@@ -57,6 +57,8 @@ model User {
   githubTokenExpiresAt   DateTime?
   name                   String?
   avatarUrl              String?
+  passwordResetToken     String?   
+  passwordResetExpires   DateTime?
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 
