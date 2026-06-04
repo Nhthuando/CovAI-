@@ -13,3 +13,8 @@ export const loginValid = z.object({
   email: z.email("Phải là email hợp lệ!"),
   password: z.string().min(8, "Vui lòng nhập password từ 8 ký tự trở lên!"),
 });
+
+
+export const resetPasswordValid = z.object({
+    newPassword: z.string().min(8, "Vui lòng nhập password từ 8 ký tự trở lên!")   
+})

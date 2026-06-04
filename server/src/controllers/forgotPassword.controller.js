@@ -3,7 +3,7 @@ import prisma from "../config/prisma.js";
 import crypto from "crypto";
 import {resetPasswordEmailHtml} from "../utils/emailTemplate.js";
 import bcrypt from "bcryptjs";
-import {resetPasswordValid} from "../features/auth/auth.valdation.js";
+import {resetPasswordValid} from "../validators/auth.validation.js";
 
 export const forgotPassword  = async (req,res) => {
     try {
