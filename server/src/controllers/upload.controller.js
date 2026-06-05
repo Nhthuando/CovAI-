@@ -1,10 +1,9 @@
 import { randomUUID } from "crypto";
 import path from "path";
-import admin from "firebase-admin";
+import { getBucket } from "../config/firebase.js";
 import prisma from "../config/prisma.js";
 import { scanZipBomb } from "../middlewares/upload.middleware.js";
 
-const bucket = admin.storage().bucket();
 
 export const uploadZip = async (req, res) => {
     try {
@@ -37,7 +36,7 @@ export const uploadZip = async (req, res) => {
         .replace(/[^a-zA-Z0-9._-]/g, "_");
         const uniqueFileName = `${randomUUID()}-${safeOriginalName}`;
         const storagePath = `projects/${projectId}/${uniqueFileName}`;
-        const blob = bucket.file(storagePath);
+        const blob = getBucket().file(storagePath);
 
         const blobStream = blob.createWriteStream({
         metadata: { contentType: file.mimetype },
