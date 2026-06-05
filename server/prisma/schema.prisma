@@ -54,7 +54,6 @@ model User {
   passwordHash           String?
   githubUserId           String?  @unique
   githubAccessTokenEnc   String?
-  githubTokenExpiresAt   DateTime?
   name                   String?
   avatarUrl              String?
   passwordResetToken     String?   

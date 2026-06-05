@@ -45,11 +45,11 @@
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:24px;border-top:1px solid #eee;">
                 <tr><td style="padding-top:20px;">
                 <p style="font-size:12px;color:#aaa;line-height:1.6;margin:0;">
-                    Link này sẽ hết hạn sau <strong style="color:#888;">10 phút</strong>. 
+                    Link này sẽ hết hạn sau <strong style="color:#888;">5 phút</strong>. 
                     Nếu bạn không yêu cầu đặt lại mật khẩu, hãy bỏ qua email này — tài khoản của bạn vẫn an toàn.
                 </p>
                 </td></tr>
-            </table>
+            </table>  
             </td></tr>
 
             <!-- Footer -->
