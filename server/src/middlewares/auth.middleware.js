@@ -1,22 +1,31 @@
 import jwt from "jsonwebtoken"
+import dotenv from "dotenv";
 
-export const authMiddleware = (req,res,next) => {
+export const authMiddleware = (req, res, next) => {
     try {
         const bearerToken = req.header("authorization");
-        if(!bearerToken) return res.status(401).json({message: "Không tìm thấy token!"});
-        if(!bearerToken.startsWith("Bearer ")) return res.status(401).json({message: "Token không hợp lệ!"});
+        console.log("Authorization:", bearerToken);
+        if (!bearerToken) return res.status(401).json({ message: "Không tìm thấy token!" });
+        if (!bearerToken.startsWith("Bearer ")) return res.status(401).json({ message: "Token không hợp lệ!" });
         const token = bearerToken.split(" ")[1];
-        if(!token) return res.status(401).json({message: "Không tìm thấy token!"});
-        const jwtsecret = process.env.JWT_SECRETS;
-        if(!jwtsecret) return res.status(500).json({message: "Không tìm thấy JWT_SECRETS!"});
-        const decode = jwt.verify(token,jwtsecret);
+        console.log("Token:", token);
+        if (!token) return res.status(401).json({ message: "Không tìm thấy token!" });
+        const jwtsecret = process.env.JWT_SECRET;
+        if (!jwtsecret) return res.status(500).json({ message: "Không tìm thấy JWT_SECRETS!" });
+        const decode = jwt.verify(token, jwtsecret);
         const { userId: id, userName: name, userEmail: email } = decode;
-        req.user = {id, name, email};
+        req.user = { id, name, email };
         next();
     } catch (error) {
+        console.log(error);
+
         if (error?.name === "TokenExpiredError") {
             return res.status(401).json({ message: "Token hết hạn!" });
         }
-        return res.status(401).json({ message: "Token không hợp lệ!" });
+
+        return res.status(401).json({
+            message: "Token không hợp lệ!",
+            error: error.message
+        });
     }
 }
