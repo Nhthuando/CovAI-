@@ -6,7 +6,7 @@ import express from "express";
 import authRoute from "./src/features/auth/auth.route.js";
 import projectRoutes from "./src/features/project/project.route.js";
 import prisma from "./src/config/prisma.js";
-
+import uploadRoute from "./src/routes/upload.route.js"
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -15,6 +15,7 @@ app.use(express.json());
 
 app.use("/api/auth", authRoute);
 app.use("/api/projects", projectRoutes);
+app.user("/api/upload", uploadRoute);
 
 async function startServer() {
     try {
