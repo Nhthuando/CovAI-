@@ -236,3 +236,26 @@ body {
     linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
   background-size: 50px 50px;
 }
+
+/* ============================================================
+   AUTOFILL OVERRIDE
+   Browsers block background-color on autofilled inputs.
+   Use inset box-shadow to fake a dark background instead.
+   ============================================================ */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  /* Fake background — box-shadow overrides the autofill yellow/white */
+  -webkit-box-shadow: 0 0 0 1000px #0d1117 inset !important;
+  box-shadow: 0 0 0 1000px #0d1117 inset !important;
+
+  /* Text color stays light */
+  -webkit-text-fill-color: #f0f6fc !important;
+  color: #f0f6fc !important;
+
+  /* Remove the yellow border Chrome sometimes adds */
+  caret-color: #f0f6fc;
+
+  transition: background-color 9999s ease-in-out 0s;
+}
