@@ -3,27 +3,30 @@ import path from "path";
 import { getBucket } from "../config/firebase.js";
 import prisma from "../config/prisma.js";
 import { scanZipBomb } from "../middlewares/upload.middleware.js";
+import { processIngestJob } from "../services/ingestJob.service.js";
 
 
 export const uploadZip = async (req, res) => {
     try {
+        if (!req.user?.id) {
+            return res.status(401).json({ message: "Unauthorized." });
+        }
+
         const { projectId } = req.body;
         const file = req.file;
 
-        if (!file || !projectId) {
-            return res.status(400).json({ message: "Vui lòng cung cấp đủ file zip và projectId." });
-        }
-
-        if (!req.user?.id || typeof projectId !== "string" || projectId.trim().length === 0) {
-            return res.status(400).json({ message: "projectId không hợp lệ." });
+        if (!file || !projectId || typeof projectId !== "string" || projectId.trim().length === 0) {
+            return res.status(400).json({ message: "Vui lòng cung cấp đủ file zip và projectId hợp lệ." });
         }
 
         try {
             await scanZipBomb(file.buffer);
         } catch (scanError) {
-            return res.status(400).json({ message: scanError.message });
+            return res.status(400).json({
+                message: scanError.message,
+                ...(scanError.violatingFiles && { violatingFiles: scanError.violatingFiles })
+            });
         }
-
 
         const projectExists = await prisma.project.findFirst({
             where: { id: projectId, ownerId: req.user.id },
@@ -44,7 +47,9 @@ export const uploadZip = async (req, res) => {
         });
 
         blobStream.on("error", (err) => {
-            return res.status(500).json({ message: "Lỗi khi tải lên Firebase: " + err.message });
+            if (!res.headersSent) {
+                res.status(500).json({ message: "Lỗi khi tải lên Firebase: " + err.message });
+            }
         });
 
         blobStream.on("finish", async () => {
@@ -69,6 +74,11 @@ export const uploadZip = async (req, res) => {
                     });
 
                     return [snapshot, job];
+                });
+
+                // Kích hoạt Job Runner chạy ngầm (không await)
+                processIngestJob(newJob.id).catch(err => {
+                    console.error("Lỗi khi chạy Job ngầm:", err);
                 });
 
                 return res.status(200).json({
