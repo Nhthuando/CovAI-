@@ -63,12 +63,10 @@ class ProjectController {
         where: { ownerId: effectiveOwnerId },
       });
       if (totalProjects >= 20) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message: "Maximum number of projects reached",
-          });
+        return res.status(400).json({
+          success: false,
+          message: "Maximum number of projects reached",
+        });
       }
 
       const project = await prisma.project.create({
@@ -111,31 +109,43 @@ class ProjectController {
    */
   async listProjects(req, res) {
     try {
-      // Require authenticated user for listing projects
-      if (!req.user) {
-        return res
-          .status(401)
-          .json({ success: false, message: "Unauthorized" });
-      }
-
       const projects = await prisma.project.findMany({
         where: { ownerId: req.user.id },
         orderBy: { createdAt: "desc" },
-        include: {
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          repoUrl: true,
+          defaultBranch: true,
+          rootDir: true,
+          jestConfigPath: true,
+          storageBasePath: true,
+          createdAt: true,
+          updatedAt: true,
           _count: {
             select: {
               snapshots: true,
-              jobs: true,
-              aiTests: true,
-              aiSuggestions: true,
             },
           },
         },
       });
 
-      return res
-        .status(200)
-        .json({ success: true, count: projects.length, data: projects });
+      return res.status(200).json({
+        projects: projects.map((p) => ({
+          id: p.id,
+          name: p.name,
+          description: p.description,
+          repoUrl: p.repoUrl,
+          defaultBranch: p.defaultBranch,
+          rootDir: p.rootDir,
+          jestConfigPath: p.jestConfigPath,
+          storageBasePath: p.storageBasePath,
+          createdAt: p.createdAt,
+          updatedAt: p.updatedAt,
+          snapshotCount: p._count.snapshots,
+        })),
+      });
     } catch (error) {
       console.error(error);
       return res
@@ -375,12 +385,10 @@ class ProjectController {
         });
       }
       if (!req.user || project.ownerId !== req.user.id) {
-        return res
-          .status(403)
-          .json({
-            success: false,
-            message: "You are not allowed to delete this project",
-          });
+        return res.status(403).json({
+          success: false,
+          message: "You are not allowed to delete this project",
+        });
       }
 
       // Check running jobs
@@ -388,12 +396,10 @@ class ProjectController {
         where: { projectId: id, status: "RUNNING" },
       });
       if (runningJobs > 0) {
-        return res
-          .status(409)
-          .json({
-            success: false,
-            message: "Cannot delete project while jobs are running",
-          });
+        return res.status(409).json({
+          success: false,
+          message: "Cannot delete project while jobs are running",
+        });
       }
 
       await prisma.project.delete({ where: { id } });
