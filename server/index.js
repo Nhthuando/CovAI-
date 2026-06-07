@@ -1,10 +1,11 @@
 import dotenv from "dotenv";
+dotenv.config();
+
+import express from "express";
+
 import authRoute from "./src/routes/auth.route.js";
 import userRoute from "./src/routes/user.route.js";
-dotenv.config();
-import express from "express";
-import authRoute from "./src/features/auth/auth.route.js";
-import projectRoutes from "./src/features/project/project.route.js";
+import projectRoutes from "./src/routes/project.route.js";
 import prisma from "./src/config/prisma.js";
 
 

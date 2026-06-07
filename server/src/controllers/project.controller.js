@@ -1,5 +1,7 @@
-import prisma from "../../config/prisma.js";
-import { parseCreateProject } from "./project.validation.js";
+import prisma from "../config/prisma.js";
+import { parseCreateProject } from "../validators/project.validation.js";
+import { detectJest } from "../utils/jestDetector.js";
+import { detectAndSaveProject } from "../services/jestDetection.service.js";
 
 class ProjectController {
     /**
@@ -54,6 +56,18 @@ class ProjectController {
                 return res.status(400).json({ success: false, message: "Maximum number of projects reached" });
             }
 
+            // Auto-detect Jest if rootDir is provided
+            let hasJest = false;
+            let detectedJestConfig = jestConfigPath || null;
+            let detectedJestCommand = null;
+
+            if (rootDir) {
+                const detection = detectJest(rootDir);
+                hasJest = detection.hasJest;
+                detectedJestConfig = detection.configPath || jestConfigPath;
+                detectedJestCommand = detection.jestCommand;
+            }
+
             const project = await prisma.project.create({
                 data: {
                     ownerId: effectiveOwnerId,
@@ -62,7 +76,9 @@ class ProjectController {
                     repoUrl,
                     defaultBranch,
                     rootDir,
-                    jestConfigPath,
+                    hasJest,
+                    jestConfigPath: detectedJestConfig,
+                    jestCommand: detectedJestCommand,
                 },
             });
 
@@ -207,6 +223,29 @@ class ProjectController {
             }
 
             return res.status(500).json({ success: false, message: "Internal server error" });
+        }
+    }
+
+    /**
+     * POST /projects/:id/detect-jest
+     */
+    async detectJestConfig(req, res) {
+        try {
+            const { id } = req.params;
+
+            const detection = await detectAndSaveProject(id);
+
+            return res.status(200).json({
+                success: true,
+                data: detection,
+            });
+        } catch (error) {
+            console.error(error);
+
+            return res.status(500).json({
+                success: false,
+                message: error.message,
+            });
         }
     }
 }

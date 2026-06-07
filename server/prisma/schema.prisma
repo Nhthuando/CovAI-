@@ -69,24 +69,32 @@ model User {
 
 // Project (single owner MVP)
 model Project {
-  id               String   @id @default(cuid())
-  ownerId          String
-  name             String
-  description      String?
-  repoUrl          String?
-  defaultBranch    String?
-  rootDir          String?
-  jestConfigPath   String?
-  storageBasePath  String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id              String   @id @default(cuid())
+  ownerId         String
 
-  owner            User     @relation(fields: [ownerId], references: [id])
-  snapshots        ProjectSnapshot[]
-  jobs             Job[]
-  aiTests          AiTest[]
-  aiSuggestions    AiSuggestion[]
-  notifications    Notification[]
+  name            String
+  description     String?
+  repoUrl         String?
+
+  defaultBranch   String?
+  rootDir         String?
+
+  jestConfigPath  String?
+  hasJest         Boolean  @default(false)
+  jestCommand     String?
+
+  storageBasePath String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  owner           User @relation(fields: [ownerId], references: [id])
+
+  snapshots       ProjectSnapshot[]
+  jobs            Job[]
+  aiTests         AiTest[]
+  aiSuggestions   AiSuggestion[]
+  notifications   Notification[]
 
   @@index([ownerId])
 }
@@ -99,7 +107,9 @@ model ProjectSnapshot {
   commitSha      String?
   storagePath    String
   rootDir        String?
-  jestConfigPath String?
+  jestConfigPath  String?
+  hasJest         Boolean @default(false)
+  jestCommand     String?
   createdAt      DateTime       @default(now())
 
   project         Project        @relation(fields: [projectId], references: [id])
