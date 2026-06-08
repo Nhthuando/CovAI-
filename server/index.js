@@ -1,10 +1,12 @@
 import dotenv from "dotenv";
-import authRoute from "./src/routes/auth.route.js";
-import userRoute from "./src/routes/user.route.js";
 dotenv.config();
+
 import express from "express";
 import cors from "cors";
-import projectRoutes from "./src/features/project/project.route.js";
+
+import authRoute from "./src/routes/auth.route.js";
+import userRoute from "./src/routes/user.route.js";
+import projectRoutes from "./src/routes/project.route.js"
 import prisma from "./src/config/prisma.js";
 import uploadRoute from "./src/routes/upload.route.js"
 
@@ -13,8 +15,8 @@ const PORT = process.env.PORT || 5000;
 
 // CORS — allow Vite dev server and production domain
 app.use(cors({
-  origin: process.env.CLIENT_URL || "http://localhost:5173",
-  credentials: true,
+    origin: process.env.CLIENT_URL || "http://localhost:5173",
+    credentials: true,
 }));
 
 app.use(express.json());
