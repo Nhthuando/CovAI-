@@ -4,8 +4,18 @@ import fs from "fs";
 import path from "path";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
+import { ServiceError } from "../utils/serviceError.js";
+
+const assertStringField = (value, fieldName) => {
+    if (!value || typeof value !== "string" || value.trim().length === 0) {
+        throw new ServiceError(`${fieldName} is required`, 400);
+    }
+};
 
 export const extractZipSnapshot = async (snapshotId, storagePath) => {
+    assertStringField(snapshotId, "snapshotId");
+    assertStringField(storagePath, "storagePath");
+
     const outputDir = path.resolve(`uploads/snapshots/${snapshotId}`);
     let dirCreatedByUs = false;
 

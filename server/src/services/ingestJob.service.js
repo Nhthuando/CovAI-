@@ -1,78 +1,85 @@
 import prisma from "../config/prisma.js";
 import { extractZipSnapshot } from "./zipExtraction.service.js";
+import {
+    markJobRunning,
+    updateJobProgress,
+    markJobSuccess,
+    markJobFailed,
+    getJobById,
+} from "./job.service.js";
+import { ServiceError } from "../utils/serviceError.js";
+
+const assertStringField = (value, fieldName) => {
+    if (!value || typeof value !== "string" || value.trim().length === 0) {
+        throw new ServiceError(`${fieldName} is required`, 400);
+    }
+};
 
 export const processIngestJob = async (jobId) => {
-    let job;
+    assertStringField(jobId, "jobId");
+
     try {
-        job = await prisma.job.update({
-            where: {
-                id: jobId,
-                status: "QUEUED"
-            },
-            data: {
-                status: "RUNNING",
-                startedAt: new Date()
-            },
-            include: { snapshot: true }
-        });
+        await markJobRunning(jobId);
     } catch (error) {
-        // P2025 là mã lỗi Prisma khi không tìm thấy record thỏa mãn điều kiện where
-        if (error.code === 'P2025') {
-            console.log(`[Job ${jobId}] Bỏ qua vì Job không tồn tại hoặc đang được xử lý bởi tiến trình khác.`);
+        if (
+            error.message === "Job not found" ||
+            error.message === "Only queued jobs can start" ||
+            error.message === "Cannot start a canceled job"
+        ) {
+            console.log(`[Job ${jobId}] Bỏ qua vì Job không tồn tại hoặc không thể bắt đầu.`);
             return;
         }
-        console.error(`[Job ${jobId}] Lỗi khi khởi tạo Job:`, error);
+        console.error(`[Job ${jobId}] Lỗi khi chuyển công việc sang RUNNING:`, error);
+        return;
+    }
+
+    let job;
+    try {
+        job = await getJobById(jobId);
+    } catch (error) {
+        console.error(`[Job ${jobId}] Lỗi khi lấy Job:`, error);
         return;
     }
 
     if (!job.snapshot) {
         console.error(`[Job ${jobId}] Lỗi dữ liệu: Không tìm thấy Snapshot đính kèm.`);
+        await markJobFailed(jobId, new ServiceError("Snapshot not found", 400));
+        return;
+    }
+
+    if (!job.snapshot.storagePath) {
+        console.error(`[Job ${jobId}] Lỗi dữ liệu: Snapshot không có storagePath.`);
+        await markJobFailed(jobId, new ServiceError("Snapshot storagePath is missing", 400));
         return;
     }
 
     try {
-        // Thực thi việc giải nén (anh nhân viên pha chế làm việc)
-        const sourcePath = await extractZipSnapshot(
-            job.snapshotId,
-            job.snapshot.storagePath
-        );
+        await updateJobProgress(jobId, 10);
 
-        // Cập nhật đường dẫn source code vào DB
+        const sourcePath = await extractZipSnapshot(job.snapshotId, job.snapshot.storagePath);
+
+        if (!sourcePath || typeof sourcePath !== "string") {
+            throw new Error("Extracted source path is invalid");
+        }
+
+        await updateJobProgress(jobId, 50);
+
         await prisma.projectSnapshot.update({
             where: { id: job.snapshotId },
-            data: { rootDir: sourcePath }
+            data: { rootDir: sourcePath },
         });
 
-        // Đánh dấu job thành công
-        await prisma.job.update({
-            where: { id: jobId },
-            data: {
-                status: "SUCCESS",
-                finishedAt: new Date()
-            }
-        });
+        await updateJobProgress(jobId, 90);
 
-        console.log(`[Job ${jobId}] Giải nén thành công vào: ${sourcePath}`);
+        await markJobSuccess(jobId, { rootDir: sourcePath });
 
-        // TODO: Gọi tiếp job tiếp theo (INSTALL_DEPS) ở đây sau này
-
+        console.log(`[Job ${jobId}] Pipeline ingest hoàn thành: ${sourcePath}`);
     } catch (error) {
-        // Đánh dấu job thất bại và lưu lỗi
-        console.error(`[Job ${jobId}] Lỗi giải nén:`, error);
-
-        // 2. Xử lý Uncaught DB Error trong Catch block
+        console.error(`[Job ${jobId}] Lỗi pipeline ingest:`, error);
         try {
-            await prisma.job.update({
-                where: { id: jobId },
-                data: {
-                    status: "FAILED",
-                    finishedAt: new Date(),
-                    errorMessage: error?.message ?? String(error)
-                }
-            });
-        } catch (dbUpdateError) {
-            console.error(`[Job ${jobId}] CRITICAL: Không thể lưu trạng thái FAILED vào DB:`, dbUpdateError);
-            // Vẫn giữ lại log gốc ở trên để không bị che mất
+            await markJobFailed(jobId, error);
+        } catch (markError) {
+            console.error(`[Job ${jobId}] Không thể đánh dấu FAILED:`, markError);
         }
     }
 };
