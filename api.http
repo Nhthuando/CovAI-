@@ -1,0 +1,15 @@
+####################################
+# API Test. Do not delete this file#
+####################################
+
+# GitHub OAuth Login
+POST http://localhost:5000/auth/github
+Content-Type: application/json
+{
+  "code": "YOUR_CODE_FROM_GITHUB"
+}
+###
+# List GitHub Repositories
+GET http://localhost:5000/api/projects/github/repos
+Authorization: Bearer YOUR_JWT_TOKEN
+###
