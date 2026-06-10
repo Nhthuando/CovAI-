@@ -1,9 +1,11 @@
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import path from "path";
 import { getBucket } from "../config/firebase.js";
 import prisma from "../config/prisma.js";
 import { scanZipBomb } from "../middlewares/upload.middleware.js";
 import { processIngestJob } from "../services/ingestJob.service.js";
+import { createSnapshotIngestJob } from "../services/job.service.js";
+import { ServiceError } from "../utils/serviceError.js";
 
 
 export const uploadZip = async (req, res) => {
@@ -35,6 +37,14 @@ export const uploadZip = async (req, res) => {
             return res.status(404).json({ message: "Project không tồn tại hoặc không có quyền." });
         }
 
+        const checksum = createHash("sha256").update(file.buffer).digest("hex");
+        const existingSnapshot = await prisma.projectSnapshot.findFirst({
+            where: { projectId, checksum },
+        });
+        if (existingSnapshot) {
+            return res.status(409).json({ message: "Duplicate snapshot already exists." });
+        }
+
         const safeOriginalName = path
             .basename(file.originalname)
             .replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -54,37 +64,24 @@ export const uploadZip = async (req, res) => {
 
         blobStream.on("finish", async () => {
             try {
-                const [newSnapshot, newJob] = await prisma.$transaction(async (tx) => {
-                    const snapshot = await tx.projectSnapshot.create({
-                        data: {
-                            projectId,
-                            source: "ZIP",
-                            storagePath,
-                        },
-                    });
-
-                    const job = await tx.job.create({
-                        data: {
-                            projectId,
-                            type: "INGEST",
-                            status: "QUEUED",
-                            snapshotId: snapshot.id,
-                            userId: req.user.id,
-                        },
-                    });
-
-                    return [snapshot, job];
+                const { snapshot, job } = await createSnapshotIngestJob({
+                    projectId,
+                    userId: req.user.id,
+                    checksum,
+                    storagePath,
                 });
 
                 // Kích hoạt Job Runner chạy ngầm (không await)
-                processIngestJob(newJob.id).catch(err => {
+                processIngestJob(job.id).catch((err) => {
                     console.error("Lỗi khi chạy Job ngầm:", err);
                 });
 
                 return res.status(200).json({
                     message: "Upload và đồng bộ hệ thống thành công!",
-                    snapshotId: newSnapshot.id,
-                    jobStatus: newJob.status,
+                    snapshotId: snapshot.id,
+                    jobId: job.id,
+                    jobStatus: job.status,
+                    progress: job.progress,
                     file: {
                         originalName: file.originalname,
                         mimeType: file.mimetype,
@@ -95,6 +92,9 @@ export const uploadZip = async (req, res) => {
             } catch (dbError) {
                 console.error("Lỗi Database:", dbError);
                 await blob.delete().catch(() => { });
+                if (dbError instanceof ServiceError) {
+                    return res.status(dbError.statusCode).json({ message: dbError.message });
+                }
                 return res.status(500).json({ message: "Lỗi đồng bộ DB, đã rollback file." });
             }
         });
@@ -102,6 +102,9 @@ export const uploadZip = async (req, res) => {
         blobStream.end(file.buffer);
     } catch (error) {
         console.error(error);
+        if (error instanceof ServiceError) {
+            return res.status(error.statusCode).json({ message: error.message });
+        }
         return res.status(500).json({ message: "Có lỗi server!" });
     }
 };
