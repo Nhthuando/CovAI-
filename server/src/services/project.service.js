@@ -1,7 +1,7 @@
 import prisma from "../config/prisma.js";
 import { detectJest } from "../utils/jestDetector.js";
 import { detectAndSaveProject } from "./jestDetection.service.js";
-import { createSnapshotIngestJob } from "./job.service.js";
+import { createSnapshotIngestJob, createSnapshotJob } from "./job.service.js";
 import { getBucket } from "../config/firebase.js";
 import { scanZipBomb } from "../middlewares/upload.middleware.js";
 import path from "path";
@@ -195,6 +195,60 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
 
 export const detectJestConfig = async (projectId) => {
     return detectAndSaveProject(projectId);
+};
+
+export const createAnalysisJob = async ({
+    projectId,
+    snapshotId,
+    userId,
+}) => {
+    if (!projectId || typeof projectId !== "string") {
+        throw new ServiceError("projectId is required", 400);
+    }
+
+    if (!snapshotId || typeof snapshotId !== "string") {
+        throw new ServiceError("snapshotId is required", 400);
+    }
+
+    if (!userId || typeof userId !== "string") {
+        throw new ServiceError("userId is required", 400);
+    }
+
+    const project = await prisma.project.findFirst({
+        where: {
+            id: projectId,
+            ownerId: userId,
+        },
+    });
+    console.log("projectId =", projectId);
+    console.log("userId =", userId);
+    if (!project) {
+        throw new ServiceError(
+            "Project not found or you don't have permission",
+            404
+        );
+    }
+
+    const snapshot = await prisma.projectSnapshot.findFirst({
+        where: {
+            id: snapshotId,
+            projectId,
+        },
+    });
+
+    if (!snapshot) {
+        throw new ServiceError(
+            "Snapshot not found",
+            404
+        );
+    }
+
+    return createSnapshotJob({
+        projectId,
+        snapshotId,
+        userId,
+        type: "BUILD_CFG",
+    });
 };
 
 export const deleteProject = async (projectId, userId) => {

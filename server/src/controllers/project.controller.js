@@ -1,5 +1,8 @@
 import { parseCreateProject } from "../validators/project.validation.js";
 import { processIngestJob } from "../services/ingestJob.service.js";
+import { processAnalysisJob } from "../services/analysisJob.service.js";
+import { parseCoverageFilesForSnapshot } from "../services/coverageFileParser.service.js";
+import { parseCoverageFunctionsForSnapshot } from "../services/coverageFunctionParser.service.js";
 import {
     ServiceError,
     createProject,
@@ -7,6 +10,7 @@ import {
     getProjectById,
     uploadProjectZip,
     detectJestConfig,
+    createAnalysisJob,
     deleteProject,
 } from "../services/project.service.js";
 
@@ -147,6 +151,150 @@ class ProjectController {
                     progress: result.job.progress,
                 },
                 file: result.file,
+            });
+        } catch (error) {
+            console.error(error);
+
+            if (error instanceof ServiceError) {
+                return res
+                    .status(error.statusCode)
+                    .json({ success: false, message: error.message });
+            }
+
+            return res.status(500).json({
+                success: false,
+                message: "Internal server error",
+            });
+        }
+    }
+
+    async runAnalysis(req, res) {
+        try {
+            const { id: projectId } = req.params;
+            const { snapshotId } = req.body;
+
+            if (!snapshotId || typeof snapshotId !== "string") {
+                return res.status(400).json({
+                    success: false,
+                    message: "snapshotId is required and must be a string",
+                });
+            }
+
+            const job = await createAnalysisJob({
+                projectId,
+                snapshotId,
+                userId: req.user.id,
+            });
+
+            processAnalysisJob(job.id).catch((err) => {
+                console.error("Lỗi khi chạy Job phân tích ngầm:", err);
+            });
+
+            return res.status(201).json({
+                success: true,
+                data: {
+                    job: {
+                        id: job.id,
+                        type: job.type,
+                        snapshotId: job.snapshotId,
+                        status: job.status,
+                        progress: job.progress,
+                        createdAt: job.createdAt,
+                        updatedAt: job.updatedAt,
+                    },
+                },
+            });
+        } catch (error) {
+            console.error(error);
+
+            if (error instanceof ServiceError) {
+                return res
+                    .status(error.statusCode)
+                    .json({ success: false, message: error.message });
+            }
+
+            return res.status(500).json({
+                success: false,
+                message: "Internal server error",
+            });
+        }
+    }
+
+    async parseCoverageFiles(req, res) {
+        try {
+            const { id: projectId } = req.params;
+            const { snapshotId, coverageReport } = req.body;
+
+            if (!snapshotId || typeof snapshotId !== "string") {
+                return res.status(400).json({
+                    success: false,
+                    message: "snapshotId is required and must be a string",
+                });
+            }
+
+            if (!coverageReport || typeof coverageReport !== "object") {
+                return res.status(400).json({
+                    success: false,
+                    message: "coverageReport is required and must be an object",
+                });
+            }
+
+            const coverageResult = await parseCoverageFilesForSnapshot({
+                projectId,
+                snapshotId,
+                coverageReport,
+                userId: req.user.id,
+            });
+
+            return res.status(200).json({
+                success: true,
+                data: coverageResult,
+            });
+        } catch (error) {
+            console.error(error);
+
+            if (error instanceof ServiceError) {
+                return res
+                    .status(error.statusCode)
+                    .json({ success: false, message: error.message });
+            }
+
+            return res.status(500).json({
+                success: false,
+                message: "Internal server error",
+            });
+        }
+    }
+
+    async parseCoverageFunctions(req, res) {
+        try {
+            const { id: projectId } = req.params;
+            const { snapshotId, coverageReport } = req.body;
+
+            if (!snapshotId || typeof snapshotId !== "string") {
+                return res.status(400).json({
+                    success: false,
+                    message: "snapshotId is required and must be a string",
+                });
+            }
+
+            if (!coverageReport || typeof coverageReport !== "object") {
+                return res.status(400).json({
+                    success: false,
+                    message: "coverageReport is required and must be an object",
+                });
+            }
+
+            const coverageResult = await parseCoverageFunctionsForSnapshot({
+                projectId,
+                snapshotId,
+                coverageReport,
+                userId: req.user.id,
+            });
+
+            return res.status(201).json({
+                success: true,
+                data: coverageResult,
             });
         } catch (error) {
             console.error(error);
