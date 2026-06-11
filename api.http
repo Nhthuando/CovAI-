@@ -6,9 +6,9 @@ POST {{baseUrl}}/auth/register
 Content-Type: application/json
 
 {
-  "email": "test@example.com",
+  "email": "dinh@gmail.com",
   "password": "password123",
-  "username": "tester"
+  "name": "dinh"
 }
 
 ###
@@ -17,8 +17,8 @@ POST {{baseUrl}}/auth/login
 Content-Type: application/json
 
 {
-  "email": "test@example.com",
-  "password": "password123"
+  "email": "huynhtandinh.dev@gmail.com",
+  "password": "newPassword123"
 }
 
 ###
@@ -27,12 +27,21 @@ POST {{baseUrl}}/auth/forgotPassword
 Content-Type: application/json
 
 {
-  "email": "test@example.com"
+  "email": "huynhtandinh.dev@gmail.com"
 }
 
 ###
+# @name getGithubAuthUrl
+# Lưu ý: Thay YOUR_CLIENT_ID bằng ID thực tế của bạn, truy cập vào link bên dưới để lấy code xác thực
+# https://github.com/login/oauth/authorize?client_id=Ov23liQyAORXbj6NeqAB&scope=user:email
+# @name githubCallback
+# Sau khi lấy code thì tự động fallback về api Get bên dưới với tham số code để lấy access token
+# GET {{baseUrl}}/auth/github/callback?code=CODE
+
+###
 # @name resetPassword
-POST {{baseUrl}}/auth/resetPassword/your-token-here
+# Dán token sau resetPassword/
+POST {{baseUrl}}/auth/resetPassword/1484ff0f9c5669498d52120db3c7741d81ea93eface28ec6f53a082f11e2b023
 Content-Type: application/json
 
 {
@@ -41,17 +50,18 @@ Content-Type: application/json
 
 ### User
 # @name getMe
-GET {{baseUrl}}/user/me
-Authorization: Bearer YOUR_TOKEN_HERE
+# Dán token sau Bearer
+GET {{baseUrl}}/users/me
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXE5MDM3dXcwMDAwNG9idms5bWo2cTN0IiwidXNlckVtYWlsIjoiaHV5bmh0YW5kaW5oLmRldkBnbWFpbC5jb20iLCJ1c2VyTmFtZSI6ImRpbmgiLCJpYXQiOjE3ODExNTcxODksImV4cCI6MTc4MTE2MDc4OX0.ELXzyTI8LNGvHB9qWMscILSMVGFEADGt6Ue5MwGioGU
 
 ###
 # @name updateMe
-PATCH {{baseUrl}}/user/me
-Authorization: Bearer YOUR_TOKEN_HERE
+PATCH {{baseUrl}}/users/me
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXE5MDM3dXcwMDAwNG9idms5bWo2cTN0IiwidXNlckVtYWlsIjoiaHV5bmh0YW5kaW5oLmRldkBnbWFpbC5jb20iLCJ1c2VyTmFtZSI6ImRpbmgiLCJpYXQiOjE3ODExNTcxODksImV4cCI6MTc4MTE2MDc4OX0.ELXzyTI8LNGvHB9qWMscILSMVGFEADGt6Ue5MwGioGU
 Content-Type: application/json
 
 {
-  "username": "newUsername"
+  "name": "dinh1"
 }
 
 ### Projects

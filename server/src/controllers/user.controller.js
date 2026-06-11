@@ -1,10 +1,10 @@
 import { meValid } from "../validators/user.validation.js";
-import { updateUserService } from "../services/user.service.js";
+import { updateUserService, getUserById } from "../services/user.service.js";
 
 export const me = async (req, res) => {
   try {
     const { id } = req.user;
-    const user = await updateUserService(id);
+    const user = await getUserById(id);
     return res.status(200).json(user);
   } catch (error) {
     console.log(error);

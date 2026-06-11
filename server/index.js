@@ -6,37 +6,44 @@ import express from "express";
 import cors from "cors";
 import projectRoutes from "./src/features/project/project.route.js";
 import prisma from "./src/config/prisma.js";
-import uploadRoute from "./src/routes/upload.route.js"
+import uploadRoute from "./src/routes/upload.route.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 // CORS — allow Vite dev server and production domain
-app.use(cors({
-  origin: process.env.CLIENT_URL || "http://localhost:5173",
-  credentials: true,
-}));
+app.use(
+  cors({
+    origin: process.env.CLIENT_URL || "http://localhost:5173",
+    credentials: true,
+  }),
+);
 
 app.use(express.json());
 
 app.use("/api/auth", authRoute);
+app.use("/api/users", userRoute);
 app.use("/api/projects", projectRoutes);
 app.use("/api/upload", uploadRoute);
 
-async function startServer() {
-    try {
-        await prisma.$connect();
-        console.log("Database connected successfully.");
+app.get("/", (req, res) => {
+  res.json({ message: "CovAI API is running" });
+});
 
-        app.listen(PORT, () => {
-            console.log("-----------------------------------------------");
-            console.log("CovAI server đang được chạy dưới port: " + PORT);
-            console.log("-----------------------------------------------");
-        });
-    } catch (error) {
-        console.error("Failed to connect to the database:", error);
-        process.exit(1);
-    }
+async function startServer() {
+  try {
+    await prisma.$connect();
+    console.log("Database connected successfully.");
+
+    app.listen(PORT, () => {
+      console.log("-----------------------------------------------");
+      console.log("CovAI server đang được chạy dưới port: " + PORT);
+      console.log("-----------------------------------------------");
+    });
+  } catch (error) {
+    console.error("Failed to connect to the database:", error);
+    process.exit(1);
+  }
 }
 
 startServer();
