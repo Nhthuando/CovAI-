@@ -1,7 +1,7 @@
 import prisma from "../config/prisma.js";
 import { detectJest } from "../utils/jestDetector.js";
 import { detectAndSaveProject } from "./jestDetection.service.js";
-import { createSnapshotIngestJob, createSnapshotJob } from "./job.service.js";
+import { createSnapshotIngestJob, createRunTestsJob } from "./job.service.js";
 import { getBucket } from "../config/firebase.js";
 import { scanZipBomb } from "../middlewares/upload.middleware.js";
 import path from "path";
@@ -243,11 +243,11 @@ export const createAnalysisJob = async ({
         );
     }
 
-    return createSnapshotJob({
+    // SCRUM-138: Tạo RUN_TESTS job cho pipeline coverage analysis
+    return createRunTestsJob({
         projectId,
         snapshotId,
         userId,
-        type: "BUILD_CFG",
     });
 };
 

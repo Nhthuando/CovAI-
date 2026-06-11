@@ -1,6 +1,6 @@
 import { parseCreateProject } from "../validators/project.validation.js";
 import { processIngestJob } from "../services/ingestJob.service.js";
-import { processAnalysisJob } from "../services/analysisJob.service.js";
+import { processRunTestsJob } from "../services/runTestsJob.service.js";
 import { parseCoverageFilesForSnapshot } from "../services/coverageFileParser.service.js";
 import { parseCoverageFunctionsForSnapshot } from "../services/coverageFunctionParser.service.js";
 import {
@@ -186,8 +186,9 @@ class ProjectController {
                 userId: req.user.id,
             });
 
-            processAnalysisJob(job.id).catch((err) => {
-                console.error("Lỗi khi chạy Job phân tích ngầm:", err);
+            // SCRUM-138..144: Kick-off full pipeline bất đồng bộ (không await)
+            processRunTestsJob(job.id).catch((err) => {
+                console.error("Lỗi khi chạy RUN_TESTS pipeline ngầm:", err);
             });
 
             return res.status(201).json({
