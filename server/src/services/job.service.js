@@ -112,6 +112,16 @@ export const createSnapshotIngestJob = async ({
 /**
  * Create a standalone job for an existing snapshot.
  */
+const JOB_TYPES = [
+    "INGEST",
+    "INSTALL_DEPS",
+    "RUN_TESTS",
+    "PARSE_COVERAGE",
+    "BUILD_CFG",
+    "AI_SUGGEST",
+    "AI_TESTS",
+];
+
 export const createIngestJobForSnapshot = async ({
     projectId,
     snapshotId,
@@ -169,6 +179,76 @@ export const createIngestJobForSnapshot = async ({
     });
 
     await addJobLog(job.id, "INFO", "Job created");
+
+    return job;
+};
+
+/**
+ * Create a generic job for a snapshot based on valid JOB_TYPES.
+ */
+export const createSnapshotJob = async ({
+    projectId,
+    snapshotId,
+    userId,
+    type,
+    payloadJson = null,
+}) => {
+    assertStringField(projectId, "projectId");
+    assertStringField(snapshotId, "snapshotId");
+    assertStringField(userId, "userId");
+    assertStringField(type, "type");
+
+    if (!JOB_TYPES.includes(type)) {
+        throw new ServiceError("Invalid job type", 400);
+    }
+
+    const snapshot = await prisma.projectSnapshot.findUnique({
+        where: { id: snapshotId },
+    });
+
+    if (!snapshot) {
+        throw new ServiceError("Snapshot not found", 404);
+    }
+
+    if (snapshot.projectId !== projectId) {
+        throw new ServiceError("Snapshot does not belong to project", 400);
+    }
+
+    const user = await prisma.user.findUnique({
+        where: { id: userId },
+    });
+
+    if (!user) {
+        throw new ServiceError("User not found", 404);
+    }
+
+    const runningJob = await prisma.job.findFirst({
+        where: {
+            projectId,
+            type,
+            status: {
+                in: ["QUEUED", "RUNNING"],
+            },
+        },
+    });
+
+    if (runningJob) {
+        throw new ServiceError("A similar job is already queued or running", 409);
+    }
+
+    const job = await prisma.job.create({
+        data: {
+            projectId,
+            snapshotId,
+            userId,
+            type,
+            status: "QUEUED",
+            progress: 0,
+            payloadJson,
+        },
+    });
+
+    await addJobLog(job.id, "INFO", `Job created (${type})`);
 
     return job;
 };
@@ -534,4 +614,4 @@ export const createRunTestsJob = async ({ projectId, snapshotId, userId }) => {
 
     await addJobLog(job.id, "INFO", "RUN_TESTS job created");
     return job;
-};
+};
