@@ -1,15 +1,93 @@
-####################################
-# API Test. Do not delete this file#
-####################################
+@baseUrl = http://localhost:5000/api
 
-# GitHub OAuth Login
-POST http://localhost:5000/auth/github
+### Auth
+# @name register
+POST {{baseUrl}}/auth/register
 Content-Type: application/json
+
 {
-  "code": "YOUR_CODE_FROM_GITHUB"
+  "email": "test@example.com",
+  "password": "password123",
+  "username": "tester"
 }
+
 ###
-# List GitHub Repositories
-GET http://localhost:5000/api/projects/github/repos
-Authorization: Bearer YOUR_JWT_TOKEN
+# @name login
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "test@example.com",
+  "password": "password123"
+}
+
 ###
+# @name forgotPassword
+POST {{baseUrl}}/auth/forgotPassword
+Content-Type: application/json
+
+{
+  "email": "test@example.com"
+}
+
+###
+# @name resetPassword
+POST {{baseUrl}}/auth/resetPassword/your-token-here
+Content-Type: application/json
+
+{
+  "newPassword": "newPassword123"
+}
+
+### User
+# @name getMe
+GET {{baseUrl}}/user/me
+Authorization: Bearer YOUR_TOKEN_HERE
+
+###
+# @name updateMe
+PATCH {{baseUrl}}/user/me
+Authorization: Bearer YOUR_TOKEN_HERE
+Content-Type: application/json
+
+{
+  "username": "newUsername"
+}
+
+### Projects
+# @name createProject
+POST {{baseUrl}}/projects
+Authorization: Bearer YOUR_TOKEN_HERE
+Content-Type: application/json
+
+{
+  "name": "My New Project"
+}
+
+###
+# @name listProjects
+GET {{baseUrl}}/projects
+Authorization: Bearer YOUR_TOKEN_HERE
+
+###
+# @name getProjectById
+GET {{baseUrl}}/projects/YOUR_PROJECT_ID
+Authorization: Bearer YOUR_TOKEN_HERE
+
+###
+# @name deleteProject
+DELETE {{baseUrl}}/projects/YOUR_PROJECT_ID
+Authorization: Bearer YOUR_TOKEN_HERE
+
+###
+# @name uploadZip
+POST {{baseUrl}}/projects/YOUR_PROJECT_ID/upload-zip
+Authorization: Bearer YOUR_TOKEN_HERE
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
+
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="file"; filename="test.zip"
+Content-Type: application/zip
+
+< ./test.zip
+------WebKitFormBoundary7MA4YWxkTrZu0gW--
