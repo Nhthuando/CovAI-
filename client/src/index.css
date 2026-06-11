@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@300;400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
 @import "tailwindcss";
 
 /* ============================================================
@@ -32,6 +32,17 @@
   /* Font families */
   --font-sans: "Inter", system-ui, sans-serif;
   --font-serif: "Instrument Serif", Georgia, serif;
+  --font-mono: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+
+  /* Dashboard IDE surfaces */
+  --ide-bg: #0d1117;
+  --ide-sidebar: #161b22;
+  --ide-activitybar: #0d1117;
+  --ide-tabbar: #161b22;
+  --ide-border: rgba(255, 255, 255, 0.08);
+  --ide-active-tab: #1c2128;
+  --ide-line-num: #484f58;
+  --ide-gutter: #161b22;
 }
 
 /* ============================================================
@@ -57,6 +68,13 @@ body {
   color: var(--text-primary);
   min-height: 100vh;
   overflow-x: hidden;
+}
+
+/* IDE layout — no page scroll */
+.ide-root {
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
 }
 
 /* ============================================================

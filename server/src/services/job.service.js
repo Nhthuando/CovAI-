@@ -183,6 +183,9 @@ export const createIngestJobForSnapshot = async ({
     return job;
 };
 
+/**
+ * Create a generic job for a snapshot based on valid JOB_TYPES.
+ */
 export const createSnapshotJob = async ({
     projectId,
     snapshotId,
@@ -545,4 +548,70 @@ export const retryJob = async (jobId) => {
 
     await addJobLog(newJob.id, "INFO", "Job retried from failed job");
     return newJob;
+};
+
+/**
+ * Tạo Job INSTALL_DEPS cho một snapshot đã có rootDir.
+ */
+export const createInstallDepsJob = async ({ projectId, snapshotId, userId }) => {
+    assertStringField(projectId, "projectId");
+    assertStringField(snapshotId, "snapshotId");
+    assertStringField(userId, "userId");
+
+    const snapshot = await prisma.projectSnapshot.findUnique({ where: { id: snapshotId } });
+    if (!snapshot) throw new ServiceError("Snapshot not found", 404);
+    if (snapshot.projectId !== projectId) throw new ServiceError("Snapshot does not belong to project", 400);
+
+    const running = await prisma.job.findFirst({
+        where: { projectId, type: "INSTALL_DEPS", status: { in: ["QUEUED", "RUNNING"] } },
+    });
+    if (running) throw new ServiceError("An INSTALL_DEPS job is already running for this project", 409);
+
+    const job = await prisma.job.create({
+        data: {
+            projectId,
+            snapshotId,
+            userId,
+            type: "INSTALL_DEPS",
+            status: "QUEUED",
+            progress: 0,
+            payloadJson: JSON.stringify({ snapshotId }),
+        },
+    });
+
+    await addJobLog(job.id, "INFO", "INSTALL_DEPS job created");
+    return job;
+};
+
+/**
+ * Tạo Job RUN_TESTS cho một snapshot.
+ */
+export const createRunTestsJob = async ({ projectId, snapshotId, userId }) => {
+    assertStringField(projectId, "projectId");
+    assertStringField(snapshotId, "snapshotId");
+    assertStringField(userId, "userId");
+
+    const snapshot = await prisma.projectSnapshot.findUnique({ where: { id: snapshotId } });
+    if (!snapshot) throw new ServiceError("Snapshot not found", 404);
+    if (snapshot.projectId !== projectId) throw new ServiceError("Snapshot does not belong to project", 400);
+
+    const running = await prisma.job.findFirst({
+        where: { projectId, type: "RUN_TESTS", status: { in: ["QUEUED", "RUNNING"] } },
+    });
+    if (running) throw new ServiceError("A RUN_TESTS job is already running for this project", 409);
+
+    const job = await prisma.job.create({
+        data: {
+            projectId,
+            snapshotId,
+            userId,
+            type: "RUN_TESTS",
+            status: "QUEUED",
+            progress: 0,
+            payloadJson: JSON.stringify({ snapshotId }),
+        },
+    });
+
+    await addJobLog(job.id, "INFO", "RUN_TESTS job created");
+    return job;
 };
