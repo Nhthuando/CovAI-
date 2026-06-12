@@ -89,6 +89,7 @@ Content-Disposition: form-data; name
 
 ###
 # @name githubOAuthAccess
+# Cái này cho việc bật/tắt truy cập vào private repository
 POST {{baseUrl}}/auth/github/access
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXE5MWs0d3YwMDAxNG9idjEyczBmNWZ1IiwidXNlckVtYWlsIjoiaHV5bmhkaW5oMms1MjcwN0BnbWFpbC5jb20iLCJ1c2VyTmFtZSI6IkRpbmhHSCIsImlhdCI6MTc4MTE4NDg4NiwiZXhwIjoxNzgxMTg4NDg2fQ.KHbVwR2vx3XiE6_idKUBBuxTjt_wbBfHMDWtxZFAvls
 Content-Type: application/json
@@ -101,5 +102,25 @@ Content-Type: application/json
 ###
 # @name listGithubRepositories
 GET {{baseUrl}}/auth/github/repositories
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXE5MWs0d3YwMDAxNG9idjEyczBmNWZ1IiwidXNlckVtYWlsIjoiaHV5bmhkaW5oMms1MjcwN0BnbWFpbC5jb20iLCJ1c2VyTmFtZSI6IkRpbmhHSCIsImlhdCI6MTc4MTE4NDg4NiwiZXhwIjoxNzgxMTg4NDg2fQ.KHbVwR2vx3XiE6_idKUBBuxTjt_wbBfHMDWtxZFAvls
+Authorization: Bearer YOUR_TOKEN_HERE
+
+###
+# @name cloneGithubRepositoryByUrl
+POST {{baseUrl}}/projects/YOUR_PROJECT_ID/import-github-url
+Content-Type: application/json
+
+{
+  "url": "https://github.com/owner/repo"
+}
+
+###
+# @name importGithubRepository
+POST {{baseUrl}}/projects/YOUR_PROJECT_ID/import-github-repo
+Authorization: Bearer YOUR_TOKEN_HERE
+Content-Type: application/json
+
+{
+  "owner": "owner_name",
+  "repo": "repo_name"
+}
 
