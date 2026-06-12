@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
 @import "tailwindcss";
 
 /* ============================================================
@@ -7,42 +7,48 @@
 :root {
   /* Surface */
   --surface-main: #0d1117;
-  --surface-container: #111827;
-  --surface-elevated: #161b22;
+  --surface-variant: #181c22;
+  --surface-elevated: #1c2128;
+  --surface-overlay: #21262d;
 
   /* Primary */
   --primary: #7c3aed;
-  --primary-light: #9d5cf5;
-  --primary-glow: rgba(124, 58, 237, 0.35);
+  --primary-light: #a78bfa;
+  --primary-glow: rgba(124, 58, 237, 0.4);
+  --primary-subtle: rgba(124, 58, 237, 0.08);
 
-  /* Accent */
+  /* Accent Cyan (AI) */
   --accent-cyan: #22d3ee;
   --accent-cyan-light: #67e8f9;
-  --accent-cyan-glow: rgba(34, 211, 238, 0.2);
+  --accent-cyan-glow: rgba(34, 211, 238, 0.25);
+  --accent-cyan-subtle: rgba(34, 211, 238, 0.06);
+
+  /* Status Colors */
+  --green: #3fb950;
+  --yellow: #d29922;
+  --red: #f85149;
 
   /* Text */
-  --text-primary: #f0f6fc;
+  --text-primary: #ffffff;
   --text-secondary: #8b949e;
   --text-muted: #484f58;
 
   /* Borders */
-  --border-subtle: rgba(255, 255, 255, 0.06);
-  --border-glass: rgba(255, 255, 255, 0.1);
+  --ide-border: rgba(255, 255, 255, 0.08);
+  --border-glow: rgba(124, 58, 237, 0.3);
 
   /* Font families */
-  --font-sans: "Inter", system-ui, sans-serif;
-  --font-serif: "Instrument Serif", Georgia, serif;
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
   --font-mono: "JetBrains Mono", "Fira Code", "Consolas", monospace;
 
-  /* Dashboard IDE surfaces */
+  /* IDE specific surfaces */
   --ide-bg: #0d1117;
-  --ide-sidebar: #161b22;
+  --ide-sidebar: #181c22;
   --ide-activitybar: #0d1117;
-  --ide-tabbar: #161b22;
-  --ide-border: rgba(255, 255, 255, 0.08);
-  --ide-active-tab: #1c2128;
-  --ide-line-num: #484f58;
-  --ide-gutter: #161b22;
+  --ide-tabbar: #181c22;
+  --ide-active-tab: #0d1117;
+  --ide-line-num: #3b4048;
+  --ide-gutter: #181c22;
 }
 
 /* ============================================================
@@ -57,9 +63,9 @@
 }
 
 html {
-  scroll-behavior: smooth;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 body {
@@ -75,60 +81,45 @@ body {
   overflow: hidden;
   height: 100vh;
   width: 100vw;
+  display: flex;
+  flex-direction: column;
 }
 
 /* ============================================================
-   SCROLLBAR
+   CUSTOM SCROLLBARS
    ============================================================ */
 ::-webkit-scrollbar {
-  width: 6px;
+  width: 4px;
+  height: 4px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--surface-main);
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--primary);
-  border-radius: 3px;
+  background: rgba(124, 58, 237, 0.35);
+  border-radius: 2px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--primary-light);
+  background: rgba(124, 58, 237, 0.6);
 }
 
 /* ============================================================
-   GLASSMORPHISM — .liquid-glass
+   GLASSMORPHISM
    ============================================================ */
-.liquid-glass {
-  background: rgba(255, 255, 255, 0.01);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  border: 1.4px solid transparent;
-  background-clip: padding-box;
-  position: relative;
+.glass {
+  background: rgba(255, 255, 255, 0.02);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.liquid-glass::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1.4px;
-  background: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.18) 0%,
-    rgba(255, 255, 255, 0.04) 40%,
-    transparent 100%
-  );
-  -webkit-mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
+.glass-violet {
+  background: rgba(124, 58, 237, 0.05);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(124, 58, 237, 0.15);
 }
 
-/* ============================================================
-   GLASS PILL
-   ============================================================ */
 .glass-pill {
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -138,142 +129,119 @@ body {
 }
 
 /* ============================================================
-   BORDER BEAM — Hover glow on cards
-   ============================================================ */
-.border-beam {
-  position: relative;
-  transition: all 0.3s ease;
-}
-
-.border-beam::after {
-  content: "";
-  position: absolute;
-  inset: -1px;
-  border-radius: inherit;
-  background: linear-gradient(
-    135deg,
-    var(--primary) 0%,
-    var(--accent-cyan) 50%,
-    var(--primary) 100%
-  );
-  opacity: 0;
-  transition: opacity 0.3s ease;
-  z-index: -1;
-}
-
-.border-beam:hover::after {
-  opacity: 0.6;
-}
-
-.border-beam:hover {
-  transform: translateY(-2px);
-  box-shadow:
-    0 0 30px var(--primary-glow),
-    0 20px 40px rgba(0, 0, 0, 0.4);
-}
-
-/* ============================================================
-   NEON GLOW UTILITIES
+   GLOW UTILITIES
    ============================================================ */
 .glow-violet {
   box-shadow:
-    0 0 20px var(--primary-glow),
-    0 0 60px rgba(124, 58, 237, 0.15);
+    0 0 20px rgba(124, 58, 237, 0.35),
+    0 0 60px rgba(124, 58, 237, 0.12);
 }
 
 .glow-cyan {
   box-shadow:
-    0 0 20px var(--accent-cyan-glow),
+    0 0 20px rgba(34, 211, 238, 0.25),
     0 0 60px rgba(34, 211, 238, 0.08);
 }
 
 .text-gradient-violet {
-  background: linear-gradient(
-    135deg,
-    var(--primary-light) 0%,
-    var(--accent-cyan) 100%
-  );
+  background: linear-gradient(135deg, var(--primary-light) 0%, var(--accent-cyan) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
 /* ============================================================
-   TYPOGRAPHY
+   SYNTAX HIGHLIGHTING TOKENS
    ============================================================ */
-.font-serif {
-  font-family: var(--font-serif);
-}
+.token-keyword  { color: #c084fc; }
+.token-type     { color: #67e8f9; }
+.token-fn       { color: #93c5fd; }
+.token-string   { color: #86efac; }
+.token-number   { color: #fca5a5; }
+.token-comment  { color: #4b5563; font-style: italic; }
+.token-tag      { color: #f9a8d4; }
+.token-attr     { color: #fde68a; }
+.token-plain    { color: #e2e8f0; }
 
 /* ============================================================
-   ANIMATION UTILITIES
+   ANIMATION KEYFRAMES
    ============================================================ */
 @keyframes float {
-  0%,
-  100% {
-    transform: translateY(0px);
-  }
-  50% {
-    transform: translateY(-8px);
-  }
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-8px); }
 }
 
 @keyframes pulse-glow {
-  0%,
-  100% {
-    opacity: 0.6;
-  }
-  50% {
-    opacity: 1;
-  }
+  0%, 100% { opacity: 0.5; }
+  50%       { opacity: 1; }
+}
+
+@keyframes gradient-shift {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes typing-cursor {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
 }
 
 @keyframes scan-line {
-  0% {
-    transform: translateY(-100%);
-  }
-  100% {
-    transform: translateY(100vh);
-  }
+  0%   { transform: translateY(-100%); }
+  100% { transform: translateY(100vh); }
 }
 
-.animate-float {
-  animation: float 4s ease-in-out infinite;
+@keyframes neon-pulse {
+  0%, 100% { box-shadow: 0 0 5px rgba(124, 58, 237, 0.3), 0 0 20px rgba(124, 58, 237, 0.1); }
+  50%       { box-shadow: 0 0 15px rgba(124, 58, 237, 0.6), 0 0 40px rgba(124, 58, 237, 0.25); }
 }
 
-.animate-pulse-glow {
-  animation: pulse-glow 2s ease-in-out infinite;
-}
+.animate-float        { animation: float 4s ease-in-out infinite; }
+.animate-pulse-glow   { animation: pulse-glow 2s ease-in-out infinite; }
+.animate-gradient     { animation: gradient-shift 6s ease infinite; background-size: 200% 200%; }
+.animate-neon-pulse   { animation: neon-pulse 2s ease-in-out infinite; }
 
 /* ============================================================
-   GRID BACKGROUND PATTERN
+   BACKGROUND PATTERNS
    ============================================================ */
 .bg-grid {
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
-  background-size: 50px 50px;
+    linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+  background-size: 40px 40px;
 }
 
 /* ============================================================
    AUTOFILL OVERRIDE
-   Browsers block background-color on autofilled inputs.
-   Use inset box-shadow to fake a dark background instead.
    ============================================================ */
 input:-webkit-autofill,
 input:-webkit-autofill:hover,
-input:-webkit-autofill:focus,
-input:-webkit-autofill:active {
-  /* Fake background — box-shadow overrides the autofill yellow/white */
+input:-webkit-autofill:focus {
   -webkit-box-shadow: 0 0 0 1000px #0d1117 inset !important;
   box-shadow: 0 0 0 1000px #0d1117 inset !important;
-
-  /* Text color stays light */
   -webkit-text-fill-color: #f0f6fc !important;
-  color: #f0f6fc !important;
-
-  /* Remove the yellow border Chrome sometimes adds */
   caret-color: #f0f6fc;
-
   transition: background-color 9999s ease-in-out 0s;
 }
+
+/* ============================================================
+   IDE-SPECIFIC COMPONENTS
+   ============================================================ */
+
+/* Tab hover with indicator */
+.tab-item {
+  position: relative;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+/* Activity bar icon active glow */
+.activity-icon-active {
+  color: var(--text-primary) !important;
+  filter: drop-shadow(0 0 6px rgba(124, 58, 237, 0.6));
+}
+
+/* Code gutter highlight lines */
+.line-covered   { background: rgba(63, 185, 80, 0.06); }
+.line-uncovered { background: rgba(248, 81, 73, 0.06); }
+.line-partial   { background: rgba(210, 153, 34, 0.06); }

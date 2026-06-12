@@ -1,181 +1,276 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Circle, BarChart3, GitBranch, Zap } from "lucide-react";
+import {
+  X,
+  Circle,
+  BarChart3,
+  GitBranch,
+  Zap,
+  ChevronRight,
+  Dot,
+} from "lucide-react";
 
-/* ── Sample code snippets per "file" ───────────────────── */
-const FILE_CODE = {
-  default: {
+/* ── App.tsx file code ────────────────────────────────────── */
+const FILES_CODE = {
+  "dashboard-tsx": {
     name: "Dashboard.tsx",
-    lang: "tsx",
+    breadcrumb: ["src", "pages", "Dashboard.tsx"],
     lines: [
-      { n: 1,  tokens: [{ t: "keyword", v: "import" }, { t: "plain", v: " { useState, useEffect } " }, { t: "keyword", v: "from" }, { t: "string", v: " 'react'" }, { t: "plain", v: ";" }] },
-      { n: 2,  tokens: [{ t: "keyword", v: "import" }, { t: "plain", v: " { motion } " }, { t: "keyword", v: "from" }, { t: "string", v: " 'framer-motion'" }, { t: "plain", v: ";" }] },
-      { n: 3,  tokens: [] },
-      { n: 4,  tokens: [{ t: "comment", v: "// 🤖 TestCovAI — AI-powered Test Coverage Platform" }] },
-      { n: 5,  tokens: [{ t: "keyword", v: "interface" }, { t: "type", v: " CoverageSummary" }, { t: "plain", v: " {" }] },
-      { n: 6,  tokens: [{ t: "plain", v: "  lines" }, { t: "plain", v: ": " }, { t: "type", v: "number" }, { t: "plain", v: ";" }] },
-      { n: 7,  tokens: [{ t: "plain", v: "  branches" }, { t: "plain", v: ": " }, { t: "type", v: "number" }, { t: "plain", v: ";" }] },
-      { n: 8,  tokens: [{ t: "plain", v: "  functions" }, { t: "plain", v: ": " }, { t: "type", v: "number" }, { t: "plain", v: ";" }] },
-      { n: 9,  tokens: [{ t: "plain", v: "  statements" }, { t: "plain", v: ": " }, { t: "type", v: "number" }, { t: "plain", v: ";" }] },
-      { n: 10, tokens: [{ t: "plain", v: "}" }] },
-      { n: 11, tokens: [] },
-      { n: 12, tokens: [{ t: "keyword", v: "const" }, { t: "fn", v: " Dashboard" }, { t: "plain", v: " = () => {" }] },
-      { n: 13, tokens: [{ t: "keyword", v: "  const" }, { t: "plain", v: " [coverage, setCoverage] = " }, { t: "fn", v: "useState" }, { t: "plain", v: "<" }, { t: "type", v: "CoverageSummary" }, { t: "plain", v: ">({" }] },
-      { n: 14, tokens: [{ t: "plain", v: "    lines: " }, { t: "number", v: "84" }, { t: "plain", v: "," }] },
-      { n: 15, tokens: [{ t: "plain", v: "    branches: " }, { t: "number", v: "71" }, { t: "plain", v: "," }] },
-      { n: 16, tokens: [{ t: "plain", v: "    functions: " }, { t: "number", v: "89" }, { t: "plain", v: "," }] },
-      { n: 17, tokens: [{ t: "plain", v: "    statements: " }, { t: "number", v: "82" }, { t: "plain", v: "," }] },
-      { n: 18, tokens: [{ t: "plain", v: "  });" }] },
-      { n: 19, tokens: [] },
-      { n: 20, tokens: [{ t: "fn", v: "  useEffect" }, { t: "plain", v: "(() => {" }] },
-      { n: 21, tokens: [{ t: "fn", v: "    fetchCoverage" }, { t: "plain", v: "();" }] },
-      { n: 22, tokens: [{ t: "plain", v: "  }, []);" }] },
-      { n: 23, tokens: [] },
-      { n: 24, tokens: [{ t: "keyword", v: "  return" }, { t: "plain", v: " (" }] },
-      { n: 25, tokens: [{ t: "tag", v: "    <motion.div" }] },
-      { n: 26, tokens: [{ t: "attr", v: "      initial" }, { t: "plain", v: "={{ opacity: " }, { t: "number", v: "0" }, { t: "plain", v: " }}" }] },
-      { n: 27, tokens: [{ t: "attr", v: "      animate" }, { t: "plain", v: "={{ opacity: " }, { t: "number", v: "1" }, { t: "plain", v: " }}" }] },
-      { n: 28, tokens: [{ t: "tag", v: "    >" }] },
-      { n: 29, tokens: [{ t: "tag", v: "      <CoverageCard" }, { t: "attr", v: " data" }, { t: "plain", v: "={coverage} " }, { t: "tag", v: "/>" }] },
-      { n: 30, tokens: [{ t: "tag", v: "    </motion.div>" }] },
-      { n: 31, tokens: [{ t: "plain", v: "  );" }] },
-      { n: 32, tokens: [{ t: "plain", v: "};" }] },
-      { n: 33, tokens: [] },
-      { n: 34, tokens: [{ t: "keyword", v: "export default" }, { t: "plain", v: " Dashboard;" }] },
+      { n: 1,  cov: "covered",   tokens: [{ t: "keyword", v: "import" }, { t: "plain", v: " { useState, useEffect } " }, { t: "keyword", v: "from" }, { t: "string", v: " 'react'" }, { t: "plain", v: ";" }] },
+      { n: 2,  cov: "covered",   tokens: [{ t: "keyword", v: "import" }, { t: "plain", v: " { motion } " }, { t: "keyword", v: "from" }, { t: "string", v: " 'framer-motion'" }, { t: "plain", v: ";" }] },
+      { n: 3,  cov: null,        tokens: [] },
+      { n: 4,  cov: null,        tokens: [{ t: "comment", v: "// 🤖 TestCovAI — AI-powered Test Coverage Platform" }] },
+      { n: 5,  cov: null,        tokens: [{ t: "keyword", v: "interface" }, { t: "type", v: " CoverageSummary" }, { t: "plain", v: " {" }] },
+      { n: 6,  cov: null,        tokens: [{ t: "plain", v: "  lines" }, { t: "plain", v: ": " }, { t: "type", v: "number" }, { t: "plain", v: ";" }] },
+      { n: 7,  cov: null,        tokens: [{ t: "plain", v: "  branches" }, { t: "plain", v: ": " }, { t: "type", v: "number" }, { t: "plain", v: ";" }] },
+      { n: 8,  cov: null,        tokens: [{ t: "plain", v: "  functions" }, { t: "plain", v: ": " }, { t: "type", v: "number" }, { t: "plain", v: ";" }] },
+      { n: 9,  cov: null,        tokens: [{ t: "plain", v: "}" }] },
+      { n: 10, cov: null,        tokens: [] },
+      { n: 11, cov: "covered",   tokens: [{ t: "keyword", v: "const" }, { t: "fn", v: " Dashboard" }, { t: "plain", v: " = () => {" }] },
+      { n: 12, cov: "covered",   tokens: [{ t: "keyword", v: "  const" }, { t: "plain", v: " [coverage, setCoverage] = " }, { t: "fn", v: "useState" }, { t: "plain", v: "<" }, { t: "type", v: "CoverageSummary" }, { t: "plain", v: ">({" }] },
+      { n: 13, cov: "covered",   tokens: [{ t: "plain", v: "    lines: " }, { t: "number", v: "84" }, { t: "plain", v: "," }] },
+      { n: 14, cov: "covered",   tokens: [{ t: "plain", v: "    branches: " }, { t: "number", v: "71" }, { t: "plain", v: "," }] },
+      { n: 15, cov: "covered",   tokens: [{ t: "plain", v: "    functions: " }, { t: "number", v: "89" }, { t: "plain", v: "," }] },
+      { n: 16, cov: "covered",   tokens: [{ t: "plain", v: "    statements: " }, { t: "number", v: "82" }, { t: "plain", v: "," }] },
+      { n: 17, cov: "covered",   tokens: [{ t: "plain", v: "  });" }] },
+      { n: 18, cov: null,        tokens: [] },
+      { n: 19, cov: "covered",   tokens: [{ t: "fn", v: "  useEffect" }, { t: "plain", v: "(() => {" }] },
+      { n: 20, cov: "covered",   tokens: [{ t: "fn", v: "    fetchCoverage" }, { t: "plain", v: "();" }] },
+      { n: 21, cov: "covered",   tokens: [{ t: "plain", v: "  }, []);" }] },
+      { n: 22, cov: null,        tokens: [] },
+      { n: 23, cov: "uncovered", tokens: [{ t: "keyword", v: "  const" }, { t: "fn", v: " handleError" }, { t: "plain", v: " = (err) => {" }] },
+      { n: 24, cov: "uncovered", tokens: [{ t: "fn", v: "    console" }, { t: "plain", v: ".error(" }, { t: "string", v: "'Coverage fetch failed'" }, { t: "plain", v: ", err);" }] },
+      { n: 25, cov: "uncovered", tokens: [{ t: "plain", v: "  };" }] },
+      { n: 26, cov: null,        tokens: [] },
+      { n: 27, cov: "covered",   tokens: [{ t: "keyword", v: "  return" }, { t: "plain", v: " (" }] },
+      { n: 28, cov: "covered",   tokens: [{ t: "tag", v: "    <motion.div" }] },
+      { n: 29, cov: "covered",   tokens: [{ t: "attr", v: "      initial" }, { t: "plain", v: "={{ opacity: " }, { t: "number", v: "0" }, { t: "plain", v: " }}" }] },
+      { n: 30, cov: "covered",   tokens: [{ t: "attr", v: "      animate" }, { t: "plain", v: "={{ opacity: " }, { t: "number", v: "1" }, { t: "plain", v: " }}" }] },
+      { n: 31, cov: "covered",   tokens: [{ t: "tag", v: "    >" }] },
+      { n: 32, cov: "partial",   tokens: [{ t: "tag", v: "      <CoverageCard" }, { t: "attr", v: " data" }, { t: "plain", v: "={coverage} " }, { t: "tag", v: "/>" }] },
+      { n: 33, cov: "covered",   tokens: [{ t: "tag", v: "    </motion.div>" }] },
+      { n: 34, cov: "covered",   tokens: [{ t: "plain", v: "  );" }] },
+      { n: 35, cov: "covered",   tokens: [{ t: "plain", v: "};" }] },
+      { n: 36, cov: null,        tokens: [] },
+      { n: 37, cov: "covered",   tokens: [{ t: "keyword", v: "export default" }, { t: "plain", v: " Dashboard;" }] },
+    ],
+  },
+  "app-tsx": {
+    name: "App.tsx",
+    breadcrumb: ["src", "App.tsx"],
+    lines: [
+      { n: 1,  cov: "covered", tokens: [{ t: "keyword", v: "import" }, { t: "plain", v: " { Routes, Route } " }, { t: "keyword", v: "from" }, { t: "string", v: " 'react-router-dom'" }, { t: "plain", v: ";" }] },
+      { n: 2,  cov: "covered", tokens: [{ t: "keyword", v: "import" }, { t: "plain", v: " " }, { t: "string", v: "'./index.css'" }, { t: "plain", v: ";" }] },
+      { n: 3,  cov: null,      tokens: [] },
+      { n: 4,  cov: "covered", tokens: [{ t: "keyword", v: "function" }, { t: "fn", v: " App" }, { t: "plain", v: "() {" }] },
+      { n: 5,  cov: "covered", tokens: [{ t: "keyword", v: "  return" }, { t: "plain", v: " (" }] },
+      { n: 6,  cov: "covered", tokens: [{ t: "tag", v: "    <Routes>" }] },
+      { n: 7,  cov: "covered", tokens: [{ t: "tag", v: "      <Route" }, { t: "attr", v: " path" }, { t: "plain", v: '="/"' }, { t: "tag", v: " />" }] },
+      { n: 8,  cov: "covered", tokens: [{ t: "tag", v: "    </Routes>" }] },
+      { n: 9,  cov: "covered", tokens: [{ t: "plain", v: "  );" }] },
+      { n: 10, cov: "covered", tokens: [{ t: "plain", v: "}" }] },
+    ],
+  },
+  "index-tsx": {
+    name: "index.tsx",
+    breadcrumb: ["src", "index.tsx"],
+    lines: [
+      { n: 1,  cov: "covered", tokens: [{ t: "keyword", v: "import" }, { t: "plain", v: " React " }, { t: "keyword", v: "from" }, { t: "string", v: " 'react'" }, { t: "plain", v: ";" }] },
+      { n: 2,  cov: "covered", tokens: [{ t: "keyword", v: "import" }, { t: "plain", v: " ReactDOM " }, { t: "keyword", v: "from" }, { t: "string", v: " 'react-dom/client'" }, { t: "plain", v: ";" }] },
+      { n: 3,  cov: null,      tokens: [] },
+      { n: 4,  cov: "covered", tokens: [{ t: "plain", v: "ReactDOM." }, { t: "fn", v: "createRoot" }, { t: "plain", v: "(" }, { t: "fn", v: "document" }, { t: "plain", v: "." }, { t: "fn", v: "getElementById" }, { t: "plain", v: "(" }, { t: "string", v: "'root'" }, { t: "plain", v: ")!)." }, { t: "fn", v: "render" }, { t: "plain", v: "(<App />);" }] },
     ],
   },
 };
 
-/* ── Token color map ────────────────────────────────────── */
+/* ── Token color map ─────────────────────────────────────── */
 const TOKEN_COLOR = {
-  keyword: "#C084FC",
-  type:    "#67E8F9",
-  fn:      "#93C5FD",
-  string:  "#86EFAC",
-  number:  "#FCA5A5",
-  comment: "#4B5563",
-  tag:     "#F9A8D4",
-  attr:    "#FDE68A",
-  plain:   "#E2E8F0",
+  keyword: "#c084fc",
+  type:    "#67e8f9",
+  fn:      "#93c5fd",
+  string:  "#86efac",
+  number:  "#fca5a5",
+  comment: "#4b5563",
+  tag:     "#f9a8d4",
+  attr:    "#fde68a",
+  plain:   "#e2e8f0",
 };
 
-/* ── Tab component ──────────────────────────────────────── */
+/* ── Coverage colors ─────────────────────────────────────── */
+const COV_GUTTER = {
+  covered:   "#3fb950",
+  uncovered: "#f85149",
+  partial:   "#d29922",
+};
+
+const COV_BG = {
+  covered:   "rgba(63,185,80,0.05)",
+  uncovered: "rgba(248,81,73,0.06)",
+  partial:   "rgba(210,153,34,0.05)",
+};
+
+/* ── File Tab ────────────────────────────────────────────── */
 function Tab({ tab, isActive, onSelect, onClose }) {
+  const [hovered, setHovered] = useState(false);
+
+  // File icon color by extension
+  const getTabColor = (name) => {
+    if (name.endsWith(".tsx") || name.endsWith(".jsx")) return "#61dafb";
+    if (name.endsWith(".ts"))  return "#3b82f6";
+    if (name.endsWith(".js"))  return "#fbbf24";
+    if (name.endsWith(".css")) return "#38bdf8";
+    return "#8b949e";
+  };
+
   return (
     <motion.div
       layout
-      initial={{ opacity: 0, x: -10 }}
+      initial={{ opacity: 0, x: -8 }}
       animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: -10 }}
+      exit={{ opacity: 0, x: -8, width: 0 }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       onClick={() => onSelect(tab.id)}
-      className="relative flex items-center gap-2 px-4 h-full cursor-pointer group text-sm select-none"
+      className="relative flex items-center gap-2 h-full cursor-pointer select-none"
       style={{
-        minWidth: 120,
+        minWidth: 110,
         maxWidth: 180,
-        background: isActive ? "var(--ide-active-tab)" : "transparent",
-        color: isActive ? "var(--text-primary)" : "var(--text-secondary)",
+        padding: "0 16px",
+        background: isActive ? "var(--ide-bg)" : "transparent",
+        color: isActive ? "#e6edf3" : "#6e7681",
         borderRight: "1px solid var(--ide-border)",
         fontFamily: "var(--font-sans)",
-        fontSize: 13,
+        fontSize: 12.5,
+        transition: "background 0.15s ease",
       }}
       id={`tab-${tab.id}`}
     >
-      {/* Top indicator */}
+      {/* Top indicator line */}
       {isActive && (
         <motion.div
-          layoutId="tab-indicator"
-          className="absolute top-0 left-0 right-0 h-0.5"
-          style={{ background: "var(--primary)" }}
+          layoutId="tab-top-indicator"
+          className="absolute top-0 left-0 right-0"
+          style={{ height: 1.5, background: "#7c3aed", boxShadow: "0 0 8px rgba(124,58,237,0.6)" }}
         />
       )}
-      {/* Dot for unsaved */}
-      <Circle size={7} className="opacity-40 flex-shrink-0" style={{ fill: tab.unsaved ? "var(--primary-light)" : "transparent", color: tab.unsaved ? "var(--primary-light)" : "transparent" }} />
-      <span className="truncate">{tab.name}</span>
-      <button
+
+      {/* Unsaved dot */}
+      {tab.unsaved && (
+        <div
+          style={{
+            width: 5,
+            height: 5,
+            borderRadius: "50%",
+            background: "#a78bfa",
+            flexShrink: 0,
+          }}
+        />
+      )}
+
+      {/* Filename with color */}
+      <span
+        className="truncate"
+        style={{ color: isActive ? getTabColor(tab.name) : undefined }}
+      >
+        {tab.name}
+      </span>
+
+      {/* Close button */}
+      <motion.button
+        animate={{ opacity: hovered || isActive ? 1 : 0 }}
+        transition={{ duration: 0.1 }}
         onClick={(e) => { e.stopPropagation(); onClose(tab.id); }}
-        className="ml-auto opacity-0 group-hover:opacity-100 hover:text-white transition-opacity rounded p-0.5"
-        style={{ color: "var(--text-secondary)" }}
+        whileHover={{ background: "rgba(255,255,255,0.1)" }}
+        whileTap={{ scale: 0.85 }}
+        className="ml-auto p-0.5 rounded flex-shrink-0"
+        style={{ color: "#6e7681", lineHeight: 0 }}
       >
         <X size={12} />
-      </button>
+      </motion.button>
     </motion.div>
   );
 }
 
-/* ── Coverage overlay bar ───────────────────────────────── */
+/* ── Coverage Pill Overlay ───────────────────────────────── */
 function CoverageOverlay() {
   const metrics = [
-    { label: "Lines", value: 84, color: "#C084FC" },
-    { label: "Branches", value: 71, color: "#67E8F9" },
-    { label: "Functions", value: 89, color: "#86EFAC" },
-    { label: "Statements", value: 82, color: "#FCA5A5" },
+    { label: "Lines",      value: 84, color: "#c084fc" },
+    { label: "Branches",   value: 71, color: "#67e8f9" },
+    { label: "Functions",  value: 89, color: "#86efac" },
+    { label: "Statements", value: 82, color: "#fca5a5" },
   ];
 
   return (
     <div
-      className="flex items-center gap-4 px-5 py-2.5"
+      className="flex items-center flex-shrink-0"
       style={{
+        gap: 20,
+        padding: "8px 20px",
         borderTop: "1px solid var(--ide-border)",
-        background: "linear-gradient(0deg, rgba(124,58,237,0.06) 0%, transparent 100%)",
+        background: "linear-gradient(0deg, rgba(124,58,237,0.04) 0%, transparent 100%)",
         fontFamily: "var(--font-mono)",
         fontSize: 12,
       }}
     >
-      <div className="flex items-center gap-1.5" style={{ color: "var(--text-muted)" }}>
-        <BarChart3 size={13} style={{ color: "var(--primary-light)" }} />
-        <span style={{ color: "var(--primary-light)", fontWeight: 500 }}>Coverage</span>
+      <div className="flex items-center gap-1.5">
+        <BarChart3 size={12} style={{ color: "#a78bfa" }} />
+        <span style={{ color: "#a78bfa", fontWeight: 600 }}>Coverage</span>
       </div>
       {metrics.map((m) => (
-        <div key={m.label} className="flex items-center gap-2">
-          <span style={{ color: "var(--text-muted)" }}>{m.label}:</span>
-          <div className="flex items-center gap-1">
-            <div
-              className="h-1 rounded-full"
-              style={{
-                width: 32,
-                background: "rgba(255,255,255,0.1)",
-                position: "relative",
-                overflow: "hidden",
-              }}
-            >
-              <motion.div
-                initial={{ width: 0 }}
-                animate={{ width: `${m.value}%` }}
-                transition={{ delay: 0.5, duration: 0.8, ease: "easeOut" }}
-                className="absolute inset-y-0 left-0 rounded-full"
-                style={{ background: m.color }}
-              />
-            </div>
-            <span style={{ color: m.color, fontWeight: 600 }}>{m.value}%</span>
+        <div key={m.label} className="flex items-center gap-1.5">
+          <span style={{ color: "#484f58" }}>{m.label}:</span>
+          <div
+            className="overflow-hidden rounded-full"
+            style={{ width: 36, height: 3, background: "rgba(255,255,255,0.06)" }}
+          >
+            <motion.div
+              initial={{ width: 0 }}
+              animate={{ width: `${m.value}%` }}
+              transition={{ delay: 0.6, duration: 0.9, ease: "easeOut" }}
+              style={{ height: "100%", background: m.color, borderRadius: 9999 }}
+            />
           </div>
+          <span style={{ color: m.color, fontWeight: 600 }}>{m.value}%</span>
         </div>
       ))}
-      <div className="ml-auto flex items-center gap-1.5" style={{ color: "var(--text-muted)" }}>
-        <GitBranch size={12} />
+      <div className="ml-auto flex items-center gap-1.5" style={{ color: "#484f58" }}>
+        <GitBranch size={11} />
         <span>main</span>
-        <Zap size={12} style={{ color: "#FDE68A", marginLeft: 8 }} />
-        <span style={{ color: "#FDE68A" }}>AI Ready</span>
+        <Zap size={11} style={{ color: "#fde68a", marginLeft: 6 }} />
+        <span style={{ color: "#fde68a" }}>AI Ready</span>
       </div>
     </div>
   );
 }
 
-/* ── Code line ──────────────────────────────────────────── */
-function CodeLine({ line, isHighlighted }) {
+/* ── Code Line ───────────────────────────────────────────── */
+function CodeLine({ line }) {
   return (
     <div
-      className="flex items-start group"
+      className="flex items-stretch group"
       style={{
-        background: isHighlighted ? "rgba(124,58,237,0.08)" : "transparent",
+        background: line.cov ? COV_BG[line.cov] : "transparent",
         paddingRight: 16,
+        minHeight: 22,
       }}
     >
+      {/* Gutter coverage dot */}
+      <div
+        style={{
+          width: 3,
+          flexShrink: 0,
+          background: line.cov ? COV_GUTTER[line.cov] : "transparent",
+        }}
+      />
+
       {/* Line number */}
       <div
-        className="select-none text-right pr-5 pt-0.5 flex-shrink-0"
+        className="select-none text-right flex-shrink-0"
         style={{
-          width: 56,
-          color: isHighlighted ? "var(--text-muted)" : "var(--ide-line-num)",
+          width: 60,
+          paddingRight: 20,
+          paddingTop: 2,
+          color: line.cov ? (line.cov === "uncovered" ? "#6b2d2d" : "#3b4048") : "var(--ide-line-num)",
           fontFamily: "var(--font-mono)",
           fontSize: 13,
           lineHeight: "1.6",
@@ -183,13 +278,16 @@ function CodeLine({ line, isHighlighted }) {
       >
         {line.n}
       </div>
-      {/* Code */}
+
+      {/* Code tokens */}
       <div
         style={{
           fontFamily: "var(--font-mono)",
           fontSize: 13,
           lineHeight: "1.6",
           whiteSpace: "pre",
+          paddingTop: 2,
+          paddingLeft: 4,
         }}
       >
         {line.tokens.length === 0 ? (
@@ -208,23 +306,26 @@ function CodeLine({ line, isHighlighted }) {
 
 /* ── Editor ─────────────────────────────────────────────── */
 export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab }) {
-  const activeFile = FILE_CODE.default;
+  const fileData = FILES_CODE[activeTabId] || FILES_CODE["dashboard-tsx"];
 
   return (
-    <div
-      className="flex flex-col flex-1 h-full"
-      style={{ background: "var(--ide-bg)", minWidth: 0 }}
+    <motion.div
+      className="flex flex-col flex-1 h-full min-w-0"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.3, delay: 0.1 }}
+      style={{ background: "var(--ide-bg)" }}
     >
-      {/* Tab bar */}
+      {/* ── Tab Bar ──────────────────────────────────────── */}
       <div
         className="flex items-end overflow-x-auto flex-shrink-0"
         style={{
-          height: 42,
+          height: 44,
           background: "var(--ide-tabbar)",
           borderBottom: "1px solid var(--ide-border)",
         }}
       >
-        <AnimatePresence>
+        <AnimatePresence mode="popLayout">
           {tabs.map((tab) => (
             <Tab
               key={tab.id}
@@ -237,43 +338,88 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab }) {
         </AnimatePresence>
       </div>
 
-      {/* Breadcrumb */}
+      {/* ── Breadcrumb ────────────────────────────────────── */}
       <div
-        className="flex items-center px-5 py-2 text-xs flex-shrink-0"
+        className="flex items-center flex-shrink-0"
         style={{
           borderBottom: "1px solid var(--ide-border)",
-          color: "var(--text-muted)",
+          color: "#484f58",
           fontFamily: "var(--font-sans)",
           background: "var(--ide-bg)",
+          fontSize: 12,
+          padding: "6px 20px",
         }}
       >
-        <span>src</span>
-        <span className="mx-1">/</span>
-        <span>pages</span>
-        <span className="mx-1">/</span>
-        <span style={{ color: "var(--text-secondary)" }}>{activeFile.name}</span>
+        {fileData.breadcrumb.map((crumb, i) => (
+          <span key={i} className="flex items-center">
+            {i > 0 && <ChevronRight size={11} style={{ margin: "0 3px", opacity: 0.4 }} />}
+            <span
+              style={{
+                color: i === fileData.breadcrumb.length - 1 ? "#8b949e" : "#484f58",
+              }}
+            >
+              {crumb}
+            </span>
+          </span>
+        ))}
       </div>
 
-      {/* Code area — scrollable */}
-      <div className="flex-1 overflow-auto">
+      {/* ── Code Area ─────────────────────────────────────── */}
+      <div className="flex-1 overflow-auto relative">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeTabId}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="py-2"
+          >
+            {fileData.lines.map((line) => (
+              <CodeLine key={line.n} line={line} />
+            ))}
+          </motion.div>
+        </AnimatePresence>
+
+        {/* Coverage pill — bottom-right floating */}
         <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.2 }}
-          className="py-3"
+          initial={{ opacity: 0, scale: 0.9, y: 8 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          transition={{ delay: 0.8, duration: 0.4, ease: "easeOut" }}
+          className="absolute bottom-5 right-5"
+          style={{ zIndex: 10 }}
         >
-          {activeFile.lines.map((line) => (
-            <CodeLine
-              key={line.n}
-              line={line}
-              isHighlighted={line.n === 14 || line.n === 29}
+          <div
+            className="flex items-center gap-2 px-4 py-2 rounded-full"
+            style={{
+              background: "rgba(13,17,23,0.85)",
+              backdropFilter: "blur(20px)",
+              WebkitBackdropFilter: "blur(20px)",
+              border: "1px solid rgba(124,58,237,0.25)",
+              boxShadow: "0 0 20px rgba(124,58,237,0.15), 0 8px 32px rgba(0,0,0,0.5)",
+              fontSize: 12,
+              fontFamily: "var(--font-mono)",
+            }}
+          >
+            <div
+              className="animate-pulse"
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: "50%",
+                background: "#3fb950",
+                boxShadow: "0 0 8px rgba(63,185,80,0.8)",
+                animationDuration: "1.5s",
+              }}
             />
-          ))}
+            <span style={{ color: "#8b949e" }}>Test Coverage:</span>
+            <span style={{ color: "#a78bfa", fontWeight: 600 }}>84%</span>
+          </div>
         </motion.div>
       </div>
 
-      {/* Coverage overlay */}
+      {/* ── Coverage Bottom Bar ────────────────────────────── */}
       <CoverageOverlay />
-    </div>
+    </motion.div>
   );
 }

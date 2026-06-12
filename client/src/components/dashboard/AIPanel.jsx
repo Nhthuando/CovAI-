@@ -12,6 +12,8 @@ import {
   Mic,
   RotateCcw,
   ChevronDown,
+  Wand2,
+  Shield,
 } from "lucide-react";
 
 /* ── Initial conversation ───────────────────────────────── */
@@ -53,7 +55,6 @@ function calculateCoverage(lines, tested) {
   },
 ];
 
-/* ── AI Responses pool ──────────────────────────────────── */
 const AI_RESPONSES = [
   {
     content:
@@ -80,8 +81,7 @@ describe('parseZip', () => {
       "Cyclomatic Complexity của dự án:\n\n- `zipExtraction.service.js`: **CC = 8** ⚠️\n- `ingestJob.service.js`: **CC = 5** ✅\n- `upload.controller.js`: **CC = 3** ✅\n\nFile có CC cao nhất cần ưu tiên refactor.",
   },
   {
-    content:
-      "Tôi đã sinh **Jest test runnable** cho `coverage.service.js`:",
+    content: "Tôi đã sinh **Jest test runnable** cho `coverage.service.js`:",
     code: `import { calculateCoverage } from './coverage.service';
 
 describe('calculateCoverage', () => {
@@ -105,9 +105,7 @@ describe('calculateCoverage', () => {
   },
 ];
 
-/* ────────────────────────────────────────────────────────── */
-/*  ChatMessage component                                    */
-/* ────────────────────────────────────────────────────────── */
+/* ── Code Block ─────────────────────────────────────────── */
 function CodeBlock({ code }) {
   const [copied, setCopied] = useState(false);
 
@@ -122,46 +120,54 @@ function CodeBlock({ code }) {
       className="relative mt-3 rounded-xl overflow-hidden group/code"
       style={{ border: "1px solid rgba(124,58,237,0.2)" }}
     >
-      {/* Language label + copy button */}
       <div
-        className="flex items-center justify-between px-4 py-2"
+        className="flex items-center justify-between px-3 py-1.5"
         style={{
-          background: "rgba(124,58,237,0.08)",
-          borderBottom: "1px solid rgba(124,58,237,0.15)",
+          background: "rgba(124,58,237,0.06)",
+          borderBottom: "1px solid rgba(124,58,237,0.12)",
         }}
       >
-        <span
-          style={{
-            color: "var(--text-muted)",
-            fontFamily: "var(--font-mono)",
-            fontSize: 11,
-            letterSpacing: "0.04em",
-          }}
-        >
-          javascript
-        </span>
-        <button
+        <div className="flex items-center gap-1.5">
+          <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#f85149" }} />
+          <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#d29922" }} />
+          <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#3fb950" }} />
+          <span
+            style={{
+              color: "#484f58",
+              fontFamily: "var(--font-mono)",
+              fontSize: 10,
+              marginLeft: 4,
+              letterSpacing: "0.04em",
+            }}
+          >
+            javascript
+          </span>
+        </div>
+        <motion.button
+          whileTap={{ scale: 0.9 }}
           onClick={handleCopy}
-          className="flex items-center gap-1.5 opacity-0 group-hover/code:opacity-100 transition-all duration-200 px-2 py-1 rounded-md hover:bg-white/5"
+          className="flex items-center gap-1 opacity-0 group-hover/code:opacity-100 px-2 py-1 rounded-md"
           style={{
-            color: copied ? "#86EFAC" : "var(--text-muted)",
-            fontSize: 11,
+            color: copied ? "#4ade80" : "#6e7681",
+            fontSize: 10,
             fontFamily: "var(--font-sans)",
+            background: "rgba(255,255,255,0.04)",
+            transition: "all 0.2s ease",
           }}
         >
-          {copied ? <Check size={12} /> : <Copy size={12} />}
+          {copied ? <Check size={11} /> : <Copy size={11} />}
           {copied ? "Copied!" : "Copy"}
-        </button>
+        </motion.button>
       </div>
       <pre
         className="overflow-x-auto"
         style={{
           fontFamily: "var(--font-mono)",
           fontSize: 12,
-          lineHeight: 1.7,
-          padding: "14px 16px",
-          background: "rgba(0,0,0,0.5)",
-          color: "#86EFAC",
+          lineHeight: 1.75,
+          padding: "12px 14px",
+          background: "rgba(0,0,0,0.45)",
+          color: "#86efac",
           margin: 0,
         }}
       >
@@ -171,17 +177,17 @@ function CodeBlock({ code }) {
   );
 }
 
+/* ── Chat Message ────────────────────────────────────────── */
 function ChatMessage({ msg }) {
   const isUser = msg.role === "user";
   const [hovered, setHovered] = useState(false);
 
-  /* Simple markdown: **bold** and `code` */
   const renderContent = (text) => {
     const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
     return parts.map((part, i) => {
       if (part.startsWith("**") && part.endsWith("**")) {
         return (
-          <strong key={i} style={{ color: "var(--text-primary)", fontWeight: 600 }}>
+          <strong key={i} style={{ color: "#e6edf3", fontWeight: 600 }}>
             {part.slice(2, -2)}
           </strong>
         );
@@ -192,11 +198,11 @@ function ChatMessage({ msg }) {
             key={i}
             style={{
               fontFamily: "var(--font-mono)",
-              background: "rgba(124,58,237,0.12)",
-              padding: "2px 6px",
+              background: "rgba(124,58,237,0.15)",
+              padding: "1px 5px",
               borderRadius: 4,
-              fontSize: "0.88em",
-              color: "var(--primary-light)",
+              fontSize: "0.87em",
+              color: "#c4b5fd",
             }}
           >
             {part.slice(1, -1)}
@@ -209,67 +215,63 @@ function ChatMessage({ msg }) {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 10 }}
+      initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3, ease: "easeOut" }}
+      transition={{ duration: 0.28, ease: "easeOut" }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       className="relative"
     >
-      {/* Role label */}
-      <div
-        className="flex items-center gap-2 mb-2"
-        style={{ fontSize: 12, fontWeight: 500 }}
-      >
+      {/* Avatar + Name row */}
+      <div className="flex items-center gap-2 mb-1.5" style={{ fontSize: 11 }}>
         <div
-          className="flex items-center justify-center rounded-full"
+          className="flex items-center justify-center rounded-full flex-shrink-0"
           style={{
-            width: 22,
-            height: 22,
+            width: 20,
+            height: 20,
             background: isUser
-              ? "rgba(124,58,237,0.25)"
-              : "linear-gradient(135deg, rgba(124,58,237,0.3), rgba(34,211,238,0.2))",
-            border: `1px solid ${
-              isUser ? "rgba(124,58,237,0.4)" : "rgba(34,211,238,0.25)"
-            }`,
+              ? "rgba(124,58,237,0.2)"
+              : "linear-gradient(135deg, rgba(124,58,237,0.35), rgba(34,211,238,0.15))",
+            border: `1px solid ${isUser ? "rgba(124,58,237,0.3)" : "rgba(34,211,238,0.2)"}`,
+            boxShadow: isUser ? "none" : "0 0 8px rgba(34,211,238,0.1)",
           }}
         >
           {isUser ? (
-            <User size={11} style={{ color: "var(--primary-light)" }} />
+            <User size={10} style={{ color: "#a78bfa" }} />
           ) : (
-            <Bot size={11} style={{ color: "var(--accent-cyan)" }} />
+            <Bot size={10} style={{ color: "#67e8f9" }} />
           )}
         </div>
         <span
           style={{
-            color: isUser ? "var(--text-secondary)" : "var(--accent-cyan-light)",
+            fontWeight: 500,
+            color: isUser ? "#8b949e" : "#67e8f9",
+            fontFamily: "var(--font-sans)",
           }}
         >
           {isUser ? "You" : "AI Agent"}
         </span>
-        <span style={{ color: "var(--text-muted)", fontSize: 10, marginLeft: "auto" }}>
+        <span style={{ color: "#30363d", marginLeft: "auto", fontFamily: "var(--font-mono)", fontSize: 10 }}>
           {msg.timestamp}
         </span>
       </div>
 
-      {/* Bubble */}
+      {/* Message Bubble */}
       <div
-        className="relative rounded-2xl transition-all duration-200"
+        className="relative rounded-xl"
         style={{
-          marginLeft: 30,
-          padding: isUser ? "10px 14px" : "14px 16px",
+          marginLeft: 28,
+          padding: "10px 13px",
           background: isUser
-            ? "rgba(255,255,255,0.03)"
-            : "rgba(124,58,237,0.05)",
-          border: `1px solid ${
-            isUser ? "rgba(255,255,255,0.06)" : "rgba(124,58,237,0.1)"
-          }`,
+            ? "rgba(255,255,255,0.025)"
+            : "rgba(124,58,237,0.04)",
+          border: `1px solid ${isUser ? "rgba(255,255,255,0.06)" : "rgba(124,58,237,0.1)"}`,
           backdropFilter: isUser ? "none" : "blur(12px)",
           WebkitBackdropFilter: isUser ? "none" : "blur(12px)",
-          fontFamily: "var(--font-sans)",
           fontSize: 13,
           lineHeight: 1.7,
-          color: "var(--text-secondary)",
+          color: "#8b949e",
+          fontFamily: "var(--font-sans)",
         }}
       >
         <div>
@@ -284,11 +286,11 @@ function ChatMessage({ msg }) {
 
         {msg.suggestion && (
           <div
-            className="mt-3 flex items-start gap-2 px-3 py-2.5 rounded-lg"
+            className="mt-3 flex items-start gap-2 px-3 py-2 rounded-lg"
             style={{
-              background: "rgba(134,239,172,0.05)",
-              border: "1px solid rgba(134,239,172,0.15)",
-              color: "#86EFAC",
+              background: "rgba(63,185,80,0.05)",
+              border: "1px solid rgba(63,185,80,0.15)",
+              color: "#3fb950",
               fontSize: 12,
               lineHeight: 1.5,
             }}
@@ -298,34 +300,36 @@ function ChatMessage({ msg }) {
           </div>
         )}
 
-        {/* Hover actions — Retry / Copy */}
+        {/* Hover actions */}
         <AnimatePresence>
           {hovered && !isUser && (
             <motion.div
               initial={{ opacity: 0, y: 4 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 4 }}
-              transition={{ duration: 0.15 }}
-              className="absolute -bottom-3 right-3 flex gap-1"
+              transition={{ duration: 0.12 }}
+              className="absolute -bottom-3 right-2 flex gap-1"
+              style={{ zIndex: 10 }}
             >
               {[
                 { icon: Copy, label: "Copy" },
                 { icon: RotateCcw, label: "Retry" },
               ].map(({ icon: Icon, label }) => (
-                <button
+                <motion.button
                   key={label}
+                  whileTap={{ scale: 0.9 }}
                   title={label}
-                  className="flex items-center gap-1 px-2 py-1 rounded-md text-xs transition-all hover:bg-white/10"
+                  className="flex items-center gap-1 px-2 py-1 rounded-md text-xs"
                   style={{
-                    background: "#1c2128",
-                    border: "1px solid var(--ide-border)",
-                    color: "var(--text-muted)",
+                    background: "#161b22",
+                    border: "1px solid rgba(255,255,255,0.08)",
+                    color: "#6e7681",
                     fontFamily: "var(--font-sans)",
                   }}
                 >
-                  <Icon size={11} />
-                  <span>{label}</span>
-                </button>
+                  <Icon size={10} />
+                  {label}
+                </motion.button>
               ))}
             </motion.div>
           )}
@@ -335,9 +339,7 @@ function ChatMessage({ msg }) {
   );
 }
 
-/* ────────────────────────────────────────────────────────── */
-/*  Typing indicator                                         */
-/* ────────────────────────────────────────────────────────── */
+/* ── Typing Indicator ────────────────────────────────────── */
 function TypingIndicator() {
   return (
     <motion.div
@@ -345,24 +347,27 @@ function TypingIndicator() {
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 8 }}
     >
-      <div className="flex items-center gap-2 mb-2" style={{ fontSize: 12, fontWeight: 500 }}>
+      <div className="flex items-center gap-2 mb-1.5" style={{ fontSize: 11 }}>
         <div
-          className="flex items-center justify-center rounded-full"
+          className="flex items-center justify-center rounded-full flex-shrink-0"
           style={{
-            width: 22, height: 22,
-            background: "linear-gradient(135deg, rgba(124,58,237,0.3), rgba(34,211,238,0.2))",
-            border: "1px solid rgba(34,211,238,0.25)",
+            width: 20, height: 20,
+            background: "linear-gradient(135deg, rgba(124,58,237,0.35), rgba(34,211,238,0.15))",
+            border: "1px solid rgba(34,211,238,0.2)",
           }}
         >
-          <Bot size={11} style={{ color: "var(--accent-cyan)" }} />
+          <Bot size={10} style={{ color: "#67e8f9" }} />
         </div>
-        <span style={{ color: "var(--accent-cyan-light)" }}>AI Agent</span>
+        <span style={{ color: "#67e8f9", fontSize: 11, fontFamily: "var(--font-sans)", fontWeight: 500 }}>
+          AI Agent
+        </span>
+        <span style={{ color: "#484f58", fontSize: 10 }}>thinking…</span>
       </div>
       <div
-        className="flex items-center gap-1.5 px-4 py-3 rounded-2xl"
+        className="flex items-center gap-1.5 px-4 py-3 rounded-xl"
         style={{
-          marginLeft: 30,
-          background: "rgba(124,58,237,0.05)",
+          marginLeft: 28,
+          background: "rgba(124,58,237,0.04)",
           border: "1px solid rgba(124,58,237,0.1)",
           backdropFilter: "blur(12px)",
         }}
@@ -370,12 +375,9 @@ function TypingIndicator() {
         {[0, 1, 2].map((i) => (
           <motion.div
             key={i}
-            animate={{ scale: [1, 1.5, 1], opacity: [0.3, 1, 0.3] }}
-            transition={{ duration: 1, repeat: Infinity, delay: i * 0.2, ease: "easeInOut" }}
-            style={{
-              width: 6, height: 6, borderRadius: "50%",
-              background: "var(--primary-light)",
-            }}
+            animate={{ scale: [1, 1.6, 1], opacity: [0.3, 1, 0.3] }}
+            transition={{ duration: 1.1, repeat: Infinity, delay: i * 0.22, ease: "easeInOut" }}
+            style={{ width: 5, height: 5, borderRadius: "50%", background: "#a78bfa" }}
           />
         ))}
       </div>
@@ -383,15 +385,12 @@ function TypingIndicator() {
   );
 }
 
-/* ────────────────────────────────────────────────────────── */
-/*  ChatInput component                                      */
-/* ────────────────────────────────────────────────────────── */
+/* ── Chat Input ──────────────────────────────────────────── */
 function ChatInput({ onSend, isTyping }) {
-  const [input, setInput] = useState("");
+  const [input, setInput]   = useState("");
   const [focused, setFocused] = useState(false);
   const textareaRef = useRef(null);
 
-  /* Auto-resize textarea */
   const autoResize = useCallback(() => {
     const ta = textareaRef.current;
     if (!ta) return;
@@ -417,43 +416,51 @@ function ChatInput({ onSend, isTyping }) {
   const canSend = input.trim() && !isTyping;
 
   return (
-    <div className="px-3 pb-3 pt-2 flex-shrink-0">
+    <div
+      className="flex-shrink-0"
+      style={{ padding: "8px 14px 10px" }}
+    >
       <div
-        className="relative rounded-2xl transition-all duration-300"
+        className="relative rounded-2xl overflow-hidden transition-all duration-300"
         style={{
-          background: "#111827",
-          border: `1.5px solid ${focused ? "var(--primary)" : "rgba(255,255,255,0.08)"}`,
+          background: "#0d1117",
+          border: `1.5px solid ${focused ? "rgba(124,58,237,0.5)" : "rgba(255,255,255,0.08)"}`,
           boxShadow: focused
-            ? "0 0 20px rgba(124,58,237,0.15), 0 0 0 3px rgba(124,58,237,0.06)"
-            : "0 2px 8px rgba(0,0,0,0.3)",
+            ? "0 0 0 3px rgba(124,58,237,0.08), 0 0 24px rgba(124,58,237,0.12)"
+            : "0 2px 10px rgba(0,0,0,0.4)",
         }}
       >
-        {/* Gradient border animation when AI is thinking */}
+        {/* Spinning gradient ring when AI is thinking */}
         <AnimatePresence>
           {isTyping && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="absolute -inset-px rounded-2xl overflow-hidden pointer-events-none"
+              className="absolute -inset-[1.5px] rounded-2xl pointer-events-none overflow-hidden"
               style={{ zIndex: 0 }}
             >
               <motion.div
                 animate={{ rotate: 360 }}
-                transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
+                transition={{ duration: 2.5, repeat: Infinity, ease: "linear" }}
                 className="absolute inset-0"
                 style={{
                   background:
-                    "conic-gradient(from 0deg, transparent, var(--primary), var(--accent-cyan), transparent)",
-                  filter: "blur(4px)",
+                    "conic-gradient(from 0deg, transparent 0deg, #7c3aed 120deg, #22d3ee 200deg, transparent 360deg)",
+                  filter: "blur(5px)",
                 }}
               />
             </motion.div>
           )}
         </AnimatePresence>
 
-        <div className="relative z-10 rounded-2xl overflow-hidden" style={{ background: "#111827" }}>
-          {/* Textarea */}
+        <div
+          className="relative z-10 overflow-hidden"
+          style={{
+            background: "#0d1117",
+            borderRadius: "calc(1rem - 1.5px)",
+          }}
+        >
           <textarea
             ref={textareaRef}
             id="ai-chat-input"
@@ -467,91 +474,120 @@ function ChatInput({ onSend, isTyping }) {
             className="w-full resize-none outline-none bg-transparent px-4 pt-3.5 pb-1 text-sm"
             style={{
               fontFamily: "var(--font-sans)",
-              color: "var(--text-primary)",
+              color: "#e6edf3",
               fontSize: 13,
               lineHeight: 1.5,
               maxHeight: 120,
+              caretColor: "#a78bfa",
             }}
           />
 
-          {/* Bottom actions row */}
+          {/* Actions row */}
           <div className="flex items-center justify-between px-3 pb-2.5 pt-1">
-            {/* Left: action buttons */}
             <div className="flex items-center gap-0.5">
-              <button
+              <motion.button
+                whileTap={{ scale: 0.9 }}
                 title="Attach file"
-                className="p-1.5 rounded-lg transition-colors hover:bg-white/5"
-                style={{ color: "var(--text-muted)" }}
+                className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+                style={{ color: "#484f58" }}
               >
                 <Paperclip size={14} />
-              </button>
-              <button
-                className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs transition-colors hover:bg-white/5"
-                style={{
-                  color: "var(--text-muted)",
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 11,
-                }}
+              </motion.button>
+              <motion.button
+                whileTap={{ scale: 0.9 }}
+                className="flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-white/5 transition-colors"
+                style={{ color: "#484f58", fontSize: 11, fontFamily: "var(--font-mono)" }}
               >
+                <Wand2 size={12} />
                 <span>Gemini</span>
                 <ChevronDown size={10} />
-              </button>
-              <button
+              </motion.button>
+              <motion.button
+                whileTap={{ scale: 0.9 }}
                 title="Voice input"
-                className="p-1.5 rounded-lg transition-colors hover:bg-white/5"
-                style={{ color: "var(--text-muted)" }}
+                className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+                style={{ color: "#484f58" }}
               >
                 <Mic size={14} />
-              </button>
+              </motion.button>
             </div>
 
-            {/* Right: send button */}
             <motion.button
-              whileHover={canSend ? { scale: 1.08, brightness: 1.2 } : {}}
+              whileHover={canSend ? { scale: 1.08 } : {}}
               whileTap={canSend ? { scale: 0.92 } : {}}
               onClick={handleSend}
               disabled={!canSend}
               className="flex items-center justify-center rounded-full transition-all duration-200"
               style={{
-                width: 30,
-                height: 30,
-                background: canSend
-                  ? "var(--primary)"
-                  : "rgba(255,255,255,0.06)",
-                color: canSend ? "#fff" : "var(--text-muted)",
+                width: 28,
+                height: 28,
+                background: canSend ? "#7c3aed" : "rgba(255,255,255,0.05)",
+                color: canSend ? "#fff" : "#484f58",
                 cursor: canSend ? "pointer" : "not-allowed",
                 border: "none",
-                boxShadow: canSend ? "0 0 12px rgba(124,58,237,0.3)" : "none",
+                boxShadow: canSend ? "0 0 14px rgba(124,58,237,0.4)" : "none",
               }}
               id="ai-send-btn"
             >
               {isTyping ? (
-                <Loader2 size={14} className="animate-spin" />
+                <Loader2 size={13} className="animate-spin" />
               ) : (
-                <ArrowUp size={15} strokeWidth={2.5} />
+                <ArrowUp size={14} strokeWidth={2.5} />
               )}
             </motion.button>
           </div>
         </div>
       </div>
 
-      {/* Helper text */}
       <div
-        className="mt-2 text-center"
-        style={{ color: "var(--text-muted)", fontSize: 10, fontFamily: "var(--font-sans)" }}
+        className="mt-1.5 text-center"
+        style={{ color: "#30363d", fontSize: 10, fontFamily: "var(--font-sans)" }}
       >
-        Enter to send · Shift+Enter for new line
+        Enter ↵ to send · Shift+Enter for new line
       </div>
     </div>
   );
 }
 
-/* ────────────────────────────────────────────────────────── */
-/*  AIAgentPanel — main export                               */
-/* ────────────────────────────────────────────────────────── */
+/* ── Quick Actions ───────────────────────────────────────── */
+function QuickActions({ onAction }) {
+  const actions = [
+    { label: "Analyze Coverage", icon: Shield, color: "#a78bfa" },
+    { label: "Generate Tests",   icon: Wand2,  color: "#67e8f9" },
+  ];
+  return (
+    <div
+      className="flex gap-2 flex-shrink-0"
+      style={{ padding: "6px 16px 8px" }}
+    >
+      {actions.map(({ label, icon: Icon, color }) => (
+        <motion.button
+          key={label}
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.97 }}
+          onClick={() => onAction(label)}
+          className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs"
+          style={{
+            background: "rgba(255,255,255,0.03)",
+            border: "1px solid rgba(255,255,255,0.07)",
+            color: "#6e7681",
+            fontFamily: "var(--font-sans)",
+            cursor: "pointer",
+            transition: "all 0.2s ease",
+          }}
+        >
+          <Icon size={12} style={{ color }} />
+          {label}
+        </motion.button>
+      ))}
+    </div>
+  );
+}
+
+/* ── AI Agent Panel — Main Export ────────────────────────── */
 export default function AIPanel() {
   const [messages, setMessages] = useState(INITIAL_MESSAGES);
-  const [isTyping, setIsTyping] = useState(false);
+  const [isTyping, setIsTyping]   = useState(false);
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -584,81 +620,90 @@ export default function AIPanel() {
   };
 
   return (
-    <div
-      className="flex flex-col h-full"
+    <motion.div
+      className="flex flex-col h-full flex-shrink-0"
+      initial={{ opacity: 0, x: 20 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ duration: 0.35, ease: "easeOut", delay: 0.15 }}
       style={{
-        width: 360,
-        flexShrink: 0,
+        width: 340,
         background: "#0d1117",
         borderLeft: "1px solid var(--ide-border)",
       }}
     >
-      {/* ── Cinematic Header ─────────────────────────────── */}
+      {/* ── Header ──────────────────────────────────── */}
       <div
-        className="flex items-center justify-between px-4 py-3.5 flex-shrink-0"
-        style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}
+        className="flex items-center justify-between flex-shrink-0"
+        style={{
+          height: 52,
+          padding: "0 18px",
+          borderBottom: "1px solid rgba(255,255,255,0.06)",
+          background: "linear-gradient(180deg, rgba(124,58,237,0.04) 0%, transparent 100%)",
+        }}
       >
         <div className="flex items-center gap-2.5">
           <div
             className="flex items-center justify-center rounded-lg"
             style={{
-              width: 30,
-              height: 30,
-              background: "linear-gradient(135deg, rgba(124,58,237,0.25), rgba(34,211,238,0.1))",
-              border: "1px solid rgba(124,58,237,0.35)",
+              width: 28,
+              height: 28,
+              background: "linear-gradient(135deg, rgba(124,58,237,0.3), rgba(34,211,238,0.1))",
+              border: "1px solid rgba(124,58,237,0.4)",
+              boxShadow: "0 0 10px rgba(124,58,237,0.2)",
             }}
           >
-            <Sparkles size={14} style={{ color: "var(--primary-light)" }} />
+            <Sparkles size={13} style={{ color: "#a78bfa" }} />
           </div>
           <span
             style={{
-              fontSize: 14,
-              fontWeight: 500,
-              color: "var(--text-primary)",
+              fontSize: 13,
+              fontWeight: 600,
+              color: "#e6edf3",
               fontFamily: "var(--font-sans)",
+              letterSpacing: "-0.01em",
             }}
           >
             AI Agent
           </span>
         </div>
 
-        {/* Status indicator with ping */}
+        {/* Status indicator */}
         <div className="flex items-center gap-2">
           <span
             style={{
               fontSize: 10,
-              color: "var(--text-muted)",
+              color: "#484f58",
               fontFamily: "var(--font-mono)",
             }}
           >
-            Gemini AI
+            READY
           </span>
           <div className="relative flex items-center justify-center" style={{ width: 10, height: 10 }}>
             <div
               className="absolute inset-0 rounded-full animate-ping"
-              style={{
-                background: "var(--primary-light)",
-                opacity: 0.4,
-              }}
+              style={{ background: "#3fb950", opacity: 0.4, animationDuration: "1.5s" }}
             />
             <div
               className="relative rounded-full"
               style={{
-                width: 6, height: 6,
-                background: "var(--primary-light)",
-                boxShadow: "0 0 8px var(--primary-glow)",
+                width: 6,
+                height: 6,
+                background: "#3fb950",
+                boxShadow: "0 0 8px rgba(63,185,80,0.6)",
               }}
             />
           </div>
         </div>
       </div>
 
-      {/* ── Messages area — custom thin scrollbar ────────── */}
+      {/* ── Messages ───────────────────────────────── */}
       <div
-        className="flex-1 overflow-y-auto px-4 py-4 flex flex-col gap-5"
+        className="flex-1 overflow-y-auto flex flex-col"
         style={{
+          gap: 20,
+          padding: "16px 16px",
           scrollbarWidth: "thin",
-          scrollbarColor: "rgba(124,58,237,0.3) transparent",
+          scrollbarColor: "rgba(124,58,237,0.25) transparent",
         }}
       >
         <AnimatePresence>
@@ -670,8 +715,11 @@ export default function AIPanel() {
         <div ref={bottomRef} />
       </div>
 
-      {/* ── Floating Input Area ──────────────────────────── */}
+      {/* ── Quick Actions ───────────────────────────── */}
+      <QuickActions onAction={handleSend} />
+
+      {/* ── Floating Input ─────────────────────────── */}
       <ChatInput onSend={handleSend} isTyping={isTyping} />
-    </div>
+    </motion.div>
   );
 }
