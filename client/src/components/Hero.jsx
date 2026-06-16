@@ -153,19 +153,7 @@ export default function Hero() {
           transition={{ duration: 0.6, delay: 0.2 }}
           style={{ display: "flex", justifyContent: "center", marginBottom: "1.5rem" }}
         >
-          <span
-            className="glass-pill"
-            style={{
-              padding: "0.375rem 1rem",
-              fontSize: "0.7rem",
-              fontWeight: "700",
-              letterSpacing: "0.18em",
-              color: "#22d3ee",
-              textTransform: "uppercase",
-            }}
-          >
-            ✦ BUILD AI-POWERED TEST COVERAGE IN MINUTES
-          </span>
+
         </motion.div>
 
         {/* Main Heading */}

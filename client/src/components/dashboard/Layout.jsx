@@ -4,6 +4,7 @@ import ActivityBar from "./ActivityBar";
 import Sidebar from "./Sidebar";
 import Editor from "./Editor";
 import AIPanel from "./AIPanel";
+import ImportLayout from "./import/ImportLayout";
 import {
   PanelLeftClose,
   PanelLeftOpen,
@@ -15,6 +16,7 @@ import {
   Bell,
   Play,
   CheckCircle2,
+  FolderPlus,
 } from "lucide-react";
 
 const INITIAL_TABS = [
@@ -43,6 +45,7 @@ export default function Layout() {
   const [tabs,           setTabs]           = useState(INITIAL_TABS);
   const [activeTabId,    setActiveTabId]    = useState("dashboard-tsx");
   const [activeFileId,   setActiveFileId]   = useState("dashboard-tsx");
+  const [showImport,     setShowImport]     = useState(false);
 
   const handleOpenFile = (node) => {
     if (node.type === "folder") return;
@@ -195,6 +198,32 @@ export default function Layout() {
             Run Tests
           </motion.button>
 
+          {/* New Project button */}
+          <motion.button
+            whileHover={{ scale: 1.03 }}
+            whileTap={{ scale: 0.97 }}
+            onClick={() => setShowImport(true)}
+            className="flex items-center gap-1.5 rounded-lg text-xs font-medium"
+            style={{
+              background: showImport
+                ? "rgba(124,58,237,0.15)"
+                : "rgba(255,255,255,0.04)",
+              color: showImport ? "#a78bfa" : "#8b949e",
+              border: showImport
+                ? "1px solid rgba(124,58,237,0.25)"
+                : "1px solid rgba(255,255,255,0.07)",
+              cursor: "pointer",
+              fontFamily: "var(--font-sans)",
+              padding: "6px 14px",
+              whiteSpace: "nowrap",
+              transition: "all 0.2s ease",
+            }}
+            id="new-project-btn"
+          >
+            <FolderPlus size={11} />
+            New Project
+          </motion.button>
+
           {/* Toggle buttons */}
           <div
             className="flex items-center"
@@ -289,7 +318,7 @@ export default function Layout() {
           )}
         </AnimatePresence>
 
-        {/* Editor — takes remaining space */}
+        {/* Editor — always rendered */}
         <motion.div className="flex flex-1 min-w-0" variants={panelVariants}>
           <Editor
             tabs={tabs}
@@ -375,6 +404,13 @@ export default function Layout() {
           </div>
         </div>
       </div>
+
+      {/* ── Import Project Fullscreen Overlay ──────────────── */}
+      <AnimatePresence>
+        {showImport && (
+          <ImportLayout onClose={() => setShowImport(false)} />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
