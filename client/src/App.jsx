@@ -1,4 +1,4 @@
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import "./index.css";
 import Navbar from "./components/Navbar";
 import Hero from "./components/Hero";
@@ -10,6 +10,8 @@ import Footer from "./components/Footer";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import DashboardPage from "./pages/DashboardPage";
+import GithubCallbackPage from "./pages/GithubCallbackPage";
+import ResetPasswordPage from "./pages/ResetPasswordPage";
 
 /* ── Landing Page ─────────────────────────────────────────── */
 function LandingPage() {
@@ -28,14 +30,38 @@ function LandingPage() {
   );
 }
 
+/* ── Protected Route ────────────────────────────────────────── */
+function ProtectedRoute({ children }) {
+  const token = localStorage.getItem("token") || (localStorage.getItem("user") ? JSON.parse(localStorage.getItem("user")).token : null);
+  if (!token) {
+    return <Navigate to="/" replace />;
+  }
+  return children;
+}
+
+/* ── Redirect if Authenticated ─────────────────────────────── */
+function RedirectIfAuthenticated({ children }) {
+  const token = localStorage.getItem("token") || (localStorage.getItem("user") ? JSON.parse(localStorage.getItem("user")).token : null);
+  if (token) {
+    return <Navigate to="/dashboard" replace />;
+  }
+  return children;
+}
+
 /* ── App Router ───────────────────────────────────────────── */
 function App() {
   return (
     <Routes>
-      <Route path="/" element={<LandingPage />} />
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/register" element={<RegisterPage />} />
-      <Route path="/dashboard" element={<DashboardPage />} />
+      <Route path="/" element={<RedirectIfAuthenticated><LandingPage /></RedirectIfAuthenticated>} />
+      <Route path="/login" element={<RedirectIfAuthenticated><LoginPage /></RedirectIfAuthenticated>} />
+      <Route path="/register" element={<RedirectIfAuthenticated><RegisterPage /></RedirectIfAuthenticated>} />
+      <Route path="/reset-password" element={<RedirectIfAuthenticated><ResetPasswordPage /></RedirectIfAuthenticated>} />
+      <Route path="/dashboard" element={
+        <ProtectedRoute>
+          <DashboardPage />
+        </ProtectedRoute>
+      } />
+      <Route path="/auth/github/callback" element={<GithubCallbackPage />} />
     </Routes>
   );
 }

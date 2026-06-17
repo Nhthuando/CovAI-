@@ -161,7 +161,7 @@ function EyeToggle({ show, onToggle }) {
 }
 
 /* ── Main Auth Form ────────────────────────────────────────── */
-export default function AuthForm({ mode, onToggleMode }) {
+export default function AuthForm({ mode, onToggleMode, setMode }) {
   const isLogin = mode === "login";
 
   const [formData, setFormData] = useState({ name: "", email: "", password: "", confirm: "" });
@@ -207,14 +207,22 @@ export default function AuthForm({ mode, onToggleMode }) {
     try {
       if (isLogin) {
         const data = await loginApi({ email: formData.email, password: formData.password });
-        // Save token to localStorage
         localStorage.setItem("token", data.token);
         localStorage.setItem("userName", data.name);
         localStorage.setItem("userEmail", data.email);
         setStatus("success");
+        setTimeout(() => {
+          window.location.href = "/dashboard";
+        }, 1500);
       } else {
-        await registerApi({ name: formData.name, email: formData.email, password: formData.password });
+        const data = await registerApi({ name: formData.name, email: formData.email, password: formData.password });
+        localStorage.setItem("token", data.token);
+        localStorage.setItem("userName", data.userName);
+        localStorage.setItem("userEmail", data.userEmail);
         setStatus("success");
+        setTimeout(() => {
+          window.location.href = "/dashboard";
+        }, 1500);
       }
     } catch (err) {
       if (err.type === "field") {
@@ -299,6 +307,11 @@ export default function AuthForm({ mode, onToggleMode }) {
           <motion.button
             id="auth-github-btn"
             type="button"
+            onClick={() => {
+              const clientId = import.meta.env.VITE_GITHUB_CLIENT_ID || "Ov23liQyAORXbj6NeqAB";
+              const redirectUri = "http://localhost:5173/auth/github/callback";
+              window.location.href = `https://github.com/login/oauth/authorize?client_id=${clientId}&scope=user:email repo&redirect_uri=${redirectUri}`;
+            }}
             whileHover={{ scale: 1.02, background: "rgba(255,255,255,0.08)" }}
             whileTap={{ scale: 0.98 }}
             style={{
@@ -464,6 +477,7 @@ export default function AuthForm({ mode, onToggleMode }) {
                 <motion.div variants={itemVariants} style={{ textAlign: "right", marginTop: "-4px" }}>
                   <a
                     href="#forgot"
+                    onClick={(e) => { e.preventDefault(); setMode("forgot_password"); }}
                     style={{ fontSize: "0.78rem", color: "#7C3AED", textDecoration: "none", fontWeight: "500" }}
                     onMouseEnter={(e) => (e.target.style.color = "#9d5cf5")}
                     onMouseLeave={(e) => (e.target.style.color = "#7C3AED")}

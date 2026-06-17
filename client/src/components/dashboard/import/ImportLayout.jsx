@@ -230,7 +230,7 @@ export default function ImportLayout({ onClose }) {
                 </div>
 
                 {/* Local Upload Dropzone */}
-                <LocalUpload />
+                <LocalUpload onClose={onClose} />
               </motion.div>
 
               {/* ── Right Panel: GitHub Import ── */}
@@ -241,7 +241,7 @@ export default function ImportLayout({ onClose }) {
                   padding: "40px 32px",
                 }}
               >
-                <GitHubImport />
+                <GitHubImport onClose={onClose} />
               </motion.div>
             </div>
           </motion.div>

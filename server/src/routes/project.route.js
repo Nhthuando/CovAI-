@@ -10,6 +10,7 @@ router.use(authMiddleware);
 router.post("/", projectController.createProject);
 router.get("/", projectController.listProjects);
 router.get("/:id", projectController.getProjectById);
+router.get("/:id/tree", projectController.getProjectTree);
 router.post("/:id/upload-zip", uploadSingleZip, projectController.uploadZip);
 router.post("/:id/run-analysis", projectController.runAnalysis);
 router.post("/:id/coverage/parse", projectController.parseCoverageFiles);

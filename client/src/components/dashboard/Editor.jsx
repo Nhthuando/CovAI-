@@ -305,7 +305,40 @@ function CodeLine({ line }) {
 }
 
 /* ── Editor ─────────────────────────────────────────────── */
-export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab }) {
+export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fileTree = [], isLoadingTree }) {
+  if (!isLoadingTree && fileTree.length === 0) {
+    return (
+      <motion.div
+        className="flex flex-col flex-1 h-full min-w-0 items-center justify-center"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        style={{ background: "var(--ide-bg)" }}
+      >
+        <div style={{ color: "#8b949e", fontSize: 24, fontWeight: 500, fontFamily: "var(--font-sans)" }}>
+          No files found
+        </div>
+        <div style={{ color: "#6e7681", fontSize: 14, marginTop: 8, fontFamily: "var(--font-sans)" }}>
+          Please import a project or wait for extraction to complete.
+        </div>
+      </motion.div>
+    );
+  }
+
+  if (tabs.length === 0) {
+    return (
+      <motion.div
+        className="flex flex-col flex-1 h-full min-w-0 items-center justify-center"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        style={{ background: "var(--ide-bg)" }}
+      >
+        <div style={{ color: "#8b949e", fontSize: 20, fontFamily: "var(--font-sans)" }}>
+          Select a file from the Explorer to view code
+        </div>
+      </motion.div>
+    );
+  }
+
   const fileData = FILES_CODE[activeTabId] || FILES_CODE["dashboard-tsx"];
 
   return (

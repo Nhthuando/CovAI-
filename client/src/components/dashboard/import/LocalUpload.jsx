@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { CloudUpload, FileArchive, X, CheckCircle2 } from "lucide-react";
+import { CloudUpload, FileArchive, X, CheckCircle2, Loader2 } from "lucide-react";
+import { createProjectApi, uploadZipApi } from "../../../services/project.service";
 
 /* ── Drag states ─────────────────────────────────────────── */
 const DRAG_STATES = {
@@ -9,9 +10,12 @@ const DRAG_STATES = {
   dropped: "dropped",
 };
 
-export default function LocalUpload() {
+export default function LocalUpload({ onClose }) {
   const [dragState, setDragState] = useState(DRAG_STATES.idle);
   const [fileName, setFileName] = useState(null);
+  const [fileObj, setFileObj] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
 
   const handleDragOver = useCallback((e) => {
     e.preventDefault();
@@ -30,8 +34,10 @@ export default function LocalUpload() {
     e.stopPropagation();
     const file = e.dataTransfer.files?.[0];
     if (file) {
+      setFileObj(file);
       setFileName(file.name);
       setDragState(DRAG_STATES.dropped);
+      setErrorMsg("");
     }
   }, []);
 
@@ -42,17 +48,41 @@ export default function LocalUpload() {
     input.onchange = (e) => {
       const file = e.target.files?.[0];
       if (file) {
+        setFileObj(file);
         setFileName(file.name);
         setDragState(DRAG_STATES.dropped);
+        setErrorMsg("");
       }
     };
     input.click();
   }, []);
 
   const handleClear = useCallback(() => {
+    setFileObj(null);
     setFileName(null);
     setDragState(DRAG_STATES.idle);
+    setErrorMsg("");
   }, []);
+
+  const handleUpload = async () => {
+    if (!fileObj) return;
+    setUploading(true);
+    setErrorMsg("");
+    try {
+      const projectName = fileName.replace(/\.[^/.]+$/, ""); 
+      const projRes = await createProjectApi({ name: projectName });
+      const projectId = projRes.data.id;
+      
+      await uploadZipApi(projectId, fileObj);
+      
+      alert("Tải lên dự án thành công!");
+      if (onClose) onClose();
+    } catch (error) {
+      setErrorMsg(error.message);
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const isOver = dragState === DRAG_STATES.over;
   const isDropped = dragState === DRAG_STATES.dropped;
@@ -186,25 +216,44 @@ export default function LocalUpload() {
             </div>
 
             <motion.button
-              whileHover={{ scale: 1.02, y: -1 }}
-              whileTap={{ scale: 0.98 }}
-              className="rounded-xl cursor-pointer"
+              whileHover={!uploading ? { scale: 1.02, y: -1 } : {}}
+              whileTap={!uploading ? { scale: 0.98 } : {}}
+              onClick={handleUpload}
+              disabled={uploading}
+              className="rounded-xl flex items-center justify-center cursor-pointer"
               style={{
                 padding: "10px 28px",
-                background:
-                  "linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)",
+                gap: 8,
+                background: uploading
+                  ? "rgba(124,58,237,0.5)"
+                  : "linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)",
                 color: "#fff",
                 fontSize: 13,
                 fontWeight: 600,
                 border: "none",
                 fontFamily: "var(--font-sans)",
-                boxShadow:
-                  "0 0 20px rgba(124,58,237,0.3), 0 4px 12px rgba(0,0,0,0.3)",
+                boxShadow: uploading
+                  ? "none"
+                  : "0 0 20px rgba(124,58,237,0.3), 0 4px 12px rgba(0,0,0,0.3)",
+                opacity: uploading ? 0.7 : 1,
+                cursor: uploading ? "not-allowed" : "pointer",
               }}
               id="upload-import-btn"
             >
-              Import Project
+              {uploading ? (
+                <>
+                  <Loader2 size={16} className="animate-spin" />
+                  Uploading...
+                </>
+              ) : (
+                "Import Project"
+              )}
             </motion.button>
+            {errorMsg && (
+              <div style={{ color: "#f85149", fontSize: 13, marginTop: 4 }}>
+                {errorMsg}
+              </div>
+            )}
           </motion.div>
         ) : (
           /* ── Idle / Drag-over State ── */

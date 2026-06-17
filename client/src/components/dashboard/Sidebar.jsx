@@ -15,91 +15,7 @@ import {
   MoreHorizontal,
 } from "lucide-react";
 
-/* ── File tree data ─────────────────────────────────────── */
-const FILE_TREE = [
-  {
-    id: "src",
-    name: "src",
-    type: "folder",
-    children: [
-      {
-        id: "src-components",
-        name: "components",
-        type: "folder",
-        children: [
-          { id: "app-tsx",     name: "App.tsx",     type: "file", lang: "react" },
-          { id: "navbar-tsx",  name: "Navbar.tsx",  type: "file", lang: "react" },
-          { id: "hero-tsx",    name: "Hero.tsx",    type: "file", lang: "react" },
-          { id: "button-tsx",  name: "Button.tsx",  type: "file", lang: "react" },
-          { id: "header-tsx",  name: "Header.tsx",  type: "file", lang: "react" },
-        ],
-      },
-      {
-        id: "src-pages",
-        name: "pages",
-        type: "folder",
-        children: [
-          { id: "dashboard-tsx", name: "Dashboard.tsx", type: "file", lang: "react", active: true },
-          { id: "login-tsx",     name: "Login.tsx",     type: "file", lang: "react" },
-        ],
-      },
-      {
-        id: "src-services",
-        name: "services",
-        type: "folder",
-        children: [
-          { id: "api-ts",  name: "api.ts",  type: "file", lang: "ts" },
-          { id: "auth-ts", name: "auth.ts", type: "file", lang: "ts" },
-        ],
-      },
-      { id: "index-tsx", name: "index.tsx",  type: "file", lang: "react" },
-      { id: "main-css",  name: "index.css",  type: "file", lang: "css" },
-    ],
-  },
-  {
-    id: "server",
-    name: "server",
-    type: "folder",
-    children: [
-      {
-        id: "server-src",
-        name: "src",
-        type: "folder",
-        children: [
-          {
-            id: "server-services",
-            name: "services",
-            type: "folder",
-            children: [
-              { id: "coverage-svc", name: "coverage.service.js", type: "file", lang: "js" },
-              { id: "ai-svc",       name: "ai.service.js",       type: "file", lang: "js" },
-            ],
-          },
-          {
-            id: "server-controllers",
-            name: "controllers",
-            type: "folder",
-            children: [
-              { id: "coverage-ctrl", name: "coverage.controller.js", type: "file", lang: "js" },
-              { id: "job-ctrl",      name: "job.controller.js",      type: "file", lang: "js" },
-            ],
-          },
-        ],
-      },
-    ],
-  },
-  {
-    id: "tests",
-    name: "__tests__",
-    type: "folder",
-    children: [
-      { id: "coverage-test", name: "coverage.test.js", type: "file", lang: "test" },
-      { id: "ai-test",       name: "ai.test.js",       type: "file", lang: "test" },
-    ],
-  },
-  { id: "pkg-json", name: "package.json", type: "file", lang: "json" },
-  { id: "readme-md", name: "README.md",   type: "file", lang: "md" },
-];
+// Removed hardcoded FILE_TREE
 
 /* ── Language icon/color map ─────────────────────────────── */
 const LANG_MAP = {
@@ -211,7 +127,7 @@ function TreeNode({ node, depth = 0, onSelect, activeFileId }) {
 }
 
 /* ── Sidebar ─────────────────────────────────────────────── */
-export default function Sidebar({ onOpenFile, activeFileId }) {
+export default function Sidebar({ onOpenFile, activeFileId, fileTree = [], projectName, isLoading }) {
   return (
     <motion.div
       className="flex flex-col h-full flex-shrink-0"
@@ -292,20 +208,24 @@ export default function Sidebar({ onOpenFile, activeFileId }) {
         }}
       >
         <ChevronDown size={11} />
-        <span>TestCovAI</span>
+        <span className="truncate">{projectName || "Project"}</span>
       </div>
 
       {/* File tree — scrollable */}
       <div className="flex-1 overflow-y-auto py-1">
-        {FILE_TREE.map((node) => (
-          <TreeNode
-            key={node.id}
-            node={node}
-            depth={0}
-            onSelect={onOpenFile}
-            activeFileId={activeFileId}
-          />
-        ))}
+        {isLoading ? (
+          <div className="px-4 py-2 text-xs text-[#8b949e]">Loading files...</div>
+        ) : (
+          fileTree.map((node) => (
+            <TreeNode
+              key={node.id}
+              node={node}
+              depth={0}
+              onSelect={onOpenFile}
+              activeFileId={activeFileId}
+            />
+          ))
+        )}
       </div>
 
       {/* Footer — branch info */}

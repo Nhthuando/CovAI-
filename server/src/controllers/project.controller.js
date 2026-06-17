@@ -12,8 +12,8 @@ import {
   getProjectById,
   uploadProjectZip,
   detectJestConfig,
-  createAnalysisJob,
   deleteProject,
+  getProjectTree,
 } from "../services/project.service.js";
 
 class ProjectController {
@@ -114,6 +114,28 @@ class ProjectController {
       return res.status(500).json({
         success: false,
         message: "Failed to get project",
+      });
+    }
+  }
+
+  /**
+   * GET /projects/:id/tree
+   */
+  async getProjectTree(req, res) {
+    try {
+      const { id } = req.params;
+      const tree = await getProjectTree(id, req.user.id);
+      return res.status(200).json({ success: true, data: tree });
+    } catch (error) {
+      console.error(error);
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+      return res.status(500).json({
+        success: false,
+        message: "Failed to get project tree",
       });
     }
   }

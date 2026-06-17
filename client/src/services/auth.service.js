@@ -60,3 +60,57 @@ export async function loginApi({ email, password }) {
 
   return data; // { message, token, name, email }
 }
+
+/**
+ * GET /api/auth/github/callback?code=...
+ */
+export async function oAuthGithubApi(code) {
+  const res = await fetch(`${BASE_URL}/auth/github/callback?code=${code}`);
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.message || "Lỗi đăng nhập GitHub");
+  }
+  return data;
+}
+
+/**
+ * POST /api/auth/forgotPassword
+ * Body: { email }
+ */
+export async function forgotPasswordApi(email) {
+  const res = await fetch(`${BASE_URL}/auth/forgotPassword`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw { type: "message", message: data.message || "Yêu cầu thất bại!" };
+  }
+  return data;
+}
+
+/**
+ * POST /api/auth/resetPassword/:token
+ * Body: { newPassword }
+ */
+export async function resetPasswordApi(token, newPassword) {
+  const res = await fetch(`${BASE_URL}/auth/resetPassword/${token}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ newPassword }),
+  });
+  const data = await res.json();
+  
+  if (!res.ok) {
+    if (data.error && typeof data.error === "object") {
+      const fieldErrors = {};
+      for (const [key, msgs] of Object.entries(data.error)) {
+        fieldErrors[key] = Array.isArray(msgs) ? msgs[0] : msgs;
+      }
+      throw { type: "field", errors: fieldErrors };
+    }
+    throw { type: "message", message: data.message || "Cập nhật thất bại!" };
+  }
+  return data;
+}

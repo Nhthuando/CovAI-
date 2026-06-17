@@ -20,6 +20,9 @@ export const register = async (req, res) => {
     return res.status(201).json(response);
   } catch (error) {
     console.log(error);
+    if (error.message === "Tài khoản đã tồn tại!") {
+      return res.status(400).json({ message: error.message });
+    }
     return res.status(500).json({ message: "Có lỗi server!" });
   }
 };
@@ -146,19 +149,18 @@ export const oAuthGithub = async (req, res) => {
     const accessToken = tokenData.access_token;
     if (!accessToken)
       return res.status(400).json({ message: "Không thể lấy access token!" });
-    const userDetail = await fetch("https://api.github.com/user", {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    const [userDetail, emailResponse] = await Promise.all([
+      fetch("https://api.github.com/user", { headers: { Authorization: `Bearer ${accessToken}` } }),
+      fetch("https://api.github.com/user/emails", { headers: { Authorization: `Bearer ${accessToken}` } })
+    ]);
+
     const userData = await userDetail.json();
-    const emailResponse = await fetch("https://api.github.com/user/emails", {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
     const emails = await emailResponse.json();
+
     const primaryEmail = emails.find((e) => e.primary)?.email ?? null;
-    if (!primaryEmail)
-      return res
-        .status(400)
-        .json({ message: "Không lấy được email từ GitHub!" });
+    if (!primaryEmail) {
+      return res.status(400).json({ message: "Không lấy được email từ GitHub!" });
+    }
     let user = await prisma.user.findUnique({
       where: { email: primaryEmail },
     });

@@ -7,8 +7,61 @@ import { scanZipBomb } from "../middlewares/upload.middleware.js";
 import path from "path";
 import { createHash, randomUUID } from "crypto";
 import { ServiceError } from "../utils/serviceError.js";
+import fs from "fs";
 
 export { ServiceError };
+
+function buildTree(dirPath, rootPath = dirPath) {
+  const result = [];
+  try {
+    if (!fs.existsSync(dirPath)) return result;
+    const items = fs.readdirSync(dirPath);
+    for (const item of items) {
+      if (item === "node_modules" || item === ".git") continue;
+      
+      const itemPath = path.join(dirPath, item);
+      const stat = fs.statSync(itemPath);
+      const relativePath = path.relative(rootPath, itemPath).replace(/\\/g, "/");
+
+      if (stat.isDirectory()) {
+        const children = buildTree(itemPath, rootPath);
+        result.push({
+          id: relativePath,
+          name: item,
+          type: "folder",
+          children
+        });
+      } else {
+        let lang = "file";
+        const ext = path.extname(item).toLowerCase();
+        if (ext === ".js" || ext === ".jsx") lang = "js";
+        else if (ext === ".ts" || ext === ".tsx") lang = "ts";
+        else if (ext === ".json") lang = "json";
+        else if (ext === ".css") lang = "css";
+        else if (ext === ".md") lang = "md";
+        else if (ext.includes("test") || ext.includes("spec")) lang = "test";
+
+        if (ext === ".jsx" || ext === ".tsx") lang = "react";
+
+        result.push({
+          id: relativePath,
+          name: item,
+          type: "file",
+          lang
+        });
+      }
+    }
+  } catch (e) {
+    console.error(e);
+  }
+  
+  result.sort((a, b) => {
+    if (a.type === b.type) return a.name.localeCompare(b.name);
+    return a.type === "folder" ? -1 : 1;
+  });
+  
+  return result;
+}
 
 export const createProject = async ({ input, currentUserId }) => {
     const {
@@ -268,4 +321,23 @@ export const deleteProject = async (projectId, userId) => {
     }
 
     await prisma.project.delete({ where: { id: projectId } });
+};
+
+export const getProjectTree = async (projectId, userId) => {
+    const project = await prisma.project.findFirst({
+        where: { id: projectId, ownerId: userId },
+    });
+    if (!project) throw new ServiceError("Project not found", 404);
+
+    const snapshot = await prisma.projectSnapshot.findFirst({
+        where: { projectId },
+        orderBy: { createdAt: "desc" }
+    });
+
+    if (!snapshot || !snapshot.rootDir) {
+        throw new ServiceError("Project snapshot not ready", 404);
+    }
+
+    const tree = buildTree(snapshot.rootDir);
+    return tree;
 };

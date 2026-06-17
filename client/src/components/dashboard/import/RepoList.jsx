@@ -1,55 +1,41 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Search, Folder, Lock, User } from "lucide-react";
+import { Search, Folder, Lock, User, Loader2 } from "lucide-react";
+import { getGithubRepositoriesApi, createProjectApi, importGithubRepoApi } from "../../../services/project.service";
 
-/* ── Mock repository data ─────────────────────────────────── */
-const MOCK_REPOS = [
-  {
-    id: 1,
-    name: "core-api-service",
-    language: "TypeScript",
-    langColor: "#3178c6",
-    updatedAt: "2h ago",
-    isPrivate: false,
-  },
-  {
-    id: 2,
-    name: "payment-gateway",
-    language: "Python",
-    langColor: "#f1e05a",
-    updatedAt: "1d ago",
-    isPrivate: true,
-  },
-  {
-    id: 3,
-    name: "frontend-dashboard",
-    language: "Vue",
-    langColor: "#41b883",
-    updatedAt: "3d ago",
-    isPrivate: false,
-  },
-  {
-    id: 4,
-    name: "ml-pipeline",
-    language: "Python",
-    langColor: "#3572A5",
-    updatedAt: "5d ago",
-    isPrivate: false,
-  },
-  {
-    id: 5,
-    name: "infra-terraform",
-    language: "HCL",
-    langColor: "#844FBA",
-    updatedAt: "1w ago",
-    isPrivate: true,
-  },
-];
+/* ── Helper ─────────────────────────────────── */
+function getLangColor(lang) {
+  const colors = {
+    TypeScript: "#3178c6",
+    JavaScript: "#f1e05a",
+    Python: "#3572A5",
+    Vue: "#41b883",
+    HTML: "#e34c26",
+    CSS: "#563d7c",
+  };
+  return colors[lang] || "#8b949e";
+}
 
 /* ── Single Repo Row ─────────────────────────────────────── */
-function RepoItem({ repo, index }) {
+function RepoItem({ repo, index, onClose }) {
   const [hovered, setHovered] = useState(false);
+  const [importing, setImporting] = useState(false);
   const Icon = repo.isPrivate ? Lock : Folder;
+
+  const handleImport = async () => {
+    if (importing) return;
+    setImporting(true);
+    try {
+      const projRes = await createProjectApi({ name: repo.name });
+      await importGithubRepoApi(projRes.data.id, repo.owner, repo.name);
+      alert("Import dự án thành công!");
+      if (onClose) onClose();
+    } catch (err) {
+      alert("Lỗi import: " + err.message);
+    } finally {
+      setImporting(false);
+    }
+  };
 
   return (
     <motion.div
@@ -135,40 +121,69 @@ function RepoItem({ repo, index }) {
 
       {/* Right: Import button (always visible) */}
       <motion.button
-        whileHover={{ scale: 1.03 }}
-        whileTap={{ scale: 0.97 }}
+        whileHover={!importing ? { scale: 1.03 } : {}}
+        whileTap={!importing ? { scale: 0.97 } : {}}
+        onClick={handleImport}
+        disabled={importing}
         className="flex items-center rounded-lg flex-shrink-0 cursor-pointer"
         style={{
           padding: "8px 20px",
-          background: hovered
+          gap: 6,
+          background: importing ? "rgba(124,58,237,0.5)" : (hovered
             ? "linear-gradient(135deg, #7c3aed, #6d28d9)"
-            : "rgba(255,255,255,0.06)",
-          border: hovered
+            : "rgba(255,255,255,0.06)"),
+          border: hovered && !importing
             ? "1px solid rgba(124,58,237,0.4)"
             : "1px solid rgba(255,255,255,0.08)",
-          color: hovered ? "#fff" : "#8b949e",
+          color: hovered || importing ? "#fff" : "#8b949e",
           fontSize: 13,
           fontWeight: 500,
           fontFamily: "var(--font-sans)",
           transition: "all 0.2s ease",
-          boxShadow: hovered
+          boxShadow: hovered && !importing
             ? "0 0 12px rgba(124,58,237,0.2)"
             : "none",
+          opacity: importing ? 0.8 : 1,
+          cursor: importing ? "not-allowed" : "pointer"
         }}
         id={`repo-import-${repo.id}`}
       >
-        Import
+        {importing ? <Loader2 size={14} className="animate-spin" /> : null}
+        {importing ? "Importing..." : "Import"}
       </motion.button>
     </motion.div>
   );
 }
 
 /* ── Repo List ───────────────────────────────────────────── */
-export default function RepoList() {
+export default function RepoList({ onClose }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [focused, setFocused] = useState(false);
+  const [repos, setRepos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState("");
 
-  const filteredRepos = MOCK_REPOS.filter((r) =>
+  useEffect(() => {
+    getGithubRepositoriesApi()
+      .then(data => {
+        const mapped = Array.isArray(data) ? data.map(r => ({
+          id: r.id,
+          name: r.name,
+          language: r.language || "Unknown",
+          langColor: getLangColor(r.language),
+          updatedAt: new Date(r.updated_at || new Date()).toLocaleDateString(),
+          isPrivate: r.private,
+          owner: r.owner?.login
+        })) : [];
+        setRepos(mapped);
+      })
+      .catch(err => {
+        setErrorMsg(err.message);
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  const filteredRepos = repos.filter((r) =>
     r.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
@@ -252,9 +267,17 @@ export default function RepoList() {
         className="flex flex-col overflow-y-auto"
         style={{ gap: 6, maxHeight: 300 }}
       >
-        {filteredRepos.length > 0 ? (
+        {loading ? (
+          <div className="flex justify-center p-8">
+            <Loader2 className="animate-spin text-gray-400" size={24} />
+          </div>
+        ) : errorMsg ? (
+          <div className="flex flex-col items-center justify-center p-8 text-red-400 text-sm">
+            {errorMsg}
+          </div>
+        ) : filteredRepos.length > 0 ? (
           filteredRepos.map((repo, i) => (
-            <RepoItem key={repo.id} repo={repo} index={i} />
+            <RepoItem key={repo.id} repo={repo} index={i} onClose={onClose} />
           ))
         ) : (
           <motion.div

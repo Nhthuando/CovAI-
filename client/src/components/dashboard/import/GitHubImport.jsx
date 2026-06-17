@@ -1,14 +1,39 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Link, ArrowRight } from "lucide-react";
+import { Link, ArrowRight, Loader2 } from "lucide-react";
 import RepoList from "./RepoList";
+import { createProjectApi, importGithubUrlApi } from "../../../services/project.service";
 
-export default function GitHubImport() {
+export default function GitHubImport({ onClose }) {
   const [urlValue, setUrlValue] = useState("");
   const [urlFocused, setUrlFocused] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
 
   const isValidUrl =
     urlValue.startsWith("https://github.com/") && urlValue.length > 25;
+
+  const handleImportUrl = async () => {
+    if (!isValidUrl || uploading) return;
+    setUploading(true);
+    setErrorMsg("");
+    try {
+      const match = urlValue.match(/github\.com\/([^/]+)\/([^/]+)/);
+      if (!match) throw new Error("URL GitHub không hợp lệ");
+      const repoName = match[2].replace(".git", "");
+      
+      const projRes = await createProjectApi({ name: repoName, repoUrl: urlValue });
+      const projectId = projRes.data.id;
+
+      await importGithubUrlApi(projectId, urlValue);
+      alert("Import dự án thành công!");
+      if (onClose) onClose();
+    } catch (err) {
+      setErrorMsg(err.message);
+    } finally {
+      setUploading(false);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full" style={{ gap: 28 }}>
@@ -91,31 +116,48 @@ export default function GitHubImport() {
           </div>
 
           <motion.button
-            whileHover={{ scale: 1.02, y: -1 }}
-            whileTap={{ scale: 0.98 }}
+            whileHover={!uploading ? { scale: 1.02, y: -1 } : {}}
+            whileTap={!uploading ? { scale: 0.98 } : {}}
+            onClick={handleImportUrl}
+            disabled={uploading || !isValidUrl}
             className="flex items-center rounded-xl flex-shrink-0 cursor-pointer"
             style={{
               gap: 8,
               padding: "14px 24px",
               background: isValidUrl
-                ? "linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)"
+                ? (uploading ? "rgba(124,58,237,0.5)" : "linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)")
                 : "#7c3aed",
               color: "#fff",
               fontSize: 14,
               fontWeight: 600,
               border: "none",
               fontFamily: "var(--font-sans)",
-              boxShadow:
-                "0 0 16px rgba(124,58,237,0.25), 0 2px 8px rgba(0,0,0,0.2)",
-              opacity: isValidUrl ? 1 : 0.8,
-              cursor: "pointer",
+              boxShadow: uploading
+                  ? "none"
+                  : "0 0 16px rgba(124,58,237,0.25), 0 2px 8px rgba(0,0,0,0.2)",
+              opacity: isValidUrl ? (uploading ? 0.7 : 1) : 0.8,
+              cursor: uploading || !isValidUrl ? "not-allowed" : "pointer",
             }}
             id="url-import-btn"
           >
-            Import
-            <ArrowRight size={15} />
+            {uploading ? (
+              <>
+                <Loader2 size={16} className="animate-spin" />
+                Importing...
+              </>
+            ) : (
+              <>
+                Import
+                <ArrowRight size={15} />
+              </>
+            )}
           </motion.button>
         </div>
+        {errorMsg && (
+          <div style={{ color: "#f85149", fontSize: 13, marginTop: 4 }}>
+            {errorMsg}
+          </div>
+        )}
       </div>
 
       {/* ── Divider: OR SELECT FROM ACCOUNT ─────────────────── */}
@@ -151,7 +193,7 @@ export default function GitHubImport() {
 
       {/* ── Repository Browser ─────────────────────────────── */}
       <div className="flex-1 min-h-0 overflow-hidden">
-        <RepoList />
+        <RepoList onClose={onClose} />
       </div>
     </div>
   );

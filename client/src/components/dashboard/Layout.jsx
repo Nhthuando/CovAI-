@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useNavigate } from "react-router-dom";
 import ActivityBar from "./ActivityBar";
 import Sidebar from "./Sidebar";
 import Editor from "./Editor";
@@ -19,11 +20,9 @@ import {
   FolderPlus,
 } from "lucide-react";
 
-const INITIAL_TABS = [
-  { id: "dashboard-tsx", name: "Dashboard.tsx", unsaved: false },
-  { id: "app-tsx",       name: "App.tsx",       unsaved: true  },
-  { id: "index-tsx",     name: "index.tsx",     unsaved: false },
-];
+import { getProjectsApi, getProjectTreeApi } from "../../services/project.service";
+
+const INITIAL_TABS = [];
 
 /* ── Container animation ─────────────────────────────────── */
 const containerVariants = {
@@ -39,13 +38,50 @@ const panelVariants = {
 };
 
 export default function Layout() {
+  const handleSelectActivity = (id) => {
+    if (id === "logout") {
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      localStorage.removeItem("userName");
+      localStorage.removeItem("userEmail");
+      navigate("/");
+      return;
+    }
+
+    setActiveActivity(id);
+  };
+
   const [activeActivity, setActiveActivity] = useState("explorer");
   const [sidebarOpen,    setSidebarOpen]    = useState(true);
   const [aiPanelOpen,    setAiPanelOpen]    = useState(true);
   const [tabs,           setTabs]           = useState(INITIAL_TABS);
-  const [activeTabId,    setActiveTabId]    = useState("dashboard-tsx");
-  const [activeFileId,   setActiveFileId]   = useState("dashboard-tsx");
+  const [activeTabId,    setActiveTabId]    = useState(null);
+  const [activeFileId,   setActiveFileId]   = useState(null);
   const [showImport,     setShowImport]     = useState(false);
+  const navigate = useNavigate();
+
+  const [project, setProject] = useState(null);
+  const [fileTree, setFileTree] = useState([]);
+  const [isLoadingTree, setIsLoadingTree] = useState(true);
+
+  useEffect(() => {
+    async function init() {
+      try {
+        const { projects } = await getProjectsApi();
+        if (projects && projects.length > 0) {
+          const firstProj = projects[0];
+          setProject(firstProj);
+          const { data: tree } = await getProjectTreeApi(firstProj.id);
+          setFileTree(tree);
+        }
+      } catch (err) {
+        console.error("Failed to load project tree:", err);
+      } finally {
+        setIsLoadingTree(false);
+      }
+    }
+    init();
+  }, []);
 
   const handleOpenFile = (node) => {
     if (node.type === "folder") return;
@@ -128,7 +164,7 @@ export default function Layout() {
             </span>
             <span style={{ color: "#30363d" }}>—</span>
             <span style={{ color: "#484f58", fontFamily: "var(--font-sans)" }}>
-              Main IDE
+              {project ? project.name : "Main IDE"}
             </span>
           </div>
         </div>
@@ -299,7 +335,7 @@ export default function Layout() {
       >
         {/* Activity Bar */}
         <motion.div variants={panelVariants}>
-          <ActivityBar active={activeActivity} onSelect={setActiveActivity} />
+          <ActivityBar active={activeActivity} onSelect={handleSelectActivity} />
         </motion.div>
 
         {/* Sidebar */}
@@ -313,7 +349,7 @@ export default function Layout() {
               transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
               style={{ overflow: "hidden", flexShrink: 0 }}
             >
-              <Sidebar onOpenFile={handleOpenFile} activeFileId={activeFileId} />
+              <Sidebar onOpenFile={handleOpenFile} activeFileId={activeFileId} fileTree={fileTree} projectName={project?.name} isLoading={isLoadingTree} />
             </motion.div>
           )}
         </AnimatePresence>
@@ -325,6 +361,8 @@ export default function Layout() {
             activeTabId={activeTabId}
             onSelectTab={setActiveTabId}
             onCloseTab={handleCloseTab}
+            fileTree={fileTree}
+            isLoadingTree={isLoadingTree}
           />
         </motion.div>
 

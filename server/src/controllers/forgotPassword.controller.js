@@ -12,10 +12,10 @@ export const forgotPassword  = async (req,res) => {
         if(!user) {
             return res.status(200).json({message: "Đã gửi link reset mật khẩu, vui lòng kiểm tra email!"});
         } 
-        if (user.passwordResetExpires && user.passwordResetExpires > new Date()) {return res.status(429).json({ message: 'Vui lòng chờ hết hạn link cũ trước khi yêu cầu lại.' });}
+        if (user.passwordResetExpires && user.passwordResetExpires > new Date()) {return res.status(429).json({ message: 'Vui lòng chờ hết hạn link cũ (1 phút) trước khi yêu cầu lại.' });}
         const resetToken = crypto.randomBytes(32).toString('hex');
         const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex');
-        const tokenExpires = new Date(Date.now() + 5 * 60 * 1000);
+        const tokenExpires = new Date(Date.now() + 1 * 60 * 1000);
         await prisma.user.update({where: {email}, data: {passwordResetToken: hashedToken, passwordResetExpires: tokenExpires}});
         const resetUrl = `http://localhost:5173/reset-password?token=${resetToken}`;
         try {

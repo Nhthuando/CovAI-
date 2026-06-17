@@ -153,9 +153,7 @@ export default function Hero() {
           transition={{ duration: 0.6, delay: 0.2 }}
           style={{ display: "flex", justifyContent: "center", marginBottom: "1.5rem" }}
         >
-
         </motion.div>
-
         {/* Main Heading */}
         <motion.h1
           initial={{ opacity: 0, y: 30 }}
@@ -357,6 +355,7 @@ export default function Hero() {
                   justifyContent: "center",
                   fontSize: "0.875rem",
                   marginLeft: i === 0 ? 0 : "-8px",
+                  margin: "1px"
                 }}
               >
                 {emoji}
@@ -374,13 +373,13 @@ export default function Hero() {
         transition={{ delay: 1.2, duration: 0.6 }}
         style={{
           position: "absolute",
-          bottom: "2rem",
+          bottom: "1rem",
           left: "50%",
           transform: "translateX(-50%)",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          gap: "0.5rem",
+          gap: "0.2rem",
           color: "#484f58",
           fontSize: "0.7rem",
           letterSpacing: "0.12em",

@@ -8,6 +8,7 @@ import {
   Settings,
   User,
   Zap,
+  LogOut,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -22,6 +23,7 @@ const TOP_ITEMS = [
 const BOTTOM_ITEMS = [
   { id: "settings", icon: Settings, label: "Settings" },
   { id: "account",  icon: User,     label: "Account" },
+  { id: "logout",   icon: LogOut,   label: "Log Out" },
 ];
 
 function ActivityItem({ item, isActive, onClick, delay = 0 }) {

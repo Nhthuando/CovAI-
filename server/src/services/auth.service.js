@@ -11,8 +11,15 @@ export const register = async (name, email, password) => {
     data: { email, passwordHash: hashedPass, name },
   });
 
+  const token = jwt.sign(
+    { userId: user.id, userEmail: user.email, userName: user.name },
+    process.env.JWT_SECRET,
+    { expiresIn: "1h" },
+  );
+
   return {
     message: "Đăng ký thành công!",
+    token,
     userName: name,
     userEmail: email,
   };

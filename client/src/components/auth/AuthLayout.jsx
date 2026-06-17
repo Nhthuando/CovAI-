@@ -2,6 +2,8 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
 import AuthForm from "./AuthForm";
+import ForgotPasswordForm from "./ForgotPasswordForm";
+import ResetPasswordForm from "./ResetPasswordForm";
 import CodePreview from "./CodePreview";
 
 const STATS = [
@@ -177,54 +179,62 @@ export default function AuthLayout({ initialMode = "login" }) {
           </motion.div>
         </div>
 
-        {/* Code Preview */}
         <motion.div
-          initial={{ opacity: 0, y: 40 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, delay: 0.2, ease: "easeOut" }}
-          style={{
-            display: "flex",
-            justifyContent: "center",
-            flex: 1,
-            alignItems: "center",
-            padding: "2rem 0",
-          }}
-        >
-          <CodePreview />
-        </motion.div>
-
-        {/* Stats */}
-        <motion.div
+          key="stats"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ duration: 0.6, delay: 0.5 }}
-          style={{
-            display: "flex",
-            gap: "2.5rem",
-            paddingTop: "1.5rem",
-            borderTop: "1px solid rgba(255,255,255,0.06)",
-          }}
+          exit={{ opacity: 0 }}
+          style={{ flex: 1, display: "flex", flexDirection: "column" }}
         >
-          {STATS.map((s) => (
-            <div key={s.label}>
-              <div
-                style={{
-                  fontSize: "1.5rem",
-                  fontWeight: "800",
-                  background: "linear-gradient(135deg, #7C3AED, #06B6D4)",
-                  WebkitBackgroundClip: "text",
-                  WebkitTextFillColor: "transparent",
-                  backgroundClip: "text",
-                  letterSpacing: "-0.03em",
-                }}
-              >
-                {s.value}
+          {/* Code Preview */}
+          <motion.div
+            initial={{ opacity: 0, y: 40 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.8, delay: 0.2, ease: "easeOut" }}
+            style={{
+              display: "flex",
+              justifyContent: "center",
+              flex: 1,
+              alignItems: "center",
+              padding: "2rem 0",
+            }}
+          >
+            <CodePreview />
+          </motion.div>
+
+          {/* Stats */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.6, delay: 0.5 }}
+            style={{
+              display: "flex",
+              gap: "2.5rem",
+              paddingTop: "1.5rem",
+              borderTop: "1px solid rgba(255,255,255,0.06)",
+            }}
+          >
+            {STATS.map((s) => (
+              <div key={s.label}>
+                <div
+                  style={{
+                    fontSize: "1.5rem",
+                    fontWeight: "800",
+                    background: "linear-gradient(135deg, #7C3AED, #06B6D4)",
+                    WebkitBackgroundClip: "text",
+                    WebkitTextFillColor: "transparent",
+                    backgroundClip: "text",
+                    letterSpacing: "-0.03em",
+                  }}
+                >
+                  {s.value}
+                </div>
+                <div style={{ color: "#484f58", fontSize: "0.75rem", marginTop: "2px" }}>
+                  {s.label}
+                </div>
               </div>
-              <div style={{ color: "#484f58", fontSize: "0.75rem", marginTop: "2px" }}>
-                {s.label}
-              </div>
-            </div>
-          ))}
+            ))}
+          </motion.div>
         </motion.div>
       </div>
 
@@ -280,7 +290,13 @@ export default function AuthLayout({ initialMode = "login" }) {
             transition={{ duration: 0.35, ease: "easeInOut" }}
             style={{ width: "100%" }}
           >
-            <AuthForm mode={mode} onToggleMode={toggleMode} />
+            {mode === "forgot_password" ? (
+              <ForgotPasswordForm setMode={setMode} />
+            ) : mode === "reset_password" ? (
+              <ResetPasswordForm />
+            ) : (
+              <AuthForm mode={mode} onToggleMode={toggleMode} setMode={setMode} />
+            )}
           </motion.div>
         </AnimatePresence>
 
