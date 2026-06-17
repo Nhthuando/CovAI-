@@ -2,13 +2,15 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import { Link, ArrowRight, Loader2 } from "lucide-react";
 import RepoList from "./RepoList";
-import { createProjectApi, importGithubUrlApi } from "../../../services/project.service";
+import { createProjectApi, importGithubUrlApi, getProjectsApi } from "../../../services/project.service";
+import { useToast } from "../ToastContext";
 
-export default function GitHubImport({ onClose }) {
+export default function GitHubImport({ onClose, onSuccess }) {
   const [urlValue, setUrlValue] = useState("");
   const [urlFocused, setUrlFocused] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const { showToast } = useToast();
 
   const isValidUrl =
     urlValue.startsWith("https://github.com/") && urlValue.length > 25;
@@ -21,15 +23,49 @@ export default function GitHubImport({ onClose }) {
       const match = urlValue.match(/github\.com\/([^/]+)\/([^/]+)/);
       if (!match) throw new Error("URL GitHub không hợp lệ");
       const repoName = match[2].replace(".git", "");
-      
-      const projRes = await createProjectApi({ name: repoName, repoUrl: urlValue });
-      const projectId = projRes.data.id;
+
+      let projectId;
+
+      try {
+        const projRes = await createProjectApi({ name: repoName, repoUrl: urlValue });
+        projectId = projRes.data.id;
+      } catch (createErr) {
+        // Handle 409 — project already exists
+        if (createErr.message?.includes("already exists") || createErr.message?.includes("Duplicate")) {
+          const { projects } = await getProjectsApi();
+          const existing = projects?.find((p) => p.name === repoName);
+          if (existing) {
+            projectId = existing.id;
+            showToast({
+              type: "info",
+              title: "Using existing project",
+              message: `Project "${repoName}" already exists. Importing repository into it.`,
+            });
+          } else {
+            throw new Error("Project already exists but could not be found.");
+          }
+        } else {
+          throw createErr;
+        }
+      }
 
       await importGithubUrlApi(projectId, urlValue);
-      alert("Import dự án thành công!");
-      if (onClose) onClose();
+
+      showToast({
+        type: "success",
+        title: "Import successful",
+        message: `Repository "${repoName}" has been imported.`,
+      });
+
+      if (onSuccess) onSuccess();
+      else if (onClose) onClose();
     } catch (err) {
       setErrorMsg(err.message);
+      showToast({
+        type: "error",
+        title: "Import failed",
+        message: err.message || "An unexpected error occurred.",
+      });
     } finally {
       setUploading(false);
     }
@@ -193,7 +229,7 @@ export default function GitHubImport({ onClose }) {
 
       {/* ── Repository Browser ─────────────────────────────── */}
       <div className="flex-1 min-h-0 overflow-hidden">
-        <RepoList onClose={onClose} />
+        <RepoList onClose={onClose} onSuccess={onSuccess} />
       </div>
     </div>
   );

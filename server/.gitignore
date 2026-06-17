@@ -6,3 +6,6 @@
 
 # node modules
 node_modules/
+
+# local storage for projects and repos
+storage/

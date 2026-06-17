@@ -320,7 +320,45 @@ export const deleteProject = async (projectId, userId) => {
         throw new ServiceError("Cannot delete project while jobs are running", 409);
     }
 
-    await prisma.project.delete({ where: { id: projectId } });
+    // Fetch snapshots BEFORE they are deleted from DB so we can clean up local dirs
+    const snapshots = await prisma.projectSnapshot.findMany({
+        where: { projectId },
+        select: { rootDir: true }
+    });
+
+    await prisma.$transaction([
+        prisma.coverageSummary.deleteMany({ where: { snapshot: { projectId } } }),
+        prisma.coverageFile.deleteMany({ where: { snapshot: { projectId } } }),
+        prisma.coverageFunction.deleteMany({ where: { snapshot: { projectId } } }),
+        prisma.cyclomatic.deleteMany({ where: { snapshot: { projectId } } }),
+        prisma.cfg.deleteMany({ where: { snapshot: { projectId } } }),
+        prisma.aiContextCache.deleteMany({ where: { snapshot: { projectId } } }),
+        prisma.aiSuggestion.deleteMany({ where: { projectId } }),
+        prisma.aiTest.deleteMany({ where: { projectId } }),
+        prisma.jobLog.deleteMany({ where: { job: { projectId } } }),
+        prisma.jobOutput.deleteMany({ where: { job: { projectId } } }),
+        prisma.job.deleteMany({ where: { projectId } }),
+        prisma.notification.deleteMany({ where: { projectId } }),
+        prisma.projectSnapshot.deleteMany({ where: { projectId } }),
+        prisma.project.delete({ where: { id: projectId } })
+    ]);
+
+    // Cleanup physical local storage directories to prevent disk leak
+    try {
+        for (const snap of snapshots) {
+            if (snap.rootDir && fs.existsSync(snap.rootDir)) {
+                fs.rmSync(snap.rootDir, { recursive: true, force: true });
+            }
+        }
+
+        // Clean up the base project storage dir if exists
+        const projectStoragePath = path.resolve("storage/projects", projectId);
+        if (fs.existsSync(projectStoragePath)) {
+            fs.rmSync(projectStoragePath, { recursive: true, force: true });
+        }
+    } catch (cleanupError) {
+        console.error("Lỗi xóa file vật lý của project:", cleanupError);
+    }
 };
 
 export const getProjectTree = async (projectId, userId) => {
@@ -340,4 +378,48 @@ export const getProjectTree = async (projectId, userId) => {
 
     const tree = buildTree(snapshot.rootDir);
     return tree;
+};
+
+export const getFileContent = async (projectId, userId, filePath) => {
+    const project = await prisma.project.findFirst({
+        where: { id: projectId, ownerId: userId },
+    });
+    if (!project) throw new ServiceError("Project not found", 404);
+
+    const snapshot = await prisma.projectSnapshot.findFirst({
+        where: { projectId },
+        orderBy: { createdAt: "desc" },
+    });
+
+    if (!snapshot || !snapshot.rootDir) {
+        throw new ServiceError("Project snapshot not ready", 404);
+    }
+
+    // Sanitize the file path to prevent directory traversal
+    const normalizedPath = path.normalize(filePath).replace(/^(\.\.(\/|\\|$))+/, "");
+    const absolutePath = path.join(snapshot.rootDir, normalizedPath);
+
+    // Ensure the resolved path is still within the snapshot rootDir
+    const resolvedRoot = path.resolve(snapshot.rootDir);
+    const resolvedFile = path.resolve(absolutePath);
+    if (!resolvedFile.startsWith(resolvedRoot)) {
+        throw new ServiceError("Invalid file path", 400);
+    }
+
+    if (!fs.existsSync(resolvedFile)) {
+        throw new ServiceError("File not found", 404);
+    }
+
+    const stat = fs.statSync(resolvedFile);
+    if (stat.isDirectory()) {
+        throw new ServiceError("Path is a directory, not a file", 400);
+    }
+
+    // Limit file size to 1MB
+    if (stat.size > 1024 * 1024) {
+        throw new ServiceError("File too large to display", 413);
+    }
+
+    const content = fs.readFileSync(resolvedFile, "utf-8");
+    return { content, size: stat.size };
 };

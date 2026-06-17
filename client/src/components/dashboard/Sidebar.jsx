@@ -13,6 +13,9 @@ import {
   RefreshCw,
   Plus,
   MoreHorizontal,
+  Trash2,
+  AlertTriangle,
+  Loader2,
 } from "lucide-react";
 
 // Removed hardcoded FILE_TREE
@@ -41,7 +44,7 @@ function TreeNode({ node, depth = 0, onSelect, activeFileId }) {
 
   const isFolder = node.type === "folder";
   const isActive = activeFileId === node.id;
-    const indent   = depth * 14 + 14;
+  const indent   = depth * 14 + 16;
 
   return (
     <div>
@@ -53,9 +56,9 @@ function TreeNode({ node, depth = 0, onSelect, activeFileId }) {
         className="flex items-center gap-2 cursor-pointer select-none relative"
         style={{
           paddingLeft: indent,
-          paddingRight: 12,
-          paddingTop: 4,
-          paddingBottom: 4,
+          paddingRight: 14,
+          paddingTop: 5,
+          paddingBottom: 5,
           background: isActive
             ? "rgba(124, 58, 237, 0.12)"
             : hovered
@@ -127,7 +130,11 @@ function TreeNode({ node, depth = 0, onSelect, activeFileId }) {
 }
 
 /* ── Sidebar ─────────────────────────────────────────────── */
-export default function Sidebar({ onOpenFile, activeFileId, fileTree = [], projectName, isLoading }) {
+export default function Sidebar({ onOpenFile, activeFileId, fileTree = [], project, projects = [], onChangeProject, onDeleteProject, isLoading, onRefresh }) {
+  const [showProjectList, setShowProjectList] = useState(false);
+  const [projectToDelete, setProjectToDelete] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
   return (
     <motion.div
       className="flex flex-col h-full flex-shrink-0"
@@ -144,9 +151,9 @@ export default function Sidebar({ onOpenFile, activeFileId, fileTree = [], proje
       <div
         className="flex items-center justify-between flex-shrink-0"
         style={{
-          height: 44,
-          paddingLeft: 16,
-          paddingRight: 12,
+          height: 46,
+          paddingLeft: 24,
+          paddingRight: 16,
           borderBottom: "1px solid var(--ide-border)",
         }}
       >
@@ -176,8 +183,9 @@ export default function Sidebar({ onOpenFile, activeFileId, fileTree = [], proje
             whileHover={{ rotate: 180 }}
             whileTap={{ scale: 0.9 }}
             transition={{ duration: 0.35 }}
+            onClick={onRefresh}
             className="p-1 rounded"
-            style={{ color: "#484f58" }}
+            style={{ color: "#484f58", cursor: "pointer", background: "transparent", border: "none" }}
             title="Refresh"
           >
             <RefreshCw size={13} />
@@ -194,27 +202,100 @@ export default function Sidebar({ onOpenFile, activeFileId, fileTree = [], proje
         </div>
       </div>
 
-      {/* Project label */}
-      <div
-        className="flex items-center gap-1.5 flex-shrink-0"
-        style={{
-          color: "#484f58",
-          fontSize: 11,
-          textTransform: "uppercase",
-          letterSpacing: "0.08em",
-          fontFamily: "var(--font-sans)",
-          borderBottom: "1px solid rgba(255,255,255,0.03)",
-          padding: "6px 16px",
-        }}
-      >
-        <ChevronDown size={11} />
-        <span className="truncate">{projectName || "Project"}</span>
+      {/* Project label & Dropdown */}
+      <div className="relative">
+        <div
+          className="flex items-center justify-between flex-shrink-0 cursor-pointer"
+          style={{
+            color: "#484f58",
+            fontSize: 11,
+            textTransform: "uppercase",
+            letterSpacing: "0.08em",
+            fontFamily: "var(--font-sans)",
+            borderBottom: "1px solid rgba(255,255,255,0.03)",
+            padding: "12px 24px",
+            background: showProjectList ? "rgba(255,255,255,0.02)" : "transparent",
+            transition: "background 0.2s ease"
+          }}
+          onClick={() => setShowProjectList(!showProjectList)}
+        >
+          <div className="flex items-center gap-1.5 min-w-0">
+            <motion.div
+              animate={{ rotate: showProjectList ? 180 : 0 }}
+              transition={{ duration: 0.2 }}
+            >
+              <ChevronDown size={11} />
+            </motion.div>
+            <span className="truncate">{project?.name || "No Project"}</span>
+          </div>
+        </div>
+
+        {/* Project List Dropdown */}
+        <AnimatePresence>
+          {showProjectList && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.2, ease: "easeInOut" }}
+              className="overflow-hidden"
+              style={{
+                background: "rgba(13, 17, 23, 0.95)",
+                borderBottom: "1px solid var(--ide-border)",
+                zIndex: 10
+              }}
+            >
+              {projects.length === 0 ? (
+                <div className="px-6 py-3 text-xs text-[#8b949e]">No projects found.</div>
+              ) : (
+                projects.map((p) => (
+                  <div
+                    key={p.id}
+                    className="flex items-center justify-between group cursor-pointer"
+                    style={{
+                      padding: "8px 24px",
+                      background: p.id === project?.id ? "rgba(124, 58, 237, 0.1)" : "transparent",
+                      borderLeft: p.id === project?.id ? "2px solid #7c3aed" : "2px solid transparent",
+                    }}
+                    onClick={() => {
+                      onChangeProject(p.id);
+                      setShowProjectList(false);
+                    }}
+                  >
+                    <span
+                      className="truncate text-xs"
+                      style={{
+                        color: p.id === project?.id ? "#c4b5fd" : "#8b949e",
+                        fontFamily: "var(--font-sans)"
+                      }}
+                    >
+                      {p.name}
+                    </span>
+                    <motion.button
+                      whileHover={{ scale: 1.1, color: "#f85149" }}
+                      whileTap={{ scale: 0.9 }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setProjectToDelete(p);
+                      }}
+                      className="opacity-0 group-hover:opacity-100 p-1 rounded"
+                      style={{ color: "#484f58", background: "transparent", border: "none" }}
+                      title="Delete Project"
+                    >
+                      <Trash2 size={12} />
+                    </motion.button>
+                  </div>
+                ))
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* File tree — scrollable */}
-      <div className="flex-1 overflow-y-auto py-1">
+      <div className="flex-1 overflow-y-auto" style={{ paddingTop: 6, paddingBottom: 6 }}>
         {isLoading ? (
-          <div className="px-4 py-2 text-xs text-[#8b949e]">Loading files...</div>
+          <div className="text-xs text-[#8b949e]" style={{ padding: "16px 24px" }}>Loading files...</div>
         ) : (
           fileTree.map((node) => (
             <TreeNode
@@ -236,7 +317,7 @@ export default function Sidebar({ onOpenFile, activeFileId, fileTree = [], proje
           fontSize: 11,
           color: "#484f58",
           fontFamily: "var(--font-mono)",
-          padding: "8px 16px",
+          padding: "12px 24px",
         }}
       >
         <span
@@ -253,6 +334,110 @@ export default function Sidebar({ onOpenFile, activeFileId, fileTree = [], proje
         <span>main</span>
         <span style={{ color: "#3fb950", marginLeft: "auto" }}>↑ 2 commits</span>
       </div>
+
+      {/* Delete Confirmation Modal */}
+      <AnimatePresence>
+        {projectToDelete && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center"
+            style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setProjectToDelete(null);
+            }}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              onClick={(e) => e.stopPropagation()}
+              className="relative overflow-hidden"
+              style={{
+                width: 400,
+                background: "#161b22",
+                border: "1px solid rgba(248, 81, 73, 0.4)",
+                borderRadius: 16,
+                boxShadow: "0 0 40px rgba(248, 81, 73, 0.15), 0 8px 32px rgba(0,0,0,0.5)",
+              }}
+            >
+              <div style={{ padding: "24px 24px 16px" }}>
+                <div className="flex items-center gap-3 mb-4">
+                  <div
+                    className="flex items-center justify-center rounded-full"
+                    style={{ width: 40, height: 40, background: "rgba(248, 81, 73, 0.1)", color: "#f85149" }}
+                  >
+                    <AlertTriangle size={20} />
+                  </div>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e6edf3", fontFamily: "var(--font-sans)" }}>
+                      Delete Project
+                    </h3>
+                    <p style={{ margin: "4px 0 0", fontSize: 13, color: "#8b949e", fontFamily: "var(--font-sans)" }}>
+                      This action cannot be undone.
+                    </p>
+                  </div>
+                </div>
+                <p style={{ fontSize: 14, color: "#c9d1d9", fontFamily: "var(--font-sans)", lineHeight: 1.5, marginBottom: 24 }}>
+                  Are you sure you want to permanently delete <strong style={{ color: "#e6edf3" }}>{projectToDelete.name}</strong>?
+                  All associated files, snapshots, and analysis data will be lost.
+                </p>
+                <div className="flex justify-end gap-3">
+                  <motion.button
+                    whileHover={!isDeleting ? { backgroundColor: "rgba(255,255,255,0.05)" } : {}}
+                    whileTap={!isDeleting ? { scale: 0.95 } : {}}
+                    onClick={() => !isDeleting && setProjectToDelete(null)}
+                    disabled={isDeleting}
+                    style={{
+                      padding: "8px 16px",
+                      borderRadius: 8,
+                      background: "transparent",
+                      border: "1px solid rgba(255,255,255,0.1)",
+                      color: "#c9d1d9",
+                      fontSize: 13,
+                      fontWeight: 500,
+                      cursor: "pointer",
+                      fontFamily: "var(--font-sans)",
+                    }}
+                  >
+                    Cancel
+                  </motion.button>
+                  <motion.button
+                    whileHover={!isDeleting ? { scale: 1.02 } : {}}
+                    whileTap={!isDeleting ? { scale: 0.95 } : {}}
+                    onClick={async () => {
+                      if (isDeleting) return;
+                      setIsDeleting(true);
+                      await onDeleteProject(projectToDelete.id);
+                      setIsDeleting(false);
+                      setProjectToDelete(null);
+                      setShowProjectList(false);
+                    }}
+                    disabled={isDeleting}
+                    style={{
+                      padding: "8px 16px",
+                      borderRadius: 8,
+                      background: isDeleting ? "rgba(218, 54, 51, 0.6)" : "#da3633",
+                      border: isDeleting ? "1px solid rgba(248, 81, 73, 0.3)" : "1px solid rgba(248, 81, 73, 0.5)",
+                      color: "#fff",
+                      fontSize: 13,
+                      fontWeight: 500,
+                      cursor: isDeleting ? "not-allowed" : "pointer",
+                      boxShadow: isDeleting ? "none" : "0 0 12px rgba(248, 81, 73, 0.4)",
+                      fontFamily: "var(--font-sans)",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
+                    {isDeleting ? <Loader2 size={14} className="animate-spin" /> : null}
+                    {isDeleting ? "Deleting..." : "Delete Project"}
+                  </motion.button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }

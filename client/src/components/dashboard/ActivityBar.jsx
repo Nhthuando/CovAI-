@@ -66,7 +66,7 @@ function ActivityItem({ item, isActive, onClick, delay = 0 }) {
         whileTap={{ scale: 0.92 }}
         className="relative flex items-center justify-center cursor-pointer select-none"
         style={{
-          width: 56,
+          width: 52,
           height: 52,
           background: isActive
             ? "rgba(124, 58, 237, 0.1)"
@@ -74,7 +74,7 @@ function ActivityItem({ item, isActive, onClick, delay = 0 }) {
             ? "rgba(255, 255, 255, 0.04)"
             : "transparent",
           borderRadius: 8,
-          margin: "0 4px",
+          margin: "0 10px",
           transition: "background 0.15s ease",
         }}
         id={`activity-${item.id}`}
@@ -124,7 +124,7 @@ export default function ActivityBar({ active, onSelect }) {
     <div
       className="flex flex-col items-center justify-between py-2 select-none flex-shrink-0"
       style={{
-        width: 64,
+        width: 72,
         background: "var(--ide-activitybar)",
         borderRight: "1px solid var(--ide-border)",
       }}

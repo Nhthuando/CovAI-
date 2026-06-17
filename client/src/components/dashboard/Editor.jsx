@@ -1,124 +1,173 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X,
-  Circle,
   BarChart3,
   GitBranch,
   Zap,
   ChevronRight,
-  Dot,
+  Loader2,
+  AlertCircle,
 } from "lucide-react";
+import { getFileContentApi } from "../../services/project.service";
 
-/* ── App.tsx file code ────────────────────────────────────── */
-const FILES_CODE = {
-  "dashboard-tsx": {
-    name: "Dashboard.tsx",
-    breadcrumb: ["src", "pages", "Dashboard.tsx"],
-    lines: [
-      { n: 1,  cov: "covered",   tokens: [{ t: "keyword", v: "import" }, { t: "plain", v: " { useState, useEffect } " }, { t: "keyword", v: "from" }, { t: "string", v: " 'react'" }, { t: "plain", v: ";" }] },
-      { n: 2,  cov: "covered",   tokens: [{ t: "keyword", v: "import" }, { t: "plain", v: " { motion } " }, { t: "keyword", v: "from" }, { t: "string", v: " 'framer-motion'" }, { t: "plain", v: ";" }] },
-      { n: 3,  cov: null,        tokens: [] },
-      { n: 4,  cov: null,        tokens: [{ t: "comment", v: "// 🤖 TestCovAI — AI-powered Test Coverage Platform" }] },
-      { n: 5,  cov: null,        tokens: [{ t: "keyword", v: "interface" }, { t: "type", v: " CoverageSummary" }, { t: "plain", v: " {" }] },
-      { n: 6,  cov: null,        tokens: [{ t: "plain", v: "  lines" }, { t: "plain", v: ": " }, { t: "type", v: "number" }, { t: "plain", v: ";" }] },
-      { n: 7,  cov: null,        tokens: [{ t: "plain", v: "  branches" }, { t: "plain", v: ": " }, { t: "type", v: "number" }, { t: "plain", v: ";" }] },
-      { n: 8,  cov: null,        tokens: [{ t: "plain", v: "  functions" }, { t: "plain", v: ": " }, { t: "type", v: "number" }, { t: "plain", v: ";" }] },
-      { n: 9,  cov: null,        tokens: [{ t: "plain", v: "}" }] },
-      { n: 10, cov: null,        tokens: [] },
-      { n: 11, cov: "covered",   tokens: [{ t: "keyword", v: "const" }, { t: "fn", v: " Dashboard" }, { t: "plain", v: " = () => {" }] },
-      { n: 12, cov: "covered",   tokens: [{ t: "keyword", v: "  const" }, { t: "plain", v: " [coverage, setCoverage] = " }, { t: "fn", v: "useState" }, { t: "plain", v: "<" }, { t: "type", v: "CoverageSummary" }, { t: "plain", v: ">({" }] },
-      { n: 13, cov: "covered",   tokens: [{ t: "plain", v: "    lines: " }, { t: "number", v: "84" }, { t: "plain", v: "," }] },
-      { n: 14, cov: "covered",   tokens: [{ t: "plain", v: "    branches: " }, { t: "number", v: "71" }, { t: "plain", v: "," }] },
-      { n: 15, cov: "covered",   tokens: [{ t: "plain", v: "    functions: " }, { t: "number", v: "89" }, { t: "plain", v: "," }] },
-      { n: 16, cov: "covered",   tokens: [{ t: "plain", v: "    statements: " }, { t: "number", v: "82" }, { t: "plain", v: "," }] },
-      { n: 17, cov: "covered",   tokens: [{ t: "plain", v: "  });" }] },
-      { n: 18, cov: null,        tokens: [] },
-      { n: 19, cov: "covered",   tokens: [{ t: "fn", v: "  useEffect" }, { t: "plain", v: "(() => {" }] },
-      { n: 20, cov: "covered",   tokens: [{ t: "fn", v: "    fetchCoverage" }, { t: "plain", v: "();" }] },
-      { n: 21, cov: "covered",   tokens: [{ t: "plain", v: "  }, []);" }] },
-      { n: 22, cov: null,        tokens: [] },
-      { n: 23, cov: "uncovered", tokens: [{ t: "keyword", v: "  const" }, { t: "fn", v: " handleError" }, { t: "plain", v: " = (err) => {" }] },
-      { n: 24, cov: "uncovered", tokens: [{ t: "fn", v: "    console" }, { t: "plain", v: ".error(" }, { t: "string", v: "'Coverage fetch failed'" }, { t: "plain", v: ", err);" }] },
-      { n: 25, cov: "uncovered", tokens: [{ t: "plain", v: "  };" }] },
-      { n: 26, cov: null,        tokens: [] },
-      { n: 27, cov: "covered",   tokens: [{ t: "keyword", v: "  return" }, { t: "plain", v: " (" }] },
-      { n: 28, cov: "covered",   tokens: [{ t: "tag", v: "    <motion.div" }] },
-      { n: 29, cov: "covered",   tokens: [{ t: "attr", v: "      initial" }, { t: "plain", v: "={{ opacity: " }, { t: "number", v: "0" }, { t: "plain", v: " }}" }] },
-      { n: 30, cov: "covered",   tokens: [{ t: "attr", v: "      animate" }, { t: "plain", v: "={{ opacity: " }, { t: "number", v: "1" }, { t: "plain", v: " }}" }] },
-      { n: 31, cov: "covered",   tokens: [{ t: "tag", v: "    >" }] },
-      { n: 32, cov: "partial",   tokens: [{ t: "tag", v: "      <CoverageCard" }, { t: "attr", v: " data" }, { t: "plain", v: "={coverage} " }, { t: "tag", v: "/>" }] },
-      { n: 33, cov: "covered",   tokens: [{ t: "tag", v: "    </motion.div>" }] },
-      { n: 34, cov: "covered",   tokens: [{ t: "plain", v: "  );" }] },
-      { n: 35, cov: "covered",   tokens: [{ t: "plain", v: "};" }] },
-      { n: 36, cov: null,        tokens: [] },
-      { n: 37, cov: "covered",   tokens: [{ t: "keyword", v: "export default" }, { t: "plain", v: " Dashboard;" }] },
-    ],
-  },
-  "app-tsx": {
-    name: "App.tsx",
-    breadcrumb: ["src", "App.tsx"],
-    lines: [
-      { n: 1,  cov: "covered", tokens: [{ t: "keyword", v: "import" }, { t: "plain", v: " { Routes, Route } " }, { t: "keyword", v: "from" }, { t: "string", v: " 'react-router-dom'" }, { t: "plain", v: ";" }] },
-      { n: 2,  cov: "covered", tokens: [{ t: "keyword", v: "import" }, { t: "plain", v: " " }, { t: "string", v: "'./index.css'" }, { t: "plain", v: ";" }] },
-      { n: 3,  cov: null,      tokens: [] },
-      { n: 4,  cov: "covered", tokens: [{ t: "keyword", v: "function" }, { t: "fn", v: " App" }, { t: "plain", v: "() {" }] },
-      { n: 5,  cov: "covered", tokens: [{ t: "keyword", v: "  return" }, { t: "plain", v: " (" }] },
-      { n: 6,  cov: "covered", tokens: [{ t: "tag", v: "    <Routes>" }] },
-      { n: 7,  cov: "covered", tokens: [{ t: "tag", v: "      <Route" }, { t: "attr", v: " path" }, { t: "plain", v: '="/"' }, { t: "tag", v: " />" }] },
-      { n: 8,  cov: "covered", tokens: [{ t: "tag", v: "    </Routes>" }] },
-      { n: 9,  cov: "covered", tokens: [{ t: "plain", v: "  );" }] },
-      { n: 10, cov: "covered", tokens: [{ t: "plain", v: "}" }] },
-    ],
-  },
-  "index-tsx": {
-    name: "index.tsx",
-    breadcrumb: ["src", "index.tsx"],
-    lines: [
-      { n: 1,  cov: "covered", tokens: [{ t: "keyword", v: "import" }, { t: "plain", v: " React " }, { t: "keyword", v: "from" }, { t: "string", v: " 'react'" }, { t: "plain", v: ";" }] },
-      { n: 2,  cov: "covered", tokens: [{ t: "keyword", v: "import" }, { t: "plain", v: " ReactDOM " }, { t: "keyword", v: "from" }, { t: "string", v: " 'react-dom/client'" }, { t: "plain", v: ";" }] },
-      { n: 3,  cov: null,      tokens: [] },
-      { n: 4,  cov: "covered", tokens: [{ t: "plain", v: "ReactDOM." }, { t: "fn", v: "createRoot" }, { t: "plain", v: "(" }, { t: "fn", v: "document" }, { t: "plain", v: "." }, { t: "fn", v: "getElementById" }, { t: "plain", v: "(" }, { t: "string", v: "'root'" }, { t: "plain", v: ")!)." }, { t: "fn", v: "render" }, { t: "plain", v: "(<App />);" }] },
-    ],
-  },
+/* ── Token color map (for simple syntax highlighting) ────── */
+const EXT_LANG_MAP = {
+  ".js": "javascript",
+  ".jsx": "javascript",
+  ".ts": "typescript",
+  ".tsx": "typescript",
+  ".json": "json",
+  ".css": "css",
+  ".html": "html",
+  ".md": "markdown",
+  ".py": "python",
+  ".java": "java",
+  ".yml": "yaml",
+  ".yaml": "yaml",
+  ".xml": "xml",
+  ".sh": "shell",
+  ".bash": "shell",
+  ".txt": "text",
 };
 
-/* ── Token color map ─────────────────────────────────────── */
-const TOKEN_COLOR = {
-  keyword: "#c084fc",
-  type:    "#67e8f9",
-  fn:      "#93c5fd",
-  string:  "#86efac",
-  number:  "#fca5a5",
-  comment: "#4b5563",
-  tag:     "#f9a8d4",
-  attr:    "#fde68a",
-  plain:   "#e2e8f0",
-};
+/* ── Simple keyword highlighting ─────────────────────────── */
+const JS_KEYWORDS = new Set([
+  "import", "export", "from", "default", "const", "let", "var",
+  "function", "return", "if", "else", "for", "while", "do",
+  "switch", "case", "break", "continue", "new", "delete", "typeof",
+  "instanceof", "in", "of", "class", "extends", "super", "this",
+  "try", "catch", "finally", "throw", "async", "await", "yield",
+  "null", "undefined", "true", "false", "void", "static",
+  "interface", "type", "enum", "implements", "abstract", "private",
+  "public", "protected", "readonly", "declare", "module", "namespace",
+]);
 
-/* ── Coverage colors ─────────────────────────────────────── */
-const COV_GUTTER = {
-  covered:   "#3fb950",
-  uncovered: "#f85149",
-  partial:   "#d29922",
-};
+const PYTHON_KEYWORDS = new Set([
+  "import", "from", "def", "class", "return", "if", "elif", "else",
+  "for", "while", "break", "continue", "pass", "raise", "try",
+  "except", "finally", "with", "as", "lambda", "yield", "global",
+  "nonlocal", "True", "False", "None", "and", "or", "not", "in",
+  "is", "del", "assert", "async", "await",
+]);
 
-const COV_BG = {
-  covered:   "rgba(63,185,80,0.05)",
-  uncovered: "rgba(248,81,73,0.06)",
-  partial:   "rgba(210,153,34,0.05)",
+function getKeywords(lang) {
+  if (lang === "javascript" || lang === "typescript") return JS_KEYWORDS;
+  if (lang === "python") return PYTHON_KEYWORDS;
+  return JS_KEYWORDS; // fallback
+}
+
+/* ── Tokenize a single line ──────────────────────────────── */
+function tokenizeLine(line, lang) {
+  const tokens = [];
+  const keywords = getKeywords(lang);
+  let i = 0;
+
+  while (i < line.length) {
+    // Comments: // or #
+    if (
+      (line[i] === "/" && line[i + 1] === "/") ||
+      (lang === "python" && line[i] === "#")
+    ) {
+      tokens.push({ type: "comment", value: line.slice(i) });
+      break;
+    }
+
+    // Multi-line comment start /*
+    if (line[i] === "/" && line[i + 1] === "*") {
+      const end = line.indexOf("*/", i + 2);
+      if (end !== -1) {
+        tokens.push({ type: "comment", value: line.slice(i, end + 2) });
+        i = end + 2;
+      } else {
+        tokens.push({ type: "comment", value: line.slice(i) });
+        break;
+      }
+      continue;
+    }
+
+    // Strings: single, double, backtick
+    if (line[i] === '"' || line[i] === "'" || line[i] === "`") {
+      const quote = line[i];
+      let j = i + 1;
+      while (j < line.length && line[j] !== quote) {
+        if (line[j] === "\\") j++; // skip escape
+        j++;
+      }
+      tokens.push({ type: "string", value: line.slice(i, j + 1) });
+      i = j + 1;
+      continue;
+    }
+
+    // Numbers
+    if (/\d/.test(line[i]) && (i === 0 || /[\s(,=+\-*/<>:[\]{};!&|^~%?]/.test(line[i - 1]))) {
+      let j = i;
+      while (j < line.length && /[\d.xXa-fA-FeEnN_]/.test(line[j])) j++;
+      tokens.push({ type: "number", value: line.slice(i, j) });
+      i = j;
+      continue;
+    }
+
+    // Words (keywords, identifiers)
+    if (/[a-zA-Z_$]/.test(line[i])) {
+      let j = i;
+      while (j < line.length && /[a-zA-Z0-9_$]/.test(line[j])) j++;
+      const word = line.slice(i, j);
+      if (keywords.has(word)) {
+        tokens.push({ type: "keyword", value: word });
+      } else if (j < line.length && line[j] === "(") {
+        tokens.push({ type: "function", value: word });
+      } else {
+        tokens.push({ type: "plain", value: word });
+      }
+      i = j;
+      continue;
+    }
+
+    // JSX/HTML tags
+    if (line[i] === "<" && i + 1 < line.length && /[a-zA-Z/]/.test(line[i + 1])) {
+      let j = i;
+      let depth = 0;
+      while (j < line.length) {
+        if (line[j] === "<") depth++;
+        if (line[j] === ">") { j++; break; }
+        j++;
+      }
+      tokens.push({ type: "tag", value: line.slice(i, j) });
+      i = j;
+      continue;
+    }
+
+    // Operators and punctuation
+    tokens.push({ type: "plain", value: line[i] });
+    i++;
+  }
+
+  return tokens;
+}
+
+/* ── Token colors ────────────────────────────────────────── */
+const TOKEN_COLORS = {
+  keyword:  "#c084fc",
+  function: "#93c5fd",
+  string:   "#86efac",
+  number:   "#fca5a5",
+  comment:  "#4b5563",
+  tag:      "#f9a8d4",
+  plain:    "#e2e8f0",
 };
 
 /* ── File Tab ────────────────────────────────────────────── */
 function Tab({ tab, isActive, onSelect, onClose }) {
   const [hovered, setHovered] = useState(false);
 
-  // File icon color by extension
   const getTabColor = (name) => {
     if (name.endsWith(".tsx") || name.endsWith(".jsx")) return "#61dafb";
     if (name.endsWith(".ts"))  return "#3b82f6";
     if (name.endsWith(".js"))  return "#fbbf24";
     if (name.endsWith(".css")) return "#38bdf8";
+    if (name.endsWith(".py"))  return "#3572A5";
+    if (name.endsWith(".json")) return "#4ade80";
     return "#8b949e";
   };
 
@@ -145,7 +194,6 @@ function Tab({ tab, isActive, onSelect, onClose }) {
       }}
       id={`tab-${tab.id}`}
     >
-      {/* Top indicator line */}
       {isActive && (
         <motion.div
           layoutId="tab-top-indicator"
@@ -153,29 +201,12 @@ function Tab({ tab, isActive, onSelect, onClose }) {
           style={{ height: 1.5, background: "#7c3aed", boxShadow: "0 0 8px rgba(124,58,237,0.6)" }}
         />
       )}
-
-      {/* Unsaved dot */}
       {tab.unsaved && (
-        <div
-          style={{
-            width: 5,
-            height: 5,
-            borderRadius: "50%",
-            background: "#a78bfa",
-            flexShrink: 0,
-          }}
-        />
+        <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#a78bfa", flexShrink: 0 }} />
       )}
-
-      {/* Filename with color */}
-      <span
-        className="truncate"
-        style={{ color: isActive ? getTabColor(tab.name) : undefined }}
-      >
+      <span className="truncate" style={{ color: isActive ? getTabColor(tab.name) : undefined }}>
         {tab.name}
       </span>
-
-      {/* Close button */}
       <motion.button
         animate={{ opacity: hovered || isActive ? 1 : 0 }}
         transition={{ duration: 0.1 }}
@@ -191,78 +222,13 @@ function Tab({ tab, isActive, onSelect, onClose }) {
   );
 }
 
-/* ── Coverage Pill Overlay ───────────────────────────────── */
-function CoverageOverlay() {
-  const metrics = [
-    { label: "Lines",      value: 84, color: "#c084fc" },
-    { label: "Branches",   value: 71, color: "#67e8f9" },
-    { label: "Functions",  value: 89, color: "#86efac" },
-    { label: "Statements", value: 82, color: "#fca5a5" },
-  ];
-
-  return (
-    <div
-      className="flex items-center flex-shrink-0"
-      style={{
-        gap: 20,
-        padding: "8px 20px",
-        borderTop: "1px solid var(--ide-border)",
-        background: "linear-gradient(0deg, rgba(124,58,237,0.04) 0%, transparent 100%)",
-        fontFamily: "var(--font-mono)",
-        fontSize: 12,
-      }}
-    >
-      <div className="flex items-center gap-1.5">
-        <BarChart3 size={12} style={{ color: "#a78bfa" }} />
-        <span style={{ color: "#a78bfa", fontWeight: 600 }}>Coverage</span>
-      </div>
-      {metrics.map((m) => (
-        <div key={m.label} className="flex items-center gap-1.5">
-          <span style={{ color: "#484f58" }}>{m.label}:</span>
-          <div
-            className="overflow-hidden rounded-full"
-            style={{ width: 36, height: 3, background: "rgba(255,255,255,0.06)" }}
-          >
-            <motion.div
-              initial={{ width: 0 }}
-              animate={{ width: `${m.value}%` }}
-              transition={{ delay: 0.6, duration: 0.9, ease: "easeOut" }}
-              style={{ height: "100%", background: m.color, borderRadius: 9999 }}
-            />
-          </div>
-          <span style={{ color: m.color, fontWeight: 600 }}>{m.value}%</span>
-        </div>
-      ))}
-      <div className="ml-auto flex items-center gap-1.5" style={{ color: "#484f58" }}>
-        <GitBranch size={11} />
-        <span>main</span>
-        <Zap size={11} style={{ color: "#fde68a", marginLeft: 6 }} />
-        <span style={{ color: "#fde68a" }}>AI Ready</span>
-      </div>
-    </div>
-  );
-}
-
 /* ── Code Line ───────────────────────────────────────────── */
-function CodeLine({ line }) {
+function CodeLine({ lineNum, tokens }) {
   return (
     <div
       className="flex items-stretch group"
-      style={{
-        background: line.cov ? COV_BG[line.cov] : "transparent",
-        paddingRight: 16,
-        minHeight: 22,
-      }}
+      style={{ paddingRight: 16, minHeight: 22 }}
     >
-      {/* Gutter coverage dot */}
-      <div
-        style={{
-          width: 3,
-          flexShrink: 0,
-          background: line.cov ? COV_GUTTER[line.cov] : "transparent",
-        }}
-      />
-
       {/* Line number */}
       <div
         className="select-none text-right flex-shrink-0"
@@ -270,13 +236,13 @@ function CodeLine({ line }) {
           width: 60,
           paddingRight: 20,
           paddingTop: 2,
-          color: line.cov ? (line.cov === "uncovered" ? "#6b2d2d" : "#3b4048") : "var(--ide-line-num)",
+          color: "var(--ide-line-num)",
           fontFamily: "var(--font-mono)",
           fontSize: 13,
           lineHeight: "1.6",
         }}
       >
-        {line.n}
+        {lineNum}
       </div>
 
       {/* Code tokens */}
@@ -290,12 +256,12 @@ function CodeLine({ line }) {
           paddingLeft: 4,
         }}
       >
-        {line.tokens.length === 0 ? (
+        {tokens.length === 0 ? (
           <span>&nbsp;</span>
         ) : (
-          line.tokens.map((tok, i) => (
-            <span key={i} style={{ color: TOKEN_COLOR[tok.t] || TOKEN_COLOR.plain }}>
-              {tok.v}
+          tokens.map((tok, i) => (
+            <span key={i} style={{ color: TOKEN_COLORS[tok.type] || TOKEN_COLORS.plain }}>
+              {tok.value}
             </span>
           ))
         )}
@@ -305,7 +271,42 @@ function CodeLine({ line }) {
 }
 
 /* ── Editor ─────────────────────────────────────────────── */
-export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fileTree = [], isLoadingTree }) {
+export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fileTree = [], isLoadingTree, projectId }) {
+  const [fileContents, setFileContents] = useState({}); // cache: { [fileId]: { content, loading, error } }
+  const fetchedRef = useRef(new Set()); // track what we've already fetched
+
+  // Fetch file content when active tab changes
+  useEffect(() => {
+    if (!activeTabId || !projectId) return;
+    
+    // Already have content or currently loading
+    if (fileContents[activeTabId]?.content !== undefined || fileContents[activeTabId]?.loading) return;
+    // Already fetched (prevents double fetch in StrictMode)
+    if (fetchedRef.current.has(activeTabId)) return;
+
+    fetchedRef.current.add(activeTabId);
+
+    setFileContents((prev) => ({
+      ...prev,
+      [activeTabId]: { content: undefined, loading: true, error: null },
+    }));
+
+    getFileContentApi(projectId, activeTabId)
+      .then((res) => {
+        setFileContents((prev) => ({
+          ...prev,
+          [activeTabId]: { content: res.data.content, loading: false, error: null },
+        }));
+      })
+      .catch((err) => {
+        setFileContents((prev) => ({
+          ...prev,
+          [activeTabId]: { content: undefined, loading: false, error: err.message || "Failed to load file" },
+        }));
+      });
+  }, [activeTabId, projectId, fileContents]);
+
+  // No files state
   if (!isLoadingTree && fileTree.length === 0) {
     return (
       <motion.div
@@ -324,6 +325,7 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
     );
   }
 
+  // No tabs open
   if (tabs.length === 0) {
     return (
       <motion.div
@@ -339,7 +341,23 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
     );
   }
 
-  const fileData = FILES_CODE[activeTabId] || FILES_CODE["dashboard-tsx"];
+  const currentFile = fileContents[activeTabId] || {};
+  const activeTab = tabs.find((t) => t.id === activeTabId);
+
+  // Determine language from file extension
+  const ext = activeTab ? "." + activeTab.name.split(".").pop() : "";
+  const lang = EXT_LANG_MAP[ext.toLowerCase()] || "text";
+
+  // Build breadcrumb from file path (id is the relative path)
+  const breadcrumb = activeTabId ? activeTabId.split("/") : [];
+
+  // Parse content into lines with tokens
+  const lines = currentFile.content
+    ? currentFile.content.split("\n").map((line, i) => ({
+        lineNum: i + 1,
+        tokens: tokenizeLine(line, lang),
+      }))
+    : [];
 
   return (
     <motion.div
@@ -383,12 +401,12 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
           padding: "6px 20px",
         }}
       >
-        {fileData.breadcrumb.map((crumb, i) => (
+        {breadcrumb.map((crumb, i) => (
           <span key={i} className="flex items-center">
             {i > 0 && <ChevronRight size={11} style={{ margin: "0 3px", opacity: 0.4 }} />}
             <span
               style={{
-                color: i === fileData.breadcrumb.length - 1 ? "#8b949e" : "#484f58",
+                color: i === breadcrumb.length - 1 ? "#8b949e" : "#484f58",
               }}
             >
               {crumb}
@@ -400,59 +418,81 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
       {/* ── Code Area ─────────────────────────────────────── */}
       <div className="flex-1 overflow-auto relative">
         <AnimatePresence mode="wait">
-          <motion.div
-            key={activeTabId}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
-            className="py-2"
-          >
-            {fileData.lines.map((line) => (
-              <CodeLine key={line.n} line={line} />
-            ))}
-          </motion.div>
+          {currentFile.loading ? (
+            <motion.div
+              key="loading"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="flex flex-col items-center justify-center h-full"
+              style={{ gap: 12 }}
+            >
+              <Loader2 size={24} className="animate-spin" style={{ color: "#a78bfa" }} />
+              <span style={{ color: "#6e7681", fontSize: 13, fontFamily: "var(--font-sans)" }}>
+                Loading file content...
+              </span>
+            </motion.div>
+          ) : currentFile.error ? (
+            <motion.div
+              key="error"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="flex flex-col items-center justify-center h-full"
+              style={{ gap: 12 }}
+            >
+              <AlertCircle size={24} style={{ color: "#f85149" }} />
+              <span style={{ color: "#f85149", fontSize: 13, fontFamily: "var(--font-sans)" }}>
+                {currentFile.error}
+              </span>
+            </motion.div>
+          ) : (
+            <motion.div
+              key={activeTabId}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              className="py-2"
+            >
+              {lines.map((line) => (
+                <CodeLine key={line.lineNum} lineNum={line.lineNum} tokens={line.tokens} />
+              ))}
+            </motion.div>
+          )}
         </AnimatePresence>
-
-        {/* Coverage pill — bottom-right floating */}
-        <motion.div
-          initial={{ opacity: 0, scale: 0.9, y: 8 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          transition={{ delay: 0.8, duration: 0.4, ease: "easeOut" }}
-          className="absolute bottom-5 right-5"
-          style={{ zIndex: 10 }}
-        >
-          <div
-            className="flex items-center gap-2 px-4 py-2 rounded-full"
-            style={{
-              background: "rgba(13,17,23,0.85)",
-              backdropFilter: "blur(20px)",
-              WebkitBackdropFilter: "blur(20px)",
-              border: "1px solid rgba(124,58,237,0.25)",
-              boxShadow: "0 0 20px rgba(124,58,237,0.15), 0 8px 32px rgba(0,0,0,0.5)",
-              fontSize: 12,
-              fontFamily: "var(--font-mono)",
-            }}
-          >
-            <div
-              className="animate-pulse"
-              style={{
-                width: 7,
-                height: 7,
-                borderRadius: "50%",
-                background: "#3fb950",
-                boxShadow: "0 0 8px rgba(63,185,80,0.8)",
-                animationDuration: "1.5s",
-              }}
-            />
-            <span style={{ color: "#8b949e" }}>Test Coverage:</span>
-            <span style={{ color: "#a78bfa", fontWeight: 600 }}>84%</span>
-          </div>
-        </motion.div>
       </div>
 
-      {/* ── Coverage Bottom Bar ────────────────────────────── */}
-      <CoverageOverlay />
+      {/* ── Bottom Info Bar ────────────────────────────────── */}
+      <div
+        className="flex items-center flex-shrink-0"
+        style={{
+          gap: 20,
+          padding: "8px 20px",
+          borderTop: "1px solid var(--ide-border)",
+          background: "linear-gradient(0deg, rgba(124,58,237,0.04) 0%, transparent 100%)",
+          fontFamily: "var(--font-mono)",
+          fontSize: 12,
+        }}
+      >
+        <div className="flex items-center gap-1.5">
+          <BarChart3 size={12} style={{ color: "#a78bfa" }} />
+          <span style={{ color: "#a78bfa", fontWeight: 600 }}>
+            {lang.charAt(0).toUpperCase() + lang.slice(1)}
+          </span>
+        </div>
+        {currentFile.content && (
+          <span style={{ color: "#484f58" }}>
+            {lines.length} lines
+          </span>
+        )}
+        <div className="ml-auto flex items-center gap-1.5" style={{ color: "#484f58" }}>
+          <GitBranch size={11} />
+          <span>main</span>
+          <Zap size={11} style={{ color: "#fde68a", marginLeft: 6 }} />
+          <span style={{ color: "#fde68a" }}>AI Ready</span>
+        </div>
+      </div>
     </motion.div>
   );
 }

@@ -41,6 +41,14 @@ export async function getProjectsApi() {
   return handleResponse(res);
 }
 
+export async function deleteProjectApi(projectId) {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}`, {
+    method: "DELETE",
+    headers: getAuthHeaders(),
+  });
+  return handleResponse(res);
+}
+
 export async function getProjectTreeApi(projectId) {
   const res = await fetch(`${BASE_URL}/projects/${projectId}/tree`, {
     headers: getAuthHeaders(),
@@ -89,6 +97,23 @@ export async function importGithubRepoApi(projectId, owner, repo) {
 
 export async function getGithubRepositoriesApi() {
   const res = await fetch(`${BASE_URL}/auth/github/repositories`, {
+    headers: getAuthHeaders(),
+  });
+  return handleResponse(res);
+}
+
+export async function getFileContentApi(projectId, filePath) {
+  const res = await fetch(
+    `${BASE_URL}/projects/${projectId}/file-content?path=${encodeURIComponent(filePath)}`,
+    {
+      headers: getAuthHeaders(),
+    }
+  );
+  return handleResponse(res);
+}
+
+export async function getUserProfileApi() {
+  const res = await fetch(`${BASE_URL}/users/me`, {
     headers: getAuthHeaders(),
   });
   return handleResponse(res);

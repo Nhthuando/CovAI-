@@ -1,7 +1,8 @@
 import { useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CloudUpload, FileArchive, X, CheckCircle2, Loader2 } from "lucide-react";
-import { createProjectApi, uploadZipApi } from "../../../services/project.service";
+import { createProjectApi, uploadZipApi, getProjectsApi } from "../../../services/project.service";
+import { useToast } from "../ToastContext";
 
 /* ── Drag states ─────────────────────────────────────────── */
 const DRAG_STATES = {
@@ -10,12 +11,13 @@ const DRAG_STATES = {
   dropped: "dropped",
 };
 
-export default function LocalUpload({ onClose }) {
+export default function LocalUpload({ onClose, onSuccess }) {
   const [dragState, setDragState] = useState(DRAG_STATES.idle);
   const [fileName, setFileName] = useState(null);
   const [fileObj, setFileObj] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const { showToast } = useToast();
 
   const handleDragOver = useCallback((e) => {
     e.preventDefault();
@@ -70,15 +72,48 @@ export default function LocalUpload({ onClose }) {
     setErrorMsg("");
     try {
       const projectName = fileName.replace(/\.[^/.]+$/, ""); 
-      const projRes = await createProjectApi({ name: projectName });
-      const projectId = projRes.data.id;
+      let projectId;
+
+      try {
+        const projRes = await createProjectApi({ name: projectName });
+        projectId = projRes.data.id;
+      } catch (createErr) {
+        // Handle 409 — project already exists
+        if (createErr.message?.includes("already exists") || createErr.message?.includes("Duplicate")) {
+          const { projects } = await getProjectsApi();
+          const existing = projects?.find((p) => p.name === projectName);
+          if (existing) {
+            projectId = existing.id;
+            showToast({
+              type: "info",
+              title: "Using existing project",
+              message: `Project "${projectName}" already exists. Uploading new snapshot into it.`,
+            });
+          } else {
+            throw new Error("Project already exists but could not be found.");
+          }
+        } else {
+          throw createErr;
+        }
+      }
       
       await uploadZipApi(projectId, fileObj);
+
+      showToast({
+        type: "success",
+        title: "Upload successful",
+        message: `Project "${projectName}" has been uploaded.`,
+      });
       
-      alert("Tải lên dự án thành công!");
-      if (onClose) onClose();
+      if (onSuccess) onSuccess();
+      else if (onClose) onClose();
     } catch (error) {
       setErrorMsg(error.message);
+      showToast({
+        type: "error",
+        title: "Upload failed",
+        message: error.message || "An unexpected error occurred.",
+      });
     } finally {
       setUploading(false);
     }

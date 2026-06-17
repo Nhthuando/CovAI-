@@ -245,3 +245,35 @@ input:-webkit-autofill:focus {
 .line-covered   { background: rgba(63, 185, 80, 0.06); }
 .line-uncovered { background: rgba(248, 81, 73, 0.06); }
 .line-partial   { background: rgba(210, 153, 34, 0.06); }
+
+/* ============================================================
+   IDE PANEL SPACING FIXES
+   Tailwind Preflight strips default padding/margin from
+   elements like p, button, pre. These rules restore proper
+   breathing room inside the IDE dashboard components.
+   ============================================================ */
+
+/* Fix paragraph spacing in AI chat messages */
+.ide-root p + p {
+  margin-top: 0.35em;
+}
+
+/* Ensure buttons have minimal padding so icons aren't cramped */
+.ide-root button {
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  line-height: 1;
+}
+
+/* Fix pre/code blocks losing spacing in AI panel */
+.ide-root pre {
+  margin: 0;
+}
+
+/* Ensure gap/flex utilities actually have spacing even with reset */
+.ide-root .flex.items-center {
+  min-height: 0;
+}
+

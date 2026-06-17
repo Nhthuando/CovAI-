@@ -14,6 +14,7 @@ export const getUserById = async (userId) => {
     name: user.name,
     email: user.email,
     avatarUrl: user.avatarUrl,
+    githubUserId: user.githubUserId || null,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
   };

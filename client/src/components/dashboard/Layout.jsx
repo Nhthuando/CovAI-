@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import ActivityBar from "./ActivityBar";
@@ -6,6 +6,7 @@ import Sidebar from "./Sidebar";
 import Editor from "./Editor";
 import AIPanel from "./AIPanel";
 import ImportLayout from "./import/ImportLayout";
+import { ToastProvider, useToast } from "./ToastContext";
 import {
   PanelLeftClose,
   PanelLeftOpen,
@@ -37,7 +38,11 @@ const panelVariants = {
   visible: { opacity: 1, y: 0, transition: { duration: 0.35, ease: "easeOut" } },
 };
 
-export default function Layout() {
+/* ── Inner Layout (needs useToast) ───────────────────────── */
+function LayoutInner() {
+  const { showToast } = useToast();
+  const navigate = useNavigate();
+
   const handleSelectActivity = (id) => {
     if (id === "logout") {
       localStorage.removeItem("token");
@@ -58,30 +63,97 @@ export default function Layout() {
   const [activeTabId,    setActiveTabId]    = useState(null);
   const [activeFileId,   setActiveFileId]   = useState(null);
   const [showImport,     setShowImport]     = useState(false);
-  const navigate = useNavigate();
 
+  const [projects, setProjects] = useState([]);
   const [project, setProject] = useState(null);
   const [fileTree, setFileTree] = useState([]);
   const [isLoadingTree, setIsLoadingTree] = useState(true);
 
-  useEffect(() => {
-    async function init() {
-      try {
-        const { projects } = await getProjectsApi();
-        if (projects && projects.length > 0) {
-          const firstProj = projects[0];
-          setProject(firstProj);
-          const { data: tree } = await getProjectTreeApi(firstProj.id);
-          setFileTree(tree);
+  const loadData = useCallback(async (activeProjId = null, retries = 3, delay = 2000) => {
+    setIsLoadingTree(true);
+    try {
+      const { projects: loadedProjects } = await getProjectsApi();
+      if (loadedProjects && loadedProjects.length > 0) {
+        setProjects(loadedProjects);
+        const targetProj = activeProjId
+          ? loadedProjects.find((p) => p.id === activeProjId) || loadedProjects[0]
+          : loadedProjects[0];
+        
+        setProject(targetProj);
+
+        // Try loading tree with retries
+        let lastError = null;
+        for (let attempt = 1; attempt <= retries; attempt++) {
+          try {
+            const { data: tree } = await getProjectTreeApi(targetProj.id);
+            setFileTree(tree || []);
+            lastError = null;
+            break;
+          } catch (treeErr) {
+            lastError = treeErr;
+            if (attempt < retries) {
+              await new Promise((r) => setTimeout(r, delay));
+            }
+          }
         }
-      } catch (err) {
-        console.error("Failed to load project tree:", err);
-      } finally {
-        setIsLoadingTree(false);
+
+        if (lastError) {
+          console.error("Failed to load project tree after retries:", lastError);
+          setFileTree([]);
+          showToast({
+            type: "warning",
+            title: "Project tree not ready",
+            message: "Source code is still being extracted. Please wait a moment and click Refresh in the Explorer panel.",
+          });
+        }
+      } else {
+        setProjects([]);
+        setProject(null);
+        setFileTree([]);
       }
+    } catch (err) {
+      console.error("Failed to load projects:", err);
+      showToast({
+        type: "error",
+        title: "Load failed",
+        message: "Could not load project data. Please refresh the page.",
+      });
+    } finally {
+      setIsLoadingTree(false);
     }
-    init();
-  }, []);
+  }, [showToast]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const handleChangeProject = (projectId) => {
+    if (project?.id === projectId) return;
+    setFileTree([]);
+    setTabs([]);
+    setActiveFileId(null);
+    setActiveTabId(null);
+    loadData(projectId);
+  };
+
+  const handleDeleteProject = async (projectId) => {
+    try {
+      const { deleteProjectApi } = await import("../../services/project.service");
+      await deleteProjectApi(projectId);
+      showToast({ type: "success", title: "Project deleted", message: "The project has been removed." });
+      if (project?.id === projectId) {
+        setFileTree([]);
+        setTabs([]);
+        setActiveFileId(null);
+        setActiveTabId(null);
+        loadData();
+      } else {
+        setProjects((prev) => prev.filter(p => p.id !== projectId));
+      }
+    } catch (err) {
+      showToast({ type: "error", title: "Delete failed", message: err.message || "Failed to delete project." });
+    }
+  };
 
   const handleOpenFile = (node) => {
     if (node.type === "folder") return;
@@ -332,6 +404,7 @@ export default function Layout() {
         variants={containerVariants}
         initial="hidden"
         animate="visible"
+        style={{ gap: 1 }}
       >
         {/* Activity Bar */}
         <motion.div variants={panelVariants}>
@@ -349,7 +422,17 @@ export default function Layout() {
               transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
               style={{ overflow: "hidden", flexShrink: 0 }}
             >
-              <Sidebar onOpenFile={handleOpenFile} activeFileId={activeFileId} fileTree={fileTree} projectName={project?.name} isLoading={isLoadingTree} />
+              <Sidebar
+                onOpenFile={handleOpenFile}
+                activeFileId={activeFileId}
+                fileTree={fileTree}
+                project={project}
+                projects={projects}
+                onChangeProject={handleChangeProject}
+                onDeleteProject={handleDeleteProject}
+                isLoading={isLoadingTree}
+                onRefresh={() => loadData(project?.id, 3, 2000)}
+              />
             </motion.div>
           )}
         </AnimatePresence>
@@ -363,6 +446,7 @@ export default function Layout() {
             onCloseTab={handleCloseTab}
             fileTree={fileTree}
             isLoadingTree={isLoadingTree}
+            projectId={project?.id}
           />
         </motion.div>
 
@@ -446,9 +530,30 @@ export default function Layout() {
       {/* ── Import Project Fullscreen Overlay ──────────────── */}
       <AnimatePresence>
         {showImport && (
-          <ImportLayout onClose={() => setShowImport(false)} />
+          <ImportLayout
+            onClose={() => setShowImport(false)}
+            onSuccess={() => {
+              setShowImport(false);
+              showToast({
+                type: "success",
+                title: "Import successful",
+                message: "Loading project files...",
+              });
+              // Delay to give server time to finish extraction
+              setTimeout(() => loadData(5, 2500), 1500);
+            }}
+          />
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+/* ── Exported Layout with ToastProvider wrapper ────────────── */
+export default function Layout() {
+  return (
+    <ToastProvider>
+      <LayoutInner />
+    </ToastProvider>
   );
 }

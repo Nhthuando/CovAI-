@@ -1,5 +1,6 @@
 import { GitHubCloneService } from "../services/githubClone.service.js";
 import prisma from "../config/prisma.js";
+import { detectJest } from "../utils/jestDetector.js";
 
 export const cloneGitHubRepositoryByUrl = async (req, res) => {
   try {
@@ -29,7 +30,22 @@ export const cloneGitHubRepositoryByUrl = async (req, res) => {
       false,
     );
 
-    res.status(200).json(cloneResult);
+    const detection = detectJest(cloneResult.localPath);
+
+    const snapshot = await prisma.projectSnapshot.create({
+      data: {
+        projectId,
+        source: "GITHUB",
+        commitSha: cloneResult.commitSha,
+        storagePath: cloneResult.localPath,
+        rootDir: cloneResult.localPath,
+        hasJest: detection.hasJest,
+        jestConfigPath: detection.configPath,
+        jestCommand: detection.jestCommand,
+      }
+    });
+
+    res.status(200).json({ ...cloneResult, snapshotId: snapshot.id });
   } catch (error) {
     console.error("Error cloning GitHub repository by URL:", error);
     res.status(500).json({ message: "Error during repository cloning." });
@@ -67,7 +83,22 @@ export const importGitHubRepository = async (req, res) => {
       true,
     );
 
-    res.status(200).json(cloneResult);
+    const detection = detectJest(cloneResult.localPath);
+
+    const snapshot = await prisma.projectSnapshot.create({
+      data: {
+        projectId,
+        source: "GITHUB",
+        commitSha: cloneResult.commitSha,
+        storagePath: cloneResult.localPath,
+        rootDir: cloneResult.localPath,
+        hasJest: detection.hasJest,
+        jestConfigPath: detection.configPath,
+        jestCommand: detection.jestCommand,
+      }
+    });
+
+    res.status(200).json({ ...cloneResult, snapshotId: snapshot.id });
   } catch (error) {
     console.error("Error importing GitHub repository:", error);
 

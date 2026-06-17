@@ -56,8 +56,8 @@ export class GitHubCloneService {
         cwd: repoDir,
       });
 
-      // Optionally remove .git if you only want source files
-      // fs.rmSync(path.join(repoDir, ".git"), { recursive: true, force: true });
+      // Automatically remove .git to save a lot of server storage space
+      fs.rmSync(path.join(repoDir, ".git"), { recursive: true, force: true });
 
       return {
         localPath: repoDir,

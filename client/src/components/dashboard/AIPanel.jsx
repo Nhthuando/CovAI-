@@ -418,7 +418,7 @@ function ChatInput({ onSend, isTyping }) {
   return (
     <div
       className="flex-shrink-0"
-      style={{ padding: "8px 14px 10px" }}
+      style={{ padding: "10px 20px 16px" }}
     >
       <div
         className="relative rounded-2xl overflow-hidden transition-all duration-300"
@@ -471,8 +471,9 @@ function ChatInput({ onSend, isTyping }) {
             onBlur={() => setFocused(false)}
             placeholder="Ask TestCovAI anything..."
             rows={1}
-            className="w-full resize-none outline-none bg-transparent px-4 pt-3.5 pb-1 text-sm"
+            className="w-full resize-none outline-none bg-transparent text-sm"
             style={{
+              padding: "16px 20px 4px 20px",
               fontFamily: "var(--font-sans)",
               color: "#e6edf3",
               fontSize: 13,
@@ -483,7 +484,7 @@ function ChatInput({ onSend, isTyping }) {
           />
 
           {/* Actions row */}
-          <div className="flex items-center justify-between px-3 pb-2.5 pt-1">
+          <div className="flex items-center justify-between" style={{ padding: "4px 16px 10px 16px" }}>
             <div className="flex items-center gap-0.5">
               <motion.button
                 whileTap={{ scale: 0.9 }}
@@ -557,8 +558,8 @@ function QuickActions({ onAction }) {
   ];
   return (
     <div
-      className="flex gap-2 flex-shrink-0"
-      style={{ padding: "6px 16px 8px" }}
+      className="flex gap-3 flex-shrink-0"
+      style={{ padding: "8px 20px 12px" }}
     >
       {actions.map(({ label, icon: Icon, color }) => (
         <motion.button
@@ -635,8 +636,8 @@ export default function AIPanel() {
       <div
         className="flex items-center justify-between flex-shrink-0"
         style={{
-          height: 52,
-          padding: "0 18px",
+          height: 54,
+          padding: "0 20px",
           borderBottom: "1px solid rgba(255,255,255,0.06)",
           background: "linear-gradient(180deg, rgba(124,58,237,0.04) 0%, transparent 100%)",
         }}
@@ -700,8 +701,8 @@ export default function AIPanel() {
       <div
         className="flex-1 overflow-y-auto flex flex-col"
         style={{
-          gap: 20,
-          padding: "16px 16px",
+          gap: 22,
+          padding: "18px 18px",
           scrollbarWidth: "thin",
           scrollbarColor: "rgba(124,58,237,0.25) transparent",
         }}

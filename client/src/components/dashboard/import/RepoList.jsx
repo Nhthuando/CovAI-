@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Search, Folder, Lock, User, Loader2 } from "lucide-react";
-import { getGithubRepositoriesApi, createProjectApi, importGithubRepoApi } from "../../../services/project.service";
+import { getGithubRepositoriesApi, createProjectApi, importGithubRepoApi, getProjectsApi } from "../../../services/project.service";
+import { useToast } from "../ToastContext";
 
 /* ── Helper ─────────────────────────────────── */
 function getLangColor(lang) {
@@ -17,21 +18,66 @@ function getLangColor(lang) {
 }
 
 /* ── Single Repo Row ─────────────────────────────────────── */
-function RepoItem({ repo, index, onClose }) {
+function RepoItem({ repo, index, onClose, onSuccess, showToast }) {
   const [hovered, setHovered] = useState(false);
   const [importing, setImporting] = useState(false);
   const Icon = repo.isPrivate ? Lock : Folder;
 
   const handleImport = async () => {
     if (importing) return;
+
+    if (repo.language && repo.language !== "JavaScript" && repo.language !== "TypeScript") {
+      showToast({
+        type: "warning",
+        title: "Language not supported",
+        message: "This project currently only supports JavaScript/Jest. Please wait for future updates.",
+      });
+      return;
+    }
+
     setImporting(true);
     try {
-      const projRes = await createProjectApi({ name: repo.name });
-      await importGithubRepoApi(projRes.data.id, repo.owner, repo.name);
-      alert("Import dự án thành công!");
-      if (onClose) onClose();
+      let projectId;
+
+      try {
+        const projRes = await createProjectApi({ name: repo.name });
+        projectId = projRes.data.id;
+      } catch (createErr) {
+        // Handle 409 — project already exists, find it and reuse
+        if (createErr.message?.includes("already exists") || createErr.message?.includes("Duplicate")) {
+          const { projects } = await getProjectsApi();
+          const existing = projects?.find((p) => p.name === repo.name);
+          if (existing) {
+            projectId = existing.id;
+            showToast({
+              type: "info",
+              title: "Using existing project",
+              message: `Project "${repo.name}" already exists. Importing repository into it.`,
+            });
+          } else {
+            throw new Error("Project already exists but could not be found.");
+          }
+        } else {
+          throw createErr;
+        }
+      }
+
+      await importGithubRepoApi(projectId, repo.owner, repo.name);
+
+      showToast({
+        type: "success",
+        title: "Import successful",
+        message: `Repository "${repo.name}" has been imported successfully.`,
+      });
+
+      if (onSuccess) onSuccess();
+      else if (onClose) onClose();
     } catch (err) {
-      alert("Lỗi import: " + err.message);
+      showToast({
+        type: "error",
+        title: "Import failed",
+        message: err.message || "An unexpected error occurred during import.",
+      });
     } finally {
       setImporting(false);
     }
@@ -156,12 +202,13 @@ function RepoItem({ repo, index, onClose }) {
 }
 
 /* ── Repo List ───────────────────────────────────────────── */
-export default function RepoList({ onClose }) {
+export default function RepoList({ onClose, onSuccess }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [focused, setFocused] = useState(false);
   const [repos, setRepos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
+  const { showToast } = useToast();
 
   useEffect(() => {
     getGithubRepositoriesApi()
@@ -277,7 +324,7 @@ export default function RepoList({ onClose }) {
           </div>
         ) : filteredRepos.length > 0 ? (
           filteredRepos.map((repo, i) => (
-            <RepoItem key={repo.id} repo={repo} index={i} onClose={onClose} />
+            <RepoItem key={repo.id} repo={repo} index={i} onClose={onClose} onSuccess={onSuccess} showToast={showToast} />
           ))
         ) : (
           <motion.div
