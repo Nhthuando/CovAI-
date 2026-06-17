@@ -128,12 +128,12 @@ class ProjectController {
       const tree = await getProjectTree(id, req.user.id);
       return res.status(200).json({ success: true, data: tree });
     } catch (error) {
-      console.error(error);
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
           .json({ success: false, message: error.message });
       }
+      console.error(error);
       return res.status(500).json({
         success: false,
         message: "Failed to get project tree",
@@ -159,12 +159,12 @@ class ProjectController {
       const result = await getFileContent(id, req.user.id, filePath);
       return res.status(200).json({ success: true, data: result });
     } catch (error) {
-      console.error(error);
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
           .json({ success: false, message: error.message });
       }
+      console.error(error);
       return res.status(500).json({
         success: false,
         message: "Failed to read file content",

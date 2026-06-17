@@ -3,7 +3,7 @@ import { detectJest } from "../utils/jestDetector.js";
 import { detectAndSaveProject } from "./jestDetection.service.js";
 import { createSnapshotIngestJob, createRunTestsJob } from "./job.service.js";
 import { getBucket } from "../config/firebase.js";
-import { scanZipBomb } from "../middlewares/upload.middleware.js";
+import { scanArchiveBomb } from "../middlewares/upload.middleware.js";
 import path from "path";
 import { createHash, randomUUID } from "crypto";
 import { ServiceError } from "../utils/serviceError.js";
@@ -192,7 +192,7 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
     }
 
     try {
-        await scanZipBomb(file.buffer);
+        await scanArchiveBomb(file.buffer, file.originalname);
     } catch (scanError) {
         throw new ServiceError(scanError.message, 400);
     }
@@ -313,12 +313,8 @@ export const deleteProject = async (projectId, userId) => {
         throw new ServiceError("You are not allowed to delete this project", 403);
     }
 
-    const runningJobs = await prisma.job.count({
-        where: { projectId, status: "RUNNING" },
-    });
-    if (runningJobs > 0) {
-        throw new ServiceError("Cannot delete project while jobs are running", 409);
-    }
+    // Allow deletion even if there are zombie running jobs
+    // The transaction below will clean up all jobs via cascading.
 
     // Fetch snapshots BEFORE they are deleted from DB so we can clean up local dirs
     const snapshots = await prisma.projectSnapshot.findMany({

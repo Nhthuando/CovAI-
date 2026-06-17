@@ -3,7 +3,7 @@ import path from "path";
 import { randomUUID } from "crypto";
 import { getBucket } from "../config/firebase.js";
 import prisma from "../config/prisma.js";
-import { scanZipBomb } from "../middlewares/upload.middleware.js";
+import { scanArchiveBomb } from "../middlewares/upload.middleware.js";
 import { processIngestJob } from "../services/ingestJob.service.js";
 import { createSnapshotIngestJob } from "../services/job.service.js";
 import { ServiceError } from "../utils/serviceError.js";
@@ -86,9 +86,9 @@ export const ingestJob = async (req, res) => {
             return res.status(400).json({ message: "projectId không hợp lệ." });
         }
 
-        // ── Scan zip bomb trước khi làm bất cứ điều gì ────────────────────
+        // ── Scan archive bomb trước khi làm bất cứ điều gì ────────────────────
         try {
-            await scanZipBomb(file.buffer);
+            await scanArchiveBomb(file.buffer, file.originalname);
         } catch (scanError) {
             return res.status(400).json({ message: scanError.message });
         }

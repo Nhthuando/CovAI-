@@ -353,7 +353,7 @@ export default function LocalUpload({ onClose, onSuccess }) {
                   lineHeight: 1.5,
                 }}
               >
-                Drag & drop .zip project here
+                Drag & drop .zip or .rar project here
               </span>
             </div>
 

@@ -1,7 +1,7 @@
 import express from "express";
 import projectController from "./../controllers/project.controller.js";
 import { authMiddleware } from "../middlewares/auth.middleware.js";
-import { uploadSingleZip } from "../middlewares/upload.middleware.js";
+import { uploadSingleArchive } from "../middlewares/upload.middleware.js";
 
 const router = express.Router();
 
@@ -12,7 +12,7 @@ router.get("/", projectController.listProjects);
 router.get("/:id", projectController.getProjectById);
 router.get("/:id/tree", projectController.getProjectTree);
 router.get("/:id/file-content", projectController.getFileContent);
-router.post("/:id/upload-zip", uploadSingleZip, projectController.uploadZip);
+router.post("/:id/upload-zip", uploadSingleArchive, projectController.uploadZip);
 router.post("/:id/run-analysis", projectController.runAnalysis);
 router.post("/:id/coverage/parse", projectController.parseCoverageFiles);
 router.post(

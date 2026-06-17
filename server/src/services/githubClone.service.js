@@ -58,6 +58,8 @@ export class GitHubCloneService {
 
       // Automatically remove .git to save a lot of server storage space
       fs.rmSync(path.join(repoDir, ".git"), { recursive: true, force: true });
+      // Remove node_modules if the user accidentally committed it
+      fs.rmSync(path.join(repoDir, "node_modules"), { recursive: true, force: true });
 
       return {
         localPath: repoDir,

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "crypto";
 import path from "path";
 import { getBucket } from "../config/firebase.js";
 import prisma from "../config/prisma.js";
-import { scanZipBomb } from "../middlewares/upload.middleware.js";
+import { scanArchiveBomb } from "../middlewares/upload.middleware.js";
 import { processIngestJob } from "../services/ingestJob.service.js";
 import { createSnapshotIngestJob } from "../services/job.service.js";
 import { ServiceError } from "../utils/serviceError.js";
@@ -18,11 +18,11 @@ export const uploadZip = async (req, res) => {
         const file = req.file;
 
         if (!file || !projectId || typeof projectId !== "string" || projectId.trim().length === 0) {
-            return res.status(400).json({ message: "Vui lòng cung cấp đủ file zip và projectId hợp lệ." });
+            return res.status(400).json({ message: "Vui lòng cung cấp đủ file nén và projectId hợp lệ." });
         }
 
         try {
-            await scanZipBomb(file.buffer);
+            await scanArchiveBomb(file.buffer, file.originalname);
         } catch (scanError) {
             return res.status(400).json({
                 message: scanError.message,
