@@ -12,4 +12,14 @@ export const meValid = z.object({
     .url("Must be a valid URL!")
     .optional()
     .or(z.literal("")),
+  jobTitle: z
+    .string()
+    .max(100, "Job title must not exceed 100 characters!")
+    .optional()
+    .or(z.literal("")),
+  bio: z
+    .string()
+    .max(500, "Bio must not exceed 500 characters!")
+    .optional()
+    .or(z.literal("")),
 });

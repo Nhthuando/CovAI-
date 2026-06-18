@@ -56,6 +56,9 @@ model User {
   githubAccessTokenEnc   String?
   name                   String?
   avatarUrl              String?
+  jobTitle               String?
+  bio                    String?
+  aiUsageCount           Int      @default(0)
   passwordResetToken     String?   
   passwordResetExpires   DateTime?
   createdAt              DateTime @default(now())
