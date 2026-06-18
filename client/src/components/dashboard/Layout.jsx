@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
@@ -6,7 +7,10 @@ import Sidebar from "./Sidebar";
 import Editor from "./Editor";
 import AIPanel from "./AIPanel";
 import ImportLayout from "./import/ImportLayout";
-import JobQueue from "./JobQueue";
+// import JobQueue from "./JobQueue";
+import SettingsSidebar from "./settings/SettingsSidebar";
+import UserProfile from "./settings/UserProfile";
+import Appearance from "./settings/Appearance";
 import { ToastProvider, useToast } from "./ToastContext";
 import {
   PanelLeftClose,
@@ -22,7 +26,10 @@ import {
   FolderPlus,
 } from "lucide-react";
 
-import { getProjectsApi, getProjectTreeApi } from "../../services/project.service";
+import {
+  getProjectsApi,
+  getProjectTreeApi,
+} from "../../services/project.service";
 
 const INITIAL_TABS = [];
 
@@ -36,7 +43,12 @@ const containerVariants = {
 
 const panelVariants = {
   hidden: { opacity: 0, y: 6 },
-  visible: { opacity: 1, y: 0, transition: { duration: 0.35, ease: "easeOut" } },
+
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: { duration: 0.35, ease: "easeOut" },
+  },
 };
 
 /* ── Inner Layout (needs useToast) ───────────────────────── */
@@ -58,6 +70,7 @@ function LayoutInner() {
   };
 
   const [activeActivity, setActiveActivity] = useState("explorer");
+  const [activeSetting, setActiveSetting] = useState("profile");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [aiPanelOpen, setAiPanelOpen] = useState(true);
   const [tabs, setTabs] = useState(INITIAL_TABS);
@@ -70,59 +83,67 @@ function LayoutInner() {
   const [fileTree, setFileTree] = useState([]);
   const [isLoadingTree, setIsLoadingTree] = useState(true);
 
-  const loadData = useCallback(async (activeProjId = null, retries = 3, delay = 2000) => {
-    setIsLoadingTree(true);
-    try {
-      const { projects: loadedProjects } = await getProjectsApi();
-      if (loadedProjects && loadedProjects.length > 0) {
-        setProjects(loadedProjects);
-        const targetProj = activeProjId
-          ? loadedProjects.find((p) => p.id === activeProjId) || loadedProjects[0]
-          : loadedProjects[0];
+  const loadData = useCallback(
+    async (activeProjId = null, retries = 3, delay = 2000) => {
+      setIsLoadingTree(true);
+      try {
+        const { projects: loadedProjects } = await getProjectsApi();
+        if (loadedProjects && loadedProjects.length > 0) {
+          setProjects(loadedProjects);
+          const targetProj = activeProjId
+            ? loadedProjects.find((p) => p.id === activeProjId) ||
+              loadedProjects[0]
+            : loadedProjects[0];
 
-        setProject(targetProj);
+          setProject(targetProj);
 
-        // Try loading tree with retries
-        let lastError = null;
-        for (let attempt = 1; attempt <= retries; attempt++) {
-          try {
-            const { data: tree } = await getProjectTreeApi(targetProj.id);
-            setFileTree(tree || []);
-            lastError = null;
-            break;
-          } catch (treeErr) {
-            lastError = treeErr;
-            if (attempt < retries) {
-              await new Promise((r) => setTimeout(r, delay));
+          // Try loading tree with retries
+          let lastError = null;
+          for (let attempt = 1; attempt <= retries; attempt++) {
+            try {
+              const { data: tree } = await getProjectTreeApi(targetProj.id);
+              setFileTree(tree || []);
+              lastError = null;
+              break;
+            } catch (treeErr) {
+              lastError = treeErr;
+              if (attempt < retries) {
+                await new Promise((r) => setTimeout(r, delay));
+              }
             }
           }
-        }
 
-        if (lastError) {
-          console.error("Failed to load project tree after retries:", lastError);
+          if (lastError) {
+            console.error(
+              "Failed to load project tree after retries:",
+              lastError,
+            );
+            setFileTree([]);
+            showToast({
+              type: "warning",
+              title: "Project tree not ready",
+              message:
+                "Source code is still being extracted. Please wait a moment and click Refresh in the Explorer panel.",
+            });
+          }
+        } else {
+          setProjects([]);
+          setProject(null);
           setFileTree([]);
-          showToast({
-            type: "warning",
-            title: "Project tree not ready",
-            message: "Source code is still being extracted. Please wait a moment and click Refresh in the Explorer panel.",
-          });
         }
-      } else {
-        setProjects([]);
-        setProject(null);
-        setFileTree([]);
+      } catch (err) {
+        console.error("Failed to load projects:", err);
+        showToast({
+          type: "error",
+          title: "Load failed",
+          message: "Could not load project data. Please refresh the page.",
+        });
+      } finally {
+        setIsLoadingTree(false);
       }
-    } catch (err) {
-      console.error("Failed to load projects:", err);
-      showToast({
-        type: "error",
-        title: "Load failed",
-        message: "Could not load project data. Please refresh the page.",
-      });
-    } finally {
-      setIsLoadingTree(false);
-    }
-  }, [showToast]);
+    },
+    [showToast],
+  );
 
   useEffect(() => {
     loadData();
@@ -139,9 +160,14 @@ function LayoutInner() {
 
   const handleDeleteProject = async (projectId) => {
     try {
-      const { deleteProjectApi } = await import("../../services/project.service");
+      const { deleteProjectApi } =
+        await import("../../services/project.service");
       await deleteProjectApi(projectId);
-      showToast({ type: "success", title: "Project deleted", message: "The project has been removed." });
+      showToast({
+        type: "success",
+        title: "Project deleted",
+        message: "The project has been removed.",
+      });
       if (project?.id === projectId) {
         setFileTree([]);
         setTabs([]);
@@ -149,10 +175,14 @@ function LayoutInner() {
         setActiveTabId(null);
         loadData();
       } else {
-        setProjects((prev) => prev.filter(p => p.id !== projectId));
+        setProjects((prev) => prev.filter((p) => p.id !== projectId));
       }
     } catch (err) {
-      showToast({ type: "error", title: "Delete failed", message: err.message || "Failed to delete project." });
+      showToast({
+        type: "error",
+        title: "Delete failed",
+        message: err.message || "Failed to delete project.",
+      });
     }
   };
 
@@ -160,7 +190,10 @@ function LayoutInner() {
     if (node.type === "folder") return;
     setActiveFileId(node.id);
     if (!tabs.find((t) => t.id === node.id)) {
-      setTabs((prev) => [...prev, { id: node.id, name: node.name, unsaved: false }]);
+      setTabs((prev) => [
+        ...prev,
+        { id: node.id, name: node.name, unsaved: false },
+      ]);
     }
     setActiveTabId(node.id);
   };
@@ -247,11 +280,16 @@ function LayoutInner() {
           {["Explorer", "Tests", "Metrics", "Settings"].map((item) => (
             <motion.button
               key={item}
+              onClick={() => {
+                if (item === "Settings") setActiveActivity("settings");
+                else if (item === "Explorer") setActiveActivity("explorer");
+              }}
               whileHover={{ color: "#e6edf3" }}
               whileTap={{ scale: 0.97 }}
               className="rounded-md text-xs"
               style={{
-                color: "#484f58",
+                color:
+                  activeActivity === item.toLowerCase() ? "#e6edf3" : "#484f58",
                 fontFamily: "var(--font-sans)",
                 background: "transparent",
                 border: "none",
@@ -280,8 +318,16 @@ function LayoutInner() {
               padding: "5px 12px",
             }}
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <circle cx="11" cy="11" r="8" />
+              <path d="m21 21-4.35-4.35" />
             </svg>
             <span>Search files…</span>
           </div>
@@ -360,7 +406,11 @@ function LayoutInner() {
               }}
               id="toggle-sidebar-btn"
             >
-              {sidebarOpen ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
+              {sidebarOpen ? (
+                <PanelLeftClose size={14} />
+              ) : (
+                <PanelLeftOpen size={14} />
+              )}
             </motion.button>
             <motion.button
               whileTap={{ scale: 0.9 }}
@@ -378,7 +428,11 @@ function LayoutInner() {
               }}
               id="toggle-ai-panel-btn"
             >
-              {aiPanelOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
+              {aiPanelOpen ? (
+                <PanelRightClose size={14} />
+              ) : (
+                <PanelRightOpen size={14} />
+              )}
             </motion.button>
             <motion.button
               whileTap={{ scale: 0.9 }}
@@ -409,7 +463,10 @@ function LayoutInner() {
       >
         {/* Activity Bar */}
         <motion.div variants={panelVariants}>
-          <ActivityBar active={activeActivity} onSelect={handleSelectActivity} />
+          <ActivityBar
+            active={activeActivity}
+            onSelect={handleSelectActivity}
+          />
         </motion.div>
 
         {/* Sidebar */}
@@ -423,25 +480,35 @@ function LayoutInner() {
               transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
               style={{ overflow: "hidden", flexShrink: 0 }}
             >
-              <Sidebar
-                onOpenFile={handleOpenFile}
-                activeFileId={activeFileId}
-                fileTree={fileTree}
-                project={project}
-                projects={projects}
-                onChangeProject={handleChangeProject}
-                onDeleteProject={handleDeleteProject}
-                isLoading={isLoadingTree}
-                onRefresh={() => loadData(project?.id, 3, 2000)}
-              />
+              {activeActivity === "settings" ? (
+                <SettingsSidebar
+                  activeSetting={activeSetting}
+                  onSelectSetting={setActiveSetting}
+                />
+              ) : (
+                <Sidebar
+                  onOpenFile={handleOpenFile}
+                  activeFileId={activeFileId}
+                  fileTree={fileTree}
+                  project={project}
+                  projects={projects}
+                  onChangeProject={handleChangeProject}
+                  onDeleteProject={handleDeleteProject}
+                  isLoading={isLoadingTree}
+                  onRefresh={() => loadData(project?.id, 3, 2000)}
+                />
+              )}
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* Main Content Area */}
+        {/* Editor / Settings Panel — always rendered */}
         <motion.div className="flex flex-1 min-w-0" variants={panelVariants}>
-          {activeActivity === "jobs" ? (
-            <JobQueue projectId={project?.id} />
+          {activeActivity === "settings" ? (
+            <div className="w-full h-full overflow-y-auto">
+              {activeSetting === "profile" && <UserProfile />}
+              {activeSetting === "appearance" && <Appearance />}
+            </div>
           ) : (
             <Editor
               tabs={tabs}
@@ -491,7 +558,11 @@ function LayoutInner() {
             <span>main</span>
           </div>
           <div
-            style={{ width: 1, height: 12, background: "rgba(255,255,255,0.2)" }}
+            style={{
+              width: 1,
+              height: 12,
+              background: "rgba(255,255,255,0.2)",
+            }}
           />
           <div className="flex items-center gap-1.5">
             <CheckCircle2 size={11} style={{ color: "#86efac" }} />
@@ -509,12 +580,20 @@ function LayoutInner() {
             <span>Coverage: 84%</span>
           </div>
           <div
-            style={{ width: 1, height: 12, background: "rgba(255,255,255,0.2)" }}
+            style={{
+              width: 1,
+              height: 12,
+              background: "rgba(255,255,255,0.2)",
+            }}
           />
           <span>Ln 29, Col 1</span>
           <span>UTF-8</span>
           <div
-            style={{ width: 1, height: 12, background: "rgba(255,255,255,0.2)" }}
+            style={{
+              width: 1,
+              height: 12,
+              background: "rgba(255,255,255,0.2)",
+            }}
           />
           <div className="flex items-center gap-1.5">
             <span

@@ -6,9 +6,8 @@ import {
   Cpu,
   FlaskConical,
   Settings,
-  User,
   Zap,
-  LogOut,
+  GitBranch,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -16,15 +15,15 @@ const TOP_ITEMS = [
   { id: "explorer", icon: Files, label: "Explorer" },
   { id: "dashboard", icon: LayoutDashboard, label: "Dashboard" },
   { id: "search", icon: Search, label: "Search" },
+
   { id: "jobs", icon: Cpu, label: "Job Queue" },
+  { id: "tests", icon: FlaskConical, label: "Tests" },
+
+  { id: "git", icon: GitBranch, label: "Source Control" },
   { id: "tests", icon: FlaskConical, label: "Tests" },
 ];
 
-const BOTTOM_ITEMS = [
-  { id: "settings", icon: Settings, label: "Settings" },
-  { id: "account", icon: User, label: "Account" },
-  { id: "logout", icon: LogOut, label: "Log Out" },
-];
+const BOTTOM_ITEMS = [{ id: "settings", icon: Settings, label: "Settings" }];
 
 function ActivityItem({ item, isActive, onClick, delay = 0 }) {
   const [hovered, setHovered] = useState(false);
@@ -47,7 +46,8 @@ function ActivityItem({ item, isActive, onClick, delay = 0 }) {
               width: 2.5,
               height: 28,
               background: "linear-gradient(180deg, #a78bfa 0%, #7c3aed 100%)",
-              boxShadow: "2px 0 12px rgba(124, 58, 237, 0.8), 0 0 6px rgba(124, 58, 237, 0.5)",
+              boxShadow:
+                "2px 0 12px rgba(124, 58, 237, 0.8), 0 0 6px rgba(124, 58, 237, 0.5)",
             }}
             initial={{ scaleY: 0, opacity: 0 }}
             animate={{ scaleY: 1, opacity: 1 }}
@@ -85,7 +85,9 @@ function ActivityItem({ item, isActive, onClick, delay = 0 }) {
           strokeWidth={isActive ? 2 : 1.6}
           style={{
             color: isActive ? "#a78bfa" : hovered ? "#8b949e" : "#484f58",
-            filter: isActive ? "drop-shadow(0 0 6px rgba(167, 139, 250, 0.5))" : "none",
+            filter: isActive
+              ? "drop-shadow(0 0 6px rgba(167, 139, 250, 0.5))"
+              : "none",
             transition: "all 0.2s ease",
           }}
         />
@@ -141,7 +143,8 @@ export default function ActivityBar({ active, onSelect }) {
             height: 36,
             borderRadius: 10,
             background: "linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%)",
-            boxShadow: "0 0 16px rgba(124, 58, 237, 0.5), 0 2px 8px rgba(0,0,0,0.4)",
+            boxShadow:
+              "0 0 16px rgba(124, 58, 237, 0.5), 0 2px 8px rgba(0,0,0,0.4)",
             marginTop: 4,
           }}
         >
