@@ -73,10 +73,7 @@ export default function ImportLayout({ onClose, onSuccess }) {
   }, []);
 
   const handleImportSuccess = () => {
-    setShowSuccessOverlay(true);
-    setTimeout(() => {
-      onSuccess?.();
-    }, 2000);
+    onSuccess?.();
   };
 
   return createPortal(

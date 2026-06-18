@@ -6,6 +6,7 @@ import Sidebar from "./Sidebar";
 import Editor from "./Editor";
 import AIPanel from "./AIPanel";
 import ImportLayout from "./import/ImportLayout";
+import JobQueue from "./JobQueue";
 import { ToastProvider, useToast } from "./ToastContext";
 import {
   PanelLeftClose,
@@ -34,7 +35,7 @@ const containerVariants = {
 };
 
 const panelVariants = {
-  hidden:  { opacity: 0, y: 6 },
+  hidden: { opacity: 0, y: 6 },
   visible: { opacity: 1, y: 0, transition: { duration: 0.35, ease: "easeOut" } },
 };
 
@@ -57,12 +58,12 @@ function LayoutInner() {
   };
 
   const [activeActivity, setActiveActivity] = useState("explorer");
-  const [sidebarOpen,    setSidebarOpen]    = useState(true);
-  const [aiPanelOpen,    setAiPanelOpen]    = useState(true);
-  const [tabs,           setTabs]           = useState(INITIAL_TABS);
-  const [activeTabId,    setActiveTabId]    = useState(null);
-  const [activeFileId,   setActiveFileId]   = useState(null);
-  const [showImport,     setShowImport]     = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [aiPanelOpen, setAiPanelOpen] = useState(true);
+  const [tabs, setTabs] = useState(INITIAL_TABS);
+  const [activeTabId, setActiveTabId] = useState(null);
+  const [activeFileId, setActiveFileId] = useState(null);
+  const [showImport, setShowImport] = useState(false);
 
   const [projects, setProjects] = useState([]);
   const [project, setProject] = useState(null);
@@ -78,7 +79,7 @@ function LayoutInner() {
         const targetProj = activeProjId
           ? loadedProjects.find((p) => p.id === activeProjId) || loadedProjects[0]
           : loadedProjects[0];
-        
+
         setProject(targetProj);
 
         // Try loading tree with retries
@@ -165,7 +166,7 @@ function LayoutInner() {
   };
 
   const handleCloseTab = (tabId) => {
-    const idx  = tabs.findIndex((t) => t.id === tabId);
+    const idx = tabs.findIndex((t) => t.id === tabId);
     const next = tabs.filter((t) => t.id !== tabId);
     setTabs(next);
     if (activeTabId === tabId && next.length > 0) {
@@ -280,7 +281,7 @@ function LayoutInner() {
             }}
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+              <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
             </svg>
             <span>Search files…</span>
           </div>
@@ -437,17 +438,21 @@ function LayoutInner() {
           )}
         </AnimatePresence>
 
-        {/* Editor — always rendered */}
+        {/* Main Content Area */}
         <motion.div className="flex flex-1 min-w-0" variants={panelVariants}>
-          <Editor
-            tabs={tabs}
-            activeTabId={activeTabId}
-            onSelectTab={setActiveTabId}
-            onCloseTab={handleCloseTab}
-            fileTree={fileTree}
-            isLoadingTree={isLoadingTree}
-            projectId={project?.id}
-          />
+          {activeActivity === "jobs" ? (
+            <JobQueue projectId={project?.id} />
+          ) : (
+            <Editor
+              tabs={tabs}
+              activeTabId={activeTabId}
+              onSelectTab={setActiveTabId}
+              onCloseTab={handleCloseTab}
+              fileTree={fileTree}
+              isLoadingTree={isLoadingTree}
+              projectId={project?.id}
+            />
+          )}
         </motion.div>
 
         {/* AI Panel */}
@@ -535,12 +540,14 @@ function LayoutInner() {
             onSuccess={() => {
               setShowImport(false);
               showToast({
-                type: "success",
-                title: "Import successful",
-                message: "Loading project files...",
+                type: "info",
+                title: "Job is being processed",
+                message: "You can track the progress in the Job Queue.",
               });
-              // Delay to give server time to finish extraction
-              setTimeout(() => loadData(5, 2500), 1500);
+              // Switch to Job Queue view so user can track progress
+              setActiveActivity("jobs");
+              // Still reload data in background
+              setTimeout(() => loadData(null, 3, 2500), 1500);
             }}
           />
         )}

@@ -49,11 +49,6 @@ function RepoItem({ repo, index, onClose, onSuccess, showToast }) {
           const existing = projects?.find((p) => p.name === repo.name);
           if (existing) {
             projectId = existing.id;
-            showToast({
-              type: "info",
-              title: "Using existing project",
-              message: `Project "${repo.name}" already exists. Importing repository into it.`,
-            });
           } else {
             throw new Error("Project already exists but could not be found.");
           }
@@ -62,14 +57,18 @@ function RepoItem({ repo, index, onClose, onSuccess, showToast }) {
         }
       }
 
-      await importGithubRepoApi(projectId, repo.owner, repo.name);
-
-      showToast({
-        type: "success",
-        title: "Import successful",
-        message: `Repository "${repo.name}" has been imported successfully.`,
+      // Fire import in background — don't await!
+      importGithubRepoApi(projectId, repo.owner, repo.name).catch((err) => {
+        console.error("[RepoList] Background import failed:", err);
       });
 
+      showToast({
+        type: "info",
+        title: "Processing started",
+        message: `"${repo.name}" is being imported. Track progress in Job Queue.`,
+      });
+
+      // Close overlay immediately
       if (onSuccess) onSuccess();
       else if (onClose) onClose();
     } catch (err) {
@@ -78,7 +77,6 @@ function RepoItem({ repo, index, onClose, onSuccess, showToast }) {
         title: "Import failed",
         message: err.message || "An unexpected error occurred during import.",
       });
-    } finally {
       setImporting(false);
     }
   };

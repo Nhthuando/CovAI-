@@ -3,7 +3,7 @@ import {
   Files,
   LayoutDashboard,
   Search,
-  GitBranch,
+  Cpu,
   FlaskConical,
   Settings,
   User,
@@ -13,17 +13,17 @@ import {
 import { useState } from "react";
 
 const TOP_ITEMS = [
-  { id: "explorer",  icon: Files,           label: "Explorer" },
+  { id: "explorer", icon: Files, label: "Explorer" },
   { id: "dashboard", icon: LayoutDashboard, label: "Dashboard" },
-  { id: "search",    icon: Search,          label: "Search" },
-  { id: "git",       icon: GitBranch,       label: "Source Control" },
-  { id: "tests",     icon: FlaskConical,    label: "Tests" },
+  { id: "search", icon: Search, label: "Search" },
+  { id: "jobs", icon: Cpu, label: "Job Queue" },
+  { id: "tests", icon: FlaskConical, label: "Tests" },
 ];
 
 const BOTTOM_ITEMS = [
   { id: "settings", icon: Settings, label: "Settings" },
-  { id: "account",  icon: User,     label: "Account" },
-  { id: "logout",   icon: LogOut,   label: "Log Out" },
+  { id: "account", icon: User, label: "Account" },
+  { id: "logout", icon: LogOut, label: "Log Out" },
 ];
 
 function ActivityItem({ item, isActive, onClick, delay = 0 }) {
@@ -71,8 +71,8 @@ function ActivityItem({ item, isActive, onClick, delay = 0 }) {
           background: isActive
             ? "rgba(124, 58, 237, 0.1)"
             : hovered
-            ? "rgba(255, 255, 255, 0.04)"
-            : "transparent",
+              ? "rgba(255, 255, 255, 0.04)"
+              : "transparent",
           borderRadius: 8,
           margin: "0 10px",
           transition: "background 0.15s ease",

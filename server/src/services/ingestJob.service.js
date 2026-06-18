@@ -1,5 +1,7 @@
 import prisma from "../config/prisma.js";
 import { extractZipSnapshot } from "./zipExtraction.service.js";
+import { getBucket } from "../config/firebase.js";
+import { PassThrough } from "stream";
 import {
     markJobRunning,
     updateJobProgress,
@@ -76,6 +78,83 @@ export const processIngestJob = async (jobId) => {
         console.log(`[Job ${jobId}] Pipeline ingest hoàn thành: ${sourcePath}`);
     } catch (error) {
         console.error(`[Job ${jobId}] Lỗi pipeline ingest:`, error);
+        try {
+            await markJobFailed(jobId, error);
+        } catch (markError) {
+            console.error(`[Job ${jobId}] Không thể đánh dấu FAILED:`, markError);
+        }
+    }
+};
+
+export const processUploadAndIngestJob = async (jobId, fileBuffer, mimeType, storagePath) => {
+    assertStringField(jobId, "jobId");
+
+    try {
+        await markJobRunning(jobId);
+    } catch (error) {
+        console.error(`[Job ${jobId}] Lỗi khi chuyển công việc sang RUNNING:`, error);
+        return;
+    }
+
+    let job;
+    try {
+        job = await getJobById(jobId);
+    } catch (error) {
+        console.error(`[Job ${jobId}] Lỗi khi lấy Job:`, error);
+        return;
+    }
+
+    try {
+        // Upload to Firebase with progress tracking (0% -> 50%)
+        const bucket = getBucket();
+        const file = bucket.file(storagePath);
+        const blobStream = file.createWriteStream({
+            metadata: { contentType: mimeType },
+        });
+
+        const passThrough = new PassThrough();
+        const totalBytes = fileBuffer.length;
+        let uploadedBytes = 0;
+        let lastReportedProgress = 0;
+
+        passThrough.on("data", (chunk) => {
+            uploadedBytes += chunk.length;
+            const progress = Math.floor((uploadedBytes / totalBytes) * 50);
+            if (progress >= lastReportedProgress + 5) {
+                lastReportedProgress = progress;
+                updateJobProgress(jobId, progress).catch(() => {});
+            }
+        });
+
+        await new Promise((resolve, reject) => {
+            blobStream.on("error", reject);
+            blobStream.on("finish", resolve);
+            passThrough.pipe(blobStream);
+            passThrough.end(fileBuffer);
+        });
+
+        await updateJobProgress(jobId, 50);
+
+        // Extract Zip directly from buffer (50% -> 90%)
+        const sourcePath = await extractZipSnapshot(job.snapshotId, storagePath, fileBuffer);
+
+        if (!sourcePath || typeof sourcePath !== "string") {
+            throw new Error("Extracted source path is invalid");
+        }
+
+        await updateJobProgress(jobId, 90);
+
+        await prisma.projectSnapshot.update({
+            where: { id: job.snapshotId },
+            data: { rootDir: sourcePath },
+        });
+
+        await updateJobProgress(jobId, 100);
+        await markJobSuccess(jobId, { rootDir: sourcePath });
+
+        console.log(`[Job ${jobId}] Pipeline upload & ingest hoàn thành: ${sourcePath}`);
+    } catch (error) {
+        console.error(`[Job ${jobId}] Lỗi pipeline upload & ingest:`, error);
         try {
             await markJobFailed(jobId, error);
         } catch (markError) {

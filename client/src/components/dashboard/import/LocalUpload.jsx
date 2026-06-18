@@ -84,11 +84,6 @@ export default function LocalUpload({ onClose, onSuccess }) {
           const existing = projects?.find((p) => p.name === projectName);
           if (existing) {
             projectId = existing.id;
-            showToast({
-              type: "info",
-              title: "Using existing project",
-              message: `Project "${projectName}" already exists. Uploading new snapshot into it.`,
-            });
           } else {
             throw new Error("Project already exists but could not be found.");
           }
@@ -97,12 +92,13 @@ export default function LocalUpload({ onClose, onSuccess }) {
         }
       }
       
+      // Server now creates the Job in DB immediately and uploads to Firebase async
       await uploadZipApi(projectId, fileObj);
 
       showToast({
-        type: "success",
-        title: "Upload successful",
-        message: `Project "${projectName}" has been uploaded.`,
+        type: "info",
+        title: "Processing started",
+        message: `"${projectName}" is being processed. Track progress in Job Queue.`,
       });
       
       if (onSuccess) onSuccess();
@@ -278,7 +274,7 @@ export default function LocalUpload({ onClose, onSuccess }) {
               {uploading ? (
                 <>
                   <Loader2 size={16} className="animate-spin" />
-                  Uploading...
+                  Sending...
                 </>
               ) : (
                 "Import Project"

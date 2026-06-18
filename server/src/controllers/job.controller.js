@@ -23,6 +23,24 @@ export const listProjectJobs = async (req, res) => {
     }
 }
 
+export const listUserJobs = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        if (!userId) return res.status(401).json({ message: "Không thể lấy user Id!" });
+        const jobs = await prisma.job.findMany({ 
+            where: { userId }, 
+            orderBy: { createdAt: "desc" },
+            include: {
+                project: { select: { name: true } }
+            }
+        });
+        return res.status(200).json({ message: "GET toàn bộ Job thành công!", jobs });
+    } catch (error) {
+        console.log(error);
+        return res.status(500).json({ message: "Có lỗi server!" });
+    }
+}
+
 export const getJobDetail = async (req, res) => {
     try {
         const userId = req.user.id;

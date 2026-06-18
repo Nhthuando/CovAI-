@@ -205,45 +205,56 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
         throw new ServiceError("Duplicate snapshot already exists", 409);
     }
 
+    // ── Build the Firebase storage path (but don't upload yet) ────────
     const safeOriginalName = path
         .basename(file.originalname)
         .replace(/[^a-zA-Z0-9._-]/g, "_");
     const uniqueFileName = `${randomUUID()}-${safeOriginalName}`;
     const storagePath = `projects/${projectId}/${uniqueFileName}`;
-    const blob = getBucket().file(storagePath);
 
-    await new Promise((resolve, reject) => {
-        const blobStream = blob.createWriteStream({
-            metadata: { contentType: file.mimetype },
-        });
-
-        blobStream.on("error", reject);
-        blobStream.on("finish", resolve);
-        blobStream.end(file.buffer);
+    // ── Create Snapshot + Job in DB FIRST so it appears in Job Queue ──
+    const { snapshot, job } = await createSnapshotIngestJob({
+        projectId,
+        userId,
+        checksum,
+        storagePath,
     });
 
-    try {
-        const { snapshot, job } = await createSnapshotIngestJob({
-            projectId,
-            userId,
-            checksum,
-            storagePath,
-        });
+    // ── Upload to Firebase Storage asynchronously ─────────────────────
+    // This runs after the response is sent, so the user sees the job immediately.
+    const uploadAndProcess = async () => {
+        try {
+            const blob = getBucket().file(storagePath);
+            await new Promise((resolve, reject) => {
+                const blobStream = blob.createWriteStream({
+                    metadata: { contentType: file.mimetype },
+                });
+                blobStream.on("error", reject);
+                blobStream.on("finish", resolve);
+                blobStream.end(file.buffer);
+            });
+        } catch (uploadErr) {
+            console.error(`[UploadProjectZip] Firebase upload failed for Job ${job.id}:`, uploadErr);
+            // Mark job as failed if upload fails
+            const { markJobRunning, markJobFailed } = await import("./job.service.js");
+            try { await markJobRunning(job.id); } catch (_) {}
+            try { await markJobFailed(job.id, uploadErr); } catch (_) {}
+            throw uploadErr;
+        }
+    };
 
-        return {
-            snapshot,
-            job,
-            file: {
-                originalName: file.originalname,
-                mimeType: file.mimetype,
-                size: file.size,
-                storagePath,
-            },
-        };
-    } catch (error) {
-        await blob.delete().catch(() => { });
-        throw error;
-    }
+    return {
+        snapshot,
+        job,
+        file: {
+            originalName: file.originalname,
+            mimeType: file.mimetype,
+            size: file.size,
+            storagePath,
+        },
+        // Expose the upload promise so the controller can chain processing after it
+        _uploadPromise: uploadAndProcess(),
+    };
 };
 
 export const detectJestConfig = async (projectId) => {
@@ -316,30 +327,67 @@ export const deleteProject = async (projectId, userId) => {
     // Allow deletion even if there are zombie running jobs
     // The transaction below will clean up all jobs via cascading.
 
-    // Fetch snapshots BEFORE they are deleted from DB so we can clean up local dirs
+    // Fetch snapshots BEFORE they are deleted from DB so we can clean up local dirs + Firebase
     const snapshots = await prisma.projectSnapshot.findMany({
         where: { projectId },
-        select: { rootDir: true }
+        select: { rootDir: true, storagePath: true }
     });
 
-    await prisma.$transaction([
-        prisma.coverageSummary.deleteMany({ where: { snapshot: { projectId } } }),
-        prisma.coverageFile.deleteMany({ where: { snapshot: { projectId } } }),
-        prisma.coverageFunction.deleteMany({ where: { snapshot: { projectId } } }),
-        prisma.cyclomatic.deleteMany({ where: { snapshot: { projectId } } }),
-        prisma.cfg.deleteMany({ where: { snapshot: { projectId } } }),
-        prisma.aiContextCache.deleteMany({ where: { snapshot: { projectId } } }),
-        prisma.aiSuggestion.deleteMany({ where: { projectId } }),
-        prisma.aiTest.deleteMany({ where: { projectId } }),
-        prisma.jobLog.deleteMany({ where: { job: { projectId } } }),
-        prisma.jobOutput.deleteMany({ where: { job: { projectId } } }),
-        prisma.job.deleteMany({ where: { projectId } }),
-        prisma.notification.deleteMany({ where: { projectId } }),
-        prisma.projectSnapshot.deleteMany({ where: { projectId } }),
-        prisma.project.delete({ where: { id: projectId } })
-    ]);
+    await prisma.$transaction(
+        [
+            prisma.coverageSummary.deleteMany({ where: { snapshot: { projectId } } }),
+            prisma.coverageFile.deleteMany({ where: { snapshot: { projectId } } }),
+            prisma.coverageFunction.deleteMany({ where: { snapshot: { projectId } } }),
+            prisma.cyclomatic.deleteMany({ where: { snapshot: { projectId } } }),
+            prisma.cfg.deleteMany({ where: { snapshot: { projectId } } }),
+            prisma.aiContextCache.deleteMany({ where: { snapshot: { projectId } } }),
+            prisma.aiSuggestion.deleteMany({ where: { projectId } }),
+            prisma.aiTest.deleteMany({ where: { projectId } }),
+            prisma.jobLog.deleteMany({ where: { job: { projectId } } }),
+            prisma.jobOutput.deleteMany({ where: { job: { projectId } } }),
+            prisma.job.deleteMany({ where: { projectId } }),
+            prisma.notification.deleteMany({ where: { projectId } }),
+            prisma.projectSnapshot.deleteMany({ where: { projectId } }),
+            prisma.project.delete({ where: { id: projectId } })
+        ],
+        { timeout: 30000 } // 30 seconds — enough for large projects
+    );
 
-    // Cleanup physical local storage directories to prevent disk leak
+    // ── Cleanup Firebase Storage files ─────────────────────────────────
+    try {
+        const bucket = getBucket();
+
+        // Delete individual snapshot files
+        for (const snap of snapshots) {
+            if (snap.storagePath) {
+                try {
+                    await bucket.file(snap.storagePath).delete();
+                    console.log(`[DeleteProject] Deleted Firebase file: ${snap.storagePath}`);
+                } catch (fbErr) {
+                    // File may already be deleted or not exist — skip silently
+                    if (fbErr.code !== 404) {
+                        console.warn(`[DeleteProject] Failed to delete Firebase file ${snap.storagePath}:`, fbErr.message);
+                    }
+                }
+            }
+        }
+
+        // Also try to delete the entire projects/{projectId}/ prefix
+        try {
+            const [files] = await bucket.getFiles({ prefix: `projects/${projectId}/` });
+            if (files.length > 0) {
+                await Promise.all(files.map(file => file.delete().catch(() => {})));
+                console.log(`[DeleteProject] Deleted ${files.length} remaining Firebase files for project ${projectId}`);
+            }
+        } catch (prefixErr) {
+            console.warn(`[DeleteProject] Failed to cleanup Firebase prefix for ${projectId}:`, prefixErr.message);
+        }
+    } catch (fbCleanupErr) {
+        console.error("[DeleteProject] Firebase cleanup error:", fbCleanupErr);
+        // Don't throw — DB deletion already succeeded
+    }
+
+    // ── Cleanup physical local storage directories ─────────────────────
     try {
         for (const snap of snapshots) {
             if (snap.rootDir && fs.existsSync(snap.rootDir)) {

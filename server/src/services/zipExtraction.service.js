@@ -11,7 +11,7 @@ const assertStringField = (value, fieldName) => {
     }
 };
 
-export const extractZipSnapshot = async (snapshotId, storagePath) => {
+export const extractZipSnapshot = async (snapshotId, storagePath, fileBuffer = null) => {
     assertStringField(snapshotId, "snapshotId");
     assertStringField(storagePath, "storagePath");
 
@@ -24,9 +24,13 @@ export const extractZipSnapshot = async (snapshotId, storagePath) => {
             dirCreatedByUs = true;
         }
 
-        const bucket = getBucket();
-        const file = bucket.file(storagePath);
-        const [zipBuffer] = await file.download();
+        let zipBuffer = fileBuffer;
+        if (!zipBuffer) {
+            const bucket = getBucket();
+            const file = bucket.file(storagePath);
+            const [downloaded] = await file.download();
+            zipBuffer = downloaded;
+        }
 
         const ext = path.extname(storagePath).toLowerCase();
         

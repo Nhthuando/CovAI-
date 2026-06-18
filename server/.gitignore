@@ -1,6 +1,8 @@
 
 /src/generated/prisma
 
+/src/generated/prisma
+
 # env files
 .env
 
@@ -9,3 +11,4 @@ node_modules/
 
 # local storage for projects and repos
 storage/
+uploads/

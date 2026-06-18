@@ -186,10 +186,15 @@ class ProjectController {
         userId: req.user.id,
       });
 
-      processIngestJob(result.job.id).catch((err) => {
-        console.error("Lỗi khi chạy Job ngầm:", err);
-      });
+      // Chain: wait for Firebase upload to finish, THEN start ingest processing
+      // This runs fully in the background — the response is sent immediately below.
+      result._uploadPromise
+        .then(() => processIngestJob(result.job.id))
+        .catch((err) => {
+          console.error("[UploadZip] Background pipeline error:", err);
+        });
 
+      // Respond immediately — the job already exists in DB with QUEUED status
       return res.status(201).json({
         success: true,
         message: "Snapshot và Job được tạo thành công",
