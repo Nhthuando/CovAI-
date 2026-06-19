@@ -110,6 +110,7 @@ export const processUploadAndIngestJob = async (jobId, fileBuffer, mimeType, sto
         const file = bucket.file(storagePath);
         const blobStream = file.createWriteStream({
             metadata: { contentType: mimeType },
+            resumable: false,
         });
 
         const passThrough = new PassThrough();
@@ -126,23 +127,26 @@ export const processUploadAndIngestJob = async (jobId, fileBuffer, mimeType, sto
             }
         });
 
-        await new Promise((resolve, reject) => {
+        const uploadPromise = new Promise((resolve, reject) => {
             blobStream.on("error", reject);
             blobStream.on("finish", resolve);
             passThrough.pipe(blobStream);
             passThrough.end(fileBuffer);
+        }).then(() => {
+            updateJobProgress(jobId, 50).catch(() => {});
         });
 
-        await updateJobProgress(jobId, 50);
-
         // Extract Zip directly from buffer (50% -> 90%)
-        const sourcePath = await extractZipSnapshot(job.snapshotId, storagePath, fileBuffer);
+        const extractPromise = extractZipSnapshot(job.snapshotId, storagePath, fileBuffer).then((path) => {
+            updateJobProgress(jobId, 90).catch(() => {});
+            return path;
+        });
+
+        const [_, sourcePath] = await Promise.all([uploadPromise, extractPromise]);
 
         if (!sourcePath || typeof sourcePath !== "string") {
             throw new Error("Extracted source path is invalid");
         }
-
-        await updateJobProgress(jobId, 90);
 
         await prisma.projectSnapshot.update({
             where: { id: job.snapshotId },

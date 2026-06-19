@@ -7,7 +7,7 @@ import Sidebar from "./Sidebar";
 import Editor from "./Editor";
 import AIPanel from "./AIPanel";
 import ImportLayout from "./import/ImportLayout";
-// import JobQueue from "./JobQueue";
+import JobQueue from "./JobQueue";
 import SettingsSidebar from "./settings/SettingsSidebar";
 import UserProfile from "./settings/UserProfile";
 import Appearance from "./settings/Appearance";
@@ -73,6 +73,7 @@ function LayoutInner() {
   const [activeSetting, setActiveSetting] = useState("profile");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [aiPanelOpen, setAiPanelOpen] = useState(true);
+  const [aiPanelWidth, setAiPanelWidth] = useState(340);
   const [tabs, setTabs] = useState(INITIAL_TABS);
   const [activeTabId, setActiveTabId] = useState(null);
   const [activeFileId, setActiveFileId] = useState(null);
@@ -144,6 +145,26 @@ function LayoutInner() {
     },
     [showToast],
   );
+
+  const handleAiPanelResize = useCallback((e) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = aiPanelWidth;
+
+    const onMouseMove = (moveEvent) => {
+      const deltaX = startX - moveEvent.clientX;
+      const newWidth = Math.max(260, Math.min(800, startWidth + deltaX));
+      setAiPanelWidth(newWidth);
+    };
+
+    const onMouseUp = () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }, [aiPanelWidth]);
 
   useEffect(() => {
     loadData();
@@ -509,6 +530,8 @@ function LayoutInner() {
               {activeSetting === "profile" && <UserProfile />}
               {activeSetting === "appearance" && <Appearance />}
             </div>
+          ) : activeActivity === "jobs" ? (
+            <JobQueue projectId={project?.id} />
           ) : (
             <Editor
               tabs={tabs}
@@ -525,16 +548,31 @@ function LayoutInner() {
         {/* AI Panel */}
         <AnimatePresence initial={false}>
           {aiPanelOpen && (
-            <motion.div
-              key="ai-panel"
-              initial={{ width: 0, opacity: 0 }}
-              animate={{ width: 340, opacity: 1 }}
-              exit={{ width: 0, opacity: 0 }}
-              transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
-              style={{ overflow: "hidden", flexShrink: 0 }}
-            >
-              <AIPanel />
-            </motion.div>
+            <>
+              {/* Resize Handle */}
+              <div
+                onMouseDown={handleAiPanelResize}
+                style={{
+                  width: 4,
+                  cursor: "col-resize",
+                  background: "transparent",
+                  zIndex: 10,
+                  marginLeft: -2,
+                  marginRight: -2,
+                }}
+                className="hover:bg-purple-500/20 transition-colors"
+              />
+              <motion.div
+                key="ai-panel"
+                initial={{ width: 0, opacity: 0 }}
+                animate={{ width: aiPanelWidth, opacity: 1 }}
+                exit={{ width: 0, opacity: 0 }}
+                transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
+                style={{ overflow: "hidden", flexShrink: 0 }}
+              >
+                <AIPanel projectId={project?.id} />
+              </motion.div>
+            </>
           )}
         </AnimatePresence>
       </motion.div>

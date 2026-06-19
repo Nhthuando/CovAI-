@@ -220,24 +220,48 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
         storagePath,
     });
 
-    // ── Upload to Firebase Storage asynchronously ─────────────────────
-    // This runs after the response is sent, so the user sees the job immediately.
     const uploadAndProcess = async () => {
         try {
+            // Update job to RUNNING immediately as we start processing
+            const { markJobRunning, updateJobProgress, markJobSuccess, markJobFailed } = await import("./job.service.js");
+            const { extractZipSnapshot } = await import("./zipExtraction.service.js");
+            
+            try { await markJobRunning(job.id); } catch (_) {}
+            
             const blob = getBucket().file(storagePath);
-            await new Promise((resolve, reject) => {
+            const uploadPromise = new Promise((resolve, reject) => {
                 const blobStream = blob.createWriteStream({
                     metadata: { contentType: file.mimetype },
+                    resumable: false,
                 });
                 blobStream.on("error", reject);
                 blobStream.on("finish", resolve);
                 blobStream.end(file.buffer);
+            }).then(() => updateJobProgress(job.id, 50).catch(() => {}));
+
+            const extractPromise = extractZipSnapshot(snapshot.id, storagePath, file.buffer).then((path) => {
+                updateJobProgress(job.id, 90).catch(() => {});
+                return path;
             });
+
+            const [_, sourcePath] = await Promise.all([uploadPromise, extractPromise]);
+
+            if (!sourcePath || typeof sourcePath !== "string") {
+                throw new Error("Extracted source path is invalid");
+            }
+
+            await prisma.projectSnapshot.update({
+                where: { id: snapshot.id },
+                data: { rootDir: sourcePath },
+            });
+
+            await updateJobProgress(job.id, 100).catch(() => {});
+            await markJobSuccess(job.id, { rootDir: sourcePath });
+            console.log(`[Job ${job.id}] Pipeline upload & ingest hoàn thành: ${sourcePath}`);
+
         } catch (uploadErr) {
-            console.error(`[UploadProjectZip] Firebase upload failed for Job ${job.id}:`, uploadErr);
-            // Mark job as failed if upload fails
-            const { markJobRunning, markJobFailed } = await import("./job.service.js");
-            try { await markJobRunning(job.id); } catch (_) {}
+            console.error(`[UploadProjectZip] Firebase upload or ingest failed for Job ${job.id}:`, uploadErr);
+            const { markJobFailed } = await import("./job.service.js");
             try { await markJobFailed(job.id, uploadErr); } catch (_) {}
             throw uploadErr;
         }

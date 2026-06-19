@@ -20,7 +20,6 @@ const TOP_ITEMS = [
   { id: "tests", icon: FlaskConical, label: "Tests" },
 
   { id: "git", icon: GitBranch, label: "Source Control" },
-  { id: "tests", icon: FlaskConical, label: "Tests" },
 ];
 
 const BOTTOM_ITEMS = [{ id: "settings", icon: Settings, label: "Settings" }];

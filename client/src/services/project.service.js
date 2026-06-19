@@ -118,3 +118,12 @@ export async function getUserProfileApi() {
   });
   return handleResponse(res);
 }
+
+export async function sendAiChatMessageApi(projectId, message, history) {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/chat`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ message, history }),
+  });
+  return handleResponse(res);
+}

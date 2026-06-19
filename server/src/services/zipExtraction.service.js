@@ -37,43 +37,44 @@ export const extractZipSnapshot = async (snapshotId, storagePath, fileBuffer = n
         if (ext === ".rar") {
             const extractor = await createExtractorFromData({ data: new Uint8Array(zipBuffer) });
             const extracted = extractor.extract({ files: () => true });
-            const files = Array.from(extracted.files);
+            const files = Array.from(extracted.files).filter(f => 
+                !f.fileHeader.flags.directory && 
+                !f.fileHeader.name.includes("node_modules/") && 
+                !f.fileHeader.name.includes(".git/")
+            );
 
-            for (const fileItem of files) {
-                if (fileItem.fileHeader.flags.directory) {
-                    continue;
-                }
-
-                if (fileItem.fileHeader.name.includes("node_modules/") || fileItem.fileHeader.name.includes(".git/")) {
-                    continue;
-                }
-
-                const filePath = path.join(outputDir, fileItem.fileHeader.name);
-                const fileDir = path.dirname(filePath);
-
-                if (!fs.existsSync(fileDir)) {
-                    fs.mkdirSync(fileDir, { recursive: true });
-                }
-
-                if (fileItem.extraction) {
-                    fs.writeFileSync(filePath, fileItem.extraction);
-                }
+            const batchSize = 50;
+            for (let i = 0; i < files.length; i += batchSize) {
+                const batch = files.slice(i, i + batchSize);
+                await Promise.all(batch.map(async (fileItem) => {
+                    const filePath = path.join(outputDir, fileItem.fileHeader.name);
+                    const fileDir = path.dirname(filePath);
+                    
+                    await fs.promises.mkdir(fileDir, { recursive: true });
+                    if (fileItem.extraction) {
+                        await fs.promises.writeFile(filePath, fileItem.extraction);
+                    }
+                }));
             }
         } else {
             const directory = await unzipper.Open.buffer(zipBuffer);
-            for (const file of directory.files) {
-                if (file.type === "Directory") continue;
-                if (file.path.includes("node_modules/") || file.path.includes(".git/")) continue;
+            const files = directory.files.filter(f => 
+                f.type !== "Directory" && 
+                !f.path.includes("node_modules/") && 
+                !f.path.includes(".git/")
+            );
 
-                const fullPath = path.join(outputDir, file.path);
-                const dir = path.dirname(fullPath);
-                
-                if (!fs.existsSync(dir)) {
-                    fs.mkdirSync(dir, { recursive: true });
-                }
-
-                const buffer = await file.buffer();
-                fs.writeFileSync(fullPath, buffer);
+            const batchSize = 50;
+            for (let i = 0; i < files.length; i += batchSize) {
+                const batch = files.slice(i, i + batchSize);
+                await Promise.all(batch.map(async (file) => {
+                    const fullPath = path.join(outputDir, file.path);
+                    const dir = path.dirname(fullPath);
+                    
+                    await fs.promises.mkdir(dir, { recursive: true });
+                    const buffer = await file.buffer();
+                    await fs.promises.writeFile(fullPath, buffer);
+                }));
             }
         }
 

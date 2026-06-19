@@ -4,6 +4,10 @@ import { processRunTestsJob } from "../services/runTestsJob.service.js";
 import { parseCoverageFilesForSnapshot } from "../services/coverageFileParser.service.js";
 import { parseCoverageFunctionsForSnapshot } from "../services/coverageFunctionParser.service.js";
 import { GitHubCloneService } from "../services/githubClone.service.js";
+import { createAiSuggestJob } from "../services/job.service.js";
+import { processAiSuggestJob } from "../services/aiSuggestJob.service.js";
+import { generateText } from "../services/gemini.service.js";
+import { checkAndIncrementQuota } from "../services/aiQuota.service.js";
 import prisma from "../config/prisma.js";
 import {
   ServiceError,
@@ -186,10 +190,9 @@ class ProjectController {
         userId: req.user.id,
       });
 
-      // Chain: wait for Firebase upload to finish, THEN start ingest processing
-      // This runs fully in the background — the response is sent immediately below.
+      // The Firebase upload and ZIP extraction run fully in the background inside uploadProjectZip.
+      // The response is sent immediately below.
       result._uploadPromise
-        .then(() => processIngestJob(result.job.id))
         .catch((err) => {
           console.error("[UploadZip] Background pipeline error:", err);
         });
@@ -501,6 +504,115 @@ class ProjectController {
       return res
         .status(500)
         .json({ success: false, message: "Internal server error" });
+    }
+  }
+
+  async runAiSuggest(req, res) {
+    try {
+      const { id: projectId } = req.params;
+      const { snapshotId } = req.body;
+
+      if (!snapshotId || typeof snapshotId !== "string") {
+        return res.status(400).json({
+          success: false,
+          message: "snapshotId is required and must be a string",
+        });
+      }
+
+      const job = await createAiSuggestJob({
+        projectId,
+        snapshotId,
+        userId: req.user.id,
+      });
+
+      // Kick-off full pipeline bất đồng bộ (không await)
+      processAiSuggestJob(job.id).catch((err) => {
+        console.error("Lỗi khi chạy AI_SUGGEST pipeline ngầm:", err);
+      });
+
+      return res.status(202).json({
+        success: true,
+        data: {
+          job: {
+            id: job.id,
+            type: job.type,
+            snapshotId: job.snapshotId,
+            status: job.status,
+            progress: job.progress,
+            createdAt: job.createdAt,
+            updatedAt: job.updatedAt,
+          },
+        },
+      });
+    } catch (error) {
+      console.error(error);
+
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  }
+
+  async chat(req, res) {
+    try {
+      const { id: projectId } = req.params;
+      const { message, history } = req.body;
+
+      if (!message || typeof message !== "string") {
+        return res.status(400).json({
+          success: false,
+          message: "Message is required and must be a string",
+        });
+      }
+
+      // Check and increment AI daily quota
+      await checkAndIncrementQuota(req.user.id);
+
+      // We just ensure project exists to provide context
+      const project = await getProjectById(projectId);
+
+      let prompt = `You are a helpful AI coding assistant named TestCovAI Agent. You assist users with code coverage, testing, and general programming questions.
+The user is working on project: ${project.name}.
+`;
+
+      if (history && Array.isArray(history) && history.length > 0) {
+        prompt += "\n--- Conversation History ---\n";
+        history.forEach((msg) => {
+          prompt += `${msg.role === "user" ? "User" : "Assistant"}: ${msg.content}\n`;
+        });
+        prompt += "----------------------------\n";
+      }
+
+      prompt += `\nUser: ${message}\nAssistant:`;
+
+      const reply = await generateText(prompt);
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          reply,
+        },
+      });
+    } catch (error) {
+      console.error(error);
+
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
     }
   }
 }
