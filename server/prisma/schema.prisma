@@ -64,7 +64,6 @@ model User {
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 
-  aiUsageCount           Int      @default(0)
   aiUsageDate            String?  // Format: "YYYY-MM-DD"
 
   projects      Project[]
