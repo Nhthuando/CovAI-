@@ -1,28 +1,29 @@
 import { motion } from "framer-motion";
 import { useInView } from "framer-motion";
-import { useRef } from "react";
+import { useRef, useState } from "react";
+import CodeLens from "./CodeLens";
 
 const CODE_LINES = [
-  { num: 1,  text: "import { processPayment } from './payment';", cov: "covered" },
-  { num: 2,  text: "import { sendEmail } from './mailer';",        cov: "covered" },
-  { num: 3,  text: "",                                              cov: null },
-  { num: 4,  text: "export function checkout(cart, user) {",       cov: "covered" },
-  { num: 5,  text: "  if (!cart || cart.items.length === 0) {",    cov: "covered" },
-  { num: 6,  text: "    throw new Error('Cart is empty');",        cov: "uncovered" },
-  { num: 7,  text: "  }",                                          cov: "covered" },
-  { num: 8,  text: "",                                              cov: null },
-  { num: 9,  text: "  const total = cart.items.reduce(",           cov: "covered" },
-  { num: 10, text: "    (sum, item) => sum + item.price, 0",       cov: "covered" },
-  { num: 11, text: "  );",                                         cov: "covered" },
-  { num: 12, text: "",                                              cov: null },
-  { num: 13, text: "  if (user.balance < total) {",                cov: "partial" },
-  { num: 14, text: "    throw new Error('Insufficient funds');",   cov: "uncovered" },
-  { num: 15, text: "  }",                                          cov: "partial" },
-  { num: 16, text: "",                                              cov: null },
-  { num: 17, text: "  const receipt = processPayment(total);",     cov: "covered" },
-  { num: 18, text: "  sendEmail(user.email, receipt);",            cov: "covered" },
-  { num: 19, text: "  return receipt;",                            cov: "covered" },
-  { num: 20, text: "}",                                            cov: "covered" },
+  { num: 1, text: "import { processPayment } from './payment';", cov: "covered" },
+  { num: 2, text: "import { sendEmail } from './mailer';", cov: "covered" },
+  { num: 3, text: "", cov: null },
+  { num: 4, text: "export function checkout(cart, user) {", cov: "covered" },
+  { num: 5, text: "  if (!cart || cart.items.length === 0) {", cov: "covered" },
+  { num: 6, text: "    throw new Error('Cart is empty');", cov: "uncovered" },
+  { num: 7, text: "  }", cov: "covered" },
+  { num: 8, text: "", cov: null },
+  { num: 9, text: "  const total = cart.items.reduce(", cov: "covered" },
+  { num: 10, text: "    (sum, item) => sum + item.price, 0", cov: "covered" },
+  { num: 11, text: "  );", cov: "covered" },
+  { num: 12, text: "", cov: null },
+  { num: 13, text: "  if (user.balance < total) {", cov: "partial" },
+  { num: 14, text: "    throw new Error('Insufficient funds');", cov: "uncovered" },
+  { num: 15, text: "  }", cov: "partial" },
+  { num: 16, text: "", cov: null },
+  { num: 17, text: "  const receipt = processPayment(total);", cov: "covered" },
+  { num: 18, text: "  sendEmail(user.email, receipt);", cov: "covered" },
+  { num: 19, text: "  return receipt;", cov: "covered" },
+  { num: 20, text: "}", cov: "covered" },
 ];
 
 const AI_SUGGESTIONS = [
@@ -57,16 +58,16 @@ const AI_SUGGESTIONS = [
 ];
 
 function getCovColor(cov) {
-  if (cov === "covered")   return "rgba(74,222,128,0.15)";
+  if (cov === "covered") return "rgba(74,222,128,0.15)";
   if (cov === "uncovered") return "rgba(239,68,68,0.18)";
-  if (cov === "partial")   return "rgba(251,191,36,0.12)";
+  if (cov === "partial") return "rgba(251,191,36,0.12)";
   return "transparent";
 }
 
 function getBarColor(cov) {
-  if (cov === "covered")   return "#4ade80";
+  if (cov === "covered") return "#4ade80";
   if (cov === "uncovered") return "#ef4444";
-  if (cov === "partial")   return "#fbbf24";
+  if (cov === "partial") return "#fbbf24";
   return "transparent";
 }
 
@@ -75,9 +76,9 @@ function tokenizeLine(text) {
   // Simple syntax coloring
   return text
     .replace(/(import|export|function|const|if|throw|return)/g, '<kw>$1</kw>')
-    .replace(/('.*?'|".*?")/g,  '<str>$1</str>')
-    .replace(/(\/\/.*)/g,       '<cmt>$1</cmt>')
-    .replace(/(\d+)/g,          '<num>$1</num>');
+    .replace(/('.*?'|".*?")/g, '<str>$1</str>')
+    .replace(/(\/\/.*)/g, '<cmt>$1</cmt>')
+    .replace(/(\d+)/g, '<num>$1</num>');
 }
 
 export default function IDEPreview() {
@@ -164,7 +165,7 @@ export default function IDEPreview() {
             borderBottom: "1px solid rgba(255,255,255,0.06)",
           }}>
             <div style={{ display: "flex", gap: "6px" }}>
-              {["#ef4444","#fbbf24","#4ade80"].map((c) => (
+              {["#ef4444", "#fbbf24", "#4ade80"].map((c) => (
                 <div key={c} style={{ width: "12px", height: "12px", borderRadius: "50%", background: c, opacity: 0.8 }} />
               ))}
             </div>
@@ -251,22 +252,27 @@ export default function IDEPreview() {
                       {line.num}
                     </div>
                     {/* Code */}
-                    <div
-                      style={{ padding: "0 12px", color: "#c9d1d9", whiteSpace: "pre" }}
-                      dangerouslySetInnerHTML={{
-                        __html: (line.text || " ")
-                          .replace(/(import|export|function|const|if|throw|return|new)/g,
-                            '<span style="color:#ff7b72">$1</span>')
-                          .replace(/('.*?'|".*?")/g,
-                            '<span style="color:#a5d6ff">$1</span>')
-                          .replace(/(\d+)/g,
-                            '<span style="color:#79c0ff">$1</span>')
-                          .replace(/(\/\/.*)/g,
-                            '<span style="color:#8b949e">$1</span>')
-                          .replace(/(\bError\b|\bcart\b|\buser\b|\btotal\b|\breceipt\b|\bsum\b|\bitem\b)/g,
-                            '<span style="color:#d2a8ff">$1</span>'),
-                      }}
-                    />
+                    <div style={{ display: "flex", alignItems: "center", flex: 1 }}>
+                      <div
+                        style={{ padding: "0 12px", color: "#c9d1d9", whiteSpace: "pre", flex: 1 }}
+                        dangerouslySetInnerHTML={{
+                          __html: (line.text || " ")
+                            .replace(/(import|export|function|const|if|throw|return|new)/g,
+                              '<span style="color:#ff7b72">$1</span>')
+                            .replace(/('.*?'|".*?")/g,
+                              '<span style="color:#a5d6ff">$1</span>')
+                            .replace(/(\d+)/g,
+                              '<span style="color:#79c0ff">$1</span>')
+                            .replace(/(\/\/.*)/g,
+                              '<span style="color:#8b949e">$1</span>')
+                            .replace(/(\bError\b|\bcart\b|\buser\b|\btotal\b|\breceipt\b|\bsum\b|\bitem\b)/g,
+                              '<span style="color:#d2a8ff">$1</span>'),
+                        }}
+                      />
+                      {line.text.includes("function") && (
+                        <CodeLens onAnalyze={() => alert("Analyzing complexity...")} />
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -335,9 +341,9 @@ export default function IDEPreview() {
                 <div style={{ fontSize: "0.7rem", color: "#484f58", marginBottom: "0.5rem" }}>COVERAGE SUMMARY</div>
                 {[
                   { label: "Statements", pct: 78, color: "#7C3AED" },
-                  { label: "Branches",   pct: 55, color: "#f97316" },
-                  { label: "Functions",  pct: 85, color: "#22d3ee" },
-                  { label: "Lines",      pct: 72, color: "#4ade80" },
+                  { label: "Branches", pct: 55, color: "#f97316" },
+                  { label: "Functions", pct: 85, color: "#22d3ee" },
+                  { label: "Lines", pct: 72, color: "#4ade80" },
                 ].map((item) => (
                   <div key={item.label} style={{ marginBottom: "0.4rem" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.68rem", color: "#8b949e", marginBottom: "2px" }}>

@@ -15,6 +15,7 @@ import {
   deleteProject,
   getProjectTree,
   getFileContent,
+  createAnalysisJob,
 } from "../services/project.service.js";
 
 class ProjectController {

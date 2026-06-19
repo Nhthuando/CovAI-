@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X,
@@ -10,6 +10,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { getFileContentApi } from "../../services/project.service";
+import CodeLens from "../CodeLens";
 
 /* ── Token color map (for simple syntax highlighting) ────── */
 const EXT_LANG_MAP = {
@@ -148,13 +149,13 @@ function tokenizeLine(line, lang) {
 
 /* ── Token colors ────────────────────────────────────────── */
 const TOKEN_COLORS = {
-  keyword:  "#c084fc",
+  keyword: "#c084fc",
   function: "#93c5fd",
-  string:   "#86efac",
-  number:   "#fca5a5",
-  comment:  "#4b5563",
-  tag:      "#f9a8d4",
-  plain:    "#e2e8f0",
+  string: "#86efac",
+  number: "#fca5a5",
+  comment: "#4b5563",
+  tag: "#f9a8d4",
+  plain: "#e2e8f0",
 };
 
 /* ── File Tab ────────────────────────────────────────────── */
@@ -163,10 +164,10 @@ function Tab({ tab, isActive, onSelect, onClose }) {
 
   const getTabColor = (name) => {
     if (name.endsWith(".tsx") || name.endsWith(".jsx")) return "#61dafb";
-    if (name.endsWith(".ts"))  return "#3b82f6";
-    if (name.endsWith(".js"))  return "#fbbf24";
+    if (name.endsWith(".ts")) return "#3b82f6";
+    if (name.endsWith(".js")) return "#fbbf24";
     if (name.endsWith(".css")) return "#38bdf8";
-    if (name.endsWith(".py"))  return "#3572A5";
+    if (name.endsWith(".py")) return "#3572A5";
     if (name.endsWith(".json")) return "#4ade80";
     return "#8b949e";
   };
@@ -223,7 +224,7 @@ function Tab({ tab, isActive, onSelect, onClose }) {
 }
 
 /* ── Code Line ───────────────────────────────────────────── */
-function CodeLine({ lineNum, tokens }) {
+function CodeLine({ lineNum, tokens, isFunction, complexity, decisionPoints, onAnalyze }) {
   return (
     <div
       className="flex items-stretch group"
@@ -254,6 +255,8 @@ function CodeLine({ lineNum, tokens }) {
           whiteSpace: "pre",
           paddingTop: 2,
           paddingLeft: 4,
+          display: "flex",
+          alignItems: "center",
         }}
       >
         {tokens.length === 0 ? (
@@ -271,14 +274,79 @@ function CodeLine({ lineNum, tokens }) {
 }
 
 /* ── Editor ─────────────────────────────────────────────── */
-export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fileTree = [], isLoadingTree, projectId }) {
+export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fileTree = [], isLoadingTree, projectId, snapshotId }) {
   const [fileContents, setFileContents] = useState({}); // cache: { [fileId]: { content, loading, error } }
+  const [complexities, setComplexities] = useState({}); // cache: { [fileId]: { [funcName]: { value, decisionPoints } } }
   const fetchedRef = useRef(new Set()); // track what we've already fetched
+
+  // Fetch complexities when active tab changes
+  useEffect(() => {
+    if (!activeTabId || !projectId || !snapshotId) return;
+
+    console.log("🔍 Active Tab ID:", activeTabId);
+    console.log("🔍 Project ID:", projectId);
+    console.log("🔍 Snapshot ID:", snapshotId);
+
+    if (!snapshotId) {
+      console.error("🔍 Snapshot ID is missing!");
+      return;
+    }
+
+    const user = localStorage.getItem("user");
+    const userToken = user ? JSON.parse(user).token : null;
+    const token = localStorage.getItem("token") || userToken;
+
+    fetch(`http://localhost:5000/api/cyclomatic?snapshotId=${snapshotId}`, {
+      method: 'GET',
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+      }
+    })
+      .then(res => {
+        console.log("🔍 Response status:", res.status);
+        return res.text(); // Read as text first to debug
+      })
+      .then(text => {
+        console.log("🔍 Raw response text:", text);
+        const data = JSON.parse(text);
+        console.log("🔍 Cyclomatic data parsed:", data);
+        console.log("🔍 activeTabId:", activeTabId);
+
+        // If data is not an array, maybe it's { results: [...] } or similar?
+        const arrayData = Array.isArray(data) ? data : (data.results || []);
+
+        if (Array.isArray(arrayData)) {
+          console.log("🔍 Processing array data of length:", arrayData.length);
+          const newComplexities = {};
+          // Normalize function to match paths: ensure both are relative paths
+          const normalize = (p) => p.replace(/\\/g, '/').replace(/^\.\//, '');
+
+          arrayData.forEach(item => {
+            const key = normalize(item.filePath);
+            if (!newComplexities[key]) newComplexities[key] = {};
+            newComplexities[key][item.functionName] = {
+              value: item.value,
+              decisionPoints: item.decisionPoints
+            };
+          });
+          console.log("🔍 complexities map keys:", Object.keys(newComplexities));
+          setComplexities(newComplexities);
+          console.log("🔍 activeTabId:", activeTabId);
+          setComplexities(newComplexities);
+        }
+      })
+      .catch(err => console.error("Failed to fetch complexities", err));
+  }, [activeTabId, projectId, snapshotId]);
+
+  useEffect(() => {
+    console.log("🔍 Complexities updated:", JSON.stringify(complexities, null, 2));
+  }, [complexities]);
 
   // Fetch file content when active tab changes
   useEffect(() => {
     if (!activeTabId || !projectId) return;
-    
+
     // Already have content or currently loading
     if (fileContents[activeTabId]?.content !== undefined || fileContents[activeTabId]?.loading) return;
     // Already fetched (prevents double fetch in StrictMode)
@@ -354,10 +422,17 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
   // Parse content into lines with tokens
   const lines = currentFile.content
     ? currentFile.content.split("\n").map((line, i) => ({
-        lineNum: i + 1,
-        tokens: tokenizeLine(line, lang),
-      }))
+      lineNum: i + 1,
+      tokens: tokenizeLine(line, lang),
+      isFunction: line.includes("function ") || line.includes("=>"),
+      functionName: line.match(/(?:async\s+)?function\s+([a-zA-Z0-9_$]+)/)?.[1]
+        ?? line.match(/(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s*)?\(/)?.[1]
+    }))
     : [];
+
+  const handleAnalyze = (functionName) => {
+    console.log("Analyzing", functionName, activeTabId);
+  };
 
   return (
     <motion.div
@@ -455,9 +530,31 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
               transition={{ duration: 0.15 }}
               className="py-2"
             >
-              {lines.map((line) => (
-                <CodeLine key={line.lineNum} lineNum={line.lineNum} tokens={line.tokens} />
-              ))}
+              {lines.map((line) => {
+                const normalize = (p) => p.replace(/\\/g, '/').replace(/^\.\//, '');
+                const normalizedPath = normalize(activeTabId);
+                const comp = complexities[normalizedPath]?.[line.functionName];
+                if (line.isFunction) {
+                  console.log(`🔍 Checking complexity for ${normalizedPath} -> ${line.functionName}:`, comp);
+                }
+                return (
+                  <React.Fragment key={line.lineNum}>
+                    {line.isFunction && (
+                      <div className="px-[60px] py-1">
+                        <CodeLens
+                          complexity={comp?.value || 0}
+                          decisionPoints={comp?.decisionPoints || 0}
+                        />
+                      </div>
+                    )}
+                    <CodeLine
+                      lineNum={line.lineNum}
+                      tokens={line.tokens}
+                      isFunction={line.isFunction}
+                    />
+                  </React.Fragment>
+                );
+              })}
             </motion.div>
           )}
         </AnimatePresence>
