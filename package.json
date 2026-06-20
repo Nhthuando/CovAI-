@@ -6,6 +6,8 @@
     "install:all": "npm install --prefix client && npm install --prefix server"
   },
   "dependencies": {
-    "esprima": "^4.0.1"
+    "@tanstack/react-query": "^5.101.0",
+    "esprima": "^4.0.1",
+    "recharts": "^3.8.1"
   }
 }

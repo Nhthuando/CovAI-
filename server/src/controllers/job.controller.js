@@ -3,7 +3,7 @@ import path from "path";
 import { randomUUID } from "crypto";
 import { getBucket } from "../config/firebase.js";
 import prisma from "../config/prisma.js";
-import { scanZipBomb } from "../middlewares/upload.middleware.js";
+import { scanArchiveBomb } from "../middlewares/upload.middleware.js";
 import { processIngestJob } from "../services/ingestJob.service.js";
 import { createSnapshotIngestJob } from "../services/job.service.js";
 import { ServiceError } from "../utils/serviceError.js";
@@ -17,6 +17,24 @@ export const listProjectJobs = async (req, res) => {
         if (!project) return res.status(404).json({ message: "Không tìm thấy Project hoặc Project không thuộc về user!" });
         const jobs = await prisma.job.findMany({ where: { projectId }, orderBy: { createdAt: "desc" } });
         return res.status(200).json({ message: "GET Job thành công!", jobs });
+    } catch (error) {
+        console.log(error);
+        return res.status(500).json({ message: "Có lỗi server!" });
+    }
+}
+
+export const listUserJobs = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        if (!userId) return res.status(401).json({ message: "Không thể lấy user Id!" });
+        const jobs = await prisma.job.findMany({ 
+            where: { userId }, 
+            orderBy: { createdAt: "desc" },
+            include: {
+                project: { select: { name: true } }
+            }
+        });
+        return res.status(200).json({ message: "GET toàn bộ Job thành công!", jobs });
     } catch (error) {
         console.log(error);
         return res.status(500).json({ message: "Có lỗi server!" });
@@ -86,9 +104,9 @@ export const ingestJob = async (req, res) => {
             return res.status(400).json({ message: "projectId không hợp lệ." });
         }
 
-        // ── Scan zip bomb trước khi làm bất cứ điều gì ────────────────────
+        // ── Scan archive bomb trước khi làm bất cứ điều gì ────────────────────
         try {
-            await scanZipBomb(file.buffer);
+            await scanArchiveBomb(file.buffer, file.originalname);
         } catch (scanError) {
             return res.status(400).json({ message: scanError.message });
         }

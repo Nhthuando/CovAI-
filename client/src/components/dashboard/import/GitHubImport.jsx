@@ -36,11 +36,6 @@ export default function GitHubImport({ onClose, onSuccess }) {
           const existing = projects?.find((p) => p.name === repoName);
           if (existing) {
             projectId = existing.id;
-            showToast({
-              type: "info",
-              title: "Using existing project",
-              message: `Project "${repoName}" already exists. Importing repository into it.`,
-            });
           } else {
             throw new Error("Project already exists but could not be found.");
           }
@@ -49,14 +44,18 @@ export default function GitHubImport({ onClose, onSuccess }) {
         }
       }
 
-      await importGithubUrlApi(projectId, urlValue);
-
-      showToast({
-        type: "success",
-        title: "Import successful",
-        message: `Repository "${repoName}" has been imported.`,
+      // Fire import in background — don't await!
+      importGithubUrlApi(projectId, urlValue).catch((err) => {
+        console.error("[GitHubImport] Background import failed:", err);
       });
 
+      showToast({
+        type: "info",
+        title: "Processing started",
+        message: `"${repoName}" is being imported. Track progress in Job Queue.`,
+      });
+
+      // Close overlay immediately
       if (onSuccess) onSuccess();
       else if (onClose) onClose();
     } catch (err) {
@@ -66,7 +65,6 @@ export default function GitHubImport({ onClose, onSuccess }) {
         title: "Import failed",
         message: err.message || "An unexpected error occurred.",
       });
-    } finally {
       setUploading(false);
     }
   };

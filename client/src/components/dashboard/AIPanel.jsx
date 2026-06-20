@@ -16,92 +16,17 @@ import {
   Shield,
 } from "lucide-react";
 
+import { sendAiChatMessageApi } from "../../services/project.service";
+import { useToast } from "./ToastContext";
+
 /* ── Initial conversation ───────────────────────────────── */
 const INITIAL_MESSAGES = [
   {
     id: 1,
     role: "assistant",
     content:
-      "Xin chào! Tôi là **AI Agent** của TestCovAI. Tôi đã phân tích source code của bạn và sẵn sàng hỗ trợ:\n\n- Phân tích **Test Coverage** và tìm điểm yếu\n- Gợi ý **test case** còn thiếu\n- Sinh **Jest test** tự động\n- Giải thích **Cyclomatic Complexity**\n\nBạn cần giúp gì không?",
-    timestamp: "14:22",
-  },
-  {
-    id: 2,
-    role: "user",
-    content: "Hãy phân tích coverage của file coverage.service.js",
-    timestamp: "14:23",
-  },
-  {
-    id: 3,
-    role: "assistant",
-    content:
-      "Đã phân tích `coverage.service.js`. Kết quả:\n\n**Coverage hiện tại:** 71% branches\n\n3 nhánh chưa được kiểm thử:",
-    timestamp: "14:23",
-    code: `// ⚠️ Uncovered branches detected
-function calculateCoverage(lines, tested) {
-  if (!lines || lines.length === 0) {
-    return 0; // ❌ Branch not tested
-  }
-  
-  const ratio = tested / lines.length;
-  
-  if (ratio > 1) {
-    throw new Error('Invalid data'); // ❌ Not tested
-  }
-  
-  return Math.round(ratio * 100);
-}`,
-    suggestion: "Gợi ý: Thêm test cho trường hợp `lines = null` và `ratio > 1`",
-  },
-];
-
-const AI_RESPONSES = [
-  {
-    content:
-      "Đã phân tích! Tôi tìm thấy **4 test case** còn thiếu trong file này.\n\nHàm `parseZip()` có **CC = 6** nhưng chỉ có 2/6 nhánh được test.",
-    code: `// 🤖 AI Generated Test — Jest Skeleton
-describe('parseZip', () => {
-  test('should handle empty zip', async () => {
-    const result = await parseZip(emptyBuffer);
-    expect(result).toEqual([]);
-  });
-
-  test('should reject invalid zip format', async () => {
-    await expect(parseZip(invalidBuffer))
-      .rejects.toThrow('Invalid ZIP');
-  });
-
-  test.todo('Handle corrupted entries');
-  test.todo('Handle nested directories');
-});`,
-    suggestion: "Coverage sau khi thêm test này: ~89% (+18%)",
-  },
-  {
-    content:
-      "Cyclomatic Complexity của dự án:\n\n- `zipExtraction.service.js`: **CC = 8** ⚠️\n- `ingestJob.service.js`: **CC = 5** ✅\n- `upload.controller.js`: **CC = 3** ✅\n\nFile có CC cao nhất cần ưu tiên refactor.",
-  },
-  {
-    content: "Tôi đã sinh **Jest test runnable** cho `coverage.service.js`:",
-    code: `import { calculateCoverage } from './coverage.service';
-
-describe('calculateCoverage', () => {
-  test('returns 0 for empty lines', () => {
-    expect(calculateCoverage([], 0)).toBe(0);
-  });
-
-  test('returns null for null input', () => {
-    expect(calculateCoverage(null, 0)).toBe(0);
-  });
-
-  test('calculates correct percentage', () => {
-    expect(calculateCoverage([1,2,3,4], 3)).toBe(75);
-  });
-
-  test('throws for invalid ratio', () => {
-    expect(() => calculateCoverage([1], 5)).toThrow();
-  });
-});`,
-    suggestion: "Run: jest --coverage để kiểm tra kết quả",
+      "Xin chào! Tôi là **AI Agent** của TestCovAI. Tôi đã được kết nối với API backend.\n\nBạn có câu hỏi nào về source code hoặc cần gợi ý test case không?",
+    timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
   },
 ];
 
@@ -231,13 +156,17 @@ function ChatMessage({ msg }) {
             height: 20,
             background: isUser
               ? "rgba(124,58,237,0.2)"
-              : "linear-gradient(135deg, rgba(124,58,237,0.35), rgba(34,211,238,0.15))",
-            border: `1px solid ${isUser ? "rgba(124,58,237,0.3)" : "rgba(34,211,238,0.2)"}`,
-            boxShadow: isUser ? "none" : "0 0 8px rgba(34,211,238,0.1)",
+              : msg.type === "error" || msg.type === "quota"
+                ? "rgba(248,113,113,0.15)"
+                : "linear-gradient(135deg, rgba(124,58,237,0.35), rgba(34,211,238,0.15))",
+            border: `1px solid ${isUser ? "rgba(124,58,237,0.3)" : msg.type === "error" || msg.type === "quota" ? "rgba(248,113,113,0.3)" : "rgba(34,211,238,0.2)"}`,
+            boxShadow: isUser ? "none" : msg.type === "error" || msg.type === "quota" ? "0 0 8px rgba(248,113,113,0.15)" : "0 0 8px rgba(34,211,238,0.1)",
           }}
         >
           {isUser ? (
             <User size={10} style={{ color: "#a78bfa" }} />
+          ) : msg.type === "error" || msg.type === "quota" ? (
+            <Shield size={10} style={{ color: "#f87171" }} />
           ) : (
             <Bot size={10} style={{ color: "#67e8f9" }} />
           )}
@@ -245,7 +174,7 @@ function ChatMessage({ msg }) {
         <span
           style={{
             fontWeight: 500,
-            color: isUser ? "#8b949e" : "#67e8f9",
+            color: isUser ? "#8b949e" : msg.type === "error" || msg.type === "quota" ? "#f87171" : "#67e8f9",
             fontFamily: "var(--font-sans)",
           }}
         >
@@ -257,6 +186,31 @@ function ChatMessage({ msg }) {
       </div>
 
       {/* Message Bubble */}
+      {msg.type === "quota" ? (
+        <div
+          className="relative rounded-xl overflow-hidden"
+          style={{
+            marginLeft: 28,
+            background: "rgba(248,113,113,0.04)",
+            border: "1px solid rgba(248,113,113,0.2)",
+            backdropFilter: "blur(12px)",
+          }}
+        >
+          {/* Top highlight bar */}
+          <div style={{ height: 3, background: "linear-gradient(90deg, #f87171, #fb923c)" }} />
+          <div style={{ padding: "16px 20px" }}>
+            <h4 style={{ color: "#f87171", fontSize: 14, fontWeight: 600, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 16 }}>🛑</span> Daily Limit Reached
+            </h4>
+            <p style={{ color: "#e6edf3", fontSize: 13, lineHeight: 1.6 }}>
+              Bạn đã vượt quá giới hạn lượt chat miễn phí hôm nay để đảm bảo chất lượng máy chủ.
+            </p>
+            <p style={{ color: "#8b949e", fontSize: 12, marginTop: 10, fontStyle: "italic" }}>
+              Hãy quay lại vào ngày mai nhé! Cảm ơn bạn đã sử dụng hệ thống.
+            </p>
+          </div>
+        </div>
+      ) : (
       <div
         className="relative rounded-xl"
         style={{
@@ -335,6 +289,7 @@ function ChatMessage({ msg }) {
           )}
         </AnimatePresence>
       </div>
+      )}
     </motion.div>
   );
 }
@@ -370,6 +325,7 @@ function TypingIndicator() {
           background: "rgba(124,58,237,0.04)",
           border: "1px solid rgba(124,58,237,0.1)",
           backdropFilter: "blur(12px)",
+          width: "max-content",
         }}
       >
         {[0, 1, 2].map((i) => (
@@ -418,7 +374,7 @@ function ChatInput({ onSend, isTyping }) {
   return (
     <div
       className="flex-shrink-0"
-      style={{ padding: "10px 20px 16px" }}
+      style={{ padding: "10px 24px 20px" }}
     >
       <div
         className="relative rounded-2xl overflow-hidden transition-all duration-300"
@@ -473,7 +429,7 @@ function ChatInput({ onSend, isTyping }) {
             rows={1}
             className="w-full resize-none outline-none bg-transparent text-sm"
             style={{
-              padding: "16px 20px 4px 20px",
+              padding: "16px 16px 8px 16px",
               fontFamily: "var(--font-sans)",
               color: "#e6edf3",
               fontSize: 13,
@@ -484,35 +440,7 @@ function ChatInput({ onSend, isTyping }) {
           />
 
           {/* Actions row */}
-          <div className="flex items-center justify-between" style={{ padding: "4px 16px 10px 16px" }}>
-            <div className="flex items-center gap-0.5">
-              <motion.button
-                whileTap={{ scale: 0.9 }}
-                title="Attach file"
-                className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
-                style={{ color: "#484f58" }}
-              >
-                <Paperclip size={14} />
-              </motion.button>
-              <motion.button
-                whileTap={{ scale: 0.9 }}
-                className="flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-white/5 transition-colors"
-                style={{ color: "#484f58", fontSize: 11, fontFamily: "var(--font-mono)" }}
-              >
-                <Wand2 size={12} />
-                <span>Gemini</span>
-                <ChevronDown size={10} />
-              </motion.button>
-              <motion.button
-                whileTap={{ scale: 0.9 }}
-                title="Voice input"
-                className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
-                style={{ color: "#484f58" }}
-              >
-                <Mic size={14} />
-              </motion.button>
-            </div>
-
+          <div className="flex items-center justify-end" style={{ padding: "4px 16px 12px 16px" }}>
             <motion.button
               whileHover={canSend ? { scale: 1.08 } : {}}
               whileTap={canSend ? { scale: 0.92 } : {}}
@@ -559,7 +487,7 @@ function QuickActions({ onAction }) {
   return (
     <div
       className="flex gap-3 flex-shrink-0"
-      style={{ padding: "8px 20px 12px" }}
+      style={{ padding: "8px 24px 12px" }}
     >
       {actions.map(({ label, icon: Icon, color }) => (
         <motion.button
@@ -586,38 +514,84 @@ function QuickActions({ onAction }) {
 }
 
 /* ── AI Agent Panel — Main Export ────────────────────────── */
-export default function AIPanel() {
+export default function AIPanel({ projectId }) {
   const [messages, setMessages] = useState(INITIAL_MESSAGES);
-  const [isTyping, setIsTyping]   = useState(false);
+  const [isTyping, setIsTyping] = useState(false);
   const bottomRef = useRef(null);
+  const { showToast } = useToast();
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
 
-  const handleSend = (text) => {
+  const handleSend = async (text) => {
+    if (!projectId) {
+      showToast({
+        type: "warning",
+        title: "No Project",
+        message: "Vui lòng chọn hoặc tạo một dự án trước khi sử dụng AI.",
+      });
+      return;
+    }
+
     const userMsg = {
       id: Date.now(),
       role: "user",
       content: text,
       timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
     };
+
+    const currentHistory = messages.map(m => ({ role: m.role, content: m.content }));
     setMessages((m) => [...m, userMsg]);
     setIsTyping(true);
 
-    setTimeout(() => {
-      const resp = AI_RESPONSES[Math.floor(Math.random() * AI_RESPONSES.length)];
+    try {
+      const res = await sendAiChatMessageApi(projectId, text, currentHistory);
+      
       setMessages((m) => [
         ...m,
         {
           id: Date.now() + 1,
           role: "assistant",
           timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
-          ...resp,
+          content: res.data.reply,
         },
       ]);
+    } catch (error) {
+      console.error(error);
+      const isQuotaError = error.message && error.message.includes("QUOTA_EXCEEDED");
+      
+      if (isQuotaError) {
+        setMessages((m) => [
+          ...m,
+          {
+            id: Date.now() + 1,
+            role: "assistant",
+            type: "quota",
+            timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
+            content: "",
+          },
+        ]);
+      } else {
+        showToast({
+          type: "error",
+          title: "Lỗi AI",
+          message: "Không thể gọi API Chat, vui lòng thử lại.",
+        });
+        setMessages((m) => [
+          ...m,
+          {
+            id: Date.now() + 1,
+            role: "assistant",
+            type: "error",
+            timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
+            content: "❌ Lỗi khi kết nối với backend API. Vui lòng kiểm tra lại log server.",
+          },
+        ]);
+      }
+    } finally {
       setIsTyping(false);
-    }, 1400 + Math.random() * 800);
+    }
   };
 
   return (
@@ -627,7 +601,7 @@ export default function AIPanel() {
       animate={{ opacity: 1, x: 0 }}
       transition={{ duration: 0.35, ease: "easeOut", delay: 0.15 }}
       style={{
-        width: 340,
+        width: "100%",
         background: "#0d1117",
         borderLeft: "1px solid var(--ide-border)",
       }}
@@ -637,7 +611,7 @@ export default function AIPanel() {
         className="flex items-center justify-between flex-shrink-0"
         style={{
           height: 54,
-          padding: "0 20px",
+          padding: "0 24px",
           borderBottom: "1px solid rgba(255,255,255,0.06)",
           background: "linear-gradient(180deg, rgba(124,58,237,0.04) 0%, transparent 100%)",
         }}
@@ -701,8 +675,8 @@ export default function AIPanel() {
       <div
         className="flex-1 overflow-y-auto flex flex-col"
         style={{
-          gap: 22,
-          padding: "18px 18px",
+          gap: 24,
+          padding: "24px 24px",
           scrollbarWidth: "thin",
           scrollbarColor: "rgba(124,58,237,0.25) transparent",
         }}
