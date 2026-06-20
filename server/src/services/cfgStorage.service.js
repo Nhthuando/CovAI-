@@ -80,3 +80,42 @@ export const storeCfg = async ({
     throw new ServiceError("Failed to store CFG data", 500);
   }
 };
+
+export const getCfgByProjectId = async (projectId, userId, filters = {}) => {
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, ownerId: userId },
+  });
+
+  if (!project) {
+    throw new ServiceError("Project not found or unauthorized", 404);
+  }
+
+  const where = {
+    snapshot: {
+      projectId: projectId,
+    },
+  };
+
+  if (filters.filePath) where.filePath = filters.filePath;
+  if (filters.functionName) where.functionName = filters.functionName;
+
+  const cfgs = await prisma.cfg.findMany({
+    where,
+    select: {
+      filePath: true,
+      functionName: true,
+      startLine: true,
+      endLine: true,
+      graphJson: true,
+    },
+  });
+
+  if (!cfgs || cfgs.length === 0) {
+    throw new ServiceError("No CFG data found for this project", 404);
+  }
+
+  return cfgs.map((cfg) => ({
+    ...cfg,
+    graphJson: JSON.parse(cfg.graphJson),
+  }));
+};

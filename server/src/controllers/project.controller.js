@@ -16,6 +16,7 @@ import {
   getProjectTree,
   getFileContent,
 } from "../services/project.service.js";
+import { getCfgByProjectId } from "../services/cfgStorage.service.js";
 
 class ProjectController {
   /**
@@ -168,6 +169,31 @@ class ProjectController {
       return res.status(500).json({
         success: false,
         message: "Failed to read file content",
+      });
+    }
+  }
+
+  async getCfg(req, res) {
+    try {
+      const { id } = req.params;
+      const { filePath, functionName } = req.query;
+
+      const cfgs = await getCfgByProjectId(id, req.user.id, {
+        filePath,
+        functionName,
+      });
+
+      return res.status(200).json({ cfgs });
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+      console.error(error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to get CFG data",
       });
     }
   }
