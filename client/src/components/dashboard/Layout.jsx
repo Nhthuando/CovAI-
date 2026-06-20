@@ -5,6 +5,7 @@ import { useNavigate } from "react-router-dom";
 import ActivityBar from "./ActivityBar";
 import Sidebar from "./Sidebar";
 import Editor from "./Editor";
+import CoverageDashboard from "./CoverageDashboard";
 import AIPanel from "./AIPanel";
 import ImportLayout from "./import/ImportLayout";
 import JobQueue from "./JobQueue";
@@ -93,7 +94,7 @@ function LayoutInner() {
           setProjects(loadedProjects);
           const targetProj = activeProjId
             ? loadedProjects.find((p) => p.id === activeProjId) ||
-              loadedProjects[0]
+            loadedProjects[0]
             : loadedProjects[0];
 
           setProject(targetProj);
@@ -298,12 +299,13 @@ function LayoutInner() {
 
         {/* Center: menu bar items */}
         <div className="flex items-center gap-0.5">
-          {["Explorer", "Tests", "Metrics", "Settings"].map((item) => (
+          {["Explorer", "Tests", "Metrics", "Coverage", "Settings"].map((item) => (
             <motion.button
               key={item}
               onClick={() => {
                 if (item === "Settings") setActiveActivity("settings");
                 else if (item === "Explorer") setActiveActivity("explorer");
+                else if (item === "Coverage") setActiveActivity("coverage");
               }}
               whileHover={{ color: "#e6edf3" }}
               whileTap={{ scale: 0.97 }}
@@ -532,6 +534,8 @@ function LayoutInner() {
             </div>
           ) : activeActivity === "jobs" ? (
             <JobQueue projectId={project?.id} />
+          ) : activeActivity === "coverage" ? (
+            <CoverageDashboard projectId={project?.id} />
           ) : (
             <Editor
               tabs={tabs}

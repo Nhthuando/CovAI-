@@ -5,13 +5,16 @@
   "main": "index.js",
   "scripts": {
     "dev": "nodemon index.js",
-    "start": "nodemon index.js"
+    "start": "nodemon index.js",
+    "test": "jest"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@babel/parser": "^8.0.0",
+    "@babel/traverse": "^8.0.0",
     "@google/generative-ai": "^0.24.1",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
@@ -19,6 +22,8 @@
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
+    "esprima": "^4.0.1",
+    "estraverse": "^5.3.0",
     "express": "^5.2.1",
     "firebase-admin": "^13.10.0",
     "helmet": "^8.2.0",
@@ -33,6 +38,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "jest": "^29.7.0",
     "nodemon": "^3.1.14"
   }
 }

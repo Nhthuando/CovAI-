@@ -254,6 +254,7 @@ model Cyclomatic {
   snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id])
   cfg      Cfg?            @relation(fields: [cfgId], references: [id])
 
+  @@unique([snapshotId, filePath, functionName])
   @@index([snapshotId, filePath])
 }
 

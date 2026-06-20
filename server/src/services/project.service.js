@@ -12,55 +12,55 @@ import fs from "fs";
 export { ServiceError };
 
 function buildTree(dirPath, rootPath = dirPath) {
-  const result = [];
-  try {
-    if (!fs.existsSync(dirPath)) return result;
-    const items = fs.readdirSync(dirPath);
-    for (const item of items) {
-      if (item === "node_modules" || item === ".git") continue;
-      
-      const itemPath = path.join(dirPath, item);
-      const stat = fs.statSync(itemPath);
-      const relativePath = path.relative(rootPath, itemPath).replace(/\\/g, "/");
+    const result = [];
+    try {
+        if (!fs.existsSync(dirPath)) return result;
+        const items = fs.readdirSync(dirPath);
+        for (const item of items) {
+            if (item === "node_modules" || item === ".git") continue;
 
-      if (stat.isDirectory()) {
-        const children = buildTree(itemPath, rootPath);
-        result.push({
-          id: relativePath,
-          name: item,
-          type: "folder",
-          children
-        });
-      } else {
-        let lang = "file";
-        const ext = path.extname(item).toLowerCase();
-        if (ext === ".js" || ext === ".jsx") lang = "js";
-        else if (ext === ".ts" || ext === ".tsx") lang = "ts";
-        else if (ext === ".json") lang = "json";
-        else if (ext === ".css") lang = "css";
-        else if (ext === ".md") lang = "md";
-        else if (ext.includes("test") || ext.includes("spec")) lang = "test";
+            const itemPath = path.join(dirPath, item);
+            const stat = fs.statSync(itemPath);
+            const relativePath = path.relative(rootPath, itemPath).replace(/\\/g, "/");
 
-        if (ext === ".jsx" || ext === ".tsx") lang = "react";
+            if (stat.isDirectory()) {
+                const children = buildTree(itemPath, rootPath);
+                result.push({
+                    id: relativePath,
+                    name: item,
+                    type: "folder",
+                    children
+                });
+            } else {
+                let lang = "file";
+                const ext = path.extname(item).toLowerCase();
+                if (ext === ".js" || ext === ".jsx") lang = "js";
+                else if (ext === ".ts" || ext === ".tsx") lang = "ts";
+                else if (ext === ".json") lang = "json";
+                else if (ext === ".css") lang = "css";
+                else if (ext === ".md") lang = "md";
+                else if (ext.includes("test") || ext.includes("spec")) lang = "test";
 
-        result.push({
-          id: relativePath,
-          name: item,
-          type: "file",
-          lang
-        });
-      }
+                if (ext === ".jsx" || ext === ".tsx") lang = "react";
+
+                result.push({
+                    id: relativePath,
+                    name: item,
+                    type: "file",
+                    lang
+                });
+            }
+        }
+    } catch (e) {
+        console.error(e);
     }
-  } catch (e) {
-    console.error(e);
-  }
-  
-  result.sort((a, b) => {
-    if (a.type === b.type) return a.name.localeCompare(b.name);
-    return a.type === "folder" ? -1 : 1;
-  });
-  
-  return result;
+
+    result.sort((a, b) => {
+        if (a.type === b.type) return a.name.localeCompare(b.name);
+        return a.type === "folder" ? -1 : 1;
+    });
+
+    return result;
 }
 
 export const createProject = async ({ input, currentUserId }) => {
@@ -332,11 +332,22 @@ export const createAnalysisJob = async ({
     }
 
     // SCRUM-138: Tạo RUN_TESTS job cho pipeline coverage analysis
-    return createRunTestsJob({
+    const runTestsJob = await createRunTestsJob({
         projectId,
         snapshotId,
         userId,
     });
+
+    // Tạo BUILD_CFG job
+    const { createSnapshotJob } = await import("./job.service.js");
+    await createSnapshotJob({
+        projectId,
+        snapshotId,
+        userId,
+        type: "BUILD_CFG",
+    });
+
+    return runTestsJob;
 };
 
 export const deleteProject = async (projectId, userId) => {
