@@ -15,10 +15,7 @@ const TOP_ITEMS = [
   { id: "explorer", icon: Files, label: "Explorer" },
   { id: "dashboard", icon: LayoutDashboard, label: "Dashboard" },
   { id: "search", icon: Search, label: "Search" },
-
   { id: "jobs", icon: Cpu, label: "Job Queue" },
-  { id: "tests", icon: FlaskConical, label: "Tests" },
-
   { id: "git", icon: GitBranch, label: "Source Control" },
   { id: "tests", icon: FlaskConical, label: "Tests" },
 ];

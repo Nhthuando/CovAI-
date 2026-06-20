@@ -15,3 +15,21 @@ export async function getUserProfileApi() {
 
   return await res.json();
 }
+
+export async function updateUserProfileApi(userData) {
+  const token = localStorage.getItem("token");
+  const res = await fetch(`${BASE_URL}/users/me`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(userData),
+  });
+
+  if (!res.ok) {
+    throw new Error("Failed to update user profile");
+  }
+
+  return await res.json();
+}
