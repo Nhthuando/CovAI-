@@ -1,7 +1,12 @@
 import { useState, useEffect } from "react";
-import { getUserProfileApi } from "../../../services/user.service";
+import {
+  getUserProfileApi,
+  updateUserProfileApi,
+} from "../../../services/user.service";
 
 export default function UserProfile() {
+  const [isAvatarExpanded, setIsAvatarExpanded] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [profile, setProfile] = useState({
     name: "",
     email: "",
@@ -28,6 +33,19 @@ export default function UserProfile() {
     };
     fetchProfile();
   }, []);
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      await updateUserProfileApi(profile);
+      alert("Profile updated successfully!");
+    } catch (error) {
+      console.error("Error updating profile:", error);
+      alert("Failed to update profile.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   return (
     <div style={{ maxWidth: "896px", padding: "24px" }}>
@@ -72,7 +90,9 @@ export default function UserProfile() {
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
+              cursor: "pointer",
             }}
+            onClick={() => profile.avatarUrl && setIsAvatarExpanded(true)}
           >
             {profile.avatarUrl ? (
               <img
@@ -84,6 +104,34 @@ export default function UserProfile() {
               <div style={{ color: "#8b949e" }}>No Image</div>
             )}
           </div>
+
+          {isAvatarExpanded && (
+            <div
+              style={{
+                position: "fixed",
+                top: 0,
+                left: 0,
+                width: "100%",
+                height: "100%",
+                background: "rgba(0,0,0,0.8)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                zIndex: 1000,
+              }}
+              onClick={() => setIsAvatarExpanded(false)}
+            >
+              <img
+                src={profile.avatarUrl}
+                alt="Expanded Avatar"
+                style={{
+                  maxWidth: "80%",
+                  maxHeight: "80%",
+                  borderRadius: "8px",
+                }}
+              />
+            </div>
+          )}
           <input
             type="file"
             id="avatar-upload"
@@ -297,6 +345,8 @@ export default function UserProfile() {
             Cancel
           </button>
           <button
+            onClick={handleSave}
+            disabled={isSaving}
             style={{
               padding: "8px 16px",
               borderRadius: "6px",
@@ -306,9 +356,10 @@ export default function UserProfile() {
               color: "#fff",
               fontWeight: 500,
               cursor: "pointer",
+              opacity: isSaving ? 0.7 : 1,
             }}
           >
-            Save Changes
+            {isSaving ? "Saving..." : "Save Changes"}
           </button>
         </div>
       </div>
