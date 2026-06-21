@@ -12,6 +12,8 @@ import uploadRoute from "./src/routes/upload.route.js";
 import jobRoute from "./src/routes/job.route.js";
 import coverageRoute from "./src/routes/coverage.route.js";
 import githubRoute from "./src/routes/github.route.js";
+import fileRoutes from './src/routes/file.routes.js';
+import aiSuggestionRoutes from './src/routes/aiSuggestion.routes.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -37,6 +39,8 @@ app.use("/api/upload", uploadRoute);
 app.use("/api/job", jobRoute);
 app.use("/api/coverage", coverageRoute);
 app.use("/api/github", githubRoute);
+app.use('/api', fileRoutes);
+app.use('/api/ai-suggestions', aiSuggestionRoutes);
 
 app.get("/", (req, res) => {
   res.json({ message: "CovAI API is running" });

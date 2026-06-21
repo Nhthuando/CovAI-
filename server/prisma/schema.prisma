@@ -6,7 +6,248 @@ datasource db {
   provider = "postgresql"
 }
 
-// Enums
+model User {
+  id                   String         @id @default(cuid())
+  email                String         @unique
+  passwordHash         String?
+  githubUserId         String?        @unique
+  githubAccessTokenEnc String?
+  name                 String?
+  avatarUrl            String?
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+  passwordResetExpires DateTime?
+  passwordResetToken   String?
+  aiUsageCount         Int            @default(0)
+  bio                  String?
+  jobTitle             String?
+  aiUsageDate          String?
+  jobs                 Job[]          @relation("UserJobs")
+  notifications        Notification[]
+  projects             Project[]
+}
+
+model Project {
+  id              String            @id @default(cuid())
+  ownerId         String
+  name            String
+  description     String?
+  repoUrl         String?
+  defaultBranch   String?
+  rootDir         String?
+  jestConfigPath  String?
+  storageBasePath String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  hasJest         Boolean           @default(false)
+  jestCommand     String?
+  aiSuggestions   AiSuggestion[]
+  aiTests         AiTest[]
+  jobs            Job[]
+  notifications   Notification[]
+  owner           User              @relation(fields: [ownerId], references: [id])
+  snapshots       ProjectSnapshot[]
+
+  @@index([ownerId])
+}
+
+model ProjectSnapshot {
+  id              String             @id @default(cuid())
+  projectId       String
+  source          SnapshotSource
+  checksum        String?
+  commitSha       String?
+  storagePath     String
+  rootDir         String?
+  jestConfigPath  String?
+  createdAt       DateTime           @default(now())
+  hasJest         Boolean            @default(false)
+  jestCommand     String?
+  aiContextCache  AiContextCache?
+  aiSuggestions   AiSuggestion[]
+  aiTests         AiTest[]
+  cfgs            Cfg[]
+  coverageFiles   CoverageFile[]
+  coverageFuncs   CoverageFunction[]
+  coverageSummary CoverageSummary?
+  cyclomatics     Cyclomatic[]
+  jobs            Job[]
+  project         Project            @relation(fields: [projectId], references: [id])
+
+  @@unique([projectId, checksum])
+  @@unique([projectId, commitSha])
+  @@index([projectId])
+}
+
+model Job {
+  id           String           @id @default(cuid())
+  projectId    String
+  snapshotId   String?
+  userId       String?
+  type         JobType
+  status       JobStatus        @default(QUEUED)
+  progress     Int              @default(0)
+  payloadJson  String?
+  resultJson   String?
+  errorMessage String?
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  createdAt    DateTime         @default(now())
+  project      Project          @relation(fields: [projectId], references: [id])
+  snapshot     ProjectSnapshot? @relation(fields: [snapshotId], references: [id])
+  user         User?            @relation("UserJobs", fields: [userId], references: [id])
+  logs         JobLog[]
+  output       JobOutput?
+
+  @@index([projectId])
+  @@index([snapshotId])
+  @@index([status, type])
+}
+
+model JobLog {
+  id        String   @id @default(cuid())
+  jobId     String
+  level     String
+  message   String
+  createdAt DateTime @default(now())
+  job       Job      @relation(fields: [jobId], references: [id])
+
+  @@index([jobId])
+}
+
+model JobOutput {
+  id        String   @id @default(cuid())
+  jobId     String   @unique
+  stdout    String?
+  stderr    String?
+  createdAt DateTime @default(now())
+  job       Job      @relation(fields: [jobId], references: [id])
+}
+
+model CoverageSummary {
+  id          String          @id @default(cuid())
+  snapshotId  String          @unique
+  linesPct    Float
+  branchesPct Float
+  funcsPct    Float
+  stmtsPct    Float
+  createdAt   DateTime        @default(now())
+  snapshot    ProjectSnapshot @relation(fields: [snapshotId], references: [id])
+}
+
+model CoverageFile {
+  id          String          @id @default(cuid())
+  snapshotId  String
+  filePath    String
+  linesPct    Float
+  branchesPct Float
+  funcsPct    Float
+  stmtsPct    Float
+  snapshot    ProjectSnapshot @relation(fields: [snapshotId], references: [id])
+
+  @@unique([snapshotId, filePath])
+  @@index([snapshotId])
+}
+
+model CoverageFunction {
+  id           String          @id @default(cuid())
+  snapshotId   String
+  filePath     String
+  functionName String
+  startLine    Int?
+  endLine      Int?
+  hit          Int
+  snapshot     ProjectSnapshot @relation(fields: [snapshotId], references: [id])
+
+  @@unique([snapshotId, filePath, functionName, startLine])
+  @@index([snapshotId, filePath])
+}
+
+model Cfg {
+  id           String          @id @default(cuid())
+  snapshotId   String
+  filePath     String
+  functionName String
+  startLine    Int?
+  endLine      Int?
+  graphJson    String
+  createdAt    DateTime        @default(now())
+  snapshot     ProjectSnapshot @relation(fields: [snapshotId], references: [id])
+  cyclomatic   Cyclomatic?
+
+  @@unique([snapshotId, filePath, functionName, startLine])
+  @@index([snapshotId, filePath])
+}
+
+model Cyclomatic {
+  id           String          @id @default(cuid())
+  snapshotId   String
+  cfgId        String?         @unique
+  filePath     String
+  functionName String
+  value        Int
+  createdAt    DateTime        @default(now())
+  cfg          Cfg?            @relation(fields: [cfgId], references: [id])
+  snapshot     ProjectSnapshot @relation(fields: [snapshotId], references: [id])
+
+  @@index([snapshotId, filePath])
+}
+
+model AiContextCache {
+  id          String          @id @default(cuid())
+  snapshotId  String          @unique
+  inputHash   String
+  payloadJson String
+  createdAt   DateTime        @default(now())
+  snapshot    ProjectSnapshot @relation(fields: [snapshotId], references: [id])
+}
+
+model AiSuggestion {
+  id           String               @id @default(cuid())
+  projectId    String
+  snapshotId   String
+  filePath     String
+  functionName String
+  priority     AiSuggestionPriority
+  message      String
+  createdAt    DateTime             @default(now())
+  project      Project              @relation(fields: [projectId], references: [id])
+  snapshot     ProjectSnapshot      @relation(fields: [snapshotId], references: [id])
+
+  @@index([projectId, snapshotId])
+  @@index([snapshotId, filePath])
+}
+
+model AiTest {
+  id         String          @id @default(cuid())
+  projectId  String
+  snapshotId String
+  mode       AiTestMode
+  filePath   String?
+  content    String
+  metaJson   String?
+  createdAt  DateTime        @default(now())
+  project    Project         @relation(fields: [projectId], references: [id])
+  snapshot   ProjectSnapshot @relation(fields: [snapshotId], references: [id])
+
+  @@index([projectId, snapshotId])
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  projectId String?
+  type      NotificationType
+  title     String
+  message   String?
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+  project   Project?         @relation(fields: [projectId], references: [id])
+  user      User             @relation(fields: [userId], references: [id])
+
+  @@index([userId, readAt])
+}
+
 enum SnapshotSource {
   ZIP
   GITHUB
@@ -45,275 +286,4 @@ enum AiSuggestionPriority {
   LOW
   MEDIUM
   HIGH
-}
-
-// Core auth + user
-model User {
-  id                     String   @id @default(cuid())
-  email                  String   @unique
-  passwordHash           String?
-  githubUserId           String?  @unique
-  githubAccessTokenEnc   String?
-  name                   String?
-  avatarUrl              String?
-  jobTitle               String?
-  bio                    String?
-  aiUsageCount           Int      @default(0)
-  passwordResetToken     String?   
-  passwordResetExpires   DateTime?
-  createdAt              DateTime @default(now())
-  updatedAt              DateTime @updatedAt
-
-  aiUsageDate            String?  // Format: "YYYY-MM-DD"
-
-  projects      Project[]
-  notifications Notification[]
-  jobs          Job[] @relation("UserJobs")
-}
-
-// Project (single owner MVP)
-model Project {
-  id              String   @id @default(cuid())
-  ownerId         String
-
-  name            String
-  description     String?
-  repoUrl         String?
-
-  defaultBranch   String?
-  rootDir         String?
-
-  jestConfigPath  String?
-  hasJest         Boolean  @default(false)
-  jestCommand     String?
-
-  storageBasePath String?
-
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  owner           User @relation(fields: [ownerId], references: [id])
-
-  snapshots       ProjectSnapshot[]
-  jobs            Job[]
-  aiTests         AiTest[]
-  aiSuggestions   AiSuggestion[]
-  notifications   Notification[]
-
-  @@index([ownerId])
-}
-
-model ProjectSnapshot {
-  id             String         @id @default(cuid())
-  projectId      String
-  source         SnapshotSource
-  checksum       String?
-  commitSha      String?
-  storagePath    String
-  rootDir        String?
-  jestConfigPath  String?
-  hasJest         Boolean @default(false)
-  jestCommand     String?
-  createdAt      DateTime       @default(now())
-
-  project         Project        @relation(fields: [projectId], references: [id])
-  coverageSummary CoverageSummary?
-  coverageFiles   CoverageFile[]
-  coverageFuncs   CoverageFunction[]
-  cfgs            Cfg[]
-  cyclomatics     Cyclomatic[]
-  aiContextCache  AiContextCache?
-  aiSuggestions   AiSuggestion[]
-  aiTests         AiTest[]
-  jobs            Job[]
-
-  @@unique([projectId, checksum])
-  @@unique([projectId, commitSha])
-  @@index([projectId])
-}
-
-// Jobs + logs
-model Job {
-  id           String    @id @default(cuid())
-  projectId    String
-  snapshotId   String?
-  userId       String?
-  type         JobType
-  status       JobStatus @default(QUEUED)
-  progress     Int       @default(0)
-  payloadJson  String?
-  resultJson   String?
-  errorMessage String?
-  startedAt    DateTime?
-  finishedAt   DateTime?
-  createdAt    DateTime  @default(now())
-
-  project   Project          @relation(fields: [projectId], references: [id])
-  snapshot  ProjectSnapshot? @relation(fields: [snapshotId], references: [id])
-  user      User?            @relation("UserJobs", fields: [userId], references: [id])
-  logs      JobLog[]
-  output    JobOutput?
-
-  @@index([projectId])
-  @@index([snapshotId])
-  @@index([status, type])
-}
-
-model JobLog {
-  id        String   @id @default(cuid())
-  jobId     String
-  level     String
-  message   String
-  createdAt DateTime @default(now())
-
-  job Job @relation(fields: [jobId], references: [id])
-
-  @@index([jobId])
-}
-
-model JobOutput {
-  id        String   @id @default(cuid())
-  jobId     String   @unique
-  stdout    String?
-  stderr    String?
-  createdAt DateTime @default(now())
-
-  job Job @relation(fields: [jobId], references: [id])
-}
-
-// Coverage
-model CoverageSummary {
-  id          String   @id @default(cuid())
-  snapshotId  String   @unique
-  linesPct    Float
-  branchesPct Float
-  funcsPct    Float
-  stmtsPct    Float
-  createdAt   DateTime @default(now())
-
-  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id])
-}
-
-model CoverageFile {
-  id          String   @id @default(cuid())
-  snapshotId  String
-  filePath    String
-  linesPct    Float
-  branchesPct Float
-  funcsPct    Float
-  stmtsPct    Float
-
-  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id])
-
-  @@unique([snapshotId, filePath])
-  @@index([snapshotId])
-}
-
-model CoverageFunction {
-  id           String   @id @default(cuid())
-  snapshotId   String
-  filePath     String
-  functionName String
-  startLine    Int?
-  endLine      Int?
-  hit          Int
-
-  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id])
-
-  @@unique([snapshotId, filePath, functionName, startLine])
-  @@index([snapshotId, filePath])
-}
-
-// CFG + Cyclomatic
-model Cfg {
-  id           String   @id @default(cuid())
-  snapshotId   String
-  filePath     String
-  functionName String
-  startLine    Int?
-  endLine      Int?
-  graphJson    String
-  createdAt    DateTime @default(now())
-
-  snapshot   ProjectSnapshot @relation(fields: [snapshotId], references: [id])
-  cyclomatic Cyclomatic?
-
-  @@unique([snapshotId, filePath, functionName, startLine])
-  @@index([snapshotId, filePath])
-}
-
-model Cyclomatic {
-  id           String   @id @default(cuid())
-  snapshotId   String
-  cfgId        String?  @unique
-  filePath     String
-  functionName String
-  value        Int
-  createdAt    DateTime @default(now())
-
-  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id])
-  cfg      Cfg?            @relation(fields: [cfgId], references: [id])
-
-  @@index([snapshotId, filePath])
-}
-
-// AI
-model AiContextCache {
-  id          String   @id @default(cuid())
-  snapshotId  String   @unique
-  inputHash   String
-  payloadJson String
-  createdAt   DateTime @default(now())
-
-  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id])
-}
-
-model AiSuggestion {
-  id           String               @id @default(cuid())
-  projectId    String
-  snapshotId   String
-  filePath     String
-  functionName String
-  priority     AiSuggestionPriority
-  message      String
-  createdAt    DateTime @default(now())
-
-  project  Project         @relation(fields: [projectId], references: [id])
-  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id])
-
-  @@index([projectId, snapshotId])
-  @@index([snapshotId, filePath])
-}
-
-model AiTest {
-  id         String     @id @default(cuid())
-  projectId  String
-  snapshotId String
-  mode       AiTestMode
-  filePath   String?
-  content    String
-  metaJson   String?
-  createdAt  DateTime @default(now())
-
-  project  Project         @relation(fields: [projectId], references: [id])
-  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id])
-
-  @@index([projectId, snapshotId])
-}
-
-// Notifications
-model Notification {
-  id        String           @id @default(cuid())
-  userId    String
-  projectId String?
-  type      NotificationType
-  title     String
-  message   String?
-  readAt    DateTime?
-  createdAt DateTime @default(now())
-
-  user    User     @relation(fields: [userId], references: [id])
-  project Project? @relation(fields: [projectId], references: [id])
-
-  @@index([userId, readAt])
 }
