@@ -41,20 +41,38 @@ export const getAiSuggestions = async ({ projectId, filePath, functionName, user
         ...(functionName && { functionName })
     };
 
-    // 6. Retrieve suggestions
-    return await prisma.aiSuggestion.findMany({
-        where,
-        select: {
-            id: true,
-            projectId: true,
-            filePath: true,
-            functionName: true,
-            message: true,
-            priority: true,
-            createdAt: true
-        },
-        orderBy: {
-            createdAt: 'desc'
-        }
-    });
+    // 6. Retrieve suggestions and tests
+    const [suggestions, tests] = await Promise.all([
+        prisma.aiSuggestion.findMany({
+            where,
+            select: {
+                id: true,
+                projectId: true,
+                filePath: true,
+                functionName: true,
+                message: true,
+                priority: true,
+                createdAt: true
+            },
+            orderBy: {
+                createdAt: 'desc'
+            }
+        }),
+        prisma.aiTest.findMany({
+            where: { projectId },
+            select: {
+                id: true,
+                projectId: true,
+                filePath: true,
+                mode: true,
+                content: true,
+                createdAt: true
+            },
+            orderBy: {
+                createdAt: 'desc'
+            }
+        })
+    ]);
+
+    return { suggestions, tests };
 };

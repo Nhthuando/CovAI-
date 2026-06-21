@@ -141,3 +141,10 @@ export async function getProjectCcApi(projectId, snapshotId) {
   });
   return handleResponse(res);
 }
+
+export async function getAiSuggestionsApi(projectId) {
+  const res = await fetch(`${BASE_URL}/ai-suggestions?projectId=${projectId}`, {
+    headers: getAuthHeaders(),
+  });
+  return handleResponse(res);
+}

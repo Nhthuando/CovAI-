@@ -31,30 +31,25 @@ export const parseAiResponse = (responseText) => {
 
 /**
  * SCRUM-297: Validate output format
- * Ensures the parsed data is an array and contains required fields.
+ * Ensures the parsed data contains the correct object schema.
  */
 export const validateOutputFormat = (parsedData) => {
-    if (!Array.isArray(parsedData)) {
-        throw new ServiceError("Parsed AI data must be an array of suggestions", 400);
+    // If it's an array, it's the old format (backward compatibility)
+    if (Array.isArray(parsedData)) {
+        return true;
     }
 
-    parsedData.forEach((item, index) => {
-        if (!item || typeof item !== "object") {
-            throw new ServiceError(`Item at index ${index} is not a valid object`, 400);
-        }
-        
-        if (!item.filePath || typeof item.filePath !== "string") {
-            throw new ServiceError(`Missing or invalid 'filePath' at index ${index}`, 400);
-        }
-        
-        if (!item.functionName || typeof item.functionName !== "string") {
-            throw new ServiceError(`Missing or invalid 'functionName' at index ${index}`, 400);
-        }
-        
-        if (!item.message || typeof item.message !== "string") {
-            throw new ServiceError(`Missing or invalid 'message' at index ${index}`, 400);
-        }
-    });
+    if (!parsedData || typeof parsedData !== "object") {
+        throw new ServiceError("Parsed AI data must be an object with suggestions and tests arrays", 400);
+    }
+
+    if (parsedData.suggestions && !Array.isArray(parsedData.suggestions)) {
+        throw new ServiceError("parsedData.suggestions must be an array", 400);
+    }
+
+    if (parsedData.tests && !Array.isArray(parsedData.tests)) {
+        throw new ServiceError("parsedData.tests must be an array", 400);
+    }
 
     return true;
 };
@@ -92,13 +87,26 @@ export const extractPriorityLevels = (item) => {
 };
 
 /**
- * Orchestrator to process raw AI text into valid AiSuggestion objects
+ * Orchestrator to process raw AI text into valid AiSuggestion and AiTest objects
  */
 export const processAiSuggestions = (responseText, projectId, snapshotId) => {
-    const parsedData = parseAiResponse(responseText);
+    let parsedData = parseAiResponse(responseText);
     validateOutputFormat(parsedData);
 
-    const suggestions = parsedData.map(item => {
+    // Normalize backward compatibility
+    if (Array.isArray(parsedData)) {
+        parsedData = { suggestions: parsedData, tests: [] };
+    } else {
+        if (!parsedData.suggestions) parsedData.suggestions = [];
+        if (!parsedData.tests) parsedData.tests = [];
+    }
+
+    const suggestions = parsedData.suggestions.map((item, index) => {
+        if (!item.filePath || !item.functionName || !item.message) {
+            console.warn(`[processAiSuggestions] Skipping invalid suggestion at index ${index}`);
+            return null;
+        }
+
         const { filePath, functionName } = extractFunctionNames(item);
         const message = extractRecommendationMessages(item);
         const priority = extractPriorityLevels(item);
@@ -111,7 +119,22 @@ export const processAiSuggestions = (responseText, projectId, snapshotId) => {
             priority,
             message
         };
-    });
+    }).filter(Boolean);
 
-    return suggestions;
+    const tests = parsedData.tests.map((item, index) => {
+        if (!item.filePath || !item.content) {
+            console.warn(`[processAiSuggestions] Skipping invalid test at index ${index}`);
+            return null;
+        }
+
+        return {
+            projectId,
+            snapshotId,
+            filePath: item.filePath.trim(),
+            mode: item.mode === "SKELETON" ? "SKELETON" : "FULL",
+            content: item.content
+        };
+    }).filter(Boolean);
+
+    return { suggestions, tests };
 };

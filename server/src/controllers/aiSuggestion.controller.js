@@ -13,7 +13,7 @@ export const getAiSuggestions = async (req, res) => {
             return res.status(400).json({ success: false, error: 'projectId is required' });
         }
 
-        const suggestions = await aiSuggestionService.getAiSuggestions({
+        const { suggestions, tests } = await aiSuggestionService.getAiSuggestions({
             projectId,
             filePath,
             functionName,
@@ -23,7 +23,7 @@ export const getAiSuggestions = async (req, res) => {
         return res.status(200).json({
             success: true,
             count: suggestions.length,
-            data: suggestions
+            data: { suggestions, tests }
         });
     } catch (error) {
         if (error.status === 404) {
