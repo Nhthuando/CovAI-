@@ -616,6 +616,89 @@ The user is working on project: ${project.name}.
       });
     }
   }
+
+  async getCfg(req, res) {
+    try {
+      const { id: projectId } = req.params;
+      let { snapshotId } = req.query;
+
+      // Verify project ownership
+      const project = await prisma.project.findFirst({
+        where: { id: projectId, ownerId: req.user.id }
+      });
+      if (!project) {
+        return res.status(404).json({ success: false, message: "Project not found or unauthorized" });
+      }
+
+      if (!snapshotId) {
+        const latestSnapshot = await prisma.projectSnapshot.findFirst({
+          where: { projectId },
+          orderBy: { createdAt: 'desc' }
+        });
+        if (!latestSnapshot) {
+           return res.status(404).json({ success: false, message: "No snapshot found for this project" });
+        }
+        snapshotId = latestSnapshot.id;
+      }
+
+      const cfgs = await prisma.cfg.findMany({
+        where: { snapshotId }
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: cfgs,
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  }
+
+  async getCc(req, res) {
+    try {
+      const { id: projectId } = req.params;
+      let { snapshotId } = req.query;
+
+      // Verify project ownership
+      const project = await prisma.project.findFirst({
+        where: { id: projectId, ownerId: req.user.id }
+      });
+      if (!project) {
+        return res.status(404).json({ success: false, message: "Project not found or unauthorized" });
+      }
+
+      if (!snapshotId) {
+        const latestSnapshot = await prisma.projectSnapshot.findFirst({
+          where: { projectId },
+          orderBy: { createdAt: 'desc' }
+        });
+        if (!latestSnapshot) {
+           return res.status(404).json({ success: false, message: "No snapshot found for this project" });
+        }
+        snapshotId = latestSnapshot.id;
+      }
+
+      const ccs = await prisma.cyclomatic.findMany({
+        where: { snapshotId },
+        orderBy: { value: 'desc' }
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: ccs,
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  }
 }
 
 export default new ProjectController();

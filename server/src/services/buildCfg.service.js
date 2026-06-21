@@ -1,7 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 import prisma from '../config/prisma.js';
-import { randomUUID } from 'crypto';
+import { extractFunctions } from './cyclomaticFunctionExtractor.service.js';
+import { calculateComplexityFromAst } from './cyclomaticCalculator.service.js';
+import { buildCFG } from './cfgBuilder.service.js';
+import { storeCfg } from './cfgStorage.service.js';
+import { storeComplexity } from './cyclomaticStorage.service.js';
 
 export async function buildCfgForSnapshot(snapshotId) {
     const snapshot = await prisma.projectSnapshot.findUnique({
@@ -15,27 +19,64 @@ export async function buildCfgForSnapshot(snapshotId) {
     if (!rootDir || !fs.existsSync(rootDir)) throw new Error('Snapshot root directory not found');
 
     const files = getAllFiles(rootDir);
-    const cfgRecords = [];
+    let count = 0;
+
+    // Clean up existing records for this snapshot to avoid zombie records when names/logic change
+    await prisma.cyclomatic.deleteMany({ where: { snapshotId } });
+    await prisma.cfg.deleteMany({ where: { snapshotId } });
 
     for (const file of files) {
-        if (file.endsWith('.js') || file.endsWith('.ts')) {
+        if (file.endsWith('.js') || file.endsWith('.ts') || file.endsWith('.jsx') || file.endsWith('.tsx')) {
             const relativePath = path.relative(rootDir, file).replace(/\\/g, '/');
-            cfgRecords.push({
-                id: randomUUID(),
-                snapshotId,
-                filePath: relativePath,
-                functionName: 'main', // Simplified for now
-                graphJson: JSON.stringify({ nodes: [], edges: [] })
-            });
+            const code = fs.readFileSync(file, 'utf-8');
+            const functions = extractFunctions(code);
+
+            for (const func of functions) {
+                count++;
+                let graphJsonStr = JSON.stringify({ nodes: [], edges: [] });
+                let complexityValue = 1;
+
+                try {
+                    const cfgData = buildCFG(func.node);
+                    graphJsonStr = JSON.stringify(cfgData.graphJson);
+                } catch (e) {
+                    console.error(`[BuildCFG] Failed to generate CFG for ${func.functionName} in ${relativePath}`);
+                }
+
+                try {
+                    const complexity = calculateComplexityFromAst(func.node);
+                    complexityValue = complexity.value;
+                } catch (e) {
+                    console.error(`[BuildCFG] Failed to calculate CC for ${func.functionName} in ${relativePath}`);
+                }
+
+                try {
+                    const cfgRecord = await storeCfg({
+                        snapshotId,
+                        filePath: relativePath,
+                        functionName: func.functionName,
+                        startLine: func.startLine,
+                        endLine: func.endLine,
+                        graphJson: graphJsonStr
+                    });
+
+                    await prisma.cyclomatic.create({
+                        data: {
+                            snapshotId,
+                            filePath: relativePath,
+                            functionName: func.functionName,
+                            value: complexityValue,
+                            cfgId: cfgRecord.id
+                        }
+                    });
+                } catch (err) {
+                    console.error(`[BuildCFG] Failed to store data for ${func.functionName} in ${relativePath}:`, err);
+                }
+            }
         }
     }
 
-    await prisma.cfg.createMany({
-        data: cfgRecords,
-        skipDuplicates: true
-    });
-
-    return cfgRecords.length;
+    return count;
 }
 
 function getAllFiles(dirPath, arrayOfFiles = []) {
@@ -43,7 +84,7 @@ function getAllFiles(dirPath, arrayOfFiles = []) {
 
     files.forEach(file => {
         if (fs.statSync(dirPath + "/" + file).isDirectory()) {
-            if (file !== 'node_modules' && file !== '.git') {
+            if (file !== 'node_modules' && file !== '.git' && file !== 'dist' && file !== 'build') {
                 arrayOfFiles = getAllFiles(dirPath + "/" + file, arrayOfFiles);
             }
         } else {

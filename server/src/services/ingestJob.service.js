@@ -123,7 +123,7 @@ export const processUploadAndIngestJob = async (jobId, fileBuffer, mimeType, sto
             const progress = Math.floor((uploadedBytes / totalBytes) * 50);
             if (progress >= lastReportedProgress + 5) {
                 lastReportedProgress = progress;
-                updateJobProgress(jobId, progress).catch(() => {});
+                updateJobProgress(jobId, progress).catch(() => { });
             }
         });
 
@@ -133,12 +133,12 @@ export const processUploadAndIngestJob = async (jobId, fileBuffer, mimeType, sto
             passThrough.pipe(blobStream);
             passThrough.end(fileBuffer);
         }).then(() => {
-            updateJobProgress(jobId, 50).catch(() => {});
+            updateJobProgress(jobId, 50).catch(() => { });
         });
 
         // Extract Zip directly from buffer (50% -> 90%)
         const extractPromise = extractZipSnapshot(job.snapshotId, storagePath, fileBuffer).then((path) => {
-            updateJobProgress(jobId, 90).catch(() => {});
+            updateJobProgress(jobId, 90).catch(() => { });
             return path;
         });
 
