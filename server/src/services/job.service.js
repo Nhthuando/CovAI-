@@ -1,5 +1,6 @@
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
+import { notificationService } from "./notification.service.js";
 
 const assertStringField = (value, fieldName) => {
     if (!value || typeof value !== "string" || value.trim().length === 0) {
@@ -174,7 +175,7 @@ export const createIngestJobForSnapshot = async ({
             type: "INGEST",
             status: "QUEUED",
             progress: 0,
-            payloadJson,
+            payloadJson: payloadJson ? JSON.stringify(payloadJson) : null,
         },
     });
 
@@ -244,7 +245,7 @@ export const createSnapshotJob = async ({
             type,
             status: "QUEUED",
             progress: 0,
-            payloadJson,
+            payloadJson: payloadJson ? JSON.stringify(payloadJson) : null,
         },
     });
 
@@ -356,6 +357,13 @@ export const markJobSuccess = async (
     });
 
     await addJobLog(jobId, "INFO", "Job succeeded");
+
+    try {
+        await notificationService.createJobFinishedNotification(currentJob.userId, currentJob.projectId);
+    } catch (error) {
+        console.error(`Failed to send job finished notification for job ${jobId}:`, error);
+    }
+
     return job;
 };
 

@@ -75,7 +75,7 @@ export const processCoverageJob = async (jobId) => {
     const coverageDir = path.join(rootDir, "coverage");
 
     // Khởi tạo output
-    await saveJobOutput(jobId, { stdout: "", stderr: "" }).catch(() => {});
+    await saveJobOutput(jobId, { stdout: "", stderr: "" }).catch(() => { });
     await updateJobProgress(jobId, 10);
     await addJobLog(jobId, "INFO", `Bắt đầu jest --coverage tại: ${rootDir}`);
 
@@ -110,7 +110,7 @@ export const processCoverageJob = async (jobId) => {
             const msg = `jest --coverage vượt quá timeout ${RUN_TESTS_TIMEOUT_MS / 1000}s`;
             console.error(`[CoverageRunner ${jobId}] ${msg}`);
             await addJobLog(jobId, "ERROR", msg);
-            await markJobFailed(jobId, new Error(msg)).catch(() => {});
+            await markJobFailed(jobId, new Error(msg)).catch(() => { });
             resolve();
         }, RUN_TESTS_TIMEOUT_MS);
 
@@ -118,14 +118,14 @@ export const processCoverageJob = async (jobId) => {
         child.stdout.on("data", async (chunk) => {
             const text = chunk.toString();
             process.stdout.write(`[Jest ${jobId}] ${text}`);
-            await appendJobOutput(jobId, { stdout: text }).catch(() => {});
+            await appendJobOutput(jobId, { stdout: text }).catch(() => { });
         });
 
         // SCRUM-111: Capture stderr
         child.stderr.on("data", async (chunk) => {
             const text = chunk.toString();
             process.stderr.write(`[Jest ${jobId}] ${text}`);
-            await appendJobOutput(jobId, { stderr: text }).catch(() => {});
+            await appendJobOutput(jobId, { stderr: text }).catch(() => { });
         });
 
         // Khi jest kết thúc
@@ -195,7 +195,7 @@ export const processCoverageJob = async (jobId) => {
             } catch (parseError) {
                 console.error(`[CoverageRunner ${jobId}] Lỗi parse coverage:`, parseError);
                 await addJobLog(jobId, "ERROR", `Lỗi parse coverage: ${parseError.message}`);
-                await markJobFailed(jobId, parseError).catch(() => {});
+                await markJobFailed(jobId, parseError).catch(() => { });
             }
 
             resolve();
@@ -206,7 +206,7 @@ export const processCoverageJob = async (jobId) => {
             if (timedOut) return;
             console.error(`[CoverageRunner ${jobId}] Process error:`, err);
             await addJobLog(jobId, "ERROR", `Process error: ${err.message}`);
-            await markJobFailed(jobId, err).catch(() => {});
+            await markJobFailed(jobId, err).catch(() => { });
             resolve();
         });
     });
