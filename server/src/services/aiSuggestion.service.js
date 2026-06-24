@@ -103,9 +103,25 @@ export const refreshAiSuggestions = async ({ projectId, userId }) => {
         throw error;
     }
 
-    // 3. Logic to refresh suggestions (e.g., trigger AI service)
-    // Note: This is a placeholder for the actual AI integration logic
-    // In a real scenario, you would call your AI service here
+    // 3. Logic to refresh suggestions
+    const latestSnapshot = await prisma.snapshot.findFirst({
+        where: { projectId },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true }
+    });
+
+    if (!latestSnapshot) {
+        const error = new Error('No snapshots found for this project');
+        error.status = 404;
+        throw error;
+    }
+
+    // Import dynamically to avoid circular dependency if needed
+    const { processAiSuggestJob } = await import('./aiSuggestJob.service.js');
+    
+    // Create a dummy job or trigger directly
+    // For simplicity, we trigger the job logic directly
+    await processAiSuggestJob(latestSnapshot.id);
     
     return { success: true, message: 'Suggestions refreshed successfully' };
 };
