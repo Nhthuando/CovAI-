@@ -12,7 +12,11 @@ router.get("/", projectController.listProjects);
 router.get("/:id", projectController.getProjectById);
 router.get("/:id/tree", projectController.getProjectTree);
 router.get("/:id/file-content", projectController.getFileContent);
-router.post("/:id/upload-zip", uploadSingleArchive, projectController.uploadZip);
+router.post(
+  "/:id/upload-zip",
+  uploadSingleArchive,
+  projectController.uploadZip,
+);
 router.post("/:id/run-analysis", projectController.runAnalysis);
 router.post("/:id/coverage/parse", projectController.parseCoverageFiles);
 router.post(
@@ -26,5 +30,7 @@ router.post("/:id/ai-suggest", projectController.runAiSuggest);
 router.post("/:id/chat", projectController.chat);
 router.get("/:id/cfg", projectController.getCfg);
 router.get("/:id/cc", projectController.getCc);
+router.get("/:id/ai/tests", projectController.getAiTests);
+router.get("/:id/ai/tests/:testId", projectController.getAiTest);
 
 export default router;
