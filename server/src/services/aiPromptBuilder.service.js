@@ -91,19 +91,26 @@ export const includeComplexityScores = (complexityArray) => {
 
 /**
  * SCRUM-292: Include testing instructions
- * Generates instructions based on the mode.
+ * Generates instructions based on the mode and hasJest flag.
  */
-export const includeTestingInstructions = (mode = "FULL", existingTestFiles = []) => {
+export const includeTestingInstructions = (mode = "FULL", existingTestFiles = [], hasJest = false) => {
     let promptSegment = "### Testing Instructions\n\n";
     
     promptSegment += "You are an expert software tester. Your task is to write tests using the **Jest** framework.\n";
     
-    if (existingTestFiles && existingTestFiles.length > 0) {
-        promptSegment += "\nThe project already contains the following test files. Try to align with their style or improve upon them:\n";
-        existingTestFiles.forEach(file => {
-            promptSegment += `- ${file.path}\n`;
-        });
-        promptSegment += "\n";
+    if (hasJest) {
+        promptSegment += "The project already uses Jest for testing.\n";
+        if (existingTestFiles && existingTestFiles.length > 0) {
+            promptSegment += "The project contains the following test files. You must analyze the coverage metrics, read the existing test files, and generate the FULL updated test file code that adds missing coverage.\n";
+            existingTestFiles.forEach(file => {
+                promptSegment += `- ${file.path}\n`;
+            });
+            promptSegment += "\n";
+        } else {
+            promptSegment += "Although Jest is configured, no test files were found. Generate FULL robust, executable test files for the uncovered source code.\n";
+        }
+    } else {
+        promptSegment += "The project currently DOES NOT have Jest set up. Your task is to act as the primary test writer and generate FULL, robust, and executable Jest test files for the source files from scratch.\n";
     }
 
     if (mode === "SKELETON") {
@@ -132,20 +139,33 @@ export const includePrioritizationRules = () => {
 
 /**
  * SCRUM-325: Store priority values (Suggestion Format)
- * Instructs the AI on the required JSON output format for suggestions.
+ * Instructs the AI on the required JSON output format for suggestions and test files.
  */
 export const includeSuggestionFormat = () => {
     let promptSegment = "### Output Format\n\n";
-    promptSegment += "You MUST output your refactoring suggestions and test recommendations as a **JSON array** of objects. Do not wrap the JSON in other text except markdown code blocks (```json ... ```).\n";
-    promptSegment += "Each object in the array MUST contain exactly these fields:\n";
-    promptSegment += "- `filePath` (string): The path to the file being analyzed.\n";
-    promptSegment += "- `functionName` (string): The name of the specific function targeted by the suggestion.\n";
-    promptSegment += "- `priority` (string): Must be exactly 'HIGH', 'MEDIUM', or 'LOW' according to the Prioritization Rules.\n";
-    promptSegment += "- `message` (string): A clear, concise explanation of the suggestion or the test case to be written.\n\n";
-    promptSegment += "Example Output:\n";
+    promptSegment += "You MUST output your response as a **JSON object** with TWO properties: `suggestions` and `tests`. Do not wrap the JSON in other text except markdown code blocks (```json ... ```).\n";
+    promptSegment += "The structure MUST be exactly as follows:\n";
     promptSegment += "```json\n";
-    promptSegment += "[\n  {\n    \"filePath\": \"src/auth.js\",\n    \"functionName\": \"loginUser\",\n    \"priority\": \"HIGH\",\n    \"message\": \"High complexity without coverage. Add tests for invalid credentials.\"\n  }\n]\n";
+    promptSegment += "{\n";
+    promptSegment += "  \"suggestions\": [\n";
+    promptSegment += "    {\n";
+    promptSegment += "      \"filePath\": \"src/auth.js\",\n";
+    promptSegment += "      \"functionName\": \"loginUser\",\n";
+    promptSegment += "      \"priority\": \"HIGH\",\n";
+    promptSegment += "      \"message\": \"High complexity without coverage. Add tests for invalid credentials.\"\n";
+    promptSegment += "    }\n";
+    promptSegment += "  ],\n";
+    promptSegment += "  \"tests\": [\n";
+    promptSegment += "    {\n";
+    promptSegment += "      \"filePath\": \"src/auth.test.js\",\n";
+    promptSegment += "      \"mode\": \"FULL\",\n";
+    promptSegment += "      \"content\": \"import { loginUser } ... \\n describe(...) \\n ...\"\n";
+    promptSegment += "    }\n";
+    promptSegment += "  ]\n";
+    promptSegment += "}\n";
     promptSegment += "```\n\n";
+    promptSegment += "- **suggestions**: An array of refactoring suggestions or test recommendations.\n";
+    promptSegment += "- **tests**: An array of actual test file generation. Set `filePath` to the appropriate test file path. Put the complete updated or new test file code in `content`.\n";
     
     return promptSegment;
 };
@@ -156,6 +176,7 @@ export const includeSuggestionFormat = () => {
  */
 export const buildFinalPrompt = (payload, options = {}) => {
     const mode = options.mode || "FULL";
+    const hasJest = options.hasJest || false;
     
     let finalPrompt = "You are an AI assistant designed to analyze source code and provide highly effective test cases and refactoring suggestions based on context metrics.\n\n";
     
@@ -167,10 +188,10 @@ export const buildFinalPrompt = (payload, options = {}) => {
     finalPrompt += includeCfgInformation(payload.cfg);
     
     finalPrompt += includePrioritizationRules();
-    finalPrompt += includeTestingInstructions(mode, payload.testFiles);
+    finalPrompt += includeTestingInstructions(mode, payload.testFiles, hasJest);
     finalPrompt += includeSuggestionFormat();
     
-    finalPrompt += "---\n\nPlease review the provided code, metrics, and CFG data carefully. Output the requested JSON array of suggestions in a markdown code block.";
+    finalPrompt += "---\n\nPlease review the provided code, metrics, and CFG data carefully. Output the requested JSON object containing `suggestions` and `tests` in a markdown code block.";
     
     return finalPrompt;
 };

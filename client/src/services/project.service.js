@@ -127,3 +127,24 @@ export async function sendAiChatMessageApi(projectId, message, history) {
   });
   return handleResponse(res);
 }
+
+export async function getProjectCfgApi(projectId, snapshotId) {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/cfg?snapshotId=${snapshotId}`, {
+    headers: getAuthHeaders(),
+  });
+  return handleResponse(res);
+}
+
+export async function getProjectCcApi(projectId, snapshotId) {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/cc?snapshotId=${snapshotId}`, {
+    headers: getAuthHeaders(),
+  });
+  return handleResponse(res);
+}
+
+export async function getAiSuggestionsApi(projectId) {
+  const res = await fetch(`${BASE_URL}/ai-suggestions?projectId=${projectId}`, {
+    headers: getAuthHeaders(),
+  });
+  return handleResponse(res);
+}

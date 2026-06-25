@@ -7,7 +7,6 @@ import {
   FlaskConical,
   Settings,
   Zap,
-  GitBranch,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -16,7 +15,6 @@ const TOP_ITEMS = [
   { id: "dashboard", icon: LayoutDashboard, label: "Dashboard" },
   { id: "search", icon: Search, label: "Search" },
   { id: "jobs", icon: Cpu, label: "Job Queue" },
-  { id: "git", icon: GitBranch, label: "Source Control" },
 ];
 
 const BOTTOM_ITEMS = [{ id: "settings", icon: Settings, label: "Settings" }];

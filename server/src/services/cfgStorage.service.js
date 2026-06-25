@@ -8,7 +8,7 @@ import { ServiceError } from "../utils/serviceError.js";
  * 1. Validate snapshot existence.
  * 2. Validate required fields.
  * 3. Serialize graphJson.
- * 4. Create or update CFG record (upsert).
+ * 4. Create CFG record.
  */
 export const storeCfg = async ({
   snapshotId,
@@ -49,22 +49,10 @@ export const storeCfg = async ({
     );
   }
 
-  // 4. Create or update CFG record
+  // 4. Create CFG record
   try {
-    const cfg = await prisma.cfg.upsert({
-      where: {
-        snapshotId_filePath_functionName_startLine: {
-          snapshotId,
-          filePath,
-          functionName,
-          startLine: startLine || null,
-        },
-      },
-      update: {
-        graphJson: serializedGraph,
-        endLine: endLine || null,
-      },
-      create: {
+    const cfg = await prisma.cfg.create({
+      data: {
         snapshotId,
         filePath,
         functionName,

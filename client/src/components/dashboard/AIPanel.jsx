@@ -16,7 +16,7 @@ import {
   Shield,
 } from "lucide-react";
 
-import { sendAiChatMessageApi } from "../../services/project.service";
+import { sendAiChatMessageApi, getAiSuggestionsApi } from "../../services/project.service";
 import { useToast } from "./ToastContext";
 
 /* ── Initial conversation ───────────────────────────────── */
@@ -482,7 +482,7 @@ function ChatInput({ onSend, isTyping }) {
 function QuickActions({ onAction }) {
   const actions = [
     { label: "Analyze Coverage", icon: Shield, color: "#a78bfa" },
-    { label: "Generate Tests",   icon: Wand2,  color: "#67e8f9" },
+    { label: "View Generated Tests", icon: Wand2,  color: "#67e8f9" },
   ];
   return (
     <div
@@ -594,6 +594,45 @@ export default function AIPanel({ projectId }) {
     }
   };
 
+  const handleQuickAction = async (label) => {
+    if (label === "View Generated Tests") {
+      if (!projectId) {
+        showToast({ type: "warning", title: "No Project", message: "Vui lòng chọn một dự án." });
+        return;
+      }
+      setIsTyping(true);
+      try {
+        const res = await getAiSuggestionsApi(projectId);
+        if (res.data && res.data.tests && res.data.tests.length > 0) {
+          const testMessages = res.data.tests.map((test, index) => ({
+            id: Date.now() + index,
+            role: "assistant",
+            timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
+            content: `**Đã tìm thấy file test được generate:** \`${test.filePath}\``,
+            code: test.content
+          }));
+          setMessages(m => [...m, ...testMessages]);
+        } else {
+          setMessages(m => [
+            ...m,
+            {
+              id: Date.now(),
+              role: "assistant",
+              timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
+              content: "Không tìm thấy file test nào được generate trong database. Hãy chắc chắn rằng dự án đã chạy xong tiến trình phân tích AI."
+            }
+          ]);
+        }
+      } catch (error) {
+        showToast({ type: "error", title: "Lỗi", message: "Không thể lấy dữ liệu test AI." });
+      } finally {
+        setIsTyping(false);
+      }
+    } else {
+      handleSend(label);
+    }
+  };
+
   return (
     <motion.div
       className="flex flex-col h-full flex-shrink-0"
@@ -691,7 +730,7 @@ export default function AIPanel({ projectId }) {
       </div>
 
       {/* ── Quick Actions ───────────────────────────── */}
-      <QuickActions onAction={handleSend} />
+      <QuickActions onAction={handleQuickAction} />
 
       {/* ── Floating Input ─────────────────────────── */}
       <ChatInput onSend={handleSend} isTyping={isTyping} />

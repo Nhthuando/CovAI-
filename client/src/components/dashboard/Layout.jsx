@@ -9,6 +9,7 @@ import CoverageDashboard from "./CoverageDashboard";
 import AIPanel from "./AIPanel";
 import ImportLayout from "./import/ImportLayout";
 import JobQueue from "./JobQueue";
+import CFGCalculator from "./CFGCalculator";
 import SettingsSidebar from "./settings/SettingsSidebar";
 import UserProfile from "./settings/UserProfile";
 import Appearance from "./settings/Appearance";
@@ -79,6 +80,7 @@ function LayoutInner() {
   const [activeTabId, setActiveTabId] = useState(null);
   const [activeFileId, setActiveFileId] = useState(null);
   const [showImport, setShowImport] = useState(false);
+  const [showCFG, setShowCFG] = useState(false);
 
   const [projects, setProjects] = useState([]);
   const [project, setProject] = useState(null);
@@ -374,6 +376,26 @@ function LayoutInner() {
           >
             <Play size={11} strokeWidth={3} />
             Run Tests
+          </motion.button>
+
+          {/* CFG Analysis button */}
+          <motion.button
+            whileHover={{ scale: 1.03 }}
+            whileTap={{ scale: 0.97 }}
+            onClick={() => setShowCFG(true)}
+            className="flex items-center gap-1.5 rounded-lg text-xs font-medium"
+            style={{
+              background: "rgba(34, 211, 238, 0.1)",
+              color: "#22d3ee",
+              border: "1px solid rgba(34, 211, 238, 0.2)",
+              cursor: "pointer",
+              fontFamily: "var(--font-sans)",
+              padding: "6px 14px",
+              whiteSpace: "nowrap",
+            }}
+          >
+            <GitBranch size={11} />
+            Logic Analysis
           </motion.button>
 
           {/* New Project button */}
@@ -672,6 +694,11 @@ function LayoutInner() {
             }}
           />
         )}
+      </AnimatePresence>
+
+      {/* ── CFG Calculator Fullscreen Overlay ──────────────── */}
+      <AnimatePresence>
+        {showCFG && <CFGCalculator project={project} onClose={() => setShowCFG(false)} />}
       </AnimatePresence>
     </div>
   );
