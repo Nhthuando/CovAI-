@@ -10,6 +10,7 @@ import {
     getJobById,
 } from "./job.service.js";
 import { ServiceError } from "../utils/serviceError.js";
+import { buildCfgForSnapshot } from "./buildCfg.service.js";
 
 const assertStringField = (value, fieldName) => {
     if (!value || typeof value !== "string" || value.trim().length === 0) {
@@ -69,6 +70,11 @@ export const processIngestJob = async (jobId) => {
         await prisma.projectSnapshot.update({
             where: { id: job.snapshotId },
             data: { rootDir: sourcePath },
+        });
+
+        // Build CFG
+        await buildCfgForSnapshot(job.snapshotId).catch(err => {
+            console.error(`[Job ${jobId}] Error building CFG:`, err);
         });
 
         await updateJobProgress(jobId, 90);
@@ -151,6 +157,11 @@ export const processUploadAndIngestJob = async (jobId, fileBuffer, mimeType, sto
         await prisma.projectSnapshot.update({
             where: { id: job.snapshotId },
             data: { rootDir: sourcePath },
+        });
+
+        // Build CFG
+        await buildCfgForSnapshot(job.snapshotId).catch(err => {
+            console.error(`[Job ${jobId}] Error building CFG:`, err);
         });
 
         await updateJobProgress(jobId, 100);

@@ -23,6 +23,7 @@ router.delete("/:id", projectController.deleteProject);
 router.post("/:id/detect-jest", projectController.detectJestConfig);
 router.post("/:id/import-github", projectController.importGitHub);
 router.post("/:id/ai-suggest", projectController.runAiSuggest);
+router.post("/:id/ai-tests", projectController.runAiTests);
 router.post("/:id/chat", projectController.chat);
 router.get("/:id/cfg", projectController.getCfg);
 router.get("/:id/cc", projectController.getCc);

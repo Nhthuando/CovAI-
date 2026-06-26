@@ -1,5 +1,5 @@
 /**
- * SCRUM-296: Include source code
+ * SCRUM-386: Include source code
  * Formats the raw source code files into a readable markdown string.
  */
 export const includeSourceCode = (sourceCode) => {
@@ -17,7 +17,7 @@ export const includeSourceCode = (sourceCode) => {
 };
 
 /**
- * SCRUM-295: Include coverage metrics
+ * SCRUM-392: Include uncovered functions
  * Formats the coverage data into text.
  */
 export const includeCoverageMetrics = (coverage) => {
@@ -39,18 +39,22 @@ export const includeCoverageMetrics = (coverage) => {
     }
 
     if (coverage.functions && coverage.functions.length > 0) {
-        promptSegment += "#### Function Hit Counts\n";
-        coverage.functions.forEach((func) => {
-            promptSegment += `- ${func.functionName} (${func.filePath}:${func.startLine}): Hits ${func.hit}\n`;
-        });
-        promptSegment += "\n";
+        const uncovered = coverage.functions.filter(f => f.hit === 0);
+        if (uncovered.length > 0) {
+            promptSegment += "#### Uncovered Functions\n";
+            promptSegment += "The following functions currently have no test coverage. Focus your testing efforts here:\n";
+            uncovered.forEach((func) => {
+                promptSegment += `- ${func.functionName} (${func.filePath}:${func.startLine})\n`;
+            });
+            promptSegment += "\n";
+        }
     }
 
     return promptSegment;
 };
 
 /**
- * SCRUM-294: Include CFG information
+ * SCRUM-391: Include CFG information
  * Formats Control Flow Graph data.
  */
 export const includeCfgInformation = (cfgArray) => {
@@ -74,7 +78,7 @@ export const includeCfgInformation = (cfgArray) => {
 };
 
 /**
- * SCRUM-293: Include complexity scores
+ * SCRUM-390: Include complexity score
  * Formats the cyclomatic complexity.
  */
 export const includeComplexityScores = (complexityArray) => {
@@ -90,7 +94,7 @@ export const includeComplexityScores = (complexityArray) => {
 };
 
 /**
- * SCRUM-292: Include testing instructions
+ * SCRUM-389: Request Jest skeleton output
  * Generates instructions based on the mode and hasJest flag.
  */
 export const includeTestingInstructions = (mode = "FULL", existingTestFiles = [], hasJest = false) => {
@@ -171,7 +175,14 @@ export const includeSuggestionFormat = () => {
 };
 
 /**
- * SCRUM-291: Build final prompt
+ * SCRUM-388: Request mock hints
+ */
+export const includeMockHints = () => {
+    return "Please provide comments or hints in the generated test skeletons indicating what external services, databases, or complex logic should be mocked (e.g., // TODO: Mock this database call).\n\n";
+};
+
+/**
+ * SCRUM-387: Create prompt template
  * Orchestrates all segments into a final prompt string.
  */
 export const buildFinalPrompt = (payload, options = {}) => {
@@ -189,6 +200,7 @@ export const buildFinalPrompt = (payload, options = {}) => {
     
     finalPrompt += includePrioritizationRules();
     finalPrompt += includeTestingInstructions(mode, payload.testFiles, hasJest);
+    finalPrompt += includeMockHints();
     finalPrompt += includeSuggestionFormat();
     
     finalPrompt += "---\n\nPlease review the provided code, metrics, and CFG data carefully. Output the requested JSON object containing `suggestions` and `tests` in a markdown code block.";
