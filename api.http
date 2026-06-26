@@ -126,10 +126,10 @@ Content-Type: application/json
 
 ###
 # @name runAiTests
-POST {{baseUrl}}/projects/cmquk92q20000r4bv21vc5n6b/ai-tests
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXB5ODV0bXAwMDAweGM3a2dsM3I1bzRxIiwidXNlckVtYWlsIjoidGh1YW5odXVnbEBnbWFpbC5jb20iLCJ1c2VyTmFtZSI6Ikh1dSBUaHVhbnMiLCJpYXQiOjE3ODI0NjA0MjgsImV4cCI6MTc4MjQ2NDAyOH0.1Yyfc7S-e0AdpKqS1_AIoRPRhjBagj7DSakkMHeTxs0
+POST {{baseUrl}}/projects//ai-tests
+Authorization: Bearer 
 Content-Type: application/json
 
 {
-  "snapshotId": "cmquk96tw0001r4bvl5hetv1c"
+  "snapshotId": ""
 }
