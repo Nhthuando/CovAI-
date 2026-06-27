@@ -1,6 +1,7 @@
 import { GitHubCloneService } from "../services/githubClone.service.js";
 import prisma from "../config/prisma.js";
 import { detectJest } from "../utils/jestDetector.js";
+import { buildCfgForSnapshot } from "../services/buildCfg.service.js";
 
 export const cloneGitHubRepositoryByUrl = async (req, res) => {
   try {
@@ -43,6 +44,11 @@ export const cloneGitHubRepositoryByUrl = async (req, res) => {
         jestConfigPath: detection.configPath,
         jestCommand: detection.jestCommand,
       }
+    });
+
+    // Build CFG in background
+    buildCfgForSnapshot(snapshot.id).catch((err) => {
+      console.error("Error building CFG for GitHub URL import:", err);
     });
 
     res.status(200).json({ ...cloneResult, snapshotId: snapshot.id });
@@ -96,6 +102,11 @@ export const importGitHubRepository = async (req, res) => {
         jestConfigPath: detection.configPath,
         jestCommand: detection.jestCommand,
       }
+    });
+
+    // Build CFG in background
+    buildCfgForSnapshot(snapshot.id).catch((err) => {
+      console.error("Error building CFG for GitHub Repo import:", err);
     });
 
     res.status(200).json({ ...cloneResult, snapshotId: snapshot.id });

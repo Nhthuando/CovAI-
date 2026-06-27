@@ -128,3 +128,12 @@ Content-Type: application/json
 # @name listAiTests
 GET {{baseUrl}}/ai-tests
 Authorization: Bearer YOUR_TOKEN_HERE
+###
+# @name runAiTests
+POST {{baseUrl}}/projects//ai-tests
+Authorization: Bearer 
+Content-Type: application/json
+
+{
+  "snapshotId": ""
+}

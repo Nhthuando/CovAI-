@@ -35,7 +35,7 @@ function computeLayout(nodes, edges) {
 
   nodes.forEach(n => {
     // Label length heuristic for width
-    const label = n.type || n.id;
+    const label = n.label || n.type || n.id;
     const width = Math.max(120, label.length * 8 + 40);
     g.setNode(n.id, { width, height: 40 });
   });
@@ -215,7 +215,24 @@ export default function CFGCalculator({ project, onClose }) {
       if (!activeCfg || !activeCfg.graphJson) return { nodes: [], edges: [] };
       try {
         const parsed = JSON.parse(activeCfg.graphJson);
-        return computeLayout(parsed.nodes || [], parsed.edges || []);
+        let nodes = parsed.nodes || [];
+        let edges = parsed.edges || [];
+
+        // Add virtual exit node to conform to standard McCabe CFG calculation
+        if (nodes.length > 0) {
+          const fromNodeIds = new Set(edges.map(e => e.from));
+          const leafNodes = nodes.filter(n => !fromNodeIds.has(n.id));
+
+          if (leafNodes.length > 0) {
+            const exitNodeId = "virtual_exit_node";
+            nodes = [...nodes, { id: exitNodeId, type: "exit", label: "Virtual Exit" }];
+            leafNodes.forEach(leaf => {
+              edges = [...edges, { from: leaf.id, to: exitNodeId }];
+            });
+          }
+        }
+
+        return computeLayout(nodes, edges);
       } catch (e) {
         return { nodes: [], edges: [] };
       }
@@ -428,7 +445,7 @@ export default function CFGCalculator({ project, onClose }) {
                           </svg>
 
                           {graphLayout.nodes.map(n => (
-                            <CFGNode key={n.id} label={n.type || n.id} line={n.line} x={n.x} y={n.y} width={n.width} isDiamond={n.type === 'condition'} active={n.type === 'start' || n.type === 'return'} />
+                            <CFGNode key={n.id} label={n.label || n.type || n.id} line={n.line} x={n.x} y={n.y} width={n.width} isDiamond={n.type === 'condition'} active={n.type === 'start' || n.type === 'return' || n.type === 'exit'} />
                           ))}
                         </div>
                       </motion.div>

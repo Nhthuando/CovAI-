@@ -648,3 +648,36 @@ export const createAiSuggestJob = async ({ projectId, snapshotId, userId }) => {
     await addJobLog(job.id, "INFO", "AI_SUGGEST job created");
     return job;
 };
+
+/**
+ * Create AI_TESTS job
+ */
+export const createAiTestsJob = async ({ projectId, snapshotId, userId }) => {
+    assertStringField(projectId, "projectId");
+    assertStringField(snapshotId, "snapshotId");
+    assertStringField(userId, "userId");
+
+    const snapshot = await prisma.projectSnapshot.findUnique({ where: { id: snapshotId } });
+    if (!snapshot) throw new ServiceError("Snapshot not found", 404);
+    if (snapshot.projectId !== projectId) throw new ServiceError("Snapshot does not belong to project", 400);
+
+    const running = await prisma.job.findFirst({
+        where: { projectId, type: "AI_TESTS", status: { in: ["QUEUED", "RUNNING"] } },
+    });
+    if (running) throw new ServiceError("An AI_TESTS job is already running for this project", 409);
+
+    const job = await prisma.job.create({
+        data: {
+            projectId,
+            snapshotId,
+            userId,
+            type: "AI_TESTS",
+            status: "QUEUED",
+            progress: 0,
+            payloadJson: JSON.stringify({ snapshotId }),
+        },
+    });
+
+    await addJobLog(job.id, "INFO", "AI_TESTS job created");
+    return job;
+};
