@@ -124,3 +124,7 @@ Content-Type: application/json
   "repo": "repo_name"
 }
 
+### AI Tests
+# @name listAiTests
+GET {{baseUrl}}/ai-tests
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF2cXplcGgwMDAwdXc3ZGw2MzIyNDhsIiwidXNlckVtYWlsIjoiZGluaEBnbWFpbC5jb20iLCJ1c2VyTmFtZSI6ImRpbmgiLCJpYXQiOjE3ODI1Mjc3MjQsImV4cCI6MTc4MjUzMTMyNH0.wShmeVjIp96U9T-PE9qv2GyZTieGepCLyBiqDg_W8Co

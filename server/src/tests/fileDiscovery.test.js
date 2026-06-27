@@ -1,10 +1,14 @@
-import { jest } from '@jest/globals';
+import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import fs from 'fs';
 import path from 'path';
 import { discoverSourceFiles } from '../services/fileDiscovery.service.js';
 import { ServiceError } from '../utils/serviceError.js';
 
-jest.mock('fs');
+jest.mock('fs', () => ({
+    __esModule: true,
+    existsSync: jest.fn(),
+    readdirSync: jest.fn(),
+}));
 
 describe('discoverSourceFiles', () => {
     beforeEach(() => {
