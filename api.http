@@ -124,6 +124,10 @@ Content-Type: application/json
   "repo": "repo_name"
 }
 
+### AI Tests
+# @name listAiTests
+GET {{baseUrl}}/ai-tests
+Authorization: Bearer YOUR_TOKEN_HERE
 ###
 # @name runAiTests
 POST {{baseUrl}}/projects//ai-tests
