@@ -1,4 +1,7 @@
 export default {
+    transform: {
+        '^.+\\.js$': 'babel-jest',
+    },
     testEnvironment: 'node',
     transform: {
         '^.+\\.(js|ts)$': ['babel-jest', { configFile: false, babelrc: false, presets: [['@babel/preset-env', { targets: { node: 'current' } }]] }],
@@ -7,6 +10,10 @@ export default {
         '^(\\.{1,2}/.*)\\.js$': '$1',
     },
     transformIgnorePatterns: [
-        'node_modules/(?!(@babel/.*|obug|js-tokens)/)',
+        '/node_modules/(?!(@prisma/client)/)',
+    ],
+    testPathIgnorePatterns: [
+        '/node_modules/',
+        '/storage/',
     ],
 };

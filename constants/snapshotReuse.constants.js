@@ -1,14 +1,6 @@
 /**
- * @file snapshotReuse.constants.js
+ * Snapshot Reuse Constants
  */
-
-export const REUSABLE_JOB_TYPES = [
-  'PARSE_COVERAGE',
-  'BUILD_CFG',
-  'AI_SUGGEST',
-  'AI_TESTS'
-];
-
 export const REQUIRED_ARTIFACTS = [
   'CoverageSummary',
   'CoverageFile',
@@ -18,3 +10,10 @@ export const REQUIRED_ARTIFACTS = [
   'AiSuggestion',
   'AiTest'
 ];
+
+export const JOB_TYPES = {
+  PARSE_COVERAGE: 'PARSE_COVERAGE',
+  BUILD_CFG: 'BUILD_CFG',
+  AI_SUGGEST: 'AI_SUGGEST',
+  AI_TESTS: 'AI_TESTS'
+};

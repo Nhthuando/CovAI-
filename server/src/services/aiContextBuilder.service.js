@@ -39,7 +39,7 @@ function collectFiles(dir, isMatch, rootDir = dir) {
 }
 
 /**
- * SCRUM-274: Load source code
+ * SCRUM-380: Load source code
  */
 export const loadSourceCode = async (snapshotId) => {
     const snapshot = await prisma.projectSnapshot.findUnique({ where: { id: snapshotId } });
@@ -58,7 +58,7 @@ export const loadSourceCode = async (snapshotId) => {
 };
 
 /**
- * SCRUM-276: Load test files
+ * SCRUM-383: Load existing test files
  */
 export const loadTestFiles = async (snapshotId) => {
     const snapshot = await prisma.projectSnapshot.findUnique({ where: { id: snapshotId } });
@@ -77,7 +77,7 @@ export const loadTestFiles = async (snapshotId) => {
 };
 
 /**
- * SCRUM-277: Load complexity metrics
+ * SCRUM-384: Load Cyclomatic Complexity data
  */
 export const loadComplexityMetrics = async (snapshotId) => {
     const metrics = await prisma.cyclomatic.findMany({
@@ -92,7 +92,7 @@ export const loadComplexityMetrics = async (snapshotId) => {
 };
 
 /**
- * SCRUM-278: Load CFG data
+ * SCRUM-385: Load CFG data
  */
 export const loadCfgData = async (snapshotId) => {
     const cfgs = await prisma.cfg.findMany({
@@ -109,7 +109,7 @@ export const loadCfgData = async (snapshotId) => {
 };
 
 /**
- * SCRUM-279: Load coverage data
+ * SCRUM-379: Load CoverageFunction data
  */
 export const loadCoverageData = async (snapshotId) => {
     const summary = await prisma.coverageSummary.findUnique({
@@ -134,7 +134,22 @@ export const loadCoverageData = async (snapshotId) => {
 };
 
 /**
- * SCRUM-275: Build AI payload
+ * SCRUM-381: Validate context size
+ */
+export const validateContextSize = (payloadJson) => {
+    // Limit context size to 20 MB to avoid excessive memory usage and ensure it fits within Gemini's context window.
+    const MAX_SIZE_BYTES = 20 * 1024 * 1024;
+    const sizeInBytes = Buffer.byteLength(payloadJson, 'utf8');
+    
+    if (sizeInBytes > MAX_SIZE_BYTES) {
+        throw new ServiceError(`Context size exceeds limit: ${(sizeInBytes / 1024 / 1024).toFixed(2)} MB > 20 MB`, 400);
+    }
+    
+    return true;
+};
+
+/**
+ * SCRUM-382: Build AI context object
  */
 export const buildAiPayload = async (snapshotId, forceRebuild = false) => {
     try {
@@ -173,6 +188,9 @@ export const buildAiPayload = async (snapshotId, forceRebuild = false) => {
 
         const payloadJson = JSON.stringify(payload);
         
+        // Validate context size (SCRUM-381)
+        validateContextSize(payloadJson);
+
         // Generate hash (SCRUM-280)
         const inputHash = generateInputHash(payloadJson);
 

@@ -304,6 +304,9 @@ export const createRunTestsJob = createTypedJob("RUN_TESTS");
 /** Creates a queued AI_SUGGEST job for a snapshot. */
 export const createAiSuggestJob = createTypedJob("AI_SUGGEST");
 
+/** Creates a queued AI_TESTS job for a snapshot. */
+export const createAiTestsJob = createTypedJob("AI_TESTS");
+
 // ---------------------------------------------------------------------------
 // State transitions
 // ---------------------------------------------------------------------------

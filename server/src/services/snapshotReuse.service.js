@@ -103,23 +103,28 @@ export async function findReusableSnapshot({
  * Determines whether a snapshot has enough processed artefacts to be reused.
  *
  * Required:
- *   • CoverageSummary (exactly one)
- *   • At least one CoverageFile, CoverageFunction, Cfg, and Cyclomatic record
- *
- * Optional (pipeline may not have reached these stages yet — we still allow
- * reuse of coverage/CFG artefacts even without AI outputs):
- *   • AiSuggestion, AiTest — checked but NOT required
+ *   • CoverageSummary
+ *   • CoverageFile
+ *   • CoverageFunction
+ *   • Cfg
+ *   • Cyclomatic
+ *   • AiSuggestion
+ *   • AiTest
  *
  * @param {string} snapshotId
  * @returns {Promise<boolean>}
  */
 async function isSnapshotReusable(snapshotId) {
+    console.log(`[SnapshotReuse] Validating artifacts for snapshot: ${snapshotId}`);
+
     const [
         coverageSummary,
         coverageFileCount,
         coverageFunctionCount,
         cfgCount,
         cyclomaticCount,
+        aiSuggestionCount,
+        aiTestCount,
     ] = await Promise.all([
         prisma.coverageSummary.findUnique({
             where: { snapshotId },
@@ -129,15 +134,26 @@ async function isSnapshotReusable(snapshotId) {
         prisma.coverageFunction.count({ where: { snapshotId } }),
         prisma.cfg.count({ where: { snapshotId } }),
         prisma.cyclomatic.count({ where: { snapshotId } }),
+        prisma.aiSuggestion.count({ where: { snapshotId } }),
+        prisma.aiTest.count({ where: { snapshotId } }),
     ]);
 
-    return !!(
-        coverageSummary &&
-        coverageFileCount > 0 &&
-        coverageFunctionCount > 0 &&
-        cfgCount > 0 &&
-        cyclomaticCount > 0
-    );
+    const missing = [];
+    if (!coverageSummary) missing.push('CoverageSummary');
+    if (coverageFileCount === 0) missing.push('CoverageFile');
+    if (coverageFunctionCount === 0) missing.push('CoverageFunction');
+    if (cfgCount === 0) missing.push('Cfg');
+    if (cyclomaticCount === 0) missing.push('Cyclomatic');
+    if (aiSuggestionCount === 0) missing.push('AiSuggestion');
+    if (aiTestCount === 0) missing.push('AiTest');
+
+    if (missing.length > 0) {
+        console.log(`[SnapshotReuse] Missing artifacts: ${missing.join(', ')}`);
+        return false;
+    }
+
+    console.log(`[SnapshotReuse] Snapshot reusable`);
+    return true;
 }
 
 // ---------------------------------------------------------------------------
