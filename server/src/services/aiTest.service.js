@@ -1,5 +1,62 @@
 import prisma from "../config/prisma.js";
 import { ServiceError } from "./project.service.js";
+import { generateText } from "./gemini.service.js";
+import { buildFullTestPrompt } from "./fullTestPromptBuilder.service.js";
+import { validateGeneratedTest } from "./testValidation.service.js";
+
+export const generateFullTest = async ({ projectId, snapshotId, userId }) => {
+  // 1. Verify access
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, ownerId: userId },
+  });
+  if (!project) throw new ServiceError("Project not found", 404);
+
+  const snapshot = await prisma.projectSnapshot.findUnique({
+    where: { id: snapshotId },
+    include: {
+      coverageSummary: true,
+      coverageFuncs: true,
+      cfgs: true,
+      cyclomatics: true,
+    },
+  });
+  if (!snapshot) throw new ServiceError("Snapshot not found", 404);
+
+  // 2. Build prompt
+  const prompt = buildFullTestPrompt({
+    sourceCode: [{ path: "mock_file.js", content: "// Mock code analysis" }],
+    coverageData: snapshot.coverageSummary,
+    cfgData: snapshot.cfgs,
+    cyclomaticData: snapshot.cyclomatics,
+  });
+
+  // 3. AI Generation
+  let generatedCode;
+  try {
+    generatedCode = await generateText(prompt);
+  } catch (error) {
+    generatedCode = `// TODO: AI Generation failed. Manual intervention required.\n// Error: ${error.message}`;
+  }
+
+  // 4. Validate
+  const validation = validateGeneratedTest(generatedCode);
+  if (!validation.valid) {
+    throw new ServiceError(
+      `AI generated invalid test code: ${validation.errors.join(", ")}`,
+      422,
+    );
+  }
+
+  // 5. Save
+  return await prisma.aiTest.create({
+    data: {
+      projectId,
+      snapshotId,
+      mode: "FULL",
+      content: generatedCode,
+    },
+  });
+};
 
 export const getAiTestById = async ({ projectId, testId, userId }) => {
   // 1. Verify project ownership
@@ -154,7 +211,7 @@ export const getAiTestsList = async ({
   // Build Filter
   const where = {
     projectId,
-    ...(status && { aiTestResult: { status } }), // Lọc theo PASS/FAIL nếu truyền vào
+    ...(status && { AiTestResult: { status } }), // Lọc theo PASS/FAIL nếu truyền vào
   };
 
   // Fetch data in parallel
@@ -172,7 +229,7 @@ export const getAiTestsList = async ({
         mode: true,
         filePath: true,
         createdAt: true,
-        aiTestResult: {
+        AiTestResult: {
           select: {
             id: true,
             status: true,

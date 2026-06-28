@@ -124,18 +124,15 @@ Content-Type: application/json
   "repo": "repo_name"
 }
 
-### AI Tests
-# @name listAiTests
-GET {{baseUrl}}/ai-tests?projectId=YOUR_PROJECT_ID&page=1&limit=10
-Authorization: Bearer YOUR_TOKEN_HERE
+
 ###
-# @name runAiTests
-POST {{baseUrl}}/projects//ai-tests
-Authorization: Bearer 
+# @name buildCfg
+POST {{baseUrl}}/projects/cmqxpx9a40001n0bvrkj0vlk7/cfg/build
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF4cHd4dDEwMDAwbjBidjVlMnl1NHc0IiwidXNlckVtYWlsIjoiaHV5bmhkaW5oMms1MjcwN0BnbWFpbC5jb20iLCJ1c2VyTmFtZSI6IkRpbmhHSCIsImlhdCI6MTc4MjY1NjY0OSwiZXhwIjoxNzgyNjYwMjQ5fQ.r8NBnK1Mx4asRp2UOTb0Mn6JtgcgkI75iUS1IbT6qL0
 Content-Type: application/json
 
 {
-  "snapshotId": ""
+  "snapshotId": "cmqxpxbx70002n0bvoxxqmf6x"
 }
 
 ### Lấy danh sách thông báo
@@ -152,3 +149,39 @@ Authorization: Bearer YOUR_TOKEN_HERE
 # @name markNotificationAsRead
 PATCH {{baseUrl}}/notifications/NHAP_ID_THONG_BAO_VAO_DAY/read
 Authorization: Bearer YOUR_TOKEN_HERE
+=======
+###
+# @name getCfg
+GET {{baseUrl}}/projects/cmquk92q20000r4bv21vc5n6b/cfg?snapshotId=cmquk96tw0001r4bvl5hetv1c
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXE5MWs0d3YwMDAxNG9idjEyczBmNWZ1IiwidXNlckVtYWlsIjoiaHV5bmhkaW5oMms1MjcwN0BnbWFpbC5jb20iLCJ1c2VyTmFtZSI6IkRpbmhHSCIsImlhdCI6MTc4MjQ1ODAwMywiZXhwIjoxNzgyNDYxNjAzfQ.S6tULiOqHRQFLBH4InmEft0PSnFh5N5m2ZEX2TyEOPs
+
+
+###
+# @name runAiTests
+POST {{baseUrl}}/projects//ai-tests
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF4cHd4dDEwMDAwbjBidjVlMnl1NHc0IiwidXNlckVtYWlsIjoiaHV5bmhkaW5oMms1MjcwN0BnbWFpbC5jb20iLCJ1c2VyTmFtZSI6IkRpbmhHSCIsImlhdCI6MTc4MjY1NjY0OSwiZXhwIjoxNzgyNjYwMjQ5fQ.r8NBnK1Mx4asRp2UOTb0Mn6JtgcgkI75iUS1IbT6qL0
+Content-Type: application/json
+
+{
+  "snapshotId": "cmqxpxbx70002n0bvoxxqmf6x"
+}
+
+### AI Tests
+# @name listAiTests
+GET {{baseUrl}}/ai-tests?projectId=cmqxpx9a40001n0bvrkj0vlk7&page=1&limit=10
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF4cHd4dDEwMDAwbjBidjVlMnl1NHc0IiwidXNlckVtYWlsIjoiaHV5bmhkaW5oMms1MjcwN0BnbWFpbC5jb20iLCJ1c2VyTmFtZSI6IkRpbmhHSCIsImlhdCI6MTc4MjY1NjY0OSwiZXhwIjoxNzgyNjYwMjQ5fQ.r8NBnK1Mx4asRp2UOTb0Mn6JtgcgkI75iUS1IbT6qL0
+
+### 
+# @name GenerateFullTest
+POST {{baseUrl}}/projects/cmqxpx9a40001n0bvrkj0vlk7/ai/generate-full-test
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF4cHd4dDEwMDAwbjBidjVlMnl1NHc0IiwidXNlckVtYWlsIjoiaHV5bmhkaW5oMms1MjcwN0BnbWFpbC5jb20iLCJ1c2VyTmFtZSI6IkRpbmhHSCIsImlhdCI6MTc4MjY1NjY0OSwiZXhwIjoxNzgyNjYwMjQ5fQ.r8NBnK1Mx4asRp2UOTb0Mn6JtgcgkI75iUS1IbT6qL0
+Content-Type: application/json
+
+{
+  "snapshotId": "cmqxpxbx70002n0bvoxxqmf6x"
+}
+
+###
+# @name getAiTests
+GET {{baseUrl}}/projects/cmqxpx9a40001n0bvrkj0vlk7/ai/tests
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF4cHd4dDEwMDAwbjBidjVlMnl1NHc0IiwidXNlckVtYWlsIjoiaHV5bmhkaW5oMms1MjcwN0BnbWFpbC5jb20iLCJ1c2VyTmFtZSI6IkRpbmhHSCIsImlhdCI6MTc4MjY1NjY0OSwiZXhwIjoxNzgyNjYwMjQ5fQ.r8NBnK1Mx4asRp2UOTb0Mn6JtgcgkI75iUS1IbT6qL0

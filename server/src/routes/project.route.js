@@ -33,5 +33,6 @@ router.get("/:id/cfg", projectController.getCfg);
 router.get("/:id/cc", projectController.getCc);
 router.get("/:id/ai/tests", projectController.getAiTests);
 router.get("/:id/ai/tests/:testId", projectController.getAiTest);
+router.post("/:id/ai/generate-full-test", projectController.generateFullTest);
 
 export default router;

@@ -8,7 +8,11 @@ import { createAiSuggestJob } from "../services/job.service.js";
 import { processAiSuggestJob } from "../services/aiSuggestJob.service.js";
 import { generateText } from "../services/gemini.service.js";
 import { checkAndIncrementQuota } from "../services/aiQuota.service.js";
-import { getAiTestById, listAiTests } from "../services/aiTest.service.js";
+import {
+  getAiTestById,
+  listAiTests,
+  generateFullTest,
+} from "../services/aiTest.service.js";
 import prisma from "../config/prisma.js";
 import {
   ServiceError,
@@ -695,12 +699,10 @@ The user is working on project: ${project.name}.
           orderBy: { createdAt: "desc" },
         });
         if (!latestSnapshot) {
-          return res
-            .status(404)
-            .json({
-              success: false,
-              message: "No snapshot found for this project",
-            });
+          return res.status(404).json({
+            success: false,
+            message: "No snapshot found for this project",
+          });
         }
         snapshotId = latestSnapshot.id;
       }
@@ -744,12 +746,10 @@ The user is working on project: ${project.name}.
           orderBy: { createdAt: "desc" },
         });
         if (!latestSnapshot) {
-          return res
-            .status(404)
-            .json({
-              success: false,
-              message: "No snapshot found for this project",
-            });
+          return res.status(404).json({
+            success: false,
+            message: "No snapshot found for this project",
+          });
         }
         snapshotId = latestSnapshot.id;
       }
@@ -812,6 +812,41 @@ The user is working on project: ${project.name}.
       });
 
       return res.status(200).json({ success: true, ...result });
+    } catch (error) {
+      console.error(error);
+
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  }
+
+  async generateFullTest(req, res) {
+    try {
+      const { id: projectId } = req.params;
+      const { snapshotId } = req.body;
+
+      if (!snapshotId || typeof snapshotId !== "string") {
+        return res.status(400).json({
+          success: false,
+          message: "snapshotId is required and must be a string",
+        });
+      }
+
+      const result = await generateFullTest({
+        projectId,
+        snapshotId,
+        userId: req.user.id,
+      });
+
+      return res.status(201).json({ success: true, data: result });
     } catch (error) {
       console.error(error);
 
