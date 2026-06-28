@@ -48,14 +48,78 @@ export const saveAiTestResult = async (data) => {
   });
 };
 
-export const getAllAiTests = async () => {
+export const getAiTestsList = async ({ projectId, userId, page = 1, limit = 20, status }) => {
   const db = prisma;
-  if (!db) {
-    throw new Error('Prisma client instance is not properly initialized.');
+  if (!db) throw new Error('Prisma client instance is not properly initialized.');
+
+  if (!projectId) {
+    const error = new Error('Project ID is required');
+    error.status = 400;
+    throw error;
   }
-  return await db.aiTest.findMany({
-    include: {
-      aiTestResult: true,
-    },
+
+  // Security Check: Verify project ownership
+  const project = await db.project.findUnique({
+    where: { id: projectId },
+    select: { ownerId: true }
   });
+
+  if (!project) {
+    const error = new Error('Project not found');
+    error.status = 404;
+    throw error;
+  }
+
+  if (project.ownerId !== userId) {
+    const error = new Error('Forbidden: You do not have access to this project');
+    error.status = 403;
+    throw error;
+  }
+
+  // Pagination calculations
+  const skip = (Math.max(1, page) - 1) * limit;
+
+  // Build Filter
+  const where = {
+    projectId,
+    ...(status && { aiTestResult: { status } }) // Lọc theo PASS/FAIL nếu truyền vào
+  };
+
+  // Fetch data in parallel
+  const [total, tests] = await Promise.all([
+    db.aiTest.count({ where }),
+    db.aiTest.findMany({
+      where,
+      skip,
+      take: Number(limit),
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        projectId: true,
+        snapshotId: true,
+        mode: true,
+        filePath: true,
+        createdAt: true,
+        aiTestResult: {
+          select: {
+            id: true,
+            status: true,
+            duration: true,
+            error: true, // Vẫn trả error ra ngoài list để frontend biết lý do tóm tắt
+            createdAt: true
+          }
+        }
+      }
+    })
+  ]);
+
+  return {
+    data: tests,
+    pagination: {
+      total,
+      page: Number(page),
+      limit: Number(limit),
+      totalPages: Math.ceil(total / limit)
+    }
+  };
 };
