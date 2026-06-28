@@ -116,7 +116,7 @@ model ProjectSnapshot {
   jestCommand     String?
   createdAt      DateTime       @default(now())
 
-  project         Project        @relation(fields: [projectId], references: [id])
+  project         Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
   coverageSummary CoverageSummary?
   coverageFiles   CoverageFile[]
   coverageFuncs   CoverageFunction[]
@@ -148,9 +148,9 @@ model Job {
   finishedAt   DateTime?
   createdAt    DateTime  @default(now())
 
-  project   Project          @relation(fields: [projectId], references: [id])
-  snapshot  ProjectSnapshot? @relation(fields: [snapshotId], references: [id])
-  user      User?            @relation("UserJobs", fields: [userId], references: [id])
+  project   Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  snapshot  ProjectSnapshot? @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  user      User?            @relation("UserJobs", fields: [userId], references: [id], onDelete: SetNull)
   logs      JobLog[]
   output    JobOutput?
 
@@ -166,7 +166,7 @@ model JobLog {
   message   String
   createdAt DateTime @default(now())
 
-  job Job @relation(fields: [jobId], references: [id])
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@index([jobId])
 }
@@ -178,7 +178,7 @@ model JobOutput {
   stderr    String?
   createdAt DateTime @default(now())
 
-  job Job @relation(fields: [jobId], references: [id])
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
 }
 
 // Coverage
@@ -191,7 +191,7 @@ model CoverageSummary {
   stmtsPct    Float
   createdAt   DateTime @default(now())
 
-  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id])
+  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 }
 
 model CoverageFile {
@@ -203,7 +203,7 @@ model CoverageFile {
   funcsPct    Float
   stmtsPct    Float
 
-  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id])
+  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 
   @@unique([snapshotId, filePath])
   @@index([snapshotId])
@@ -218,7 +218,7 @@ model CoverageFunction {
   endLine      Int?
   hit          Int
 
-  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id])
+  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 
   @@unique([snapshotId, filePath, functionName, startLine])
   @@index([snapshotId, filePath])
@@ -235,7 +235,7 @@ model Cfg {
   graphJson    String
   createdAt    DateTime @default(now())
 
-  snapshot   ProjectSnapshot @relation(fields: [snapshotId], references: [id])
+  snapshot   ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
   cyclomatic Cyclomatic?
 
   @@unique([snapshotId, filePath, functionName, startLine])
@@ -251,8 +251,8 @@ model Cyclomatic {
   value        Int
   createdAt    DateTime @default(now())
 
-  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id])
-  cfg      Cfg?            @relation(fields: [cfgId], references: [id])
+  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  cfg      Cfg?            @relation(fields: [cfgId], references: [id], onDelete: Cascade)
 
   @@unique([snapshotId, filePath, functionName])
   @@index([snapshotId, filePath])
@@ -266,7 +266,7 @@ model AiContextCache {
   payloadJson String
   createdAt   DateTime @default(now())
 
-  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id])
+  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 }
 
 model AiSuggestion {
@@ -279,8 +279,8 @@ model AiSuggestion {
   message      String
   createdAt    DateTime @default(now())
 
-  project  Project         @relation(fields: [projectId], references: [id])
-  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id])
+  project  Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 
   @@index([projectId, snapshotId])
   @@index([snapshotId, filePath])
@@ -296,8 +296,8 @@ model AiTest {
   metaJson   String?
   createdAt  DateTime @default(now())
 
-  project  Project         @relation(fields: [projectId], references: [id])
-  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id])
+  project  Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 
   @@index([projectId, snapshotId])
 }
@@ -313,8 +313,8 @@ model Notification {
   readAt    DateTime?
   createdAt DateTime @default(now())
 
-  user    User     @relation(fields: [userId], references: [id])
-  project Project? @relation(fields: [projectId], references: [id])
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([userId, readAt])
 }

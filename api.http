@@ -124,3 +124,18 @@ Content-Type: application/json
   "repo": "repo_name"
 }
 
+###
+# @name buildCfg
+POST {{baseUrl}}/projects/cmquk92q20000r4bv21vc5n6b/cfg/build
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXE5MWs0d3YwMDAxNG9idjEyczBmNWZ1IiwidXNlckVtYWlsIjoiaHV5bmhkaW5oMms1MjcwN0BnbWFpbC5jb20iLCJ1c2VyTmFtZSI6IkRpbmhHSCIsImlhdCI6MTc4MjQ1ODAwMywiZXhwIjoxNzgyNDYxNjAzfQ.S6tULiOqHRQFLBH4InmEft0PSnFh5N5m2ZEX2TyEOPs
+Content-Type: application/json
+
+{
+  "snapshotId": "cmquk96tw0001r4bvl5hetv1c"
+}
+
+###
+# @name getCfg
+GET {{baseUrl}}/projects/cmquk92q20000r4bv21vc5n6b/cfg?snapshotId=cmquk96tw0001r4bvl5hetv1c
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXE5MWs0d3YwMDAxNG9idjEyczBmNWZ1IiwidXNlckVtYWlsIjoiaHV5bmhkaW5oMms1MjcwN0BnbWFpbC5jb20iLCJ1c2VyTmFtZSI6IkRpbmhHSCIsImlhdCI6MTc4MjQ1ODAwMywiZXhwIjoxNzgyNDYxNjAzfQ.S6tULiOqHRQFLBH4InmEft0PSnFh5N5m2ZEX2TyEOPs
+

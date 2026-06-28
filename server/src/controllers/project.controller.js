@@ -22,6 +22,8 @@ import {
   getFileContent,
   createAnalysisJob,
 } from "../services/project.service.js";
+import { createBuildCfgJob } from "../services/job.service.js";
+import { processBuildCfgJob } from "../services/buildCfgJob.service.js";
 
 class ProjectController {
   /**
@@ -238,10 +240,14 @@ class ProjectController {
       const { id: projectId } = req.params;
       const { snapshotId } = req.body;
 
-      if (!snapshotId || typeof snapshotId !== "string") {
+      if (!snapshotId) {
+        console.error(
+          "DEBUG: snapshotId missing. Request Body:",
+          JSON.stringify(req.body),
+        );
         return res.status(400).json({
           success: false,
-          message: "snapshotId is required and must be a string",
+          message: `snapshotId is required. Received: ${typeof snapshotId}`,
         });
       }
 
@@ -254,6 +260,63 @@ class ProjectController {
       // SCRUM-138..144: Kick-off full pipeline bất đồng bộ (không await)
       processRunTestsJob(job.id).catch((err) => {
         console.error("Lỗi khi chạy RUN_TESTS pipeline ngầm:", err);
+      });
+
+      return res.status(201).json({
+        success: true,
+        data: {
+          job: {
+            id: job.id,
+            type: job.type,
+            snapshotId: job.snapshotId,
+            status: job.status,
+            progress: job.progress,
+            createdAt: job.createdAt,
+            updatedAt: job.updatedAt,
+          },
+        },
+      });
+    } catch (error) {
+      console.error(error);
+
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  }
+
+  async buildCfg(req, res) {
+    try {
+      const { id: projectId } = req.params;
+      const snapshotId = req.body?.snapshotId;
+
+      if (!snapshotId) {
+        return res.status(400).json({
+          success: false,
+          message: "snapshotId is required in the request body",
+          debug: {
+            body: req.body,
+            headers: req.headers,
+            contentType: req.headers["content-type"],
+          },
+        });
+      }
+
+      const job = await createBuildCfgJob({
+        projectId,
+        snapshotId,
+        userId: req.user.id,
+      });
+
+      processBuildCfgJob(job.id).catch((err) => {
+        console.error("Lỗi khi chạy BUILD_CFG pipeline ngầm:", err);
       });
 
       return res.status(201).json({
