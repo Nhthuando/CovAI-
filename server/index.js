@@ -16,6 +16,7 @@ import cyclomaticRoute from "./src/routes/cyclomatic.route.js";
 import aiSuggestionRoute from "./src/routes/aiSuggestion.route.js";
 import aiTestRoute from "./src/routes/aiTest.route.js";
 import fileRoutes from "./src/routes/file.routes.js";
+import notificationRoute from "./src/routes/notification.route.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -45,6 +46,7 @@ app.use("/api/cyclomatic", cyclomaticRoute);
 app.use("/api/ai-suggestions", aiSuggestionRoute);
 app.use("/api/ai-tests", aiTestRoute);
 app.use("/api/files", fileRoutes);
+app.use("/api/notifications", notificationRoute);
 
 app.get("/", (req, res) => {
   res.json({ message: "CovAI API is running" });
