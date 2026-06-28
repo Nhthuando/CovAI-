@@ -561,6 +561,62 @@ class ProjectController {
     }
   }
 
+  async runAiTests(req, res) {
+    try {
+      const { id: projectId } = req.params;
+      const { snapshotId } = req.body;
+
+      if (!snapshotId || typeof snapshotId !== "string") {
+        return res.status(400).json({
+          success: false,
+          message: "snapshotId is required and must be a string",
+        });
+      }
+
+      const { createAiTestsJob } = await import("../services/job.service.js");
+      const { processAiTestsJob } =
+        await import("../services/aiTestsJob.service.js");
+
+      const job = await createAiTestsJob({
+        projectId,
+        snapshotId,
+        userId: req.user.id,
+      });
+
+      processAiTestsJob(job.id).catch((err) => {
+        console.error("Lỗi khi chạy AI_TESTS pipeline ngầm:", err);
+      });
+
+      return res.status(202).json({
+        success: true,
+        data: {
+          job: {
+            id: job.id,
+            type: job.type,
+            snapshotId: job.snapshotId,
+            status: job.status,
+            progress: job.progress,
+            createdAt: job.createdAt,
+            updatedAt: job.updatedAt,
+          },
+        },
+      });
+    } catch (error) {
+      console.error(error);
+
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  }
+
   async chat(req, res) {
     try {
       const { id: projectId } = req.params;
@@ -639,10 +695,12 @@ The user is working on project: ${project.name}.
           orderBy: { createdAt: "desc" },
         });
         if (!latestSnapshot) {
-          return res.status(404).json({
-            success: false,
-            message: "No snapshot found for this project",
-          });
+          return res
+            .status(404)
+            .json({
+              success: false,
+              message: "No snapshot found for this project",
+            });
         }
         snapshotId = latestSnapshot.id;
       }
@@ -686,10 +744,12 @@ The user is working on project: ${project.name}.
           orderBy: { createdAt: "desc" },
         });
         if (!latestSnapshot) {
-          return res.status(404).json({
-            success: false,
-            message: "No snapshot found for this project",
-          });
+          return res
+            .status(404)
+            .json({
+              success: false,
+              message: "No snapshot found for this project",
+            });
         }
         snapshotId = latestSnapshot.id;
       }

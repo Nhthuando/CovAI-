@@ -124,3 +124,16 @@ Content-Type: application/json
   "repo": "repo_name"
 }
 
+### AI Tests
+# @name listAiTests
+GET {{baseUrl}}/ai-tests?projectId=YOUR_PROJECT_ID&page=1&limit=10
+Authorization: Bearer YOUR_TOKEN_HERE
+###
+# @name runAiTests
+POST {{baseUrl}}/projects//ai-tests
+Authorization: Bearer 
+Content-Type: application/json
+
+{
+  "snapshotId": ""
+}

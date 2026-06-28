@@ -37,7 +37,7 @@ const runNpmInstall = (jobId, rootDir) => {
     return new Promise((resolve, reject) => {
         let timedOut = false;
 
-        addJobLog(jobId, "INFO", `[SCRUM-139] Bắt đầu npm install tại: ${rootDir}`).catch(() => {});
+        addJobLog(jobId, "INFO", `[SCRUM-139] Bắt đầu npm install tại: ${rootDir}`).catch(() => { });
 
         const child = spawn("npm", ["install", "--prefer-offline"], {
             cwd: rootDir,
@@ -49,18 +49,18 @@ const runNpmInstall = (jobId, rootDir) => {
             timedOut = true;
             child.kill("SIGKILL");
             const msg = `npm install vượt quá timeout ${INSTALL_TIMEOUT_MS / 1000}s`;
-            await addJobLog(jobId, "ERROR", msg).catch(() => {});
+            await addJobLog(jobId, "ERROR", msg).catch(() => { });
             reject(new Error(msg));
         }, INSTALL_TIMEOUT_MS);
 
         child.stdout.on("data", async (chunk) => {
             const text = chunk.toString();
-            await appendJobOutput(jobId, { stdout: text }).catch(() => {});
+            await appendJobOutput(jobId, { stdout: text }).catch(() => { });
         });
 
         child.stderr.on("data", async (chunk) => {
             const text = chunk.toString();
-            await appendJobOutput(jobId, { stderr: text }).catch(() => {});
+            await appendJobOutput(jobId, { stderr: text }).catch(() => { });
         });
 
         child.on("close", async (code) => {
@@ -68,11 +68,11 @@ const runNpmInstall = (jobId, rootDir) => {
             if (timedOut) return;
 
             if (code === 0) {
-                await addJobLog(jobId, "INFO", "[SCRUM-139] npm install hoàn thành thành công.").catch(() => {});
+                await addJobLog(jobId, "INFO", "[SCRUM-139] npm install hoàn thành thành công.").catch(() => { });
                 resolve();
             } else {
                 const msg = `[SCRUM-139] npm install thất bại với exit code ${code}`;
-                await addJobLog(jobId, "ERROR", msg).catch(() => {});
+                await addJobLog(jobId, "ERROR", msg).catch(() => { });
                 reject(new Error(msg));
             }
         });
@@ -107,7 +107,7 @@ const runJestCoverage = (jobId, rootDir, jestConfigPath) => {
             jestArgs.push(`--config=${jestConfigPath}`);
         }
 
-        addJobLog(jobId, "INFO", `[SCRUM-140] Bắt đầu jest --coverage tại: ${rootDir}`).catch(() => {});
+        addJobLog(jobId, "INFO", `[SCRUM-140] Bắt đầu jest --coverage tại: ${rootDir}`).catch(() => { });
 
         const child = spawn("npx", ["jest", ...jestArgs], {
             cwd: rootDir,
@@ -119,20 +119,20 @@ const runJestCoverage = (jobId, rootDir, jestConfigPath) => {
             timedOut = true;
             child.kill("SIGKILL");
             const msg = `jest --coverage vượt quá timeout ${JEST_TIMEOUT_MS / 1000}s`;
-            await addJobLog(jobId, "ERROR", msg).catch(() => {});
+            await addJobLog(jobId, "ERROR", msg).catch(() => { });
             reject(new Error(msg));
         }, JEST_TIMEOUT_MS);
 
         child.stdout.on("data", async (chunk) => {
             const text = chunk.toString();
             process.stdout.write(`[Jest ${jobId}] ${text}`);
-            await appendJobOutput(jobId, { stdout: text }).catch(() => {});
+            await appendJobOutput(jobId, { stdout: text }).catch(() => { });
         });
 
         child.stderr.on("data", async (chunk) => {
             const text = chunk.toString();
             process.stderr.write(`[Jest ${jobId}] ${text}`);
-            await appendJobOutput(jobId, { stderr: text }).catch(() => {});
+            await appendJobOutput(jobId, { stderr: text }).catch(() => { });
         });
 
         child.on("close", async (code) => {
@@ -143,12 +143,12 @@ const runJestCoverage = (jobId, rootDir, jestConfigPath) => {
             // exit code >= 2 = lỗi nghiêm trọng (config sai, không chạy được)
             if (code !== null && code >= 2) {
                 const msg = `[SCRUM-140] jest kết thúc với exit code ${code} (lỗi nghiêm trọng)`;
-                await addJobLog(jobId, "ERROR", msg).catch(() => {});
+                await addJobLog(jobId, "ERROR", msg).catch(() => { });
                 reject(new Error(msg));
                 return;
             }
 
-            await addJobLog(jobId, "INFO", `[SCRUM-140] jest kết thúc (exit ${code}), coverage đã sinh.`).catch(() => {});
+            await addJobLog(jobId, "INFO", `[SCRUM-140] jest kết thúc (exit ${code}), coverage đã sinh.`).catch(() => { });
             resolve({ exitCode: code });
         });
 
@@ -186,7 +186,7 @@ const parseFinalCoverageFiles = async (jobId, snapshotId, projectId, userId, cov
     const coverageReport = readCoverageFinal(coverageDir);
 
     if (!coverageReport) {
-        await addJobLog(jobId, "WARN", "[SCRUM-141] coverage-final.json không tồn tại, bỏ qua parse CoverageFile.").catch(() => {});
+        await addJobLog(jobId, "WARN", "[SCRUM-141] coverage-final.json không tồn tại, bỏ qua parse CoverageFile.").catch(() => { });
         return;
     }
 
@@ -201,10 +201,10 @@ const parseFinalCoverageFiles = async (jobId, snapshotId, projectId, userId, cov
             jobId,
             "INFO",
             `[SCRUM-141] Đã parse ${result.totalFiles} CoverageFile records.`
-        ).catch(() => {});
+        ).catch(() => { });
     } catch (err) {
         // Không fail toàn bộ pipeline nếu parse file lỗi
-        await addJobLog(jobId, "WARN", `[SCRUM-141] Lỗi parse CoverageFile: ${err.message}`).catch(() => {});
+        await addJobLog(jobId, "WARN", `[SCRUM-141] Lỗi parse CoverageFile: ${err.message}`).catch(() => { });
     }
 };
 
@@ -216,7 +216,7 @@ const parseFinalCoverageFunctions = async (jobId, snapshotId, projectId, userId,
     const coverageReport = readCoverageFinal(coverageDir);
 
     if (!coverageReport) {
-        await addJobLog(jobId, "WARN", "[SCRUM-141] coverage-final.json không tồn tại, bỏ qua parse CoverageFunction.").catch(() => {});
+        await addJobLog(jobId, "WARN", "[SCRUM-141] coverage-final.json không tồn tại, bỏ qua parse CoverageFunction.").catch(() => { });
         return;
     }
 
@@ -231,9 +231,9 @@ const parseFinalCoverageFunctions = async (jobId, snapshotId, projectId, userId,
             jobId,
             "INFO",
             `[SCRUM-141] Đã parse ${result.totalFunctions} CoverageFunction records.`
-        ).catch(() => {});
+        ).catch(() => { });
     } catch (err) {
-        await addJobLog(jobId, "WARN", `[SCRUM-141] Lỗi parse CoverageFunction: ${err.message}`).catch(() => {});
+        await addJobLog(jobId, "WARN", `[SCRUM-141] Lỗi parse CoverageFunction: ${err.message}`).catch(() => { });
     }
 };
 
@@ -293,7 +293,7 @@ export const processRunTestsJob = async (jobId) => {
     if (!job.snapshot?.rootDir) {
         const msg = "Snapshot chưa có rootDir — INGEST job chưa hoàn thành.";
         console.error(`[RunTestsJob ${jobId}] ${msg}`);
-        await markJobFailed(jobId, new Error(msg)).catch(() => {});
+        await markJobFailed(jobId, new Error(msg)).catch(() => { });
         return;
     }
 
@@ -305,29 +305,29 @@ export const processRunTestsJob = async (jobId) => {
     const coverageDir = path.join(rootDir, "coverage");
 
     // Khởi tạo output record
-    await saveJobOutput(jobId, { stdout: "", stderr: "" }).catch(() => {});
+    await saveJobOutput(jobId, { stdout: "", stderr: "" }).catch(() => { });
 
     // ── SCRUM-144: Progress 10% — bắt đầu ───────────────────────────────────
-    await updateJobProgress(jobId, 10).catch(() => {});
-    await addJobLog(jobId, "INFO", "Pipeline RUN_TESTS bắt đầu.").catch(() => {});
+    await updateJobProgress(jobId, 10).catch(() => { });
+    await addJobLog(jobId, "INFO", "Pipeline RUN_TESTS bắt đầu.").catch(() => { });
 
     try {
         // ── SCRUM-139: Install dependencies ──────────────────────────────────
-        await addJobLog(jobId, "INFO", "Bước 1/4: Cài dependencies...").catch(() => {});
+        await addJobLog(jobId, "INFO", "Bước 1/4: Cài dependencies...").catch(() => { });
         await runNpmInstall(jobId, rootDir);
 
         // ── SCRUM-144: Progress 35% — sau install ─────────────────────────────
-        await updateJobProgress(jobId, 35).catch(() => {});
+        await updateJobProgress(jobId, 35).catch(() => { });
 
         // ── SCRUM-140: Execute coverage analysis ──────────────────────────────
-        await addJobLog(jobId, "INFO", "Bước 2/4: Chạy jest --coverage...").catch(() => {});
+        await addJobLog(jobId, "INFO", "Bước 2/4: Chạy jest --coverage...").catch(() => { });
         const { exitCode } = await runJestCoverage(jobId, rootDir, jestConfigPath);
 
         // ── SCRUM-144: Progress 65% — sau jest ───────────────────────────────
-        await updateJobProgress(jobId, 65).catch(() => {});
+        await updateJobProgress(jobId, 65).catch(() => { });
 
         // ── SCRUM-141: Parse reports ──────────────────────────────────────────
-        await addJobLog(jobId, "INFO", "Bước 3/4: Parse coverage reports...").catch(() => {});
+        await addJobLog(jobId, "INFO", "Bước 3/4: Parse coverage reports...").catch(() => { });
 
         // Parse coverage-summary.json → CoverageSummary + CoverageFile (from summary)
         let summaryResult = null;
@@ -340,9 +340,9 @@ export const processRunTestsJob = async (jobId) => {
                 `branches=${summaryResult.total.branches.pct}%, ` +
                 `functions=${summaryResult.total.functions.pct}%, ` +
                 `statements=${summaryResult.total.statements.pct}% | files=${summaryResult.fileCount}`
-            ).catch(() => {});
+            ).catch(() => { });
         } catch (parseErr) {
-            await addJobLog(jobId, "WARN", `[SCRUM-141] Lỗi parse coverage-summary: ${parseErr.message}`).catch(() => {});
+            await addJobLog(jobId, "WARN", `[SCRUM-141] Lỗi parse coverage-summary: ${parseErr.message}`).catch(() => { });
         }
 
         // Parse coverage-final.json → CoverageFile (per-file detail)
@@ -354,13 +354,13 @@ export const processRunTestsJob = async (jobId) => {
         // Verify lcov.info
         const lcovPath = path.join(coverageDir, "lcov.info");
         const hasLcov = fs.existsSync(lcovPath);
-        await addJobLog(jobId, "INFO", `lcov.info: ${hasLcov ? "có" : "không tìm thấy"}`).catch(() => {});
+        await addJobLog(jobId, "INFO", `lcov.info: ${hasLcov ? "có" : "không tìm thấy"}`).catch(() => { });
 
         // ── SCRUM-144: Progress 85% — sau parse ──────────────────────────────
-        await updateJobProgress(jobId, 85).catch(() => {});
+        await updateJobProgress(jobId, 85).catch(() => { });
 
         // ── SCRUM-142: Store results lên Firebase ─────────────────────────────
-        await addJobLog(jobId, "INFO", "Bước 4/4: Lưu coverage files lên Firebase...").catch(() => {});
+        await addJobLog(jobId, "INFO", "Bước 4/4: Lưu coverage files lên Firebase...").catch(() => { });
         let storageResult = {};
         try {
             storageResult = await storeCoverageOutputs(snapshotId, projectId, coverageDir);
@@ -368,18 +368,18 @@ export const processRunTestsJob = async (jobId) => {
                 jobId,
                 "INFO",
                 `[SCRUM-142] Đã upload coverage files: ${storageResult.baseStoragePath}`
-            ).catch(() => {});
+            ).catch(() => { });
         } catch (storageErr) {
             // Không fail toàn bộ pipeline nếu storage lỗi
             await addJobLog(
                 jobId,
                 "WARN",
                 `[SCRUM-142] Không thể upload coverage files: ${storageErr.message}`
-            ).catch(() => {});
+            ).catch(() => { });
         }
 
         // ── SCRUM-144: Progress 100% ──────────────────────────────────────────
-        await updateJobProgress(jobId, 100).catch(() => {});
+        await updateJobProgress(jobId, 100).catch(() => { });
 
         // ── SCRUM-143: markJobSuccess ─────────────────────────────────────────
         await markJobSuccess(jobId, {
@@ -401,7 +401,7 @@ export const processRunTestsJob = async (jobId) => {
 
     } catch (error) {
         console.error(`[RunTestsJob ${jobId}] Lỗi pipeline:`, error);
-        await addJobLog(jobId, "ERROR", `Lỗi pipeline: ${error.message}`).catch(() => {});
+        await addJobLog(jobId, "ERROR", `Lỗi pipeline: ${error.message}`).catch(() => { });
         // ── SCRUM-143: markJobFailed ──────────────────────────────────────────
         await markJobFailed(jobId, error).catch((markErr) => {
             console.error(`[RunTestsJob ${jobId}] Không thể đánh dấu FAILED:`, markErr);
