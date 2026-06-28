@@ -18,6 +18,7 @@ router.post(
   projectController.uploadZip,
 );
 router.post("/:id/run-analysis", projectController.runAnalysis);
+router.post("/:id/cfg/build", projectController.buildCfg);
 router.post("/:id/coverage/parse", projectController.parseCoverageFiles);
 router.post(
   "/:id/coverage/functions/parse",
