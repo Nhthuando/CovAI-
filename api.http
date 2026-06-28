@@ -126,7 +126,7 @@ Content-Type: application/json
 
 ### AI Tests
 # @name listAiTests
-GET {{baseUrl}}/ai-tests
+GET {{baseUrl}}/ai-tests?projectId=YOUR_PROJECT_ID&page=1&limit=10
 Authorization: Bearer YOUR_TOKEN_HERE
 ###
 # @name runAiTests
