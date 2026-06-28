@@ -137,3 +137,18 @@ Content-Type: application/json
 {
   "snapshotId": ""
 }
+
+### Lấy danh sách thông báo
+# @name listNotifications
+GET {{baseUrl}}/notifications?page=1&limit=10&unreadOnly=false
+Authorization: Bearer YOUR_TOKEN_HERE
+
+### Đánh dấu tất cả là đã đọc
+# @name markAllNotificationsAsRead
+PATCH {{baseUrl}}/notifications/read-all
+Authorization: Bearer YOUR_TOKEN_HERE
+
+### Đánh dấu 1 thông báo là đã đọc
+# @name markNotificationAsRead
+PATCH {{baseUrl}}/notifications/NHAP_ID_THONG_BAO_VAO_DAY/read
+Authorization: Bearer YOUR_TOKEN_HERE
