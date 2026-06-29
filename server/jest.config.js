@@ -14,7 +14,7 @@ export default {
         '^(\\.{1,2}/.*)\\.js$': '$1',
     },
     transformIgnorePatterns: [
-        '/node_modules/(?!(@prisma/client)/)',
+        "/node_modules/(?!(?:@prisma/client|@babel)/)",
     ],
     testPathIgnorePatterns: [
         '/node_modules/',

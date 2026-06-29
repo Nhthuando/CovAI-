@@ -1,65 +1,120 @@
-import * as notificationService from '../services/notification.service.js';
+import { z } from "zod";
+import { notificationService } from "../services/notification.service.js";
+import { ServiceError } from "../utils/serviceError.js";
 
-export const listNotifications = async (req, res) => {
-    try {
-        const { page, limit, unreadOnly } = req.query;
-        const userId = req.user?.id;
+export const notificationController = {
+    async getNotifications(req, res, next) {
+        try {
+            const userId = req.user?.id;
+            if (!userId) {
+                return res.status(401).json({ success: false, message: "Unauthorized" });
+            }
 
-        if (!userId) {
-            return res.status(401).json({ success: false, message: 'Unauthorized' });
+            const page = req.query.page ? Number(req.query.page) : undefined;
+            const limit = req.query.limit ? Number(req.query.limit) : undefined;
+            const unreadOnly = req.query.unreadOnly === "true";
+
+            const result = await notificationService.getUserNotifications(
+                userId,
+                page,
+                limit,
+                unreadOnly
+            );
+
+            res.status(200).json({ success: true, ...result });
+        } catch (error) {
+            next(error);
         }
+    },
 
-        const result = await notificationService.getNotifications({
-            userId,
-            page,
-            limit,
-            unreadOnly
-        });
+    async getUnreadCount(req, res, next) {
+        try {
+            const userId = req.user?.id;
+            if (!userId) {
+                return res.status(401).json({ success: false, message: "Unauthorized" });
+            }
 
-        res.status(200).json({ success: true, ...result });
-    } catch (error) {
-        console.error('Error fetching notifications:', error);
-        const statusCode = error.status || 500;
-        res.status(statusCode).json({ success: false, message: error.message || 'Failed to fetch notifications' });
-    }
-};
+            const result = await notificationService.getUnreadCount(userId);
 
-export const markAsRead = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const userId = req.user?.id;
-
-        if (!userId) {
-            return res.status(401).json({ success: false, message: 'Unauthorized' });
+            res.status(200).json({
+                success: true,
+                count: result.count,
+            });
+        } catch (error) {
+            next(error);
         }
+    },
 
-        const notification = await notificationService.markAsRead({
-            notificationId: id,
-            userId
-        });
+    async markNotificationAsRead(req, res, next) {
+        try {
+            const userId = req.user?.id;
+            if (!userId) {
+                return res.status(401).json({ success: false, message: "Unauthorized" });
+            }
 
-        res.status(200).json({ success: true, data: notification });
-    } catch (error) {
-        console.error('Error marking notification as read:', error);
-        const statusCode = error.status || 500;
-        res.status(statusCode).json({ success: false, message: error.message || 'Failed to mark notification as read' });
-    }
-};
+            const { id } = req.params;
 
-export const markAllAsRead = async (req, res) => {
-    try {
-        const userId = req.user?.id;
+            const notification = await notificationService.markAsRead(
+                id,
+                userId
+            );
 
-        if (!userId) {
-            return res.status(401).json({ success: false, message: 'Unauthorized' });
+            res.status(200).json({
+                success: true,
+                data: notification,
+            });
+        } catch (error) {
+            next(error);
         }
+    },
 
-        const result = await notificationService.markAllAsRead({ userId });
+    async markAllAsRead(req, res, next) {
+        try {
+            const userId = req.user?.id;
+            if (!userId) {
+                return res.status(401).json({ success: false, message: "Unauthorized" });
+            }
 
-        res.status(200).json({ success: true, message: `Successfully marked ${result.updatedCount} notifications as read` });
-    } catch (error) {
-        console.error('Error marking all notifications as read:', error);
-        const statusCode = error.status || 500;
-        res.status(statusCode).json({ success: false, message: error.message || 'Failed to mark all notifications as read' });
-    }
+            const result = await notificationService.markAllAsRead(userId);
+
+            res.status(200).json({
+                success: true,
+                message: `Successfully marked ${result.updatedCount} notifications as read`,
+            });
+        } catch (error) {
+            next(error);
+        }
+    },
+
+    async createNotification(req, res, next) {
+        try {
+            const user = req.user;
+
+            if (!user) {
+                return res.status(401).json({ success: false, message: "Unauthorized" });
+            }
+
+            // NOTE: requires `role` field on the Prisma User model (see schema fix)
+            // and the auth middleware to actually attach `role` onto req.user
+            // (e.g. by selecting it when loading the user from the JWT/session).
+            // if (user.role !== "ADMIN") {
+            //     throw new ServiceError("No permission", 403);
+            // }
+
+            const created = await notificationService.createNotification({
+                userId: req.user.id,
+                ...req.body,
+            });
+
+            res.status(201).json({
+                success: true,
+                data: created,
+            });
+        } catch (error) {
+            if (error instanceof z.ZodError) {
+                return next(new ServiceError("Invalid request data", 400));
+            }
+            next(error);
+        }
+    },
 };

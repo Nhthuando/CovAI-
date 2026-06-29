@@ -17,8 +17,8 @@ POST {{baseUrl}}/auth/login
 Content-Type: application/json
 
 {
-  "email": "huynhtandinh.dev@gmail.com",
-  "password": "newPassword123"
+  "email": "dinh@gmail.com",
+  "password": "password123"
 }
 
 ###
@@ -186,3 +186,41 @@ Content-Type: application/json
 GET {{baseUrl}}/projects/cmqxpx9a40001n0bvrkj0vlk7/ai/tests
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF4cHd4dDEwMDAwbjBidjVlMnl1NHc0IiwidXNlckVtYWlsIjoiaHV5bmhkaW5oMms1MjcwN0BnbWFpbC5jb20iLCJ1c2VyTmFtZSI6IkRpbmhHSCIsImlhdCI6MTc4MjY1NjY0OSwiZXhwIjoxNzgyNjYwMjQ5fQ.r8NBnK1Mx4asRp2UOTb0Mn6JtgcgkI75iUS1IbT6qL0
 
+//Quy
+###
+# @name getNotifications
+GET {{baseUrl}}/notifications?page=1&limit=10&unreadOnly=false
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF2cXplcGgwMDAwdXc3ZGw2MzIyNDhsIiwidXNlckVtYWlsIjoiZGluaEBnbWFpbC5jb20iLCJ1c2VyTmFtZSI6ImRpbmgiLCJpYXQiOjE3ODI3MDk4MTcsImV4cCI6MTc4MjcxMzQxN30.56SAdaMFYsszpa9IIsK49DatLXLJ_YWU5RerMDnxpXs
+
+###
+# @name getUnreadCount
+GET {{baseUrl}}/notifications?unreadOnly=true
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF2cXplcGgwMDAwdXc3ZGw2MzIyNDhsIiwidXNlckVtYWlsIjoiZGluaEBnbWFpbC5jb20iLCJ1c2VyTmFtZSI6ImRpbmgiLCJpYXQiOjE3ODI3MDk4MTcsImV4cCI6MTc4MjcxMzQxN30.56SAdaMFYsszpa9IIsK49DatLXLJ_YWU5RerMDnxpXs
+
+###
+# @name getUnreadCount
+GET {{baseUrl}}/notifications/unread-count
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF2cXplcGgwMDAwdXc3ZGw2MzIyNDhsIiwidXNlckVtYWlsIjoiZGluaEBnbWFpbC5jb20iLCJ1c2VyTmFtZSI6ImRpbmgiLCJpYXQiOjE3ODI3MDk4MTcsImV4cCI6MTc4MjcxMzQxN30.56SAdaMFYsszpa9IIsK49DatLXLJ_YWU5RerMDnxpXs
+
+###
+# @name markNotificationAsRead
+PATCH {{baseUrl}}/notifications/cmqyryx2000008cw5kqjbv2hz/read
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF2cXplcGgwMDAwdXc3ZGw2MzIyNDhsIiwidXNlckVtYWlsIjoiZGluaEBnbWFpbC5jb20iLCJ1c2VyTmFtZSI6ImRpbmgiLCJpYXQiOjE3ODI3MDk4MTcsImV4cCI6MTc4MjcxMzQxN30.56SAdaMFYsszpa9IIsK49DatLXLJ_YWU5RerMDnxpXs
+
+###
+# @name markAllNotificationsAsRead
+PATCH {{baseUrl}}/notifications/read-all
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF2cXplcGgwMDAwdXc3ZGw2MzIyNDhsIiwidXNlckVtYWlsIjoiZGluaEBnbWFpbC5jb20iLCJ1c2VyTmFtZSI6ImRpbmgiLCJpYXQiOjE3ODI3MDk4MTcsImV4cCI6MTc4MjcxMzQxN30.56SAdaMFYsszpa9IIsK49DatLXLJ_YWU5RerMDnxpXs
+
+###
+# @name createNotification
+
+POST {{baseUrl}}/notifications
+Content-Type: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF2cXplcGgwMDAwdXc3ZGw2MzIyNDhsIiwidXNlckVtYWlsIjoiZGluaEBnbWFpbC5jb20iLCJ1c2VyTmFtZSI6ImRpbmgiLCJpYXQiOjE3ODI3MDk4MTcsImV4cCI6MTc4MjcxMzQxN30.56SAdaMFYsszpa9IIsK49DatLXLJ_YWU5RerMDnxpXs
+
+{
+  "type": "SYSTEM",
+  "title": "Test notification",
+  "message": "Hello world"
+}
