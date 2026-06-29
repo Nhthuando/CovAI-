@@ -8,6 +8,11 @@ import { createAiSuggestJob } from "../services/job.service.js";
 import { processAiSuggestJob } from "../services/aiSuggestJob.service.js";
 import { generateText } from "../services/gemini.service.js";
 import { checkAndIncrementQuota } from "../services/aiQuota.service.js";
+import {
+  getAiTestById,
+  listAiTests,
+  generateFullTest,
+} from "../services/aiTest.service.js";
 import prisma from "../config/prisma.js";
 import {
   ServiceError,
@@ -21,6 +26,8 @@ import {
   getFileContent,
   createAnalysisJob,
 } from "../services/project.service.js";
+import { createBuildCfgJob } from "../services/job.service.js";
+import { processBuildCfgJob } from "../services/buildCfgJob.service.js";
 
 class ProjectController {
   /**
@@ -193,10 +200,9 @@ class ProjectController {
 
       // The Firebase upload and ZIP extraction run fully in the background inside uploadProjectZip.
       // The response is sent immediately below.
-      result._uploadPromise
-        .catch((err) => {
-          console.error("[UploadZip] Background pipeline error:", err);
-        });
+      result._uploadPromise.catch((err) => {
+        console.error("[UploadZip] Background pipeline error:", err);
+      });
 
       // Respond immediately — the job already exists in DB with QUEUED status
       return res.status(201).json({
@@ -238,10 +244,14 @@ class ProjectController {
       const { id: projectId } = req.params;
       const { snapshotId } = req.body;
 
-      if (!snapshotId || typeof snapshotId !== "string") {
+      if (!snapshotId) {
+        console.error(
+          "DEBUG: snapshotId missing. Request Body:",
+          JSON.stringify(req.body),
+        );
         return res.status(400).json({
           success: false,
-          message: "snapshotId is required and must be a string",
+          message: `snapshotId is required. Received: ${typeof snapshotId}`,
         });
       }
 
@@ -254,6 +264,63 @@ class ProjectController {
       // SCRUM-138..144: Kick-off full pipeline bất đồng bộ (không await)
       processRunTestsJob(job.id).catch((err) => {
         console.error("Lỗi khi chạy RUN_TESTS pipeline ngầm:", err);
+      });
+
+      return res.status(201).json({
+        success: true,
+        data: {
+          job: {
+            id: job.id,
+            type: job.type,
+            snapshotId: job.snapshotId,
+            status: job.status,
+            progress: job.progress,
+            createdAt: job.createdAt,
+            updatedAt: job.updatedAt,
+          },
+        },
+      });
+    } catch (error) {
+      console.error(error);
+
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  }
+
+  async buildCfg(req, res) {
+    try {
+      const { id: projectId } = req.params;
+      const snapshotId = req.body?.snapshotId;
+
+      if (!snapshotId) {
+        return res.status(400).json({
+          success: false,
+          message: "snapshotId is required in the request body",
+          debug: {
+            body: req.body,
+            headers: req.headers,
+            contentType: req.headers["content-type"],
+          },
+        });
+      }
+
+      const job = await createBuildCfgJob({
+        projectId,
+        snapshotId,
+        userId: req.user.id,
+      });
+
+      processBuildCfgJob(job.id).catch((err) => {
+        console.error("Lỗi khi chạy BUILD_CFG pipeline ngầm:", err);
       });
 
       return res.status(201).json({
@@ -574,7 +641,8 @@ class ProjectController {
       }
 
       const { createAiTestsJob } = await import("../services/job.service.js");
-      const { processAiTestsJob } = await import("../services/aiTestsJob.service.js");
+      const { processAiTestsJob } =
+        await import("../services/aiTestsJob.service.js");
 
       const job = await createAiTestsJob({
         projectId,
@@ -679,25 +747,31 @@ The user is working on project: ${project.name}.
 
       // Verify project ownership
       const project = await prisma.project.findFirst({
-        where: { id: projectId, ownerId: req.user.id }
+        where: { id: projectId, ownerId: req.user.id },
       });
       if (!project) {
-        return res.status(404).json({ success: false, message: "Project not found or unauthorized" });
+        return res.status(404).json({
+          success: false,
+          message: "Project not found or unauthorized",
+        });
       }
 
       if (!snapshotId) {
         const latestSnapshot = await prisma.projectSnapshot.findFirst({
           where: { projectId },
-          orderBy: { createdAt: 'desc' }
+          orderBy: { createdAt: "desc" },
         });
         if (!latestSnapshot) {
-          return res.status(404).json({ success: false, message: "No snapshot found for this project" });
+          return res.status(404).json({
+            success: false,
+            message: "No snapshot found for this project",
+          });
         }
         snapshotId = latestSnapshot.id;
       }
 
       const cfgs = await prisma.cfg.findMany({
-        where: { snapshotId }
+        where: { snapshotId },
       });
 
       return res.status(200).json({
@@ -720,26 +794,32 @@ The user is working on project: ${project.name}.
 
       // Verify project ownership
       const project = await prisma.project.findFirst({
-        where: { id: projectId, ownerId: req.user.id }
+        where: { id: projectId, ownerId: req.user.id },
       });
       if (!project) {
-        return res.status(404).json({ success: false, message: "Project not found or unauthorized" });
+        return res.status(404).json({
+          success: false,
+          message: "Project not found or unauthorized",
+        });
       }
 
       if (!snapshotId) {
         const latestSnapshot = await prisma.projectSnapshot.findFirst({
           where: { projectId },
-          orderBy: { createdAt: 'desc' }
+          orderBy: { createdAt: "desc" },
         });
         if (!latestSnapshot) {
-          return res.status(404).json({ success: false, message: "No snapshot found for this project" });
+          return res.status(404).json({
+            success: false,
+            message: "No snapshot found for this project",
+          });
         }
         snapshotId = latestSnapshot.id;
       }
 
       const ccs = await prisma.cyclomatic.findMany({
         where: { snapshotId },
-        orderBy: { value: 'desc' }
+        orderBy: { value: "desc" },
       });
 
       return res.status(200).json({
@@ -748,6 +828,97 @@ The user is working on project: ${project.name}.
       });
     } catch (error) {
       console.error(error);
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  }
+
+  async getAiTest(req, res) {
+    try {
+      const { id: projectId, testId } = req.params;
+
+      const aiTest = await getAiTestById({
+        projectId,
+        testId,
+        userId: req.user.id,
+      });
+
+      return res.status(200).json({ success: true, data: aiTest });
+    } catch (error) {
+      console.error(error);
+
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  }
+
+  async getAiTests(req, res) {
+    try {
+      const { id: projectId } = req.params;
+      const { page = 1, limit = 10 } = req.query;
+
+      const result = await listAiTests({
+        projectId,
+        userId: req.user.id,
+        page,
+        limit,
+      });
+
+      return res.status(200).json({ success: true, ...result });
+    } catch (error) {
+      console.error(error);
+
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  }
+
+  async generateFullTest(req, res) {
+    try {
+      const { id: projectId } = req.params;
+      const { snapshotId } = req.body;
+
+      if (!snapshotId || typeof snapshotId !== "string") {
+        return res.status(400).json({
+          success: false,
+          message: "snapshotId is required and must be a string",
+        });
+      }
+
+      const result = await generateFullTest({
+        projectId,
+        snapshotId,
+        userId: req.user.id,
+      });
+
+      return res.status(201).json({ success: true, data: result });
+    } catch (error) {
+      console.error(error);
+
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+
       return res.status(500).json({
         success: false,
         message: "Internal server error",

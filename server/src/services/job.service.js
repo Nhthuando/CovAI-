@@ -43,6 +43,7 @@ const assertStringField = (value, fieldName) => {
 };
 
 /**
+ * Kept Number.isFinite (HEAD) — stricter than NaN-only check; rejects Infinity.
  * @param {unknown} value
  * @param {string}  fieldName
  * @throws {ServiceError} 400 when value is not a finite number
@@ -60,7 +61,6 @@ const assertNumberField = (value, fieldName) => {
 /**
  * Normalises any thrown value into a proper Error so `error.message` is safe
  * to read.
- *
  * @param {unknown} error
  * @returns {Error}
  */
@@ -73,10 +73,10 @@ const normalizeJobError = (error) => {
  * Appends a log entry to a job, optionally inside an existing Prisma
  * transaction client.
  *
- * @param {string}                                       jobId
- * @param {"INFO" | "WARN" | "ERROR"}                   level
- * @param {string}                                       message
- * @param {import("@prisma/client").PrismaClient}        [client]
+ * @param {string}                                  jobId
+ * @param {"INFO" | "WARN" | "ERROR"}               level
+ * @param {string}                                  message
+ * @param {import("@prisma/client").PrismaClient}   [client]
  */
 export const addJobLog = async (jobId, level, message, client = prisma) => {
     return client.jobLog.create({ data: { jobId, level, message } });
@@ -105,12 +105,41 @@ const assertNoActiveJob = async (projectId, type, client = prisma) => {
 };
 
 // ---------------------------------------------------------------------------
+// Typed convenience creators (thin wrappers — avoids repetition at call sites)
+// ---------------------------------------------------------------------------
+
+const createTypedJob = (type) =>
+    ({ projectId, snapshotId, userId }) =>
+        createSnapshotJob({
+            projectId,
+            snapshotId,
+            userId,
+            type,
+            payloadJson: { snapshotId },
+        });
+
+/** Creates a queued INSTALL_DEPS job for a snapshot. */
+export const createInstallDepsJob = createTypedJob("INSTALL_DEPS");
+
+/** Creates a queued RUN_TESTS job for a snapshot. */
+export const createRunTestsJob = createTypedJob("RUN_TESTS");
+
+/** Creates a queued BUILD_CFG job for a snapshot. */
+export const createBuildCfgJob = createTypedJob("BUILD_CFG");
+
+/** Creates a queued AI_SUGGEST job for a snapshot. */
+export const createAiSuggestJob = createTypedJob("AI_SUGGEST");
+
+/** Creates a queued AI_TESTS job for a snapshot. */
+export const createAiTestsJob = createTypedJob("AI_TESTS");
+
+// ---------------------------------------------------------------------------
 // Create jobs
 // ---------------------------------------------------------------------------
 
 /**
  * Creates a new snapshot record and a queued INGEST job within a single
- * transaction.  Short-circuits if an identical snapshot already has fully
+ * transaction. Short-circuits if an identical snapshot already has fully
  * processed artefacts.
  *
  * @param {{
@@ -196,7 +225,10 @@ export const createIngestJobForSnapshot = async ({
     assertStringField(userId, "userId");
 
     const [snapshot, user] = await Promise.all([
-        prisma.projectSnapshot.findUnique({ where: { id: snapshotId }, select: { id: true, projectId: true } }),
+        prisma.projectSnapshot.findUnique({
+            where: { id: snapshotId },
+            select: { id: true, projectId: true },
+        }),
         prisma.user.findUnique({ where: { id: userId }, select: { id: true } }),
     ]);
 
@@ -253,7 +285,10 @@ export const createSnapshotJob = async ({
     }
 
     const [snapshot, user] = await Promise.all([
-        prisma.projectSnapshot.findUnique({ where: { id: snapshotId }, select: { id: true, projectId: true } }),
+        prisma.projectSnapshot.findUnique({
+            where: { id: snapshotId },
+            select: { id: true, projectId: true },
+        }),
         prisma.user.findUnique({ where: { id: userId }, select: { id: true } }),
     ]);
 
@@ -280,32 +315,6 @@ export const createSnapshotJob = async ({
 
     return job;
 };
-
-// ---------------------------------------------------------------------------
-// Typed convenience creators (thin wrappers to avoid repetition at call sites)
-// ---------------------------------------------------------------------------
-
-const createTypedJob = (type) =>
-    ({ projectId, snapshotId, userId }) =>
-        createSnapshotJob({
-            projectId,
-            snapshotId,
-            userId,
-            type,
-            payloadJson: { snapshotId },
-        });
-
-/** Creates a queued INSTALL_DEPS job for a snapshot. */
-export const createInstallDepsJob = createTypedJob("INSTALL_DEPS");
-
-/** Creates a queued RUN_TESTS job for a snapshot. */
-export const createRunTestsJob = createTypedJob("RUN_TESTS");
-
-/** Creates a queued AI_SUGGEST job for a snapshot. */
-export const createAiSuggestJob = createTypedJob("AI_SUGGEST");
-
-/** Creates a queued AI_TESTS job for a snapshot. */
-export const createAiTestsJob = createTypedJob("AI_TESTS");
 
 // ---------------------------------------------------------------------------
 // State transitions
@@ -415,10 +424,7 @@ export const markJobSuccess = async (jobId, resultJson) => {
 
     // Non-critical — failure must not roll back the job status update.
     try {
-        await notificationService.createJobFinishedNotification(
-            currentJob.userId,
-            currentJob.projectId
-        );
+        await notificationService.createJobFinishedNotification(jobId);
     } catch (err) {
         console.error(`[job.service] Notification failed for job ${jobId}:`, err);
     }
@@ -429,8 +435,8 @@ export const markJobSuccess = async (jobId, resultJson) => {
 /**
  * Transitions a RUNNING job to FAILED, storing the error message.
  *
- * @param {string}          jobId
- * @param {unknown}         error  Any thrown value
+ * @param {string}  jobId
+ * @param {unknown} error  Any thrown value
  * @returns {Promise<object>} Updated Job record
  */
 export const markJobFailed = async (jobId, error) => {
@@ -545,7 +551,11 @@ export const getJobById = async (jobId) => {
 
     const job = await prisma.job.findUnique({
         where: { id: jobId },
-        include: { snapshot: true, logs: { orderBy: { createdAt: "asc" } }, output: true },
+        include: {
+            snapshot: true,
+            logs: { orderBy: { createdAt: "asc" } },
+            output: true,
+        },
     });
 
     if (!job) throw new ServiceError("Job not found", 404);

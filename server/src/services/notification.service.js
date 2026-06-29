@@ -56,6 +56,59 @@ export const notificationService = {
         }
     },
 
+    /**
+     * SCRUM-480: Creates a notification when a job completes (SUCCESS or FAILED).
+     * Merged from standalone export — includes AI_READY logic (SCRUM-482, SCRUM-486).
+     */
+    createJobFinishedNotification: async (jobId) => {
+        try {
+            const job = await prisma.job.findUnique({
+                where: { id: jobId },
+                include: { project: true },
+            });
+
+            if (!job) {
+                console.error(`[NotificationService] Job ${jobId} not found when creating notification.`);
+                return null;
+            }
+
+            if (!job.userId) {
+                console.log(`[NotificationService] Job ${jobId} has no userId, skipping notification.`);
+                return null;
+            }
+
+            const projectName = job.project ? job.project.name : 'Unknown Project';
+            const jobType = job.type;
+            const jobStatus = job.status;
+
+            let notificationType = 'JOB_FINISHED';
+            let notificationTitle = `Job ${jobStatus}`;
+            let notificationMessage = `Job ${jobType} for project '${projectName}' finished with status ${jobStatus}.`;
+
+            if (jobStatus === 'FAILED' && job.errorMessage) {
+                notificationMessage += ` Error: ${job.errorMessage}`;
+            }
+
+            // SCRUM-482, SCRUM-486: AI Ready Notification
+            if (jobStatus === 'SUCCESS' && (jobType === 'AI_SUGGEST' || jobType === 'AI_TESTS')) {
+                notificationType = 'AI_READY';
+                notificationTitle = 'AI Results Ready';
+                notificationMessage = `The AI has finished generating results for project '${projectName}'.`;
+            }
+
+            return await notificationService.createNotification({
+                userId: job.userId,
+                projectId: job.projectId,
+                type: notificationType,
+                title: notificationTitle,
+                message: notificationMessage,
+            });
+        } catch (error) {
+            console.error(`[NotificationService] Error creating notification for job ${jobId}:`, error);
+            return null; // Don't crash the job flow
+        }
+    },
+
     createAIReadyNotification: async (userId, projectId) => {
         return await notificationService.createNotification({
             userId,
@@ -63,21 +116,6 @@ export const notificationService = {
             type: 'AI_READY',
             title: 'AI Analysis Ready',
             message: 'Your AI analysis has completed successfully.',
-        });
-    },
-
-    createJobFinishedNotification: async (
-        userId,
-        projectId,
-        title = 'Job Finished',
-        message = 'Your requested job has completed successfully.'
-    ) => {
-        return await notificationService.createNotification({
-            userId,
-            projectId,
-            type: 'JOB_FINISHED',
-            title,
-            message,
         });
     },
 
@@ -90,11 +128,37 @@ export const notificationService = {
         });
     },
 
-    getUserNotifications: async (
-        userId,
-        page = 1,
-        limit = 20
-    ) => {
+    createSystemBroadcastNotification: async (title, message) => {
+        try {
+            z.string().min(1).max(255).parse(title);
+            z.string().min(1).parse(message);
+
+            const users = await prisma.user.findMany({ select: { id: true } });
+            if (users.length === 0) return 0;
+
+            const result = await prisma.notification.createMany({
+                data: users.map((user) => ({
+                    userId: user.id,
+                    type: 'SYSTEM',
+                    title,
+                    message,
+                    readAt: null,
+                })),
+            });
+            return result.count;
+        } catch (error) {
+            if (error instanceof ServiceError) throw error;
+            if (error instanceof z.ZodError) throw new ServiceError('Invalid broadcast data.', 400);
+            console.error('Error in createSystemBroadcastNotification:', error);
+            throw new ServiceError('Failed to create system broadcast notification.', 500);
+        }
+    },
+
+    /**
+     * Merged: supports unreadOnly filter (from standalone export) and
+     * returns unreadCount in meta alongside pagination.
+     */
+    getUserNotifications: async (userId, page = 1, limit = 20, unreadOnly = false) => {
         try {
             const validatedUserId = CuidSchema.parse(userId);
             const validatedPage = z.number().int().positive().parse(Number(page));
@@ -102,24 +166,33 @@ export const notificationService = {
 
             const skip = (validatedPage - 1) * validatedLimit;
 
-            const [notifications, total] = await prisma.$transaction([
+            const where = {
+                userId: validatedUserId,
+                ...(unreadOnly === true || unreadOnly === 'true' ? { readAt: null } : {}),
+            };
+
+            const [notifications, total, unreadCount] = await prisma.$transaction([
                 prisma.notification.findMany({
-                    where: { userId: validatedUserId },
+                    where,
                     include: { project: { select: { id: true, name: true } } },
                     orderBy: { createdAt: 'desc' },
                     skip,
                     take: validatedLimit,
                 }),
-                prisma.notification.count({ where: { userId: validatedUserId } }),
+                prisma.notification.count({ where }),
+                prisma.notification.count({ where: { userId: validatedUserId, readAt: null } }),
             ]);
 
             return {
                 data: notifications,
-                pagination: {
-                    page: validatedPage,
-                    limit: validatedLimit,
-                    total,
-                    totalPages: Math.ceil(total / validatedLimit),
+                meta: {
+                    unreadCount,
+                    pagination: {
+                        page: validatedPage,
+                        limit: validatedLimit,
+                        total,
+                        totalPages: Math.ceil(total / validatedLimit),
+                    },
                 },
             };
         } catch (error) {
@@ -167,7 +240,7 @@ export const notificationService = {
                 where: { userId: validatedUserId, readAt: null },
                 data: { readAt: new Date() },
             });
-            return result.count;
+            return { updatedCount: result.count };
         } catch (error) {
             if (error instanceof ServiceError) throw error;
             if (error instanceof z.ZodError) throw new ServiceError('Invalid user ID.', 400);
@@ -188,32 +261,6 @@ export const notificationService = {
             if (error instanceof z.ZodError) throw new ServiceError('Invalid user ID.', 400);
             console.error('Error in getUnreadCount:', error);
             throw new ServiceError('Failed to get unread notification count.', 500);
-        }
-    },
-
-    createSystemBroadcastNotification: async (title, message) => {
-        try {
-            z.string().min(1).max(255).parse(title);
-            z.string().min(1).parse(message);
-
-            const users = await prisma.user.findMany({ select: { id: true } });
-            if (users.length === 0) return 0;
-
-            const result = await prisma.notification.createMany({
-                data: users.map((user) => ({
-                    userId: user.id,
-                    type: 'SYSTEM',
-                    title,
-                    message,
-                    readAt: null,
-                })),
-            });
-            return result.count;
-        } catch (error) {
-            if (error instanceof ServiceError) throw error;
-            if (error instanceof z.ZodError) throw new ServiceError('Invalid broadcast data.', 400);
-            console.error('Error in createSystemBroadcastNotification:', error);
-            throw new ServiceError('Failed to create system broadcast notification.', 500);
         }
     },
 };
