@@ -33,10 +33,8 @@ export const notificationService = {
 
             return await prisma.notification.create({
                 data: {
-                    user: { connect: { id: validatedData.userId } },
-                    ...(validatedData.projectId && {
-                        project: { connect: { id: validatedData.projectId } },
-                    }),
+                    userId: validatedData.userId,
+                    projectId: validatedData.projectId,
                     type: validatedData.type,
                     title: validatedData.title,
                     message: validatedData.message,

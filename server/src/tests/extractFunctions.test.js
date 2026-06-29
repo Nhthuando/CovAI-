@@ -1,5 +1,5 @@
-import { parseJavaScriptCode } from './babelParser.service.js';
-import { extractFunctions } from './functionExtraction.service.js';
+import { parseJavaScriptCode } from "../services/babelParser.service.js";
+import { extractFunctions } from "../services/functionExtraction.service.js";
 
 describe('Function Extraction Service', () => {
     const filePath = 'test.js';
