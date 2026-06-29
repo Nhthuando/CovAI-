@@ -31,6 +31,9 @@ import {
 import {
   getProjectsApi,
   getProjectTreeApi,
+  runAnalysisApi,
+  generateSkeletonApi,
+  generateFullTestsApi,
 } from "../../services/project.service";
 
 const INITIAL_TABS = [];
@@ -81,6 +84,8 @@ function LayoutInner() {
   const [activeFileId, setActiveFileId] = useState(null);
   const [showImport, setShowImport] = useState(false);
   const [showCFG, setShowCFG] = useState(false);
+  const [showTestPrompt, setShowTestPrompt] = useState(false);
+  const [testPromptSnapshotId, setTestPromptSnapshotId] = useState(null);
 
   const [projects, setProjects] = useState([]);
   const [project, setProject] = useState(null);
@@ -231,6 +236,36 @@ function LayoutInner() {
     }
   };
 
+  const handleRunTests = async () => {
+    if (!project) {
+      showToast({
+        type: "warning",
+        title: "No Project Selected",
+        message: "Please select a project first to run tests.",
+      });
+      return;
+    }
+    try {
+      const res = await runAnalysisApi(project.id);
+      if (res && res.needsTests) {
+        setTestPromptSnapshotId(res.snapshotId);
+        setShowTestPrompt(true);
+      } else {
+        showToast({
+          type: "info",
+          title: "Analysis Started",
+          message: "Your project analysis has been queued. You will be notified when it completes.",
+        });
+      }
+    } catch (err) {
+      showToast({
+        type: "error",
+        title: "Analysis Error",
+        message: err.message || "Failed to start project analysis.",
+      });
+    }
+  };
+
   return (
     <div
       className="ide-root"
@@ -361,6 +396,7 @@ function LayoutInner() {
           <motion.button
             whileHover={{ scale: 1.03 }}
             whileTap={{ scale: 0.97 }}
+            onClick={handleRunTests}
             className="flex items-center gap-1.5 rounded-lg text-xs font-medium"
             style={{
               background: "linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)",
@@ -699,6 +735,83 @@ function LayoutInner() {
       {/* ── CFG Calculator Fullscreen Overlay ──────────────── */}
       <AnimatePresence>
         {showCFG && <CFGCalculator project={project} onClose={() => setShowCFG(false)} />}
+      </AnimatePresence>
+
+      {/* ── Missing Test Prompt Modal ──────────────────────── */}
+      <AnimatePresence>
+        {showTestPrompt && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-[9999]"
+            onClick={() => setShowTestPrompt(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="bg-[#0d1117] border border-[#30363d] rounded-2xl shadow-2xl relative overflow-hidden"
+              style={{ width: "500px", padding: "32px", maxWidth: "90vw" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Subtle background glow */}
+              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[#7c3aed] to-transparent opacity-50"></div>
+              
+              <div className="flex items-center text-[#f0f6fc]" style={{ gap: "16px", marginBottom: "20px" }}>
+                <div className="flex items-center justify-center rounded-full bg-[#7c3aed]/10 border border-[#7c3aed]/20" style={{ width: "40px", height: "40px", minWidth: "40px" }}>
+                  <Zap className="text-[#a78bfa]" size={20} />
+                </div>
+                <h2 className="text-2xl font-bold tracking-tight m-0">Missing Test Files</h2>
+              </div>
+              
+              <p className="text-[#8b949e] text-[15px] leading-relaxed m-0" style={{ marginBottom: "32px" }}>
+                Dự án <strong>{project?.name || "này"}</strong> chưa có file test (Jest). Quá trình phân tích Code Coverage cần có test files để chạy thành công. Bạn có muốn AI tự động sinh Test Code cho dự án <strong>{project?.name || "này"}</strong> không?
+              </p>
+              
+              <div className="flex flex-col" style={{ gap: "14px" }}>
+                <button
+                  onClick={async () => {
+                    setShowTestPrompt(false);
+                    try {
+                      showToast({ type: "info", title: "Generating", message: "Đã đưa vào hàng chờ AI tạo Skeleton Tests." });
+                      await generateSkeletonApi(project.id, testPromptSnapshotId);
+                    } catch (err) {
+                      showToast({ type: "error", title: "Error", message: err.message });
+                    }
+                  }}
+                  className="w-full rounded-lg font-semibold text-[14px] transition-all duration-200 hover:bg-[#7c3aed]/20 active:scale-[0.98] flex items-center justify-center"
+                  style={{ padding: "12px", background: "rgba(124, 58, 237, 0.15)", color: "#c4b5fd", border: "1px solid rgba(124,58,237,0.3)", gap: "8px" }}
+                >
+                  <Zap size={16} className="text-[#a78bfa]" />
+                  Generate Skeleton Tests
+                </button>
+                <button
+                  onClick={async () => {
+                    setShowTestPrompt(false);
+                    try {
+                      showToast({ type: "info", title: "Generating", message: "Đã đưa vào hàng chờ AI tạo Full Tests." });
+                      await generateFullTestsApi(project.id, testPromptSnapshotId);
+                    } catch (err) {
+                      showToast({ type: "error", title: "Error", message: err.message });
+                    }
+                  }}
+                  className="w-full rounded-lg font-semibold text-[14px] transition-all duration-200 hover:bg-[#21262d] active:scale-[0.98] flex items-center justify-center"
+                  style={{ padding: "12px", background: "#161b22", color: "#f0f6fc", border: "1px solid #30363d", gap: "8px" }}
+                >
+                  Generate Full Tests
+                </button>
+                <button
+                  onClick={() => setShowTestPrompt(false)}
+                  className="w-full rounded-lg font-medium text-[14px] text-[#8b949e] hover:text-[#c9d1d9] hover:bg-[#161b22] transition-colors"
+                  style={{ padding: "12px", marginTop: "8px" }}
+                >
+                  Bỏ qua
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
       </AnimatePresence>
     </div>
   );

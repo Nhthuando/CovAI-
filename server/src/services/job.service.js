@@ -131,7 +131,14 @@ export const createBuildCfgJob = createTypedJob("BUILD_CFG");
 export const createAiSuggestJob = createTypedJob("AI_SUGGEST");
 
 /** Creates a queued AI_TESTS job for a snapshot. */
-export const createAiTestsJob = createTypedJob("AI_TESTS");
+export const createAiTestsJob = ({ projectId, snapshotId, userId, mode = "SKELETON" }) =>
+    createSnapshotJob({
+        projectId,
+        snapshotId,
+        userId,
+        type: "AI_TESTS",
+        payloadJson: { snapshotId, mode },
+    });
 
 // ---------------------------------------------------------------------------
 // Create jobs

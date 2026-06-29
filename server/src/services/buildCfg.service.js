@@ -15,11 +15,29 @@ export async function buildCfgForSnapshot(snapshotId) {
 
     if (!snapshot) throw new Error('Snapshot not found');
 
-    const rootDir = snapshot.rootDir;
-    if (!rootDir || !fs.existsSync(rootDir)) throw new Error('Snapshot root directory not found');
+    let rootDir = snapshot.rootDir;
+
+    // Fallback: if rootDir is missing, try to resolve from storagePath
+    if (!rootDir || !fs.existsSync(rootDir)) {
+        console.warn(`[BuildCFG] rootDir not found or invalid for snapshot ${snapshotId}: "${rootDir}"`);
+        
+        // Try storagePath-based resolution (uploads/snapshots/<snapshotId>)
+        const fallbackPath = path.join(process.cwd(), 'uploads', 'snapshots', snapshotId);
+        if (fs.existsSync(fallbackPath)) {
+            rootDir = fallbackPath;
+            console.log(`[BuildCFG] Using fallback path: ${fallbackPath}`);
+        } else {
+            console.error(`[BuildCFG] Fallback path also not found: ${fallbackPath}`);
+            throw new Error(`Snapshot root directory not found for ${snapshotId}. rootDir="${snapshot.rootDir}", fallback="${fallbackPath}"`);
+        }
+    }
+
+    console.log(`[BuildCFG] Starting CFG build for snapshot ${snapshotId}, rootDir: ${rootDir}`);
 
     const files = getAllFiles(rootDir);
     let count = 0;
+
+    console.log(`[BuildCFG] Found ${files.length} total files in ${rootDir}`);
 
     // Clean up existing records for this snapshot to avoid zombie records when names/logic change
     await prisma.cyclomatic.deleteMany({ where: { snapshotId } });
@@ -75,7 +93,7 @@ export async function buildCfgForSnapshot(snapshotId) {
             }
         }
     }
-
+    console.log(`[BuildCFG] Completed for snapshot ${snapshotId}: ${count} functions processed`);
     return count;
 }
 

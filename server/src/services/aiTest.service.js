@@ -2,6 +2,7 @@ import prisma from "../config/prisma.js";
 import { ServiceError } from "./project.service.js";
 import { generateText } from "./gemini.service.js";
 import { buildFullTestPrompt } from "./fullTestPromptBuilder.service.js";
+import { buildAiPayload } from "./aiContextBuilder.service.js";
 import { validateGeneratedTest } from "./testValidation.service.js";
 
 export const generateFullTest = async ({ projectId, snapshotId, userId }) => {
@@ -22,12 +23,15 @@ export const generateFullTest = async ({ projectId, snapshotId, userId }) => {
   });
   if (!snapshot) throw new ServiceError("Snapshot not found", 404);
 
+  const aiPayloadResult = await buildAiPayload(snapshotId);
+  const payload = aiPayloadResult.payload;
+
   // 2. Build prompt
   const prompt = buildFullTestPrompt({
-    sourceCode: [{ path: "mock_file.js", content: "// Mock code analysis" }],
-    coverageData: snapshot.coverageSummary,
-    cfgData: snapshot.cfgs,
-    cyclomaticData: snapshot.cyclomatics,
+    sourceCode: payload.sourceCode,
+    coverageData: payload.coverage,
+    cfgData: payload.cfg,
+    cyclomaticData: payload.complexity,
   });
 
   // 3. AI Generation

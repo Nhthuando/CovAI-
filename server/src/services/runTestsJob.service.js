@@ -49,23 +49,27 @@ const runNpmInstall = (jobId, rootDir) => {
             timedOut = true;
             child.kill("SIGKILL");
             const msg = `npm install vượt quá timeout ${INSTALL_TIMEOUT_MS / 1000}s`;
+            await appendJobOutput(jobId, { stdout: outStr, stderr: errStr }).catch(() => { });
             await addJobLog(jobId, "ERROR", msg).catch(() => { });
             reject(new Error(msg));
         }, INSTALL_TIMEOUT_MS);
 
-        child.stdout.on("data", async (chunk) => {
-            const text = chunk.toString();
-            await appendJobOutput(jobId, { stdout: text }).catch(() => { });
+        let outStr = "";
+        let errStr = "";
+
+        child.stdout.on("data", (chunk) => {
+            outStr += chunk.toString();
         });
 
-        child.stderr.on("data", async (chunk) => {
-            const text = chunk.toString();
-            await appendJobOutput(jobId, { stderr: text }).catch(() => { });
+        child.stderr.on("data", (chunk) => {
+            errStr += chunk.toString();
         });
 
         child.on("close", async (code) => {
             clearTimeout(timer);
             if (timedOut) return;
+
+            await appendJobOutput(jobId, { stdout: outStr, stderr: errStr }).catch(() => { });
 
             if (code === 0) {
                 await addJobLog(jobId, "INFO", "[SCRUM-139] npm install hoàn thành thành công.").catch(() => { });
@@ -119,25 +123,31 @@ const runJestCoverage = (jobId, rootDir, jestConfigPath) => {
             timedOut = true;
             child.kill("SIGKILL");
             const msg = `jest --coverage vượt quá timeout ${JEST_TIMEOUT_MS / 1000}s`;
+            await appendJobOutput(jobId, { stdout: outStr, stderr: errStr }).catch(() => { });
             await addJobLog(jobId, "ERROR", msg).catch(() => { });
             reject(new Error(msg));
         }, JEST_TIMEOUT_MS);
 
-        child.stdout.on("data", async (chunk) => {
+        let outStr = "";
+        let errStr = "";
+
+        child.stdout.on("data", (chunk) => {
             const text = chunk.toString();
             process.stdout.write(`[Jest ${jobId}] ${text}`);
-            await appendJobOutput(jobId, { stdout: text }).catch(() => { });
+            outStr += text;
         });
 
-        child.stderr.on("data", async (chunk) => {
+        child.stderr.on("data", (chunk) => {
             const text = chunk.toString();
             process.stderr.write(`[Jest ${jobId}] ${text}`);
-            await appendJobOutput(jobId, { stderr: text }).catch(() => { });
+            errStr += text;
         });
 
         child.on("close", async (code) => {
             clearTimeout(timer);
             if (timedOut) return;
+
+            await appendJobOutput(jobId, { stdout: outStr, stderr: errStr }).catch(() => { });
 
             // Jest exit code 1 = có test fail nhưng coverage vẫn sinh → chấp nhận
             // exit code >= 2 = lỗi nghiêm trọng (config sai, không chạy được)
