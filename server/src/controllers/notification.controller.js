@@ -97,9 +97,9 @@ export const notificationController = {
             // NOTE: requires `role` field on the Prisma User model (see schema fix)
             // and the auth middleware to actually attach `role` onto req.user
             // (e.g. by selecting it when loading the user from the JWT/session).
-            // if (user.role !== "ADMIN") {
-            //     throw new ServiceError("No permission", 403);
-            // }
+            if (user.role !== "ADMIN") {
+                throw new ServiceError("No permission", 403);
+            }
 
             const created = await notificationService.createNotification({
                 userId: req.user.id,
