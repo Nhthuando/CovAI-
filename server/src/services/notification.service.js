@@ -1,5 +1,64 @@
 import prisma from '../config/prisma.js';
 
+/**
+ * SCRUM-480: Create notification
+ * Creates a notification when a job completes (SUCCESS or FAILED)
+ */
+export const createJobFinishedNotification = async (jobId) => {
+    try {
+        const job = await prisma.job.findUnique({
+            where: { id: jobId },
+            include: { project: true }
+        });
+
+        if (!job) {
+            console.error(`[NotificationService] Job ${jobId} not found when creating notification.`);
+            return null;
+        }
+
+        // If the job has no associated user, we cannot create a user notification
+        if (!job.userId) {
+            console.log(`[NotificationService] Job ${jobId} has no userId, skipping notification.`);
+            return null;
+        }
+
+        // SCRUM-477, SCRUM-478, SCRUM-479
+        const projectName = job.project ? job.project.name : "Unknown Project";
+        const jobType = job.type;
+        const jobStatus = job.status;
+
+        let notificationType = "JOB_FINISHED";
+        let notificationTitle = `Job ${jobStatus}`;
+        let notificationMessage = `Job ${jobType} for project '${projectName}' finished with status ${jobStatus}.`;
+
+        if (jobStatus === "FAILED" && job.errorMessage) {
+            notificationMessage += ` Error: ${job.errorMessage}`;
+        }
+
+        // SCRUM-482, SCRUM-486: AI Ready Notification
+        if (jobStatus === "SUCCESS" && (jobType === "AI_SUGGEST" || jobType === "AI_TESTS")) {
+            notificationType = "AI_READY";
+            notificationTitle = "AI Results Ready";
+            notificationMessage = `The AI has finished generating results for project '${projectName}'.`;
+        }
+
+        const notification = await prisma.notification.create({
+            data: {
+                userId: job.userId,
+                projectId: job.projectId,
+                type: notificationType,
+                title: notificationTitle,
+                message: notificationMessage
+            }
+        });
+
+        return notification;
+    } catch (error) {
+        console.error(`[NotificationService] Error creating notification for job ${jobId}:`, error);
+        return null; // Return null on error so we don't crash the job flow
+    }
+};
+
 export const getNotifications = async ({ userId, page = 1, limit = 20, unreadOnly = false }) => {
     const db = prisma;
     if (!db) throw new Error('Prisma client instance is not properly initialized.');
