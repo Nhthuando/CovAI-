@@ -64,7 +64,7 @@ export const processInstallDepsJob = async (jobId) => {
     const rootDir = job.snapshot.rootDir;
 
     // ── Khởi tạo output ───────────────────────────────────────────────────
-    await saveJobOutput(jobId, { stdout: "", stderr: "" }).catch(() => {});
+    await saveJobOutput(jobId, { stdout: "", stderr: "" }).catch(() => { });
     await updateJobProgress(jobId, 10);
     await addJobLog(jobId, "INFO", `Bắt đầu npm install tại: ${rootDir}`);
 
@@ -86,7 +86,7 @@ export const processInstallDepsJob = async (jobId) => {
             child.kill("SIGKILL");
             const msg = `npm install vượt quá timeout ${INSTALL_TIMEOUT_MS / 1000}s`;
             console.error(`[InstallDeps ${jobId}] ${msg}`);
-            await markJobFailed(jobId, new Error(msg)).catch(() => {});
+            await markJobFailed(jobId, new Error(msg)).catch(() => { });
             resolve();
         }, INSTALL_TIMEOUT_MS);
 
@@ -94,14 +94,14 @@ export const processInstallDepsJob = async (jobId) => {
         child.stdout.on("data", async (chunk) => {
             const text = chunk.toString();
             stdoutBuf += text;
-            await appendJobOutput(jobId, { stdout: text }).catch(() => {});
+            await appendJobOutput(jobId, { stdout: text }).catch(() => { });
         });
 
         // Capture stderr
         child.stderr.on("data", async (chunk) => {
             const text = chunk.toString();
             stderrBuf += text;
-            await appendJobOutput(jobId, { stderr: text }).catch(() => {});
+            await appendJobOutput(jobId, { stderr: text }).catch(() => { });
         });
 
         // Khi process kết thúc
@@ -127,7 +127,7 @@ export const processInstallDepsJob = async (jobId) => {
             clearTimeout(timer);
             if (timedOut) return;
             console.error(`[InstallDeps ${jobId}] Process error:`, err);
-            await markJobFailed(jobId, err).catch(() => {});
+            await markJobFailed(jobId, err).catch(() => { });
             resolve();
         });
     });
