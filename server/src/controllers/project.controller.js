@@ -242,16 +242,39 @@ class ProjectController {
   async runAnalysis(req, res) {
     try {
       const { id: projectId } = req.params;
-      const { snapshotId } = req.body;
+      let { snapshotId } = req.body;
 
+      let targetSnapshot;
       if (!snapshotId) {
-        console.error(
-          "DEBUG: snapshotId missing. Request Body:",
-          JSON.stringify(req.body),
-        );
-        return res.status(400).json({
-          success: false,
-          message: `snapshotId is required. Received: ${typeof snapshotId}`,
+        targetSnapshot = await prisma.projectSnapshot.findFirst({
+          where: { projectId },
+          orderBy: { createdAt: 'desc' }
+        });
+        if (!targetSnapshot) {
+          return res.status(400).json({
+            success: false,
+            message: "No snapshot found for this project",
+          });
+        }
+        snapshotId = targetSnapshot.id;
+      } else {
+        targetSnapshot = await prisma.projectSnapshot.findUnique({
+          where: { id: snapshotId }
+        });
+        if (!targetSnapshot) {
+          return res.status(404).json({
+            success: false,
+            message: "Snapshot not found",
+          });
+        }
+      }
+
+      if (!targetSnapshot.hasJest) {
+        return res.status(200).json({
+          success: true,
+          needsTests: true,
+          snapshotId: targetSnapshot.id,
+          message: "Dự án chưa có file test. Vui lòng tạo test trước khi chạy phân tích."
         });
       }
 
@@ -299,18 +322,21 @@ class ProjectController {
   async buildCfg(req, res) {
     try {
       const { id: projectId } = req.params;
-      const snapshotId = req.body?.snapshotId;
+      let snapshotId = req.body?.snapshotId;
 
+      // Auto-resolve to latest snapshot if not provided
       if (!snapshotId) {
-        return res.status(400).json({
-          success: false,
-          message: "snapshotId is required in the request body",
-          debug: {
-            body: req.body,
-            headers: req.headers,
-            contentType: req.headers["content-type"],
-          },
+        const latestSnapshot = await prisma.projectSnapshot.findFirst({
+          where: { projectId },
+          orderBy: { createdAt: "desc" },
         });
+        if (!latestSnapshot) {
+          return res.status(404).json({
+            success: false,
+            message: "No snapshot found for this project. Please upload a project first.",
+          });
+        }
+        snapshotId = latestSnapshot.id;
       }
 
       const job = await createBuildCfgJob({
@@ -903,13 +929,28 @@ The user is working on project: ${project.name}.
         });
       }
 
-      const result = await generateFullTest({
+      const { createAiTestsJob } = await import("../services/job.service.js");
+      const { processAiTestsJob } = await import("../services/aiTestsJob.service.js");
+
+      // Check if project/snapshot exists and matches...
+      // createAiTestsJob already does these assertions.
+      const job = await createAiTestsJob({
         projectId,
         snapshotId,
         userId: req.user.id,
+        mode: "FULL",
       });
 
-      return res.status(201).json({ success: true, data: result });
+      // Run pipeline in the background
+      processAiTestsJob(job.id).catch((err) => {
+        console.error("Lỗi khi chạy AI_TESTS (FULL) pipeline ngầm:", err);
+      });
+
+      return res.status(202).json({
+        success: true,
+        message: "AI Full tests generation job queued successfully",
+        jobId: job.id,
+      });
     } catch (error) {
       console.error(error);
 

@@ -30,7 +30,8 @@ export const processAiSuggestJob = async (jobId) => {
 
         // SCRUM-307: Build context
         await addJobLog(jobId, "INFO", "Building AI Context Payload...");
-        const payload = await buildAiPayload(snapshotId);
+        const aiPayloadResult = await buildAiPayload(snapshotId);
+        const payload = aiPayloadResult.payload;
         
         await updateJobStatus({ jobId, progress: 30 });
 

@@ -673,7 +673,7 @@ export const createAiSuggestJob = async ({ projectId, snapshotId, userId }) => {
 /**
  * Create AI_TESTS job
  */
-export const createAiTestsJob = async ({ projectId, snapshotId, userId }) => {
+export const createAiTestsJob = async ({ projectId, snapshotId, userId, mode = "SKELETON" }) => {
   assertStringField(projectId, "projectId");
   assertStringField(snapshotId, "snapshotId");
   assertStringField(userId, "userId");
@@ -706,11 +706,11 @@ export const createAiTestsJob = async ({ projectId, snapshotId, userId }) => {
       type: "AI_TESTS",
       status: "QUEUED",
       progress: 0,
-      payloadJson: JSON.stringify({ snapshotId }),
+      payloadJson: JSON.stringify({ snapshotId, mode }),
     },
   });
 
-  await addJobLog(job.id, "INFO", "AI_TESTS job created");
+  await addJobLog(job.id, "INFO", `AI_TESTS (${mode}) job created`);
   return job;
 };
 export const createBuildCfgJob = async ({ projectId, snapshotId, userId }) => {

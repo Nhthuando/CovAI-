@@ -142,9 +142,45 @@ export async function getProjectCcApi(projectId, snapshotId) {
   return handleResponse(res);
 }
 
+export async function buildCfgApi(projectId, snapshotId) {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/cfg/build`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ snapshotId }),
+  });
+  return handleResponse(res);
+}
+
 export async function getAiSuggestionsApi(projectId) {
   const res = await fetch(`${BASE_URL}/ai-suggestions?projectId=${projectId}`, {
     headers: getAuthHeaders(),
+  });
+  return handleResponse(res);
+}
+
+export async function runAnalysisApi(projectId) {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/run-analysis`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({}),
+  });
+  return handleResponse(res);
+}
+
+export async function generateSkeletonApi(projectId, snapshotId) {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/ai-tests`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ snapshotId }),
+  });
+  return handleResponse(res);
+}
+
+export async function generateFullTestsApi(projectId, snapshotId) {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/ai/generate-full-test`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ snapshotId }),
   });
   return handleResponse(res);
 }

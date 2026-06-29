@@ -2,9 +2,9 @@ import React, { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import dagre from "dagre";
 import {
-  X, Sparkles, Info, ZoomIn, ZoomOut, GitBranch, ArrowLeft, TerminalSquare, Network
+  X, Sparkles, Info, ZoomIn, ZoomOut, GitBranch, ArrowLeft, TerminalSquare, Network, RefreshCw
 } from "lucide-react";
-import { getProjectCfgApi, getProjectCcApi, getFileContentApi } from "../../services/project.service.js";
+import { getProjectCfgApi, getProjectCcApi, getFileContentApi, buildCfgApi } from "../../services/project.service.js";
 
 /* --- ANIMATION VARIANTS --- */
 const containerVariants = {
@@ -130,6 +130,31 @@ export default function CFGCalculator({ project, onClose }) {
   const [selectedFunc, setSelectedFunc] = useState(null);
   const [sourceCode, setSourceCode] = useState("");
   const [zoom, setZoom] = useState(1);
+  const [rebuilding, setRebuilding] = useState(false);
+
+  const handleRebuild = async () => {
+    try {
+      setRebuilding(true);
+      setError(null);
+      await buildCfgApi(project.id, "");
+      // Wait a moment for the job to process, then refetch
+      await new Promise(r => setTimeout(r, 3000));
+      const [cfgRes, ccRes] = await Promise.all([
+        getProjectCfgApi(project.id, ""),
+        getProjectCcApi(project.id, "")
+      ]);
+      setCfgs(cfgRes.data);
+      setCcs(ccRes.data);
+      if (cfgRes.data.length > 0) {
+        const firstFile = [...new Set(cfgRes.data.map(c => c.filePath))][0];
+        setSelectedFile(firstFile);
+      }
+    } catch (err) {
+      setError(err.message || "Failed to rebuild CFG");
+    } finally {
+      setRebuilding(false);
+    }
+  };
 
   useEffect(() => {
     async function fetchData() {
@@ -306,10 +331,50 @@ export default function CFGCalculator({ project, onClose }) {
         </button>
       </div>
 
-      {loading ? (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Loading analysis data...</div>
+      {loading || rebuilding ? (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px' }}>
+          <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}>
+            <RefreshCw size={28} style={{ color: '#22D3EE' }} />
+          </motion.div>
+          <span style={{ color: '#8B949E', fontSize: '14px' }}>{rebuilding ? 'Đang rebuild CFG...' : 'Loading analysis data...'}</span>
+        </div>
       ) : error ? (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ef4444' }}>{error}</div>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', color: '#ef4444' }}>
+          <span>{error}</span>
+          <button
+            onClick={handleRebuild}
+            style={{
+              padding: '10px 24px', borderRadius: '8px', border: '1px solid rgba(34,211,238,0.4)',
+              background: 'rgba(34,211,238,0.1)', color: '#22D3EE', cursor: 'pointer',
+              fontSize: '13px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px'
+            }}
+          >
+            <RefreshCw size={16} /> Rebuild CFG
+          </button>
+        </div>
+      ) : cfgs.length === 0 ? (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '24px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+            <Network size={48} style={{ color: '#8B949E', opacity: 0.5 }} />
+            <span style={{ color: '#c9d1d9', fontSize: '18px', fontWeight: 'bold' }}>Chưa có dữ liệu CFG</span>
+            <span style={{ color: '#8B949E', fontSize: '13px', textAlign: 'center', maxWidth: '400px', lineHeight: '1.6' }}>
+              Dữ liệu Control Flow Graph và Cyclomatic Complexity chưa được tạo cho snapshot hiện tại. Nhấn nút bên dưới để build.
+            </span>
+          </div>
+          <button
+            onClick={handleRebuild}
+            style={{
+              padding: '12px 28px', borderRadius: '8px', border: '1px solid rgba(34,211,238,0.4)',
+              background: 'rgba(34,211,238,0.1)', color: '#22D3EE', cursor: 'pointer',
+              fontSize: '14px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px',
+              transition: 'all 0.2s'
+            }}
+            onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(34,211,238,0.2)'; e.currentTarget.style.boxShadow = '0 0 20px rgba(34,211,238,0.2)'; }}
+            onMouseOut={(e) => { e.currentTarget.style.background = 'rgba(34,211,238,0.1)'; e.currentTarget.style.boxShadow = 'none'; }}
+          >
+            <RefreshCw size={18} /> Build CFG & CC
+          </button>
+        </div>
       ) : (
         /* --- MAIN CONTENT --- */
         <div style={{ flex: 1, display: "flex", overflowX: "auto", overflowY: "hidden", background: "#0D1117", width: "100%" }}>

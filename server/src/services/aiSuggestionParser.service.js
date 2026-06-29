@@ -1,8 +1,10 @@
 import { ServiceError } from "../utils/serviceError.js";
+import { jsonrepair } from "jsonrepair";
 
 /**
  * SCRUM-301: Parse AI response
  * Extracts a JSON block from the AI's markdown response and parses it.
+ * Includes repair logic for truncated or malformed responses using jsonrepair.
  */
 export const parseAiResponse = (responseText) => {
     if (!responseText || typeof responseText !== "string") {
@@ -10,7 +12,7 @@ export const parseAiResponse = (responseText) => {
     }
 
     // Try to find JSON within markdown code blocks e.g. ```json ... ```
-    const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/);
+    let jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/);
     let jsonString = jsonMatch ? jsonMatch[1] : responseText;
 
     // Sometimes the AI might omit the ```json and just use ```
@@ -21,10 +23,43 @@ export const parseAiResponse = (responseText) => {
         }
     }
 
+    // If no code block match, the response may have been truncated before the closing ```.
+    // Try to extract JSON starting from ```json to the end.
+    if (!jsonMatch) {
+        const truncatedMatch = responseText.match(/```json\s*([\s\S]*)/);
+        if (truncatedMatch) {
+            jsonString = truncatedMatch[1];
+            console.warn("[AiSuggestionParser] Detected truncated markdown code block, attempting repair...");
+        }
+    }
+
+    // Attempt 1: Direct parse
     try {
         return JSON.parse(jsonString.trim());
-    } catch (error) {
-        console.error("[AiSuggestionParser] Failed to parse JSON:", jsonString.substring(0, 200));
+    } catch (firstError) {
+        console.warn("[AiSuggestionParser] Direct JSON.parse failed, attempting repair using jsonrepair...");
+    }
+
+    // Attempt 2: Repair JSON using jsonrepair
+    try {
+        const repaired = jsonrepair(jsonString);
+        const parsed = JSON.parse(repaired);
+        console.log("[AiSuggestionParser] Successfully repaired and parsed malformed JSON.");
+        return parsed;
+    } catch (repairError) {
+        // Save the failed raw text for debugging if needed
+        import("fs").then(fs => {
+            const dumpPath = "failed_ai_json_dump.txt";
+            fs.writeFileSync(dumpPath, jsonString);
+            console.error(`[AiSuggestionParser] Dumped failing JSON to ${dumpPath}`);
+        });
+
+        // Log more context for debugging (first 500 chars + last 200 chars)
+        const preview = jsonString.length > 700
+            ? jsonString.substring(0, 500) + "\n...[TRUNCATED]...\n" + jsonString.substring(jsonString.length - 200)
+            : jsonString;
+        console.error("[AiSuggestionParser] Failed to parse JSON even after jsonrepair attempt:");
+        console.error(preview);
         throw new ServiceError("Failed to parse AI response as JSON", 500);
     }
 };

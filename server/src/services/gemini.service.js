@@ -64,8 +64,13 @@ export const generateText = async (prompt, systemInstruction = null) => {
   const model = genAI.getGenerativeModel(modelOptions);
 
   const apiCall = async () => {
-    // Send prompts
-    const result = await model.generateContent(prompt);
+    // Send prompts with generationConfig to prevent response truncation
+    const result = await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: {
+        maxOutputTokens: 65536,
+      },
+    });
     // Receive responses
     return result.response.text();
   };

@@ -73,8 +73,11 @@ export const processIngestJob = async (jobId) => {
         });
 
         // Build CFG
-        await buildCfgForSnapshot(job.snapshotId).catch(err => {
-            console.error(`[Job ${jobId}] Error building CFG:`, err);
+        console.log(`[Job ${jobId}] Starting CFG build for snapshot ${job.snapshotId}, rootDir: ${sourcePath}`);
+        await buildCfgForSnapshot(job.snapshotId).then(count => {
+            console.log(`[Job ${jobId}] CFG build completed: ${count} functions processed`);
+        }).catch(err => {
+            console.error(`[Job ${jobId}] Error building CFG:`, err.message);
         });
 
         await updateJobProgress(jobId, 90);
@@ -160,8 +163,11 @@ export const processUploadAndIngestJob = async (jobId, fileBuffer, mimeType, sto
         });
 
         // Build CFG
-        await buildCfgForSnapshot(job.snapshotId).catch(err => {
-            console.error(`[Job ${jobId}] Error building CFG:`, err);
+        console.log(`[Job ${jobId}] Starting CFG build for snapshot ${job.snapshotId}, rootDir: ${sourcePath}`);
+        await buildCfgForSnapshot(job.snapshotId).then(count => {
+            console.log(`[Job ${jobId}] CFG build completed: ${count} functions processed`);
+        }).catch(err => {
+            console.error(`[Job ${jobId}] Error building CFG:`, err.message);
         });
 
         await updateJobProgress(jobId, 100);
