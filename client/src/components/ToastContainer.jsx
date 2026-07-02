@@ -1,5 +1,5 @@
 import React from 'react';
-import { Toast } from './Toast.jsx';
+import Toast from './dashboard/Toast.jsx';
 
 /**
  * Manages and displays multiple toast notifications
@@ -25,10 +25,7 @@ export const ToastContainer = ({ toasts, setToasts }) => {
             {toasts.map(toast => (
                 <Toast
                     key={toast.id}
-                    title={toast.title}
-                    message={toast.message}
-                    type={toast.type}
-                    duration={toast.duration}
+                    toast={toast}
                     onClose={() => removeToast(toast.id)}
                 />
             ))}

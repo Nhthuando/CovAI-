@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useCallback, useRef } from "react";
 import { AnimatePresence } from "framer-motion";
-import Toast from "./Toast";
+import Toast from "./Toast.jsx";
 
 const ToastContext = createContext(null);
 
