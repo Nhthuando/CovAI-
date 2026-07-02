@@ -3,7 +3,8 @@ dotenv.config();
 
 import express from "express";
 import cors from "cors";
-
+import { createServer } from "http";
+import { Server } from "socket.io";
 import authRoute from "./src/routes/auth.route.js";
 import userRoute from "./src/routes/user.route.js";
 import projectRoutes from "./src/routes/project.route.js";
@@ -17,9 +18,20 @@ import aiSuggestionRoute from "./src/routes/aiSuggestion.route.js";
 import aiTestRoute from "./src/routes/aiTest.route.js";
 import fileRoutes from "./src/routes/file.routes.js";
 import notificationRoute from "./src/routes/notification.route.js";
+import { eventDispatcher, NOTIFICATION_EVENT } from "./src/utils/eventDispatcher.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: [
+      process.env.CLIENT_URL || "http://localhost:5173",
+      "http://localhost:5174",
+    ],
+    credentials: true,
+  },
+});
 
 // CORS — allow Vite dev server and production domain
 
@@ -52,12 +64,29 @@ app.get("/", (req, res) => {
   res.json({ message: "CovAI API is running" });
 });
 
+// Socket.IO connection handling
+io.on("connection", (socket) => {
+  console.log(`[Socket.IO] User connected: ${socket.id}`);
+
+  socket.on("subscribe_notifications", (userId) => {
+    socket.join(`user:${userId}`);
+    console.log(`[Socket.IO] User ${userId} subscribed to notifications`);
+  });
+
+  socket.on("disconnect", () => {
+    console.log(`[Socket.IO] User disconnected: ${socket.id}`);
+  });
+});
+
+// Make io available globally for services
+global.io = io;
+
 async function startServer() {
   try {
     await prisma.$connect();
     console.log("Database connected successfully.");
 
-    app.listen(PORT, () => {
+    httpServer.listen(PORT, () => {
       console.log("-----------------------------------------------");
       console.log("CovAI server đang được chạy dưới port: " + PORT);
       console.log("-----------------------------------------------");

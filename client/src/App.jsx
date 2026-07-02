@@ -12,6 +12,8 @@ import RegisterPage from "./pages/RegisterPage";
 import DashboardPage from "./pages/DashboardPage";
 import GithubCallbackPage from "./pages/GithubCallbackPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
+import { NotificationProvider } from "./contexts/NotificationContext";
+import { useAuth } from "./hooks/useAuth";
 
 /* ── Landing Page ─────────────────────────────────────────── */
 function LandingPage() {
@@ -49,20 +51,32 @@ function RedirectIfAuthenticated({ children }) {
 }
 
 /* ── App Router ───────────────────────────────────────────── */
+function AppContent() {
+  const { userId } = useAuth();
+
+  return (
+    <>
+      <Routes>
+        <Route path="/" element={<RedirectIfAuthenticated><LandingPage /></RedirectIfAuthenticated>} />
+        <Route path="/login" element={<RedirectIfAuthenticated><LoginPage /></RedirectIfAuthenticated>} />
+        <Route path="/register" element={<RedirectIfAuthenticated><RegisterPage /></RedirectIfAuthenticated>} />
+        <Route path="/reset-password" element={<RedirectIfAuthenticated><ResetPasswordPage /></RedirectIfAuthenticated>} />
+        <Route path="/dashboard" element={
+          <ProtectedRoute>
+            <DashboardPage />
+          </ProtectedRoute>
+        } />
+        <Route path="/auth/github/callback" element={<GithubCallbackPage />} />
+      </Routes>
+    </>
+  );
+}
+
 function App() {
   return (
-    <Routes>
-      <Route path="/" element={<RedirectIfAuthenticated><LandingPage /></RedirectIfAuthenticated>} />
-      <Route path="/login" element={<RedirectIfAuthenticated><LoginPage /></RedirectIfAuthenticated>} />
-      <Route path="/register" element={<RedirectIfAuthenticated><RegisterPage /></RedirectIfAuthenticated>} />
-      <Route path="/reset-password" element={<RedirectIfAuthenticated><ResetPasswordPage /></RedirectIfAuthenticated>} />
-      <Route path="/dashboard" element={
-        <ProtectedRoute>
-          <DashboardPage />
-        </ProtectedRoute>
-      } />
-      <Route path="/auth/github/callback" element={<GithubCallbackPage />} />
-    </Routes>
+    <NotificationProvider>
+      <AppContent />
+    </NotificationProvider>
   );
 }
 

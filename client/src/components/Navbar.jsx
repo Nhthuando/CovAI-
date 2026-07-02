@@ -1,8 +1,12 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
+import { useAuth } from "../hooks/useAuth";
+import { NotificationCenter } from "./NotificationCenter";
 
 export default function Navbar() {
+  const { user } = useAuth();
+  console.log('[Navbar] user object:', user);
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -135,42 +139,66 @@ export default function Navbar() {
 
         {/* Auth Buttons */}
         <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-          <Link
-            to="/login"
-            id="nav-login"
-            style={{
-              color: "#8b949e",
-              textDecoration: "none",
-              fontSize: "0.875rem",
-              fontWeight: "500",
-              padding: "0.375rem 0.75rem",
-              transition: "color 0.2s ease",
-            }}
-            onMouseEnter={(e) => (e.target.style.color = "#f0f6fc")}
-            onMouseLeave={(e) => (e.target.style.color = "#8b949e")}
-          >
-            Log in
-          </Link>
-          <motion.div whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.97 }}>
-            <Link
-              to="/register"
-              id="nav-signup"
-              style={{
-                background:
-                  "linear-gradient(135deg, #7C3AED 0%, #9d5cf5 100%)",
-                color: "white",
-                textDecoration: "none",
-                fontSize: "0.875rem",
-                fontWeight: "600",
-                padding: "0.5rem 1.25rem",
-                borderRadius: "8px",
-                boxShadow: "0 0 16px rgba(124,58,237,0.35)",
-                display: "inline-block",
-              }}
-            >
-              Sign up free
-            </Link>
-          </motion.div>
+          {user ? (
+            <>
+              <NotificationCenter userId={user.id} />
+              <Link
+                to="/dashboard"
+                id="nav-dashboard"
+                style={{
+                  color: "#8b949e",
+                  textDecoration: "none",
+                  fontSize: "0.875rem",
+                  fontWeight: "500",
+                  padding: "0.375rem 0.75rem",
+                  transition: "color 0.2s ease",
+                }}
+                onMouseEnter={(e) => (e.target.style.color = "#f0f6fc")}
+                onMouseLeave={(e) => (e.target.style.color = "#8b949e")}
+              >
+                Dashboard
+              </Link>
+            </>
+          ) : (
+            <>
+              <Link
+                to="/login"
+                id="nav-login"
+                style={{
+                  color: "#8b949e",
+                  textDecoration: "none",
+                  fontSize: "0.875rem",
+                  fontWeight: "500",
+                  padding: "0.375rem 0.75rem",
+                  transition: "color 0.2s ease",
+                }}
+                onMouseEnter={(e) => (e.target.style.color = "#f0f6fc")}
+                onMouseLeave={(e) => (e.target.style.color = "#8b949e")}
+              >
+                Log in
+              </Link>
+              <motion.div whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.97 }}>
+                <Link
+                  to="/register"
+                  id="nav-signup"
+                  style={{
+                    background:
+                      "linear-gradient(135deg, #7C3AED 0%, #9d5cf5 100%)",
+                    color: "white",
+                    textDecoration: "none",
+                    fontSize: "0.875rem",
+                    fontWeight: "600",
+                    padding: "0.5rem 1.25rem",
+                    borderRadius: "8px",
+                    boxShadow: "0 0 16px rgba(124,58,237,0.35)",
+                    display: "inline-block",
+                  }}
+                >
+                  Sign up free
+                </Link>
+              </motion.div>
+            </>
+          )}
         </div>
       </div>
     </motion.nav>

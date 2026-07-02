@@ -28,6 +28,10 @@ import {
   FolderPlus,
 } from "lucide-react";
 
+import { useAuth } from "../../hooks/useAuth";
+import { NotificationCenter } from "../NotificationCenter";
+import NotificationsSettings from "./settings/NotificationsSettings";
+
 import {
   getProjectsApi,
   getProjectTreeApi,
@@ -60,6 +64,7 @@ const panelVariants = {
 function LayoutInner() {
   const { showToast } = useToast();
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   const handleSelectActivity = (id) => {
     if (id === "logout") {
@@ -515,21 +520,7 @@ function LayoutInner() {
                 <PanelRightOpen size={14} />
               )}
             </motion.button>
-            <motion.button
-              whileTap={{ scale: 0.9 }}
-              style={{
-                color: "#484f58",
-                background: "transparent",
-                border: "none",
-                cursor: "pointer",
-                padding: "4px 6px",
-                borderRadius: 6,
-                display: "flex",
-                alignItems: "center",
-              }}
-            >
-              <Bell size={14} />
-            </motion.button>
+            <NotificationCenter userId={user?.id} size={14} theme="dark" />
           </div>
         </div>
       </div>
@@ -589,6 +580,7 @@ function LayoutInner() {
             <div className="w-full h-full overflow-y-auto">
               {activeSetting === "profile" && <UserProfile />}
               {activeSetting === "appearance" && <Appearance />}
+              {activeSetting === "notifications" && <NotificationsSettings />}
             </div>
           ) : activeActivity === "jobs" ? (
             <JobQueue projectId={project?.id} />
@@ -757,18 +749,18 @@ function LayoutInner() {
             >
               {/* Subtle background glow */}
               <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[#7c3aed] to-transparent opacity-50"></div>
-              
+
               <div className="flex items-center text-[#f0f6fc]" style={{ gap: "16px", marginBottom: "20px" }}>
                 <div className="flex items-center justify-center rounded-full bg-[#7c3aed]/10 border border-[#7c3aed]/20" style={{ width: "40px", height: "40px", minWidth: "40px" }}>
                   <Zap className="text-[#a78bfa]" size={20} />
                 </div>
                 <h2 className="text-2xl font-bold tracking-tight m-0">Missing Test Files</h2>
               </div>
-              
+
               <p className="text-[#8b949e] text-[15px] leading-relaxed m-0" style={{ marginBottom: "32px" }}>
                 Dự án <strong>{project?.name || "này"}</strong> chưa có file test (Jest). Quá trình phân tích Code Coverage cần có test files để chạy thành công. Bạn có muốn AI tự động sinh Test Code cho dự án <strong>{project?.name || "này"}</strong> không?
               </p>
-              
+
               <div className="flex flex-col" style={{ gap: "14px" }}>
                 <button
                   onClick={async () => {

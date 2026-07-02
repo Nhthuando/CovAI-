@@ -1,6 +1,7 @@
 import prismaClient from '../config/prisma.js';
 import { ServiceError } from '../utils/serviceError.js';
 import { z } from 'zod';
+import { eventDispatcher, NOTIFICATION_EVENT } from '../utils/eventDispatcher.js';
 
 const prisma = prismaClient;
 
@@ -31,7 +32,7 @@ export const notificationService = {
         try {
             const validatedData = CreateNotificationSchema.parse(data);
 
-            return await prisma.notification.create({
+            const notification = await prisma.notification.create({
                 data: {
                     userId: validatedData.userId,
                     projectId: validatedData.projectId,
@@ -40,7 +41,25 @@ export const notificationService = {
                     message: validatedData.message,
                     readAt: null,
                 },
+                include: {
+                    project: {
+                        select: { id: true, name: true }
+                    }
+                }
             });
+
+            // Emit event for real-time notification
+            eventDispatcher.emit(NOTIFICATION_EVENT, {
+                userId: notification.userId,
+                notification: notification,
+            });
+
+            // Emit via Socket.IO if available
+            if (global.io) {
+                global.io.to(`user:${notification.userId}`).emit('notification', notification);
+            }
+
+            return notification;
         } catch (error) {
             if (error instanceof z.ZodError) {
                 throw new ServiceError('Invalid notification data provided.', 400);
