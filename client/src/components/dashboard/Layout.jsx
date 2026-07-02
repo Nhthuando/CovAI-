@@ -687,7 +687,6 @@ function LayoutInner() {
       </div>
 
       {/* ── Main Row ───────────────────────────────────────── */}
-      {/* ── Main Row ───────────────────────────────────────── */}
       <motion.div
         className="flex flex-1 overflow-hidden"
         variants={containerVariants}
@@ -854,49 +853,67 @@ function LayoutInner() {
       </motion.div>
 
       {/* ── Status Bar ─────────────────────────────────────── */}
-      <div className="flex items-center gap-4">
-        <div className="flex items-center gap-1.5">
-          <GitBranch size={11} />
-          {!isMobile && <span>main</span>}
+      <div
+        className="flex items-center justify-between flex-shrink-0"
+        style={{
+          minHeight: 26,
+          paddingLeft: isMobile ? 8 : 16,
+          paddingRight: isMobile ? 8 : 16,
+          background: "#7c3aed",
+          fontSize: 11,
+          color: "rgba(255,255,255,0.85)",
+          fontFamily: "var(--font-sans)",
+          flexWrap: "nowrap",
+          overflowX: "auto",
+          overflowY: "hidden",
+          whiteSpace: "nowrap",
+        }}
+      >
+        <div className="flex items-center gap-4" style={{ flexWrap: "nowrap", flexShrink: 0 }}>
+          <div className="flex items-center gap-1.5">
+            <GitBranch size={11} />
+            {!isMobile && <span>main</span>}
+          </div>
+          {!isMobile && (
+            <>
+              <div style={{ width: 1, height: 12, background: "rgba(255,255,255,0.2)" }} />
+              <div className="flex items-center gap-1.5">
+                <CheckCircle2 size={11} style={{ color: "#86efac" }} />
+                <span>0 errors</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Zap size={11} style={{ color: "#fde68a" }} />
+                <span>TypeScript</span>
+              </div>
+            </>
+          )}
         </div>
-        {!isMobile && (
-          <>
-            <div style={{ width: 1, height: 12, background: "rgba(255,255,255,0.2)" }} />
-            <div className="flex items-center gap-1.5">
-              <CheckCircle2 size={11} style={{ color: "#86efac" }} />
-              <span>0 errors</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <Zap size={11} style={{ color: "#fde68a" }} />
-              <span>TypeScript</span>
-            </div>
-          </>
-        )}
+
+        <div className="flex items-center gap-4" style={{ flexWrap: "nowrap", flexShrink: 0 }}>
+          <div className="flex items-center gap-1.5">
+            <BarChart3 size={11} />
+            <span>{isMobile ? "84%" : "Coverage: 84%"}</span>
+          </div>
+          {!isMobile && (
+            <>
+              <div style={{ width: 1, height: 12, background: "rgba(255,255,255,0.2)" }} />
+              <span>Ln 29, Col 1</span>
+              <span>UTF-8</span>
+            </>
+          )}
+          <div style={{ width: 1, height: 12, background: "rgba(255,255,255,0.2)" }} />
+          <div className="flex items-center gap-1.5">
+            <span
+              style={{
+                width: 6, height: 6, borderRadius: "50%", background: "#86efac",
+                display: "inline-block", boxShadow: "0 0 6px rgba(134,239,172,0.7)",
+              }}
+            />
+            {!isMobile && <span>Gemini AI ✓</span>}
+          </div>
+        </div>
       </div>
 
-      <div className="flex items-center gap-4">
-        <div className="flex items-center gap-1.5">
-          <BarChart3 size={11} />
-          <span>{isMobile ? "84%" : "Coverage: 84%"}</span>
-        </div>
-        {!isMobile && (
-          <>
-            <div style={{ width: 1, height: 12, background: "rgba(255,255,255,0.2)" }} />
-            <span>Ln 29, Col 1</span>
-            <span>UTF-8</span>
-          </>
-        )}
-        <div style={{ width: 1, height: 12, background: "rgba(255,255,255,0.2)" }} />
-        <div className="flex items-center gap-1.5">
-          <span
-            style={{
-              width: 6, height: 6, borderRadius: "50%", background: "#86efac",
-              display: "inline-block", boxShadow: "0 0 6px rgba(134,239,172,0.7)",
-            }}
-          />
-          {!isMobile && <span>Gemini AI ✓</span>}
-        </div>
-      </div>
       {/* ── Import Project Fullscreen Overlay ──────────────── */}
       <AnimatePresence>
         {showImport && (
