@@ -410,13 +410,17 @@ export const markJobSuccess = async (jobId, resultJson) => {
 
     const resultString = JSON.stringify(resultJson ?? {});
 
+    const finishedAt = new Date();
+    const computeTimeMs = currentJob.startedAt ? finishedAt.getTime() - currentJob.startedAt.getTime() : 0;
+
     const [job] = await Promise.all([
         prisma.job.update({
             where: { id: jobId },
             data: {
                 status: "SUCCESS",
                 progress: 100,
-                finishedAt: new Date(),
+                finishedAt,
+                computeTimeMs,
                 resultJson: resultString,
             },
         }),
@@ -460,11 +464,15 @@ export const markJobFailed = async (jobId, error) => {
     if (currentJob.status !== "RUNNING")
         throw new ServiceError("Only running jobs can be marked as failed", 400);
 
+    const finishedAt = new Date();
+    const computeTimeMs = currentJob.startedAt ? finishedAt.getTime() - currentJob.startedAt.getTime() : 0;
+
     const job = await prisma.job.update({
         where: { id: jobId },
         data: {
             status: "FAILED",
-            finishedAt: new Date(),
+            finishedAt,
+            computeTimeMs,
             errorMessage: normalizedError.message,
         },
     });

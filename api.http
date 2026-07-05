@@ -224,3 +224,8 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF2c
   "title": "Test notification",
   "message": "Hello world"
 }
+
+### Analytics
+# @name getDashboardAnalytics
+GET {{baseUrl}}/analytics/dashboard
+Authorization: Bearer YOUR_TOKEN_HERE

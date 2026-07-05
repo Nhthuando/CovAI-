@@ -14,7 +14,7 @@ export const checkAndIncrementQuota = async (userId) => {
   if (!user) throw new ServiceError(404, "User not found");
 
   // Get current date string in YYYY-MM-DD format (local timezone approximation)
-  const today = new Date().toLocaleDateString('en-CA'); 
+  const today = new Date().toLocaleDateString('en-CA');
 
   if (user.aiUsageDate !== today) {
     // New day, reset quota
@@ -28,7 +28,7 @@ export const checkAndIncrementQuota = async (userId) => {
     if (user.aiUsageCount >= MAX_QUOTA) {
       throw new ServiceError(429, "QUOTA_EXCEEDED");
     }
-    
+
     // Increment quota
     await prisma.user.update({
       where: { id: userId },
@@ -36,4 +36,12 @@ export const checkAndIncrementQuota = async (userId) => {
     });
     return true;
   }
+};
+
+export const incrementTokenUsage = async (userId, tokens) => {
+  if (!tokens || tokens <= 0) return;
+  await prisma.user.update({
+    where: { id: userId },
+    data: { aiTokenUsage: { increment: tokens } }
+  });
 };
