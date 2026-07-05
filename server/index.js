@@ -19,6 +19,7 @@ import aiTestRoute from "./src/routes/aiTest.route.js";
 import fileRoutes from "./src/routes/file.routes.js";
 import notificationRoute from "./src/routes/notification.route.js";
 import { eventDispatcher, NOTIFICATION_EVENT } from "./src/utils/eventDispatcher.js";
+import analyticsRoute from "./src/routes/analytics.route.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -59,6 +60,7 @@ app.use("/api/ai-suggestions", aiSuggestionRoute);
 app.use("/api/ai-tests", aiTestRoute);
 app.use("/api/files", fileRoutes);
 app.use("/api/notifications", notificationRoute);
+app.use("/api/analytics", analyticsRoute);
 
 app.get("/", (req, res) => {
   res.json({ message: "CovAI API is running" });
