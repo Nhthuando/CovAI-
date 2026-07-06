@@ -27,6 +27,7 @@ export const useSocket = (userId, onNotification) => {
         socketRef.current = socket;
 
         socket.on('connect', () => {
+            console.log('[Socket.IO] Connected to server, subscribing user:', userId);
             setIsConnected(true);
             setError(null);
             socket.emit('subscribe_notifications', userId);
@@ -39,6 +40,8 @@ export const useSocket = (userId, onNotification) => {
         });
 
         socket.on('notification', (notification) => {
+            console.log('[Socket.IO] Received notification:', notification);
+            console.log('[Socket.IO] onNotificationRef.current:', onNotificationRef.current);
             onNotificationRef.current?.(notification);
         });
 

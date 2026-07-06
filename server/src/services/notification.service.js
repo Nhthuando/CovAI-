@@ -56,6 +56,7 @@ export const notificationService = {
 
             // Emit via Socket.IO if available
             if (global.io) {
+                console.log(`[NotificationService] Emitting notification to user:${notification.userId}`);
                 global.io.to(`user:${notification.userId}`).emit('notification', notification);
             }
 
@@ -79,6 +80,7 @@ export const notificationService = {
      */
     createJobFinishedNotification: async (jobId) => {
         try {
+            console.log(`[NotificationService] Creating notification for job ${jobId}`);
             const job = await prisma.job.findUnique({
                 where: { id: jobId },
                 include: { project: true },
@@ -88,6 +90,7 @@ export const notificationService = {
                 console.error(`[NotificationService] Job ${jobId} not found when creating notification.`);
                 return null;
             }
+            console.log(`[NotificationService] Job found:`, job.id, job.status);
 
             if (!job.userId) {
                 console.log(`[NotificationService] Job ${jobId} has no userId, skipping notification.`);
@@ -188,7 +191,7 @@ export const notificationService = {
                 ...(unreadOnly === true || unreadOnly === 'true' ? { readAt: null } : {}),
             };
 
-            const [notifications, total, unreadCount] = await prisma.$transaction([
+            const [notifications, total, unreadCount] = await Promise.all([
                 prisma.notification.findMany({
                     where,
                     include: { project: { select: { id: true, name: true } } },

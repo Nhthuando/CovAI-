@@ -22,19 +22,22 @@ export const
 
         // Handle new notification from Socket.IO
         const handleNewNotification = useCallback((notification) => {
-            console.log('New notification received:', notification);
+            console.log('[NotificationCenter] Received new notification:', notification);
+            console.log('[NotificationCenter] Current unreadCount before update:', unreadCount); // Log current unreadCount
             setNotifications(prev => [notification, ...prev]);
             setUnreadCount(prev => prev + 1);
+            console.log('[NotificationCenter] New unreadCount after update:', unreadCount + 1); // Log new unreadCount
             const toastEvent = new CustomEvent('showToast', {
                 detail: {
                     title: notification.title,
                     message: notification.message,
                     type: notification.type === 'SYSTEM' ? 'info' :
-                        notification.type === 'AI_READY' ? 'success' : 'info'
+                        notification.type === 'AI_READY' ? 'success' :
+                            notification.type === 'JOB_FINISHED' ? 'success' : 'info'
                 }
             });
             window.dispatchEvent(toastEvent);
-        }, []); // mảng rỗng vì chỉ dùng setter functions, không phụ thuộc state/props nào khác
+        }, [setNotifications, setUnreadCount]); // Added dependencies for useCallback
 
         // Use Socket.IO hook
         useSocket(userId, handleNewNotification);
@@ -98,7 +101,7 @@ export const
         };
 
         // Mark all as read
-        const handleMarkAllAsRead = async () => {
+        const handleMarkAllAsRead = useCallback(async () => {
             try {
                 console.log('Marking all notifications as read');
                 await notificationService.markAllAsRead();
@@ -113,7 +116,7 @@ export const
                 console.error('Error marking all notifications as read:', err);
                 setError('Failed to mark all notifications as read');
             }
-        };
+        }, []);
 
         // Load more notifications
         const handleLoadMore = () => {
@@ -138,6 +141,13 @@ export const
                 console.log('No userId, skipping notification fetch');
             }
         }, [userId]);
+
+        // Mark all notifications as read when dropdown opens
+        useEffect(() => {
+            if (dropdownOpen && unreadCount > 0) {
+                handleMarkAllAsRead();
+            }
+        }, [dropdownOpen]);
 
         useEffect(() => {
             const handleClickOutside = (event) => {
