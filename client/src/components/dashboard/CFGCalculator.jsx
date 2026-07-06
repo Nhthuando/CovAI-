@@ -5,6 +5,7 @@ import {
   X, Sparkles, Info, ZoomIn, ZoomOut, GitBranch, ArrowLeft, TerminalSquare, Network, RefreshCw
 } from "lucide-react";
 import { getProjectCfgApi, getProjectCcApi, getFileContentApi, buildCfgApi } from "../../services/project.service.js";
+import { useBreakpoints } from "../../hooks/useMediaQuery";
 
 /* --- ANIMATION VARIANTS --- */
 const containerVariants = {
@@ -121,6 +122,7 @@ function CFGNode({ label, line, x, y, active = false, isDiamond = false, width =
 }
 
 export default function CFGCalculator({ project, onClose }) {
+  const { isMobile } = useBreakpoints();
   const [cfgs, setCfgs] = useState([]);
   const [ccs, setCcs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -131,6 +133,43 @@ export default function CFGCalculator({ project, onClose }) {
   const [sourceCode, setSourceCode] = useState("");
   const [zoom, setZoom] = useState(1);
   const [rebuilding, setRebuilding] = useState(false);
+
+  // Resize state
+  const [leftWidth, setLeftWidth] = useState(420);
+  const [rightWidth, setRightWidth] = useState(400);
+  const [isResizingLeft, setIsResizingLeft] = useState(false);
+  const [isResizingRight, setIsResizingRight] = useState(false);
+  const [topHeight, setTopHeight] = useState(30); // Percentage
+  const [isResizingTop, setIsResizingTop] = useState(false);
+
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      if (isResizingLeft) {
+        setLeftWidth(Math.max(200, Math.min(800, e.clientX)));
+      } else if (isResizingRight) {
+        setRightWidth(Math.max(200, Math.min(800, window.innerWidth - e.clientX)));
+      } else if (isResizingTop) {
+        const containerHeight = window.innerHeight;
+        const newHeight = (e.clientY / containerHeight) * 100;
+        setTopHeight(Math.max(10, Math.min(80, newHeight)));
+      }
+    };
+    const handleMouseUp = () => {
+      setIsResizingLeft(false);
+      setIsResizingRight(false);
+      setIsResizingTop(false);
+      document.body.style.cursor = 'default';
+    };
+    if (isResizingLeft || isResizingRight || isResizingTop) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = isResizingTop ? 'row-resize' : 'col-resize';
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizingLeft, isResizingRight, isResizingTop]);
 
   const handleRebuild = async () => {
     try {
@@ -234,7 +273,7 @@ export default function CFGCalculator({ project, onClose }) {
       const nodes = fileCfgs.map((c, i) => ({ id: c.functionName, label: c.functionName }));
       const edges = [];
       // Create a dummy chain so dagre lays them out nicely vertically
-      for(let i=0; i<nodes.length-1; i++) edges.push({ from: nodes[i].id, to: nodes[i+1].id });
+      for (let i = 0; i < nodes.length - 1; i++) edges.push({ from: nodes[i].id, to: nodes[i + 1].id });
       return computeLayout(nodes, edges);
     } else {
       if (!activeCfg || !activeCfg.graphJson) return { nodes: [], edges: [] };
@@ -289,13 +328,13 @@ export default function CFGCalculator({ project, onClose }) {
             <select
               value={selectedFile || ""}
               onChange={(e) => { setSelectedFile(e.target.value); setSelectedFunc(null); }}
-              style={{ 
-                background: "rgba(255,255,255,0.08)", 
-                color: "#c9d1d9", 
-                border: "1px solid rgba(255,255,255,0.12)", 
-                borderRadius: "6px", 
-                padding: "6px 12px", 
-                fontSize: "13px", 
+              style={{
+                background: "rgba(255,255,255,0.08)",
+                color: "#c9d1d9",
+                border: "1px solid rgba(255,255,255,0.12)",
+                borderRadius: "6px",
+                padding: "6px 12px",
+                fontSize: "13px",
                 outline: "none",
                 cursor: "pointer",
                 boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
@@ -377,11 +416,24 @@ export default function CFGCalculator({ project, onClose }) {
         </div>
       ) : (
         /* --- MAIN CONTENT --- */
-        <div style={{ flex: 1, display: "flex", overflowX: "auto", overflowY: "hidden", background: "#0D1117", width: "100%" }}>
-          <div style={{ display: "flex", height: "100%", minWidth: "1350px", width: "100%" }}>
+        <div style={{ flex: 1, display: "flex", overflowX: isMobile ? "hidden" : "auto", overflowY: "hidden", background: "#0D1117", width: "100%" }}>
+          <div style={{ display: "flex", height: "100%", width: "100%", flexDirection: isMobile ? "column" : "row" }}>
 
             {/* LEFT COLUMN: Source Code */}
-            <div style={{ width: "420px", flexShrink: 0, display: "flex", flexDirection: "column", borderRight: "1px solid rgba(255,255,255,0.05)", background: "#0D1117" }}>
+            <div style={{ width: isMobile ? "100%" : `${leftWidth}px`, flexShrink: 0, display: "flex", flexDirection: "column", borderRight: "1px solid rgba(255,255,255,0.05)", background: "#0D1117", height: isMobile ? `${topHeight}%` : "100%", position: 'relative' }}>
+              <div
+                onMouseDown={() => isMobile ? setIsResizingTop(true) : setIsResizingLeft(true)}
+                style={{
+                  position: 'absolute',
+                  [isMobile ? 'bottom' : 'right']: -3,
+                  top: isMobile ? 'auto' : 0,
+                  bottom: isMobile ? -3 : 0,
+                  width: isMobile ? '100%' : 6,
+                  height: isMobile ? 6 : '100%',
+                  cursor: isMobile ? 'row-resize' : 'col-resize',
+                  zIndex: 100
+                }}
+              />
               <div style={{ padding: "20px 32px", fontSize: "11px", letterSpacing: "0.2em", color: "#8B949E", textTransform: "uppercase", fontWeight: "bold", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid rgba(255,255,255,0.05)", background: "rgba(22,27,34,0.5)" }}>
                 <span>Source Code</span>
                 <span style={{ background: "rgba(255,255,255,0.1)", padding: "4px 10px", borderRadius: "6px", fontSize: "10px", color: "#fff" }}>JS/TS</span>
@@ -390,7 +442,7 @@ export default function CFGCalculator({ project, onClose }) {
                 {sourceLines.map((line) => {
                   const isActiveScope = activeCfg && line.num >= activeCfg.startLine && line.num <= activeCfg.endLine;
                   const isDimmed = !isCallGraph && !isActiveScope;
-                  
+
                   return (
                     <div
                       key={line.num}
@@ -417,7 +469,7 @@ export default function CFGCalculator({ project, onClose }) {
             </div>
 
             {/* MIDDLE COLUMN: Graph Area */}
-            <div style={{ flex: 1, minWidth: "550px", display: "flex", flexDirection: "column", borderRight: "1px solid rgba(255,255,255,0.05)", background: "#0D1117", position: "relative" }}>
+            <div style={{ flex: 1, minWidth: isMobile ? "100%" : "550px", display: "flex", flexDirection: "column", borderRight: "1px solid rgba(255,255,255,0.05)", background: "#0D1117", position: "relative", height: isMobile ? "40%" : "100%" }}>
               <div style={{ padding: "20px 32px", fontSize: "11px", letterSpacing: "0.2em", color: "#8B949E", textTransform: "uppercase", fontWeight: "bold", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid rgba(255,255,255,0.05)", zIndex: 20, background: "rgba(22,27,34,0.5)" }}>
                 <div className="flex items-center gap-3">
                   {!isCallGraph && (
@@ -521,7 +573,13 @@ export default function CFGCalculator({ project, onClose }) {
             </div>
 
             {/* RIGHT COLUMN: Metrics */}
-            <div style={{ width: "400px", flexShrink: 0, display: "flex", flexDirection: "column", padding: "40px", overflowY: "auto", background: "#161B22" }}>
+            <div style={{ width: isMobile ? "100%" : `${rightWidth}px`, flexShrink: 0, display: "flex", flexDirection: "column", padding: isMobile ? "20px" : "40px", overflowY: "auto", background: "#161B22", height: isMobile ? "30%" : "100%", position: 'relative' }}>
+              {!isMobile && (
+                <div
+                  onMouseDown={() => setIsResizingRight(true)}
+                  style={{ position: 'absolute', left: -3, top: 0, bottom: 0, width: 6, cursor: 'col-resize', zIndex: 100 }}
+                />
+              )}
               <AnimatePresence mode="wait">
                 {isCallGraph ? (
                   <motion.div

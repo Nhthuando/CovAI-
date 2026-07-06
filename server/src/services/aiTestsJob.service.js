@@ -7,6 +7,7 @@ import { generateText } from "./gemini.service.js";
 import { processAiSuggestions } from "./aiSuggestionParser.service.js";
 import { processSkeletonTests } from "./skeletonPostProcessor.service.js";
 import { processFullTests } from "./fullTestsPostProcessor.service.js";
+import { notificationService } from "./notification.service.js";
 
 /**
  * Orchestrates the full Skeleton Test Generation Pipeline
@@ -36,18 +37,18 @@ export const processAiTestsJob = async (jobId) => {
         await addJobLog(jobId, "INFO", `Building AI Context Payload for ${mode} Tests...`);
         const aiPayloadResult = await buildAiPayload(snapshotId);
         const payload = aiPayloadResult.payload;
-        
+
         await updateJobStatus({ jobId, progress: 30 });
 
         await addJobLog(jobId, "INFO", `Constructing final prompt for ${mode} mode...`);
         const finalPrompt = buildFinalPrompt(payload, { mode, hasJest });
-        
+
         await updateJobStatus({ jobId, progress: 40 });
 
         // SCRUM-394: Call Gemini API
         await addJobLog(jobId, "INFO", "Calling Gemini AI model...");
         const responseText = await generateText(finalPrompt, "gemini-1.5-pro");
-        
+
         // SCRUM-396: Validate AI response
         if (!responseText) {
             throw new Error("Gemini returned an empty response.");
@@ -59,7 +60,7 @@ export const processAiTestsJob = async (jobId) => {
         const { suggestions, tests } = processAiSuggestions(responseText, projectId, snapshotId);
 
         await addJobLog(jobId, "INFO", "Saving skeleton tests to database...");
-        
+
         // Clean up old ones for this snapshot
         await prisma.aiTest.deleteMany({
             where: { snapshotId }
@@ -81,7 +82,7 @@ export const processAiTestsJob = async (jobId) => {
         // SCRUM-398: Generate tests
         if (tests.length > 0) {
             let processedTests, summary;
-            
+
             if (mode === "FULL") {
                 const result = processFullTests(tests);
                 processedTests = result.processedTests;
@@ -91,7 +92,7 @@ export const processAiTestsJob = async (jobId) => {
                 processedTests = result.processedTests;
                 summary = result.summary;
             }
-            
+
             await prisma.aiTest.createMany({
                 data: processedTests
             });
@@ -106,13 +107,16 @@ export const processAiTestsJob = async (jobId) => {
             progress: 100,
         });
 
+        // Notify user
+        await notificationService.createJobFinishedNotification(jobId);
+
         return { success: true, count: tests.length };
     } catch (error) {
         // SCRUM-395: Handle generation errors
         console.error(`[AiTestsJob ${jobId}] Failed:`, error);
-        
+
         await addJobLog(jobId, "ERROR", `Pipeline Error: ${error.message}`);
-        
+
         await updateJobStatus({
             jobId,
             status: "FAILED",
