@@ -318,11 +318,12 @@ Thông báo người dùng.
 POST /api/auth/register
 POST /api/auth/login
 POST /api/auth/logout
-POST /api/auth/forgot
-POST /api/auth/reset
+POST /api/auth/forgotPassword
+POST /api/auth/resetPassword/:token
 
-GET  /api/auth/github
 GET  /api/auth/github/callback
+POST /api/auth/github/access
+GET  /api/auth/github/repositories
 ```
 
 ---
@@ -330,8 +331,8 @@ GET  /api/auth/github/callback
 ## User
 
 ```http
-GET   /api/user/me
-PATCH /api/user/me
+GET   /api/users/me
+PATCH /api/users/me
 ```
 
 ---
@@ -370,9 +371,9 @@ GET /api/projects/:id/snapshots
 ```http
 POST /api/projects/:id/run-analysis
 
-GET /api/projects/:id/jobs
+GET /api/job/:projectId/jobs
 
-GET /api/jobs/:id
+GET /api/job/:jobId
 ```
 
 ---
@@ -380,11 +381,11 @@ GET /api/jobs/:id
 ## Coverage
 
 ```http
-GET /api/projects/:id/coverage/summary
+GET /api/coverage/:snapshotId/summary
 
-GET /api/projects/:id/coverage/files
+GET /api/coverage/:snapshotId/files
 
-GET /api/projects/:id/coverage/functions
+GET /api/coverage/:snapshotId/functions
 ```
 
 ---
@@ -402,9 +403,9 @@ GET /api/projects/:id/cc
 ## AI Suggestions
 
 ```http
-GET /api/projects/:id/ai/suggestions
+GET /api/ai-suggestions?projectId=:id
 
-POST /api/projects/:id/ai/suggestions/refresh
+POST /api/ai-suggestions/refresh/:projectId
 ```
 
 ---
@@ -412,9 +413,11 @@ POST /api/projects/:id/ai/suggestions/refresh
 ## AI Test Generation
 
 ```http
-GET /api/projects/:id/ai/tests?mode=skeleton
+POST /api/projects/:id/ai-tests
 
-GET /api/projects/:id/ai/tests?mode=full
+GET  /api/projects/:id/ai/tests
+
+POST /api/projects/:id/ai/generate-full-test
 ```
 
 ---
@@ -433,9 +436,10 @@ PATCH /api/notifications/:id/read
 
 ## Upload Restrictions
 
-- Chỉ cho phép file ZIP
-- Giới hạn kích thước file
+- Chỉ cho phép file ZIP và RAR
+- Giới hạn kích thước file (200MB compressed, 1GB uncompressed)
 - Chặn file nhạy cảm
+- Kiểm tra archive bomb
 
 Ví dụ:
 
@@ -460,8 +464,9 @@ Mọi quá trình phân tích được thực hiện trong Docker container riê
 ## API Protection
 
 - JWT Authentication
-- Rate Limiting
+- Rate Limiting (express-rate-limit)
 - Input Validation (Zod)
+- Token Encryption (AES-256-GCM)
 
 ---
 

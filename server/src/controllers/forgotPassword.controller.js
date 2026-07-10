@@ -17,7 +17,8 @@ export const forgotPassword  = async (req,res) => {
         const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex');
         const tokenExpires = new Date(Date.now() + 1 * 60 * 1000);
         await prisma.user.update({where: {email}, data: {passwordResetToken: hashedToken, passwordResetExpires: tokenExpires}});
-        const resetUrl = `http://localhost:5173/reset-password?token=${resetToken}`;
+        const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
+        const resetUrl = `${clientUrl}/reset-password?token=${resetToken}`;
         try {
             await sendEmail({email: email, subject: "ĐẶT LẠI MẬT KHẨU | CovAI Service", html: resetPasswordEmailHtml(user.name,resetUrl)})
             return res.status(200).json({message: "Đã gửi link reset mật khẩu, vui lòng kiểm tra email!"});

@@ -20,6 +20,8 @@ import fileRoutes from "./src/routes/file.routes.js";
 import notificationRoute from "./src/routes/notification.route.js";
 import { eventDispatcher, NOTIFICATION_EVENT } from "./src/utils/eventDispatcher.js";
 import analyticsRoute from "./src/routes/analytics.route.js";
+import { globalLimiter } from "./src/middlewares/rateLimit.middleware.js";
+import "./src/services/queue.service.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -47,6 +49,9 @@ app.use(
 );
 
 app.use(express.json());
+
+// Global rate limiter
+app.use(globalLimiter);
 
 app.use("/api/auth", authRoute);
 app.use("/api/users", userRoute);

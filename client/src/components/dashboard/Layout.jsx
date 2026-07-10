@@ -245,6 +245,7 @@ function LayoutInner() {
 
   const handleOpenFile = (node) => {
     if (node.type === "folder") return;
+    setActiveActivity("explorer");
     setActiveFileId(node.id);
     if (!tabs.find((t) => t.id === node.id)) {
       setTabs((prev) => [
@@ -253,6 +254,28 @@ function LayoutInner() {
       ]);
     }
     setActiveTabId(node.id);
+  };
+
+  const handleOpenFileByPath = (filePath) => {
+    setActiveActivity("explorer");
+    // Normalize path to match tree format if needed
+    const normalizedPath = filePath.replace(/\\/g, '/').replace(/^\.\//, '');
+    const findNode = (nodes, path) => {
+      for (const node of nodes) {
+        if (node.id === path || path.endsWith('/' + node.id) || node.id.endsWith('/' + path)) return node;
+        if (node.children) {
+          const found = findNode(node.children, path);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+    const node = findNode(fileTree, normalizedPath);
+    if (node) {
+      handleOpenFile(node);
+    } else {
+      handleOpenFile({ id: normalizedPath, name: normalizedPath.split('/').pop(), type: "file" });
+    }
   };
 
   const handleCloseTab = (tabId) => {
@@ -279,6 +302,9 @@ function LayoutInner() {
         setTestPromptSnapshotId(res.snapshotId);
         setShowTestPrompt(true);
       } else {
+        if (res?.data?.job?.snapshotId) {
+          localStorage.setItem(`latestSnapshot_${project.id}`, res.data.job.snapshotId);
+        }
         showToast({
           type: "info",
           title: "Analysis Started",
@@ -401,7 +427,7 @@ function LayoutInner() {
         {/* Center: menu bar items — desktop/tablet only */}
         {!isMobile && (
           <div className="flex items-center gap-0.5">
-            {["Explorer", "Tests", "Metrics", "Coverage", "Settings"].map((item) => (
+            {["Explorer", "Coverage", "Settings"].map((item) => (
               <motion.button
                 key={item}
                 onClick={() => {
@@ -655,7 +681,7 @@ function LayoutInner() {
                 overflow: "hidden",
               }}
             >
-              {["Explorer", "Tests", "Metrics", "Coverage", "Settings"].map((item) => (
+              {["Explorer", "Coverage", "Settings"].map((item) => (
                 <button
                   key={item}
                   onClick={() => {
@@ -791,7 +817,7 @@ function LayoutInner() {
           ) : activeActivity === "jobs" ? (
             <JobQueue projectId={project?.id} />
           ) : activeActivity === "coverage" ? (
-            <CoverageDashboard projectId={project?.id} />
+            <CoverageDashboard snapshotId={project?.latestSnapshotId || (project?.id ? localStorage.getItem(`latestSnapshot_${project.id}`) : null) || testPromptSnapshotId} projectId={project?.id} onOpenFile={handleOpenFileByPath} />
           ) : (
             <Editor
               tabs={tabs}

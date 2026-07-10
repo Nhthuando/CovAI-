@@ -1,17 +1,11 @@
 import prisma from "../config/prisma.js";
-
-class ServiceError extends Error {
-  constructor(statusCode, message) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-}
+import { ServiceError } from "../utils/serviceError.js";
 
 const MAX_QUOTA = process.env.AI_DAILY_QUOTA ? parseInt(process.env.AI_DAILY_QUOTA) : 50;
 
 export const checkAndIncrementQuota = async (userId) => {
   const user = await prisma.user.findUnique({ where: { id: userId } });
-  if (!user) throw new ServiceError(404, "User not found");
+  if (!user) throw new ServiceError("User not found", 404);
 
   // Get current date string in YYYY-MM-DD format (local timezone approximation)
   const today = new Date().toLocaleDateString('en-CA');
@@ -26,7 +20,7 @@ export const checkAndIncrementQuota = async (userId) => {
   } else {
     // Same day, check quota
     if (user.aiUsageCount >= MAX_QUOTA) {
-      throw new ServiceError(429, "QUOTA_EXCEEDED");
+      throw new ServiceError("QUOTA_EXCEEDED", 429);
     }
 
     // Increment quota

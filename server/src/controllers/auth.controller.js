@@ -6,6 +6,7 @@ import {
 import prisma from "../config/prisma.js";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
+import { encrypt, decrypt } from "../utils/crypto.js";
 
 export const register = async (req, res) => {
   try {
@@ -64,10 +65,19 @@ export const getGithubRepositories = async (req, res) => {
       });
     }
 
-    // Sử dụng token đã lưu để lấy repo từ GitHub API
+    // Decrypt token đã mã hóa
+    let accessToken;
+    try {
+      accessToken = decrypt(user.githubAccessTokenEnc);
+    } catch {
+      // Fallback: token cũ chưa encrypt
+      accessToken = user.githubAccessTokenEnc;
+    }
+
+    // Sử dụng token đã giải mã để lấy repo từ GitHub API
     const response = await fetch("https://api.github.com/user/repos", {
       headers: {
-        Authorization: `token ${user.githubAccessTokenEnc}`,
+        Authorization: `token ${accessToken}`,
         Accept: "application/vnd.github.v3+json",
       },
     });
@@ -164,13 +174,22 @@ export const oAuthGithub = async (req, res) => {
     let user = await prisma.user.findUnique({
       where: { email: primaryEmail },
     });
+    // Encrypt access token trước khi lưu
+    let encryptedToken;
+    try {
+      encryptedToken = encrypt(accessToken);
+    } catch {
+      // Fallback nếu chưa cấu hình ENCRYPTION_KEY
+      encryptedToken = accessToken;
+    }
+
     if (user) {
       user = await prisma.user.update({
         where: { email: primaryEmail },
         data: {
           githubUserId: String(userData.id),
           name: user.name || userData.login,
-          githubAccessTokenEnc: accessToken,
+          githubAccessTokenEnc: encryptedToken,
         },
       });
     } else {
@@ -179,7 +198,7 @@ export const oAuthGithub = async (req, res) => {
           githubUserId: String(userData.id),
           name: userData.login,
           email: primaryEmail,
-          githubAccessTokenEnc: accessToken,
+          githubAccessTokenEnc: encryptedToken,
         },
       });
     }

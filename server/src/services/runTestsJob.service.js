@@ -14,6 +14,7 @@ import { saveJobOutput, appendJobOutput } from "./jobOutput.service.js";
 import { parseCoverageSummary } from "./coverageSummaryParser.service.js";
 import { storeCoverageOutputs } from "./coverageStorage.service.js";
 import { ServiceError } from "../utils/serviceError.js";
+import { dockerRunner } from "./dockerRunner.service.js";
 
 const INSTALL_TIMEOUT_MS = 3 * 60 * 1000; // 3 phút
 const JEST_TIMEOUT_MS = 5 * 60 * 1000;    // 5 phút
@@ -29,145 +30,60 @@ const assertStringField = (value, fieldName) => {
 };
 
 /**
- * SCRUM-139: Chạy npm install --prefer-offline trong rootDir.
- * Capture stdout/stderr, timeout 3 phút.
+ * SCRUM-139: Chạy npm install --prefer-offline trong rootDir thông qua Docker.
  * @returns {Promise<void>} - resolve bình thường hoặc throw Error nếu thất bại
  */
-const runNpmInstall = (jobId, rootDir) => {
-    return new Promise((resolve, reject) => {
-        let timedOut = false;
+const runNpmInstall = async (jobId, rootDir) => {
+    await addJobLog(jobId, "INFO", `[SCRUM-139] Bắt đầu npm install tại: ${rootDir}`).catch(() => { });
 
-        addJobLog(jobId, "INFO", `[SCRUM-139] Bắt đầu npm install tại: ${rootDir}`).catch(() => { });
-
-        const child = spawn("npm", ["install", "--prefer-offline"], {
-            cwd: rootDir,
-            shell: true,
-            env: { ...process.env, CI: "true" },
-        });
-
-        const timer = setTimeout(async () => {
-            timedOut = true;
-            child.kill("SIGKILL");
-            const msg = `npm install vượt quá timeout ${INSTALL_TIMEOUT_MS / 1000}s`;
-            await appendJobOutput(jobId, { stdout: outStr, stderr: errStr }).catch(() => { });
-            await addJobLog(jobId, "ERROR", msg).catch(() => { });
-            reject(new Error(msg));
-        }, INSTALL_TIMEOUT_MS);
-
-        let outStr = "";
-        let errStr = "";
-
-        child.stdout.on("data", (chunk) => {
-            outStr += chunk.toString();
-        });
-
-        child.stderr.on("data", (chunk) => {
-            errStr += chunk.toString();
-        });
-
-        child.on("close", async (code) => {
-            clearTimeout(timer);
-            if (timedOut) return;
-
-            await appendJobOutput(jobId, { stdout: outStr, stderr: errStr }).catch(() => { });
-
-            if (code === 0) {
-                await addJobLog(jobId, "INFO", "[SCRUM-139] npm install hoàn thành thành công.").catch(() => { });
-                resolve();
-            } else {
-                const msg = `[SCRUM-139] npm install thất bại với exit code ${code}`;
-                await addJobLog(jobId, "ERROR", msg).catch(() => { });
-                reject(new Error(msg));
-            }
-        });
-
-        child.on("error", (err) => {
-            clearTimeout(timer);
-            if (timedOut) return;
-            reject(err);
-        });
+    const result = await dockerRunner.run({
+        snapshotPath: rootDir,
+        command: "npm install --prefer-offline",
+        timeoutMs: INSTALL_TIMEOUT_MS,
+        jobId
     });
+
+    if (result.success) {
+        await addJobLog(jobId, "INFO", "[SCRUM-139] npm install hoàn thành thành công.").catch(() => { });
+    } else {
+        const msg = `[SCRUM-139] npm install thất bại với exit code ${result.exitCode}`;
+        await addJobLog(jobId, "ERROR", msg).catch(() => { });
+        throw new Error(msg);
+    }
 };
 
 /**
- * SCRUM-140: Chạy jest --coverage trong rootDir.
- * Capture stdout/stderr, timeout 5 phút.
+ * SCRUM-140: Chạy jest --coverage trong rootDir thông qua Docker.
  * @returns {Promise<{ exitCode: number }>}
  */
-const runJestCoverage = (jobId, rootDir, jestConfigPath) => {
-    return new Promise((resolve, reject) => {
-        let timedOut = false;
+const runJestCoverage = async (jobId, rootDir, jestConfigPath) => {
+    let jestCmd = "npx jest --coverage --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --forceExit --testTimeout=30000";
+    
+    if (jestConfigPath) {
+        // Path inside Docker must be relative to /workspace
+        const relativeConfig = path.relative(rootDir, jestConfigPath).replace(/\\/g, '/');
+        jestCmd += ` --config=${relativeConfig}`;
+    }
 
-        const jestArgs = [
-            "--coverage",
-            "--coverageReporters=json-summary",
-            "--coverageReporters=json",
-            "--coverageReporters=lcov",
-            "--forceExit",
-            "--testTimeout=30000",
-        ];
+    await addJobLog(jobId, "INFO", `[SCRUM-140] Bắt đầu jest --coverage tại Docker container`).catch(() => { });
 
-        if (jestConfigPath) {
-            jestArgs.push(`--config=${jestConfigPath}`);
-        }
-
-        addJobLog(jobId, "INFO", `[SCRUM-140] Bắt đầu jest --coverage tại: ${rootDir}`).catch(() => { });
-
-        const child = spawn("npx", ["jest", ...jestArgs], {
-            cwd: rootDir,
-            shell: true,
-            env: { ...process.env, CI: "true", FORCE_COLOR: "0" },
-        });
-
-        const timer = setTimeout(async () => {
-            timedOut = true;
-            child.kill("SIGKILL");
-            const msg = `jest --coverage vượt quá timeout ${JEST_TIMEOUT_MS / 1000}s`;
-            await appendJobOutput(jobId, { stdout: outStr, stderr: errStr }).catch(() => { });
-            await addJobLog(jobId, "ERROR", msg).catch(() => { });
-            reject(new Error(msg));
-        }, JEST_TIMEOUT_MS);
-
-        let outStr = "";
-        let errStr = "";
-
-        child.stdout.on("data", (chunk) => {
-            const text = chunk.toString();
-            process.stdout.write(`[Jest ${jobId}] ${text}`);
-            outStr += text;
-        });
-
-        child.stderr.on("data", (chunk) => {
-            const text = chunk.toString();
-            process.stderr.write(`[Jest ${jobId}] ${text}`);
-            errStr += text;
-        });
-
-        child.on("close", async (code) => {
-            clearTimeout(timer);
-            if (timedOut) return;
-
-            await appendJobOutput(jobId, { stdout: outStr, stderr: errStr }).catch(() => { });
-
-            // Jest exit code 1 = có test fail nhưng coverage vẫn sinh → chấp nhận
-            // exit code >= 2 = lỗi nghiêm trọng (config sai, không chạy được)
-            if (code !== null && code >= 2) {
-                const msg = `[SCRUM-140] jest kết thúc với exit code ${code} (lỗi nghiêm trọng)`;
-                await addJobLog(jobId, "ERROR", msg).catch(() => { });
-                reject(new Error(msg));
-                return;
-            }
-
-            await addJobLog(jobId, "INFO", `[SCRUM-140] jest kết thúc (exit ${code}), coverage đã sinh.`).catch(() => { });
-            resolve({ exitCode: code });
-        });
-
-        child.on("error", (err) => {
-            clearTimeout(timer);
-            if (timedOut) return;
-            reject(err);
-        });
+    const result = await dockerRunner.run({
+        snapshotPath: rootDir,
+        command: jestCmd,
+        timeoutMs: JEST_TIMEOUT_MS,
+        jobId
     });
+
+    // Jest exit code 1 = có test fail nhưng coverage vẫn sinh → chấp nhận
+    // exit code >= 2 = lỗi nghiêm trọng (config sai, không chạy được)
+    if (!result.success && result.exitCode !== null && result.exitCode >= 2) {
+        const msg = `[SCRUM-140] jest kết thúc với exit code ${result.exitCode} (lỗi nghiêm trọng)`;
+        await addJobLog(jobId, "ERROR", msg).catch(() => { });
+        throw new Error(msg);
+    }
+
+    await addJobLog(jobId, "INFO", `[SCRUM-140] jest kết thúc (exit ${result.exitCode}), coverage đã sinh.`).catch(() => { });
+    return { exitCode: result.exitCode };
 };
 
 /**

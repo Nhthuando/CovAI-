@@ -54,7 +54,20 @@ export async function processBuildCfgJob(job) {
   }
 
   try {
-    await markJobRunning(jobId);
+    try {
+      await markJobRunning(jobId);
+    } catch (error) {
+      if (
+          error.message === "Job not found" ||
+          error.message === "Only queued jobs can start" ||
+          error.message === "Cannot start a canceled job"
+      ) {
+          console.log(`[BuildCfgJob ${jobId}] Bỏ qua vì Job không tồn tại hoặc không thể bắt đầu.`);
+          return;
+      }
+      throw error;
+    }
+
     const count = await buildCfgForSnapshot(snapshotId);
     await markJobSuccess(jobId, { count });
   } catch (error) {

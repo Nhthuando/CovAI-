@@ -4,7 +4,7 @@ import { randomUUID } from "crypto";
 import { getBucket } from "../config/firebase.js";
 import prisma from "../config/prisma.js";
 import { scanArchiveBomb } from "../middlewares/upload.middleware.js";
-import { processIngestJob } from "../services/ingestJob.service.js";
+import { addJobToQueue } from "../services/queue.service.js";
 import { createSnapshotIngestJob } from "../services/job.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 
@@ -160,8 +160,8 @@ export const ingestJob = async (req, res) => {
 
                 // ── SCRUM-74, 76, 77, 78: Kick-off pipeline bất đồng bộ ──────────
                 // KHÔNG dùng await → API trả về ngay, worker xử lý ngầm
-                processIngestJob(job.id).catch((err) => {
-                    console.error(`[IngestJob] Lỗi không mong muốn từ pipeline Job ${job.id}:`, err);
+                addJobToQueue("INGEST", job.id).catch((err) => {
+                    console.error("Lỗi khi thêm INGEST vào queue:", err);
                 });
 
                 // ── Trả về kết quả ngay cho Frontend ─────────────────────────────

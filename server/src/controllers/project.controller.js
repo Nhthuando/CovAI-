@@ -27,7 +27,7 @@ import {
   createAnalysisJob,
 } from "../services/project.service.js";
 import { createBuildCfgJob } from "../services/job.service.js";
-import { processBuildCfgJob } from "../services/buildCfgJob.service.js";
+import { addJobToQueue } from "../services/queue.service.js";
 
 class ProjectController {
   /**
@@ -96,6 +96,7 @@ class ProjectController {
           createdAt: p.createdAt,
           updatedAt: p.updatedAt,
           snapshotCount: p._count.snapshots,
+          latestSnapshotId: p.snapshots?.[0]?.id || null,
         })),
       });
     } catch (error) {
@@ -127,6 +128,53 @@ class ProjectController {
       return res.status(500).json({
         success: false,
         message: "Failed to get project",
+      });
+    }
+  }
+
+  /**
+   * GET /projects/:id/snapshots
+   */
+  async listSnapshots(req, res) {
+    try {
+      const { id: projectId } = req.params;
+
+      // Verify project ownership
+      const project = await prisma.project.findFirst({
+        where: { id: projectId, ownerId: req.user.id },
+      });
+      if (!project) {
+        return res.status(404).json({
+          success: false,
+          message: "Project not found or unauthorized",
+        });
+      }
+
+      const snapshots = await prisma.projectSnapshot.findMany({
+        where: { projectId },
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          source: true,
+          checksum: true,
+          commitSha: true,
+          storagePath: true,
+          rootDir: true,
+          hasJest: true,
+          jestCommand: true,
+          createdAt: true,
+        },
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: snapshots,
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to get snapshots",
       });
     }
   }
@@ -284,9 +332,9 @@ class ProjectController {
         userId: req.user.id,
       });
 
-      // SCRUM-138..144: Kick-off full pipeline bất đồng bộ (không await)
-      processRunTestsJob(job.id).catch((err) => {
-        console.error("Lỗi khi chạy RUN_TESTS pipeline ngầm:", err);
+      // SCRUM-138..144: Kick-off full pipeline bất đồng bộ qua Queue
+      addJobToQueue("RUN_TESTS", job.id).catch((err) => {
+        console.error("Lỗi khi thêm RUN_TESTS vào queue:", err);
       });
 
       return res.status(201).json({
@@ -345,8 +393,8 @@ class ProjectController {
         userId: req.user.id,
       });
 
-      processBuildCfgJob(job.id).catch((err) => {
-        console.error("Lỗi khi chạy BUILD_CFG pipeline ngầm:", err);
+      addJobToQueue("BUILD_CFG", job.id).catch((err) => {
+        console.error("Lỗi khi thêm BUILD_CFG vào queue:", err);
       });
 
       return res.status(201).json({
@@ -620,8 +668,8 @@ class ProjectController {
       });
 
       // Kick-off full pipeline bất đồng bộ (không await)
-      processAiSuggestJob(job.id).catch((err) => {
-        console.error("Lỗi khi chạy AI_SUGGEST pipeline ngầm:", err);
+      addJobToQueue("AI_SUGGEST", job.id).catch((err) => {
+        console.error("Lỗi khi thêm AI_SUGGEST vào queue:", err);
       });
 
       return res.status(202).json({
@@ -676,8 +724,8 @@ class ProjectController {
         userId: req.user.id,
       });
 
-      processAiTestsJob(job.id).catch((err) => {
-        console.error("Lỗi khi chạy AI_TESTS pipeline ngầm:", err);
+      addJobToQueue("AI_TESTS", job.id).catch((err) => {
+        console.error("Lỗi khi thêm AI_TESTS vào queue:", err);
       });
 
       return res.status(202).json({
@@ -738,6 +786,35 @@ The user is working on project: ${project.name}.
           prompt += `${msg.role === "user" ? "User" : "Assistant"}: ${msg.content}\n`;
         });
         prompt += "----------------------------\n";
+      }
+
+      if (message.trim().toLowerCase() === "analyze coverage") {
+        const latestSnapshot = await prisma.projectSnapshot.findFirst({
+          where: { projectId },
+          orderBy: { createdAt: "desc" },
+        });
+
+        if (latestSnapshot) {
+          const summary = await prisma.coverageSummary.findUnique({
+            where: { snapshotId: latestSnapshot.id }
+          });
+          const files = await prisma.coverageFile.findMany({
+            where: { snapshotId: latestSnapshot.id }
+          });
+
+          if (summary && files.length > 0) {
+            prompt += `\n--- Coverage Data for Analysis ---\n`;
+            prompt += `Overall Coverage: Lines ${summary.linesPct}%, Branches ${summary.branchesPct}%, Functions ${summary.funcsPct}%, Statements ${summary.stmtsPct}%\n`;
+            prompt += `File Coverage Details:\n`;
+            files.forEach(f => {
+              prompt += `- ${f.filePath}: Lines ${f.linesPct}%, Branches ${f.branchesPct}%, Functions ${f.funcsPct}%\n`;
+            });
+            prompt += `----------------------------------\n`;
+            prompt += `Please analyze this coverage data, point out any critical files lacking tests, and suggest which files/functions the user should write tests for next. Do not ask for the coverage report, as it is provided above.\n`;
+          } else {
+            prompt += `\n(System Note: User requested coverage analysis, but no coverage data was found in the database. Please inform the user they need to run tests to generate coverage first.)\n`;
+          }
+        }
       }
 
       prompt += `\nUser: ${message}\nAssistant:`;
@@ -942,8 +1019,8 @@ The user is working on project: ${project.name}.
       });
 
       // Run pipeline in the background
-      processAiTestsJob(job.id).catch((err) => {
-        console.error("Lỗi khi chạy AI_TESTS (FULL) pipeline ngầm:", err);
+      addJobToQueue("AI_TESTS", job.id).catch((err) => {
+        console.error("Lỗi khi thêm AI_TESTS vào queue:", err);
       });
 
       return res.status(202).json({

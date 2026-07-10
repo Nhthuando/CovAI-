@@ -102,7 +102,7 @@ function getAllFiles(dirPath, arrayOfFiles = []) {
 
     files.forEach(file => {
         if (fs.statSync(dirPath + "/" + file).isDirectory()) {
-            if (file !== 'node_modules' && file !== '.git' && file !== 'dist' && file !== 'build') {
+            if (file !== 'node_modules' && file !== '.git' && file !== 'dist' && file !== 'build' && file !== 'coverage') {
                 arrayOfFiles = getAllFiles(dirPath + "/" + file, arrayOfFiles);
             }
         } else {

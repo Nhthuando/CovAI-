@@ -141,6 +141,11 @@ export const listProjects = async (userId) => {
             storageBasePath: true,
             createdAt: true,
             updatedAt: true,
+            snapshots: {
+                orderBy: { createdAt: "desc" },
+                take: 1,
+                select: { id: true }
+            },
             _count: {
                 select: {
                     snapshots: true,
@@ -253,6 +258,27 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
             await prisma.projectSnapshot.update({
                 where: { id: snapshot.id },
                 data: { rootDir: sourcePath },
+            });
+
+            // Sau khi giải nén, detect Jest metadata ngay
+            const { detectJest } = await import("../utils/jestDetector.js");
+            const detection = detectJest(sourcePath);
+            
+            await prisma.projectSnapshot.update({
+                where: { id: snapshot.id },
+                data: { 
+                   hasJest: detection.hasJest,
+                   jestCommand: detection.jestCommand
+                },
+            });
+
+            await prisma.project.update({
+                where: { id: projectId },
+                data: {
+                   hasJest: detection.hasJest,
+                   jestConfigPath: detection.configPath,
+                   jestCommand: detection.jestCommand
+                },
             });
 
             await updateJobProgress(job.id, 100).catch(() => {});

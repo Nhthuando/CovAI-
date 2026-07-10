@@ -9,6 +9,7 @@ const router = express.Router();
 
 router.post(
   "/projects/:projectId/import-github-url",
+  authMiddleware,
   cloneGitHubRepositoryByUrl,
 );
 

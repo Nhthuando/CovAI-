@@ -313,8 +313,8 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
         console.log("🔍 Cyclomatic data parsed:", data);
         console.log("🔍 activeTabId:", activeTabId);
 
-        // If data is not an array, maybe it's { results: [...] } or similar?
-        const arrayData = Array.isArray(data) ? data : (data.results || []);
+        // If data is not an array, maybe it's { results: [...] } or { data: [...] }
+        const arrayData = Array.isArray(data) ? data : (data.data || data.results || []);
 
         if (Array.isArray(arrayData)) {
           console.log("🔍 Processing array data of length:", arrayData.length);
@@ -327,7 +327,7 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
             if (!newComplexities[key]) newComplexities[key] = {};
             newComplexities[key][item.functionName] = {
               value: item.value,
-              decisionPoints: item.decisionPoints
+              decisionPoints: item.decisionPoints !== undefined ? item.decisionPoints : Math.max(0, item.value - 1)
             };
           });
           console.log("🔍 complexities map keys:", Object.keys(newComplexities));
@@ -421,13 +421,16 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
 
   // Parse content into lines with tokens
   const lines = currentFile.content
-    ? currentFile.content.split("\n").map((line, i) => ({
-      lineNum: i + 1,
-      tokens: tokenizeLine(line, lang),
-      isFunction: line.includes("function ") || line.includes("=>"),
-      functionName: line.match(/(?:async\s+)?function\s+([a-zA-Z0-9_$]+)/)?.[1]
-        ?? line.match(/(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s*)?\(/)?.[1]
-    }))
+    ? currentFile.content.split("\n").map((line, i) => {
+      const fnName = line.match(/(?:async\s+)?function\s+([a-zA-Z0-9_$]+)/)?.[1]
+        ?? line.match(/(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s*)?\(/)?.[1];
+      return {
+        lineNum: i + 1,
+        tokens: tokenizeLine(line, lang),
+        isFunction: !!fnName,
+        functionName: fnName
+      };
+    })
     : [];
 
   const handleAnalyze = (functionName) => {
@@ -539,11 +542,11 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
                 }
                 return (
                   <React.Fragment key={line.lineNum}>
-                    {line.isFunction && (
+                    {line.isFunction && comp && (
                       <div className="px-[60px] py-1">
                         <CodeLens
-                          complexity={comp?.value || 0}
-                          decisionPoints={comp?.decisionPoints || 0}
+                          complexity={comp.value}
+                          decisionPoints={comp.decisionPoints}
                         />
                       </div>
                     )}

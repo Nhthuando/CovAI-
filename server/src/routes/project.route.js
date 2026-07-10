@@ -10,6 +10,7 @@ router.use(authMiddleware);
 router.post("/", projectController.createProject);
 router.get("/", projectController.listProjects);
 router.get("/:id", projectController.getProjectById);
+router.get("/:id/snapshots", projectController.listSnapshots);
 router.get("/:id/tree", projectController.getProjectTree);
 router.get("/:id/file-content", projectController.getFileContent);
 router.post(

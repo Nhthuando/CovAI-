@@ -1,8 +1,8 @@
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { createInstallDepsJob, createRunTestsJob } from "../services/job.service.js";
-import { processInstallDepsJob } from "../services/installDeps.service.js";
 import { processCoverageJob } from "../services/coverageRunner.service.js";
+import { addJobToQueue } from "../services/queue.service.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -153,33 +153,14 @@ export const runCoverage = async (req, res) => {
             userId,
         });
 
-        // Kick-off pipeline bất đồng bộ: INSTALL_DEPS → RUN_TESTS
-        // KHÔNG await → API trả về ngay
-        (async () => {
-            try {
-                // Bước 1: npm install
-                await processInstallDepsJob(installJob.id);
-
-                // Kiểm tra install có thành công không
-                const updatedInstallJob = await prisma.job.findUnique({ where: { id: installJob.id } });
-                if (updatedInstallJob?.status !== "SUCCESS") {
-                    console.error(`[Coverage Pipeline] INSTALL_DEPS thất bại, bỏ qua RUN_TESTS cho snapshot ${snapshotId}`);
-                    return;
-                }
-
-                // Bước 2: Tạo và chạy RUN_TESTS Job
-                const runJob = await createRunTestsJob({
-                    projectId: snapshot.projectId,
-                    snapshotId,
-                    userId,
-                });
-
-                await processCoverageJob(runJob.id);
-
-            } catch (pipelineError) {
-                console.error(`[Coverage Pipeline] Lỗi pipeline cho snapshot ${snapshotId}:`, pipelineError);
-            }
-        })();
+        // Kick-off pipeline bất đồng bộ qua Queue (COVERAGE_PIPELINE)
+        addJobToQueue("COVERAGE_PIPELINE", installJob.id, {
+            snapshotId,
+            userId,
+            projectId: snapshot.projectId
+        }).catch((err) => {
+            console.error(`[Coverage Pipeline] Lỗi khi thêm vào queue:`, err);
+        });
 
         return res.status(200).json({
             success: true,
@@ -278,7 +259,6 @@ export const getCoverageFiles = async (req, res) => {
                     branchesPct: true,
                     funcsPct: true,
                     stmtsPct: true,
-                    createdAt: true,
                 },
             }),
             prisma.coverageFile.count({ where: { snapshotId } }),
@@ -413,7 +393,6 @@ export const getCoverageFunctions = async (req, res) => {
                     startLine: true,
                     endLine: true,
                     hit: true,
-                    createdAt: true,
                 },
             }),
             prisma.coverageFunction.count({ where }),
