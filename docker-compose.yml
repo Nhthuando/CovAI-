@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: covai_server
+    ports:
+      - "5000:5000"
+    environment:
+      # Ghi đè biến REDIS_URL để dùng Redis trong Docker
+      - REDIS_URL=redis://redis:6379
+      - DISABLE_DOCKER_RUNNER=true
+    env_file:
+      - ./server/.env
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: covai_client
+    ports:
+      - "80:80"
+      - "5173:80" # Map thêm port 5173 vì trong backend đang setup CORS cho origin này
+    depends_on:
+      - server
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: covai_redis
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+volumes:
+  redis_data:

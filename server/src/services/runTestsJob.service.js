@@ -325,6 +325,22 @@ export const processRunTestsJob = async (jobId) => {
 
         console.log(`[RunTestsJob ${jobId}] Pipeline hoàn thành thành công.`);
 
+        // Chain to BUILD_CFG
+        try {
+            const { default: prisma } = await import("../config/prisma.js");
+            const buildCfgJob = await prisma.job.findFirst({
+                where: { snapshotId, type: "BUILD_CFG", status: "QUEUED" },
+                orderBy: { createdAt: "desc" }
+            });
+            if (buildCfgJob) {
+                const { addJobToQueue } = await import("./queue.service.js");
+                await addJobToQueue("BUILD_CFG", buildCfgJob.id);
+                console.log(`[RunTestsJob ${jobId}] Đã tự động trigger BUILD_CFG job: ${buildCfgJob.id}`);
+            }
+        } catch (chainErr) {
+            console.error(`[RunTestsJob ${jobId}] Lỗi khi trigger BUILD_CFG:`, chainErr);
+        }
+
     } catch (error) {
         console.error(`[RunTestsJob ${jobId}] Lỗi pipeline:`, error);
         await addJobLog(jobId, "ERROR", `Lỗi pipeline: ${error.message}`).catch(() => { });
@@ -332,5 +348,21 @@ export const processRunTestsJob = async (jobId) => {
         await markJobFailed(jobId, error).catch((markErr) => {
             console.error(`[RunTestsJob ${jobId}] Không thể đánh dấu FAILED:`, markErr);
         });
+
+        // Fail pending BUILD_CFG if this fails
+        try {
+            const job = await getJobById(jobId);
+            const { default: prisma } = await import("../config/prisma.js");
+            const buildCfgJob = await prisma.job.findFirst({
+                where: { snapshotId: job.snapshotId, type: "BUILD_CFG", status: "QUEUED" },
+                orderBy: { createdAt: "desc" }
+            });
+            if (buildCfgJob) {
+                await markJobFailed(buildCfgJob.id, new Error(`Failed because RUN_TESTS pipeline failed: ${error.message}`));
+                console.log(`[RunTestsJob ${jobId}] Đã đánh dấu failed cho BUILD_CFG job: ${buildCfgJob.id}`);
+            }
+        } catch (failChainErr) {
+            console.error(`[RunTestsJob ${jobId}] Lỗi khi fail BUILD_CFG:`, failChainErr);
+        }
     }
 };

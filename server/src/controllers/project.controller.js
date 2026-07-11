@@ -705,13 +705,20 @@ class ProjectController {
   async runAiTests(req, res) {
     try {
       const { id: projectId } = req.params;
-      const { snapshotId } = req.body;
+      let snapshotId = req.body?.snapshotId;
 
-      if (!snapshotId || typeof snapshotId !== "string") {
-        return res.status(400).json({
-          success: false,
-          message: "snapshotId is required and must be a string",
+      if (!snapshotId) {
+        const latestSnapshot = await prisma.projectSnapshot.findFirst({
+          where: { projectId },
+          orderBy: { createdAt: "desc" },
         });
+        if (!latestSnapshot) {
+          return res.status(404).json({
+            success: false,
+            message: "No snapshot found for this project",
+          });
+        }
+        snapshotId = latestSnapshot.id;
       }
 
       const { createAiTestsJob } = await import("../services/job.service.js");
@@ -997,13 +1004,20 @@ The user is working on project: ${project.name}.
   async generateFullTest(req, res) {
     try {
       const { id: projectId } = req.params;
-      const { snapshotId } = req.body;
+      let snapshotId = req.body?.snapshotId;
 
-      if (!snapshotId || typeof snapshotId !== "string") {
-        return res.status(400).json({
-          success: false,
-          message: "snapshotId is required and must be a string",
+      if (!snapshotId) {
+        const latestSnapshot = await prisma.projectSnapshot.findFirst({
+          where: { projectId },
+          orderBy: { createdAt: "desc" },
         });
+        if (!latestSnapshot) {
+          return res.status(404).json({
+            success: false,
+            message: "No snapshot found for this project",
+          });
+        }
+        snapshotId = latestSnapshot.id;
       }
 
       const { createAiTestsJob } = await import("../services/job.service.js");

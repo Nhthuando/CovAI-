@@ -24,32 +24,21 @@ const overlayVariants = {
 };
 
 const contentVariants = {
-  hidden: { opacity: 0, y: 24, scale: 0.97 },
+  hidden: { opacity: 0, y: 15, scale: 0.98 },
   visible: {
     opacity: 1,
     y: 0,
     scale: 1,
     transition: {
-      duration: 0.5,
-      ease: [0.22, 1, 0.36, 1],
-      staggerChildren: 0.08,
-      delayChildren: 0.15,
+      duration: 0.3,
+      ease: "easeOut",
     },
   },
   exit: {
     opacity: 0,
-    y: 16,
+    y: 10,
     scale: 0.98,
-    transition: { duration: 0.25 },
-  },
-};
-
-const childVariants = {
-  hidden: { opacity: 0, y: 16 },
-  visible: {
-    opacity: 1,
-    y: 0,
-    transition: { duration: 0.4, ease: "easeOut" },
+    transition: { duration: 0.2 },
   },
 };
 
@@ -172,7 +161,6 @@ export default function ImportLayout({ onClose, onSuccess }) {
           >
             {/* ── Breadcrumb ─────────────────────────────────────── */}
             <motion.div
-              variants={childVariants}
               className="flex items-center"
               style={{ gap: 8, marginBottom: 40 }}
             >
@@ -210,13 +198,12 @@ export default function ImportLayout({ onClose, onSuccess }) {
 
             {/* ── Main Card (Split Layout) ───────────────────────── */}
             <motion.div
-              variants={childVariants}
               className="rounded-2xl overflow-hidden"
               style={{
                 background: "#111827",
                 border: "1px solid rgba(255,255,255,0.08)",
-                boxShadow:
-                  "0 8px 64px rgba(0,0,0,0.5), 0 0 80px rgba(124,58,237,0.04)",
+                boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+                willChange: "transform, opacity"
               }}
             >
               <div
@@ -225,7 +212,6 @@ export default function ImportLayout({ onClose, onSuccess }) {
               >
                 {/* ── Left Panel: Import Info + Local Upload ── */}
                 <motion.div
-                  variants={childVariants}
                   className="flex flex-col lg:w-[38%]"
                   style={{
                     padding: "40px 32px",
@@ -270,7 +256,6 @@ export default function ImportLayout({ onClose, onSuccess }) {
 
                 {/* ── Right Panel: GitHub Import ── */}
                 <motion.div
-                  variants={childVariants}
                   className="flex flex-col flex-1 lg:w-[62%] relative"
                   style={{
                     padding: "40px 32px",
@@ -281,9 +266,7 @@ export default function ImportLayout({ onClose, onSuccess }) {
                     <div
                       className="absolute inset-0 z-10 flex flex-col items-center justify-center"
                       style={{
-                        background: "rgba(10, 14, 20, 0.75)",
-                        backdropFilter: "blur(4px)",
-                        WebkitBackdropFilter: "blur(4px)",
+                        background: "rgba(10, 14, 20, 0.9)",
                         borderRadius: "0 16px 16px 0",
                       }}
                     >
@@ -390,7 +373,6 @@ export default function ImportLayout({ onClose, onSuccess }) {
 
             {/* ── Bottom Help Text ───────────────────────────────── */}
             <motion.div
-              variants={childVariants}
               className="flex items-center justify-center"
               style={{
                 marginTop: 32,

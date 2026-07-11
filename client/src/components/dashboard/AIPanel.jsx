@@ -16,7 +16,7 @@ import {
   Shield,
 } from "lucide-react";
 
-import { sendAiChatMessageApi, getAiSuggestionsApi } from "../../services/project.service";
+import { sendAiChatMessageApi, getAiSuggestionsApi, generateSkeletonApi, generateFullTestsApi } from "../../services/project.service";
 import { useToast } from "./ToastContext";
 
 /* ── Initial conversation ───────────────────────────────── */
@@ -103,9 +103,20 @@ function CodeBlock({ code }) {
 }
 
 /* ── Chat Message ────────────────────────────────────────── */
-function ChatMessage({ msg }) {
+function ChatMessage({ msg, onRetry }) {
   const isUser = msg.role === "user";
   const [hovered, setHovered] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const handleAction = (label) => {
+    if (label === "Copy" || label === "Copied") {
+      navigator.clipboard.writeText(msg.content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } else if (label === "Retry" && onRetry) {
+      onRetry();
+    }
+  };
 
   const renderContent = (text) => {
     const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
@@ -254,6 +265,30 @@ function ChatMessage({ msg }) {
           </div>
         )}
 
+        {msg.options && (
+          <div className="flex gap-3" style={{ marginTop: "16px", marginBottom: "8px", flexWrap: "wrap" }}>
+            {msg.options.map((opt) => (
+              <button
+                key={opt.label}
+                onClick={() => opt.onClick && opt.onClick(opt.action)}
+                className="flex-1 rounded-lg transition-colors hover:bg-[rgba(124,58,237,0.2)]"
+                style={{
+                  padding: "10px 12px",
+                  background: "rgba(124,58,237,0.1)",
+                  border: "1px solid rgba(124,58,237,0.3)",
+                  color: "#e6edf3",
+                  fontSize: 12,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Hover actions */}
         <AnimatePresence>
           {hovered && !isUser && (
@@ -266,22 +301,24 @@ function ChatMessage({ msg }) {
               style={{ zIndex: 10 }}
             >
               {[
-                { icon: Copy, label: "Copy" },
+                { icon: copied ? Check : Copy, label: copied ? "Copied" : "Copy" },
                 { icon: RotateCcw, label: "Retry" },
               ].map(({ icon: Icon, label }) => (
                 <motion.button
                   key={label}
                   whileTap={{ scale: 0.9 }}
                   title={label}
-                  className="flex items-center gap-1 px-2 py-1 rounded-md text-xs"
+                  onClick={() => handleAction(label)}
+                  className="flex items-center gap-1.5 rounded-md text-xs cursor-pointer"
                   style={{
+                    padding: "6px 10px",
                     background: "#161b22",
                     border: "1px solid rgba(255,255,255,0.08)",
-                    color: "#6e7681",
+                    color: copied && label === "Copied" ? "#4ade80" : "#6e7681",
                     fontFamily: "var(--font-sans)",
                   }}
                 >
-                  <Icon size={10} />
+                  <Icon size={11} />
                   {label}
                 </motion.button>
               ))}
@@ -487,7 +524,10 @@ function QuickActions({ onAction }) {
   return (
     <div
       className="flex gap-3 flex-shrink-0"
-      style={{ padding: "8px 24px 12px" }}
+      style={{
+        padding: "8px 24px 12px",
+        flexWrap: "wrap"
+      }}
     >
       {actions.map(({ label, icon: Icon, color }) => (
         <motion.button
@@ -495,17 +535,19 @@ function QuickActions({ onAction }) {
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.97 }}
           onClick={() => onAction(label)}
-          className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs"
+          className="flex-1 flex items-center justify-center gap-2 rounded-xl text-xs"
           style={{
+            padding: "10px 14px",
             background: "rgba(255,255,255,0.03)",
             border: "1px solid rgba(255,255,255,0.07)",
             color: "#6e7681",
             fontFamily: "var(--font-sans)",
             cursor: "pointer",
             transition: "all 0.2s ease",
+            whiteSpace: "nowrap",
           }}
         >
-          <Icon size={12} style={{ color }} />
+          <Icon size={14} style={{ color }} />
           {label}
         </motion.button>
       ))}
@@ -619,7 +661,11 @@ export default function AIPanel({ projectId }) {
               id: Date.now(),
               role: "assistant",
               timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
-              content: "Không tìm thấy file test nào được generate trong database. Hãy chắc chắn rằng dự án đã chạy xong tiến trình phân tích AI."
+              content: "Không tìm thấy file test nào được tạo trong database.\nBạn muốn tôi tạo **Skeleton Test** (khung test cơ bản) hay **Full Test** (test case chi tiết) cho dự án này?",
+              options: [
+                { label: "Generate Skeleton", action: "generate_skeleton", onClick: handleOptionClick },
+                { label: "Generate Full Test", action: "generate_full", onClick: handleOptionClick }
+              ]
             }
           ]);
         }
@@ -630,6 +676,35 @@ export default function AIPanel({ projectId }) {
       }
     } else {
       handleSend(label);
+    }
+  };
+
+  const handleOptionClick = async (action) => {
+    if (action === "generate_skeleton" || action === "generate_full") {
+      setIsTyping(true);
+      try {
+        if (action === "generate_skeleton") {
+          await generateSkeletonApi(projectId);
+          setMessages(m => [...m, {
+            id: Date.now(),
+            role: "assistant",
+            timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
+            content: "🚀 Đã bắt đầu tiến trình tạo Skeleton Test. Tiến trình này chạy ngầm, bạn có thể kiểm tra tiến độ ở tab Queue. Khi hoàn thành hãy ấn nút **View Generated Tests** để xem file sinh ra."
+          }]);
+        } else {
+          await generateFullTestsApi(projectId);
+          setMessages(m => [...m, {
+            id: Date.now(),
+            role: "assistant",
+            timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
+            content: "🚀 Đã bắt đầu tiến trình tạo Full Test. Tiến trình này chạy ngầm, bạn có thể kiểm tra tiến độ ở tab Queue. Khi hoàn thành hãy ấn nút **View Generated Tests** để xem file sinh ra."
+          }]);
+        }
+      } catch (e) {
+        showToast({ type: "error", title: "Lỗi", message: "Không thể bắt đầu tạo test." });
+      } finally {
+        setIsTyping(false);
+      }
     }
   };
 
@@ -721,8 +796,23 @@ export default function AIPanel({ projectId }) {
         }}
       >
         <AnimatePresence>
-          {messages.map((msg) => (
-            <ChatMessage key={msg.id} msg={msg} />
+          {messages.map((msg, index) => (
+            <ChatMessage 
+              key={msg.id} 
+              msg={msg} 
+              onRetry={() => {
+                let userMsg = null;
+                for (let i = index - 1; i >= 0; i--) {
+                  if (messages[i].role === "user") {
+                    userMsg = messages[i];
+                    break;
+                  }
+                }
+                if (userMsg) {
+                  handleSend(userMsg.content);
+                }
+              }} 
+            />
           ))}
           {isTyping && <TypingIndicator key="typing" />}
         </AnimatePresence>

@@ -35,22 +35,32 @@ export const dockerRunner = {
         addJobLog(jobId, "INFO", `[DockerRunner] Khởi động container với lệnh: ${command}`).catch(() => { });
       }
 
-      const args = [
-        "run",
-        "--rm",
-        "-v",
-        `${snapshotPath}:/workspace`,
-        "-w",
-        "/workspace",
-        "node:22",
-        "sh",
-        "-c",
-        command,
-      ];
+      // Check if we should run directly instead of docker
+      // In our docker-compose deployment, we don't have docker CLI installed inside the server container.
+      const useDocker = !process.env.DISABLE_DOCKER_RUNNER;
 
-      const child = spawn("docker", args);
+      let child;
+      let timer;
 
-      const timer = setTimeout(async () => {
+      if (useDocker) {
+        const args = [
+          "run",
+          "--rm",
+          "-v",
+          `${snapshotPath}:/workspace`,
+          "-w",
+          "/workspace",
+          "node:22",
+          "sh",
+          "-c",
+          command,
+        ];
+        child = spawn("docker", args);
+      } else {
+        child = spawn(command, { shell: true, cwd: snapshotPath });
+      }
+
+      timer = setTimeout(async () => {
         timedOut = true;
         child.kill("SIGKILL");
         if (jobId) {
@@ -58,7 +68,7 @@ export const dockerRunner = {
         }
         reject(
           new ServiceError(
-            `Docker execution timed out after ${timeoutMs}ms`,
+            `Execution timed out after ${timeoutMs}ms`,
             408,
           ),
         );
