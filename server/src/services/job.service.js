@@ -482,6 +482,45 @@ export const markJobFailed = async (jobId, error) => {
 };
 
 /**
+ * Transitions a QUEUED job directly to FAILED.
+ * Used when a prerequisite job fails and dependent QUEUED jobs need to be
+ * cancelled with an error message rather than left stuck.
+ *
+ * @param {string}  jobId
+ * @param {unknown} error  Any thrown value
+ * @returns {Promise<object>} Updated Job record
+ */
+export const markQueuedJobFailed = async (jobId, error) => {
+    assertStringField(jobId, "jobId");
+
+    const normalizedError = normalizeJobError(error);
+
+    const currentJob = await prisma.job.findUnique({
+        where: { id: jobId },
+        select: { id: true, status: true },
+    });
+
+    if (!currentJob) throw new ServiceError("Job not found", 404);
+    if (currentJob.status !== "QUEUED")
+        throw new ServiceError("Only queued jobs can be marked as failed via this method", 400);
+
+    const finishedAt = new Date();
+
+    const job = await prisma.job.update({
+        where: { id: jobId },
+        data: {
+            status: "FAILED",
+            finishedAt,
+            computeTimeMs: 0,
+            errorMessage: normalizedError.message,
+        },
+    });
+
+    await addJobLog(job.id, "ERROR", `Job failed (from QUEUED): ${normalizedError.message}`);
+    return job;
+};
+
+/**
  * Cancels a QUEUED or RUNNING job.
  *
  * @param {string} jobId

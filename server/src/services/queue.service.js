@@ -8,7 +8,7 @@ import { processBuildCfgJob } from './buildCfgJob.service.js';
 import { processIngestJob } from './ingestJob.service.js';
 import { processInstallDepsJob } from './installDeps.service.js';
 import { processCoverageJob } from './coverageRunner.service.js';
-import { getJobById, markJobFailed, createRunTestsJob } from './job.service.js';
+import { getJobById, markJobFailed, markQueuedJobFailed, createRunTestsJob } from './job.service.js';
 import prisma from "../config/prisma.js";
 
 const redisOptions = {
@@ -78,6 +78,8 @@ const worker = new Worker('covai-jobs', async (job) => {
             const dbJob = await getJobById(jobId);
             if (dbJob && dbJob.status === 'RUNNING') {
                 await markJobFailed(jobId, error);
+            } else if (dbJob && dbJob.status === 'QUEUED') {
+                await markQueuedJobFailed(jobId, error);
             }
         } catch (fallbackError) {
             console.error(`[Queue] Không thể markJobFailed cho Job ${jobId}:`, fallbackError);

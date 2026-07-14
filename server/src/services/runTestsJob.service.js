@@ -6,6 +6,7 @@ import {
     markJobRunning,
     markJobSuccess,
     markJobFailed,
+    markQueuedJobFailed,
     updateJobProgress,
     getJobById,
     addJobLog,
@@ -358,7 +359,7 @@ export const processRunTestsJob = async (jobId) => {
                 orderBy: { createdAt: "desc" }
             });
             if (buildCfgJob) {
-                await markJobFailed(buildCfgJob.id, new Error(`Failed because RUN_TESTS pipeline failed: ${error.message}`));
+                await markQueuedJobFailed(buildCfgJob.id, new Error(`Failed because RUN_TESTS pipeline failed: ${error.message}`));
                 console.log(`[RunTestsJob ${jobId}] Đã đánh dấu failed cho BUILD_CFG job: ${buildCfgJob.id}`);
             }
         } catch (failChainErr) {

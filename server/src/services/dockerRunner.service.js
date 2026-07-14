@@ -1,4 +1,4 @@
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import { ServiceError } from "../utils/serviceError.js";
 import { addJobLog } from "./job.service.js";
 import { appendJobOutput } from "./jobOutput.service.js";
@@ -6,8 +6,28 @@ import { appendJobOutput } from "./jobOutput.service.js";
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes default
 
 /**
+ * Auto-detect whether Docker CLI is available on this host.
+ * Caches the result so we only check once at startup.
+ */
+const detectDockerAvailable = () => {
+  if (process.env.DISABLE_DOCKER_RUNNER) return false;
+  try {
+    const result = spawnSync("docker", ["--version"], { timeout: 5000, stdio: "pipe" });
+    return result.status === 0;
+  } catch {
+    return false;
+  }
+};
+
+const DOCKER_AVAILABLE = detectDockerAvailable();
+if (!DOCKER_AVAILABLE) {
+  console.warn("[DockerRunner] Docker không khả dụng — sẽ chạy lệnh trực tiếp qua shell.");
+}
+
+/**
  * Docker Runner Service
  * Executes commands inside a transient Node.js Docker container.
+ * Falls back to direct shell execution when Docker is not available.
  */
 export const dockerRunner = {
   /**
@@ -32,17 +52,14 @@ export const dockerRunner = {
       // sh -c: Wrap command to handle complex strings
 
       if (jobId) {
-        addJobLog(jobId, "INFO", `[DockerRunner] Khởi động container với lệnh: ${command}`).catch(() => { });
+        const mode = DOCKER_AVAILABLE ? "Docker container" : "shell trực tiếp";
+        addJobLog(jobId, "INFO", `[DockerRunner] Khởi động ${mode} với lệnh: ${command}`).catch(() => { });
       }
-
-      // Check if we should run directly instead of docker
-      // In our docker-compose deployment, we don't have docker CLI installed inside the server container.
-      const useDocker = !process.env.DISABLE_DOCKER_RUNNER;
 
       let child;
       let timer;
 
-      if (useDocker) {
+      if (DOCKER_AVAILABLE) {
         const args = [
           "run",
           "--rm",
@@ -93,10 +110,11 @@ export const dockerRunner = {
       child.on("error", async (err) => {
         clearTimeout(timer);
         if (timedOut) return;
+        const mode = DOCKER_AVAILABLE ? "Docker" : "shell";
         if (jobId) {
-          await addJobLog(jobId, "ERROR", `[DockerRunner] Lỗi khởi tạo Docker: ${err.message}`).catch(() => { });
+          await addJobLog(jobId, "ERROR", `[DockerRunner] Lỗi khởi tạo ${mode}: ${err.message}`).catch(() => { });
         }
-        reject(new ServiceError(`Failed to spawn Docker: ${err.message}`, 500));
+        reject(new ServiceError(`Failed to spawn ${mode}: ${err.message}`, 500));
       });
 
       child.on("close", async (code) => {
