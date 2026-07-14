@@ -309,7 +309,7 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
             type="button"
             onClick={() => {
               const clientId = import.meta.env.VITE_GITHUB_CLIENT_ID || "Ov23liQyAORXbj6NeqAB";
-              const redirectUri = "http://localhost:5173/auth/github/callback";
+              const redirectUri = `${window.location.origin}/auth/github/callback`;
               window.location.href = `https://github.com/login/oauth/authorize?client_id=${clientId}&scope=user:email repo&redirect_uri=${redirectUri}`;
             }}
             whileHover={{ scale: 1.02, background: "rgba(255,255,255,0.08)" }}
