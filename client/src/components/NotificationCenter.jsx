@@ -23,10 +23,8 @@ export const
         // Handle new notification from Socket.IO
         const handleNewNotification = useCallback((notification) => {
             console.log('[NotificationCenter] Received new notification:', notification);
-            console.log('[NotificationCenter] Current unreadCount before update:', unreadCount); // Log current unreadCount
             setNotifications(prev => [notification, ...prev]);
             setUnreadCount(prev => prev + 1);
-            console.log('[NotificationCenter] New unreadCount after update:', unreadCount + 1); // Log new unreadCount
             const toastEvent = new CustomEvent('showToast', {
                 detail: {
                     title: notification.title,
@@ -37,7 +35,7 @@ export const
                 }
             });
             window.dispatchEvent(toastEvent);
-        }, [setNotifications, setUnreadCount]); // Added dependencies for useCallback
+        }, [setNotifications, setUnreadCount]);
 
         // Use Socket.IO hook
         useSocket(userId, handleNewNotification);

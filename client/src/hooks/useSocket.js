@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 
-const SOCKET_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
 
 /**
  * Custom hook for Socket.IO connection management
@@ -31,6 +31,7 @@ export const useSocket = (userId, onNotification) => {
             setIsConnected(true);
             setError(null);
             socket.emit('subscribe_notifications', userId);
+            console.log('[Socket.IO] Emitted subscribe_notifications for user:', userId);
         });
 
         socket.on('disconnect', () => setIsConnected(false));
