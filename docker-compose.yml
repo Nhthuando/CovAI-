@@ -8,6 +8,10 @@ services:
     container_name: covai_server
     ports:
       - "5000:5000"
+    volumes:
+      - ./server:/app
+      - /app/node_modules
+    command: npm run dev
     environment:
       # Ghi đè biến REDIS_URL để dùng Redis trong Docker
       - REDIS_URL=redis://redis:6379
@@ -21,11 +25,14 @@ services:
   client:
     build:
       context: ./client
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     container_name: covai_client
     ports:
-      - "80:80"
-      - "5173:80" # Map thêm port 5173 vì trong backend đang setup CORS cho origin này
+      - "5173:5173"
+    volumes:
+      - ./client:/app
+      - /app/node_modules
+    command: npm run dev -- --host
     depends_on:
       - server
     restart: unless-stopped

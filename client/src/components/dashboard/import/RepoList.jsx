@@ -1,7 +1,12 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Search, Folder, Lock, User, Loader2 } from "lucide-react";
-import { getGithubRepositoriesApi, createProjectApi, importGithubRepoApi, getProjectsApi } from "../../../services/project.service";
+import {
+  getGithubRepositoriesApi,
+  createProjectApi,
+  importGithubRepoApi,
+  getProjectsApi,
+} from "../../../services/project.service";
 import { useToast } from "../ToastContext";
 
 /* ── Helper ─────────────────────────────────── */
@@ -26,11 +31,16 @@ function RepoItem({ repo, index, onClose, onSuccess, showToast }) {
   const handleImport = async () => {
     if (importing) return;
 
-    if (repo.language && repo.language !== "JavaScript" && repo.language !== "TypeScript") {
+    if (
+      repo.language &&
+      repo.language !== "JavaScript" &&
+      repo.language !== "TypeScript"
+    ) {
       showToast({
         type: "warning",
         title: "Language not supported",
-        message: "This project currently only supports JavaScript/Jest. Please wait for future updates.",
+        message:
+          "This project currently only supports JavaScript/Jest. Please wait for future updates.",
       });
       return;
     }
@@ -44,7 +54,10 @@ function RepoItem({ repo, index, onClose, onSuccess, showToast }) {
         projectId = projRes.data.id;
       } catch (createErr) {
         // Handle 409 — project already exists, find it and reuse
-        if (createErr.message?.includes("already exists") || createErr.message?.includes("Duplicate")) {
+        if (
+          createErr.message?.includes("already exists") ||
+          createErr.message?.includes("Duplicate")
+        ) {
           const { projects } = await getProjectsApi();
           const existing = projects?.find((p) => p.name === repo.name);
           if (existing) {
@@ -173,22 +186,24 @@ function RepoItem({ repo, index, onClose, onSuccess, showToast }) {
         style={{
           padding: "8px 20px",
           gap: 6,
-          background: importing ? "rgba(124,58,237,0.5)" : (hovered
-            ? "linear-gradient(135deg, #7c3aed, #6d28d9)"
-            : "rgba(255,255,255,0.06)"),
-          border: hovered && !importing
-            ? "1px solid rgba(124,58,237,0.4)"
-            : "1px solid rgba(255,255,255,0.08)",
+          background: importing
+            ? "rgba(124,58,237,0.5)"
+            : hovered
+              ? "linear-gradient(135deg, #7c3aed, #6d28d9)"
+              : "rgba(255,255,255,0.06)",
+          border:
+            hovered && !importing
+              ? "1px solid rgba(124,58,237,0.4)"
+              : "1px solid rgba(255,255,255,0.08)",
           color: hovered || importing ? "#fff" : "#8b949e",
           fontSize: 13,
           fontWeight: 500,
           fontFamily: "var(--font-sans)",
           transition: "all 0.2s ease",
-          boxShadow: hovered && !importing
-            ? "0 0 12px rgba(124,58,237,0.2)"
-            : "none",
+          boxShadow:
+            hovered && !importing ? "0 0 12px rgba(124,58,237,0.2)" : "none",
           opacity: importing ? 0.8 : 1,
-          cursor: importing ? "not-allowed" : "pointer"
+          cursor: importing ? "not-allowed" : "pointer",
         }}
         id={`repo-import-${repo.id}`}
       >
@@ -206,31 +221,47 @@ export default function RepoList({ onClose, onSuccess }) {
   const [repos, setRepos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const reposPerPage = 10;
   const { showToast } = useToast();
 
   useEffect(() => {
     getGithubRepositoriesApi()
-      .then(data => {
-        const mapped = Array.isArray(data) ? data.map(r => ({
-          id: r.id,
-          name: r.name,
-          language: r.language || "Unknown",
-          langColor: getLangColor(r.language),
-          updatedAt: new Date(r.updated_at || new Date()).toLocaleDateString(),
-          isPrivate: r.private,
-          owner: r.owner?.login
-        })) : [];
+      .then((data) => {
+        const mapped = Array.isArray(data)
+          ? data.map((r) => ({
+              id: r.id,
+              name: r.name,
+              language: r.language || "Unknown",
+              langColor: getLangColor(r.language),
+              updatedAt: new Date(
+                r.updated_at || new Date(),
+              ).toLocaleDateString(),
+              isPrivate: r.private,
+              owner: r.owner?.login,
+            }))
+          : [];
         setRepos(mapped);
       })
-      .catch(err => {
+      .catch((err) => {
         setErrorMsg(err.message);
       })
       .finally(() => setLoading(false));
   }, []);
 
   const filteredRepos = repos.filter((r) =>
-    r.name.toLowerCase().includes(searchQuery.toLowerCase())
+    r.name.toLowerCase().includes(searchQuery.toLowerCase()),
   );
+
+  const totalPages = Math.ceil(filteredRepos.length / reposPerPage);
+  const displayedRepos = filteredRepos.slice(
+    (currentPage - 1) * reposPerPage,
+    currentPage * reposPerPage,
+  );
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery]);
 
   return (
     <div className="flex flex-col" style={{ gap: 16 }}>
@@ -320,9 +351,16 @@ export default function RepoList({ onClose, onSuccess }) {
           <div className="flex flex-col items-center justify-center p-8 text-red-400 text-sm">
             {errorMsg}
           </div>
-        ) : filteredRepos.length > 0 ? (
-          filteredRepos.map((repo, i) => (
-            <RepoItem key={repo.id} repo={repo} index={i} onClose={onClose} onSuccess={onSuccess} showToast={showToast} />
+        ) : displayedRepos.length > 0 ? (
+          displayedRepos.map((repo, i) => (
+            <RepoItem
+              key={repo.id}
+              repo={repo}
+              index={i}
+              onClose={onClose}
+              onSuccess={onSuccess}
+              showToast={showToast}
+            />
           ))
         ) : (
           <motion.div
@@ -338,6 +376,31 @@ export default function RepoList({ onClose, onSuccess }) {
           </motion.div>
         )}
       </div>
+
+      {/* Pagination Controls */}
+      {totalPages > 1 && (
+        <div className="flex justify-center items-center gap-2 mt-2 pt-2 border-t border-[rgba(255,255,255,0.05)]">
+          <button
+            disabled={currentPage === 1}
+            onClick={() => setCurrentPage((curr) => Math.max(curr - 1, 1))}
+            className="px-2 py-1 text-xs text-[#8b949e] hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            Prev
+          </button>
+          <span className="text-[10px] text-[#484f58] uppercase font-bold">
+            {currentPage} / {totalPages}
+          </span>
+          <button
+            disabled={currentPage === totalPages}
+            onClick={() =>
+              setCurrentPage((curr) => Math.min(curr + 1, totalPages))
+            }
+            className="px-2 py-1 text-xs text-[#8b949e] hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            Next
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -75,18 +75,33 @@ export const getGithubRepositories = async (req, res) => {
     }
 
     // Sử dụng token đã giải mã để lấy repo từ GitHub API
-    const response = await fetch("https://api.github.com/user/repos", {
-      headers: {
-        Authorization: `token ${accessToken}`,
-        Accept: "application/vnd.github.v3+json",
-      },
-    });
+    let repos = [];
+    let page = 1;
+    const perPage = 15;
 
-    if (!response.ok) {
-      throw new Error("Không thể lấy repository từ GitHub!");
+    while (true) {
+      const response = await fetch(
+        `https://api.github.com/user/repos?per_page=${perPage}&page=${page}&sort=created&direction=desc`,
+        {
+          headers: {
+            Authorization: `token ${accessToken}`,
+            Accept: "application/vnd.github.v3+json",
+          },
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error("Không thể lấy repository từ GitHub!");
+      }
+
+      const pageRepos = await response.json();
+      if (pageRepos.length === 0) break;
+
+      repos = repos.concat(pageRepos);
+      if (pageRepos.length < perPage) break;
+      page++;
     }
 
-    const repos = await response.json();
     return res.status(200).json(repos);
   } catch (error) {
     console.error(error);
@@ -160,8 +175,12 @@ export const oAuthGithub = async (req, res) => {
     if (!accessToken)
       return res.status(400).json({ message: "Không thể lấy access token!" });
     const [userDetail, emailResponse] = await Promise.all([
-      fetch("https://api.github.com/user", { headers: { Authorization: `Bearer ${accessToken}` } }),
-      fetch("https://api.github.com/user/emails", { headers: { Authorization: `Bearer ${accessToken}` } })
+      fetch("https://api.github.com/user", {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }),
+      fetch("https://api.github.com/user/emails", {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }),
     ]);
 
     const userData = await userDetail.json();
@@ -169,7 +188,9 @@ export const oAuthGithub = async (req, res) => {
 
     const primaryEmail = emails.find((e) => e.primary)?.email ?? null;
     if (!primaryEmail) {
-      return res.status(400).json({ message: "Không lấy được email từ GitHub!" });
+      return res
+        .status(400)
+        .json({ message: "Không lấy được email từ GitHub!" });
     }
     let user = await prisma.user.findUnique({
       where: { email: primaryEmail },
