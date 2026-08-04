@@ -72,7 +72,10 @@ model ProjectSnapshot {
   coverageFuncs   CoverageFunction[]
   coverageSummary CoverageSummary?
   cyclomatics     Cyclomatic[]
+  codeHygieneIssues CodeHygieneIssue[]
+  codeHygieneSummary CodeHygieneSummary?
   jobs            Job[]
+  performanceMetric PerformanceMetric?
   project         Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@unique([projectId, checksum])
@@ -205,6 +208,49 @@ model AiContextCache {
   snapshot    ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 }
 
+model PerformanceMetric {
+  id                    String          @id @default(cuid())
+  snapshotId            String          @unique
+  performanceScore      Float
+  highRiskFunctionCount Int
+  averageComplexity     Float
+  coverageScore         Float
+  executionScore        Float?           @default(0)
+  executionTimeMs       Int?             @default(0)
+  riskLevel             RiskLevel       @default(MEDIUM)
+  createdAt             DateTime        @default(now())
+  snapshot              ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+}
+
+model CodeHygieneIssue {
+  id          String          @id @default(cuid())
+  snapshotId  String
+  filePath    String
+  line        Int
+  column      Int
+  type        IssueType
+  severity    Severity
+  message     String
+  rule        String
+  createdAt   DateTime        @default(now())
+  snapshot    ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@index([snapshotId])
+}
+
+model CodeHygieneSummary {
+  id            String          @id @default(cuid())
+  snapshotId    String          @unique
+  totalIssues   Int
+  infoCount     Int
+  warningCount  Int
+  highCount     Int
+  criticalCount Int
+  hygieneScore  Float           @default(0)
+  createdAt     DateTime        @default(now())
+  snapshot      ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+}
+
 model AiSuggestion {
   id           String               @id @default(cuid())
   projectId    String
@@ -274,8 +320,10 @@ enum JobType {
   RUN_TESTS
   PARSE_COVERAGE
   BUILD_CFG
+  PERFORMANCE_ANALYSIS
   AI_SUGGEST
   AI_TESTS
+  CODE_HYGIENE
 }
 
 enum JobStatus {
@@ -284,6 +332,12 @@ enum JobStatus {
   SUCCESS
   FAILED
   CANCELED
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
 }
 
 enum NotificationType {
@@ -301,4 +355,19 @@ enum AiSuggestionPriority {
   LOW
   MEDIUM
   HIGH
+}
+
+enum IssueType {
+  CONSOLE_LOG
+  DEBUGGER
+  TODO
+  FIXME
+  HACK
+}
+
+enum Severity {
+  INFO
+  WARNING
+  HIGH
+  CRITICAL
 }

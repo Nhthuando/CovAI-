@@ -8,6 +8,8 @@ import { processBuildCfgJob } from './buildCfgJob.service.js';
 import { processIngestJob } from './ingestJob.service.js';
 import { processInstallDepsJob } from './installDeps.service.js';
 import { processCoverageJob } from './coverageRunner.service.js';
+import { processCodeHygieneJob } from './codeHygieneJob.service.js';
+import { processPerformanceAnalysisJob } from './performanceJob.service.js';
 import { getJobById, markJobFailed, createRunTestsJob } from './job.service.js';
 import prisma from "../config/prisma.js";
 
@@ -43,6 +45,9 @@ const worker = new Worker('covai-jobs', async (job) => {
                 if (!dbJob) throw new Error(`Job ${jobId} not found`);
                 await processBuildCfgJob(dbJob);
                 break;
+            case 'PERFORMANCE_ANALYSIS':
+                await processPerformanceAnalysisJob(jobId);
+                break;
             case 'INGEST':
                 await processIngestJob(jobId);
                 break;
@@ -51,6 +56,9 @@ const worker = new Worker('covai-jobs', async (job) => {
                 break;
             case 'COVERAGE':
                 await processCoverageJob(jobId);
+                break;
+            case 'CODE_HYGIENE':
+                await processCodeHygieneJob(jobId);
                 break;
             case 'COVERAGE_PIPELINE':
                 // Custom pipeline cho coverage

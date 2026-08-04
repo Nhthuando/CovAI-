@@ -20,8 +20,10 @@ const JOB_TYPES = Object.freeze([
     "RUN_TESTS",
     "PARSE_COVERAGE",
     "BUILD_CFG",
+    "PERFORMANCE_ANALYSIS",
     "AI_SUGGEST",
     "AI_TESTS",
+    "CODE_HYGIENE",
 ]);
 
 /** Terminal statuses — a job in one of these states cannot be mutated. */
@@ -127,8 +129,14 @@ export const createRunTestsJob = createTypedJob("RUN_TESTS");
 /** Creates a queued BUILD_CFG job for a snapshot. */
 export const createBuildCfgJob = createTypedJob("BUILD_CFG");
 
+/** Creates a queued automatic performance-analysis job for a snapshot. */
+export const createPerformanceAnalysisJob = createTypedJob("PERFORMANCE_ANALYSIS");
+
 /** Creates a queued AI_SUGGEST job for a snapshot. */
 export const createAiSuggestJob = createTypedJob("AI_SUGGEST");
+
+/** Creates a queued CODE_HYGIENE job for a snapshot. */
+export const createCodeHygieneJob = createTypedJob("CODE_HYGIENE");
 
 /** Creates a queued AI_TESTS job for a snapshot. */
 export const createAiTestsJob = ({ projectId, snapshotId, userId, mode = "SKELETON" }) =>

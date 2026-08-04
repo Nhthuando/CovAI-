@@ -20,8 +20,11 @@ import fileRoutes from "./src/routes/file.routes.js";
 import notificationRoute from "./src/routes/notification.route.js";
 import { eventDispatcher, NOTIFICATION_EVENT } from "./src/utils/eventDispatcher.js";
 import analyticsRoute from "./src/routes/analytics.route.js";
+import codeHygieneRoute from "./src/routes/codeHygiene.route.js";
+import performanceRoute from "./src/routes/performance.route.js";
 import { globalLimiter } from "./src/middlewares/rateLimit.middleware.js";
 import "./src/services/queue.service.js";
+import "./src/services/codeHygieneJob.service.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -66,6 +69,8 @@ app.use("/api/ai-tests", aiTestRoute);
 app.use("/api/files", fileRoutes);
 app.use("/api/notifications", notificationRoute);
 app.use("/api/analytics", analyticsRoute);
+app.use("/api/code-hygiene", codeHygieneRoute);
+app.use("/api/performance", performanceRoute);
 
 app.get("/", (req, res) => {
   res.json({ message: "CovAI API is running" });
