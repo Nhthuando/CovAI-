@@ -1,4 +1,9 @@
 .understand-anything/
+/.agents/
+/.specify/
+/specs/
+/AGENTS.md
+
 # Logs
 logs
 *.log
