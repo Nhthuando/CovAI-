@@ -9,6 +9,7 @@ import CoverageDashboard from "./CoverageDashboard";
 import AIPanel from "./AIPanel";
 import ImportLayout from "./import/ImportLayout";
 import JobQueue from "./JobQueue";
+import ProjectArchitecturePanel from "./ProjectArchitecturePanel";
 import CFGCalculator from "./CFGCalculator";
 import SettingsSidebar from "./settings/SettingsSidebar";
 import UserProfile from "./settings/UserProfile";
@@ -22,7 +23,6 @@ import {
   GitBranch,
   Zap,
   BarChart3,
-  Bell,
   Play,
   CheckCircle2,
   FolderPlus,
@@ -43,6 +43,7 @@ import {
   generateSkeletonApi,
   generateFullTestsApi,
 } from "../../services/project.service";
+import { getProjectJobsApi } from "../../services/job.service";
 
 const INITIAL_TABS = [];
 
@@ -105,6 +106,37 @@ function LayoutInner() {
   const [project, setProject] = useState(null);
   const [fileTree, setFileTree] = useState([]);
   const [isLoadingTree, setIsLoadingTree] = useState(true);
+  const [latestRunJob, setLatestRunJob] = useState(null);
+  const [isSubmittingAnalysis, setIsSubmittingAnalysis] = useState(false);
+
+  useEffect(() => {
+    if (!project?.id) {
+      setLatestRunJob(null);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const refreshRunJob = async () => {
+      try {
+        const response = await getProjectJobsApi(project.id);
+        const jobs = response.jobs || [];
+        const targetSnapshotId = project.snapshots?.[0]?.id || project.latestSnapshotId || localStorage.getItem(`latestSnapshot_${project.id}`);
+        const latest = jobs
+          .filter((job) => job.type === "RUN_TESTS" && (!targetSnapshotId || job.snapshotId === targetSnapshotId))
+          .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
+        if (!cancelled) setLatestRunJob(latest);
+      } catch {
+        // The queue screen remains the source of truth if this optional hint fails.
+      }
+    };
+
+    refreshRunJob();
+    const timer = window.setInterval(refreshRunJob, 4000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [project]);
 
   useEffect(() => {
     if (isMobile) {
@@ -117,7 +149,6 @@ function LayoutInner() {
       setSidebarOpen(true);
       setAiPanelOpen(true);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMobile, isTablet]);
 
   const loadData = useCallback(
@@ -296,8 +327,21 @@ function LayoutInner() {
       });
       return;
     }
+    if (["QUEUED", "RUNNING", "SUCCESS"].includes(latestRunJob?.status)) {
+      showToast({
+        type: "info",
+        title: latestRunJob.status === "SUCCESS" ? "Already completed" : "Analysis already running",
+        message: latestRunJob.status === "SUCCESS"
+          ? "This snapshot already has a completed test analysis."
+          : "The current analysis is still in progress.",
+      });
+      return;
+    }
+
+    setIsSubmittingAnalysis(true);
     try {
       const res = await runAnalysisApi(project.id);
+      setLatestRunJob(res?.data?.job || res?.job || null);
       if (res && res.needsTests) {
         setTestPromptSnapshotId(res.snapshotId);
         setShowTestPrompt(true);
@@ -317,8 +361,19 @@ function LayoutInner() {
         title: "Analysis Error",
         message: err.message || "Failed to start project analysis.",
       });
+    } finally {
+      setIsSubmittingAnalysis(false);
     }
   };
+
+  const runButtonLocked = isSubmittingAnalysis || ["QUEUED", "RUNNING", "SUCCESS"].includes(latestRunJob?.status);
+  const runButtonLabel = latestRunJob?.status === "SUCCESS"
+    ? "Tests Completed"
+    : latestRunJob?.status === "RUNNING"
+      ? "Running..."
+      : latestRunJob?.status === "QUEUED"
+        ? "Queued..."
+        : "Run Tests";
 
   return (
     <div
@@ -484,22 +539,25 @@ function LayoutInner() {
             whileHover={{ scale: 1.03 }}
             whileTap={{ scale: 0.97 }}
             onClick={handleRunTests}
+            disabled={runButtonLocked}
             className="flex items-center gap-1.5 rounded-lg text-xs font-medium"
             style={{
               background: "linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)",
               color: "#fff",
               border: "none",
-              cursor: "pointer",
+              cursor: runButtonLocked ? "not-allowed" : "pointer",
+              opacity: runButtonLocked ? 0.62 : 1,
               fontFamily: "var(--font-sans)",
               boxShadow: "0 0 12px rgba(124,58,237,0.3)",
               padding: isMobile ? "6px 8px" : "6px 14px",
               whiteSpace: "nowrap",
             }}
             id="run-tests-btn"
-            title="Run Tests"
+            title={runButtonLabel}
+            aria-label={runButtonLabel}
           >
             <Play size={11} strokeWidth={3} />
-            {!isMobile && "Run Tests"}
+            {!isMobile && runButtonLabel}
           </motion.button>
 
           {/* Logic Analysis & New Project — desktop/tablet inline, mobile via "more" menu */}
@@ -681,12 +739,13 @@ function LayoutInner() {
                 overflow: "hidden",
               }}
             >
-              {["Explorer", "Coverage", "Settings"].map((item) => (
+              {["Explorer", "Architecture", "Coverage", "Settings"].map((item) => (
                 <button
                   key={item}
                   onClick={() => {
                     if (item === "Settings") setActiveActivity("settings");
                     else if (item === "Explorer") setActiveActivity("explorer");
+                    else if (item === "Architecture") setActiveActivity("architecture");
                     else if (item === "Coverage") setActiveActivity("coverage");
                     setMobileNavOpen(false);
                   }}
@@ -816,6 +875,8 @@ function LayoutInner() {
             </div>
           ) : activeActivity === "jobs" ? (
             <JobQueue projectId={project?.id} />
+          ) : activeActivity === "architecture" ? (
+            <ProjectArchitecturePanel projectId={project?.id} />
           ) : activeActivity === "coverage" ? (
             <CoverageDashboard snapshotId={project?.latestSnapshotId || (project?.id ? localStorage.getItem(`latestSnapshot_${project.id}`) : null) || testPromptSnapshotId} projectId={project?.id} onOpenFile={handleOpenFileByPath} />
           ) : (

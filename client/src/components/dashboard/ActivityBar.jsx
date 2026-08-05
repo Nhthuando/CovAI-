@@ -4,7 +4,7 @@ import {
   LayoutDashboard,
   Search,
   Cpu,
-  FlaskConical,
+  Network,
   Settings,
   Zap,
 } from "lucide-react";
@@ -15,6 +15,7 @@ const TOP_ITEMS = [
   { id: "dashboard", icon: LayoutDashboard, label: "Dashboard" },
   { id: "search", icon: Search, label: "Search" },
   { id: "jobs", icon: Cpu, label: "Job Queue" },
+  { id: "architecture", icon: Network, label: "Architecture" },
 ];
 
 const BOTTOM_ITEMS = [{ id: "settings", icon: Settings, label: "Settings" }];

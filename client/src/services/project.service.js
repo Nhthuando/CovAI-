@@ -158,11 +158,18 @@ export async function getAiSuggestionsApi(projectId) {
   return handleResponse(res);
 }
 
-export async function runAnalysisApi(projectId) {
+export async function getProjectSnapshotsApi(projectId) {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/snapshots`, {
+    headers: getAuthHeaders(),
+  });
+  return handleResponse(res);
+}
+
+export async function runAnalysisApi(projectId, snapshotId) {
   const res = await fetch(`${BASE_URL}/projects/${projectId}/run-analysis`, {
     method: "POST",
     headers: getAuthHeaders(),
-    body: JSON.stringify({}),
+    body: JSON.stringify(snapshotId ? { snapshotId } : {}),
   });
   return handleResponse(res);
 }

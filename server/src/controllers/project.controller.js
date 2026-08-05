@@ -326,14 +326,16 @@ class ProjectController {
         });
       }
 
-      const job = await createAnalysisJob({
+      const queuedJob = await createAnalysisJob({
         projectId,
         snapshotId,
         userId: req.user.id,
       });
+      const reused = queuedJob.reused === true;
+      const { reused: _reused, ...job } = queuedJob;
 
       // SCRUM-138..144: Kick-off full pipeline bất đồng bộ qua Queue
-      addJobToQueue("RUN_TESTS", job.id).catch((err) => {
+      if (!reused) addJobToQueue("RUN_TESTS", job.id).catch((err) => {
         console.error("Lỗi khi thêm RUN_TESTS vào queue:", err);
       });
 

@@ -357,6 +357,19 @@ export const createAnalysisJob = async ({
         );
     }
 
+    // Repeated requests for the same snapshot reuse an active or completed
+    // RUN_TESTS job instead of scheduling duplicate work.
+    const existingRun = await prisma.job.findFirst({
+        where: {
+            projectId,
+            snapshotId,
+            type: "RUN_TESTS",
+            status: { in: ["QUEUED", "RUNNING", "SUCCESS"] },
+        },
+        orderBy: { createdAt: "desc" },
+    });
+    if (existingRun) return { ...existingRun, reused: true };
+
     // SCRUM-138: Tạo RUN_TESTS job cho pipeline coverage analysis
     const runTestsJob = await createRunTestsJob({
         projectId,
@@ -373,7 +386,7 @@ export const createAnalysisJob = async ({
         type: "BUILD_CFG",
     });
 
-    return runTestsJob;
+    return { ...runTestsJob, reused: false };
 };
 
 export const deleteProject = async (projectId, userId) => {
