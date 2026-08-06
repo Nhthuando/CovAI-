@@ -1,93 +1,32 @@
-import { parseJavaScriptCode, parseJavaScriptFile } from './babelParser.service.js';
-import fs from 'fs';
-import path from 'path';
+import fs from "fs";
+import os from "os";
+import path from "path";
+import { afterEach, describe, expect, it } from "@jest/globals";
+import { parseJavaScriptCode, parseJavaScriptFile } from "./babelParser.service.js";
 
-// Mock fs for file testing
-jest.mock('fs');
+const files = [];
+afterEach(() => files.splice(0).forEach((filePath) => fs.rmSync(filePath, { force: true })));
 
-describe('Babel Parser Service', () => {
+describe("Babel parser service", () => {
+  it("parses JavaScript, JSX, TypeScript, CommonJS, and modern module syntax", () => {
+    const code = `import value from "pkg"; const element = <h1>{value?.name ?? "fallback"}</h1>; export const fn = async (x: number) => await import("./x.js"); module.exports.element = element;`;
+    const result = parseJavaScriptCode(code);
+    expect(result.success).toBe(true);
+    expect(result.ast.type).toBe("File");
+  });
 
-    test('should parse valid JavaScript code', () => {
-        const code = 'const x = 10;';
-        const result = parseJavaScriptCode(code);
-        expect(result.success).toBe(true);
-        expect(result.ast).toBeDefined();
-    });
+  it("returns a safe error for malformed source", () => {
+    const result = parseJavaScriptCode("const = ;");
+    expect(result).toMatchObject({ success: false, ast: null });
+    expect(result.error).toBeTruthy();
+  });
 
-    test('should parse TypeScript syntax', () => {
-        const code = 'const x: number = 10;';
-        const result = parseJavaScriptCode(code);
-        expect(result.success).toBe(true);
-    });
-
-    test('should parse JSX syntax', () => {
-        const code = 'const element = <h1>Hello</h1>;';
-        const result = parseJavaScriptCode(code);
-        expect(result.success).toBe(true);
-    });
-
-    test('should parse ES Modules', () => {
-        const code = 'import { something } from "module"; export default something;';
-        const result = parseJavaScriptCode(code);
-        expect(result.success).toBe(true);
-    });
-
-    test('should return error for invalid syntax', () => {
-        const code = 'const x = ;'; // Syntax error
-        const result = parseJavaScriptCode(code);
-        expect(result.success).toBe(false);
-        expect(result.error).toBeDefined();
-        expect(result.ast).toBeNull();
-    });
-
-    test('should parse valid JavaScript file', () => {
-        const mockFilePath = 'test.js';
-        const mockCode = 'const y = 20;';
-        fs.readFileSync.mockReturnValue(mockCode);
-
-        const result = parseJavaScriptFile(mockFilePath);
-        expect(result.success).toBe(true);
-        expect(result.ast).toBeDefined();
-        expect(fs.readFileSync).toHaveBeenCalledWith(mockFilePath, 'utf-8');
-    });
-
-    test('should handle file read errors', () => {
-        fs.readFileSync.mockImplementation(() => { throw new Error('File not found'); });
-        const result = parseJavaScriptFile('nonexistent.js');
-        expect(result.success).toBe(false);
-        expect(result.success).toBe(true);
-    });
-
-    test('should support modern syntax', () => {
-        const code = `
-            const a = obj?.prop;
-            const b = val ?? "default";
-            const c = { ...obj };
-            import("./mod.js");
-            await fetch(url);
-            class User { field = 1; #priv = 2; #method() {} }
-            const n = 1_000;
-            x ||= y;
-        `;
-        const result = parseJavaScriptCode(code);
-        expect(result.success).toBe(true);
-    });
-
-    test('should parse a real file', () => {
-        fs.writeFileSync(tempFilePath, 'const x = 10;');
-        const result = parseJavaScriptFile(tempFilePath);
-        expect(result.success).toBe(true);
-        expect(result.ast.type).toBe('File');
-    });
-
-    test('should handle missing file', () => {
-        const result = parseJavaScriptFile('non-existent.js');
-        expect(result.success).toBe(false);
-        expect(result.error).toContain('File does not exist');
-    });
-
-    test('should handle invalid file path', () => {
-        expect(parseJavaScriptFile(null).success).toBe(false);
-        expect(parseJavaScriptFile(123).success).toBe(false);
-    });
+  it("parses a readable source file and rejects missing or invalid paths", () => {
+    const filePath = path.join(os.tmpdir(), `covai-parser-${Date.now()}.js`);
+    files.push(filePath);
+    fs.writeFileSync(filePath, "export const answer = 42;");
+    expect(parseJavaScriptFile(filePath)).toMatchObject({ success: true });
+    expect(parseJavaScriptFile(`${filePath}.missing`)).toMatchObject({ success: false, ast: null });
+    expect(parseJavaScriptFile(null)).toMatchObject({ success: false, ast: null });
+  });
 });

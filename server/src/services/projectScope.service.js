@@ -3,6 +3,22 @@ import { ServiceError } from "../utils/serviceError.js";
 
 const notFound = () => new ServiceError("Project or snapshot not found", 404);
 
+export const resolveLatestOwnedProjectSnapshot = async ({ projectId, userId, requireRoot = false }) => {
+    const project = await prisma.project.findFirst({ where: { id: projectId, ownerId: userId }, select: { id: true } });
+    if (!project) throw notFound();
+
+    const snapshot = await prisma.projectSnapshot.findFirst({
+        where: { projectId },
+        orderBy: { createdAt: "desc" },
+    });
+
+    if (!snapshot || (requireRoot && !snapshot.rootDir)) {
+        throw new ServiceError("Project upload is still processing; try again when a snapshot is ready", 409);
+    }
+
+    return { project, snapshot };
+};
+
 export const resolveOwnedProjectSnapshot = async ({ projectId, snapshotId, userId, requireRoot = false }) => {
     const project = await prisma.project.findFirst({ where: { id: projectId, ownerId: userId }, select: { id: true } });
     if (!project) throw notFound();

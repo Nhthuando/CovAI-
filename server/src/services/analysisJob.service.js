@@ -1,10 +1,12 @@
+import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
+import { analyzeProjectStructure } from "./projectStructureAnalyzer.service.js";
 import {
-    markJobRunning,
-    updateJobProgress,
-    markJobSuccess,
-    markJobFailed,
     getJobById,
+    markJobFailed,
+    markJobRunning,
+    markJobSuccess,
+    updateJobProgress,
 } from "./job.service.js";
 
 const assertStringField = (value, fieldName) => {
@@ -13,22 +15,19 @@ const assertStringField = (value, fieldName) => {
     }
 };
 
+/**
+ * Runs static project-structure analysis for one already-authorized snapshot.
+ * It never executes repository code. The prior completed result is untouched
+ * unless a fresh, fully serializable result has been built successfully.
+ */
 export const processAnalysisJob = async (jobId) => {
     assertStringField(jobId, "jobId");
 
     try {
         await markJobRunning(jobId);
     } catch (error) {
-        if (
-            error.message === "Job not found" ||
-            error.message === "Only queued jobs can start" ||
-            error.message === "Cannot start a canceled job"
-        ) {
-            console.log(`[Job ${jobId}] Bỏ qua vì Job không tồn tại hoặc không thể bắt đầu.`);
-            return;
-        }
-
-        console.error(`[Job ${jobId}] Lỗi khi chuyển công việc sang RUNNING:`, error);
+        if (["Job not found", "Only queued jobs can start", "Cannot start a canceled job"].includes(error.message)) return;
+        console.error(`[Job ${jobId}] Could not start architecture analysis`, error);
         return;
     }
 
@@ -36,39 +35,45 @@ export const processAnalysisJob = async (jobId) => {
     try {
         job = await getJobById(jobId);
     } catch (error) {
-        console.error(`[Job ${jobId}] Lỗi khi lấy Job:`, error);
+        console.error(`[Job ${jobId}] Could not load architecture analysis job`, error);
         return;
     }
 
-    if (!job.snapshot) {
-        console.error(`[Job ${jobId}] Snapshot không tồn tại.`);
-        await markJobFailed(jobId, new ServiceError("Snapshot not found", 400));
-        return;
-    }
-
-    if (!job.snapshot.storagePath) {
-        console.error(`[Job ${jobId}] Snapshot storagePath không hợp lệ.`);
-        await markJobFailed(jobId, new ServiceError("Snapshot storagePath is missing", 400));
+    if (!job.snapshot?.rootDir) {
+        await markJobFailed(jobId, new ServiceError("Project snapshot is not ready for analysis", 409));
         return;
     }
 
     try {
-        await updateJobProgress(jobId, 20);
-        await updateJobProgress(jobId, 60);
-        await updateJobProgress(jobId, 85);
+        await updateJobProgress(jobId, 15);
+        const result = analyzeProjectStructure(job.snapshot.rootDir, { snapshotId: job.snapshotId });
+        await updateJobProgress(jobId, 75);
 
-        await markJobSuccess(jobId, {
-            snapshotId: job.snapshotId,
-            analyzedAt: new Date().toISOString(),
+        const analysis = await prisma.projectStructureAnalysis.upsert({
+            where: { snapshotId: job.snapshotId },
+            create: {
+                snapshotId: job.snapshotId,
+                schemaVersion: result.schemaVersion,
+                resultJson: JSON.stringify(result),
+            },
+            update: {
+                schemaVersion: result.schemaVersion,
+                resultJson: JSON.stringify(result),
+            },
         });
-
-        console.log(`[Job ${jobId}] Analysis job completed successfully.`);
+        await updateJobProgress(jobId, 95);
+        await markJobSuccess(jobId, {
+            analysisId: analysis.id,
+            snapshotId: job.snapshotId,
+            summary: result.summary,
+            analyzedAt: result.analyzedAt,
+        });
     } catch (error) {
-        console.error(`[Job ${jobId}] Lỗi pipeline analysis:`, error);
+        console.error(`[Job ${jobId}] Architecture analysis failed`, error);
         try {
             await markJobFailed(jobId, error);
         } catch (markError) {
-            console.error(`[Job ${jobId}] Không thể đánh dấu FAILED:`, markError);
+            console.error(`[Job ${jobId}] Could not mark architecture analysis as failed`, markError);
         }
     }
 };

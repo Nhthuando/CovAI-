@@ -6,6 +6,7 @@ import { PROJECT_STRUCTURE_SCHEMA_VERSION, DIAGNOSTIC_CATEGORIES, MODULE_FORMATS
 import { resolveProjectDependencies } from "./projectStructureDependencies.service.js";
 import { classifyProjectStructureRole } from "./projectStructureRoles.service.js";
 import { buildProjectStructureTree } from "./projectStructureTree.service.js";
+import { buildProjectArchitectureOverview } from "./projectArchitectureOverview.service.js";
 import { createNodeId } from "../utils/projectStructureId.util.js";
 
 const languageFor = (relativePath) => path.extname(relativePath).slice(1).toLowerCase();
@@ -35,10 +36,11 @@ export const analyzeProjectStructure = (rootDir, { snapshotId = null } = {}) => 
     const dependencies = resolveProjectDependencies({ rootDir, files });
     const functions = files.flatMap((file) => file.functions.map((item) => ({ ...item, dependencies: file.imports })));
     const exportedFunctionCount = functions.filter((item) => item.exported).length;
+    const architecture = buildProjectArchitectureOverview({ files, edges: dependencies.edges, functions });
     return {
         schemaVersion: PROJECT_STRUCTURE_SCHEMA_VERSION, snapshotId, analyzedAt: new Date().toISOString(),
         summary: { totalFiles: files.length, totalFunctions: functions.length, exportedFunctionCount, moduleFormat: projectFormat(files), externalDependencies: dependencies.externalDependencies.map(({ name }) => name) },
         graph: { nodes: files.map(({ ast, ...file }) => file), edges: dependencies.edges, externalDependencies: dependencies.externalDependencies },
-        tree: buildProjectStructureTree(files), functions, diagnostics,
+        tree: buildProjectStructureTree(files), functions, architecture, diagnostics,
     };
 };

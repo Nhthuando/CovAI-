@@ -22,6 +22,8 @@ const JOB_TYPES = Object.freeze([
     "BUILD_CFG",
     "AI_SUGGEST",
     "AI_TESTS",
+    "ANALYSIS",
+    "QUALITY_ANALYSIS",
 ]);
 
 /** Terminal statuses — a job in one of these states cannot be mutated. */
@@ -139,6 +141,57 @@ export const createAiTestsJob = ({ projectId, snapshotId, userId, mode = "SKELET
         type: "AI_TESTS",
         payloadJson: { snapshotId, mode },
     });
+
+/**
+ * Creates an idempotent, snapshot-scoped Architecture analysis job.
+ * Unlike other job types, two snapshots of the same project may be analyzed
+ * concurrently. The database partial unique index closes the race between
+ * the active-job lookup and creation.
+ */
+export const createAnalysisJob = async ({ projectId, snapshotId, userId }) => {
+    assertStringField(projectId, "projectId");
+    assertStringField(snapshotId, "snapshotId");
+    assertStringField(userId, "userId");
+
+    const snapshot = await prisma.projectSnapshot.findFirst({
+        where: { id: snapshotId, projectId, project: { ownerId: userId } },
+    });
+    if (!snapshot) throw new ServiceError("Project or snapshot not found", 404);
+    if (!snapshot.rootDir) throw new ServiceError("Project snapshot is not ready for analysis", 409);
+
+    const activeWhere = {
+        projectId,
+        snapshotId,
+        type: "ANALYSIS",
+        status: { in: ["QUEUED", "RUNNING"] },
+    };
+    const active = await prisma.job.findFirst({ where: activeWhere, orderBy: { createdAt: "desc" } });
+    if (active) return { ...active, reused: true };
+
+    try {
+        const job = await prisma.job.create({
+            data: {
+                projectId,
+                snapshotId,
+                userId,
+                type: "ANALYSIS",
+                status: "QUEUED",
+                progress: 0,
+                payloadJson: JSON.stringify({ snapshotId }),
+            },
+        });
+        await addJobLog(job.id, "INFO", "Architecture analysis job created");
+        return { ...job, reused: false };
+    } catch (error) {
+        // The partial unique index can reject a concurrent create. Re-read only
+        // the active row; all other database failures remain visible.
+        if (error?.code === "P2002") {
+            const concurrent = await prisma.job.findFirst({ where: activeWhere, orderBy: { createdAt: "desc" } });
+            if (concurrent) return { ...concurrent, reused: true };
+        }
+        throw error;
+    }
+};
 
 // ---------------------------------------------------------------------------
 // Create jobs

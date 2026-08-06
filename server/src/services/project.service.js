@@ -1,7 +1,9 @@
 import prisma from "../config/prisma.js";
 import { detectJest } from "../utils/jestDetector.js";
 import { detectAndSaveProject } from "./jestDetection.service.js";
-import { createSnapshotIngestJob, createRunTestsJob } from "./job.service.js";
+import { createAnalysisJob as createArchitectureAnalysisJob, createSnapshotIngestJob, createRunTestsJob } from "./job.service.js";
+import { analysisResultResponse, snapshotResponse } from "./analysisResponse.service.js";
+import { resolveLatestOwnedProjectSnapshot, resolveOwnedProjectSnapshot } from "./projectScope.service.js";
 import { getBucket } from "../config/firebase.js";
 import { scanArchiveBomb } from "../middlewares/upload.middleware.js";
 import path from "path";
@@ -311,7 +313,48 @@ export const detectJestConfig = async (projectId) => {
     return detectAndSaveProject(projectId);
 };
 
-export const createAnalysisJob = async ({
+export const listProjectSnapshots = async ({ projectId, userId }) => {
+    const project = await prisma.project.findFirst({ where: { id: projectId, ownerId: userId }, select: { id: true } });
+    if (!project) throw new ServiceError("Project not found", 404);
+    const snapshots = await prisma.projectSnapshot.findMany({
+        where: { projectId },
+        orderBy: { createdAt: "desc" },
+        include: { structureAnalysis: { select: { schemaVersion: true } } },
+    });
+    return snapshots.map(snapshotResponse);
+};
+
+const resolveAnalysisSnapshot = async ({ projectId, snapshotId, userId }) => {
+    if (snapshotId) {
+        return resolveOwnedProjectSnapshot({ projectId, snapshotId, userId, requireRoot: true });
+    }
+    return resolveLatestOwnedProjectSnapshot({ projectId, userId, requireRoot: true });
+};
+
+export const resolveCoverageAnalysisSnapshot = async ({ projectId, snapshotId, userId }) => {
+    const { snapshot } = await resolveAnalysisSnapshot({ projectId, snapshotId, userId });
+    return snapshot;
+};
+
+export const startProjectStructureAnalysis = async ({ projectId, snapshotId, userId }) => {
+    const snapshot = await resolveCoverageAnalysisSnapshot({ projectId, snapshotId, userId });
+    return createArchitectureAnalysisJob({ projectId, snapshotId: snapshot.id, userId });
+};
+
+export const getProjectStructureAnalysis = async ({ projectId, snapshotId, userId }) => {
+    const { snapshot } = await resolveOwnedProjectSnapshot({ projectId, snapshotId, userId });
+    const analysis = await prisma.projectStructureAnalysis.findUnique({ where: { snapshotId: snapshot.id } });
+    if (!analysis) throw new ServiceError("Architecture analysis not found", 404);
+    try {
+        return analysisResultResponse(analysis);
+    } catch {
+        throw new ServiceError("Stored architecture analysis is invalid", 500);
+    }
+};
+
+// Kept for a future explicitly named coverage endpoint. It is intentionally
+// separate from Architecture analysis, which is static and does not need Jest.
+export const createCoverageAnalysisJob = async ({
     projectId,
     snapshotId,
     userId,

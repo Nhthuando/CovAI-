@@ -44,6 +44,7 @@ model Project {
   jestCommand     String?
   aiSuggestions   AiSuggestion[]
   aiTests         AiTest[]
+  qualityReports  QualityReport[]
   jobs            Job[]
   notifications   Notification[]
   owner           User              @relation(fields: [ownerId], references: [id])
@@ -74,9 +75,49 @@ model ProjectSnapshot {
   cyclomatics     Cyclomatic[]
   jobs            Job[]
   project         Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  structureAnalysis ProjectStructureAnalysis?
+  qualityReport     QualityReport?
 
   @@unique([projectId, checksum])
   @@unique([projectId, commitSha])
+  @@index([projectId])
+}
+
+model ProjectStructureAnalysis {
+  id            String          @id @default(cuid())
+  snapshotId    String          @unique
+  schemaVersion Int
+  resultJson    String
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  snapshot      ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+}
+
+model QualityReport {
+  id                    String          @id @default(cuid())
+  snapshotId            String          @unique
+  projectId             String
+
+  performanceScore      Float
+  securityScore         Float
+  coverageScore         Float
+  maintainabilityScore  Float
+  overallScore          Float
+
+  performanceDetails    String
+  securityDetails       String
+  debugReport           String
+  recommendations       String
+
+  aiAvailable           Boolean         @default(true)
+  aiError               String?
+
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+
+  snapshot              ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  project               Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
   @@index([projectId])
 }
 
@@ -104,6 +145,7 @@ model Job {
   @@index([projectId])
   @@index([snapshotId])
   @@index([status, type])
+  @@index([projectId, snapshotId, type, status])
 }
 
 model JobLog {
@@ -276,6 +318,10 @@ enum JobType {
   BUILD_CFG
   AI_SUGGEST
   AI_TESTS
+  ANALYSIS
+  CODE_HYGIENE
+  PERFORMANCE_ANALYSIS
+  QUALITY_ANALYSIS
 }
 
 enum JobStatus {

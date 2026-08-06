@@ -11,6 +11,7 @@ import ImportLayout from "./import/ImportLayout";
 import JobQueue from "./JobQueue";
 import ProjectArchitecturePanel from "./ProjectArchitecturePanel";
 import CFGCalculator from "./CFGCalculator";
+import QualityDashboard from "./QualityDashboard";
 import SettingsSidebar from "./settings/SettingsSidebar";
 import UserProfile from "./settings/UserProfile";
 import Appearance from "./settings/Appearance";
@@ -28,7 +29,8 @@ import {
   FolderPlus,
   Menu,
   X,
-  MoreHorizontal
+  MoreHorizontal,
+  Award,
 } from "lucide-react";
 
 import { useAuth } from "../../hooks/useAuth";
@@ -99,6 +101,7 @@ function LayoutInner() {
   const [activeFileId, setActiveFileId] = useState(null);
   const [showImport, setShowImport] = useState(false);
   const [showCFG, setShowCFG] = useState(false);
+  const [showQualityDashboard, setShowQualityDashboard] = useState(false);
   const [showTestPrompt, setShowTestPrompt] = useState(false);
   const [testPromptSnapshotId, setTestPromptSnapshotId] = useState(null);
 
@@ -585,6 +588,27 @@ function LayoutInner() {
               <motion.button
                 whileHover={{ scale: 1.03 }}
                 whileTap={{ scale: 0.97 }}
+                onClick={() => setShowQualityDashboard(true)}
+                className="flex items-center gap-1.5 rounded-lg text-xs font-medium"
+                style={{
+                  background: "rgba(168, 85, 247, 0.12)",
+                  color: "#c084fc",
+                  border: "1px solid rgba(168, 85, 247, 0.25)",
+                  cursor: "pointer",
+                  fontFamily: "var(--font-sans)",
+                  padding: "6px 14px",
+                  whiteSpace: "nowrap",
+                }}
+                id="quality-dashboard-btn"
+                title="API Code Quality Dashboard"
+              >
+                <Award size={12} />
+                {!isTablet && "Quality Dashboard"}
+              </motion.button>
+
+              <motion.button
+                whileHover={{ scale: 1.03 }}
+                whileTap={{ scale: 0.97 }}
                 onClick={() => setShowImport(true)}
                 className="flex items-center gap-1.5 rounded-lg text-xs font-medium"
                 style={{
@@ -1025,6 +1049,16 @@ function LayoutInner() {
       {/* ── CFG Calculator Fullscreen Overlay ──────────────── */}
       <AnimatePresence>
         {showCFG && <CFGCalculator project={project} onClose={() => setShowCFG(false)} />}
+      </AnimatePresence>
+
+      {/* ── Quality Dashboard Fullscreen Overlay ──────────── */}
+      <AnimatePresence>
+        {showQualityDashboard && (
+          <QualityDashboard
+            projectId={project?.id}
+            onClose={() => setShowQualityDashboard(false)}
+          />
+        )}
       </AnimatePresence>
 
       {/* ── Missing Test Prompt Modal ──────────────────────── */}

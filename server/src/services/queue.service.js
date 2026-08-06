@@ -8,6 +8,7 @@ import { processBuildCfgJob } from './buildCfgJob.service.js';
 import { processIngestJob } from './ingestJob.service.js';
 import { processInstallDepsJob } from './installDeps.service.js';
 import { processCoverageJob } from './coverageRunner.service.js';
+import { processQualityAnalysisJob } from './qualityAnalysisJob.service.js';
 import { getJobById, markJobFailed, markQueuedJobFailed, createRunTestsJob } from './job.service.js';
 import prisma from "../config/prisma.js";
 
@@ -31,6 +32,9 @@ const worker = new Worker('covai-jobs', async (job) => {
                 break;
             case 'ANALYSIS':
                 await processAnalysisJob(jobId);
+                break;
+            case 'QUALITY_ANALYSIS':
+                await processQualityAnalysisJob(jobId);
                 break;
             case 'AI_TESTS':
                 await processAiTestsJob(jobId);

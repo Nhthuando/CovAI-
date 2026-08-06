@@ -24,10 +24,15 @@ import {
   deleteProject,
   getProjectTree,
   getFileContent,
-  createAnalysisJob,
+  createCoverageAnalysisJob,
+  getProjectStructureAnalysis,
+  listProjectSnapshots,
+  resolveCoverageAnalysisSnapshot,
+  startProjectStructureAnalysis,
 } from "../services/project.service.js";
 import { createBuildCfgJob } from "../services/job.service.js";
 import { addJobToQueue } from "../services/queue.service.js";
+import { analysisJobResponse } from "../services/analysisResponse.service.js";
 
 class ProjectController {
   /**
@@ -134,8 +139,85 @@ class ProjectController {
 
   /**
    * GET /projects/:id/snapshots
+   * Snapshot metadata is deliberately selector-safe: no host paths, source,
+   * or storage locations can cross this controller boundary.
    */
   async listSnapshots(req, res) {
+    try {
+      const data = await listProjectSnapshots({ projectId: req.params.id, userId: req.user.id });
+      return res.status(200).json({ success: true, data });
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        return res.status(error.statusCode).json({ success: false, message: error.message });
+      }
+      console.error(error);
+      return res.status(500).json({ success: false, message: "Failed to get snapshots" });
+    }
+  }
+
+  /**
+   * GET /projects/:id/structure-analysis?snapshotId=...
+   * Reads an existing architecture map only; it never starts background work.
+   */
+  async getStructureAnalysis(req, res) {
+    try {
+      const data = await getProjectStructureAnalysis({
+        projectId: req.params.id,
+        snapshotId: req.query.snapshotId,
+        userId: req.user.id,
+      });
+      return res.status(200).json({ success: true, data });
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        return res.status(error.statusCode).json({ success: false, message: error.message });
+      }
+      console.error(error);
+      return res.status(500).json({ success: false, message: "Failed to get architecture analysis" });
+    }
+  }
+
+  /**
+   * POST /projects/:id/structure-analysis
+   * Starts snapshot-bound static architecture analysis.
+   */
+  async runStructureAnalysis(req, res) {
+    try {
+      const queuedJob = await startProjectStructureAnalysis({
+        projectId: req.params.id,
+        snapshotId: req.body?.snapshotId,
+        userId: req.user.id,
+      });
+      const reused = queuedJob.reused === true;
+      const { reused: _reused, ...job } = queuedJob;
+      const safeJob = analysisJobResponse(job);
+
+      if (!reused) {
+        addJobToQueue("ANALYSIS", job.id).catch((queueError) => {
+          console.error("Could not queue architecture analysis", queueError);
+        });
+      }
+
+      return res.status(reused ? 200 : 201).json({
+        success: true,
+        reused,
+        needsTests: false,
+        snapshotId: job.snapshotId,
+        job: safeJob,
+        data: { job: safeJob },
+      });
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        return res.status(error.statusCode).json({ success: false, message: error.message });
+      }
+      console.error(error);
+      return res.status(500).json({ success: false, message: "Failed to start architecture analysis" });
+    }
+  }
+
+  /**
+   * Legacy implementation retained temporarily for an explicit coverage route.
+   */
+  async listSnapshotsUnsafe(req, res) {
     try {
       const { id: projectId } = req.params;
 
@@ -287,35 +369,14 @@ class ProjectController {
     }
   }
 
-  async runAnalysis(req, res) {
+  async runCoverageAnalysis(req, res) {
     try {
       const { id: projectId } = req.params;
-      let { snapshotId } = req.body;
-
-      let targetSnapshot;
-      if (!snapshotId) {
-        targetSnapshot = await prisma.projectSnapshot.findFirst({
-          where: { projectId },
-          orderBy: { createdAt: 'desc' }
-        });
-        if (!targetSnapshot) {
-          return res.status(400).json({
-            success: false,
-            message: "No snapshot found for this project",
-          });
-        }
-        snapshotId = targetSnapshot.id;
-      } else {
-        targetSnapshot = await prisma.projectSnapshot.findUnique({
-          where: { id: snapshotId }
-        });
-        if (!targetSnapshot) {
-          return res.status(404).json({
-            success: false,
-            message: "Snapshot not found",
-          });
-        }
-      }
+      const targetSnapshot = await resolveCoverageAnalysisSnapshot({
+        projectId,
+        snapshotId: req.body?.snapshotId,
+        userId: req.user.id,
+      });
 
       if (!targetSnapshot.hasJest) {
         return res.status(200).json({
@@ -326,9 +387,9 @@ class ProjectController {
         });
       }
 
-      const queuedJob = await createAnalysisJob({
+      const queuedJob = await createCoverageAnalysisJob({
         projectId,
-        snapshotId,
+        snapshotId: targetSnapshot.id,
         userId: req.user.id,
       });
       const reused = queuedJob.reused === true;
