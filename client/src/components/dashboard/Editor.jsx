@@ -283,12 +283,7 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
   useEffect(() => {
     if (!activeTabId || !projectId || !snapshotId) return;
 
-    console.log("🔍 Active Tab ID:", activeTabId);
-    console.log("🔍 Project ID:", projectId);
-    console.log("🔍 Snapshot ID:", snapshotId);
-
     if (!snapshotId) {
-      console.error("🔍 Snapshot ID is missing!");
       return;
     }
 
@@ -304,20 +299,15 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
       }
     })
       .then(res => {
-        console.log("🔍 Response status:", res.status);
         return res.text(); // Read as text first to debug
       })
       .then(text => {
-        console.log("🔍 Raw response text:", text);
         const data = JSON.parse(text);
-        console.log("🔍 Cyclomatic data parsed:", data);
-        console.log("🔍 activeTabId:", activeTabId);
 
         // If data is not an array, maybe it's { results: [...] } or { data: [...] }
         const arrayData = Array.isArray(data) ? data : (data.data || data.results || []);
 
         if (Array.isArray(arrayData)) {
-          console.log("🔍 Processing array data of length:", arrayData.length);
           const newComplexities = {};
           // Normalize function to match paths: ensure both are relative paths
           const normalize = (p) => p.replace(/\\/g, '/').replace(/^\.\//, '');
@@ -330,9 +320,6 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
               decisionPoints: item.decisionPoints !== undefined ? item.decisionPoints : Math.max(0, item.value - 1)
             };
           });
-          console.log("🔍 complexities map keys:", Object.keys(newComplexities));
-          setComplexities(newComplexities);
-          console.log("🔍 activeTabId:", activeTabId);
           setComplexities(newComplexities);
         }
       })
@@ -340,7 +327,7 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
   }, [activeTabId, projectId, snapshotId]);
 
   useEffect(() => {
-    console.log("🔍 Complexities updated:", JSON.stringify(complexities, null, 2));
+    // console.log("🔍 Complexities updated:", JSON.stringify(complexities, null, 2));
   }, [complexities]);
 
   // Fetch file content when active tab changes
@@ -434,7 +421,6 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
     : [];
 
   const handleAnalyze = (functionName) => {
-    console.log("Analyzing", functionName, activeTabId);
   };
 
   return (
@@ -538,7 +524,7 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
                 const normalizedPath = normalize(activeTabId);
                 const comp = complexities[normalizedPath]?.[line.functionName];
                 if (line.isFunction) {
-                  console.log(`🔍 Checking complexity for ${normalizedPath} -> ${line.functionName}:`, comp);
+                  // console.log(`🔍 Checking complexity for ${normalizedPath} -> ${line.functionName}:`, comp);
                 }
                 return (
                   <React.Fragment key={line.lineNum}>

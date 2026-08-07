@@ -20,20 +20,20 @@ import { getUserJobsApi } from "../../services/job.service";
 /* ── Helpers: map backend enums to UI props ────────────────── */
 
 const JOB_TYPE_CONFIG = {
-  INGEST:       { label: "Source Ingest",    icon: PackageOpen,  taskLabel: "Extracting and indexing source files" },
-  INSTALL_DEPS: { label: "Install Deps",    icon: Wrench,       taskLabel: "Installing project dependencies" },
-  RUN_TESTS:    { label: "Run Tests",       icon: TestTube2,    taskLabel: "Running test suite with coverage" },
-  PARSE_COVERAGE:{ label: "Parse Coverage", icon: Activity,     taskLabel: "Parsing coverage report data" },
-  BUILD_CFG:    { label: "Build CFG",       icon: Cpu,          taskLabel: "Building control flow graphs" },
-  AI_SUGGEST:   { label: "AI Suggest",      icon: BrainCircuit, taskLabel: "Generating AI improvement suggestions" },
-  AI_TESTS:     { label: "AI Tests",        icon: BrainCircuit, taskLabel: "Generating AI test cases" },
+  INGEST: { label: "Source Ingest", icon: PackageOpen, taskLabel: "Extracting and indexing source files" },
+  INSTALL_DEPS: { label: "Install Deps", icon: Wrench, taskLabel: "Installing project dependencies" },
+  RUN_TESTS: { label: "Run Tests", icon: TestTube2, taskLabel: "Running test suite with coverage" },
+  PARSE_COVERAGE: { label: "Parse Coverage", icon: Activity, taskLabel: "Parsing coverage report data" },
+  BUILD_CFG: { label: "Build CFG", icon: Cpu, taskLabel: "Building control flow graphs" },
+  AI_SUGGEST: { label: "AI Suggest", icon: BrainCircuit, taskLabel: "Generating AI improvement suggestions" },
+  AI_TESTS: { label: "AI Tests", icon: BrainCircuit, taskLabel: "Generating AI test cases" },
 };
 
 const JOB_STATUS_CONFIG = {
-  QUEUED:   { label: "QUEUED",   color: "#f59e0b", icon: Clock },
-  RUNNING:  { label: "RUNNING",  color: "#38bdf8", icon: Activity },
-  SUCCESS:  { label: "COMPLETED", color: "#22c55e", icon: CheckCircle2 },
-  FAILED:   { label: "FAILED",   color: "#ef4444", icon: XCircle },
+  QUEUED: { label: "QUEUED", color: "#f59e0b", icon: Clock },
+  RUNNING: { label: "RUNNING", color: "#38bdf8", icon: Activity },
+  SUCCESS: { label: "COMPLETED", color: "#22c55e", icon: CheckCircle2 },
+  FAILED: { label: "FAILED", color: "#ef4444", icon: XCircle },
   CANCELED: { label: "CANCELED", color: "#6b7280", icon: Ban },
 };
 
@@ -65,7 +65,11 @@ export default function JobQueue({ projectId }) {
     setError(null);
     try {
       const data = await getUserJobsApi();
-      setJobs(data.jobs || []);
+      // Filter out background services: PERFORMANCE_ANALYSIS and CODE_HYGIENE
+      const visibleJobs = (data.jobs || []).filter(
+        (job) => !["PERFORMANCE_ANALYSIS", "CODE_HYGIENE"].includes(job.type)
+      );
+      setJobs(visibleJobs);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -184,8 +188,8 @@ export default function JobQueue({ projectId }) {
           <div className="flex items-center justify-between mb-2">
             <h2 style={{ fontSize: 17, fontWeight: 600, color: "#f0f6fc" }}>
               {filter === "ALL" ? `All Jobs (${jobs.length})` :
-               filter === "ACTIVE" ? `Active Jobs (${activeJobs.length})` :
-               `Completed (${completedJobs.length + failedJobs.length})`}
+                filter === "ACTIVE" ? `Active Jobs (${activeJobs.length})` :
+                  `Completed (${completedJobs.length + failedJobs.length})`}
             </h2>
             <div className="flex items-center gap-2">
               {["ALL", "ACTIVE", "COMPLETED"].map((f) => (

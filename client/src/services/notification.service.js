@@ -39,12 +39,10 @@ export const notificationService = {
      * @returns {Promise<Object>} Notifications data with meta info
      */
     getNotifications: async (page = 1, limit = 20, unreadOnly = false) => {
-        console.log('[notificationService] getNotifications called:', { page, limit, unreadOnly });
         try {
             const response = await notificationApi.get('/', {
                 params: { page, limit, unreadOnly },
             });
-            console.log('[notificationService] API response:', response.data);
             return response.data;
         } catch (error) {
             console.error('[notificationService] Error fetching notifications:', error);

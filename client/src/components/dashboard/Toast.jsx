@@ -162,7 +162,7 @@ export default function Toast({ toast, onClose }) {
       <motion.div
         initial={{ scaleX: 1 }}
         animate={{ scaleX: 0 }}
-        transition={{ duration: 4.5, ease: "linear" }}
+        transition={{ duration: toast.duration / 1000, ease: "linear" }}
         style={{
           position: "absolute",
           bottom: 0,

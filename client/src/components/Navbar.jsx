@@ -6,7 +6,6 @@ import { NotificationCenter } from "./NotificationCenter";
 
 export default function Navbar() {
   const { user } = useAuth();
-  console.log('[Navbar] user object:', user);
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 

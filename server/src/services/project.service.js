@@ -230,9 +230,9 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
             // Update job to RUNNING immediately as we start processing
             const { markJobRunning, updateJobProgress, markJobSuccess, markJobFailed } = await import("./job.service.js");
             const { extractZipSnapshot } = await import("./zipExtraction.service.js");
-            
-            try { await markJobRunning(job.id); } catch (_) {}
-            
+
+            try { await markJobRunning(job.id); } catch (_) { }
+
             const blob = getBucket().file(storagePath);
             const uploadPromise = new Promise((resolve, reject) => {
                 const blobStream = blob.createWriteStream({
@@ -242,10 +242,10 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
                 blobStream.on("error", reject);
                 blobStream.on("finish", resolve);
                 blobStream.end(file.buffer);
-            }).then(() => updateJobProgress(job.id, 50).catch(() => {}));
+            }).then(() => updateJobProgress(job.id, 50).catch(() => { }));
 
             const extractPromise = extractZipSnapshot(snapshot.id, storagePath, file.buffer).then((path) => {
-                updateJobProgress(job.id, 90).catch(() => {});
+                updateJobProgress(job.id, 90).catch(() => { });
                 return path;
             });
 
@@ -263,32 +263,32 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
             // Sau khi giải nén, detect Jest metadata ngay
             const { detectJest } = await import("../utils/jestDetector.js");
             const detection = detectJest(sourcePath);
-            
+
             await prisma.projectSnapshot.update({
                 where: { id: snapshot.id },
-                data: { 
-                   hasJest: detection.hasJest,
-                   jestCommand: detection.jestCommand
+                data: {
+                    hasJest: detection.hasJest,
+                    jestCommand: detection.jestCommand
                 },
             });
 
             await prisma.project.update({
                 where: { id: projectId },
                 data: {
-                   hasJest: detection.hasJest,
-                   jestConfigPath: detection.configPath,
-                   jestCommand: detection.jestCommand
+                    hasJest: detection.hasJest,
+                    jestConfigPath: detection.configPath,
+                    jestCommand: detection.jestCommand
                 },
             });
 
-            await updateJobProgress(job.id, 100).catch(() => {});
+            await updateJobProgress(job.id, 100).catch(() => { });
             await markJobSuccess(job.id, { rootDir: sourcePath });
             console.log(`[Job ${job.id}] Pipeline upload & ingest hoàn thành: ${sourcePath}`);
 
         } catch (uploadErr) {
             console.error(`[UploadProjectZip] Firebase upload or ingest failed for Job ${job.id}:`, uploadErr);
             const { markJobFailed } = await import("./job.service.js");
-            try { await markJobFailed(job.id, uploadErr); } catch (_) {}
+            try { await markJobFailed(job.id, uploadErr); } catch (_) { }
             throw uploadErr;
         }
     };
@@ -437,7 +437,7 @@ export const deleteProject = async (projectId, userId) => {
         try {
             const [files] = await bucket.getFiles({ prefix: `projects/${projectId}/` });
             if (files.length > 0) {
-                await Promise.all(files.map(file => file.delete().catch(() => {})));
+                await Promise.all(files.map(file => file.delete().catch(() => { })));
                 console.log(`[DeleteProject] Deleted ${files.length} remaining Firebase files for project ${projectId}`);
             }
         } catch (prefixErr) {
@@ -470,7 +470,7 @@ export const getProjectTree = async (projectId, userId) => {
     const project = await prisma.project.findFirst({
         where: { id: projectId, ownerId: userId },
     });
-    if (!project) throw new ServiceError("Project not found", 404);
+    if (!project) throw new ServiceError("Project not found or you don't have permission", 404);
 
     const snapshot = await prisma.projectSnapshot.findFirst({
         where: { projectId },
@@ -478,7 +478,7 @@ export const getProjectTree = async (projectId, userId) => {
     });
 
     if (!snapshot || !snapshot.rootDir) {
-        throw new ServiceError("Project snapshot not ready", 404);
+        throw new ServiceError("Project snapshot not ready", 202);
     }
 
     const tree = buildTree(snapshot.rootDir);

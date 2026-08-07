@@ -23,6 +23,8 @@ import analyticsRoute from "./src/routes/analytics.route.js";
 import codeHygieneRoute from "./src/routes/codeHygiene.route.js";
 import performanceRoute from "./src/routes/performance.route.js";
 import { globalLimiter } from "./src/middlewares/rateLimit.middleware.js";
+import path from "path";
+import { fileURLToPath } from "url";
 import "./src/services/queue.service.js";
 import "./src/services/codeHygieneJob.service.js";
 
@@ -72,8 +74,13 @@ app.use("/api/analytics", analyticsRoute);
 app.use("/api/code-hygiene", codeHygieneRoute);
 app.use("/api/performance", performanceRoute);
 
-app.get("/", (req, res) => {
-  res.json({ message: "CovAI API is running" });
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+app.use(express.static(path.join(__dirname, "../client/dist")));
+
+app.get(/.*/, (req, res) => {
+  res.sendFile(path.join(__dirname, "../client/dist/index.html"));
 });
 
 // Socket.IO connection handling
