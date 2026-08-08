@@ -7,8 +7,10 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.0",
+    "axios": "^1.18.1",
     "esprima": "^4.0.1",
     "recharts": "^3.8.1",
-    "socket.io": "^4.8.3"
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3"
   }
 }

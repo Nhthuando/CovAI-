@@ -256,27 +256,26 @@ export const processRunTestsJob = async (jobId) => {
         // ── SCRUM-141: Parse reports ──────────────────────────────────────────
         await addJobLog(jobId, "INFO", "Bước 3/4: Parse coverage reports...").catch(() => { });
 
-        // Parse coverage-summary.json → CoverageSummary + CoverageFile (from summary)
+        // ── SCRUM-141: Parse reports (Multi-Framework Aggregator) ────────────────
+        await addJobLog(jobId, "INFO", "Bước 3/4: Tự động gom nhóm các Coverage Reports (LCOV, Jest)...").catch(() => { });
+
         let summaryResult = null;
         try {
-            summaryResult = await parseCoverageSummary(coverageDir, snapshotId);
+            const { aggregateCoverageReports } = await import("./coverageAggregator.service.js");
+            summaryResult = await aggregateCoverageReports(rootDir, snapshotId);
+            
             await addJobLog(
                 jobId,
                 "INFO",
-                `[SCRUM-141] Summary: lines=${summaryResult.total.lines.pct}%, ` +
-                `branches=${summaryResult.total.branches.pct}%, ` +
-                `functions=${summaryResult.total.functions.pct}%, ` +
-                `statements=${summaryResult.total.statements.pct}% | files=${summaryResult.fileCount}`
+                `[SCRUM-141] Đã gộp thành công ${summaryResult.filesFound} files. ` +
+                `Summary: lines=${summaryResult.summary.linesPct}%, ` +
+                `branches=${summaryResult.summary.branchesPct}%, ` +
+                `functions=${summaryResult.summary.funcsPct}%, ` +
+                `statements=${summaryResult.summary.stmtsPct}% | files=${summaryResult.fileCount}`
             ).catch(() => { });
         } catch (parseErr) {
-            await addJobLog(jobId, "WARN", `[SCRUM-141] Lỗi parse coverage-summary: ${parseErr.message}`).catch(() => { });
+            await addJobLog(jobId, "WARN", `[SCRUM-141] Lỗi gom nhóm coverage: ${parseErr.message}`).catch(() => { });
         }
-
-        // Parse coverage-final.json → CoverageFile (per-file detail)
-        await parseFinalCoverageFiles(jobId, snapshotId, projectId, userId, coverageDir);
-
-        // Parse coverage-final.json → CoverageFunction (per-function detail)
-        await parseFinalCoverageFunctions(jobId, snapshotId, projectId, userId, coverageDir);
 
         // Verify lcov.info
         const lcovPath = path.join(coverageDir, "lcov.info");
