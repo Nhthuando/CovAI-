@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["partialIndexes"]
 }
 
 datasource db {
@@ -19,10 +20,10 @@ model User {
   passwordResetExpires DateTime?
   passwordResetToken   String?
   aiUsageCount         Int            @default(0)
-  aiTokenUsage         Int            @default(0)
   aiUsageDate          String?
   bio                  String?
   jobTitle             String?
+  aiTokenUsage         Int            @default(0)
   jobs                 Job[]          @relation("UserJobs")
   notifications        Notification[]
   projects             Project[]
@@ -44,39 +45,40 @@ model Project {
   jestCommand     String?
   aiSuggestions   AiSuggestion[]
   aiTests         AiTest[]
-  qualityReports  QualityReport[]
   jobs            Job[]
   notifications   Notification[]
   owner           User              @relation(fields: [ownerId], references: [id])
   snapshots       ProjectSnapshot[]
+  qualityReports  QualityReport[]
 
   @@index([ownerId])
 }
 
 model ProjectSnapshot {
-  id              String             @id @default(cuid())
-  projectId       String
-  source          SnapshotSource
-  checksum        String?
-  commitSha       String?
-  storagePath     String
-  rootDir         String?
-  jestConfigPath  String?
-  createdAt       DateTime           @default(now())
-  hasJest         Boolean            @default(false)
-  jestCommand     String?
-  aiContextCache  AiContextCache?
-  aiSuggestions   AiSuggestion[]
-  aiTests         AiTest[]
-  cfgs            Cfg[]
-  coverageFiles   CoverageFile[]
-  coverageFuncs   CoverageFunction[]
-  coverageSummary CoverageSummary?
-  cyclomatics     Cyclomatic[]
-  jobs            Job[]
-  project         Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  id                String                    @id @default(cuid())
+  projectId         String
+  source            SnapshotSource
+  checksum          String?
+  commitSha         String?
+  storagePath       String
+  rootDir           String?
+  jestConfigPath    String?
+  createdAt         DateTime                  @default(now())
+  hasJest           Boolean                   @default(false)
+  jestCommand       String?
+  aiContextCache    AiContextCache?
+  aiSuggestions     AiSuggestion[]
+  aiTests           AiTest[]
+  cfgs              Cfg[]
+  coverageFiles     CoverageFile[]
+  coverageFuncs     CoverageFunction[]
+  coverageSummary   CoverageSummary?
+  cyclomatics       Cyclomatic[]
+  jobs              Job[]
+  project           Project                   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   structureAnalysis ProjectStructureAnalysis?
   qualityReport     QualityReport?
+  vulnerabilities   Vulnerability[]
 
   @@unique([projectId, checksum])
   @@unique([projectId, commitSha])
@@ -94,54 +96,50 @@ model ProjectStructureAnalysis {
 }
 
 model QualityReport {
-  id                    String          @id @default(cuid())
-  snapshotId            String          @unique
-  projectId             String
-
-  performanceScore      Float
-  securityScore         Float
-  coverageScore         Float
-  maintainabilityScore  Float
-  overallScore          Float
-
-  performanceDetails    String
-  securityDetails       String
-  debugReport           String
-  recommendations       String
-
-  aiAvailable           Boolean         @default(true)
-  aiError               String?
-
-  createdAt             DateTime        @default(now())
-  updatedAt             DateTime        @updatedAt
-
-  snapshot              ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
-  project               Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  id                   String          @id @default(cuid())
+  snapshotId           String          @unique
+  projectId            String
+  performanceScore     Float
+  securityScore        Float
+  coverageScore        Float
+  maintainabilityScore Float
+  overallScore         Float
+  performanceDetails   String
+  securityDetails      String
+  debugReport          String
+  recommendations      String
+  aiAvailable          Boolean         @default(true)
+  aiError              String?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+  project              Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  snapshot             ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 
   @@index([projectId])
 }
 
 model Job {
-  id           String           @id @default(cuid())
-  projectId    String
-  snapshotId   String?
-  userId       String?
-  type         JobType
-  status       JobStatus        @default(QUEUED)
-  progress     Int              @default(0)
-  payloadJson  String?
-  resultJson   String?
-  errorMessage String?
-  startedAt    DateTime?
-  finishedAt   DateTime?
+  id            String           @id @default(cuid())
+  projectId     String
+  snapshotId    String?
+  userId        String?
+  type          JobType
+  status        JobStatus        @default(QUEUED)
+  progress      Int              @default(0)
+  payloadJson   String?
+  resultJson    String?
+  errorMessage  String?
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  createdAt     DateTime         @default(now())
   computeTimeMs Int?
-  createdAt    DateTime         @default(now())
-  project      Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  snapshot     ProjectSnapshot? @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
-  user         User?            @relation("UserJobs", fields: [userId], references: [id])
-  logs         JobLog[]
-  output       JobOutput?
+  project       Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  snapshot      ProjectSnapshot? @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  user          User?            @relation("UserJobs", fields: [userId], references: [id])
+  logs          JobLog[]
+  output        JobOutput?
 
+  @@unique([projectId, snapshotId, type], map: "Job_active_analysis_per_snapshot_key", where: raw("((type = 'ANALYSIS'::\"JobType\") AND (\"snapshotId\" IS NOT NULL) AND (status = ANY (ARRAY['QUEUED'::\"JobStatus\", 'RUNNING'::\"JobStatus\"])))"))
   @@index([projectId])
   @@index([snapshotId])
   @@index([status, type])
@@ -305,6 +303,21 @@ model Notification {
   @@index([userId, readAt])
 }
 
+model Vulnerability {
+  id          String   @id @default(cuid())
+  snapshotId  String
+  type        String   // "SECRET", "DANGEROUS_API", "INSECURE_PATTERN"
+  severity    String   // "CRITICAL", "HIGH", "MEDIUM", "LOW"
+  file        String
+  line        Int?
+  description String
+  createdAt   DateTime @default(now())
+  
+  snapshot    ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@index([snapshotId])
+}
+
 enum SnapshotSource {
   ZIP
   GITHUB
@@ -318,10 +331,11 @@ enum JobType {
   BUILD_CFG
   AI_SUGGEST
   AI_TESTS
-  ANALYSIS
   CODE_HYGIENE
   PERFORMANCE_ANALYSIS
+  ANALYSIS
   QUALITY_ANALYSIS
+  SECURITY_ANALYSIS
 }
 
 enum JobStatus {
