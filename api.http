@@ -228,4 +228,4 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF2c
 ### Analytics
 # @name getDashboardAnalytics
 GET {{baseUrl}}/analytics/dashboard
-Authorization: Bearer YOUR_TOKEN_HERE
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF2cXplcGgwMDAwdXc3ZGw2MzIyNDhsIiwidXNlckVtYWlsIjoiZGluaEBnbWFpbC5jb20iLCJ1c2VyTmFtZSI6ImRpbmgiLCJpYXQiOjE3ODMyMjM3ODAsImV4cCI6MTc4MzIyNzM4MH0.z6cjre0WXD8RhQY1CiwDNXDafhWezLhEUeerBJMHmB8
