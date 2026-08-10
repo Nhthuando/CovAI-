@@ -16,7 +16,7 @@ const PERFORMANCE_CONFIG = Object.freeze({
     })
 });
 
-const normalizeExecutionTime = (timeMs) => Number.isFinite(timeMs) && timeMs >= 0 ? Math.round(timeMs) : 0;
+const normalizeExecutionTime = (timeMs) => Number.isFinite(timeMs) && timeMs >= 0 ? Math.ceil(timeMs) : 0;
 
 export const calculatePipelineExecutionScore = (timeMs) => {
     const normalizedTime = normalizeExecutionTime(timeMs);

@@ -10,6 +10,7 @@ import AIPanel from "./AIPanel";
 import ImportLayout from "./import/ImportLayout";
 import JobQueue from "./JobQueue";
 import CFGCalculator from "./CFGCalculator";
+import PerformanceDashboard from "./PerformanceDashboard";
 import SettingsSidebar from "./settings/SettingsSidebar";
 import UserProfile from "./settings/UserProfile";
 import Appearance from "./settings/Appearance";
@@ -816,6 +817,8 @@ function LayoutInner() {
             </div>
           ) : activeActivity === "jobs" ? (
             <JobQueue projectId={project?.id} />
+          ) : activeActivity === "performance" ? (
+            <PerformanceDashboard snapshotId={project?.latestSnapshotId || (project?.id ? localStorage.getItem(`latestSnapshot_${project.id}`) : null) || testPromptSnapshotId} projectId={project?.id} />
           ) : activeActivity === "coverage" ? (
             <CoverageDashboard snapshotId={project?.latestSnapshotId || (project?.id ? localStorage.getItem(`latestSnapshot_${project.id}`) : null) || testPromptSnapshotId} projectId={project?.id} onOpenFile={handleOpenFileByPath} />
           ) : (
