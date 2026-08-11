@@ -30,6 +30,17 @@ const assertStringField = (value, fieldName) => {
     }
 };
 
+export const coverageResultFromSummary = (summaryResult) => {
+    if (!summaryResult?.summary) return null;
+    const { linesPct, branchesPct, funcsPct, stmtsPct } = summaryResult.summary;
+    return {
+        lines: linesPct,
+        branches: branchesPct,
+        functions: funcsPct,
+        statements: stmtsPct,
+    };
+};
+
 /**
  * SCRUM-139: Chạy npm install --prefer-offline trong rootDir thông qua Docker.
  * @returns {Promise<void>} - resolve bình thường hoặc throw Error nếu thất bại
@@ -310,14 +321,7 @@ export const processRunTestsJob = async (jobId) => {
         // ── SCRUM-143: markJobSuccess ─────────────────────────────────────────
         await markJobSuccess(jobId, {
             jestExitCode: exitCode,
-            coverage: summaryResult
-                ? {
-                    lines: summaryResult.total.lines.pct,
-                    branches: summaryResult.total.branches.pct,
-                    functions: summaryResult.total.functions.pct,
-                    statements: summaryResult.total.statements.pct,
-                }
-                : null,
+            coverage: coverageResultFromSummary(summaryResult),
             fileCount: summaryResult?.fileCount ?? null,
             hasLcov,
             storageBasePath: storageResult.baseStoragePath ?? null,
