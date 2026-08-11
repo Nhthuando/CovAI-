@@ -10,6 +10,7 @@ import Footer from "./components/Footer";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import DashboardPage from "./pages/DashboardPage";
+import ProjectSelectionPage from "./pages/ProjectSelectionPage";
 import GithubCallbackPage from "./pages/GithubCallbackPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
 import { NotificationProvider } from "./contexts/NotificationContext";
@@ -34,7 +35,11 @@ function LandingPage() {
 
 /* ── Protected Route ────────────────────────────────────────── */
 function ProtectedRoute({ children }) {
-  const token = localStorage.getItem("token") || (localStorage.getItem("user") ? JSON.parse(localStorage.getItem("user")).token : null);
+  const token =
+    localStorage.getItem("token") ||
+    (localStorage.getItem("user")
+      ? JSON.parse(localStorage.getItem("user")).token
+      : null);
   if (!token) {
     return <Navigate to="/" replace />;
   }
@@ -43,9 +48,13 @@ function ProtectedRoute({ children }) {
 
 /* ── Redirect if Authenticated ─────────────────────────────── */
 function RedirectIfAuthenticated({ children }) {
-  const token = localStorage.getItem("token") || (localStorage.getItem("user") ? JSON.parse(localStorage.getItem("user")).token : null);
+  const token =
+    localStorage.getItem("token") ||
+    (localStorage.getItem("user")
+      ? JSON.parse(localStorage.getItem("user")).token
+      : null);
   if (token) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to="/projects" replace />;
   }
   return children;
 }
@@ -57,15 +66,54 @@ function AppContent() {
   return (
     <>
       <Routes>
-        <Route path="/" element={<RedirectIfAuthenticated><LandingPage /></RedirectIfAuthenticated>} />
-        <Route path="/login" element={<RedirectIfAuthenticated><LoginPage /></RedirectIfAuthenticated>} />
-        <Route path="/register" element={<RedirectIfAuthenticated><RegisterPage /></RedirectIfAuthenticated>} />
-        <Route path="/reset-password" element={<RedirectIfAuthenticated><ResetPasswordPage /></RedirectIfAuthenticated>} />
-        <Route path="/dashboard" element={
-          <ProtectedRoute>
-            <DashboardPage />
-          </ProtectedRoute>
-        } />
+        <Route
+          path="/"
+          element={
+            <RedirectIfAuthenticated>
+              <LandingPage />
+            </RedirectIfAuthenticated>
+          }
+        />
+        <Route
+          path="/login"
+          element={
+            <RedirectIfAuthenticated>
+              <LoginPage />
+            </RedirectIfAuthenticated>
+          }
+        />
+        <Route
+          path="/register"
+          element={
+            <RedirectIfAuthenticated>
+              <RegisterPage />
+            </RedirectIfAuthenticated>
+          }
+        />
+        <Route
+          path="/reset-password"
+          element={
+            <RedirectIfAuthenticated>
+              <ResetPasswordPage />
+            </RedirectIfAuthenticated>
+          }
+        />
+        <Route
+          path="/projects"
+          element={
+            <ProtectedRoute>
+              <ProjectSelectionPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/main-editor"
+          element={
+            <ProtectedRoute>
+              <DashboardPage />
+            </ProtectedRoute>
+          }
+        />
         <Route path="/auth/github/callback" element={<GithubCallbackPage />} />
       </Routes>
     </>

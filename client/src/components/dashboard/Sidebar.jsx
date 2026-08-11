@@ -2,7 +2,6 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ChevronRight,
-  ChevronDown,
   Folder,
   FolderOpen,
   FileCode2,
@@ -13,7 +12,6 @@ import {
   RefreshCw,
   Plus,
   MoreHorizontal,
-  Trash2,
   AlertTriangle,
   Loader2,
 } from "lucide-react";
@@ -23,12 +21,12 @@ import {
 /* ── Language icon/color map ─────────────────────────────── */
 const LANG_MAP = {
   react: { icon: FileCode2, color: "#61dafb" },
-  ts:    { icon: Braces,    color: "#3b82f6" },
-  js:    { icon: FileCode2, color: "#fbbf24" },
-  json:  { icon: FileJson,  color: "#4ade80" },
-  css:   { icon: FileText,  color: "#38bdf8" },
-  md:    { icon: FileText,  color: "#94a3b8" },
-  test:  { icon: TestTube2, color: "#c084fc" },
+  ts: { icon: Braces, color: "#3b82f6" },
+  js: { icon: FileCode2, color: "#fbbf24" },
+  json: { icon: FileJson, color: "#4ade80" },
+  css: { icon: FileText, color: "#38bdf8" },
+  md: { icon: FileText, color: "#94a3b8" },
+  test: { icon: TestTube2, color: "#c084fc" },
 };
 
 function FileIcon({ lang }) {
@@ -39,12 +37,12 @@ function FileIcon({ lang }) {
 
 /* ── Tree Node ──────────────────────────────────────────── */
 function TreeNode({ node, depth = 0, onSelect, activeFileId }) {
-  const [open, setOpen]       = useState(depth < 1);
+  const [open, setOpen] = useState(depth < 1);
   const [hovered, setHovered] = useState(false);
 
   const isFolder = node.type === "folder";
   const isActive = activeFileId === node.id;
-  const indent   = depth * 14 + 16;
+  const indent = depth * 14 + 16;
 
   return (
     <div>
@@ -62,16 +60,10 @@ function TreeNode({ node, depth = 0, onSelect, activeFileId }) {
           background: isActive
             ? "rgba(124, 58, 237, 0.12)"
             : hovered
-            ? "rgba(255, 255, 255, 0.04)"
-            : "transparent",
-          borderLeft: isActive
-            ? "2px solid #7c3aed"
-            : "2px solid transparent",
-          color: isActive
-            ? "#c4b5fd"
-            : hovered
-            ? "#e6edf3"
-            : "#8b949e",
+              ? "rgba(255, 255, 255, 0.04)"
+              : "transparent",
+          borderLeft: isActive ? "2px solid #7c3aed" : "2px solid transparent",
+          color: isActive ? "#c4b5fd" : hovered ? "#e6edf3" : "#8b949e",
           fontSize: 13,
           fontFamily: "var(--font-sans)",
           transition: "background 0.1s ease, color 0.1s ease",
@@ -88,7 +80,10 @@ function TreeNode({ node, depth = 0, onSelect, activeFileId }) {
               <ChevronRight size={12} style={{ opacity: 0.5 }} />
             </motion.span>
             {open ? (
-              <FolderOpen size={14} style={{ color: "#e3b341", flexShrink: 0 }} />
+              <FolderOpen
+                size={14}
+                style={{ color: "#e3b341", flexShrink: 0 }}
+              />
             ) : (
               <Folder size={14} style={{ color: "#e3b341", flexShrink: 0 }} />
             )}
@@ -130,8 +125,14 @@ function TreeNode({ node, depth = 0, onSelect, activeFileId }) {
 }
 
 /* ── Sidebar ─────────────────────────────────────────────── */
-export default function Sidebar({ onOpenFile, activeFileId, fileTree = [], project, projects = [], onChangeProject, onDeleteProject, isLoading, onRefresh }) {
-  const [showProjectList, setShowProjectList] = useState(false);
+export default function Sidebar({
+  onOpenFile,
+  activeFileId,
+  fileTree = [],
+  onDeleteProject,
+  isLoading,
+  onRefresh,
+}) {
   const [projectToDelete, setProjectToDelete] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -185,7 +186,12 @@ export default function Sidebar({ onOpenFile, activeFileId, fileTree = [], proje
             transition={{ duration: 0.35 }}
             onClick={onRefresh}
             className="p-1 rounded"
-            style={{ color: "#484f58", cursor: "pointer", background: "transparent", border: "none" }}
+            style={{
+              color: "#484f58",
+              cursor: "pointer",
+              background: "transparent",
+              border: "none",
+            }}
             title="Refresh"
           >
             <RefreshCw size={13} />
@@ -202,100 +208,18 @@ export default function Sidebar({ onOpenFile, activeFileId, fileTree = [], proje
         </div>
       </div>
 
-      {/* Project label & Dropdown */}
-      <div className="relative">
-        <div
-          className="flex items-center justify-between flex-shrink-0 cursor-pointer"
-          style={{
-            color: "#484f58",
-            fontSize: 11,
-            textTransform: "uppercase",
-            letterSpacing: "0.08em",
-            fontFamily: "var(--font-sans)",
-            borderBottom: "1px solid rgba(255,255,255,0.03)",
-            padding: "12px 24px",
-            background: showProjectList ? "rgba(255,255,255,0.02)" : "transparent",
-            transition: "background 0.2s ease"
-          }}
-          onClick={() => setShowProjectList(!showProjectList)}
-        >
-          <div className="flex items-center gap-1.5 min-w-0">
-            <motion.div
-              animate={{ rotate: showProjectList ? 180 : 0 }}
-              transition={{ duration: 0.2 }}
-            >
-              <ChevronDown size={11} />
-            </motion.div>
-            <span className="truncate">{project?.name || "No Project"}</span>
-          </div>
-        </div>
-
-        {/* Project List Dropdown */}
-        <AnimatePresence>
-          {showProjectList && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: "auto", opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.2, ease: "easeInOut" }}
-              className="overflow-hidden"
-              style={{
-                background: "rgba(13, 17, 23, 0.95)",
-                borderBottom: "1px solid var(--ide-border)",
-                zIndex: 10
-              }}
-            >
-              {projects.length === 0 ? (
-                <div className="px-6 py-3 text-xs text-[#8b949e]">No projects found.</div>
-              ) : (
-                projects.map((p) => (
-                  <div
-                    key={p.id}
-                    className="flex items-center justify-between group cursor-pointer"
-                    style={{
-                      padding: "8px 24px",
-                      background: p.id === project?.id ? "rgba(124, 58, 237, 0.1)" : "transparent",
-                      borderLeft: p.id === project?.id ? "2px solid #7c3aed" : "2px solid transparent",
-                    }}
-                    onClick={() => {
-                      onChangeProject(p.id);
-                      setShowProjectList(false);
-                    }}
-                  >
-                    <span
-                      className="truncate text-xs"
-                      style={{
-                        color: p.id === project?.id ? "#c4b5fd" : "#8b949e",
-                        fontFamily: "var(--font-sans)"
-                      }}
-                    >
-                      {p.name}
-                    </span>
-                    <motion.button
-                      whileHover={{ scale: 1.1, color: "#f85149" }}
-                      whileTap={{ scale: 0.9 }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setProjectToDelete(p);
-                      }}
-                      className="opacity-0 group-hover:opacity-100 p-1 rounded"
-                      style={{ color: "#484f58", background: "transparent", border: "none" }}
-                      title="Delete Project"
-                    >
-                      <Trash2 size={12} />
-                    </motion.button>
-                  </div>
-                ))
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-
       {/* File tree — scrollable */}
-      <div className="flex-1 overflow-y-auto" style={{ paddingTop: 6, paddingBottom: 6 }}>
+      <div
+        className="flex-1 overflow-y-auto"
+        style={{ paddingTop: 6, paddingBottom: 6 }}
+      >
         {isLoading ? (
-          <div className="text-xs text-[#8b949e]" style={{ padding: "16px 24px" }}>Loading files...</div>
+          <div
+            className="text-xs text-[#8b949e]"
+            style={{ padding: "16px 24px" }}
+          >
+            Loading files...
+          </div>
         ) : (
           fileTree.map((node) => (
             <TreeNode
@@ -332,7 +256,9 @@ export default function Sidebar({ onOpenFile, activeFileId, fileTree = [], proje
           }}
         />
         <span>main</span>
-        <span style={{ color: "#3fb950", marginLeft: "auto" }}>↑ 2 commits</span>
+        <span style={{ color: "#3fb950", marginLeft: "auto" }}>
+          ↑ 2 commits
+        </span>
       </div>
 
       {/* Delete Confirmation Modal */}
@@ -340,7 +266,10 @@ export default function Sidebar({ onOpenFile, activeFileId, fileTree = [], proje
         {projectToDelete && (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center"
-            style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }}
+            style={{
+              background: "rgba(0,0,0,0.6)",
+              backdropFilter: "blur(4px)",
+            }}
             onClick={(e) => {
               e.stopPropagation();
               setProjectToDelete(null);
@@ -357,33 +286,70 @@ export default function Sidebar({ onOpenFile, activeFileId, fileTree = [], proje
                 background: "#161b22",
                 border: "1px solid rgba(248, 81, 73, 0.4)",
                 borderRadius: 16,
-                boxShadow: "0 0 40px rgba(248, 81, 73, 0.15), 0 8px 32px rgba(0,0,0,0.5)",
+                boxShadow:
+                  "0 0 40px rgba(248, 81, 73, 0.15), 0 8px 32px rgba(0,0,0,0.5)",
               }}
             >
               <div style={{ padding: "24px 24px 16px" }}>
                 <div className="flex items-center gap-3 mb-4">
                   <div
                     className="flex items-center justify-center rounded-full"
-                    style={{ width: 40, height: 40, background: "rgba(248, 81, 73, 0.1)", color: "#f85149" }}
+                    style={{
+                      width: 40,
+                      height: 40,
+                      background: "rgba(248, 81, 73, 0.1)",
+                      color: "#f85149",
+                    }}
                   >
                     <AlertTriangle size={20} />
                   </div>
                   <div>
-                    <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: "#e6edf3", fontFamily: "var(--font-sans)" }}>
+                    <h3
+                      style={{
+                        margin: 0,
+                        fontSize: 16,
+                        fontWeight: 600,
+                        color: "#e6edf3",
+                        fontFamily: "var(--font-sans)",
+                      }}
+                    >
                       Delete Project
                     </h3>
-                    <p style={{ margin: "4px 0 0", fontSize: 13, color: "#8b949e", fontFamily: "var(--font-sans)" }}>
+                    <p
+                      style={{
+                        margin: "4px 0 0",
+                        fontSize: 13,
+                        color: "#8b949e",
+                        fontFamily: "var(--font-sans)",
+                      }}
+                    >
                       This action cannot be undone.
                     </p>
                   </div>
                 </div>
-                <p style={{ fontSize: 14, color: "#c9d1d9", fontFamily: "var(--font-sans)", lineHeight: 1.5, marginBottom: 24 }}>
-                  Are you sure you want to permanently delete <strong style={{ color: "#e6edf3" }}>{projectToDelete.name}</strong>?
-                  All associated files, snapshots, and analysis data will be lost.
+                <p
+                  style={{
+                    fontSize: 14,
+                    color: "#c9d1d9",
+                    fontFamily: "var(--font-sans)",
+                    lineHeight: 1.5,
+                    marginBottom: 24,
+                  }}
+                >
+                  Are you sure you want to permanently delete{" "}
+                  <strong style={{ color: "#e6edf3" }}>
+                    {projectToDelete.name}
+                  </strong>
+                  ? All associated files, snapshots, and analysis data will be
+                  lost.
                 </p>
                 <div className="flex justify-end gap-3">
                   <motion.button
-                    whileHover={!isDeleting ? { backgroundColor: "rgba(255,255,255,0.05)" } : {}}
+                    whileHover={
+                      !isDeleting
+                        ? { backgroundColor: "rgba(255,255,255,0.05)" }
+                        : {}
+                    }
                     whileTap={!isDeleting ? { scale: 0.95 } : {}}
                     onClick={() => !isDeleting && setProjectToDelete(null)}
                     disabled={isDeleting}
@@ -410,26 +376,33 @@ export default function Sidebar({ onOpenFile, activeFileId, fileTree = [], proje
                       await onDeleteProject(projectToDelete.id);
                       setIsDeleting(false);
                       setProjectToDelete(null);
-                      setShowProjectList(false);
                     }}
                     disabled={isDeleting}
                     style={{
                       padding: "8px 16px",
                       borderRadius: 8,
-                      background: isDeleting ? "rgba(218, 54, 51, 0.6)" : "#da3633",
-                      border: isDeleting ? "1px solid rgba(248, 81, 73, 0.3)" : "1px solid rgba(248, 81, 73, 0.5)",
+                      background: isDeleting
+                        ? "rgba(218, 54, 51, 0.6)"
+                        : "#da3633",
+                      border: isDeleting
+                        ? "1px solid rgba(248, 81, 73, 0.3)"
+                        : "1px solid rgba(248, 81, 73, 0.5)",
                       color: "#fff",
                       fontSize: 13,
                       fontWeight: 500,
                       cursor: isDeleting ? "not-allowed" : "pointer",
-                      boxShadow: isDeleting ? "none" : "0 0 12px rgba(248, 81, 73, 0.4)",
+                      boxShadow: isDeleting
+                        ? "none"
+                        : "0 0 12px rgba(248, 81, 73, 0.4)",
                       fontFamily: "var(--font-sans)",
                       display: "flex",
                       alignItems: "center",
                       gap: 6,
                     }}
                   >
-                    {isDeleting ? <Loader2 size={14} className="animate-spin" /> : null}
+                    {isDeleting ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : null}
                     {isDeleting ? "Deleting..." : "Delete Project"}
                   </motion.button>
                 </div>

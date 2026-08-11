@@ -1,5 +1,5 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
 @import "tailwindcss";
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
 
 /* ============================================================
    CSS CUSTOM PROPERTIES — DESIGN TOKENS
@@ -58,6 +58,9 @@
 *::before,
 *::after {
   box-sizing: border-box;
+}
+
+body {
   margin: 0;
   padding: 0;
 }
@@ -76,6 +79,13 @@ body {
   overflow-x: hidden;
 }
 
+html,
+body {
+  width: 100%;
+  height: 100vh;
+  box-sizing: border-box;
+}
+
 /* IDE layout — no page scroll */
 .ide-root {
   overflow: hidden;
@@ -83,6 +93,10 @@ body {
   width: 100vw;
   display: flex;
   flex-direction: column;
+}
+
+.page-wrapper {
+  padding: 2rem 4rem !important;
 }
 
 /* ============================================================
@@ -144,7 +158,11 @@ body {
 }
 
 .text-gradient-violet {
-  background: linear-gradient(135deg, var(--primary-light) 0%, var(--accent-cyan) 100%);
+  background: linear-gradient(
+    135deg,
+    var(--primary-light) 0%,
+    var(--accent-cyan) 100%
+  );
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -153,54 +171,116 @@ body {
 /* ============================================================
    SYNTAX HIGHLIGHTING TOKENS
    ============================================================ */
-.token-keyword  { color: #c084fc; }
-.token-type     { color: #67e8f9; }
-.token-fn       { color: #93c5fd; }
-.token-string   { color: #86efac; }
-.token-number   { color: #fca5a5; }
-.token-comment  { color: #4b5563; font-style: italic; }
-.token-tag      { color: #f9a8d4; }
-.token-attr     { color: #fde68a; }
-.token-plain    { color: #e2e8f0; }
+.token-keyword {
+  color: #c084fc;
+}
+.token-type {
+  color: #67e8f9;
+}
+.token-fn {
+  color: #93c5fd;
+}
+.token-string {
+  color: #86efac;
+}
+.token-number {
+  color: #fca5a5;
+}
+.token-comment {
+  color: #4b5563;
+  font-style: italic;
+}
+.token-tag {
+  color: #f9a8d4;
+}
+.token-attr {
+  color: #fde68a;
+}
+.token-plain {
+  color: #e2e8f0;
+}
 
 /* ============================================================
    ANIMATION KEYFRAMES
    ============================================================ */
 @keyframes float {
-  0%, 100% { transform: translateY(0px); }
-  50%       { transform: translateY(-8px); }
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
 }
 
 @keyframes pulse-glow {
-  0%, 100% { opacity: 0.5; }
-  50%       { opacity: 1; }
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 @keyframes gradient-shift {
-  0%   { background-position: 0% 50%; }
-  50%  { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
 }
 
 @keyframes typing-cursor {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
 }
 
 @keyframes scan-line {
-  0%   { transform: translateY(-100%); }
-  100% { transform: translateY(100vh); }
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(100vh);
+  }
 }
 
 @keyframes neon-pulse {
-  0%, 100% { box-shadow: 0 0 5px rgba(124, 58, 237, 0.3), 0 0 20px rgba(124, 58, 237, 0.1); }
-  50%       { box-shadow: 0 0 15px rgba(124, 58, 237, 0.6), 0 0 40px rgba(124, 58, 237, 0.25); }
+  0%,
+  100% {
+    box-shadow:
+      0 0 5px rgba(124, 58, 237, 0.3),
+      0 0 20px rgba(124, 58, 237, 0.1);
+  }
+  50% {
+    box-shadow:
+      0 0 15px rgba(124, 58, 237, 0.6),
+      0 0 40px rgba(124, 58, 237, 0.25);
+  }
 }
 
-.animate-float        { animation: float 4s ease-in-out infinite; }
-.animate-pulse-glow   { animation: pulse-glow 2s ease-in-out infinite; }
-.animate-gradient     { animation: gradient-shift 6s ease infinite; background-size: 200% 200%; }
-.animate-neon-pulse   { animation: neon-pulse 2s ease-in-out infinite; }
+.animate-float {
+  animation: float 4s ease-in-out infinite;
+}
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+.animate-gradient {
+  animation: gradient-shift 6s ease infinite;
+  background-size: 200% 200%;
+}
+.animate-neon-pulse {
+  animation: neon-pulse 2s ease-in-out infinite;
+}
 
 /* ============================================================
    BACKGROUND PATTERNS
@@ -232,7 +312,9 @@ input:-webkit-autofill:focus {
 /* Tab hover with indicator */
 .tab-item {
   position: relative;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
 
 /* Activity bar icon active glow */
@@ -242,38 +324,18 @@ input:-webkit-autofill:focus {
 }
 
 /* Code gutter highlight lines */
-.line-covered   { background: rgba(63, 185, 80, 0.06); }
-.line-uncovered { background: rgba(248, 81, 73, 0.06); }
-.line-partial   { background: rgba(210, 153, 34, 0.06); }
+.line-covered {
+  background: rgba(63, 185, 80, 0.06);
+}
+.line-uncovered {
+  background: rgba(248, 81, 73, 0.06);
+}
+.line-partial {
+  background: rgba(210, 153, 34, 0.06);
+}
 
 /* ============================================================
-   IDE PANEL SPACING FIXES
-   Tailwind Preflight strips default padding/margin from
-   elements like p, button, pre. These rules restore proper
-   breathing room inside the IDE dashboard components.
+   IDE PANEL SPACING FIXES (REMOVED)
+   Tailwind utilities now handle spacing directly without 
+   global overrides that were conflicting with Tailwind.
    ============================================================ */
-
-/* Fix paragraph spacing in AI chat messages */
-.ide-root p + p {
-  margin-top: 0.35em;
-}
-
-/* Ensure buttons have minimal padding so icons aren't cramped */
-.ide-root button {
-  padding: 0;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  line-height: 1;
-}
-
-/* Fix pre/code blocks losing spacing in AI panel */
-.ide-root pre {
-  margin: 0;
-}
-
-/* Ensure gap/flex utilities actually have spacing even with reset */
-.ide-root .flex.items-center {
-  min-height: 0;
-}
-
