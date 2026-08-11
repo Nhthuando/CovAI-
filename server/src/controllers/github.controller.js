@@ -43,6 +43,7 @@ export const cloneGitHubRepositoryByUrl = async (req, res) => {
         hasJest: detection.hasJest,
         jestConfigPath: detection.configPath,
         jestCommand: detection.jestCommand,
+        testingFrameworksJson: JSON.stringify(detection.testingFrameworks),
       }
     });
 
@@ -51,7 +52,7 @@ export const cloneGitHubRepositoryByUrl = async (req, res) => {
       console.error("Error building CFG for GitHub URL import:", err);
     });
 
-    res.status(200).json({ ...cloneResult, snapshotId: snapshot.id });
+    res.status(200).json({ ...cloneResult, snapshotId: snapshot.id, testingFrameworks: detection.testingFrameworks });
   } catch (error) {
     console.error("Error cloning GitHub repository by URL:", error);
     res.status(500).json({ message: "Error during repository cloning." });
@@ -101,6 +102,7 @@ export const importGitHubRepository = async (req, res) => {
         hasJest: detection.hasJest,
         jestConfigPath: detection.configPath,
         jestCommand: detection.jestCommand,
+        testingFrameworksJson: JSON.stringify(detection.testingFrameworks),
       }
     });
 
@@ -109,7 +111,7 @@ export const importGitHubRepository = async (req, res) => {
       console.error("Error building CFG for GitHub Repo import:", err);
     });
 
-    res.status(200).json({ ...cloneResult, snapshotId: snapshot.id });
+    res.status(200).json({ ...cloneResult, snapshotId: snapshot.id, testingFrameworks: detection.testingFrameworks });
   } catch (error) {
     console.error("Error importing GitHub repository:", error);
 

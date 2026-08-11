@@ -12,6 +12,16 @@ export const snapshotResponse = (snapshot) => ({
     commitSha: snapshot.commitSha, createdAt: snapshot.createdAt,
     hasStructureAnalysis: Boolean(snapshot.structureAnalysis),
     schemaVersion: snapshot.structureAnalysis?.schemaVersion || null,
+    testingFrameworks: parseTestingFrameworks(snapshot.testingFrameworksJson),
 });
+
+const parseTestingFrameworks = (value) => {
+    if (!value) return null;
+    try {
+        return JSON.parse(value);
+    } catch {
+        return null;
+    }
+};
 
 export const analysisResultResponse = (analysis) => JSON.parse(analysis.resultJson);

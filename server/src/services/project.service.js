@@ -270,6 +270,8 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
                 where: { id: snapshot.id },
                 data: { 
                    hasJest: detection.hasJest,
+                   jestConfigPath: detection.configPath,
+                   testingFrameworksJson: JSON.stringify(detection.testingFrameworks),
                    jestCommand: detection.jestCommand
                 },
             });

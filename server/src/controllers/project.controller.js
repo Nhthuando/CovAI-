@@ -4,6 +4,7 @@ import { processRunTestsJob } from "../services/runTestsJob.service.js";
 import { parseCoverageFilesForSnapshot } from "../services/coverageFileParser.service.js";
 import { parseCoverageFunctionsForSnapshot } from "../services/coverageFunctionParser.service.js";
 import { GitHubCloneService } from "../services/githubClone.service.js";
+import { detectJest } from "../utils/jestDetector.js";
 import { createAiSuggestJob } from "../services/job.service.js";
 import { processAiSuggestJob } from "../services/aiSuggestJob.service.js";
 import { generateText } from "../services/gemini.service.js";
@@ -677,12 +678,18 @@ class ProjectController {
           .json({ success: false, message: "Duplicate snapshot" });
       }
 
+      const detection = detectJest(localPath);
       const snapshot = await prisma.projectSnapshot.create({
         data: {
           projectId,
           source: "GITHUB",
           commitSha,
           storagePath: localPath,
+          rootDir: localPath,
+          hasJest: detection.hasJest,
+          jestConfigPath: detection.configPath,
+          jestCommand: detection.jestCommand,
+          testingFrameworksJson: JSON.stringify(detection.testingFrameworks),
         },
       });
 
@@ -695,6 +702,7 @@ class ProjectController {
           commitSha: snapshot.commitSha,
           storagePath: snapshot.storagePath,
           createdAt: snapshot.createdAt,
+          testingFrameworks: JSON.parse(snapshot.testingFrameworksJson),
         },
       });
     } catch (error) {
