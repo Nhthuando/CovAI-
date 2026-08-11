@@ -18,6 +18,7 @@ const JOB_TYPES = Object.freeze([
     "INGEST",
     "INSTALL_DEPS",
     "RUN_TESTS",
+    "SUPERTEST_COVERAGE",
     "PARSE_COVERAGE",
     "BUILD_CFG",
     "PERFORMANCE_ANALYSIS",
@@ -125,6 +126,9 @@ export const createInstallDepsJob = createTypedJob("INSTALL_DEPS");
 
 /** Creates a queued RUN_TESTS job for a snapshot. */
 export const createRunTestsJob = createTypedJob("RUN_TESTS");
+
+/** Creates a queued Supertest integration-coverage job for a snapshot. */
+export const createSupertestCoverageJob = createTypedJob("SUPERTEST_COVERAGE");
 
 /** Creates a queued BUILD_CFG job for a snapshot. */
 export const createBuildCfgJob = createTypedJob("BUILD_CFG");

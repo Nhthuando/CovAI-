@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import {
     getCoverageSummary,
     getCoverageFiles,
+    runSupertestCoverage,
 } from "../../services/coverage.service.js";
 
 async function handleResponse(res) {
@@ -267,6 +268,7 @@ const CoverageDashboard = ({ snapshotId, projectId, onOpenFile }) => {
     const [search, setSearch] = useState("");
     const [page, setPage] = useState(1);
     const [pagination, setPagination] = useState(null);
+    const [isRunningSupertest, setIsRunningSupertest] = useState(false);
 
     const LIMIT = 50;
 
@@ -295,6 +297,18 @@ const CoverageDashboard = ({ snapshotId, projectId, onOpenFile }) => {
     }, [snapshotId, sortBy, order, page]);
 
     useEffect(() => { fetchData(); }, [fetchData]);
+
+    const handleRunSupertest = async () => {
+        if (!snapshotId || isRunningSupertest) return;
+        setIsRunningSupertest(true);
+        try {
+            await runSupertestCoverage(snapshotId);
+        } catch (err) {
+            setError(err.message || "Unable to start Supertest coverage.");
+        } finally {
+            setIsRunningSupertest(false);
+        }
+    };
 
     // Reset page khi sort thay đổi
     const toggleSort = (field) => {
@@ -353,18 +367,29 @@ const CoverageDashboard = ({ snapshotId, projectId, onOpenFile }) => {
                             )}
                         </p>
                     </div>
-                    <button onClick={fetchData} style={{
-                        display: "flex", alignItems: "center", gap: 6,
-                        background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
-                        borderRadius: 8, color: "#8b949e", fontSize: 12, fontWeight: 500,
-                        cursor: "pointer", padding: "7px 14px", fontFamily: "inherit",
-                    }}>
-                        <svg width={12} height={12} viewBox="0 0 12 12" fill="none">
-                            <path d="M10.5 6A4.5 4.5 0 1 1 6 1.5" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" />
-                            <path d="M6 1.5 8 3.5 6 5.5" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                        Refresh
-                    </button>
+                    <div style={{ display: "flex", gap: 8 }}>
+                        <button onClick={handleRunSupertest} disabled={!snapshotId || isRunningSupertest} style={{
+                            display: "flex", alignItems: "center", gap: 6,
+                            background: "rgba(167,139,250,0.12)", border: "1px solid rgba(167,139,250,0.35)",
+                            borderRadius: 8, color: "#c4b5fd", fontSize: 12, fontWeight: 600,
+                            cursor: isRunningSupertest ? "wait" : "pointer", padding: "7px 14px", fontFamily: "inherit",
+                            opacity: !snapshotId || isRunningSupertest ? 0.65 : 1,
+                        }}>
+                            {isRunningSupertest ? "Queuing Supertest..." : "Run Supertest"}
+                        </button>
+                        <button onClick={fetchData} style={{
+                            display: "flex", alignItems: "center", gap: 6,
+                            background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
+                            borderRadius: 8, color: "#8b949e", fontSize: 12, fontWeight: 500,
+                            cursor: "pointer", padding: "7px 14px", fontFamily: "inherit",
+                        }}>
+                            <svg width={12} height={12} viewBox="0 0 12 12" fill="none">
+                                <path d="M10.5 6A4.5 4.5 0 1 1 6 1.5" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" />
+                                <path d="M6 1.5 8 3.5 6 5.5" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                            Refresh
+                        </button>
+                    </div>
                 </div>
             </div>
 

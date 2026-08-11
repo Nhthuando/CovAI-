@@ -23,6 +23,7 @@ const JOB_TYPE_CONFIG = {
   INGEST: { label: "Source Ingest", icon: PackageOpen, taskLabel: "Extracting and indexing source files" },
   INSTALL_DEPS: { label: "Install Deps", icon: Wrench, taskLabel: "Installing project dependencies" },
   RUN_TESTS: { label: "Run Tests", icon: TestTube2, taskLabel: "Running test suite with coverage" },
+  SUPERTEST_COVERAGE: { label: "Supertest Coverage", icon: TestTube2, taskLabel: "Running Supertest integration coverage" },
   PARSE_COVERAGE: { label: "Parse Coverage", icon: Activity, taskLabel: "Parsing coverage report data" },
   BUILD_CFG: { label: "Build CFG", icon: Cpu, taskLabel: "Building control flow graphs" },
   AI_SUGGEST: { label: "AI Suggest", icon: BrainCircuit, taskLabel: "Generating AI improvement suggestions" },

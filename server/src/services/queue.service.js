@@ -10,6 +10,7 @@ import { processInstallDepsJob } from './installDeps.service.js';
 import { processCoverageJob } from './coverageRunner.service.js';
 import { processCodeHygieneJob } from './codeHygieneJob.service.js';
 import { processPerformanceAnalysisJob } from './performanceJob.service.js';
+import { processSupertestCoverageJob } from './supertestCoverageJob.service.js';
 import { getJobById, markJobFailed, createRunTestsJob } from './job.service.js';
 import prisma from "../config/prisma.js";
 
@@ -30,6 +31,9 @@ const worker = new Worker('covai-jobs', async (job) => {
         switch (type) {
             case 'RUN_TESTS':
                 await processRunTestsJob(jobId);
+                break;
+            case 'SUPERTEST_COVERAGE':
+                await processSupertestCoverageJob(jobId);
                 break;
             case 'ANALYSIS':
                 await processAnalysisJob(jobId);

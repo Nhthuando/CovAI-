@@ -8,6 +8,7 @@ export const upsertPerformanceMetric = (result) => {
         coverageScore: result.coverageScore,
         averageComplexity: result.averageComplexity,
         highRiskFunctionCount: result.highRiskFunctions.length,
+        testExecutionType: result.testExecutionType,
         riskLevel: result.riskLevel
     };
     return prisma.performanceMetric.upsert({

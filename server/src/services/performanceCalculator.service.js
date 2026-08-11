@@ -51,7 +51,7 @@ const getRiskLevel = (score) => score >= PERFORMANCE_CONFIG.thresholds.riskHigh 
     score >= PERFORMANCE_CONFIG.thresholds.riskMedium ? 'MEDIUM' : 'LOW';
 
 /** Pure calculation: no Prisma, filesystem, or external state. */
-export const calculatePerformance = ({ snapshotId, cyclomatics = [], coverageData = {}, executionTimeMs = 0 }) => {
+export const calculatePerformance = ({ snapshotId, cyclomatics = [], coverageData = {}, executionTimeMs = 0, testExecutionType = "JEST_UNIT" }) => {
     const normalizedExecutionTimeMs = normalizeExecutionTime(executionTimeMs);
     const coverageScore = coverageData.summary?.linesPct ?? 0;
     const averageComplexity = calculateAverageComplexity(cyclomatics);
@@ -64,6 +64,7 @@ export const calculatePerformance = ({ snapshotId, cyclomatics = [], coverageDat
         snapshotId,
         executionTimeMs: normalizedExecutionTimeMs,
         executionScore,
+        testExecutionType,
         pipelineExecutionScore: executionScore,
         performanceScore,
         coverageScore,

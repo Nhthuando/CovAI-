@@ -223,6 +223,7 @@ model PerformanceMetric {
   coverageScore         Float
   executionScore        Float?          @default(0)
   executionTimeMs       Int?            @default(0)
+  testExecutionType     String?         @default("JEST_UNIT")
   riskLevel             RiskLevel       @default(MEDIUM)
   createdAt             DateTime        @default(now())
   snapshot              ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
@@ -357,6 +358,7 @@ enum JobType {
   INGEST
   INSTALL_DEPS
   RUN_TESTS
+  SUPERTEST_COVERAGE
   PARSE_COVERAGE
   BUILD_CFG
   AI_SUGGEST
