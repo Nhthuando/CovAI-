@@ -24,10 +24,26 @@ import {
   deleteProject,
   getProjectTree,
   getFileContent,
+  updateFileContent,
+  createProjectFile,
+  createProjectFolder,
+  renameProjectEntry,
+  deleteProjectEntry,
   createAnalysisJob,
 } from "../services/project.service.js";
 import { createBuildCfgJob } from "../services/job.service.js";
 import { addJobToQueue } from "../services/queue.service.js";
+
+const handleEntryMutation = async (req, res, operation, failureMessage) => {
+  try {
+    const result = await operation(req.params.id, req.user.id, req.body.path, req.body.content, req.body.newPath);
+    return res.status(201).json({ success: true, data: result });
+  } catch (error) {
+    if (error instanceof ServiceError) return res.status(error.statusCode).json({ success: false, message: error.message });
+    console.error(error);
+    return res.status(500).json({ success: false, message: failureMessage });
+  }
+};
 
 class ProjectController {
   /**
@@ -229,6 +245,61 @@ class ProjectController {
         success: false,
         message: "Failed to read file content",
       });
+    }
+  }
+
+  /**
+   * PUT /projects/:id/file-content
+   * Body: { path, content }
+   */
+  async updateFileContent(req, res) {
+    try {
+      const { id } = req.params;
+      const { path: filePath, content } = req.body;
+
+      if (!filePath || typeof content !== "string") {
+        return res.status(400).json({
+          success: false,
+          message: "File path and text content are required",
+        });
+      }
+
+      const result = await updateFileContent(id, req.user.id, filePath, content);
+      return res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+      console.error(error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to save file content",
+      });
+    }
+  }
+
+  async createFile(req, res) {
+    return handleEntryMutation(req, res, createProjectFile, "Failed to create file");
+  }
+
+  async createFolder(req, res) {
+    return handleEntryMutation(req, res, createProjectFolder, "Failed to create folder");
+  }
+
+  async renameEntry(req, res) {
+    return handleEntryMutation(req, res, renameProjectEntry, "Failed to rename entry");
+  }
+
+  async deleteEntry(req, res) {
+    try {
+      const result = await deleteProjectEntry(req.params.id, req.user.id, req.query.path);
+      return res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      if (error instanceof ServiceError) return res.status(error.statusCode).json({ success: false, message: error.message });
+      console.error(error);
+      return res.status(500).json({ success: false, message: "Failed to delete entry" });
     }
   }
 

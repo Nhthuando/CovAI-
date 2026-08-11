@@ -16,6 +16,8 @@ import {
   Trash2,
   AlertTriangle,
   Loader2,
+  FolderPlus,
+  Pencil,
 } from "lucide-react";
 
 // Removed hardcoded FILE_TREE
@@ -37,8 +39,33 @@ function FileIcon({ lang }) {
   return <Icon size={14} style={{ color: cfg.color, flexShrink: 0 }} />;
 }
 
+function EntryActionDropdown({ action, setAction, onSubmit }) {
+  const isDelete = action.type === "delete";
+  return (
+    <motion.form
+      initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+      onSubmit={onSubmit} className="mx-2 my-1 overflow-hidden rounded-md p-2"
+      style={{ background: "#1c2128", border: "1px solid #30363d", boxShadow: "0 8px 20px rgba(0,0,0,.35)" }}
+    >
+      {isDelete ? (
+        <>
+          <p className="m-0 mb-2 text-xs" style={{ color: "#e6edf3" }}>Xóa {action.node.type === "folder" ? "thư mục và nội dung" : "file"} <strong>{action.node.name}</strong>?</p>
+          <div className="flex justify-end gap-2"><button type="button" onClick={() => setAction(null)} className="rounded px-2 py-1 text-xs" style={{ color: "#c9d1d9" }}>Hủy</button><button type="submit" className="rounded px-2 py-1 text-xs" style={{ background: "#da3633", color: "white" }}>Xóa</button></div>
+        </>
+      ) : (
+        <>
+          <input autoFocus value={action.value} onChange={(e) => setAction((current) => ({ ...current, value: e.target.value }))}
+            placeholder={action.type === "file" ? "new-file.js" : "new-folder"} className="w-full rounded px-2 py-1.5 text-xs outline-none"
+            style={{ background: "#0d1117", border: "1px solid #30363d", color: "#e6edf3" }} />
+          <div className="mt-2 flex justify-end gap-2"><button type="button" onClick={() => setAction(null)} className="rounded px-2 py-1 text-xs" style={{ color: "#c9d1d9" }}>Hủy</button><button type="submit" disabled={!action.value.trim()} className="rounded px-2 py-1 text-xs" style={{ background: "#7c3aed", color: "white" }}>Xác nhận</button></div>
+        </>
+      )}
+    </motion.form>
+  );
+}
+
 /* ── Tree Node ──────────────────────────────────────────── */
-function TreeNode({ node, depth = 0, onSelect, activeFileId }) {
+function TreeNode({ node, depth = 0, onSelect, activeFileId, onCreateFile, onCreateFolder, onRename, onDelete, action, setAction, onSubmitAction }) {
   const [open, setOpen]       = useState(depth < 1);
   const [hovered, setHovered] = useState(false);
 
@@ -100,7 +127,23 @@ function TreeNode({ node, depth = 0, onSelect, activeFileId }) {
           </>
         )}
         <span className="truncate leading-none">{node.name}</span>
+        {hovered && (
+          <span className="ml-auto flex items-center gap-1" onClick={(event) => event.stopPropagation()}>
+            {isFolder && <>
+              <button title="New file here" onClick={() => onCreateFile(node.id)}><Plus size={12} /></button>
+              <button title="New folder here" onClick={() => onCreateFolder(node.id)}><FolderPlus size={12} /></button>
+            </>}
+            <button title="Rename" onClick={() => onRename(node)}><Pencil size={12} /></button>
+            <button title="Delete" onClick={() => onDelete(node)}><Trash2 size={12} /></button>
+          </span>
+        )}
       </motion.div>
+
+      <AnimatePresence>
+        {action && (action.node?.id === node.id || action.parentPath === node.id) && (
+          <EntryActionDropdown action={action} setAction={setAction} onSubmit={onSubmitAction} />
+        )}
+      </AnimatePresence>
 
       {/* Animated children */}
       <AnimatePresence initial={false}>
@@ -120,6 +163,13 @@ function TreeNode({ node, depth = 0, onSelect, activeFileId }) {
                 depth={depth + 1}
                 onSelect={onSelect}
                 activeFileId={activeFileId}
+                onCreateFile={onCreateFile}
+                onCreateFolder={onCreateFolder}
+                onRename={onRename}
+                onDelete={onDelete}
+                action={action}
+                setAction={setAction}
+                onSubmitAction={onSubmitAction}
               />
             ))}
           </motion.div>
@@ -130,10 +180,51 @@ function TreeNode({ node, depth = 0, onSelect, activeFileId }) {
 }
 
 /* ── Sidebar ─────────────────────────────────────────────── */
-export default function Sidebar({ onOpenFile, activeFileId, fileTree = [], project, projects = [], onChangeProject, onDeleteProject, isLoading, onRefresh }) {
+export default function Sidebar({ onOpenFile, activeFileId, fileTree = [], project, projects = [], onChangeProject, onDeleteProject, isLoading, onRefresh, onCreateFile, onCreateFolder, onRenameEntry, onDeleteEntry }) {
   const [showProjectList, setShowProjectList] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [action, setAction] = useState(null);
+  const requestNewFile = (parentPath = "") => {
+    setAction({ type: "file", parentPath, value: "" });
+    return;
+    const name = window.prompt("Tên file mới (có thể gồm thư mục con):");
+    if (name?.trim()) onCreateFile(parentPath ? `${parentPath}/${name.trim()}` : name.trim());
+  };
+  const requestNewFolder = (parentPath = "") => {
+    setAction({ type: "folder", parentPath, value: "" });
+    return;
+    const name = window.prompt("Tên thư mục mới (có thể gồm thư mục con):");
+    if (name?.trim()) onCreateFolder(parentPath ? `${parentPath}/${name.trim()}` : name.trim());
+  };
+  const requestRename = (node) => {
+    setAction({ type: "rename", node, value: node.name });
+    return;
+    const newName = window.prompt("Tên hoặc đường dẫn mới:", node.name);
+    if (!newName?.trim()) return;
+    const parent = node.id.includes("/") ? node.id.slice(0, node.id.lastIndexOf("/")) : "";
+    onRenameEntry(node.id, parent ? `${parent}/${newName.trim()}` : newName.trim());
+  };
+  const requestDelete = (node) => {
+    setAction({ type: "delete", node });
+    return;
+    if (window.confirm(`Xóa ${node.type === "folder" ? "thư mục và toàn bộ nội dung" : "file"} “${node.name}”?`)) onDeleteEntry(node);
+  };
+
+  const submitAction = async (event) => {
+    event.preventDefault();
+    if (!action) return;
+    if (action.type === "delete") {
+      await onDeleteEntry(action.node);
+    } else if (action.type === "rename" && action.value.trim()) {
+      const parent = action.node.id.includes("/") ? action.node.id.slice(0, action.node.id.lastIndexOf("/")) : "";
+      await onRenameEntry(action.node.id, parent ? `${parent}/${action.value.trim()}` : action.value.trim());
+    } else if (action.value.trim()) {
+      const targetPath = action.parentPath ? `${action.parentPath}/${action.value.trim()}` : action.value.trim();
+      await (action.type === "file" ? onCreateFile(targetPath) : onCreateFolder(targetPath));
+    }
+    setAction(null);
+  };
 
   return (
     <motion.div
@@ -145,6 +236,7 @@ export default function Sidebar({ onOpenFile, activeFileId, fileTree = [], proje
         width: 260,
         background: "var(--ide-sidebar)",
         borderRight: "1px solid var(--ide-border)",
+        position: "relative",
       }}
     >
       {/* Header */}
@@ -176,8 +268,15 @@ export default function Sidebar({ onOpenFile, activeFileId, fileTree = [], proje
             className="p-1 rounded"
             style={{ color: "#484f58" }}
             title="New File"
+            onClick={() => requestNewFile()}
           >
             <Plus size={14} />
+          </motion.button>
+          <motion.button
+            whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} className="p-1 rounded"
+            style={{ color: "#484f58" }} title="New Folder" onClick={() => requestNewFolder()}
+          >
+            <FolderPlus size={14} />
           </motion.button>
           <motion.button
             whileHover={{ rotate: 180 }}
@@ -201,6 +300,41 @@ export default function Sidebar({ onOpenFile, activeFileId, fileTree = [], proje
           </motion.button>
         </div>
       </div>
+
+      <AnimatePresence>
+        {action && !action.node && !action.parentPath && (
+          <motion.form
+            initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
+            onSubmit={submitAction}
+            className="absolute left-2 right-2 z-30 rounded-lg p-3"
+            style={{ top: 50, background: "#1c2128", border: "1px solid #30363d", boxShadow: "0 12px 28px rgba(0,0,0,.45)" }}
+          >
+            {action.type === "delete" ? (
+              <>
+                <p className="m-0 mb-3 text-xs" style={{ color: "#e6edf3" }}>Xóa {action.node.type === "folder" ? "thư mục và toàn bộ nội dung" : "file"} <strong>{action.node.name}</strong>?</p>
+                <div className="flex justify-end gap-2">
+                  <button type="button" onClick={() => setAction(null)} className="rounded px-2 py-1 text-xs" style={{ color: "#c9d1d9" }}>Hủy</button>
+                  <button type="submit" className="rounded px-2 py-1 text-xs" style={{ background: "#da3633", color: "white" }}>Xóa</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <label className="mb-1 block text-xs" style={{ color: "#c9d1d9" }}>
+                  {action.type === "rename" ? "Tên mới" : action.type === "file" ? "Tên file mới" : "Tên thư mục mới"}
+                </label>
+                <input autoFocus value={action.value} onChange={(e) => setAction((current) => ({ ...current, value: e.target.value }))}
+                  placeholder={action.type === "file" ? "src/new-file.js" : "components"}
+                  className="w-full rounded px-2 py-1.5 text-xs outline-none"
+                  style={{ background: "#0d1117", border: "1px solid #30363d", color: "#e6edf3" }} />
+                <div className="mt-3 flex justify-end gap-2">
+                  <button type="button" onClick={() => setAction(null)} className="rounded px-2 py-1 text-xs" style={{ color: "#c9d1d9" }}>Hủy</button>
+                  <button type="submit" disabled={!action.value.trim()} className="rounded px-2 py-1 text-xs" style={{ background: "#7c3aed", color: "white" }}>Xác nhận</button>
+                </div>
+              </>
+            )}
+          </motion.form>
+        )}
+      </AnimatePresence>
 
       {/* Project label & Dropdown */}
       <div className="relative">
@@ -304,6 +438,13 @@ export default function Sidebar({ onOpenFile, activeFileId, fileTree = [], proje
               depth={0}
               onSelect={onOpenFile}
               activeFileId={activeFileId}
+              onCreateFile={requestNewFile}
+              onCreateFolder={requestNewFolder}
+              onRename={requestRename}
+              onDelete={requestDelete}
+              action={action}
+              setAction={setAction}
+              onSubmitAction={submitAction}
             />
           ))
         )}

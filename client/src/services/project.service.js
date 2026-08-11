@@ -112,6 +112,43 @@ export async function getFileContentApi(projectId, filePath) {
   return handleResponse(res);
 }
 
+export async function updateFileContentApi(projectId, filePath, content) {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/file-content`, {
+    method: "PUT",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ path: filePath, content }),
+  });
+  return handleResponse(res);
+}
+
+export async function createProjectFileApi(projectId, filePath, content = "") {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/files`, {
+    method: "POST", headers: getAuthHeaders(), body: JSON.stringify({ path: filePath, content }),
+  });
+  return handleResponse(res);
+}
+
+export async function createProjectFolderApi(projectId, folderPath) {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/folders`, {
+    method: "POST", headers: getAuthHeaders(), body: JSON.stringify({ path: folderPath }),
+  });
+  return handleResponse(res);
+}
+
+export async function renameProjectEntryApi(projectId, filePath, newPath) {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/entries`, {
+    method: "PATCH", headers: getAuthHeaders(), body: JSON.stringify({ path: filePath, newPath }),
+  });
+  return handleResponse(res);
+}
+
+export async function deleteProjectEntryApi(projectId, filePath) {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/entries?path=${encodeURIComponent(filePath)}`, {
+    method: "DELETE", headers: getAuthHeaders(),
+  });
+  return handleResponse(res);
+}
+
 export async function getUserProfileApi() {
   const res = await fetch(`${BASE_URL}/users/me`, {
     headers: getAuthHeaders(),

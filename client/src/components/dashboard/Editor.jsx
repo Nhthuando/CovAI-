@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X,
@@ -8,9 +8,11 @@ import {
   ChevronRight,
   Loader2,
   AlertCircle,
+  Save,
+  Check,
 } from "lucide-react";
-import { getFileContentApi } from "../../services/project.service";
-import CodeLens from "../CodeLens";
+import MonacoEditor from "@monaco-editor/react";
+import { getFileContentApi, updateFileContentApi } from "../../services/project.service";
 
 /* ── Token color map (for simple syntax highlighting) ────── */
 const EXT_LANG_MAP = {
@@ -278,6 +280,9 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
   const [fileContents, setFileContents] = useState({}); // cache: { [fileId]: { content, loading, error } }
   const [complexities, setComplexities] = useState({}); // cache: { [fileId]: { [funcName]: { value, decisionPoints } } }
   const fetchedRef = useRef(new Set()); // track what we've already fetched
+  const saveHandlerRef = useRef(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
   // Fetch complexities when active tab changes
   useEffect(() => {
@@ -423,6 +428,37 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
   const handleAnalyze = (functionName) => {
   };
 
+  const handleChange = (value) => {
+    setSaveError("");
+    setFileContents((prev) => ({
+      ...prev,
+      [activeTabId]: { ...prev[activeTabId], draft: value ?? "" },
+    }));
+  };
+
+  const handleSave = async () => {
+    const file = fileContents[activeTabId];
+    if (!projectId || !activeTabId || !file || file.draft === undefined || saving) return;
+
+    setSaving(true);
+    setSaveError("");
+    try {
+      await updateFileContentApi(projectId, activeTabId, file.draft);
+      setFileContents((prev) => ({
+        ...prev,
+        [activeTabId]: { ...prev[activeTabId], content: file.draft, draft: undefined },
+      }));
+    } catch (err) {
+      setSaveError(err.message || "Could not save file");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  saveHandlerRef.current = handleSave;
+
+  const hasUnsavedChanges = currentFile.draft !== undefined && currentFile.draft !== currentFile.content;
+
   return (
     <motion.div
       className="flex flex-col flex-1 h-full min-w-0"
@@ -477,6 +513,24 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
             </span>
           </span>
         ))}
+        <div className="ml-auto flex items-center gap-2">
+          {saveError && <span style={{ color: "#f85149", fontSize: 11 }}>{saveError}</span>}
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={!hasUnsavedChanges || saving}
+            className="flex items-center gap-1 rounded px-2 py-1"
+            style={{
+              color: hasUnsavedChanges ? "#ddd6fe" : "#6e7681",
+              background: hasUnsavedChanges ? "rgba(124,58,237,0.18)" : "transparent",
+              cursor: hasUnsavedChanges && !saving ? "pointer" : "default",
+            }}
+            title="Save file (Ctrl/Cmd + S)"
+          >
+            {saving ? <Loader2 size={13} className="animate-spin" /> : hasUnsavedChanges ? <Save size={13} /> : <Check size={13} />}
+            {saving ? "Saving" : hasUnsavedChanges ? "Save" : "Saved"}
+          </button>
+        </div>
       </div>
 
       {/* ── Code Area ─────────────────────────────────────── */}
@@ -511,14 +565,20 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
               </span>
             </motion.div>
           ) : (
-            <motion.div
+            <>
+            <MonacoEditor
               key={activeTabId}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.15 }}
-              className="py-2"
-            >
+              height="100%"
+              language={lang}
+              theme="vs-dark"
+              value={currentFile.draft ?? currentFile.content ?? ""}
+              onChange={handleChange}
+              onMount={(editor, monaco) => {
+                editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => saveHandlerRef.current?.());
+              }}
+              options={{ fontSize: 13, fontFamily: "var(--font-mono)", lineHeight: 21, minimap: { enabled: false }, scrollBeyondLastLine: false, automaticLayout: true, padding: { top: 8 } }}
+            />
+            {/* Legacy read-only renderer retained for future CodeLens integration.
               {lines.map((line) => {
                 const normalize = (p) => p.replace(/\\/g, '/').replace(/^\.\//, '');
                 const normalizedPath = normalize(activeTabId);
@@ -544,7 +604,8 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
                   </React.Fragment>
                 );
               })}
-            </motion.div>
+            */}
+            </>
           )}
         </AnimatePresence>
       </div>

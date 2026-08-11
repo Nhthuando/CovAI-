@@ -4,7 +4,6 @@ import {
   LayoutDashboard,
   Search,
   Cpu,
-  BarChart2,
   FlaskConical,
   Settings,
   Zap,
@@ -16,7 +15,6 @@ const TOP_ITEMS = [
   { id: "dashboard", icon: LayoutDashboard, label: "Dashboard" },
   { id: "search", icon: Search, label: "Search" },
   { id: "jobs", icon: Cpu, label: "Job Queue" },
-  { id: "performance", icon: BarChart2, label: "Performance" },
 ];
 
 const BOTTOM_ITEMS = [{ id: "settings", icon: Settings, label: "Settings" }];

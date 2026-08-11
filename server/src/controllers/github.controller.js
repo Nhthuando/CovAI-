@@ -122,6 +122,8 @@ export const importGitHubRepository = async (req, res) => {
       });
     } else if (error.message === "Invalid repository") {
       return res.status(400).json({ message: "Invalid repository format." });
+    } else if (error.message === "Missing GitHub token") {
+      return res.status(401).json({ message: "GitHub authentication token is missing. Please connect your GitHub account." });
     } else if (error.message.includes("clone failure")) {
       return res.status(500).json({
         message: "Failed to clone repository due to an internal error.",

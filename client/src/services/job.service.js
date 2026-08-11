@@ -62,9 +62,9 @@ export async function getJobDetailApi(jobId) {
  * GET /api/performance/snapshot/:snapshotId
  * Returns { metric, slowFunctions }
  */
-export async function getPerformanceSnapshotApi(snapshotId) {
-  const res = await fetch(`${BASE_URL.replace('/api', '')}/api/performance/snapshot/${snapshotId}`, {
-    headers: getAuthHeaders(),
-  });
-  return handleResponse(res);
-}
+// export async function getPerformanceSnapshotApi(snapshotId) {
+//   const res = await fetch(`${BASE_URL.replace('/api', '')}/api/performance/snapshot/${snapshotId}`, {
+//     headers: getAuthHeaders(),
+//   });
+//   return handleResponse(res);
+// }
