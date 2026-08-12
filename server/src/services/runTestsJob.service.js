@@ -59,7 +59,7 @@ const runNpmInstall = async (jobId, rootDir) => {
  */
 const runJestCoverage = async (jobId, rootDir, jestConfigPath) => {
     let jestCmd = "npx jest --coverage --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --forceExit --testTimeout=30000";
-    
+
     if (jestConfigPath) {
         // Path inside Docker must be relative to /workspace
         const relativeConfig = path.relative(rootDir, jestConfigPath).replace(/\\/g, '/');
@@ -248,6 +248,14 @@ export const processRunTestsJob = async (jobId) => {
 
         // ── SCRUM-140: Execute coverage analysis ──────────────────────────────
         await addJobLog(jobId, "INFO", "Bước 2/4: Chạy jest --coverage...").catch(() => { });
+
+        // Detect Supertest
+        const { detectSupertest } = await import("./supertestDetection.service.js");
+        const supertestInfo = await detectSupertest(rootDir);
+        if (supertestInfo.detected) {
+            await addJobLog(jobId, "INFO", `[SUPERTEST] Phát hiện Supertest: ${supertestInfo.supertestFiles.length} files.`).catch(() => { });
+        }
+
         const { exitCode } = await runJestCoverage(jobId, rootDir, jestConfigPath);
 
         // ── SCRUM-144: Progress 65% — sau jest ───────────────────────────────

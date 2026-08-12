@@ -29,10 +29,35 @@ import {
   listProjectSnapshots,
   resolveCoverageAnalysisSnapshot,
   startProjectStructureAnalysis,
+  updateFileContent,
+  createProjectFile,
+  createProjectFolder,
+  renameProjectEntry,
+  deleteProjectEntry,
 } from "../services/project.service.js";
 import { createBuildCfgJob } from "../services/job.service.js";
 import { addJobToQueue } from "../services/queue.service.js";
 import { analysisJobResponse } from "../services/analysisResponse.service.js";
+
+const handleEntryMutation = async (req, res, operation, failureMessage) => {
+  try {
+    const result = await operation(
+      req.params.id,
+      req.user.id,
+      req.body.path,
+      req.body.content,
+      req.body.newPath,
+    );
+    return res.status(201).json({ success: true, data: result });
+  } catch (error) {
+    if (error instanceof ServiceError)
+      return res
+        .status(error.statusCode)
+        .json({ success: false, message: error.message });
+    console.error(error);
+    return res.status(500).json({ success: false, message: failureMessage });
+  }
+};
 
 class ProjectController {
   /**
@@ -144,14 +169,21 @@ class ProjectController {
    */
   async listSnapshots(req, res) {
     try {
-      const data = await listProjectSnapshots({ projectId: req.params.id, userId: req.user.id });
+      const data = await listProjectSnapshots({
+        projectId: req.params.id,
+        userId: req.user.id,
+      });
       return res.status(200).json({ success: true, data });
     } catch (error) {
       if (error instanceof ServiceError) {
-        return res.status(error.statusCode).json({ success: false, message: error.message });
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
       }
       console.error(error);
-      return res.status(500).json({ success: false, message: "Failed to get snapshots" });
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to get snapshots" });
     }
   }
 
@@ -169,10 +201,15 @@ class ProjectController {
       return res.status(200).json({ success: true, data });
     } catch (error) {
       if (error instanceof ServiceError) {
-        return res.status(error.statusCode).json({ success: false, message: error.message });
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
       }
       console.error(error);
-      return res.status(500).json({ success: false, message: "Failed to get architecture analysis" });
+      return res.status(500).json({
+        success: false,
+        message: "Failed to get architecture analysis",
+      });
     }
   }
 
@@ -207,10 +244,15 @@ class ProjectController {
       });
     } catch (error) {
       if (error instanceof ServiceError) {
-        return res.status(error.statusCode).json({ success: false, message: error.message });
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
       }
       console.error(error);
-      return res.status(500).json({ success: false, message: "Failed to start architecture analysis" });
+      return res.status(500).json({
+        success: false,
+        message: "Failed to start architecture analysis",
+      });
     }
   }
 
@@ -315,6 +357,90 @@ class ProjectController {
   }
 
   /**
+   * PUT /projects/:id/file-content
+   * Body: { path, content }
+   */
+  async updateFileContent(req, res) {
+    try {
+      const { id } = req.params;
+      const { path: filePath, content } = req.body;
+
+      if (!filePath || typeof content !== "string") {
+        return res.status(400).json({
+          success: false,
+          message: "File path and text content are required",
+        });
+      }
+
+      const result = await updateFileContent(
+        id,
+        req.user.id,
+        filePath,
+        content,
+      );
+      return res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+      console.error(error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to save file content",
+      });
+    }
+  }
+
+  async createFile(req, res) {
+    return handleEntryMutation(
+      req,
+      res,
+      createProjectFile,
+      "Failed to create file",
+    );
+  }
+
+  async createFolder(req, res) {
+    return handleEntryMutation(
+      req,
+      res,
+      createProjectFolder,
+      "Failed to create folder",
+    );
+  }
+
+  async renameEntry(req, res) {
+    return handleEntryMutation(
+      req,
+      res,
+      renameProjectEntry,
+      "Failed to rename entry",
+    );
+  }
+
+  async deleteEntry(req, res) {
+    try {
+      const result = await deleteProjectEntry(
+        req.params.id,
+        req.user.id,
+        req.query.path,
+      );
+      return res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      if (error instanceof ServiceError)
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      console.error(error);
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to delete entry" });
+    }
+  }
+
+  /**
    * POST /projects/:id/upload-zip
    */
   async uploadZip(req, res) {
@@ -383,7 +509,8 @@ class ProjectController {
           success: true,
           needsTests: true,
           snapshotId: targetSnapshot.id,
-          message: "Dự án chưa có file test. Vui lòng tạo test trước khi chạy phân tích."
+          message:
+            "Dự án chưa có file test. Vui lòng tạo test trước khi chạy phân tích.",
         });
       }
 
@@ -396,9 +523,10 @@ class ProjectController {
       const { reused: _reused, ...job } = queuedJob;
 
       // SCRUM-138..144: Kick-off full pipeline bất đồng bộ qua Queue
-      if (!reused) addJobToQueue("RUN_TESTS", job.id).catch((err) => {
-        console.error("Lỗi khi thêm RUN_TESTS vào queue:", err);
-      });
+      if (!reused)
+        addJobToQueue("RUN_TESTS", job.id).catch((err) => {
+          console.error("Lỗi khi thêm RUN_TESTS vào queue:", err);
+        });
 
       return res.status(201).json({
         success: true,
@@ -444,7 +572,8 @@ class ProjectController {
         if (!latestSnapshot) {
           return res.status(404).json({
             success: false,
-            message: "No snapshot found for this project. Please upload a project first.",
+            message:
+              "No snapshot found for this project. Please upload a project first.",
           });
         }
         snapshotId = latestSnapshot.id;
@@ -866,17 +995,17 @@ The user is working on project: ${project.name}.
 
         if (latestSnapshot) {
           const summary = await prisma.coverageSummary.findUnique({
-            where: { snapshotId: latestSnapshot.id }
+            where: { snapshotId: latestSnapshot.id },
           });
           const files = await prisma.coverageFile.findMany({
-            where: { snapshotId: latestSnapshot.id }
+            where: { snapshotId: latestSnapshot.id },
           });
 
           if (summary && files.length > 0) {
             prompt += `\n--- Coverage Data for Analysis ---\n`;
             prompt += `Overall Coverage: Lines ${summary.linesPct}%, Branches ${summary.branchesPct}%, Functions ${summary.funcsPct}%, Statements ${summary.stmtsPct}%\n`;
             prompt += `File Coverage Details:\n`;
-            files.forEach(f => {
+            files.forEach((f) => {
               prompt += `- ${f.filePath}: Lines ${f.linesPct}%, Branches ${f.branchesPct}%, Functions ${f.funcsPct}%\n`;
             });
             prompt += `----------------------------------\n`;
@@ -1084,7 +1213,8 @@ The user is working on project: ${project.name}.
       }
 
       const { createAiTestsJob } = await import("../services/job.service.js");
-      const { processAiTestsJob } = await import("../services/aiTestsJob.service.js");
+      const { processAiTestsJob } =
+        await import("../services/aiTestsJob.service.js");
 
       // Check if project/snapshot exists and matches...
       // createAiTestsJob already does these assertions.

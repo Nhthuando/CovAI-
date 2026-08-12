@@ -68,3 +68,12 @@ export async function getCoverageFiles(
 
     return handleResponse(res);
 }
+
+export async function runSupertestCoverage(snapshotId) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/supertest/run`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+    });
+
+    return handleResponse(res);
+}

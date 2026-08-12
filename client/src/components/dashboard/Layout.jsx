@@ -44,6 +44,10 @@ import {
   runAnalysisApi,
   generateSkeletonApi,
   generateFullTestsApi,
+  createProjectFileApi,
+  createProjectFolderApi,
+  renameProjectEntryApi,
+  deleteProjectEntryApi,
 } from "../../services/project.service";
 import { getProjectJobsApi } from "../../services/job.service";
 
@@ -341,6 +345,109 @@ function LayoutInner() {
     setTabs(next);
     if (activeTabId === tabId && next.length > 0) {
       setActiveTabId(next[Math.max(0, idx - 1)].id);
+    }
+  };
+
+  const refreshProjectFiles = async () => {
+    await loadData(project?.id, 1, 0);
+  };
+
+  const handleCreateFile = async (filePath) => {
+    if (!project) return;
+    try {
+      await createProjectFileApi(project.id, filePath);
+      await refreshProjectFiles();
+      handleOpenFile({
+        id: filePath.replace(/\\/g, "/"),
+        name: filePath.split(/[\\/]/).pop(),
+        type: "file",
+      });
+      showToast({
+        type: "success",
+        title: "File created",
+        message: `${filePath} has been created.`,
+      });
+    } catch (err) {
+      showToast({
+        type: "error",
+        title: "Could not create file",
+        message: err.message,
+      });
+    }
+  };
+
+  const handleCreateFolder = async (folderPath) => {
+    if (!project) return;
+    try {
+      await createProjectFolderApi(project.id, folderPath);
+      await refreshProjectFiles();
+      showToast({
+        type: "success",
+        title: "Folder created",
+        message: `${folderPath} has been created.`,
+      });
+    } catch (err) {
+      showToast({
+        type: "error",
+        title: "Could not create folder",
+        message: err.message,
+      });
+    }
+  };
+
+  const handleRenameEntry = async (filePath, newPath) => {
+    if (!project) return;
+    try {
+      await renameProjectEntryApi(project.id, filePath, newPath);
+      setTabs((prev) =>
+        prev.map((tab) =>
+          tab.id === filePath
+            ? { ...tab, id: newPath, name: newPath.split("/").pop() }
+            : tab,
+        ),
+      );
+      if (activeTabId === filePath) setActiveTabId(newPath);
+      if (activeFileId === filePath) setActiveFileId(newPath);
+      await refreshProjectFiles();
+      showToast({
+        type: "success",
+        title: "Renamed",
+        message: `${filePath} is now ${newPath}.`,
+      });
+    } catch (err) {
+      showToast({
+        type: "error",
+        title: "Could not rename",
+        message: err.message,
+      });
+    }
+  };
+
+  const handleDeleteEntry = async (node) => {
+    if (!project) return;
+    try {
+      await deleteProjectEntryApi(project.id, node.id);
+      setTabs((prev) =>
+        prev.filter(
+          (tab) => tab.id !== node.id && !tab.id.startsWith(`${node.id}/`),
+        ),
+      );
+      if (activeFileId === node.id || activeFileId?.startsWith(`${node.id}/`)) {
+        setActiveFileId(null);
+        setActiveTabId(null);
+      }
+      await refreshProjectFiles();
+      showToast({
+        type: "success",
+        title: "Deleted",
+        message: `${node.name} has been deleted.`,
+      });
+    } catch (err) {
+      showToast({
+        type: "error",
+        title: "Could not delete",
+        message: err.message,
+      });
     }
   };
 
@@ -942,6 +1049,10 @@ function LayoutInner() {
                   onDeleteProject={handleDeleteProject}
                   isLoading={isLoadingTree}
                   onRefresh={() => loadData(project?.id, 3, 2000)}
+                  onCreateFile={handleCreateFile}
+                  onCreateFolder={handleCreateFolder}
+                  onRenameEntry={handleRenameEntry}
+                  onDeleteEntry={handleDeleteEntry}
                 />
               )}
             </motion.div>

@@ -55,30 +55,33 @@ model Project {
 }
 
 model ProjectSnapshot {
-  id                String                    @id @default(cuid())
-  projectId         String
-  source            SnapshotSource
-  checksum          String?
-  commitSha         String?
-  storagePath       String
-  rootDir           String?
-  jestConfigPath    String?
-  createdAt         DateTime                  @default(now())
-  hasJest           Boolean                   @default(false)
-  jestCommand       String?
-  aiContextCache    AiContextCache?
-  aiSuggestions     AiSuggestion[]
-  aiTests           AiTest[]
-  cfgs              Cfg[]
-  coverageFiles     CoverageFile[]
-  coverageFuncs     CoverageFunction[]
-  coverageSummary   CoverageSummary?
-  cyclomatics       Cyclomatic[]
-  jobs              Job[]
-  project           Project                   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  structureAnalysis ProjectStructureAnalysis?
-  qualityReport     QualityReport?
-  vulnerabilities   Vulnerability[]
+  id                       String                    @id @default(cuid())
+  projectId                String
+  source                   SnapshotSource
+  checksum                 String?
+  commitSha                String?
+  storagePath              String
+  rootDir                  String?
+  jestConfigPath           String?
+  createdAt                DateTime                  @default(now())
+  hasJest                  Boolean                   @default(false)
+  jestCommand              String?
+  aiContextCache           AiContextCache?
+  aiSuggestions            AiSuggestion[]
+  aiTests                  AiTest[]
+  cfgs                     Cfg[]
+  coverageFiles            CoverageFile[]
+  coverageFuncs            CoverageFunction[]
+  coverageSummary          CoverageSummary?
+  cyclomatics              Cyclomatic[]
+  codeHygieneIssues        CodeHygieneIssue[]
+  codeHygieneSummary       CodeHygieneSummary?
+  jobs                     Job[]
+  performanceMetric        PerformanceMetric?
+  project                  Project                   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ProjectStructureAnalysis ProjectStructureAnalysis?
+  QualityReport            QualityReport?
+  vulnerabilities          Vulnerability[]
 
   @@unique([projectId, checksum])
   @@unique([projectId, commitSha])
@@ -86,13 +89,13 @@ model ProjectSnapshot {
 }
 
 model ProjectStructureAnalysis {
-  id            String          @id @default(cuid())
-  snapshotId    String          @unique
-  schemaVersion Int
-  resultJson    String
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
-  snapshot      ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  id              String          @id @default(cuid())
+  snapshotId      String          @unique
+  schemaVersion   Int
+  resultJson      String
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  ProjectSnapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 }
 
 model QualityReport {
@@ -112,8 +115,8 @@ model QualityReport {
   aiError              String?
   createdAt            DateTime        @default(now())
   updatedAt            DateTime        @updatedAt
-  project              Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  snapshot             ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  Project              Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ProjectSnapshot      ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 
   @@index([projectId])
 }
@@ -245,6 +248,50 @@ model AiContextCache {
   snapshot    ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 }
 
+model PerformanceMetric {
+  id                    String          @id @default(cuid())
+  snapshotId            String          @unique
+  performanceScore      Float
+  highRiskFunctionCount Int
+  averageComplexity     Float
+  coverageScore         Float
+  executionScore        Float?          @default(0)
+  executionTimeMs       Int?            @default(0)
+  testExecutionType     String?         @default("JEST_UNIT")
+  riskLevel             RiskLevel       @default(MEDIUM)
+  createdAt             DateTime        @default(now())
+  snapshot              ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+}
+
+model CodeHygieneIssue {
+  id         String          @id @default(cuid())
+  snapshotId String
+  filePath   String
+  line       Int
+  column     Int
+  type       IssueType
+  severity   Severity
+  message    String
+  rule       String
+  createdAt  DateTime        @default(now())
+  snapshot   ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@index([snapshotId])
+}
+
+model CodeHygieneSummary {
+  id            String          @id @default(cuid())
+  snapshotId    String          @unique
+  totalIssues   Int
+  infoCount     Int
+  warningCount  Int
+  highCount     Int
+  criticalCount Int
+  hygieneScore  Float           @default(0)
+  createdAt     DateTime        @default(now())
+  snapshot      ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+}
+
 model AiSuggestion {
   id           String               @id @default(cuid())
   projectId    String
@@ -306,13 +353,12 @@ model Notification {
 model Vulnerability {
   id          String   @id @default(cuid())
   snapshotId  String
-  type        String   // "SECRET", "DANGEROUS_API", "INSECURE_PATTERN"
-  severity    String   // "CRITICAL", "HIGH", "MEDIUM", "LOW"
+  type        String
+  severity    String
   file        String
   line        Int?
   description String
   createdAt   DateTime @default(now())
-  
   snapshot    ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 
   @@index([snapshotId])
@@ -327,6 +373,7 @@ enum JobType {
   INGEST
   INSTALL_DEPS
   RUN_TESTS
+  SUPERTEST_COVERAGE
   PARSE_COVERAGE
   BUILD_CFG
   AI_SUGGEST
@@ -346,6 +393,12 @@ enum JobStatus {
   CANCELED
 }
 
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
 enum NotificationType {
   JOB_FINISHED
   AI_READY
@@ -361,4 +414,19 @@ enum AiSuggestionPriority {
   LOW
   MEDIUM
   HIGH
+}
+
+enum IssueType {
+  CONSOLE_LOG
+  DEBUGGER
+  TODO
+  FIXME
+  HACK
+}
+
+enum Severity {
+  INFO
+  WARNING
+  HIGH
+  CRITICAL
 }

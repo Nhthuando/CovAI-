@@ -15,6 +15,11 @@ router.get("/:id/snapshots", projectController.listSnapshots);
 router.get("/:id/structure-analysis", projectController.getStructureAnalysis);
 router.get("/:id/tree", projectController.getProjectTree);
 router.get("/:id/file-content", projectController.getFileContent);
+router.put("/:id/file-content", projectController.updateFileContent);
+router.post("/:id/files", projectController.createFile);
+router.post("/:id/folders", projectController.createFolder);
+router.patch("/:id/entries", projectController.renameEntry);
+router.delete("/:id/entries", projectController.deleteEntry);
 router.post(
   "/:id/upload-zip",
   uploadSingleArchive,

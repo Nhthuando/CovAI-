@@ -3,6 +3,7 @@ import {
   markJobRunning,
   markJobSuccess,
   markJobFailed,
+  createPerformanceAnalysisJob,
 } from "./job.service.js";
 
 export async function processBuildCfgJob(job) {
@@ -68,8 +69,17 @@ export async function processBuildCfgJob(job) {
       throw error;
     }
 
-    const count = await buildCfgForSnapshot(snapshotId);
-    await markJobSuccess(jobId, { count });
+    const result = await buildCfgForSnapshot(snapshotId);
+    await markJobSuccess(jobId, result);
+
+    const performanceJob = await createPerformanceAnalysisJob({
+      projectId: jobObj.projectId,
+      snapshotId,
+      userId: jobObj.userId,
+    });
+    const { addJobToQueue } = await import("./queue.service.js");
+    await addJobToQueue("PERFORMANCE_ANALYSIS", performanceJob.id);
+    console.log(`[BuildCfgJob ${jobId}] Queued PERFORMANCE_ANALYSIS job ${performanceJob.id}.`);
   } catch (error) {
     console.error(`Error processing job ${jobId}:`, error);
     // Only mark failed if we know it's a valid job

@@ -232,9 +232,9 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
             // Update job to RUNNING immediately as we start processing
             const { markJobRunning, updateJobProgress, markJobSuccess, markJobFailed } = await import("./job.service.js");
             const { extractZipSnapshot } = await import("./zipExtraction.service.js");
-            
-            try { await markJobRunning(job.id); } catch (_) {}
-            
+
+            try { await markJobRunning(job.id); } catch (_) { }
+
             const blob = getBucket().file(storagePath);
             const uploadPromise = new Promise((resolve, reject) => {
                 const blobStream = blob.createWriteStream({
@@ -244,10 +244,10 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
                 blobStream.on("error", reject);
                 blobStream.on("finish", resolve);
                 blobStream.end(file.buffer);
-            }).then(() => updateJobProgress(job.id, 50).catch(() => {}));
+            }).then(() => updateJobProgress(job.id, 50).catch(() => { }));
 
             const extractPromise = extractZipSnapshot(snapshot.id, storagePath, file.buffer).then((path) => {
-                updateJobProgress(job.id, 90).catch(() => {});
+                updateJobProgress(job.id, 90).catch(() => { });
                 return path;
             });
 
@@ -265,32 +265,32 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
             // Sau khi giải nén, detect Jest metadata ngay
             const { detectJest } = await import("../utils/jestDetector.js");
             const detection = detectJest(sourcePath);
-            
+
             await prisma.projectSnapshot.update({
                 where: { id: snapshot.id },
-                data: { 
-                   hasJest: detection.hasJest,
-                   jestCommand: detection.jestCommand
+                data: {
+                    hasJest: detection.hasJest,
+                    jestCommand: detection.jestCommand
                 },
             });
 
             await prisma.project.update({
                 where: { id: projectId },
                 data: {
-                   hasJest: detection.hasJest,
-                   jestConfigPath: detection.configPath,
-                   jestCommand: detection.jestCommand
+                    hasJest: detection.hasJest,
+                    jestConfigPath: detection.configPath,
+                    jestCommand: detection.jestCommand
                 },
             });
 
-            await updateJobProgress(job.id, 100).catch(() => {});
+            await updateJobProgress(job.id, 100).catch(() => { });
             await markJobSuccess(job.id, { rootDir: sourcePath });
             console.log(`[Job ${job.id}] Pipeline upload & ingest hoàn thành: ${sourcePath}`);
 
         } catch (uploadErr) {
             console.error(`[UploadProjectZip] Firebase upload or ingest failed for Job ${job.id}:`, uploadErr);
             const { markJobFailed } = await import("./job.service.js");
-            try { await markJobFailed(job.id, uploadErr); } catch (_) {}
+            try { await markJobFailed(job.id, uploadErr); } catch (_) { }
             throw uploadErr;
         }
     };
@@ -493,7 +493,7 @@ export const deleteProject = async (projectId, userId) => {
         try {
             const [files] = await bucket.getFiles({ prefix: `projects/${projectId}/` });
             if (files.length > 0) {
-                await Promise.all(files.map(file => file.delete().catch(() => {})));
+                await Promise.all(files.map(file => file.delete().catch(() => { })));
                 console.log(`[DeleteProject] Deleted ${files.length} remaining Firebase files for project ${projectId}`);
             }
         } catch (prefixErr) {
@@ -526,7 +526,7 @@ export const getProjectTree = async (projectId, userId) => {
     const project = await prisma.project.findFirst({
         where: { id: projectId, ownerId: userId },
     });
-    if (!project) throw new ServiceError("Project not found", 404);
+    if (!project) throw new ServiceError("Project not found or you don't have permission", 404);
 
     const snapshot = await prisma.projectSnapshot.findFirst({
         where: { projectId },
@@ -534,7 +534,7 @@ export const getProjectTree = async (projectId, userId) => {
     });
 
     if (!snapshot || !snapshot.rootDir) {
-        throw new ServiceError("Project snapshot not ready", 404);
+        throw new ServiceError("Project snapshot not ready", 202);
     }
 
     const tree = buildTree(snapshot.rootDir);
@@ -583,4 +583,99 @@ export const getFileContent = async (projectId, userId, filePath) => {
 
     const content = fs.readFileSync(resolvedFile, "utf-8");
     return { content, size: stat.size };
+};
+
+export const updateFileContent = async (projectId, userId, filePath, content) => {
+    const project = await prisma.project.findFirst({
+        where: { id: projectId, ownerId: userId },
+    });
+    if (!project) throw new ServiceError("Project not found", 404);
+
+    const snapshot = await prisma.projectSnapshot.findFirst({
+        where: { projectId },
+        orderBy: { createdAt: "desc" },
+    });
+    if (!snapshot || !snapshot.rootDir) {
+        throw new ServiceError("Project snapshot not ready", 404);
+    }
+
+    if (Buffer.byteLength(content, "utf8") > 1024 * 1024) {
+        throw new ServiceError("File content is too large to save", 413);
+    }
+
+    const normalizedPath = path.normalize(filePath).replace(/^(\.\.(\/|\\|$))+/, "");
+    const resolvedRoot = path.resolve(snapshot.rootDir);
+    const resolvedFile = path.resolve(resolvedRoot, normalizedPath);
+    const relativePath = path.relative(resolvedRoot, resolvedFile);
+    if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+        throw new ServiceError("Invalid file path", 400);
+    }
+
+    if (!fs.existsSync(resolvedFile)) {
+        throw new ServiceError("File not found", 404);
+    }
+
+    const stat = fs.statSync(resolvedFile);
+    if (stat.isDirectory()) {
+        throw new ServiceError("Path is a directory, not a file", 400);
+    }
+
+    await fs.promises.writeFile(resolvedFile, content, "utf8");
+    return { path: relativePath.replace(/\\/g, "/"), size: Buffer.byteLength(content, "utf8") };
+};
+
+const getSnapshotRoot = async (projectId, userId) => {
+    const project = await prisma.project.findFirst({ where: { id: projectId, ownerId: userId } });
+    if (!project) throw new ServiceError("Project not found", 404);
+    const snapshot = await prisma.projectSnapshot.findFirst({ where: { projectId }, orderBy: { createdAt: "desc" } });
+    if (!snapshot?.rootDir) throw new ServiceError("Project snapshot not ready", 404);
+    return path.resolve(snapshot.rootDir);
+};
+
+const resolveProjectPath = (rootDir, filePath) => {
+    if (typeof filePath !== "string" || !filePath.trim()) throw new ServiceError("Path is required", 400);
+    const resolvedPath = path.resolve(rootDir, filePath.trim());
+    const relativePath = path.relative(rootDir, resolvedPath);
+    if (!relativePath || relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+        throw new ServiceError("Invalid file path", 400);
+    }
+    return { resolvedPath, relativePath };
+};
+
+export const createProjectFile = async (projectId, userId, filePath, content = "") => {
+    if (typeof content !== "string") throw new ServiceError("File content must be text", 400);
+    if (Buffer.byteLength(content, "utf8") > 1024 * 1024) throw new ServiceError("File content is too large", 413);
+    const rootDir = await getSnapshotRoot(projectId, userId);
+    const { resolvedPath, relativePath } = resolveProjectPath(rootDir, filePath);
+    if (fs.existsSync(resolvedPath)) throw new ServiceError("A file or folder already exists at this path", 409);
+    await fs.promises.mkdir(path.dirname(resolvedPath), { recursive: true });
+    await fs.promises.writeFile(resolvedPath, content, "utf8");
+    return { path: relativePath.replace(/\\/g, "/"), type: "file" };
+};
+
+export const createProjectFolder = async (projectId, userId, folderPath) => {
+    const rootDir = await getSnapshotRoot(projectId, userId);
+    const { resolvedPath, relativePath } = resolveProjectPath(rootDir, folderPath);
+    if (fs.existsSync(resolvedPath)) throw new ServiceError("A file or folder already exists at this path", 409);
+    await fs.promises.mkdir(resolvedPath, { recursive: true });
+    return { path: relativePath.replace(/\\/g, "/"), type: "folder" };
+};
+
+export const renameProjectEntry = async (projectId, userId, filePath, _content, newPath) => {
+    const rootDir = await getSnapshotRoot(projectId, userId);
+    const source = resolveProjectPath(rootDir, filePath);
+    const destination = resolveProjectPath(rootDir, newPath);
+    if (!fs.existsSync(source.resolvedPath)) throw new ServiceError("File or folder not found", 404);
+    if (fs.existsSync(destination.resolvedPath)) throw new ServiceError("A file or folder already exists at the new path", 409);
+    await fs.promises.mkdir(path.dirname(destination.resolvedPath), { recursive: true });
+    await fs.promises.rename(source.resolvedPath, destination.resolvedPath);
+    return { path: destination.relativePath.replace(/\\/g, "/") };
+};
+
+export const deleteProjectEntry = async (projectId, userId, filePath) => {
+    const rootDir = await getSnapshotRoot(projectId, userId);
+    const { resolvedPath, relativePath } = resolveProjectPath(rootDir, filePath);
+    if (!fs.existsSync(resolvedPath)) throw new ServiceError("File or folder not found", 404);
+    await fs.promises.rm(resolvedPath, { recursive: true, force: true });
+    return { path: relativePath.replace(/\\/g, "/") };
 };
