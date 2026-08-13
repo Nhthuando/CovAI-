@@ -1,3 +1,4 @@
+/* eslint-disable no-unused-vars */
 /* eslint-disable no-undef */
 /* eslint-disable no-unreachable */
 import { useState } from "react";
@@ -286,7 +287,6 @@ export default function Sidebar({
   onRenameEntry,
   onDeleteEntry,
 }) {
-  const [showProjectList, setShowProjectList] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [action, setAction] = useState(null);
@@ -533,108 +533,20 @@ export default function Sidebar({
         )}
       </AnimatePresence>
 
-      {/* Project label & Dropdown */}
-      <div className="relative">
-        <div
-          className="flex items-center justify-between flex-shrink-0 cursor-pointer"
-          style={{
-            color: "#484f58",
-            fontSize: 11,
-            textTransform: "uppercase",
-            letterSpacing: "0.08em",
-            fontFamily: "var(--font-sans)",
-            borderBottom: "1px solid rgba(255,255,255,0.03)",
-            padding: "12px 24px",
-            background: showProjectList
-              ? "rgba(255,255,255,0.02)"
-              : "transparent",
-            transition: "background 0.2s ease",
-          }}
-          onClick={() => setShowProjectList(!showProjectList)}
-        >
-          <div className="flex items-center gap-1.5 min-w-0">
-            <motion.div
-              animate={{ rotate: showProjectList ? 180 : 0 }}
-              transition={{ duration: 0.2 }}
-            >
-              <ChevronDown size={11} />
-            </motion.div>
-            <span className="truncate">{project?.name || "No Project"}</span>
-          </div>
-        </div>
-
-        {/* Project List Dropdown */}
-        <AnimatePresence>
-          {showProjectList && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: "auto", opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.2, ease: "easeInOut" }}
-              className="overflow-hidden"
-              style={{
-                background: "rgba(13, 17, 23, 0.95)",
-                borderBottom: "1px solid var(--ide-border)",
-                zIndex: 10,
-              }}
-            >
-              {projects.length === 0 ? (
-                <div className="px-6 py-3 text-xs text-[#8b949e]">
-                  No projects found.
-                </div>
-              ) : (
-                projects.map((p) => (
-                  <div
-                    key={p.id}
-                    className="flex items-center justify-between group cursor-pointer"
-                    style={{
-                      padding: "8px 24px",
-                      background:
-                        p.id === project?.id
-                          ? "rgba(124, 58, 237, 0.1)"
-                          : "transparent",
-                      borderLeft:
-                        p.id === project?.id
-                          ? "2px solid #7c3aed"
-                          : "2px solid transparent",
-                    }}
-                    onClick={() => {
-                      onChangeProject(p.id);
-                      setShowProjectList(false);
-                    }}
-                  >
-                    <span
-                      className="truncate text-xs"
-                      style={{
-                        color: p.id === project?.id ? "#c4b5fd" : "#8b949e",
-                        fontFamily: "var(--font-sans)",
-                      }}
-                    >
-                      {p.name}
-                    </span>
-                    <motion.button
-                      whileHover={{ scale: 1.1, color: "#f85149" }}
-                      whileTap={{ scale: 0.9 }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setProjectToDelete(p);
-                      }}
-                      className="opacity-0 group-hover:opacity-100 p-1 rounded"
-                      style={{
-                        color: "#484f58",
-                        background: "transparent",
-                        border: "none",
-                      }}
-                      title="Delete Project"
-                    >
-                      <Trash2 size={12} />
-                    </motion.button>
-                  </div>
-                ))
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
+      {/* Project label */}
+      <div
+        className="flex items-center justify-between flex-shrink-0"
+        style={{
+          color: "#484f58",
+          fontSize: 11,
+          textTransform: "uppercase",
+          letterSpacing: "0.08em",
+          fontFamily: "var(--font-sans)",
+          borderBottom: "1px solid rgba(255,255,255,0.03)",
+          padding: "12px 24px",
+        }}
+      >
+        <span className="truncate">{project?.name || "No Project"}</span>
       </div>
 
       {/* File tree — scrollable */}

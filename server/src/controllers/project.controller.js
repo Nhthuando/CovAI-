@@ -8,11 +8,7 @@ import { createAiSuggestJob } from "../services/job.service.js";
 import { processAiSuggestJob } from "../services/aiSuggestJob.service.js";
 import { generateText } from "../services/gemini.service.js";
 import { checkAndIncrementQuota } from "../services/aiQuota.service.js";
-import {
-  getAiTestById,
-  listAiTests,
-  generateFullTest,
-} from "../services/aiTest.service.js";
+import { getAiTestById, listAiTests } from "../services/aiTest.service.js";
 import prisma from "../config/prisma.js";
 import {
   ServiceError,
@@ -21,6 +17,7 @@ import {
   getProjectById,
   uploadProjectZip,
   detectJestConfig,
+  detectPlaywrightConfig,
   deleteProject,
   getProjectTree,
   getFileContent,
@@ -737,6 +734,117 @@ class ProjectController {
   }
 
   /**
+   * POST /projects/:id/detect-playwright
+   */
+  async detectPlaywrightConfig(req, res) {
+    try {
+      const { id } = req.params;
+      const detection = await detectPlaywrightConfig(id);
+
+      return res.status(200).json({ success: true, data: detection });
+    } catch (error) {
+      console.error(error);
+
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: error.message,
+      });
+    }
+  }
+
+  /**
+   * POST /projects/:id/run-playwright
+   */
+  async runPlaywrightTests(req, res) {
+    try {
+      const { id: projectId } = req.params;
+      const { testDirectory, snapshotId } = req.body;
+
+      const { createPlaywrightJob } =
+        await import("../services/job.service.js");
+
+      const job = await createPlaywrightJob({
+        projectId,
+        snapshotId,
+        testDirectory,
+        userId: req.user.id,
+      });
+
+      addJobToQueue("RUN_PLAYWRIGHT_TESTS", job.id).catch((err) => {
+        console.error("Lỗi khi thêm RUN_PLAYWRIGHT_TESTS vào queue:", err);
+      });
+
+      return res.status(202).json({
+        success: true,
+        data: {
+          job: {
+            id: job.id,
+            type: job.type,
+            snapshotId: job.snapshotId,
+            status: job.status,
+            progress: job.progress,
+            createdAt: job.createdAt,
+            updatedAt: job.updatedAt,
+          },
+        },
+      });
+    } catch (error) {
+      console.error(error);
+
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  }
+
+  /**
+   * POST /projects/:id/run-integration-tests
+   */
+  async runIntegrationTests(req, res) {
+    try {
+      const { id: projectId } = req.params;
+      const { snapshotId } = req.body;
+
+      const { runIntegrationTestPipeline } =
+        await import("../services/integrationTest.orchestrator.js");
+
+      const result = await runIntegrationTestPipeline({
+        projectId,
+        snapshotId,
+        userId: req.user.id,
+      });
+
+      return res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      console.error(error);
+
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  }
+
+  /**
    * DELETE /projects/:id
    */
   async deleteProject(req, res) {
@@ -1193,48 +1301,28 @@ The user is working on project: ${project.name}.
     }
   }
 
-  async generateFullTest(req, res) {
+  async generateIntegrationTest(req, res) {
     try {
       const { id: projectId } = req.params;
-      let snapshotId = req.body?.snapshotId;
+      const { snapshotId, framework } = req.body;
 
-      if (!snapshotId) {
-        const latestSnapshot = await prisma.projectSnapshot.findFirst({
-          where: { projectId },
-          orderBy: { createdAt: "desc" },
-        });
-        if (!latestSnapshot) {
-          return res.status(404).json({
-            success: false,
-            message: "No snapshot found for this project",
-          });
-        }
-        snapshotId = latestSnapshot.id;
+      if (!framework) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Framework is required" });
       }
 
-      const { createAiTestsJob } = await import("../services/job.service.js");
-      const { processAiTestsJob } =
-        await import("../services/aiTestsJob.service.js");
+      const { generateIntegrationTest } =
+        await import("../services/aiTest.service.js");
 
-      // Check if project/snapshot exists and matches...
-      // createAiTestsJob already does these assertions.
-      const job = await createAiTestsJob({
+      const aiTest = await generateIntegrationTest({
         projectId,
         snapshotId,
         userId: req.user.id,
-        mode: "FULL",
+        framework,
       });
 
-      // Run pipeline in the background
-      addJobToQueue("AI_TESTS", job.id).catch((err) => {
-        console.error("Lỗi khi thêm AI_TESTS vào queue:", err);
-      });
-
-      return res.status(202).json({
-        success: true,
-        message: "AI Full tests generation job queued successfully",
-        jobId: job.id,
-      });
+      return res.status(201).json({ success: true, data: aiTest });
     } catch (error) {
       console.error(error);
 

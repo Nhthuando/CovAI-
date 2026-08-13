@@ -2,7 +2,10 @@ import express from "express";
 import projectController from "./../controllers/project.controller.js";
 import { authMiddleware } from "../middlewares/auth.middleware.js";
 import { uploadSingleArchive } from "../middlewares/upload.middleware.js";
-import { runQualityAnalysis, fetchQualityReport } from "../controllers/quality.controller.js";
+import {
+  runQualityAnalysis,
+  fetchQualityReport,
+} from "../controllers/quality.controller.js";
 
 const router = express.Router();
 
@@ -37,6 +40,12 @@ router.post(
 );
 router.delete("/:id", projectController.deleteProject);
 router.post("/:id/detect-jest", projectController.detectJestConfig);
+router.post("/:id/detect-playwright", projectController.detectPlaywrightConfig);
+router.post("/:id/run-playwright", projectController.runPlaywrightTests);
+router.post(
+  "/:id/run-integration-tests",
+  projectController.runIntegrationTests,
+);
 router.post("/:id/import-github", projectController.importGitHub);
 router.post("/:id/ai-suggest", projectController.runAiSuggest);
 router.post("/:id/ai-tests", projectController.runAiTests);
@@ -45,6 +54,9 @@ router.get("/:id/cfg", projectController.getCfg);
 router.get("/:id/cc", projectController.getCc);
 router.get("/:id/ai/tests", projectController.getAiTests);
 router.get("/:id/ai/tests/:testId", projectController.getAiTest);
-router.post("/:id/ai/generate-full-test", projectController.generateFullTest);
+router.post(
+  "/:id/ai/generate-integration-test",
+  projectController.generateIntegrationTest,
+);
 
 export default router;

@@ -171,18 +171,22 @@ model JobOutput {
 
 model CoverageSummary {
   id          String          @id @default(cuid())
-  snapshotId  String          @unique
+  snapshotId  String
+  type        String          @default("UNIT")
   linesPct    Float
   branchesPct Float
   funcsPct    Float
   stmtsPct    Float
   createdAt   DateTime        @default(now())
   snapshot    ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@unique([snapshotId, type])
 }
 
 model CoverageFile {
   id          String          @id @default(cuid())
   snapshotId  String
+  type        String          @default("UNIT")
   filePath    String
   linesPct    Float
   branchesPct Float
@@ -190,7 +194,7 @@ model CoverageFile {
   stmtsPct    Float
   snapshot    ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 
-  @@unique([snapshotId, filePath])
+  @@unique([snapshotId, filePath, type])
   @@index([snapshotId])
 }
 

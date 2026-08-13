@@ -5,7 +5,12 @@ import { buildFullTestPrompt } from "./fullTestPromptBuilder.service.js";
 import { buildAiPayload } from "./aiContextBuilder.service.js";
 import { validateGeneratedTest } from "./testValidation.service.js";
 
-export const generateFullTest = async ({ projectId, snapshotId, userId }) => {
+export const generateIntegrationTest = async ({
+  projectId,
+  snapshotId,
+  userId,
+  framework,
+}) => {
   // 1. Verify access
   const project = await prisma.project.findFirst({
     where: { id: projectId, ownerId: userId },
@@ -27,12 +32,13 @@ export const generateFullTest = async ({ projectId, snapshotId, userId }) => {
   const payload = aiPayloadResult.payload;
 
   // 2. Build prompt
-  const prompt = buildFullTestPrompt({
-    sourceCode: payload.sourceCode,
-    coverageData: payload.coverage,
-    cfgData: payload.cfg,
-    cyclomaticData: payload.complexity,
-  });
+  const prompt = `Bạn là một chuyên gia testing. Hãy tạo một file integration test sử dụng framework ${framework} dựa trên các thông tin dự án dưới đây.
+Dự án có cấu trúc như sau:
+${JSON.stringify(payload.sourceCode, null, 2)}
+
+Hãy viết các test case tập trung vào API endpoint và business logic chính.
+Trả về code file test hoàn chỉnh.
+`;
 
   // 3. AI Generation
   let generatedCode;
