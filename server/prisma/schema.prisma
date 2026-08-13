@@ -43,6 +43,9 @@ model Project {
   updatedAt       DateTime          @updatedAt
   hasJest         Boolean           @default(false)
   jestCommand     String?
+  hasVitest       Boolean         @default(false)
+  vitestConfigPath String?
+  vitestCommand   String?
   aiSuggestions   AiSuggestion[]
   aiTests         AiTest[]
   jobs            Job[]
@@ -55,30 +58,34 @@ model Project {
 }
 
 model ProjectSnapshot {
-  id                String                    @id @default(cuid())
-  projectId         String
-  source            SnapshotSource
-  checksum          String?
-  commitSha         String?
-  storagePath       String
-  rootDir           String?
-  jestConfigPath    String?
-  createdAt         DateTime                  @default(now())
-  hasJest           Boolean                   @default(false)
-  jestCommand       String?
-  aiContextCache    AiContextCache?
-  aiSuggestions     AiSuggestion[]
-  aiTests           AiTest[]
-  cfgs              Cfg[]
-  coverageFiles     CoverageFile[]
-  coverageFuncs     CoverageFunction[]
-  coverageSummary   CoverageSummary?
-  cyclomatics       Cyclomatic[]
-  jobs              Job[]
-  project           Project                   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  structureAnalysis ProjectStructureAnalysis?
-  qualityReport     QualityReport?
-  vulnerabilities   Vulnerability[]
+  id                    String                    @id @default(cuid())
+  projectId             String
+  source                SnapshotSource
+  checksum              String?
+  commitSha             String?
+  storagePath           String
+  rootDir               String?
+  jestConfigPath        String?
+  createdAt             DateTime                  @default(now())
+  hasJest               Boolean                   @default(false)
+  jestCommand           String?
+  testingFrameworksJson String?
+  aiContextCache        AiContextCache?
+  hasVitest             Boolean                   @default(false)
+  vitestConfigPath      String?
+  vitestCommand         String?
+  aiSuggestions         AiSuggestion[]
+  aiTests               AiTest[]
+  cfgs                  Cfg[]
+  coverageFiles         CoverageFile[]
+  coverageFuncs         CoverageFunction[]
+  coverageSummary       CoverageSummary?
+  cyclomatics           Cyclomatic[]
+  jobs                  Job[]
+  project               Project                   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  structureAnalysis     ProjectStructureAnalysis?
+  qualityReport         QualityReport?
+  vulnerabilities       Vulnerability[]
 
   @@unique([projectId, checksum])
   @@unique([projectId, commitSha])
@@ -304,15 +311,14 @@ model Notification {
 }
 
 model Vulnerability {
-  id          String   @id @default(cuid())
+  id          String          @id @default(cuid())
   snapshotId  String
-  type        String   // "SECRET", "DANGEROUS_API", "INSECURE_PATTERN"
-  severity    String   // "CRITICAL", "HIGH", "MEDIUM", "LOW"
+  type        String
+  severity    String
   file        String
   line        Int?
   description String
-  createdAt   DateTime @default(now())
-  
+  createdAt   DateTime        @default(now())
   snapshot    ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 
   @@index([snapshotId])

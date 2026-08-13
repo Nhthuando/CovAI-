@@ -21,6 +21,7 @@ import {
   getProjectById,
   uploadProjectZip,
   detectJestConfig,
+  detectVitestConfig,
   deleteProject,
   getProjectTree,
   getFileContent,
@@ -595,6 +596,31 @@ class ProjectController {
       console.error(error);
 
       if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: error.message,
+      });
+    }
+  }
+
+  /**
+   * POST /project/:id/detect-vitest
+   */
+  async detectVitestConfig(req, res) {
+    try {
+      const { id } = req.params;
+      const detection = await detectVitestConfig(id);
+
+      return res.status(200).json({ success: true, data: detection });
+    } catch (error) {
+      console.error(error);
+
+      if (error.statusCode) {
         return res
           .status(error.statusCode)
           .json({ success: false, message: error.message });

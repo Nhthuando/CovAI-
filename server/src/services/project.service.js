@@ -1,6 +1,7 @@
 import prisma from "../config/prisma.js";
 import { detectJest } from "../utils/jestDetector.js";
 import { detectAndSaveProject } from "./jestDetection.service.js";
+import { detectAndSaveProject as detectVitestAndSave } from "./vitestDetection.service.js";
 import { createAnalysisJob as createArchitectureAnalysisJob, createSnapshotIngestJob, createRunTestsJob } from "./job.service.js";
 import { analysisResultResponse, snapshotResponse } from "./analysisResponse.service.js";
 import { resolveLatestOwnedProjectSnapshot, resolveOwnedProjectSnapshot } from "./projectScope.service.js";
@@ -232,9 +233,9 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
             // Update job to RUNNING immediately as we start processing
             const { markJobRunning, updateJobProgress, markJobSuccess, markJobFailed } = await import("./job.service.js");
             const { extractZipSnapshot } = await import("./zipExtraction.service.js");
-            
-            try { await markJobRunning(job.id); } catch (_) {}
-            
+
+            try { await markJobRunning(job.id); } catch (_) { }
+
             const blob = getBucket().file(storagePath);
             const uploadPromise = new Promise((resolve, reject) => {
                 const blobStream = blob.createWriteStream({
@@ -244,10 +245,10 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
                 blobStream.on("error", reject);
                 blobStream.on("finish", resolve);
                 blobStream.end(file.buffer);
-            }).then(() => updateJobProgress(job.id, 50).catch(() => {}));
+            }).then(() => updateJobProgress(job.id, 50).catch(() => { }));
 
             const extractPromise = extractZipSnapshot(snapshot.id, storagePath, file.buffer).then((path) => {
-                updateJobProgress(job.id, 90).catch(() => {});
+                updateJobProgress(job.id, 90).catch(() => { });
                 return path;
             });
 
@@ -265,32 +266,32 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
             // Sau khi giải nén, detect Jest metadata ngay
             const { detectJest } = await import("../utils/jestDetector.js");
             const detection = detectJest(sourcePath);
-            
+
             await prisma.projectSnapshot.update({
                 where: { id: snapshot.id },
-                data: { 
-                   hasJest: detection.hasJest,
-                   jestCommand: detection.jestCommand
+                data: {
+                    hasJest: detection.hasJest,
+                    jestCommand: detection.jestCommand
                 },
             });
 
             await prisma.project.update({
                 where: { id: projectId },
                 data: {
-                   hasJest: detection.hasJest,
-                   jestConfigPath: detection.configPath,
-                   jestCommand: detection.jestCommand
+                    hasJest: detection.hasJest,
+                    jestConfigPath: detection.configPath,
+                    jestCommand: detection.jestCommand
                 },
             });
 
-            await updateJobProgress(job.id, 100).catch(() => {});
+            await updateJobProgress(job.id, 100).catch(() => { });
             await markJobSuccess(job.id, { rootDir: sourcePath });
             console.log(`[Job ${job.id}] Pipeline upload & ingest hoàn thành: ${sourcePath}`);
 
         } catch (uploadErr) {
             console.error(`[UploadProjectZip] Firebase upload or ingest failed for Job ${job.id}:`, uploadErr);
             const { markJobFailed } = await import("./job.service.js");
-            try { await markJobFailed(job.id, uploadErr); } catch (_) {}
+            try { await markJobFailed(job.id, uploadErr); } catch (_) { }
             throw uploadErr;
         }
     };
@@ -311,6 +312,10 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
 
 export const detectJestConfig = async (projectId) => {
     return detectAndSaveProject(projectId);
+};
+
+export const detectVitestConfig = async (projectId) => {
+    return detectVitestAndSave(projectId);
 };
 
 export const listProjectSnapshots = async ({ projectId, userId }) => {
@@ -493,7 +498,7 @@ export const deleteProject = async (projectId, userId) => {
         try {
             const [files] = await bucket.getFiles({ prefix: `projects/${projectId}/` });
             if (files.length > 0) {
-                await Promise.all(files.map(file => file.delete().catch(() => {})));
+                await Promise.all(files.map(file => file.delete().catch(() => { })));
                 console.log(`[DeleteProject] Deleted ${files.length} remaining Firebase files for project ${projectId}`);
             }
         } catch (prefixErr) {
