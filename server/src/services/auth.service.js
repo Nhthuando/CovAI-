@@ -11,15 +11,27 @@ export const register = async (name, email, password) => {
     data: { email, passwordHash: hashedPass, name },
   });
 
-  const token = jwt.sign(
+  const accessToken = jwt.sign(
     { userId: user.id, userEmail: user.email, userName: user.name },
     process.env.JWT_SECRET,
-    { expiresIn: "1h" },
+    { expiresIn: "15m" },
   );
+
+  const refreshToken = jwt.sign(
+    { userId: user.id },
+    process.env.JWT_REFRESH_SECRET,
+    { expiresIn: "7d" },
+  );
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { refreshToken },
+  });
 
   return {
     message: "Đăng ký thành công!",
-    token,
+    accessToken,
+    refreshToken,
     userName: name,
     userEmail: email,
   };
@@ -32,15 +44,27 @@ export const login = async (email, password) => {
   const checkPass = await bcrypt.compare(password, user.passwordHash);
   if (!checkPass) throw new Error("Email hoặc mật khẩu không chính xác!");
 
-  const token = jwt.sign(
+  const accessToken = jwt.sign(
     { userId: user.id, userEmail: user.email, userName: user.name },
     process.env.JWT_SECRET,
-    { expiresIn: "1h" },
+    { expiresIn: "15m" },
   );
+
+  const refreshToken = jwt.sign(
+    { userId: user.id },
+    process.env.JWT_REFRESH_SECRET,
+    { expiresIn: "7d" },
+  );
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { refreshToken },
+  });
 
   return {
     message: "Đăng nhập thành công!",
-    token,
+    accessToken,
+    refreshToken,
     name: user.name,
     email: user.email,
   };

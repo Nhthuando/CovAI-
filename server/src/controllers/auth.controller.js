@@ -18,7 +18,18 @@ export const register = async (req, res) => {
 
     const { name, email, password } = result.data;
     const response = await registerService(name, email, password);
-    return res.status(201).json(response);
+    res.cookie("refreshToken", response.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+    return res.status(201).json({
+      message: response.message,
+      accessToken: response.accessToken,
+      userName: response.userName,
+      userEmail: response.userEmail,
+    });
   } catch (error) {
     console.log(error);
     if (error.message === "Tài khoản đã tồn tại!") {
@@ -38,7 +49,18 @@ export const login = async (req, res) => {
 
     const { email, password } = result.data;
     const response = await loginService(email, password);
-    return res.status(200).json(response);
+    res.cookie("refreshToken", response.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+    return res.status(200).json({
+      message: response.message,
+      accessToken: response.accessToken,
+      name: response.name,
+      email: response.email,
+    });
   } catch (error) {
     console.log(error);
     if (

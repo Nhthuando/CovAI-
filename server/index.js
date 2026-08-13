@@ -6,7 +6,9 @@ import cors from "cors";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import authRoute from "./src/routes/auth.route.js";
+import refreshRoute from "./src/routes/refresh.route.js";
 import userRoute from "./src/routes/user.route.js";
+import cookieParser from "cookie-parser";
 import projectRoutes from "./src/routes/project.route.js";
 import prisma from "./src/config/prisma.js";
 import uploadRoute from "./src/routes/upload.route.js";
@@ -18,7 +20,10 @@ import aiSuggestionRoute from "./src/routes/aiSuggestion.route.js";
 import aiTestRoute from "./src/routes/aiTest.route.js";
 import fileRoutes from "./src/routes/file.routes.js";
 import notificationRoute from "./src/routes/notification.route.js";
-import { eventDispatcher, NOTIFICATION_EVENT } from "./src/utils/eventDispatcher.js";
+import {
+  eventDispatcher,
+  NOTIFICATION_EVENT,
+} from "./src/utils/eventDispatcher.js";
 import analyticsRoute from "./src/routes/analytics.route.js";
 import codeHygieneRoute from "./src/routes/codeHygiene.route.js";
 import fileManagerRoute from "./src/routes/fileManager.route.js";
@@ -53,12 +58,14 @@ app.use(
   }),
 );
 
+app.use(cookieParser());
 app.use(express.json());
 
 // Global rate limiter
 app.use(globalLimiter);
 
 app.use("/api/auth", authRoute);
+app.use("/api/refresh", refreshRoute);
 app.use("/api/users", userRoute);
 app.use("/api/projects", projectRoutes);
 app.use("/api/upload", uploadRoute);
