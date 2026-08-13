@@ -237,7 +237,7 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
           email: formData.email,
           password: formData.password,
         });
-        localStorage.setItem("token", data.token);
+        localStorage.setItem("token", data.accessToken);
         localStorage.setItem("userName", data.name);
         localStorage.setItem("userEmail", data.email);
         setStatus("success");
@@ -250,7 +250,7 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
           email: formData.email,
           password: formData.password,
         });
-        localStorage.setItem("token", data.token);
+        localStorage.setItem("token", data.accessToken);
         localStorage.setItem("userName", data.userName);
         localStorage.setItem("userEmail", data.userEmail);
         setStatus("success");
