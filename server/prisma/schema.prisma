@@ -19,6 +19,7 @@ model User {
   updatedAt            DateTime       @updatedAt
   passwordResetExpires DateTime?
   passwordResetToken   String?
+  refreshToken         String?
   aiUsageCount         Int            @default(0)
   aiUsageDate          String?
   bio                  String?
@@ -53,6 +54,29 @@ model Project {
   owner           User              @relation(fields: [ownerId], references: [id])
   snapshots       ProjectSnapshot[]
   qualityReports  QualityReport[]
+  id               String            @id @default(cuid())
+  ownerId          String
+  name             String
+  description      String?
+  repoUrl          String?
+  defaultBranch    String?
+  rootDir          String?
+  jestConfigPath   String?
+  storageBasePath  String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  hasJest          Boolean           @default(false)
+  jestCommand      String?
+  hasVitest        Boolean           @default(false)
+  vitestCommand    String?
+  vitestConfigPath String?
+  aiSuggestions    AiSuggestion[]
+  aiTests          AiTest[]
+  jobs             Job[]
+  notifications    Notification[]
+  owner            User              @relation(fields: [ownerId], references: [id])
+  snapshots        ProjectSnapshot[]
+  qualityReports   QualityReport[]
 
   @@index([ownerId])
 }
@@ -86,6 +110,34 @@ model ProjectSnapshot {
   structureAnalysis     ProjectStructureAnalysis?
   qualityReport         QualityReport?
   vulnerabilities       Vulnerability[]
+  id                       String                    @id @default(cuid())
+  projectId                String
+  source                   SnapshotSource
+  checksum                 String?
+  commitSha                String?
+  storagePath              String
+  rootDir                  String?
+  jestConfigPath           String?
+  createdAt                DateTime                  @default(now())
+  hasJest                  Boolean                   @default(false)
+  jestCommand              String?
+  testingFrameworksJson    String?
+  hasVitest                Boolean                   @default(false)
+  vitestCommand            String?
+  vitestConfigPath         String?
+  aiContextCache           AiContextCache?
+  aiSuggestions            AiSuggestion[]
+  aiTests                  AiTest[]
+  cfgs                     Cfg[]
+  coverageFiles            CoverageFile[]
+  coverageFuncs            CoverageFunction[]
+  coverageSummaries        CoverageSummary?
+  cyclomatics              Cyclomatic[]
+  jobs                     Job[]
+  project                  Project                   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ProjectStructureAnalysis ProjectStructureAnalysis?
+  QualityReport            QualityReport?
+  vulnerabilities          Vulnerability[]
 
   @@unique([projectId, checksum])
   @@unique([projectId, commitSha])
@@ -93,13 +145,13 @@ model ProjectSnapshot {
 }
 
 model ProjectStructureAnalysis {
-  id            String          @id @default(cuid())
-  snapshotId    String          @unique
-  schemaVersion Int
-  resultJson    String
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
-  snapshot      ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  id              String          @id @default(cuid())
+  snapshotId      String          @unique
+  schemaVersion   Int
+  resultJson      String
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  ProjectSnapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 }
 
 model QualityReport {
@@ -119,8 +171,8 @@ model QualityReport {
   aiError              String?
   createdAt            DateTime        @default(now())
   updatedAt            DateTime        @updatedAt
-  project              Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  snapshot             ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  Project              Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ProjectSnapshot      ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 
   @@index([projectId])
 }

@@ -1,8 +1,9 @@
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
-import { createInstallDepsJob, createRunTestsJob } from "../services/job.service.js";
+import { createInstallDepsJob, createRunTestsJob, createSupertestCoverageJob } from "../services/job.service.js";
 import { processCoverageJob } from "../services/coverageRunner.service.js";
 import { addJobToQueue } from "../services/queue.service.js";
+import { detectSupertest } from "../services/supertestDetection.service.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -176,6 +177,50 @@ export const runCoverage = async (req, res) => {
             return res.status(error.statusCode).json({ success: false, message: error.message });
         }
         return res.status(500).json({ success: false, message: "Có lỗi server!" });
+    }
+};
+
+/**
+ * POST /api/coverage/:snapshotId/supertest/run
+ * Queues a dedicated Supertest integration coverage job.
+ */
+export const runSupertestCoverage = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
+
+        const { snapshotId } = req.params;
+        if (!snapshotId || typeof snapshotId !== "string" || !snapshotId.trim()) {
+            return res.status(400).json({ success: false, message: "Invalid snapshotId." });
+        }
+
+        const snapshot = await prisma.projectSnapshot.findUnique({
+            where: { id: snapshotId },
+            select: { id: true, projectId: true, rootDir: true, project: { select: { ownerId: true } } },
+        });
+        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
+        if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
+        if (!snapshot.rootDir) return res.status(409).json({ success: false, message: "Snapshot is not ready to run tests." });
+
+        const supertestInfo = await detectSupertest(snapshot.rootDir);
+        if (!supertestInfo.detected || supertestInfo.supertestFiles.length === 0) {
+            return res.status(422).json({ success: false, message: "No Supertest test files were found in this snapshot." });
+        }
+
+        const job = await createSupertestCoverageJob({ projectId: snapshot.projectId, snapshotId, userId });
+        await addJobToQueue("SUPERTEST_COVERAGE", job.id);
+
+        return res.status(202).json({
+            success: true,
+            message: "Supertest coverage job queued.",
+            jobId: job.id,
+            snapshotId,
+            supertestFileCount: supertestInfo.supertestFiles.length,
+        });
+    } catch (error) {
+        console.error("[RunSupertestCoverage] Server error:", error);
+        if (error instanceof ServiceError) return res.status(error.statusCode).json({ success: false, message: error.message });
+        return res.status(500).json({ success: false, message: "Unable to queue Supertest coverage." });
     }
 };
 

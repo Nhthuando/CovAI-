@@ -5,4 +5,4 @@
 
 */
 -- AlterTable
-ALTER TABLE "User" DROP COLUMN "githubTokenExpiresAt";
+ALTER TABLE "User" DROP COLUMN IF EXISTS "githubTokenExpiresAt";

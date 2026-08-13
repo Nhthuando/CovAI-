@@ -6,9 +6,12 @@ export const NotificationContext = createContext();
 export const NotificationProvider = ({ children }) => {
     const [toasts, setToasts] = useState([]);
 
-    const addToast = useCallback((title, message, type = 'info', duration = 5000) => {
+    const addToast = useCallback((title, message, type = 'info', duration = 4500) => {
         const id = Date.now();
         setToasts(prev => [...prev, { id, title, message, type, duration }]);
+        setTimeout(() => {
+            setToasts(prev => prev.filter(t => t.id !== id));
+        }, duration);
     }, []);
 
     // Listen for custom toast events (from NotificationCenter)

@@ -1,3 +1,4 @@
+/* eslint-disable no-unused-vars */
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
@@ -6,7 +7,6 @@ import { NotificationCenter } from "./NotificationCenter";
 
 export default function Navbar() {
   const { user } = useAuth();
-  console.log('[Navbar] user object:', user);
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -72,8 +72,7 @@ export default function Navbar() {
               width: "32px",
               height: "32px",
               borderRadius: "8px",
-              background:
-                "linear-gradient(135deg, #7C3AED 0%, #22d3ee 100%)",
+              background: "linear-gradient(135deg, #7C3AED 0%, #22d3ee 100%)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -96,8 +95,7 @@ export default function Navbar() {
             TestCov
             <span
               style={{
-                background:
-                  "linear-gradient(90deg, #7C3AED, #22d3ee)",
+                background: "linear-gradient(90deg, #7C3AED, #22d3ee)",
                 WebkitBackgroundClip: "text",
                 WebkitTextFillColor: "transparent",
                 backgroundClip: "text",
@@ -177,7 +175,10 @@ export default function Navbar() {
               >
                 Log in
               </Link>
-              <motion.div whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.97 }}>
+              <motion.div
+                whileHover={{ scale: 1.04 }}
+                whileTap={{ scale: 0.97 }}
+              >
                 <Link
                   to="/register"
                   id="nav-signup"

@@ -44,6 +44,10 @@ import {
   runAnalysisApi,
   generateSkeletonApi,
   generateFullTestsApi,
+  createProjectFileApi,
+  createProjectFolderApi,
+  renameProjectEntryApi,
+  deleteProjectEntryApi,
 } from "../../services/project.service";
 import { getProjectJobsApi } from "../../services/job.service";
 
@@ -72,6 +76,8 @@ function LayoutInner() {
   const { showToast } = useToast();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const searchParams = new URLSearchParams(window.location.search);
+  const initialProjectId = searchParams.get("projectId");
   const { isMobile, isTablet } = useBreakpoints();
   const isCompact = isMobile || isTablet;
 
@@ -123,10 +129,19 @@ function LayoutInner() {
       try {
         const response = await getProjectJobsApi(project.id);
         const jobs = response.jobs || [];
-        const targetSnapshotId = project.snapshots?.[0]?.id || project.latestSnapshotId || localStorage.getItem(`latestSnapshot_${project.id}`);
-        const latest = jobs
-          .filter((job) => job.type === "RUN_TESTS" && (!targetSnapshotId || job.snapshotId === targetSnapshotId))
-          .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
+        const targetSnapshotId =
+          project.snapshots?.[0]?.id ||
+          project.latestSnapshotId ||
+          localStorage.getItem(`latestSnapshot_${project.id}`);
+        const latest =
+          jobs
+            .filter(
+              (job) =>
+                job.type === "RUN_TESTS" &&
+                (!targetSnapshotId || job.snapshotId === targetSnapshotId),
+            )
+            .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] ||
+          null;
         if (!cancelled) setLatestRunJob(latest);
       } catch {
         // The queue screen remains the source of truth if this optional hint fails.
@@ -163,7 +178,7 @@ function LayoutInner() {
           setProjects(loadedProjects);
           const targetProj = activeProjId
             ? loadedProjects.find((p) => p.id === activeProjId) ||
-            loadedProjects[0]
+              loadedProjects[0]
             : loadedProjects[0];
 
           setProject(targetProj);
@@ -216,29 +231,32 @@ function LayoutInner() {
     [showToast],
   );
 
-  const handleAiPanelResize = useCallback((e) => {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startWidth = aiPanelWidth;
+  const handleAiPanelResize = useCallback(
+    (e) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startWidth = aiPanelWidth;
 
-    const onMouseMove = (moveEvent) => {
-      const deltaX = startX - moveEvent.clientX;
-      const newWidth = Math.max(260, Math.min(800, startWidth + deltaX));
-      setAiPanelWidth(newWidth);
-    };
+      const onMouseMove = (moveEvent) => {
+        const deltaX = startX - moveEvent.clientX;
+        const newWidth = Math.max(260, Math.min(800, startWidth + deltaX));
+        setAiPanelWidth(newWidth);
+      };
 
-    const onMouseUp = () => {
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
-    };
+      const onMouseUp = () => {
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+      };
 
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
-  }, [aiPanelWidth]);
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+    },
+    [aiPanelWidth],
+  );
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    loadData(initialProjectId);
+  }, [loadData, initialProjectId]);
 
   const handleChangeProject = (projectId) => {
     if (project?.id === projectId) return;
@@ -293,10 +311,15 @@ function LayoutInner() {
   const handleOpenFileByPath = (filePath) => {
     setActiveActivity("explorer");
     // Normalize path to match tree format if needed
-    const normalizedPath = filePath.replace(/\\/g, '/').replace(/^\.\//, '');
+    const normalizedPath = filePath.replace(/\\/g, "/").replace(/^\.\//, "");
     const findNode = (nodes, path) => {
       for (const node of nodes) {
-        if (node.id === path || path.endsWith('/' + node.id) || node.id.endsWith('/' + path)) return node;
+        if (
+          node.id === path ||
+          path.endsWith("/" + node.id) ||
+          node.id.endsWith("/" + path)
+        )
+          return node;
         if (node.children) {
           const found = findNode(node.children, path);
           if (found) return found;
@@ -308,7 +331,11 @@ function LayoutInner() {
     if (node) {
       handleOpenFile(node);
     } else {
-      handleOpenFile({ id: normalizedPath, name: normalizedPath.split('/').pop(), type: "file" });
+      handleOpenFile({
+        id: normalizedPath,
+        name: normalizedPath.split("/").pop(),
+        type: "file",
+      });
     }
   };
 
@@ -318,6 +345,109 @@ function LayoutInner() {
     setTabs(next);
     if (activeTabId === tabId && next.length > 0) {
       setActiveTabId(next[Math.max(0, idx - 1)].id);
+    }
+  };
+
+  const refreshProjectFiles = async () => {
+    await loadData(project?.id, 1, 0);
+  };
+
+  const handleCreateFile = async (filePath) => {
+    if (!project) return;
+    try {
+      await createProjectFileApi(project.id, filePath);
+      await refreshProjectFiles();
+      handleOpenFile({
+        id: filePath.replace(/\\/g, "/"),
+        name: filePath.split(/[\\/]/).pop(),
+        type: "file",
+      });
+      showToast({
+        type: "success",
+        title: "File created",
+        message: `${filePath} has been created.`,
+      });
+    } catch (err) {
+      showToast({
+        type: "error",
+        title: "Could not create file",
+        message: err.message,
+      });
+    }
+  };
+
+  const handleCreateFolder = async (folderPath) => {
+    if (!project) return;
+    try {
+      await createProjectFolderApi(project.id, folderPath);
+      await refreshProjectFiles();
+      showToast({
+        type: "success",
+        title: "Folder created",
+        message: `${folderPath} has been created.`,
+      });
+    } catch (err) {
+      showToast({
+        type: "error",
+        title: "Could not create folder",
+        message: err.message,
+      });
+    }
+  };
+
+  const handleRenameEntry = async (filePath, newPath) => {
+    if (!project) return;
+    try {
+      await renameProjectEntryApi(project.id, filePath, newPath);
+      setTabs((prev) =>
+        prev.map((tab) =>
+          tab.id === filePath
+            ? { ...tab, id: newPath, name: newPath.split("/").pop() }
+            : tab,
+        ),
+      );
+      if (activeTabId === filePath) setActiveTabId(newPath);
+      if (activeFileId === filePath) setActiveFileId(newPath);
+      await refreshProjectFiles();
+      showToast({
+        type: "success",
+        title: "Renamed",
+        message: `${filePath} is now ${newPath}.`,
+      });
+    } catch (err) {
+      showToast({
+        type: "error",
+        title: "Could not rename",
+        message: err.message,
+      });
+    }
+  };
+
+  const handleDeleteEntry = async (node) => {
+    if (!project) return;
+    try {
+      await deleteProjectEntryApi(project.id, node.id);
+      setTabs((prev) =>
+        prev.filter(
+          (tab) => tab.id !== node.id && !tab.id.startsWith(`${node.id}/`),
+        ),
+      );
+      if (activeFileId === node.id || activeFileId?.startsWith(`${node.id}/`)) {
+        setActiveFileId(null);
+        setActiveTabId(null);
+      }
+      await refreshProjectFiles();
+      showToast({
+        type: "success",
+        title: "Deleted",
+        message: `${node.name} has been deleted.`,
+      });
+    } catch (err) {
+      showToast({
+        type: "error",
+        title: "Could not delete",
+        message: err.message,
+      });
     }
   };
 
@@ -333,10 +463,14 @@ function LayoutInner() {
     if (["QUEUED", "RUNNING", "SUCCESS"].includes(latestRunJob?.status)) {
       showToast({
         type: "info",
-        title: latestRunJob.status === "SUCCESS" ? "Already completed" : "Analysis already running",
-        message: latestRunJob.status === "SUCCESS"
-          ? "This snapshot already has a completed test analysis."
-          : "The current analysis is still in progress.",
+        title:
+          latestRunJob.status === "SUCCESS"
+            ? "Already completed"
+            : "Analysis already running",
+        message:
+          latestRunJob.status === "SUCCESS"
+            ? "This snapshot already has a completed test analysis."
+            : "The current analysis is still in progress.",
       });
       return;
     }
@@ -350,12 +484,16 @@ function LayoutInner() {
         setShowTestPrompt(true);
       } else {
         if (res?.data?.job?.snapshotId) {
-          localStorage.setItem(`latestSnapshot_${project.id}`, res.data.job.snapshotId);
+          localStorage.setItem(
+            `latestSnapshot_${project.id}`,
+            res.data.job.snapshotId,
+          );
         }
         showToast({
           type: "info",
           title: "Analysis Started",
-          message: "Your project analysis has been queued. You will be notified when it completes.",
+          message:
+            "Your project analysis has been queued. You will be notified when it completes.",
         });
       }
     } catch (err) {
@@ -369,14 +507,17 @@ function LayoutInner() {
     }
   };
 
-  const runButtonLocked = isSubmittingAnalysis || ["QUEUED", "RUNNING", "SUCCESS"].includes(latestRunJob?.status);
-  const runButtonLabel = latestRunJob?.status === "SUCCESS"
-    ? "Tests Completed"
-    : latestRunJob?.status === "RUNNING"
-      ? "Running..."
-      : latestRunJob?.status === "QUEUED"
-        ? "Queued..."
-        : "Run Tests";
+  const runButtonLocked =
+    isSubmittingAnalysis ||
+    ["QUEUED", "RUNNING", "SUCCESS"].includes(latestRunJob?.status);
+  const runButtonLabel =
+    latestRunJob?.status === "SUCCESS"
+      ? "Tests Completed"
+      : latestRunJob?.status === "RUNNING"
+        ? "Running..."
+        : latestRunJob?.status === "QUEUED"
+          ? "Queued..."
+          : "Run Tests";
 
   return (
     <div
@@ -449,7 +590,10 @@ function LayoutInner() {
             />
           )}
 
-          <div className="flex items-center gap-2" style={{ fontSize: 12, minWidth: 0 }}>
+          <div
+            className="flex items-center gap-2"
+            style={{ fontSize: 12, minWidth: 0 }}
+          >
             <span
               style={{
                 color: "#a78bfa",
@@ -482,39 +626,11 @@ function LayoutInner() {
           </div>
         </div>
 
-        {/* Center: menu bar items — desktop/tablet only */}
-        {!isMobile && (
-          <div className="flex items-center gap-0.5">
-            {["Explorer", "Coverage", "Settings"].map((item) => (
-              <motion.button
-                key={item}
-                onClick={() => {
-                  if (item === "Settings") setActiveActivity("settings");
-                  else if (item === "Explorer") setActiveActivity("explorer");
-                  else if (item === "Coverage") setActiveActivity("coverage");
-                }}
-                whileHover={{ color: "#e6edf3" }}
-                whileTap={{ scale: 0.97 }}
-                className="rounded-md text-xs"
-                style={{
-                  color:
-                    activeActivity === item.toLowerCase() ? "#e6edf3" : "#484f58",
-                  fontFamily: "var(--font-sans)",
-                  background: "transparent",
-                  border: "none",
-                  cursor: "pointer",
-                  transition: "color 0.15s ease",
-                  padding: "4px 12px",
-                }}
-              >
-                {item}
-              </motion.button>
-            ))}
-          </div>
-        )}
-
         {/* Right: search + actions */}
-        <div className="flex items-center gap-2" style={{ position: "relative" }}>
+        <div
+          className="flex items-center gap-2"
+          style={{ position: "relative" }}
+        >
           {/* Search bar — hidden on mobile/tablet */}
           {!isCompact && (
             <div
@@ -529,7 +645,14 @@ function LayoutInner() {
                 padding: "5px 12px",
               }}
             >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
                 <circle cx="11" cy="11" r="8" />
                 <path d="m21 21-4.35-4.35" />
               </svg>
@@ -609,22 +732,22 @@ function LayoutInner() {
               <motion.button
                 whileHover={{ scale: 1.03 }}
                 whileTap={{ scale: 0.97 }}
-                onClick={() => setShowImport(true)}
+                onClick={() => navigate("/projects")}
                 className="flex items-center gap-1.5 rounded-lg text-xs font-medium"
                 style={{
-                  background: showImport ? "rgba(124,58,237,0.15)" : "rgba(255,255,255,0.04)",
-                  color: showImport ? "#a78bfa" : "#8b949e",
-                  border: showImport ? "1px solid rgba(124,58,237,0.25)" : "1px solid rgba(255,255,255,0.07)",
+                  background: "rgba(255,255,255,0.04)",
+                  color: "#8b949e",
+                  border: "1px solid rgba(255,255,255,0.07)",
                   cursor: "pointer",
                   fontFamily: "var(--font-sans)",
                   padding: "6px 14px",
                   whiteSpace: "nowrap",
                   transition: "all 0.2s ease",
                 }}
-                id="new-project-btn"
+                id="projects-btn"
               >
                 <FolderPlus size={11} />
-                {!isTablet && "New Project"}
+                {!isTablet && "Projects"}
               </motion.button>
             </>
           )}
@@ -668,25 +791,45 @@ function LayoutInner() {
                     }}
                   >
                     <button
-                      onClick={() => { setShowCFG(true); setMobileMoreOpen(false); }}
+                      onClick={() => {
+                        setShowCFG(true);
+                        setMobileMoreOpen(false);
+                      }}
                       style={{
-                        display: "flex", alignItems: "center", gap: 8, width: "100%",
-                        padding: "10px 14px", background: "transparent", border: "none",
-                        color: "#22d3ee", fontSize: 13, cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        width: "100%",
+                        padding: "10px 14px",
+                        background: "transparent",
+                        border: "none",
+                        color: "#22d3ee",
+                        fontSize: 13,
+                        cursor: "pointer",
                       }}
                     >
                       <GitBranch size={13} /> Logic Analysis
                     </button>
                     <button
-                      onClick={() => { setShowImport(true); setMobileMoreOpen(false); }}
+                      onClick={() => {
+                        setShowImport(true);
+                        setMobileMoreOpen(false);
+                      }}
                       style={{
-                        display: "flex", alignItems: "center", gap: 8, width: "100%",
-                        padding: "10px 14px", background: "transparent", border: "none",
-                        color: "#8b949e", fontSize: 13, cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        width: "100%",
+                        padding: "10px 14px",
+                        background: "transparent",
+                        border: "none",
+                        color: "#8b949e",
+                        fontSize: 13,
+                        cursor: "pointer",
                         borderTop: "1px solid #21262d",
                       }}
                     >
-                      <FolderPlus size={13} /> New Project
+                      <FolderPlus size={13} /> Projects
                     </button>
                   </motion.div>
                 )}
@@ -721,7 +864,11 @@ function LayoutInner() {
               }}
               id="toggle-sidebar-btn"
             >
-              {sidebarOpen ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
+              {sidebarOpen ? (
+                <PanelLeftClose size={14} />
+              ) : (
+                <PanelLeftOpen size={14} />
+              )}
             </motion.button>
             <motion.button
               whileTap={{ scale: 0.9 }}
@@ -739,7 +886,11 @@ function LayoutInner() {
               }}
               id="toggle-ai-panel-btn"
             >
-              {aiPanelOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
+              {aiPanelOpen ? (
+                <PanelRightClose size={14} />
+              ) : (
+                <PanelRightOpen size={14} />
+              )}
             </motion.button>
             <NotificationCenter userId={user?.id} size={14} theme="dark" />
           </div>
@@ -763,33 +914,43 @@ function LayoutInner() {
                 overflow: "hidden",
               }}
             >
-              {["Explorer", "Architecture", "Coverage", "Settings"].map((item) => (
-                <button
-                  key={item}
-                  onClick={() => {
-                    if (item === "Settings") setActiveActivity("settings");
-                    else if (item === "Explorer") setActiveActivity("explorer");
-                    else if (item === "Architecture") setActiveActivity("architecture");
-                    else if (item === "Coverage") setActiveActivity("coverage");
-                    setMobileNavOpen(false);
-                  }}
-                  style={{
-                    display: "block",
-                    width: "100%",
-                    textAlign: "left",
-                    padding: "12px 16px",
-                    background:
-                      activeActivity === item.toLowerCase() ? "rgba(124,58,237,0.1)" : "transparent",
-                    color: activeActivity === item.toLowerCase() ? "#e6edf3" : "#8b949e",
-                    border: "none",
-                    borderBottom: "1px solid #161b22",
-                    fontSize: 13,
-                    cursor: "pointer",
-                  }}
-                >
-                  {item}
-                </button>
-              ))}
+              {["Explorer", "Architecture", "Coverage", "Settings"].map(
+                (item) => (
+                  <button
+                    key={item}
+                    onClick={() => {
+                      if (item === "Settings") setActiveActivity("settings");
+                      else if (item === "Explorer")
+                        setActiveActivity("explorer");
+                      else if (item === "Architecture")
+                        setActiveActivity("architecture");
+                      else if (item === "Coverage")
+                        setActiveActivity("coverage");
+                      setMobileNavOpen(false);
+                    }}
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      textAlign: "left",
+                      padding: "12px 16px",
+                      background:
+                        activeActivity === item.toLowerCase()
+                          ? "rgba(124,58,237,0.1)"
+                          : "transparent",
+                      color:
+                        activeActivity === item.toLowerCase()
+                          ? "#e6edf3"
+                          : "#8b949e",
+                      border: "none",
+                      borderBottom: "1px solid #161b22",
+                      fontSize: 13,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {item}
+                  </button>
+                ),
+              )}
             </motion.div>
           )}
         </AnimatePresence>
@@ -806,7 +967,10 @@ function LayoutInner() {
         {/* Activity Bar — ẩn trên mobile (đã có hamburger thay thế) */}
         {!isMobile && (
           <motion.div variants={panelVariants}>
-            <ActivityBar active={activeActivity} onSelect={handleSelectActivity} />
+            <ActivityBar
+              active={activeActivity}
+              onSelect={handleSelectActivity}
+            />
           </motion.div>
         )}
 
@@ -817,7 +981,10 @@ function LayoutInner() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => { setSidebarOpen(false); setAiPanelOpen(false); }}
+              onClick={() => {
+                setSidebarOpen(false);
+                setAiPanelOpen(false);
+              }}
               style={{
                 position: "fixed",
                 inset: 0,
@@ -833,23 +1000,29 @@ function LayoutInner() {
           {sidebarOpen && (
             <motion.div
               key="sidebar"
-              initial={isMobile ? { x: -280, opacity: 0 } : { width: 0, opacity: 0 }}
-              animate={isMobile ? { x: 0, opacity: 1 } : { width: 260, opacity: 1 }}
-              exit={isMobile ? { x: -280, opacity: 0 } : { width: 0, opacity: 0 }}
+              initial={
+                isMobile ? { x: -280, opacity: 0 } : { width: 0, opacity: 0 }
+              }
+              animate={
+                isMobile ? { x: 0, opacity: 1 } : { width: 260, opacity: 1 }
+              }
+              exit={
+                isMobile ? { x: -280, opacity: 0 } : { width: 0, opacity: 0 }
+              }
               transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
               style={
                 isMobile
                   ? {
-                    position: "fixed",
-                    top: 42,
-                    bottom: 26,
-                    left: 0,
-                    width: 280,
-                    maxWidth: "85vw",
-                    overflow: "hidden",
-                    zIndex: 35,
-                    boxShadow: "4px 0 24px rgba(0,0,0,0.4)",
-                  }
+                      position: "fixed",
+                      top: 42,
+                      bottom: 26,
+                      left: 0,
+                      width: 280,
+                      maxWidth: "85vw",
+                      overflow: "hidden",
+                      zIndex: 35,
+                      boxShadow: "4px 0 24px rgba(0,0,0,0.4)",
+                    }
                   : { overflow: "hidden", flexShrink: 0 }
               }
             >
@@ -865,7 +1038,8 @@ function LayoutInner() {
                 <Sidebar
                   onOpenFile={(node) => {
                     handleOpenFile(node);
-                    if (isMobile && node.type !== "folder") setSidebarOpen(false);
+                    if (isMobile && node.type !== "folder")
+                      setSidebarOpen(false);
                   }}
                   activeFileId={activeFileId}
                   fileTree={fileTree}
@@ -875,6 +1049,10 @@ function LayoutInner() {
                   onDeleteProject={handleDeleteProject}
                   isLoading={isLoadingTree}
                   onRefresh={() => loadData(project?.id, 3, 2000)}
+                  onCreateFile={handleCreateFile}
+                  onCreateFolder={handleCreateFolder}
+                  onRenameEntry={handleRenameEntry}
+                  onDeleteEntry={handleDeleteEntry}
                 />
               )}
             </motion.div>
@@ -902,7 +1080,17 @@ function LayoutInner() {
           ) : activeActivity === "architecture" ? (
             <ProjectArchitecturePanel projectId={project?.id} />
           ) : activeActivity === "coverage" ? (
-            <CoverageDashboard snapshotId={project?.latestSnapshotId || (project?.id ? localStorage.getItem(`latestSnapshot_${project.id}`) : null) || testPromptSnapshotId} projectId={project?.id} onOpenFile={handleOpenFileByPath} />
+            <CoverageDashboard
+              snapshotId={
+                project?.latestSnapshotId ||
+                (project?.id
+                  ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                  : null) ||
+                testPromptSnapshotId
+              }
+              projectId={project?.id}
+              onOpenFile={handleOpenFileByPath}
+            />
           ) : (
             <Editor
               tabs={tabs}
@@ -936,23 +1124,31 @@ function LayoutInner() {
               )}
               <motion.div
                 key="ai-panel"
-                initial={isMobile ? { x: 320, opacity: 0 } : { width: 0, opacity: 0 }}
-                animate={isMobile ? { x: 0, opacity: 1 } : { width: aiPanelWidth, opacity: 1 }}
-                exit={isMobile ? { x: 320, opacity: 0 } : { width: 0, opacity: 0 }}
+                initial={
+                  isMobile ? { x: 320, opacity: 0 } : { width: 0, opacity: 0 }
+                }
+                animate={
+                  isMobile
+                    ? { x: 0, opacity: 1 }
+                    : { width: aiPanelWidth, opacity: 1 }
+                }
+                exit={
+                  isMobile ? { x: 320, opacity: 0 } : { width: 0, opacity: 0 }
+                }
                 transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
                 style={
                   isMobile
                     ? {
-                      position: "fixed",
-                      top: 42,
-                      bottom: 26,
-                      right: 0,
-                      width: "100%",
-                      maxWidth: 360,
-                      overflow: "hidden",
-                      zIndex: 35,
-                      boxShadow: "-4px 0 24px rgba(0,0,0,0.4)",
-                    }
+                        position: "fixed",
+                        top: 42,
+                        bottom: 26,
+                        right: 0,
+                        width: "100%",
+                        maxWidth: 360,
+                        overflow: "hidden",
+                        zIndex: 35,
+                        boxShadow: "-4px 0 24px rgba(0,0,0,0.4)",
+                      }
                     : { overflow: "hidden", flexShrink: 0 }
                 }
               >
@@ -980,14 +1176,23 @@ function LayoutInner() {
           whiteSpace: "nowrap",
         }}
       >
-        <div className="flex items-center gap-4" style={{ flexWrap: "nowrap", flexShrink: 0 }}>
+        <div
+          className="flex items-center gap-4"
+          style={{ flexWrap: "nowrap", flexShrink: 0 }}
+        >
           <div className="flex items-center gap-1.5">
             <GitBranch size={11} />
             {!isMobile && <span>main</span>}
           </div>
           {!isMobile && (
             <>
-              <div style={{ width: 1, height: 12, background: "rgba(255,255,255,0.2)" }} />
+              <div
+                style={{
+                  width: 1,
+                  height: 12,
+                  background: "rgba(255,255,255,0.2)",
+                }}
+              />
               <div className="flex items-center gap-1.5">
                 <CheckCircle2 size={11} style={{ color: "#86efac" }} />
                 <span>0 errors</span>
@@ -1000,24 +1205,43 @@ function LayoutInner() {
           )}
         </div>
 
-        <div className="flex items-center gap-4" style={{ flexWrap: "nowrap", flexShrink: 0 }}>
+        <div
+          className="flex items-center gap-4"
+          style={{ flexWrap: "nowrap", flexShrink: 0 }}
+        >
           <div className="flex items-center gap-1.5">
             <BarChart3 size={11} />
             <span>{isMobile ? "84%" : "Coverage: 84%"}</span>
           </div>
           {!isMobile && (
             <>
-              <div style={{ width: 1, height: 12, background: "rgba(255,255,255,0.2)" }} />
+              <div
+                style={{
+                  width: 1,
+                  height: 12,
+                  background: "rgba(255,255,255,0.2)",
+                }}
+              />
               <span>Ln 29, Col 1</span>
               <span>UTF-8</span>
             </>
           )}
-          <div style={{ width: 1, height: 12, background: "rgba(255,255,255,0.2)" }} />
+          <div
+            style={{
+              width: 1,
+              height: 12,
+              background: "rgba(255,255,255,0.2)",
+            }}
+          />
           <div className="flex items-center gap-1.5">
             <span
               style={{
-                width: 6, height: 6, borderRadius: "50%", background: "#86efac",
-                display: "inline-block", boxShadow: "0 0 6px rgba(134,239,172,0.7)",
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                background: "#86efac",
+                display: "inline-block",
+                boxShadow: "0 0 6px rgba(134,239,172,0.7)",
               }}
             />
             {!isMobile && <span>Gemini AI ✓</span>}
@@ -1048,7 +1272,9 @@ function LayoutInner() {
 
       {/* ── CFG Calculator Fullscreen Overlay ──────────────── */}
       <AnimatePresence>
-        {showCFG && <CFGCalculator project={project} onClose={() => setShowCFG(false)} />}
+        {showCFG && (
+          <CFGCalculator project={project} onClose={() => setShowCFG(false)} />
+        )}
       </AnimatePresence>
 
       {/* ── Quality Dashboard Fullscreen Overlay ──────────── */}
@@ -1082,15 +1308,29 @@ function LayoutInner() {
               {/* Subtle background glow */}
               <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[#7c3aed] to-transparent opacity-50"></div>
 
-              <div className="flex items-center text-[#f0f6fc]" style={{ gap: "16px", marginBottom: "20px" }}>
-                <div className="flex items-center justify-center rounded-full bg-[#7c3aed]/10 border border-[#7c3aed]/20" style={{ width: "40px", height: "40px", minWidth: "40px" }}>
+              <div
+                className="flex items-center text-[#f0f6fc]"
+                style={{ gap: "16px", marginBottom: "20px" }}
+              >
+                <div
+                  className="flex items-center justify-center rounded-full bg-[#7c3aed]/10 border border-[#7c3aed]/20"
+                  style={{ width: "40px", height: "40px", minWidth: "40px" }}
+                >
                   <Zap className="text-[#a78bfa]" size={20} />
                 </div>
-                <h2 className="text-2xl font-bold tracking-tight m-0">Missing Test Files</h2>
+                <h2 className="text-2xl font-bold tracking-tight m-0">
+                  Missing Test Files
+                </h2>
               </div>
 
-              <p className="text-[#8b949e] text-[15px] leading-relaxed m-0" style={{ marginBottom: "32px" }}>
-                Dự án <strong>{project?.name || "này"}</strong> chưa có file test (Jest). Quá trình phân tích Code Coverage cần có test files để chạy thành công. Bạn có muốn AI tự động sinh Test Code cho dự án <strong>{project?.name || "này"}</strong> không?
+              <p
+                className="text-[#8b949e] text-[15px] leading-relaxed m-0"
+                style={{ marginBottom: "32px" }}
+              >
+                Dự án <strong>{project?.name || "này"}</strong> chưa có file
+                test (Jest). Quá trình phân tích Code Coverage cần có test files
+                để chạy thành công. Bạn có muốn AI tự động sinh Test Code cho dự
+                án <strong>{project?.name || "này"}</strong> không?
               </p>
 
               <div className="flex flex-col" style={{ gap: "14px" }}>
@@ -1098,14 +1338,31 @@ function LayoutInner() {
                   onClick={async () => {
                     setShowTestPrompt(false);
                     try {
-                      showToast({ type: "info", title: "Generating", message: "Đã đưa vào hàng chờ AI tạo Skeleton Tests." });
-                      await generateSkeletonApi(project.id, testPromptSnapshotId);
+                      showToast({
+                        type: "info",
+                        title: "Generating",
+                        message: "Đã đưa vào hàng chờ AI tạo Skeleton Tests.",
+                      });
+                      await generateSkeletonApi(
+                        project.id,
+                        testPromptSnapshotId,
+                      );
                     } catch (err) {
-                      showToast({ type: "error", title: "Error", message: err.message });
+                      showToast({
+                        type: "error",
+                        title: "Error",
+                        message: err.message,
+                      });
                     }
                   }}
                   className="w-full rounded-lg font-semibold text-[14px] transition-all duration-200 hover:bg-[#7c3aed]/20 active:scale-[0.98] flex items-center justify-center"
-                  style={{ padding: "12px", background: "rgba(124, 58, 237, 0.15)", color: "#c4b5fd", border: "1px solid rgba(124,58,237,0.3)", gap: "8px" }}
+                  style={{
+                    padding: "12px",
+                    background: "rgba(124, 58, 237, 0.15)",
+                    color: "#c4b5fd",
+                    border: "1px solid rgba(124,58,237,0.3)",
+                    gap: "8px",
+                  }}
                 >
                   <Zap size={16} className="text-[#a78bfa]" />
                   Generate Skeleton Tests
@@ -1114,14 +1371,31 @@ function LayoutInner() {
                   onClick={async () => {
                     setShowTestPrompt(false);
                     try {
-                      showToast({ type: "info", title: "Generating", message: "Đã đưa vào hàng chờ AI tạo Full Tests." });
-                      await generateFullTestsApi(project.id, testPromptSnapshotId);
+                      showToast({
+                        type: "info",
+                        title: "Generating",
+                        message: "Đã đưa vào hàng chờ AI tạo Full Tests.",
+                      });
+                      await generateFullTestsApi(
+                        project.id,
+                        testPromptSnapshotId,
+                      );
                     } catch (err) {
-                      showToast({ type: "error", title: "Error", message: err.message });
+                      showToast({
+                        type: "error",
+                        title: "Error",
+                        message: err.message,
+                      });
                     }
                   }}
                   className="w-full rounded-lg font-semibold text-[14px] transition-all duration-200 hover:bg-[#21262d] active:scale-[0.98] flex items-center justify-center"
-                  style={{ padding: "12px", background: "#161b22", color: "#f0f6fc", border: "1px solid #30363d", gap: "8px" }}
+                  style={{
+                    padding: "12px",
+                    background: "#161b22",
+                    color: "#f0f6fc",
+                    border: "1px solid #30363d",
+                    gap: "8px",
+                  }}
                 >
                   Generate Full Tests
                 </button>

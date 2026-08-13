@@ -30,7 +30,7 @@ export default function GithubCallbackPage() {
           localStorage.setItem("token", data.token);
           localStorage.setItem("userName", data.name);
           localStorage.setItem("userEmail", data.email);
-          navigate("/dashboard");
+          navigate("/projects");
         })
         .catch((err) => {
           alert("Lỗi đăng nhập GitHub: " + err.message);
@@ -42,9 +42,28 @@ export default function GithubCallbackPage() {
   }, [searchParams, navigate]);
 
   return (
-    <div style={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#0D1117", color: "#f0f6fc", flexDirection: "column", gap: "16px" }}>
+    <div
+      style={{
+        height: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "#0D1117",
+        color: "#f0f6fc",
+        flexDirection: "column",
+        gap: "16px",
+      }}
+    >
       <Loader2 size={32} className="animate-spin" color="#7c3aed" />
-      <span style={{ fontFamily: "var(--font-sans)", fontSize: "16px", fontWeight: "500" }}>Logging in...</span>
+      <span
+        style={{
+          fontFamily: "var(--font-sans)",
+          fontSize: "16px",
+          fontWeight: "500",
+        }}
+      >
+        Logging in...
+      </span>
     </div>
   );
 }
