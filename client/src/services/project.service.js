@@ -204,20 +204,11 @@ export async function runAnalysisApi(projectId, options = {}) {
   return handleResponse(res);
 }
 
-export async function generateSkeletonApi(projectId, snapshotId) {
+export async function generateSkeletonApi(projectId, snapshotId, mode = "SKELETON") {
   const res = await fetch(`${BASE_URL}/projects/${projectId}/ai-tests`, {
     method: "POST",
     headers: getAuthHeaders(),
-    body: JSON.stringify({ snapshotId }),
-  });
-  return handleResponse(res);
-}
-
-export async function generateFullTestsApi(projectId, snapshotId) {
-  const res = await fetch(`${BASE_URL}/projects/${projectId}/ai/generate-full-test`, {
-    method: "POST",
-    headers: getAuthHeaders(),
-    body: JSON.stringify({ snapshotId }),
+    body: JSON.stringify({ snapshotId, mode }),
   });
   return handleResponse(res);
 }

@@ -801,6 +801,7 @@ class ProjectController {
         projectId,
         snapshotId,
         userId: req.user.id,
+        mode: req.body.mode || "SKELETON",
       });
 
       addJobToQueue("AI_TESTS", job.id).catch((err) => {

@@ -42,7 +42,6 @@ import {
   getProjectTreeApi,
   runAnalysisApi,
   generateSkeletonApi,
-  generateFullTestsApi,
   createProjectFileApi,
   createProjectFolderApi,
   renameProjectEntryApi,
@@ -365,25 +364,18 @@ function LayoutInner() {
   const handleSelectTestMode = async (mode) => {
     setShowTestModeSelector(false);
     try {
-      const res = await runAnalysisApi(project.id, { mode });
-      if (res && res.needsTests) {
-        setTestPromptSnapshotId(res.snapshotId);
-        setShowTestPrompt(true);
-      } else {
-        if (res?.data?.job?.snapshotId) {
-          localStorage.setItem(`latestSnapshot_${project.id}`, res.data.job.snapshotId);
-        }
-        showToast({
-          type: "info",
-          title: "Analysis Started",
-          message: `Your project analysis (${mode}) has been queued.`,
-        });
-      }
+      // Use shared generation API
+      const res = await generateSkeletonApi(project.id, null, mode);
+      showToast({
+        type: "info",
+        title: "Generation Started",
+        message: `AI Test generation (${mode}) has been queued.`,
+      });
     } catch (err) {
       showToast({
         type: "error",
-        title: "Analysis Error",
-        message: err.message || "Failed to start project analysis.",
+        title: "Generation Error",
+        message: err.message || "Failed to start test generation.",
       });
     }
   };
@@ -1082,7 +1074,7 @@ function LayoutInner() {
                     setShowTestPrompt(false);
                     try {
                       showToast({ type: "info", title: "Generating", message: "Đã đưa vào hàng chờ AI tạo Skeleton Tests." });
-                      await generateSkeletonApi(project.id, testPromptSnapshotId);
+                      await generateSkeletonApi(project.id, testPromptSnapshotId, "SKELETON");
                     } catch (err) {
                       showToast({ type: "error", title: "Error", message: err.message });
                     }
@@ -1098,7 +1090,7 @@ function LayoutInner() {
                     setShowTestPrompt(false);
                     try {
                       showToast({ type: "info", title: "Generating", message: "Đã đưa vào hàng chờ AI tạo Full Tests." });
-                      await generateFullTestsApi(project.id, testPromptSnapshotId);
+                      await generateSkeletonApi(project.id, testPromptSnapshotId, "FULL");
                     } catch (err) {
                       showToast({ type: "error", title: "Error", message: err.message });
                     }

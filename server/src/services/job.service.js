@@ -92,10 +92,12 @@ export const addJobLog = async (jobId, level, message, client = prisma) => {
  * @param {string} projectId
  * @param {string} type
  * @param {import("@prisma/client").PrismaClient} [client]
+ * @param {object} [extraFilters]
  */
-const assertNoActiveJob = async (projectId, type, client = prisma) => {
+const assertNoActiveJob = async (projectId, type, client = prisma, extraFilters = {}) => {
+    const where = { projectId, type, status: { in: ["QUEUED", "RUNNING"] }, ...extraFilters };
     const running = await client.job.findFirst({
-        where: { projectId, type, status: { in: ["QUEUED", "RUNNING"] } },
+        where,
         select: { id: true },
     });
 
@@ -150,14 +152,30 @@ export const createAiSuggestJob = createTypedJob("AI_SUGGEST");
 export const createCodeHygieneJob = createTypedJob("CODE_HYGIENE");
 
 /** Creates a queued AI_TESTS job for a snapshot. */
-export const createAiTestsJob = ({ projectId, snapshotId, userId, mode = "SKELETON" }) =>
-    createSnapshotJob({
+export const createAiTestsJob = async ({ projectId, snapshotId, userId, mode = "SKELETON" }) => {
+    // Check for existing active job with same snapshot and mode
+    const existing = await prisma.job.findFirst({
+        where: {
+            projectId,
+            snapshotId,
+            type: "AI_TESTS",
+            status: { in: ["QUEUED", "RUNNING"] },
+            payloadJson: { contains: `"mode":"${mode}"` }
+        }
+    });
+
+    if (existing) {
+        return { ...existing, existing: true };
+    }
+
+    return createSnapshotJob({
         projectId,
         snapshotId,
         userId,
         type: "AI_TESTS",
         payloadJson: { snapshotId, mode },
     });
+};
 
 // ---------------------------------------------------------------------------
 // Create jobs
