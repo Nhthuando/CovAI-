@@ -195,11 +195,11 @@ export async function getAiSuggestionsApi(projectId) {
   return handleResponse(res);
 }
 
-export async function runAnalysisApi(projectId) {
+export async function runAnalysisApi(projectId, options = {}) {
   const res = await fetch(`${BASE_URL}/projects/${projectId}/run-analysis`, {
     method: "POST",
     headers: getAuthHeaders(),
-    body: JSON.stringify({}),
+    body: JSON.stringify(options),
   });
   return handleResponse(res);
 }

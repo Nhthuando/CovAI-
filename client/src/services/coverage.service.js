@@ -77,3 +77,11 @@ export async function runSupertestCoverage(snapshotId) {
 
     return handleResponse(res);
 }
+
+export async function getTestExecution(snapshotId) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/test-execution`, {
+        headers: getAuthHeaders(),
+    });
+
+    return handleResponse(res);
+}

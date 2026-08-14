@@ -15,6 +15,8 @@ import { parseCoverageSummary } from "./coverageSummaryParser.service.js";
 import { storeCoverageOutputs } from "./coverageStorage.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { dockerRunner } from "./dockerRunner.service.js";
+import { parseJestResults } from "./testResultParser.service.js";
+import prisma from "../config/prisma.js";
 
 const INSTALL_TIMEOUT_MS = 3 * 60 * 1000; // 3 phút
 const JEST_TIMEOUT_MS = 5 * 60 * 1000;    // 5 phút
@@ -57,7 +59,7 @@ const runNpmInstall = async (jobId, rootDir) => {
  * @returns {Promise<{ exitCode: number }>}
  */
 const runJestCoverage = async (jobId, rootDir, jestConfigPath) => {
-    let jestCmd = "npx jest --coverage --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --forceExit --testTimeout=30000";
+    let jestCmd = "npx jest --coverage --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=test-results.json --forceExit --testTimeout=30000";
 
     if (jestConfigPath) {
         // Path inside Docker must be relative to /workspace
@@ -262,6 +264,21 @@ export const processRunTestsJob = async (jobId) => {
 
         // ── SCRUM-141: Parse reports ──────────────────────────────────────────
         await addJobLog(jobId, "INFO", "Bước 3/4: Parse coverage reports...").catch(() => { });
+
+        // Parse test results
+        const jestResults = parseJestResults(coverageDir);
+        if (jestResults) {
+            await prisma.testRun.create({
+                data: {
+                    snapshotId,
+                    type: "JEST",
+                    ...jestResults,
+                    startedAt: new Date(),
+                    finishedAt: new Date()
+                }
+            });
+            await addJobLog(jobId, "INFO", `[SCRUM-141] Đã lưu TestRun (JEST): ${jestResults.totalTests} tests.`).catch(() => { });
+        }
 
         // Parse coverage-summary.json → CoverageSummary + CoverageFile (from summary)
         let summaryResult = null;

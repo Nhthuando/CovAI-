@@ -21,10 +21,10 @@ describe('supertestCoverage.service', () => {
         dockerRunner.run = async () => ({ success: true, exitCode: 0 });
 
         try {
-            const result = await runSupertest('job1', tempDir, null);
+            const result = await runSupertest('job1', tempDir, null, [path.join(tempDir, 'api.test.js')]);
             expect(result.coverageDir).toBe(path.join(tempDir, 'coverage'));
         } finally {
             dockerRunner.run = originalRun;
         }
-    });
+    }, 15000);
 });

@@ -27,7 +27,14 @@ export default function GithubCallbackPage() {
 
       oAuthGithubApi(code)
         .then((data) => {
+          const userPayload = {
+            id: data.userId || data.id,
+            name: data.name,
+            email: data.email,
+            token: data.token,
+          };
           localStorage.setItem("token", data.token);
+          localStorage.setItem("user", JSON.stringify(userPayload));
           localStorage.setItem("userName", data.name);
           localStorage.setItem("userEmail", data.email);
           navigate("/dashboard");

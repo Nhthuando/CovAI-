@@ -8,6 +8,8 @@ import path from "path";
 import { createHash, randomUUID } from "crypto";
 import { ServiceError } from "../utils/serviceError.js";
 import fs from "fs";
+import { validateNodeProject, validateArchiveContainsPackageJson } from "../utils/nodeProjectValidator.js";
+import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 
 export { ServiceError };
 
@@ -198,8 +200,10 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
 
     try {
         await scanArchiveBomb(file.buffer, file.originalname);
+        await validateArchiveContainsPackageJson(file.buffer, file.originalname);
     } catch (scanError) {
-        throw new ServiceError(scanError.message, 400);
+        const message = scanError instanceof ServiceError ? scanError.message : scanError.message;
+        throw new ServiceError(message, scanError instanceof ServiceError ? scanError.statusCode : 400);
     }
 
     const checksum = createHash("sha256").update(file.buffer).digest("hex");
@@ -255,14 +259,17 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
                 throw new Error("Extracted source path is invalid");
             }
 
+            const resolvedRootDir = resolveProjectRoot(sourcePath);
+            const validation = await validateNodeProject(resolvedRootDir);
+
             await prisma.projectSnapshot.update({
                 where: { id: snapshot.id },
-                data: { rootDir: sourcePath },
+                data: { rootDir: validation.rootDir },
             });
 
             // Sau khi giải nén, detect Jest metadata ngay
             const { detectJest } = await import("../utils/jestDetector.js");
-            const detection = detectJest(sourcePath);
+            const detection = detectJest(validation.rootDir);
 
             await prisma.projectSnapshot.update({
                 where: { id: snapshot.id },
@@ -282,8 +289,8 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
             });
 
             await updateJobProgress(job.id, 100).catch(() => { });
-            await markJobSuccess(job.id, { rootDir: sourcePath });
-            console.log(`[Job ${job.id}] Pipeline upload & ingest hoàn thành: ${sourcePath}`);
+            await markJobSuccess(job.id, { rootDir: validation.rootDir });
+            console.log(`[Job ${job.id}] Pipeline upload & ingest hoàn thành: ${validation.rootDir}`);
 
         } catch (uploadErr) {
             console.error(`[UploadProjectZip] Firebase upload or ingest failed for Job ${job.id}:`, uploadErr);
@@ -315,6 +322,7 @@ export const createAnalysisJob = async ({
     projectId,
     snapshotId,
     userId,
+    mode = "FULL",
 }) => {
     if (!projectId || typeof projectId !== "string") {
         throw new ServiceError("projectId is required", 400);
@@ -362,6 +370,7 @@ export const createAnalysisJob = async ({
         projectId,
         snapshotId,
         userId,
+        mode,
     });
 
     // Tạo BUILD_CFG job

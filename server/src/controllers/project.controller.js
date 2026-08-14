@@ -361,7 +361,7 @@ class ProjectController {
   async runAnalysis(req, res) {
     try {
       const { id: projectId } = req.params;
-      let { snapshotId } = req.body;
+      let { snapshotId, mode } = req.body;
 
       let targetSnapshot;
       if (!snapshotId) {
@@ -401,6 +401,7 @@ class ProjectController {
         projectId,
         snapshotId,
         userId: req.user.id,
+        mode: mode || "FULL",
       });
 
       // SCRUM-138..144: Kick-off full pipeline bất đồng bộ qua Queue

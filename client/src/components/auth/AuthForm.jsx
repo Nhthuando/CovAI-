@@ -207,7 +207,14 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
     try {
       if (isLogin) {
         const data = await loginApi({ email: formData.email, password: formData.password });
+        const userPayload = {
+          id: data.userId || data.id,
+          name: data.name,
+          email: data.email,
+          token: data.token,
+        };
         localStorage.setItem("token", data.token);
+        localStorage.setItem("user", JSON.stringify(userPayload));
         localStorage.setItem("userName", data.name);
         localStorage.setItem("userEmail", data.email);
         setStatus("success");
@@ -216,9 +223,16 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
         }, 1500);
       } else {
         const data = await registerApi({ name: formData.name, email: formData.email, password: formData.password });
+        const userPayload = {
+          id: data.userId || data.id,
+          name: data.userName || formData.name,
+          email: data.userEmail || formData.email,
+          token: data.token,
+        };
         localStorage.setItem("token", data.token);
-        localStorage.setItem("userName", data.userName);
-        localStorage.setItem("userEmail", data.userEmail);
+        localStorage.setItem("user", JSON.stringify(userPayload));
+        localStorage.setItem("userName", userPayload.name);
+        localStorage.setItem("userEmail", userPayload.email);
         setStatus("success");
         setTimeout(() => {
           window.location.href = "/dashboard";

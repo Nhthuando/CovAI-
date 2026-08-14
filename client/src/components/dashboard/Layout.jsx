@@ -7,6 +7,7 @@ import Sidebar from "./Sidebar";
 import Editor from "./Editor";
 import CoverageDashboard from "./CoverageDashboard";
 import AIPanel from "./AIPanel";
+import TestModeSelector from "./TestModeSelector";
 import ImportLayout from "./import/ImportLayout";
 import JobQueue from "./JobQueue";
 import CFGCalculator from "./CFGCalculator";
@@ -103,6 +104,7 @@ function LayoutInner() {
   const [showImport, setShowImport] = useState(false);
   const [showCFG, setShowCFG] = useState(false);
   const [showTestPrompt, setShowTestPrompt] = useState(false);
+  const [showTestModeSelector, setShowTestModeSelector] = useState(false);
   const [testPromptSnapshotId, setTestPromptSnapshotId] = useState(null);
 
   const [projects, setProjects] = useState([]);
@@ -357,8 +359,13 @@ function LayoutInner() {
       });
       return;
     }
+    setShowTestModeSelector(true);
+  };
+
+  const handleSelectTestMode = async (mode) => {
+    setShowTestModeSelector(false);
     try {
-      const res = await runAnalysisApi(project.id);
+      const res = await runAnalysisApi(project.id, { mode });
       if (res && res.needsTests) {
         setTestPromptSnapshotId(res.snapshotId);
         setShowTestPrompt(true);
@@ -369,7 +376,7 @@ function LayoutInner() {
         showToast({
           type: "info",
           title: "Analysis Started",
-          message: "Your project analysis has been queued. You will be notified when it completes.",
+          message: `Your project analysis (${mode}) has been queued.`,
         });
       }
     } catch (err) {
@@ -518,6 +525,11 @@ function LayoutInner() {
 
         {/* Right: search + actions */}
         <div className="flex items-center gap-2" style={{ position: "relative" }}>
+          <TestModeSelector
+            isOpen={showTestModeSelector}
+            onClose={() => setShowTestModeSelector(false)}
+            onSelect={handleSelectTestMode}
+          />
           {/* Search bar — hidden on mobile/tablet */}
           {!isCompact && (
             <div

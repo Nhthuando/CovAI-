@@ -125,7 +125,14 @@ const createTypedJob = (type) =>
 export const createInstallDepsJob = createTypedJob("INSTALL_DEPS");
 
 /** Creates a queued RUN_TESTS job for a snapshot. */
-export const createRunTestsJob = createTypedJob("RUN_TESTS");
+export const createRunTestsJob = ({ projectId, snapshotId, userId, mode = "FULL" }) =>
+    createSnapshotJob({
+        projectId,
+        snapshotId,
+        userId,
+        type: "RUN_TESTS",
+        payloadJson: { snapshotId, mode },
+    });
 
 /** Creates a queued Supertest integration-coverage job for a snapshot. */
 export const createSupertestCoverageJob = createTypedJob("SUPERTEST_COVERAGE");
@@ -439,7 +446,9 @@ export const markJobSuccess = async (jobId, resultJson) => {
         prisma.jobOutput.upsert({
             where: { jobId },
             create: { jobId, stdout: resultString },
-            update: { stdout: resultString },
+            // Runners stream their real stdout/stderr while they execute.
+            // Do not replace that diagnostic output with the result payload.
+            update: {},
         }),
     ]);
 
