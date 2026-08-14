@@ -59,7 +59,7 @@ Content-Type: application/json
 ###
 # @name listProjects
 GET {{baseUrl}}/projects
-Authorization: Bearer YOUR_TOKEN_HERE
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF2cXplcGgwMDAwdXc3ZGw2MzIyNDhsIiwidXNlckVtYWlsIjoiZGluaEBnbWFpbC5jb20iLCJ1c2VyTmFtZSI6ImRpbmgiLCJpYXQiOjE3ODY2MzUyMDksImV4cCI6MTc4NjYzODgwOX0.NkJKvtzCmY3VPfW7ucyFvxkxXVsuPdt-vOcFiGUZ6_8
 
 ###
 # @name getProjectById
@@ -229,3 +229,9 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF2c
 # @name getDashboardAnalytics
 GET {{baseUrl}}/analytics/dashboard
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF2cXplcGgwMDAwdXc3ZGw2MzIyNDhsIiwidXNlckVtYWlsIjoiZGluaEBnbWFpbC5jb20iLCJ1c2VyTmFtZSI6ImRpbmgiLCJpYXQiOjE3ODMyMjM3ODAsImV4cCI6MTc4MzIyNzM4MH0.z6cjre0WXD8RhQY1CiwDNXDafhWezLhEUeerBJMHmB8
+
+###
+# @name detectVitest
+POST {{baseUrl}}/projects/cmspgg2bo000016lmak0v5grh/detect-vitest
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF2cXplcGgwMDAwdXc3ZGw2MzIyNDhsIiwidXNlckVtYWlsIjoiZGluaEBnbWFpbC5jb20iLCJ1c2VyTmFtZSI6ImRpbmgiLCJpYXQiOjE3ODY2MzUyNTEsImV4cCI6MTc4NjYzODg1MX0.5pMSJmjpqbnS2cxnqbP_IGVrsNYsRREQDZRQLY1wIt0
+Content-Type: application/json

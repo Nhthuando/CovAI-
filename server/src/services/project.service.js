@@ -2,6 +2,7 @@ import prisma from "../config/prisma.js";
 import { detectJest } from "../utils/jestDetector.js";
 import { detectAndSaveProject } from "./jestDetection.service.js";
 import { detectFrameworks } from "./testDetection.service.js";
+import { detectAndSaveProject as detectVitestAndSave } from "./vitestDetection.service.js";
 import {
   createAnalysisJob as createArchitectureAnalysisJob,
   createSnapshotIngestJob,
@@ -367,6 +368,10 @@ export const detectPlaywrightConfig = async (projectId, userId) => {
     throw new ServiceError("Project snapshot not ready", 404);
 
   return await detectFrameworks(snapshot.rootDir);
+};
+
+export const detectVitestConfig = async (projectId) => {
+  return detectVitestAndSave(projectId);
 };
 
 export const listProjectSnapshots = async ({ projectId, userId }) => {

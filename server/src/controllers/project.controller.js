@@ -18,6 +18,7 @@ import {
   uploadProjectZip,
   detectJestConfig,
   detectPlaywrightConfig,
+  detectVitestConfig,
   deleteProject,
   getProjectTree,
   getFileContent,
@@ -828,6 +829,31 @@ class ProjectController {
       });
 
       return res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      console.error(error);
+
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  }
+
+  /**
+   * POST /projects/:id/detect-vitest
+   */
+  async detectVitestConfig(req, res) {
+    try {
+      const { id } = req.params;
+      const detection = await detectVitestConfig(id);
+
+      return res.status(200).json({ success: true, data: detection });
     } catch (error) {
       console.error(error);
 
