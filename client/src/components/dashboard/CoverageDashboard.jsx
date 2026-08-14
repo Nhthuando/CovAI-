@@ -389,8 +389,8 @@ const CoverageDashboard = ({ snapshotId, projectId, onOpenFile }) => {
 
     const cov = summary.coverage;
 
-    const jestRun = testRuns.find(r => r.type === "JEST");
-    const supertestRun = testRuns.find(r => r.type === "SUPERTEST");
+    const jestRun = testRuns.jest;
+    const supertestRun = testRuns.supertest;
 
     const highCount = files.filter(f => (f.linesPct ?? 0) >= 90).length;
     const warnCount = files.filter(f => (f.linesPct ?? 0) >= 70 && (f.linesPct ?? 0) < 90).length;

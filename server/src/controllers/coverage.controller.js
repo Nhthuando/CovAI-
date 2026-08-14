@@ -407,9 +407,16 @@ export const getTestExecution = async (req, res) => {
             orderBy: { createdAt: "desc" }
         });
 
+        // Map to expected frontend structure
+        const jestRun = testRuns.find(r => r.type === "JEST");
+        const supertestRun = testRuns.find(r => r.type === "SUPERTEST");
+
         return res.status(200).json({
             success: true,
-            data: testRuns
+            data: {
+                jest: jestRun || null,
+                supertest: supertestRun || null
+            }
         });
     } catch (error) {
         console.error("[getTestExecution] Error:", error);

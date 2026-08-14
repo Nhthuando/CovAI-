@@ -70,14 +70,20 @@ export const processSupertestCoverageJob = async (jobId) => {
 
         // Parse test results
         const supertestResults = parseJestResults(coverageDir);
+        // SCRUM-141: Persist Supertest test results
         if (supertestResults) {
             await prisma.testRun.create({
                 data: {
                     snapshotId,
                     type: "SUPERTEST",
-                    ...supertestResults,
-                    startedAt: new Date(),
-                    finishedAt: new Date()
+                    totalTests: supertestResults.totalTests,
+                    passedTests: supertestResults.passedTests,
+                    failedTests: supertestResults.failedTests,
+                    skippedTests: supertestResults.skippedTests,
+                    durationMs: supertestResults.durationMs,
+                    status: supertestResults.status, // PASSED or FAILED
+                    startedAt: new Date(), // TODO: Get actual start time
+                    finishedAt: new Date() // TODO: Get actual finish time
                 }
             });
             await addJobLog(jobId, "INFO", `[SCRUM-141] Đã lưu TestRun (SUPERTEST): ${supertestResults.totalTests} tests.`).catch(() => { });
