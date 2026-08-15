@@ -28,6 +28,7 @@ const JOB_TYPES = Object.freeze([
   "QUALITY_ANALYSIS",
   "SECURITY_ANALYSIS",
   "CODE_HYGIENE",
+  "RUN_VITEST_TESTS",
 ]);
 
 /** Terminal statuses — a job in one of these states cannot be mutated. */
@@ -103,6 +104,10 @@ export const createRunTestsJob = ({ projectId, snapshotId, userId, mode = "FULL"
     payloadJson: { snapshotId, mode },
   });
 
+/** Creates a queued RUN_VITEST_TESTS job for a snapshot. */
+export const createVitestJob = createTypedJob("RUN_VITEST_TESTS");
+
+/** Creates a queued Supertest integration-coverage job for a snapshot. */
 export const createSupertestCoverageJob = createTypedJob("SUPERTEST_COVERAGE");
 export const createBuildCfgJob = createTypedJob("BUILD_CFG");
 export const createPerformanceAnalysisJob = createTypedJob("PERFORMANCE_ANALYSIS");

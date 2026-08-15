@@ -372,6 +372,7 @@ enum JobType {
   ANALYSIS
   QUALITY_ANALYSIS
   SECURITY_ANALYSIS
+  RUN_VITEST_TESTS
 }
 
 enum JobStatus {
