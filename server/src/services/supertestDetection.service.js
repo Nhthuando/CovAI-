@@ -1,67 +1,103 @@
-import fs from 'fs';
-import path from 'path';
+import fs from "fs";
+import path from "path";
+import { resolveProjectRoot } from "../utils/projectRootResolver.js";
+
+const TEST_FILE_RE = /(?:^|[._-])(test|spec)\.(?:[cm]?[jt]sx?)$/i;
+const SUPERTEST_IMPORT_RE = /(?:from\s*["']supertest["']|require\(\s*["']supertest["']\s*\)|import\s*\(\s*["']supertest["']\s*\))/;
+const IGNORED_DIRECTORIES = new Set(["node_modules", "coverage", "storage", ".git", ".next", "dist", "build"]);
+const JEST_CONFIG_FILES = ["jest.config.js", "jest.config.cjs", "jest.config.mjs", "jest.config.ts", "jest.config.json"];
+
+const readPackage = (rootDir, reasons) => {
+    const packagePath = path.join(rootDir, "package.json");
+    if (!fs.existsSync(packagePath)) {
+        reasons.push("package.json not found");
+        return { packagePath: null, pkg: null };
+    }
+
+    try {
+        return { packagePath, pkg: JSON.parse(fs.readFileSync(packagePath, "utf8")) };
+    } catch (error) {
+        reasons.push(`Unable to read package.json: ${error.message}`);
+        return { packagePath, pkg: null };
+    }
+};
+
+const findJestConfig = (rootDir, pkg) => {
+    const configName = JEST_CONFIG_FILES.find((name) => fs.existsSync(path.join(rootDir, name)));
+    if (configName) return path.join(rootDir, configName);
+    return pkg?.jest ? path.join(rootDir, "package.json") : null;
+};
+
+const isTestFile = (rootDir, filePath) => {
+    if (TEST_FILE_RE.test(path.basename(filePath))) return true;
+    const relativeParts = path.relative(rootDir, filePath).split(path.sep).map((part) => part.toLowerCase());
+    return ["test", "tests", "__tests__"].some((directory) => relativeParts.includes(directory))
+        && /\.[cm]?[jt]sx?$/i.test(filePath);
+};
 
 /**
- * Detects Supertest usage in a project directory.
+ * Detect Supertest dependency, imports, test files and Jest configuration in a
+ * snapshot. The result contains absolute paths so it can be handed directly to
+ * the runner, while configFile is relative for API clients.
  */
 export const detectSupertest = async (rootDir) => {
-    const pkgPath = path.join(rootDir, 'package.json');
-    let detected = false;
-    let version = null;
-    const detectionReasons = [];
-
-    if (fs.existsSync(pkgPath)) {
-        try {
-            const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-            const deps = { ...pkg.dependencies, ...pkg.devDependencies, ...pkg.optionalDependencies };
-            if (deps.supertest) {
-                detected = true;
-                version = deps.supertest;
-                detectionReasons.push('Supertest dependency found in package.json');
-            } else {
-                detectionReasons.push('Supertest dependency not found');
-            }
-        } catch (e) {
-            detectionReasons.push(`Error reading package.json: ${e.message}`);
-        }
-    } else {
-        detectionReasons.push('package.json not found');
+    const effectiveRootDir = resolveProjectRoot(rootDir);
+    if (!effectiveRootDir || typeof effectiveRootDir !== "string" || !fs.existsSync(effectiveRootDir)) {
+        return {
+            detected: false, version: null, framework: null, testFiles: [], supertestFiles: [],
+            configFile: null, configPath: null, testCommand: null,
+            detectionReasons: ["Project root directory does not exist"],
+        };
     }
+
+    const detectionReasons = [];
+    const { pkg } = readPackage(effectiveRootDir, detectionReasons);
+    const dependencies = pkg ? { ...pkg.dependencies, ...pkg.devDependencies, ...pkg.optionalDependencies } : {};
+    const version = dependencies.supertest ?? null;
+    if (version) detectionReasons.push("Supertest dependency found in package.json");
+    else detectionReasons.push("Supertest dependency not found in package.json");
 
     const testFiles = [];
     const supertestFiles = [];
+    const scanDir = (directory) => {
+        let entries = [];
+        try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
+        catch (error) { detectionReasons.push(`Unable to scan ${directory}: ${error.message}`); return; }
 
-    // Simple recursive file scanner for test files
-    const scanDir = (dir) => {
-        const files = fs.readdirSync(dir);
-        for (const file of files) {
-            const fullPath = path.join(dir, file);
-            if (fs.statSync(fullPath).isDirectory()) {
-                if (file !== 'node_modules' && file !== 'storage') {
-                    scanDir(fullPath);
-                }
-            } else if (/\.(test|spec)\.(js|ts)$/.test(file)) {
-                testFiles.push(fullPath);
-                const content = fs.readFileSync(fullPath, 'utf8');
-                if (content.includes('supertest') || content.includes('request(')) {
-                    supertestFiles.push(fullPath);
-                }
+        for (const entry of entries) {
+            const fullPath = path.join(directory, entry.name);
+            if (entry.isDirectory()) {
+                if (!IGNORED_DIRECTORIES.has(entry.name)) scanDir(fullPath);
+                continue;
+            }
+            if (!entry.isFile() || !isTestFile(rootDir, fullPath)) continue;
+            testFiles.push(fullPath);
+            try {
+                if (SUPERTEST_IMPORT_RE.test(fs.readFileSync(fullPath, "utf8"))) supertestFiles.push(fullPath);
+            } catch (error) {
+                detectionReasons.push(`Unable to read test file ${fullPath}: ${error.message}`);
             }
         }
     };
+    scanDir(effectiveRootDir);
 
-    if (fs.existsSync(rootDir)) {
-        scanDir(rootDir);
-    }
+    if (supertestFiles.length) detectionReasons.push(`Found ${supertestFiles.length} test file(s) importing Supertest`);
+    const configPath = findJestConfig(effectiveRootDir, pkg);
+    if (configPath) detectionReasons.push(`Jest configuration found: ${path.relative(effectiveRootDir, configPath)}`);
+
+    const hasJestDependency = Boolean(dependencies.jest || pkg?.jest);
+    const hasJestConfig = Boolean(configPath);
+    const framework = hasJestDependency || hasJestConfig || Boolean(version) || supertestFiles.length > 0 ? "jest" : null;
 
     return {
-        detected: detected || supertestFiles.length > 0,
+        detected: Boolean(version || supertestFiles.length),
         version,
-        framework: 'jest',
+        framework,
         testFiles,
         supertestFiles,
-        configFile: fs.existsSync(path.join(rootDir, 'jest.config.js')) ? 'jest.config.js' : null,
-        testCommand: 'npm test',
-        detectionReasons
+        configFile: configPath ? path.relative(effectiveRootDir, configPath).replace(/\\/g, "/") : null,
+        configPath,
+        testCommand: pkg?.scripts?.test ?? (hasJestDependency ? "npx --no-install jest" : null),
+        detectionReasons,
     };
 };

@@ -83,6 +83,8 @@ model ProjectSnapshot {
   coverageSummaries        CoverageSummary?
   cyclomatics              Cyclomatic[]
   jobs                     Job[]
+  testRuns                 TestRun[]
+  performanceMetric        PerformanceMetric?
   project                  Project                   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   ProjectStructureAnalysis ProjectStructureAnalysis?
   QualityReport            QualityReport?
@@ -296,6 +298,24 @@ model AiTestResult {
   aiTest    AiTest   @relation(fields: [aiTestId], references: [id], onDelete: Cascade)
 }
 
+model TestRun {
+  id            String          @id @default(cuid())
+  snapshotId    String
+  type          TestType
+  totalTests    Int
+  passedTests   Int
+  failedTests   Int
+  skippedTests  Int
+  durationMs    Float
+  status        String
+  startedAt     DateTime
+  finishedAt    DateTime
+  createdAt     DateTime        @default(now())
+  snapshot      ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@index([snapshotId])
+}
+
 model Notification {
   id        String           @id @default(cuid())
   userId    String
@@ -323,6 +343,14 @@ model Vulnerability {
   snapshot    ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 
   @@index([snapshotId])
+}
+
+model PerformanceMetric {
+  id          String          @id @default(cuid())
+  snapshotId  String          @unique
+  metricsJson String
+  createdAt   DateTime        @default(now())
+  snapshot    ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 }
 
 enum SnapshotSource {
@@ -370,4 +398,24 @@ enum AiSuggestionPriority {
   LOW
   MEDIUM
   HIGH
+}
+
+enum TestType {
+  JEST
+  SUPERTEST
+}
+
+enum IssueType {
+  CONSOLE_LOG
+  DEBUGGER
+  TODO
+  FIXME
+  HACK
+}
+
+enum Severity {
+  INFO
+  WARNING
+  HIGH
+  CRITICAL
 }

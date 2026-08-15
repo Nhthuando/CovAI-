@@ -44,6 +44,12 @@ export const
         const isFetchingRef = useRef(false);
 
         const fetchNotifications = async (pageNum = 1, reset = false) => {
+            if (!userId || !localStorage.getItem('token')) {
+                setNotifications([]);
+                setUnreadCount(0);
+                return;
+            }
+
             if (isFetchingRef.current) return;
             isFetchingRef.current = true;
             setLoading(true);
@@ -52,12 +58,12 @@ export const
             try {
                 const result = await notificationService.getNotifications(pageNum, LIMIT);
                 if (reset) {
-                    setNotifications(result.data);
+                    setNotifications(result.data || []);
                 } else {
-                    setNotifications(prev => [...prev, ...result.data]);
+                    setNotifications(prev => [...prev, ...(result.data || [])]);
                 }
-                setUnreadCount(result.meta.unreadCount);
-                setHasMore(pageNum < result.meta.pagination.totalPages);
+                setUnreadCount(result.meta?.unreadCount ?? 0);
+                setHasMore(pageNum < (result.meta?.pagination?.totalPages ?? 0));
             } catch (err) {
                 setError(err.response?.data?.message || 'Failed to load notifications');
             } finally {
@@ -68,11 +74,16 @@ export const
 
         // Fetch unread count (polling fallback)
         const fetchUnreadCount = async () => {
+            if (!userId || !localStorage.getItem('token')) {
+                setUnreadCount(0);
+                return;
+            }
+
             try {
                 const count = await notificationService.getUnreadCount();
-                setUnreadCount(count);
-            } catch (err) {
-                console.error('Error fetching unread count:', err);
+                setUnreadCount(count ?? 0);
+            } catch {
+                setUnreadCount(0);
             }
         };
 

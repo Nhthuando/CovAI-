@@ -4,6 +4,7 @@ import {
     getCoverageSummary,
     getCoverageFiles,
     runSupertestCoverage,
+    getTestExecution,
 } from "../../services/coverage.service.js";
 
 async function handleResponse(res) {
@@ -88,6 +89,58 @@ const MetricCard = ({ label, desc, value, color = "#f0f6fc" }) => (
         <span style={{ fontSize: 11, color: "#6e7681", marginTop: 4, lineHeight: 1.4 }}>{desc}</span>
     </div>
 );
+
+const TestExecutionCard = ({ type, results }) => {
+    if (!results) return (
+        <div style={{
+            flex: 1, background: "rgba(255,255,255,0.02)", border: "1px dashed rgba(255,255,255,0.1)",
+            borderRadius: 14, padding: "20px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, minWidth: 240
+        }}>
+            <span style={{ fontSize: 14, fontWeight: 600, color: "#484f58" }}>{type}</span>
+            <span style={{ fontSize: 12, color: "#484f58" }}>No execution data</span>
+        </div>
+    );
+
+    const passRate = results.totalTests > 0 ? (results.passedTests / results.totalTests) * 100 : 0;
+    const duration = (results.durationMs / 1000).toFixed(1);
+
+    return (
+        <div style={{
+            flex: 1, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)",
+            borderRadius: 14, padding: "20px", display: "flex", flexDirection: "column", gap: 12, minWidth: 240
+        }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 16, fontWeight: 700, color: "#a78bfa" }}>{type}</span>
+                <span style={{ fontSize: 12, color: "#6e7681" }}>{duration}s</span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                    <span style={{ fontSize: 20, fontWeight: 700, color: "#f0f6fc" }}>{results.totalTests}</span>
+                    <span style={{ fontSize: 11, color: "#8b949e", textTransform: "uppercase" }}>Tests</span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                    <span style={{ fontSize: 20, fontWeight: 700, color: "#22c55e" }}>{results.passedTests}</span>
+                    <span style={{ fontSize: 11, color: "#8b949e", textTransform: "uppercase" }}>Passed</span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                    <span style={{ fontSize: 20, fontWeight: 700, color: results.failedTests > 0 ? "#ef4444" : "#f0f6fc" }}>{results.failedTests}</span>
+                    <span style={{ fontSize: 11, color: "#8b949e", textTransform: "uppercase" }}>Failed</span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                    <span style={{ fontSize: 20, fontWeight: 700, color: "#6e7681" }}>{results.skippedTests}</span>
+                    <span style={{ fontSize: 11, color: "#8b949e", textTransform: "uppercase" }}>Skipped</span>
+                </div>
+            </div>
+            <div style={{ marginTop: 4 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                    <span style={{ fontSize: 11, color: "#8b949e" }}>Pass Rate</span>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: getCoverageColor(passRate).color }}>{passRate.toFixed(1)}%</span>
+                </div>
+                <MiniBar pct={passRate} color={getCoverageColor(passRate).color} />
+            </div>
+        </div>
+    );
+};
 
 const FileStatusCard = ({ label, count, color, desc }) => (
     <div style={{
@@ -260,6 +313,7 @@ const ErrorState = ({ message, onRetry }) => (
 // ── Main Component ────────────────────────────────────────────
 const CoverageDashboard = ({ snapshotId, projectId, onOpenFile }) => {
     const [summary, setSummary] = useState(null);
+    const [testRuns, setTestRuns] = useState([]);
     const [files, setFiles] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -277,7 +331,7 @@ const CoverageDashboard = ({ snapshotId, projectId, onOpenFile }) => {
         setLoading(true);
         setError(null);
         try {
-            const [sumRes, filesRes] = await Promise.all([
+            const [sumRes, filesRes, testRes] = await Promise.all([
                 getCoverageSummary(snapshotId),
                 getCoverageFiles(snapshotId, {
                     sortBy,
@@ -285,10 +339,12 @@ const CoverageDashboard = ({ snapshotId, projectId, onOpenFile }) => {
                     page,
                     limit: LIMIT,
                 }),
+                getTestExecution(snapshotId),
             ]);
             setSummary(sumRes.data);
             setFiles(filesRes.data.files ?? []);
             setPagination(filesRes.data.pagination ?? null);
+            setTestRuns(testRes.data ?? []);
         } catch (err) {
             setError(err.message || "Failed to load coverage data.");
         } finally {
@@ -333,6 +389,9 @@ const CoverageDashboard = ({ snapshotId, projectId, onOpenFile }) => {
 
     const cov = summary.coverage;
 
+    const jestRun = testRuns.jest;
+    const supertestRun = testRuns.supertest;
+
     const highCount = files.filter(f => (f.linesPct ?? 0) >= 90).length;
     const warnCount = files.filter(f => (f.linesPct ?? 0) >= 70 && (f.linesPct ?? 0) < 90).length;
     const lowCount = files.filter(f => (f.linesPct ?? 0) < 70).length;
@@ -340,7 +399,7 @@ const CoverageDashboard = ({ snapshotId, projectId, onOpenFile }) => {
     return (
         <div style={{
             display: "flex", flexDirection: "column",
-            width: "100%", height: "100%", overflow: "hidden",
+            width: "100%",
             background: "var(--ide-bg, #0d1117)",
             color: "var(--text-primary, #f0f6fc)",
             fontFamily: "var(--font-sans, -apple-system, sans-serif)",
@@ -428,6 +487,24 @@ const CoverageDashboard = ({ snapshotId, projectId, onOpenFile }) => {
                     <MetricCard label="Logic Branches" desc="Percentage of branches (If/Else) executed" value={fmt(cov.branches)} color="#38bdf8" />
                     <MetricCard label="Functions" desc="Percentage of functions called during tests" value={fmt(cov.functions)} color="#a78bfa" />
                     <MetricCard label="Statements" desc="Percentage of statements executed successfully" value={fmt(cov.statements)} color="#fb923c" />
+                </div>
+            </div>
+
+            {/* ── Test Execution ── */}
+            <div style={{ marginBottom: 24, flexShrink: 0 }}>
+                <h3 style={{ fontSize: 18, fontWeight: 600, color: "#f0f6fc", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
+                    <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="m12 14 4-4" />
+                        <path d="m3.34 19 1.4-1.4" />
+                        <path d="m19.07 4.93-1.41 1.41" />
+                        <rect x="2" y="2" width="20" height="20" rx="5" />
+                        <path d="m9 9 6 6" />
+                    </svg>
+                    Test Execution
+                </h3>
+                <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+                    <TestExecutionCard type="Jest" results={jestRun} />
+                    <TestExecutionCard type="Supertest" results={supertestRun} />
                 </div>
             </div>
 

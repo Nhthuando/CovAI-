@@ -22,6 +22,8 @@ import path from "path";
 import { createHash, randomUUID } from "crypto";
 import { ServiceError } from "../utils/serviceError.js";
 import fs from "fs";
+import { validateNodeProject, validateArchiveContainsPackageJson } from "../utils/nodeProjectValidator.js";
+import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 
 export { ServiceError };
 
@@ -231,14 +233,12 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
     throw new ServiceError("Duplicate snapshot already exists", 409);
   }
 
-  // ── Build the Firebase storage path (but don't upload yet) ────────
   const safeOriginalName = path
     .basename(file.originalname)
     .replace(/[^a-zA-Z0-9._-]/g, "_");
   const uniqueFileName = `${randomUUID()}-${safeOriginalName}`;
   const storagePath = `projects/${projectId}/${uniqueFileName}`;
 
-  // ── Create Snapshot + Job in DB FIRST so it appears in Job Queue ──
   const { snapshot, job } = await createSnapshotIngestJob({
     projectId,
     userId,
@@ -247,20 +247,16 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
   });
 
   const uploadAndProcess = async () => {
+    const {
+      markJobRunning,
+      updateJobProgress,
+      markJobSuccess,
+      markJobFailed,
+    } = await import("./job.service.js");
+    const { extractZipSnapshot } = await import("./zipExtraction.service.js");
+
     try {
-      // Update job to RUNNING immediately as we start processing
-      const {
-        markJobRunning,
-        updateJobProgress,
-        markJobSuccess,
-        markJobFailed,
-      } = await import("./job.service.js");
-      const { extractZipSnapshot } = await import("./zipExtraction.service.js");
-
-      try {
-        await markJobRunning(job.id);
-      } catch (_) {}
-
+      await markJobRunning(job.id);
       const blob = getBucket().file(storagePath);
       const uploadPromise = new Promise((resolve, reject) => {
         const blobStream = blob.createWriteStream({
@@ -270,14 +266,14 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
         blobStream.on("error", reject);
         blobStream.on("finish", resolve);
         blobStream.end(file.buffer);
-      }).then(() => updateJobProgress(job.id, 50).catch(() => {}));
+      }).then(() => updateJobProgress(job.id, 50).catch(() => { }));
 
       const extractPromise = extractZipSnapshot(
         snapshot.id,
         storagePath,
         file.buffer,
       ).then((path) => {
-        updateJobProgress(job.id, 90).catch(() => {});
+        updateJobProgress(job.id, 90).catch(() => { });
         return path;
       });
 
@@ -290,14 +286,16 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
         throw new Error("Extracted source path is invalid");
       }
 
+      const resolvedRootDir = resolveProjectRoot(sourcePath);
+      const validation = await validateNodeProject(resolvedRootDir);
+
       await prisma.projectSnapshot.update({
         where: { id: snapshot.id },
-        data: { rootDir: sourcePath },
+        data: { rootDir: validation.rootDir },
       });
 
-      // Sau khi giải nén, detect Jest metadata ngay
       const { detectJest } = await import("../utils/jestDetector.js");
-      const detection = detectJest(sourcePath);
+      const detection = detectJest(validation.rootDir);
 
       await prisma.projectSnapshot.update({
         where: { id: snapshot.id },
@@ -316,20 +314,13 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
         },
       });
 
-      await updateJobProgress(job.id, 100).catch(() => {});
-      await markJobSuccess(job.id, { rootDir: sourcePath });
-      console.log(
-        `[Job ${job.id}] Pipeline upload & ingest hoàn thành: ${sourcePath}`,
-      );
+      await updateJobProgress(job.id, 100).catch(() => { });
+      await markJobSuccess(job.id, { rootDir: validation.rootDir });
+      console.log(`[Job ${job.id}] Pipeline upload & ingest hoàn thành: ${validation.rootDir}`);
     } catch (uploadErr) {
-      console.error(
-        `[UploadProjectZip] Firebase upload or ingest failed for Job ${job.id}:`,
-        uploadErr,
-      );
+      console.error(`[UploadProjectZip] Firebase upload or ingest failed for Job ${job.id}:`, uploadErr);
       const { markJobFailed } = await import("./job.service.js");
-      try {
-        await markJobFailed(job.id, uploadErr);
-      } catch (_) {}
+      try { await markJobFailed(job.id, uploadErr); } catch (_) { }
       throw uploadErr;
     }
   };
@@ -343,7 +334,6 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
       size: file.size,
       storagePath,
     },
-    // Expose the upload promise so the controller can chain processing after it
     _uploadPromise: uploadAndProcess(),
   };
 };
@@ -383,9 +373,14 @@ export const listProjectSnapshots = async ({ projectId, userId }) => {
   const snapshots = await prisma.projectSnapshot.findMany({
     where: { projectId },
     orderBy: { createdAt: "desc" },
-    include: { structureAnalysis: { select: { schemaVersion: true } } },
+    include: { ProjectStructureAnalysis: { select: { schemaVersion: true } } },
   });
-  return snapshots.map(snapshotResponse);
+  return snapshots.map((snapshot) =>
+    snapshotResponse({
+      ...snapshot,
+      structureAnalysis: snapshot.ProjectStructureAnalysis ?? null,
+    }),
+  );
 };
 
 const resolveAnalysisSnapshot = async ({ projectId, snapshotId, userId }) => {
@@ -455,12 +450,11 @@ export const getProjectStructureAnalysis = async ({
   }
 };
 
-// Kept for a future explicitly named coverage endpoint. It is intentionally
-// separate from Architecture analysis, which is static and does not need Jest.
 export const createCoverageAnalysisJob = async ({
   projectId,
   snapshotId,
   userId,
+  mode = "FULL",
 }) => {
   if (!projectId || typeof projectId !== "string") {
     throw new ServiceError("projectId is required", 400);
@@ -480,8 +474,6 @@ export const createCoverageAnalysisJob = async ({
       ownerId: userId,
     },
   });
-  console.log("projectId =", projectId);
-  console.log("userId =", userId);
   if (!project) {
     throw new ServiceError(
       "Project not found or you don't have permission",
@@ -500,8 +492,6 @@ export const createCoverageAnalysisJob = async ({
     throw new ServiceError("Snapshot not found", 404);
   }
 
-  // Repeated requests for the same snapshot reuse an active or completed
-  // RUN_TESTS job instead of scheduling duplicate work.
   const existingRun = await prisma.job.findFirst({
     where: {
       projectId,
@@ -513,14 +503,13 @@ export const createCoverageAnalysisJob = async ({
   });
   if (existingRun) return { ...existingRun, reused: true };
 
-  // SCRUM-138: Tạo RUN_TESTS job cho pipeline coverage analysis
   const runTestsJob = await createRunTestsJob({
     projectId,
     snapshotId,
     userId,
+    mode,
   });
 
-  // Tạo BUILD_CFG job
   const { createSnapshotJob } = await import("./job.service.js");
   await createSnapshotJob({
     projectId,
@@ -541,10 +530,6 @@ export const deleteProject = async (projectId, userId) => {
     throw new ServiceError("You are not allowed to delete this project", 403);
   }
 
-  // Allow deletion even if there are zombie running jobs
-  // The transaction below will clean up all jobs via cascading.
-
-  // Fetch snapshots BEFORE they are deleted from DB so we can clean up local dirs + Firebase
   const snapshots = await prisma.projectSnapshot.findMany({
     where: { projectId },
     select: { rootDir: true, storagePath: true },
@@ -569,64 +554,38 @@ export const deleteProject = async (projectId, userId) => {
       prisma.projectSnapshot.deleteMany({ where: { projectId } }),
       prisma.project.delete({ where: { id: projectId } }),
     ],
-    { timeout: 30000 }, // 30 seconds — enough for large projects
+    { timeout: 30000 },
   );
 
-  // ── Cleanup Firebase Storage files ─────────────────────────────────
   try {
     const bucket = getBucket();
-
-    // Delete individual snapshot files
     for (const snap of snapshots) {
       if (snap.storagePath) {
         try {
           await bucket.file(snap.storagePath).delete();
-          console.log(
-            `[DeleteProject] Deleted Firebase file: ${snap.storagePath}`,
-          );
         } catch (fbErr) {
-          // File may already be deleted or not exist — skip silently
-          if (fbErr.code !== 404) {
-            console.warn(
-              `[DeleteProject] Failed to delete Firebase file ${snap.storagePath}:`,
-              fbErr.message,
-            );
-          }
+          if (fbErr.code !== 404) console.warn(`[DeleteProject] Failed to delete Firebase file ${snap.storagePath}:`, fbErr.message);
         }
       }
     }
-
-    // Also try to delete the entire projects/{projectId}/ prefix
     try {
-      const [files] = await bucket.getFiles({
-        prefix: `projects/${projectId}/`,
-      });
+      const [files] = await bucket.getFiles({ prefix: `projects/${projectId}/` });
       if (files.length > 0) {
-        await Promise.all(files.map((file) => file.delete().catch(() => {})));
-        console.log(
-          `[DeleteProject] Deleted ${files.length} remaining Firebase files for project ${projectId}`,
-        );
+        await Promise.all(files.map((file) => file.delete().catch(() => { })));
       }
     } catch (prefixErr) {
-      console.warn(
-        `[DeleteProject] Failed to cleanup Firebase prefix for ${projectId}:`,
-        prefixErr.message,
-      );
+      console.warn(`[DeleteProject] Failed to cleanup Firebase prefix for ${projectId}:`, prefixErr.message);
     }
   } catch (fbCleanupErr) {
     console.error("[DeleteProject] Firebase cleanup error:", fbCleanupErr);
-    // Don't throw — DB deletion already succeeded
   }
 
-  // ── Cleanup physical local storage directories ─────────────────────
   try {
     for (const snap of snapshots) {
       if (snap.rootDir && fs.existsSync(snap.rootDir)) {
         fs.rmSync(snap.rootDir, { recursive: true, force: true });
       }
     }
-
-    // Clean up the base project storage dir if exists
     const projectStoragePath = path.resolve("storage/projects", projectId);
     if (fs.existsSync(projectStoragePath)) {
       fs.rmSync(projectStoragePath, { recursive: true, force: true });
@@ -674,13 +633,11 @@ export const getFileContent = async (projectId, userId, filePath) => {
     throw new ServiceError("Project snapshot not ready", 404);
   }
 
-  // Sanitize the file path to prevent directory traversal
   const normalizedPath = path
     .normalize(filePath)
     .replace(/^(\.\.(\/|\\|$))+/, "");
   const absolutePath = path.join(snapshot.rootDir, normalizedPath);
 
-  // Ensure the resolved path is still within the snapshot rootDir
   const resolvedRoot = path.resolve(snapshot.rootDir);
   const resolvedFile = path.resolve(absolutePath);
   if (!resolvedFile.startsWith(resolvedRoot)) {
@@ -696,7 +653,6 @@ export const getFileContent = async (projectId, userId, filePath) => {
     throw new ServiceError("Path is a directory, not a file", 400);
   }
 
-  // Limit file size to 1MB
   if (stat.size > 1024 * 1024) {
     throw new ServiceError("File too large to display", 413);
   }

@@ -13,6 +13,8 @@ const saveJobOutput = jest.fn();
 const runSupertest = jest.fn();
 const parseCoverageSummary = jest.fn();
 const storeCoverageOutputs = jest.fn();
+const parseCoverageFilesForSnapshot = jest.fn();
+const parseCoverageFunctionsForSnapshot = jest.fn();
 
 await jest.unstable_mockModule('../services/job.service.js', () => ({
     markJobRunning, markJobSuccess, markJobFailed, updateJobProgress, getJobById, addJobLog,
@@ -21,6 +23,8 @@ await jest.unstable_mockModule('../services/jobOutput.service.js', () => ({ save
 await jest.unstable_mockModule('../services/supertestRunner.service.js', () => ({ runSupertest }));
 await jest.unstable_mockModule('../services/coverageSummaryParser.service.js', () => ({ parseCoverageSummary }));
 await jest.unstable_mockModule('../services/coverageStorage.service.js', () => ({ storeCoverageOutputs }));
+await jest.unstable_mockModule('../services/coverageFileParser.service.js', () => ({ parseCoverageFilesForSnapshot }));
+await jest.unstable_mockModule('../services/coverageFunctionParser.service.js', () => ({ parseCoverageFunctionsForSnapshot }));
 
 const { processSupertestCoverageJob } = await import('../services/supertestCoverageJob.service.js');
 
@@ -46,6 +50,11 @@ describe('supertestCoverageJob.service', () => {
             total: { lines: { pct: 80 }, branches: { pct: 80 }, functions: { pct: 80 }, statements: { pct: 80 } },
         });
         storeCoverageOutputs.mockResolvedValue({ baseStoragePath: 'path/to/storage' });
+        parseCoverageFilesForSnapshot.mockResolvedValue(undefined);
+        parseCoverageFunctionsForSnapshot.mockResolvedValue(undefined);
+        fs.mkdirSync(path.join(rootDir, 'coverage'));
+        fs.writeFileSync(path.join(rootDir, 'coverage', 'coverage-summary.json'), JSON.stringify({ total: {} }));
+        fs.writeFileSync(path.join(rootDir, 'coverage', 'coverage-final.json'), JSON.stringify({}));
     });
 
     afterEach(() => fs.rmSync(rootDir, { recursive: true, force: true }));
@@ -60,4 +69,6 @@ describe('supertestCoverageJob.service', () => {
         }));
         expect(markJobFailed).not.toHaveBeenCalled();
     });
+
+
 });

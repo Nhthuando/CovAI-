@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
- "scripts": {
+  "scripts": {
     "dev": "prisma generate && nodemon index.js",
     "dev:docker": "prisma generate && nodemon index.js",
     "db:push": "prisma db push",
