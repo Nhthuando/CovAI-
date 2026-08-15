@@ -463,7 +463,7 @@ function LayoutInner() {
             </motion.div>
           )}
         </AnimatePresence>
-        <motion.div className="flex flex-1 min-w-0" variants={panelVariants}>
+        <motion.div className="flex flex-1 min-w-0 min-h-0" variants={panelVariants}>
           {activeActivity === "settings" ? (
             <div className="w-full h-full overflow-y-auto">
               {isMobile && <SettingsSidebar activeSetting={activeSetting} onSelectSetting={setActiveSetting} variant="tabs" />}
@@ -476,7 +476,9 @@ function LayoutInner() {
           ) : activeActivity === "architecture" ? (
             <ProjectArchitecturePanel projectId={project?.id} />
           ) : activeActivity === "coverage" ? (
-            <CoverageDashboard snapshotId={project?.latestSnapshotId || (project?.id ? localStorage.getItem(`latestSnapshot_${project.id}`) : null) || testPromptSnapshotId} projectId={project?.id} onOpenFile={handleOpenFileByPath} />
+            <div className="w-full h-full overflow-y-auto">
+              <CoverageDashboard snapshotId={project?.latestSnapshotId || (project?.id ? localStorage.getItem(`latestSnapshot_${project.id}`) : null) || testPromptSnapshotId} projectId={project?.id} onOpenFile={handleOpenFileByPath} />
+            </div>
           ) : (
             <Editor tabs={tabs} activeTabId={activeTabId} onSelectTab={setActiveTabId} onCloseTab={handleCloseTab} fileTree={fileTree} isLoadingTree={isLoadingTree} projectId={project?.id} />
           )}
