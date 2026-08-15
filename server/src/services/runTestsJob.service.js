@@ -6,7 +6,6 @@ import {
     markJobRunning,
     markJobSuccess,
     markJobFailed,
-    markQueuedJobFailed,
     updateJobProgress,
     getJobById,
     addJobLog,
@@ -16,6 +15,8 @@ import { parseCoverageSummary } from "./coverageSummaryParser.service.js";
 import { storeCoverageOutputs } from "./coverageStorage.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { dockerRunner } from "./dockerRunner.service.js";
+import { parseJestResults } from "./testResultParser.service.js";
+import prisma from "../config/prisma.js";
 
 const INSTALL_TIMEOUT_MS = 3 * 60 * 1000; // 3 phút
 const JEST_TIMEOUT_MS = 5 * 60 * 1000;    // 5 phút
@@ -58,7 +59,7 @@ const runNpmInstall = async (jobId, rootDir) => {
  * @returns {Promise<{ exitCode: number }>}
  */
 const runJestCoverage = async (jobId, rootDir, jestConfigPath) => {
-    let jestCmd = "npx jest --coverage --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --forceExit --testTimeout=30000";
+    let jestCmd = "npx jest --coverage --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=test-results.json --forceExit --testTimeout=30000";
 
     if (jestConfigPath) {
         // Path inside Docker must be relative to /workspace
@@ -264,26 +265,42 @@ export const processRunTestsJob = async (jobId) => {
         // ── SCRUM-141: Parse reports ──────────────────────────────────────────
         await addJobLog(jobId, "INFO", "Bước 3/4: Parse coverage reports...").catch(() => { });
 
-        // ── SCRUM-141: Parse reports (Multi-Framework Aggregator) ────────────────
-        await addJobLog(jobId, "INFO", "Bước 3/4: Tự động gom nhóm các Coverage Reports (LCOV, Jest)...").catch(() => { });
+        // Parse test results
+        const jestResults = parseJestResults(coverageDir);
+        if (jestResults) {
+            await prisma.testRun.create({
+                data: {
+                    snapshotId,
+                    type: "JEST",
+                    ...jestResults,
+                    startedAt: new Date(),
+                    finishedAt: new Date()
+                }
+            });
+            await addJobLog(jobId, "INFO", `[SCRUM-141] Đã lưu TestRun (JEST): ${jestResults.totalTests} tests.`).catch(() => { });
+        }
 
+        // Parse coverage-summary.json → CoverageSummary + CoverageFile (from summary)
         let summaryResult = null;
         try {
-            const { aggregateCoverageReports } = await import("./coverageAggregator.service.js");
-            summaryResult = await aggregateCoverageReports(rootDir, snapshotId);
-            
+            summaryResult = await parseCoverageSummary(coverageDir, snapshotId);
             await addJobLog(
                 jobId,
                 "INFO",
-                `[SCRUM-141] Đã gộp thành công ${summaryResult.filesFound} files. ` +
-                `Summary: lines=${summaryResult.summary.linesPct}%, ` +
-                `branches=${summaryResult.summary.branchesPct}%, ` +
-                `functions=${summaryResult.summary.funcsPct}%, ` +
-                `statements=${summaryResult.summary.stmtsPct}% | files=${summaryResult.fileCount}`
+                `[SCRUM-141] Summary: lines=${summaryResult.total.lines.pct}%, ` +
+                `branches=${summaryResult.total.branches.pct}%, ` +
+                `functions=${summaryResult.total.functions.pct}%, ` +
+                `statements=${summaryResult.total.statements.pct}% | files=${summaryResult.fileCount}`
             ).catch(() => { });
         } catch (parseErr) {
-            await addJobLog(jobId, "WARN", `[SCRUM-141] Lỗi gom nhóm coverage: ${parseErr.message}`).catch(() => { });
+            await addJobLog(jobId, "WARN", `[SCRUM-141] Lỗi parse coverage-summary: ${parseErr.message}`).catch(() => { });
         }
+
+        // Parse coverage-final.json → CoverageFile (per-file detail)
+        await parseFinalCoverageFiles(jobId, snapshotId, projectId, userId, coverageDir);
+
+        // Parse coverage-final.json → CoverageFunction (per-function detail)
+        await parseFinalCoverageFunctions(jobId, snapshotId, projectId, userId, coverageDir);
 
         // Verify lcov.info
         const lcovPath = path.join(coverageDir, "lcov.info");
@@ -366,7 +383,7 @@ export const processRunTestsJob = async (jobId) => {
                 orderBy: { createdAt: "desc" }
             });
             if (buildCfgJob) {
-                await markQueuedJobFailed(buildCfgJob.id, new Error(`Failed because RUN_TESTS pipeline failed: ${error.message}`));
+                await markJobFailed(buildCfgJob.id, new Error(`Failed because RUN_TESTS pipeline failed: ${error.message}`));
                 console.log(`[RunTestsJob ${jobId}] Đã đánh dấu failed cho BUILD_CFG job: ${buildCfgJob.id}`);
             }
         } catch (failChainErr) {

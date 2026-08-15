@@ -1,6 +1,14 @@
 import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
+const clearAuthState = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    localStorage.removeItem('userName');
+    localStorage.removeItem('userEmail');
+};
+
 const notificationApi = axios.create({
     baseURL: `${API_URL}/notifications`,
     withCredentials: true,
@@ -10,9 +18,12 @@ const notificationApi = axios.create({
 notificationApi.interceptors.request.use(
     (config) => {
         const token = localStorage.getItem('token');
-        if (token) {
-            config.headers.Authorization = `Bearer ${token}`;
+        if (!token) {
+            delete config.headers?.Authorization;
+            return config;
         }
+
+        config.headers.Authorization = `Bearer ${token}`;
         return config;
     },
     (error) => Promise.reject(error)
@@ -22,9 +33,11 @@ notificationApi.interceptors.request.use(
 notificationApi.interceptors.response.use(
     (response) => response,
     (error) => {
-        if (error.response?.status === 401) {
-            localStorage.removeItem('token');
-            window.location.href = '/login';
+        if (error?.response?.status === 401) {
+            clearAuthState();
+            if (!window.location.pathname.includes('/login')) {
+                window.location.href = '/login';
+            }
         }
         return Promise.reject(error);
     }
@@ -40,11 +53,33 @@ export const notificationService = {
      */
     getNotifications: async (page = 1, limit = 20, unreadOnly = false) => {
         try {
+            const token = localStorage.getItem('token');
+            if (!token) {
+                return {
+                    success: true,
+                    data: [],
+                    meta: {
+                        unreadCount: 0,
+                        pagination: { page, limit, total: 0, totalPages: 0 },
+                    },
+                };
+            }
+
             const response = await notificationApi.get('/', {
                 params: { page, limit, unreadOnly },
             });
             return response.data;
         } catch (error) {
+            if (error?.response?.status === 401 || error?.code === 'ERR_NETWORK' || !navigator.onLine) {
+                return {
+                    success: true,
+                    data: [],
+                    meta: {
+                        unreadCount: 0,
+                        pagination: { page, limit: 20, total: 0, totalPages: 0 },
+                    },
+                };
+            }
             console.error('[notificationService] Error fetching notifications:', error);
             throw error;
         }
@@ -56,9 +91,17 @@ export const notificationService = {
      */
     getUnreadCount: async () => {
         try {
+            const token = localStorage.getItem('token');
+            if (!token) {
+                return 0;
+            }
+
             const response = await notificationApi.get('/unread-count');
-            return response.data.count;
+            return response.data.count ?? 0;
         } catch (error) {
+            if (error?.response?.status === 401 || error?.code === 'ERR_NETWORK' || !navigator.onLine) {
+                return 0;
+            }
             console.error('Error fetching unread count:', error);
             throw error;
         }

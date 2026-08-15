@@ -1,6 +1,7 @@
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { createInstallDepsJob, createRunTestsJob, createSupertestCoverageJob } from "../services/job.service.js";
+import { jobQueue, addSupertestCoveragePipeline } from "../services/queue.service.js";
 import { processCoverageJob } from "../services/coverageRunner.service.js";
 import { addJobToQueue } from "../services/queue.service.js";
 import { detectSupertest } from "../services/supertestDetection.service.js";
@@ -63,14 +64,21 @@ export const getCoverageSummary = async (req, res) => {
             where: { snapshotId },
         });
 
-        if (!summary) {
-            return res.status(404).json({
-                success: false,
-                message: "Chưa có dữ liệu coverage cho snapshot này. Hãy chạy test trước.",
-            });
-        }
+        const coverage = summary
+            ? {
+                lines: summary.linesPct,
+                branches: summary.branchesPct,
+                functions: summary.funcsPct,
+                statements: summary.stmtsPct,
+            }
+            : {
+                lines: 0,
+                branches: 0,
+                functions: 0,
+                statements: 0,
+            };
 
-        // Return formatted response
+        // Return formatted response even before the first coverage run completes.
         return res.status(200).json({
             success: true,
             data: {
@@ -80,13 +88,8 @@ export const getCoverageSummary = async (req, res) => {
                 source: snapshot.source,
                 commitSha: snapshot.commitSha ?? null,
                 snapshotCreatedAt: snapshot.createdAt,
-                coverage: {
-                    lines: summary.linesPct,
-                    branches: summary.branchesPct,
-                    functions: summary.funcsPct,
-                    statements: summary.stmtsPct,
-                },
-                summaryCreatedAt: summary.createdAt,
+                coverage,
+                summaryCreatedAt: summary?.createdAt ?? null,
             },
         });
 
@@ -147,6 +150,16 @@ export const runCoverage = async (req, res) => {
             });
         }
 
+        if (!snapshot.rootDir) {
+            return res.status(422).json({ success: false, message: "Invalid Node.js project: package.json was not found in the uploaded project." });
+        }
+
+        const fs = await import("fs");
+        const packageJsonPath = `${snapshot.rootDir}/package.json`;
+        if (!fs.existsSync(packageJsonPath)) {
+            return res.status(422).json({ success: false, message: "Invalid Node.js project: package.json was not found in the uploaded project." });
+        }
+
         // Tạo INSTALL_DEPS Job
         const installJob = await createInstallDepsJob({
             projectId: snapshot.projectId,
@@ -202,18 +215,36 @@ export const runSupertestCoverage = async (req, res) => {
         if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
         if (!snapshot.rootDir) return res.status(409).json({ success: false, message: "Snapshot is not ready to run tests." });
 
+        const packageJsonPath = `${snapshot.rootDir}/package.json`;
+        const fs = await import("fs");
+        if (!fs.existsSync(packageJsonPath)) {
+            return res.status(422).json({ success: false, message: "Invalid Node.js project: package.json was not found in the uploaded project." });
+        }
+
         const supertestInfo = await detectSupertest(snapshot.rootDir);
         if (!supertestInfo.detected || supertestInfo.supertestFiles.length === 0) {
             return res.status(422).json({ success: false, message: "No Supertest test files were found in this snapshot." });
         }
 
+        // Snapshots normally do not include node_modules. Install first so the
+        // runner never falls back to npx downloading arbitrary packages.
+        const installJob = await createInstallDepsJob({ projectId: snapshot.projectId, snapshotId, userId });
         const job = await createSupertestCoverageJob({ projectId: snapshot.projectId, snapshotId, userId });
-        await addJobToQueue("SUPERTEST_COVERAGE", job.id);
+
+        // Queue Supertest pipeline with correct BullMQ dependency direction:
+        // SUPERTEST_COVERAGE_PIPELINE (parent) waits for INSTALL_DEPS (child)
+        try {
+            await addSupertestCoveragePipeline(installJob.id, job.id);
+        } catch (error) {
+            console.error(`[Supertest Pipeline] Error queuing pipeline:`, error);
+            throw error;
+        }
 
         return res.status(202).json({
             success: true,
-            message: "Supertest coverage job queued.",
+            message: "Supertest coverage pipeline queued (install dependencies, then run tests).",
             jobId: job.id,
+            installJobId: installJob.id,
             snapshotId,
             supertestFileCount: supertestInfo.supertestFiles.length,
         });
@@ -254,15 +285,15 @@ export const getCoverageFiles = async (req, res) => {
 
         // ── SCRUM-158: Parse & validate sorting params ───────────────────────
         const rawSortBy = req.query.sortBy ?? "filePath";
-        const rawOrder  = req.query.order  ?? "asc";
+        const rawOrder = req.query.order ?? "asc";
 
         const sortBy = ALLOWED_SORT_FIELDS.includes(rawSortBy) ? rawSortBy : "filePath";
-        const order  = ALLOWED_SORT_ORDERS.includes(rawOrder)  ? rawOrder  : "asc";
+        const order = ALLOWED_SORT_ORDERS.includes(rawOrder) ? rawOrder : "asc";
 
         // Pagination
-        const page  = Math.max(1, parseInt(req.query.page,  10) || 1);
+        const page = Math.max(1, parseInt(req.query.page, 10) || 1);
         const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
-        const skip  = (page - 1) * limit;
+        const skip = (page - 1) * limit;
 
         // ── SCRUM-156: Verify permissions ────────────────────────────────────
         const snapshot = await prisma.projectSnapshot.findUnique({
@@ -309,14 +340,8 @@ export const getCoverageFiles = async (req, res) => {
             prisma.coverageFile.count({ where: { snapshotId } }),
         ]);
 
-        if (total === 0) {
-            return res.status(404).json({
-                success: false,
-                message: "Chưa có dữ liệu CoverageFile cho snapshot này. Hãy chạy test trước.",
-            });
-        }
-
-        // ── Return formatted response ────────────────────────────────────────
+        // Return an empty dataset instead of a 404 so the UI can render a valid
+        // "no coverage generated yet" state without treating it as a broken API.
         return res.status(200).json({
             success: true,
             data: {
@@ -361,6 +386,44 @@ export const getCoverageFiles = async (req, res) => {
  *  - page     : number >= 1     (default: 1)
  *  - limit    : number 1-200    (default: 50)
  */
+export const getTestExecution = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
+
+        const { snapshotId } = req.params;
+        if (!snapshotId) return res.status(400).json({ success: false, message: "snapshotId is required." });
+
+        const snapshot = await prisma.projectSnapshot.findUnique({
+            where: { id: snapshotId },
+            select: { project: { select: { ownerId: true } } }
+        });
+
+        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
+        if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
+
+        const testRuns = await prisma.testRun.findMany({
+            where: { snapshotId },
+            orderBy: { createdAt: "desc" }
+        });
+
+        // Map to expected frontend structure
+        const jestRun = testRuns.find(r => r.type === "JEST");
+        const supertestRun = testRuns.find(r => r.type === "SUPERTEST");
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                jest: jestRun || null,
+                supertest: supertestRun || null
+            }
+        });
+    } catch (error) {
+        console.error("[getTestExecution] Error:", error);
+        return res.status(500).json({ success: false, message: "Server error." });
+    }
+};
+
 export const getCoverageFunctions = async (req, res) => {
     try {
         // ── Auth ─────────────────────────────────────────────────────────────
@@ -382,13 +445,13 @@ export const getCoverageFunctions = async (req, res) => {
                 : null;
 
         const rawSortBy = req.query.sortBy ?? "filePath";
-        const rawOrder  = req.query.order  ?? "asc";
+        const rawOrder = req.query.order ?? "asc";
         const sortBy = ALLOWED_FUNC_SORT_FIELDS.includes(rawSortBy) ? rawSortBy : "filePath";
-        const order  = ALLOWED_SORT_ORDERS.includes(rawOrder)        ? rawOrder  : "asc";
+        const order = ALLOWED_SORT_ORDERS.includes(rawOrder) ? rawOrder : "asc";
 
-        const page  = Math.max(1, parseInt(req.query.page,  10) || 1);
+        const page = Math.max(1, parseInt(req.query.page, 10) || 1);
         const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
-        const skip  = (page - 1) * limit;
+        const skip = (page - 1) * limit;
 
         // ── SCRUM-161: Verify permissions ─────────────────────────────────────
         const snapshot = await prisma.projectSnapshot.findUnique({
@@ -443,16 +506,8 @@ export const getCoverageFunctions = async (req, res) => {
             prisma.coverageFunction.count({ where }),
         ]);
 
-        if (total === 0) {
-            return res.status(404).json({
-                success: false,
-                message: filePathFilter
-                    ? `Không tìm thấy function nào khớp với file "${filePathFilter}" trong snapshot này.`
-                    : "Chưa có dữ liệu CoverageFunction cho snapshot này. Hãy chạy test trước.",
-            });
-        }
-
-        // ── Return formatted response ──────────────────────────────────────────
+        // Return an empty dataset instead of a 404 so the UI can render a valid
+        // empty coverage state while tests are still running or no tests exist.
         return res.status(200).json({
             success: true,
             data: {

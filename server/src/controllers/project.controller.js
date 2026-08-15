@@ -162,8 +162,6 @@ class ProjectController {
 
   /**
    * GET /projects/:id/snapshots
-   * Snapshot metadata is deliberately selector-safe: no host paths, source,
-   * or storage locations can cross this controller boundary.
    */
   async listSnapshots(req, res) {
     try {
@@ -178,7 +176,7 @@ class ProjectController {
           .status(error.statusCode)
           .json({ success: false, message: error.message });
       }
-      console.error(error);
+      console.error("[listSnapshots] Error:", error);
       return res
         .status(500)
         .json({ success: false, message: "Failed to get snapshots" });
@@ -187,7 +185,6 @@ class ProjectController {
 
   /**
    * GET /projects/:id/structure-analysis?snapshotId=...
-   * Reads an existing architecture map only; it never starts background work.
    */
   async getStructureAnalysis(req, res) {
     try {
@@ -213,7 +210,6 @@ class ProjectController {
 
   /**
    * POST /projects/:id/structure-analysis
-   * Starts snapshot-bound static architecture analysis.
    */
   async runStructureAnalysis(req, res) {
     try {
@@ -250,53 +246,6 @@ class ProjectController {
       return res.status(500).json({
         success: false,
         message: "Failed to start architecture analysis",
-      });
-    }
-  }
-
-  /**
-   * Legacy implementation retained temporarily for an explicit coverage route.
-   */
-  async listSnapshotsUnsafe(req, res) {
-    try {
-      const { id: projectId } = req.params;
-
-      // Verify project ownership
-      const project = await prisma.project.findFirst({
-        where: { id: projectId, ownerId: req.user.id },
-      });
-      if (!project) {
-        return res.status(404).json({
-          success: false,
-          message: "Project not found or unauthorized",
-        });
-      }
-
-      const snapshots = await prisma.projectSnapshot.findMany({
-        where: { projectId },
-        orderBy: { createdAt: "desc" },
-        select: {
-          id: true,
-          source: true,
-          checksum: true,
-          commitSha: true,
-          storagePath: true,
-          rootDir: true,
-          hasJest: true,
-          jestCommand: true,
-          createdAt: true,
-        },
-      });
-
-      return res.status(200).json({
-        success: true,
-        data: snapshots,
-      });
-    } catch (error) {
-      console.error(error);
-      return res.status(500).json({
-        success: false,
-        message: "Failed to get snapshots",
       });
     }
   }
@@ -356,7 +305,6 @@ class ProjectController {
 
   /**
    * PUT /projects/:id/file-content
-   * Body: { path, content }
    */
   async updateFileContent(req, res) {
     try {
@@ -392,30 +340,15 @@ class ProjectController {
   }
 
   async createFile(req, res) {
-    return handleEntryMutation(
-      req,
-      res,
-      createProjectFile,
-      "Failed to create file",
-    );
+    return handleEntryMutation(req, res, createProjectFile, "Failed to create file");
   }
 
   async createFolder(req, res) {
-    return handleEntryMutation(
-      req,
-      res,
-      createProjectFolder,
-      "Failed to create folder",
-    );
+    return handleEntryMutation(req, res, createProjectFolder, "Failed to create folder");
   }
 
   async renameEntry(req, res) {
-    return handleEntryMutation(
-      req,
-      res,
-      renameProjectEntry,
-      "Failed to rename entry",
-    );
+    return handleEntryMutation(req, res, renameProjectEntry, "Failed to rename entry");
   }
 
   async deleteEntry(req, res) {
@@ -452,13 +385,10 @@ class ProjectController {
         userId: req.user.id,
       });
 
-      // The Firebase upload and ZIP extraction run fully in the background inside uploadProjectZip.
-      // The response is sent immediately below.
       result._uploadPromise.catch((err) => {
         console.error("[UploadZip] Background pipeline error:", err);
       });
 
-      // Respond immediately — the job already exists in DB with QUEUED status
       return res.status(201).json({
         success: true,
         message: "Snapshot và Job được tạo thành công",
@@ -496,6 +426,8 @@ class ProjectController {
   async runCoverageAnalysis(req, res) {
     try {
       const { id: projectId } = req.params;
+      const { mode } = req.body;
+
       const targetSnapshot = await resolveCoverageAnalysisSnapshot({
         projectId,
         snapshotId: req.body?.snapshotId,
@@ -516,6 +448,7 @@ class ProjectController {
         projectId,
         snapshotId: targetSnapshot.id,
         userId: req.user.id,
+        mode: mode || "FULL",
       });
       const reused = queuedJob.reused === true;
       const { reused: _reused, ...job } = queuedJob;
@@ -1055,6 +988,7 @@ class ProjectController {
         projectId,
         snapshotId,
         userId: req.user.id,
+        mode: req.body.mode || "SKELETON",
       });
 
       addJobToQueue("AI_TESTS", job.id).catch((err) => {

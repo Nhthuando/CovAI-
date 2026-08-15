@@ -1,6 +1,6 @@
 import express from "express";
 import { authMiddleware } from "../middlewares/auth.middleware.js";
-import { getCoverageSummary, runCoverage, runSupertestCoverage, getCoverageFiles, getCoverageFunctions } from "../controllers/coverage.controller.js";
+import { getCoverageSummary, runCoverage, runSupertestCoverage, getCoverageFiles, getCoverageFunctions, getTestExecution } from "../controllers/coverage.controller.js";
 
 const router = express.Router();
 
@@ -19,6 +19,8 @@ router.post("/:snapshotId/supertest/run", authMiddleware, runSupertestCoverage);
 // SCRUM-160: GET /api/coverage/:snapshotId/functions — lấy danh sách CoverageFunction
 // Query: ?filePath=<filter>&sortBy=functionName|filePath|hit|startLine&order=asc|desc&page=1&limit=50
 router.get("/:snapshotId/functions", authMiddleware, getCoverageFunctions);
+
+router.get("/:snapshotId/test-execution", authMiddleware, getTestExecution);
 
 
 export default router;

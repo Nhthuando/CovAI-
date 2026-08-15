@@ -41,7 +41,7 @@ const uploadBufferToFirebase = async (buffer, destPath, mimeType) => {
  *  - SCRUM-115: coverage-final.json
  *  - SCRUM-116: lcov.info
  *
- * SCRUM-117: Lưu storagePaths vào ProjectSnapshot.storageBasePath (JSON)
+ * SCRUM-117: Lưu storage prefix vào ProjectSnapshot.storagePath
  *
  * @param {string} snapshotId
  * @param {string} projectId
@@ -93,15 +93,15 @@ export const storeCoverageOutputs = async (snapshotId, projectId, coverageDir) =
     }
 
     // ── SCRUM-117: Associate outputs với Snapshot ─────────────────────────
-    // Lưu storage paths vào storageBasePath của snapshot (dưới dạng JSON prefix)
+    // ProjectSnapshot uses the real Prisma field `storagePath`, not `storageBasePath`.
     await prisma.projectSnapshot.update({
         where: { id: snapshotId },
         data: {
-            storageBasePath: baseStoragePath,
+            storagePath: baseStoragePath,
         },
     });
 
-    console.log(`[CoverageStorage] Snapshot ${snapshotId} cập nhật storageBasePath = ${baseStoragePath}`);
+    console.log(`[CoverageStorage] Snapshot ${snapshotId} cập nhật storagePath = ${baseStoragePath}`);
 
     return {
         baseStoragePath,

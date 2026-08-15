@@ -42,7 +42,12 @@ export const useAuth = () => {
         localStorage.removeItem('user');
         localStorage.removeItem('userName');
         localStorage.removeItem('userEmail');
+
+        // Clear any other potential auth keys if they exist
+        // Ensure state is fully reset
         setUser(null);
+
+        // Force reload or redirect handled by component using useAuth
     }, []);
 
     useEffect(() => {

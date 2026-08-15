@@ -26,6 +26,7 @@ const JOB_TYPES = Object.freeze([
   "AI_TESTS",
   "ANALYSIS",
   "QUALITY_ANALYSIS",
+  "SECURITY_ANALYSIS",
   "CODE_HYGIENE",
 ]);
 
@@ -36,23 +37,12 @@ const TERMINAL_STATUSES = Object.freeze(["SUCCESS", "FAILED", "CANCELED"]);
 // Assertion helpers
 // ---------------------------------------------------------------------------
 
-/**
- * @param {unknown} value
- * @param {string}  fieldName
- * @throws {ServiceError} 400 when value is absent or not a non-empty string
- */
 const assertStringField = (value, fieldName) => {
   if (!value || typeof value !== "string" || value.trim().length === 0) {
     throw new ServiceError(`${fieldName} is required`, 400);
   }
 };
 
-/**
- * Kept Number.isFinite (HEAD) — stricter than NaN-only check; rejects Infinity.
- * @param {unknown} value
- * @param {string}  fieldName
- * @throws {ServiceError} 400 when value is not a finite number
- */
 const assertNumberField = (value, fieldName) => {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new ServiceError(`${fieldName} must be a number`, 400);
@@ -63,41 +53,19 @@ const assertNumberField = (value, fieldName) => {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Normalises any thrown value into a proper Error so `error.message` is safe
- * to read.
- * @param {unknown} error
- * @returns {Error}
- */
 const normalizeJobError = (error) => {
   if (error instanceof Error) return error;
   return new Error(typeof error === "string" ? error : JSON.stringify(error));
 };
 
-/**
- * Appends a log entry to a job, optionally inside an existing Prisma
- * transaction client.
- *
- * @param {string}                                  jobId
- * @param {"INFO" | "WARN" | "ERROR"}               level
- * @param {string}                                  message
- * @param {import("@prisma/client").PrismaClient}   [client]
- */
 export const addJobLog = async (jobId, level, message, client = prisma) => {
   return client.jobLog.create({ data: { jobId, level, message } });
 };
 
-/**
- * Shared guard: throws 409 when a job of the given type is already active for
- * the project.
- *
- * @param {string} projectId
- * @param {string} type
- * @param {import("@prisma/client").PrismaClient} [client]
- */
-const assertNoActiveJob = async (projectId, type, client = prisma) => {
+const assertNoActiveJob = async (projectId, type, client = prisma, extraFilters = {}) => {
+  const where = { projectId, type, status: { in: ["QUEUED", "RUNNING"] }, ...extraFilters };
   const running = await client.job.findFirst({
-    where: { projectId, type, status: { in: ["QUEUED", "RUNNING"] } },
+    where,
     select: { id: true },
   });
 
@@ -110,64 +78,61 @@ const assertNoActiveJob = async (projectId, type, client = prisma) => {
 };
 
 // ---------------------------------------------------------------------------
-// Typed convenience creators (thin wrappers — avoids repetition at call sites)
+// Typed convenience creators
 // ---------------------------------------------------------------------------
 
 const createTypedJob =
   (type) =>
-  ({ projectId, snapshotId, userId }) =>
-    createSnapshotJob({
-      projectId,
-      snapshotId,
-      userId,
-      type,
-      payloadJson: { snapshotId },
-    });
+    ({ projectId, snapshotId, userId }) =>
+      createSnapshotJob({
+        projectId,
+        snapshotId,
+        userId,
+        type,
+        payloadJson: { snapshotId },
+      });
 
-/** Creates a queued INSTALL_DEPS job for a snapshot. */
 export const createInstallDepsJob = createTypedJob("INSTALL_DEPS");
 
-/** Creates a queued RUN_TESTS job for a snapshot. */
-export const createRunTestsJob = createTypedJob("RUN_TESTS");
+export const createRunTestsJob = ({ projectId, snapshotId, userId, mode = "FULL" }) =>
+  createSnapshotJob({
+    projectId,
+    snapshotId,
+    userId,
+    type: "RUN_TESTS",
+    payloadJson: { snapshotId, mode },
+  });
 
-/** Creates a queued Supertest integration-coverage job for a snapshot. */
 export const createSupertestCoverageJob = createTypedJob("SUPERTEST_COVERAGE");
-
-/** Creates a queued BUILD_CFG job for a snapshot. */
 export const createBuildCfgJob = createTypedJob("BUILD_CFG");
-
-/** Creates a queued automatic performance-analysis job for a snapshot. */
-export const createPerformanceAnalysisJob = createTypedJob(
-  "PERFORMANCE_ANALYSIS",
-);
-
-/** Creates a queued AI_SUGGEST job for a snapshot. */
+export const createPerformanceAnalysisJob = createTypedJob("PERFORMANCE_ANALYSIS");
 export const createAiSuggestJob = createTypedJob("AI_SUGGEST");
-
-/** Creates a queued CODE_HYGIENE job for a snapshot. */
 export const createCodeHygieneJob = createTypedJob("CODE_HYGIENE");
 
-/** Creates a queued AI_TESTS job for a snapshot. */
-export const createAiTestsJob = ({
-  projectId,
-  snapshotId,
-  userId,
-  mode = "SKELETON",
-}) =>
-  createSnapshotJob({
+export const createAiTestsJob = async ({ projectId, snapshotId, userId, mode = "SKELETON" }) => {
+  const existing = await prisma.job.findFirst({
+    where: {
+      projectId,
+      snapshotId,
+      type: "AI_TESTS",
+      status: { in: ["QUEUED", "RUNNING"] },
+      payloadJson: { contains: `"mode":"${mode}"` }
+    }
+  });
+
+  if (existing) {
+    return { ...existing, existing: true };
+  }
+
+  return createSnapshotJob({
     projectId,
     snapshotId,
     userId,
     type: "AI_TESTS",
     payloadJson: { snapshotId, mode },
   });
+};
 
-/**
- * Creates an idempotent, snapshot-scoped Architecture analysis job.
- * Unlike other job types, two snapshots of the same project may be analyzed
- * concurrently. The database partial unique index closes the race between
- * the active-job lookup and creation.
- */
 export const createAnalysisJob = async ({ projectId, snapshotId, userId }) => {
   assertStringField(projectId, "projectId");
   assertStringField(snapshotId, "snapshotId");
@@ -207,8 +172,6 @@ export const createAnalysisJob = async ({ projectId, snapshotId, userId }) => {
     await addJobLog(job.id, "INFO", "Architecture analysis job created");
     return { ...job, reused: false };
   } catch (error) {
-    // The partial unique index can reject a concurrent create. Re-read only
-    // the active row; all other database failures remain visible.
     if (error?.code === "P2002") {
       const concurrent = await prisma.job.findFirst({
         where: activeWhere,
@@ -224,22 +187,6 @@ export const createAnalysisJob = async ({ projectId, snapshotId, userId }) => {
 // Create jobs
 // ---------------------------------------------------------------------------
 
-/**
- * Creates a new snapshot record and a queued INGEST job within a single
- * transaction. Short-circuits if an identical snapshot already has fully
- * processed artefacts.
- *
- * @param {{
- *   projectId:   string,
- *   userId:      string,
- *   checksum:    string,
- *   storagePath: string,
- * }} params
- * @returns {Promise<
- *   | { reused: true;  result: import("./snapshotReuse.service.js").CachedResult }
- *   | { reused: false; snapshot: object; job: object }
- * >}
- */
 export const createSnapshotIngestJob = async ({
   projectId,
   userId,
@@ -251,7 +198,6 @@ export const createSnapshotIngestJob = async ({
   assertStringField(checksum, "checksum");
   assertStringField(storagePath, "storagePath");
 
-  // Short-circuit: reuse a previously processed snapshot with same checksum.
   const cached = await reuseSnapshotHistory({
     projectId,
     checksum,
@@ -294,17 +240,6 @@ export const createSnapshotIngestJob = async ({
   });
 };
 
-/**
- * Creates a standalone INGEST job for an already-existing snapshot.
- *
- * @param {{
- *   projectId:    string,
- *   snapshotId:   string,
- *   userId:       string,
- *   payloadJson?: object | null,
- * }} params
- * @returns {Promise<object>} The created Job record
- */
 export const createIngestJobForSnapshot = async ({
   projectId,
   snapshotId,
@@ -347,18 +282,6 @@ export const createIngestJobForSnapshot = async ({
   return job;
 };
 
-/**
- * Creates a generic job for any valid job type.
- *
- * @param {{
- *   projectId:    string,
- *   snapshotId:   string,
- *   userId:       string,
- *   type:         string,
- *   payloadJson?: object | null,
- * }} params
- * @returns {Promise<object>} The created Job record
- */
 export const createSnapshotJob = async ({
   projectId,
   snapshotId,
@@ -414,13 +337,6 @@ export const createSnapshotJob = async ({
 // State transitions
 // ---------------------------------------------------------------------------
 
-/**
- * Updates the numeric progress of a running job (clamped 0–100).
- *
- * @param {string} jobId
- * @param {number} progress  0–100
- * @returns {Promise<object>} Updated Job record
- */
 export const updateJobProgress = async (jobId, progress) => {
   assertStringField(jobId, "jobId");
   assertNumberField(progress, "progress");
@@ -446,12 +362,6 @@ export const updateJobProgress = async (jobId, progress) => {
   return job;
 };
 
-/**
- * Transitions a QUEUED job to RUNNING.
- *
- * @param {string} jobId
- * @returns {Promise<object>} Updated Job record
- */
 export const markJobRunning = async (jobId) => {
   assertStringField(jobId, "jobId");
 
@@ -475,20 +385,12 @@ export const markJobRunning = async (jobId) => {
   return job;
 };
 
-/**
- * Transitions a RUNNING job to SUCCESS, persisting the result payload.
- * Also upserts a JobOutput record and fires a finish notification.
- *
- * @param {string}  jobId
- * @param {object}  [resultJson={}]
- * @returns {Promise<object>} Updated Job record
- */
 export const markJobSuccess = async (jobId, resultJson) => {
   assertStringField(jobId, "jobId");
 
   const currentJob = await prisma.job.findUnique({
     where: { id: jobId },
-    select: { id: true, status: true, userId: true, projectId: true },
+    select: { id: true, status: true, userId: true, projectId: true, startedAt: true },
   });
 
   if (!currentJob) throw new ServiceError("Job not found", 404);
@@ -522,7 +424,6 @@ export const markJobSuccess = async (jobId, resultJson) => {
 
   await addJobLog(jobId, "INFO", "Job succeeded");
 
-  // Non-critical — failure must not roll back the job status update.
   try {
     await notificationService.createJobFinishedNotification(jobId);
   } catch (err) {
@@ -532,13 +433,6 @@ export const markJobSuccess = async (jobId, resultJson) => {
   return job;
 };
 
-/**
- * Transitions a RUNNING job to FAILED, storing the error message.
- *
- * @param {string}  jobId
- * @param {unknown} error  Any thrown value
- * @returns {Promise<object>} Updated Job record
- */
 export const markJobFailed = async (jobId, error) => {
   assertStringField(jobId, "jobId");
 
@@ -546,7 +440,7 @@ export const markJobFailed = async (jobId, error) => {
 
   const currentJob = await prisma.job.findUnique({
     where: { id: jobId },
-    select: { id: true, status: true },
+    select: { id: true, status: true, startedAt: true },
   });
 
   if (!currentJob) throw new ServiceError("Job not found", 404);
@@ -572,15 +466,6 @@ export const markJobFailed = async (jobId, error) => {
   return job;
 };
 
-/**
- * Transitions a QUEUED job directly to FAILED.
- * Used when a prerequisite job fails and dependent QUEUED jobs need to be
- * cancelled with an error message rather than left stuck.
- *
- * @param {string}  jobId
- * @param {unknown} error  Any thrown value
- * @returns {Promise<object>} Updated Job record
- */
 export const markQueuedJobFailed = async (jobId, error) => {
   assertStringField(jobId, "jobId");
 
@@ -618,12 +503,6 @@ export const markQueuedJobFailed = async (jobId, error) => {
   return job;
 };
 
-/**
- * Cancels a QUEUED or RUNNING job.
- *
- * @param {string} jobId
- * @returns {Promise<object>} Updated Job record
- */
 export const cancelJob = async (jobId) => {
   assertStringField(jobId, "jobId");
 
@@ -646,12 +525,6 @@ export const cancelJob = async (jobId) => {
   return job;
 };
 
-/**
- * Retries a FAILED INGEST job by creating a new job for the same snapshot.
- *
- * @param {string} jobId  ID of the failed job to retry
- * @returns {Promise<object>} The newly created Job record
- */
 export const retryJob = async (jobId) => {
   assertStringField(jobId, "jobId");
 
@@ -666,7 +539,6 @@ export const retryJob = async (jobId) => {
   if (oldJob.type !== "INGEST")
     throw new ServiceError("Only INGEST jobs can be retried", 400);
 
-  // Verify the snapshot still exists and belongs to the project.
   const snapshot = await prisma.projectSnapshot.findUnique({
     where: { id: oldJob.snapshotId },
     select: { id: true, projectId: true },
@@ -693,12 +565,6 @@ export const retryJob = async (jobId) => {
 // Read operations
 // ---------------------------------------------------------------------------
 
-/**
- * Fetches a single job with its snapshot, logs, and output.
- *
- * @param {string} jobId
- * @returns {Promise<object>}
- */
 export const getJobById = async (jobId) => {
   assertStringField(jobId, "jobId");
 
@@ -715,12 +581,6 @@ export const getJobById = async (jobId) => {
   return job;
 };
 
-/**
- * Returns all jobs for a project, newest first.
- *
- * @param {string} projectId
- * @returns {Promise<object[]>}
- */
 export const getProjectJobs = async (projectId) => {
   assertStringField(projectId, "projectId");
   return prisma.job.findMany({
@@ -729,12 +589,6 @@ export const getProjectJobs = async (projectId) => {
   });
 };
 
-/**
- * Returns all QUEUED or RUNNING jobs for a project.
- *
- * @param {string} projectId
- * @returns {Promise<object[]>}
- */
 export const getRunningJobs = async (projectId) => {
   assertStringField(projectId, "projectId");
   return prisma.job.findMany({
@@ -742,12 +596,6 @@ export const getRunningJobs = async (projectId) => {
   });
 };
 
-/**
- * Returns aggregated job status counts for a project.
- *
- * @param {string} projectId
- * @returns {Promise<{ queued: number, running: number, success: number, failed: number }>}
- */
 export const getJobStats = async (projectId) => {
   assertStringField(projectId, "projectId");
 

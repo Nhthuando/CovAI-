@@ -13,7 +13,6 @@ import {
 } from "lucide-react";
 import { loginApi, registerApi } from "../../services/auth.service";
 
-/* ── Inline GitHub SVG ─────────────────────────────────────── */
 function GithubIcon({ size = 17 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
@@ -22,7 +21,6 @@ function GithubIcon({ size = 17 }) {
   );
 }
 
-/* ── Stagger container ─────────────────────────────────────── */
 const containerVariants = {
   hidden: {},
   visible: { transition: { staggerChildren: 0.07, delayChildren: 0.05 } },
@@ -32,7 +30,6 @@ const itemVariants = {
   visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: "easeOut" } },
 };
 
-/* ── Shake animation for error ─────────────────────────────── */
 const shakeVariants = {
   shake: {
     x: [0, -8, 8, -6, 6, -4, 4, 0],
@@ -40,10 +37,8 @@ const shakeVariants = {
   },
 };
 
-/* ── Email regex validator ─────────────────────────────────── */
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-/* ── Input field ───────────────────────────────────────────── */
 function InputField({
   id,
   label,
@@ -98,8 +93,6 @@ function InputField({
         </div>
         <input
           id={id}
-          /* Always use type="text" for email to suppress browser native tooltip.
-             We validate email format ourselves via regex. */
           type={type}
           value={value}
           onChange={onChange}
@@ -125,7 +118,6 @@ function InputField({
         {rightSlot && <div style={{ padding: "0 12px 0 0" }}>{rightSlot}</div>}
       </div>
 
-      {/* ── Error message — same style for all fields ── */}
       <AnimatePresence>
         {error && (
           <motion.div
@@ -155,7 +147,6 @@ function InputField({
   );
 }
 
-/* ── Eye toggle button ─────────────────────────────────────── */
 function EyeToggle({ show, onToggle }) {
   return (
     <button
@@ -179,7 +170,6 @@ function EyeToggle({ show, onToggle }) {
   );
 }
 
-/* ── Main Auth Form ────────────────────────────────────────── */
 export default function AuthForm({ mode, onToggleMode, setMode }) {
   const isLogin = mode === "login";
 
@@ -192,17 +182,15 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
   const [errors, setErrors] = useState({});
   const [showPass, setShowPass] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
-  const [status, setStatus] = useState("idle"); // idle | loading | success | error
-  const [serverMessage, setServerMessage] = useState(""); // for top-level server errors
+  const [status, setStatus] = useState("idle");
+  const [serverMessage, setServerMessage] = useState("");
 
   const update = (field) => (e) => {
     setFormData((d) => ({ ...d, [field]: e.target.value }));
-    // Clear field error on change
     if (errors[field]) setErrors((prev) => ({ ...prev, [field]: "" }));
     setServerMessage("");
   };
 
-  /* ── Client-side validation ─────────────────────────────── */
   function validate() {
     const errs = {};
     if (!isLogin && !formData.name.trim()) errs.name = "Vui lòng nhập họ tên";
@@ -215,7 +203,6 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
     return errs;
   }
 
-  /* ── Submit ─────────────────────────────────────────────── */
   async function handleSubmit(e) {
     e.preventDefault();
     setServerMessage("");
@@ -240,10 +227,6 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
         localStorage.setItem("token", data.accessToken);
         localStorage.setItem("userName", data.name);
         localStorage.setItem("userEmail", data.email);
-        setStatus("success");
-        setTimeout(() => {
-          window.location.href = "/projects";
-        }, 1500);
       } else {
         const data = await registerApi({
           name: formData.name,
@@ -253,19 +236,17 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
         localStorage.setItem("token", data.accessToken);
         localStorage.setItem("userName", data.userName);
         localStorage.setItem("userEmail", data.userEmail);
-        setStatus("success");
-        setTimeout(() => {
-          window.location.href = "/projects";
-        }, 1500);
       }
+      setStatus("success");
+      setTimeout(() => {
+        window.location.href = "/projects";
+      }, 1500);
     } catch (err) {
       if (err.type === "field") {
-        // Map server field errors back onto the form
         setErrors(err.errors);
         setStatus("error");
         setTimeout(() => setStatus("idle"), 600);
       } else {
-        // Top-level message error (e.g. "Tài khoản đã tồn tại!")
         setServerMessage(err.message || "Có lỗi xảy ra, vui lòng thử lại");
         setStatus("error");
         setTimeout(() => setStatus("idle"), 600);
@@ -282,7 +263,6 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
         padding: "0 1.5rem",
       }}
     >
-      {/* Heading */}
       <AnimatePresence mode="wait">
         <motion.div
           key={mode + "-heading"}
@@ -317,7 +297,6 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
         </motion.div>
       </AnimatePresence>
 
-      {/* ── Success state ── */}
       <AnimatePresence>
         {status === "success" && (
           <motion.div
@@ -365,7 +344,6 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
 
       {status !== "success" && (
         <>
-          {/* ── GitHub SSO ── */}
           <motion.button
             id="auth-github-btn"
             type="button"
@@ -400,7 +378,6 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
             Continue with GitHub
           </motion.button>
 
-          {/* OR divider */}
           <div
             style={{
               display: "flex",
@@ -435,7 +412,6 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
             />
           </div>
 
-          {/* ── Top-level server error message ── */}
           <AnimatePresence>
             {serverMessage && (
               <motion.div
@@ -473,8 +449,6 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
             )}
           </AnimatePresence>
 
-          {/* ── Form ── */}
-          {/* noValidate disables ALL browser native validation tooltips */}
           <motion.form
             key={mode + "-form"}
             id={`auth-${mode}-form`}
@@ -489,7 +463,6 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
               animate="visible"
               style={{ display: "flex", flexDirection: "column", gap: "1rem" }}
             >
-              {/* Name (register only) */}
               <AnimatePresence>
                 {!isLogin && (
                   <motion.div
@@ -516,7 +489,6 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
                 )}
               </AnimatePresence>
 
-              {/* Email — type="text" to suppress browser native tooltip */}
               <motion.div variants={itemVariants}>
                 <InputField
                   id="auth-email"
@@ -530,7 +502,6 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
                 />
               </motion.div>
 
-              {/* Password */}
               <motion.div variants={itemVariants}>
                 <InputField
                   id="auth-password"
@@ -552,7 +523,6 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
                 />
               </motion.div>
 
-              {/* Confirm password (register only) */}
               <AnimatePresence>
                 {!isLogin && (
                   <motion.div
@@ -585,7 +555,6 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
                 )}
               </AnimatePresence>
 
-              {/* Forgot password */}
               {isLogin && (
                 <motion.div
                   variants={itemVariants}
@@ -611,7 +580,6 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
                 </motion.div>
               )}
 
-              {/* Submit button */}
               <motion.div
                 variants={itemVariants}
                 style={{ marginTop: "0.5rem" }}
@@ -671,7 +639,6 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
                 </motion.button>
               </motion.div>
 
-              {/* Terms */}
               {!isLogin && (
                 <motion.p
                   variants={itemVariants}
@@ -702,7 +669,6 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
             </motion.div>
           </motion.form>
 
-          {/* Toggle mode */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -716,7 +682,7 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
           >
             {isLogin ? (
               <>
-                Don&apos;t have an account?{" "}
+                Don't have an account?{" "}
                 <button
                   id="auth-toggle-to-register"
                   onClick={onToggleMode}

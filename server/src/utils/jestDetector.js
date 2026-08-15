@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { resolveProjectRoot } from "./projectRootResolver.js";
 
 const JEST_CONFIG_FILES = [
     "jest.config.js",
@@ -17,6 +18,7 @@ const readJsonFile = (filePath) => {
 };
 
 export function detectJest(rootDir) {
+    const effectiveRootDir = resolveProjectRoot(rootDir);
     const result = {
         hasJest: false,
         hasJestConfigFile: false,
@@ -29,7 +31,7 @@ export function detectJest(rootDir) {
         scripts: {},
         jestCommand: null,
         version: null,
-        rootDir: rootDir || null,
+        rootDir: effectiveRootDir || null,
         packageJsonPath: null,
         errors: [],
     };
@@ -40,11 +42,11 @@ export function detectJest(rootDir) {
         return result;
     }
 
-    const packagePath = path.join(rootDir, "package.json");
+    const packagePath = path.join(effectiveRootDir, "package.json");
     result.packageJsonPath = packagePath;
 
     for (const file of JEST_CONFIG_FILES) {
-        const fullPath = path.join(rootDir, file);
+        const fullPath = path.join(effectiveRootDir, file);
 
         if (fs.existsSync(fullPath)) {
             result.configPath = fullPath;
