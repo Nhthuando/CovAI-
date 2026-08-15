@@ -4,8 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "nodemon index.js",
-    "start": "nodemon index.js",
+    "dev": "prisma generate && nodemon index.js",
+    "dev:docker": "prisma generate && nodemon index.js",
+    "db:push": "prisma db push",
+    "start": "prisma generate && node index.js",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js"
   },
   "keywords": [],
@@ -22,6 +24,7 @@
     "adm-zip": "^0.5.17",
     "bcryptjs": "^3.0.3",
     "bullmq": "^5.80.0",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "esprima": "^4.0.1",

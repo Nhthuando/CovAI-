@@ -59,12 +59,7 @@ const runNpmInstall = async (jobId, rootDir) => {
  * @returns {Promise<{ exitCode: number }>}
  */
 const runJestCoverage = async (jobId, rootDir, jestConfigPath) => {
-    const coverageDir = path.join(rootDir, "coverage");
-    if (!fs.existsSync(coverageDir)) {
-        fs.mkdirSync(coverageDir, { recursive: true });
-    }
-    const resultsPath = path.join(coverageDir, "test-results.json");
-    let jestCmd = `npx jest --coverage --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=${resultsPath} --forceExit --testTimeout=30000`;
+    let jestCmd = "npx jest --coverage --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=test-results.json --forceExit --testTimeout=30000";
 
     if (jestConfigPath) {
         // Path inside Docker must be relative to /workspace
@@ -270,28 +265,19 @@ export const processRunTestsJob = async (jobId) => {
         // ── SCRUM-141: Parse reports ──────────────────────────────────────────
         await addJobLog(jobId, "INFO", "Bước 3/4: Parse coverage reports...").catch(() => { });
 
-        // SCRUM-141: Persist Jest test results
+        // Parse test results
         const jestResults = parseJestResults(coverageDir);
         if (jestResults) {
-            const testRun = await prisma.testRun.create({
+            await prisma.testRun.create({
                 data: {
                     snapshotId,
                     type: "JEST",
-                    totalTests: jestResults.totalTests,
-                    passedTests: jestResults.passedTests,
-                    failedTests: jestResults.failedTests,
-                    skippedTests: jestResults.skippedTests,
-                    durationMs: jestResults.durationMs,
-                    status: jestResults.status, // PASSED or FAILED
-                    startedAt: new Date(), // TODO: Get actual start time
-                    finishedAt: new Date() // TODO: Get actual finish time
+                    ...jestResults,
+                    startedAt: new Date(),
+                    finishedAt: new Date()
                 }
             });
-            console.log(`[TEST-RESULT] TestRun persisted:`, testRun.id, testRun.type);
             await addJobLog(jobId, "INFO", `[SCRUM-141] Đã lưu TestRun (JEST): ${jestResults.totalTests} tests.`).catch(() => { });
-        } else {
-            await addJobLog(jobId, "ERROR", `[TEST-RESULT] Jest completed but test result JSON could not be parsed.`).catch(() => { });
-            throw new Error(`Jest execution result was not available for TestRun persistence.`);
         }
 
         // Parse coverage-summary.json → CoverageSummary + CoverageFile (from summary)

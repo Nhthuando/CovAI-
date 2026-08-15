@@ -2,19 +2,20 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Files,
   LayoutDashboard,
-  Search,
   Cpu,
-  FlaskConical,
+  Network,
   Settings,
   Zap,
+  BarChart3,
 } from "lucide-react";
 import { useState } from "react";
 
 const TOP_ITEMS = [
   { id: "explorer", icon: Files, label: "Explorer" },
   { id: "dashboard", icon: LayoutDashboard, label: "Dashboard" },
-  { id: "search", icon: Search, label: "Search" },
+  { id: "coverage", icon: BarChart3, label: "Coverage" },
   { id: "jobs", icon: Cpu, label: "Job Queue" },
+  { id: "architecture", icon: Network, label: "Architecture" },
 ];
 
 const BOTTOM_ITEMS = [{ id: "settings", icon: Settings, label: "Settings" }];

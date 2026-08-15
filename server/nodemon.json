@@ -1,3 +1,4 @@
 {
-  "ignore": ["storage/**/*", "uploads/**/*"]
+  "ignore": ["storage/**/*", "uploads/**/*"],
+  "legacyWatch": true
 }

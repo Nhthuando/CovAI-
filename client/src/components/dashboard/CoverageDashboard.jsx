@@ -399,7 +399,7 @@ const CoverageDashboard = ({ snapshotId, projectId, onOpenFile }) => {
     return (
         <div style={{
             display: "flex", flexDirection: "column",
-            width: "100%", height: "100%", overflow: "hidden",
+            width: "100%",
             background: "var(--ide-bg, #0d1117)",
             color: "var(--text-primary, #f0f6fc)",
             fontFamily: "var(--font-sans, -apple-system, sans-serif)",

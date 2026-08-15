@@ -195,11 +195,35 @@ export async function getAiSuggestionsApi(projectId) {
   return handleResponse(res);
 }
 
-export async function runAnalysisApi(projectId, options = {}) {
+export async function getProjectSnapshotsApi(projectId) {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/snapshots`, {
+    headers: getAuthHeaders(),
+  });
+  return handleResponse(res);
+}
+
+export async function getProjectStructureAnalysisApi(projectId, snapshotId) {
+  const query = snapshotId ? `?snapshotId=${encodeURIComponent(snapshotId)}` : "";
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/structure-analysis${query}`, {
+    headers: getAuthHeaders(),
+  });
+  return handleResponse(res);
+}
+
+export async function runAnalysisApi(projectId, snapshotId) {
   const res = await fetch(`${BASE_URL}/projects/${projectId}/run-analysis`, {
     method: "POST",
     headers: getAuthHeaders(),
-    body: JSON.stringify(options),
+    body: JSON.stringify(snapshotId ? { snapshotId } : {}),
+  });
+  return handleResponse(res);
+}
+
+export async function runProjectStructureAnalysisApi(projectId, snapshotId) {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/structure-analysis`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify(snapshotId ? { snapshotId } : {}),
   });
   return handleResponse(res);
 }

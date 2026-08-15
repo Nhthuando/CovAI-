@@ -1,3 +1,5 @@
+/* eslint-disable react-hooks/refs */
+/* eslint-disable no-unused-vars */
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -12,7 +14,10 @@ import {
   Check,
 } from "lucide-react";
 import MonacoEditor from "@monaco-editor/react";
-import { getFileContentApi, updateFileContentApi } from "../../services/project.service";
+import {
+  getFileContentApi,
+  updateFileContentApi,
+} from "../../services/project.service";
 
 /* ── Token color map (for simple syntax highlighting) ────── */
 const EXT_LANG_MAP = {
@@ -36,22 +41,97 @@ const EXT_LANG_MAP = {
 
 /* ── Simple keyword highlighting ─────────────────────────── */
 const JS_KEYWORDS = new Set([
-  "import", "export", "from", "default", "const", "let", "var",
-  "function", "return", "if", "else", "for", "while", "do",
-  "switch", "case", "break", "continue", "new", "delete", "typeof",
-  "instanceof", "in", "of", "class", "extends", "super", "this",
-  "try", "catch", "finally", "throw", "async", "await", "yield",
-  "null", "undefined", "true", "false", "void", "static",
-  "interface", "type", "enum", "implements", "abstract", "private",
-  "public", "protected", "readonly", "declare", "module", "namespace",
+  "import",
+  "export",
+  "from",
+  "default",
+  "const",
+  "let",
+  "var",
+  "function",
+  "return",
+  "if",
+  "else",
+  "for",
+  "while",
+  "do",
+  "switch",
+  "case",
+  "break",
+  "continue",
+  "new",
+  "delete",
+  "typeof",
+  "instanceof",
+  "in",
+  "of",
+  "class",
+  "extends",
+  "super",
+  "this",
+  "try",
+  "catch",
+  "finally",
+  "throw",
+  "async",
+  "await",
+  "yield",
+  "null",
+  "undefined",
+  "true",
+  "false",
+  "void",
+  "static",
+  "interface",
+  "type",
+  "enum",
+  "implements",
+  "abstract",
+  "private",
+  "public",
+  "protected",
+  "readonly",
+  "declare",
+  "module",
+  "namespace",
 ]);
 
 const PYTHON_KEYWORDS = new Set([
-  "import", "from", "def", "class", "return", "if", "elif", "else",
-  "for", "while", "break", "continue", "pass", "raise", "try",
-  "except", "finally", "with", "as", "lambda", "yield", "global",
-  "nonlocal", "True", "False", "None", "and", "or", "not", "in",
-  "is", "del", "assert", "async", "await",
+  "import",
+  "from",
+  "def",
+  "class",
+  "return",
+  "if",
+  "elif",
+  "else",
+  "for",
+  "while",
+  "break",
+  "continue",
+  "pass",
+  "raise",
+  "try",
+  "except",
+  "finally",
+  "with",
+  "as",
+  "lambda",
+  "yield",
+  "global",
+  "nonlocal",
+  "True",
+  "False",
+  "None",
+  "and",
+  "or",
+  "not",
+  "in",
+  "is",
+  "del",
+  "assert",
+  "async",
+  "await",
 ]);
 
 function getKeywords(lang) {
@@ -103,7 +183,10 @@ function tokenizeLine(line, lang) {
     }
 
     // Numbers
-    if (/\d/.test(line[i]) && (i === 0 || /[\s(,=+\-*/<>:[\]{};!&|^~%?]/.test(line[i - 1]))) {
+    if (
+      /\d/.test(line[i]) &&
+      (i === 0 || /[\s(,=+\-*/<>:[\]{};!&|^~%?]/.test(line[i - 1]))
+    ) {
       let j = i;
       while (j < line.length && /[\d.xXa-fA-FeEnN_]/.test(line[j])) j++;
       tokens.push({ type: "number", value: line.slice(i, j) });
@@ -128,12 +211,19 @@ function tokenizeLine(line, lang) {
     }
 
     // JSX/HTML tags
-    if (line[i] === "<" && i + 1 < line.length && /[a-zA-Z/]/.test(line[i + 1])) {
+    if (
+      line[i] === "<" &&
+      i + 1 < line.length &&
+      /[a-zA-Z/]/.test(line[i + 1])
+    ) {
       let j = i;
       let depth = 0;
       while (j < line.length) {
         if (line[j] === "<") depth++;
-        if (line[j] === ">") { j++; break; }
+        if (line[j] === ">") {
+          j++;
+          break;
+        }
         j++;
       }
       tokens.push({ type: "tag", value: line.slice(i, j) });
@@ -201,19 +291,37 @@ function Tab({ tab, isActive, onSelect, onClose }) {
         <motion.div
           layoutId="tab-top-indicator"
           className="absolute top-0 left-0 right-0"
-          style={{ height: 1.5, background: "#7c3aed", boxShadow: "0 0 8px rgba(124,58,237,0.6)" }}
+          style={{
+            height: 1.5,
+            background: "#7c3aed",
+            boxShadow: "0 0 8px rgba(124,58,237,0.6)",
+          }}
         />
       )}
       {tab.unsaved && (
-        <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#a78bfa", flexShrink: 0 }} />
+        <div
+          style={{
+            width: 5,
+            height: 5,
+            borderRadius: "50%",
+            background: "#a78bfa",
+            flexShrink: 0,
+          }}
+        />
       )}
-      <span className="truncate" style={{ color: isActive ? getTabColor(tab.name) : undefined }}>
+      <span
+        className="truncate"
+        style={{ color: isActive ? getTabColor(tab.name) : undefined }}
+      >
         {tab.name}
       </span>
       <motion.button
         animate={{ opacity: hovered || isActive ? 1 : 0 }}
         transition={{ duration: 0.1 }}
-        onClick={(e) => { e.stopPropagation(); onClose(tab.id); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClose(tab.id);
+        }}
         whileHover={{ background: "rgba(255,255,255,0.1)" }}
         whileTap={{ scale: 0.85 }}
         className="ml-auto p-0.5 rounded flex-shrink-0"
@@ -226,7 +334,14 @@ function Tab({ tab, isActive, onSelect, onClose }) {
 }
 
 /* ── Code Line ───────────────────────────────────────────── */
-function CodeLine({ lineNum, tokens, isFunction, complexity, decisionPoints, onAnalyze }) {
+function CodeLine({
+  lineNum,
+  tokens,
+  isFunction,
+  complexity,
+  decisionPoints,
+  onAnalyze,
+}) {
   return (
     <div
       className="flex items-stretch group"
@@ -265,7 +380,10 @@ function CodeLine({ lineNum, tokens, isFunction, complexity, decisionPoints, onA
           <span>&nbsp;</span>
         ) : (
           tokens.map((tok, i) => (
-            <span key={i} style={{ color: TOKEN_COLORS[tok.type] || TOKEN_COLORS.plain }}>
+            <span
+              key={i}
+              style={{ color: TOKEN_COLORS[tok.type] || TOKEN_COLORS.plain }}
+            >
               {tok.value}
             </span>
           ))
@@ -276,7 +394,16 @@ function CodeLine({ lineNum, tokens, isFunction, complexity, decisionPoints, onA
 }
 
 /* ── Editor ─────────────────────────────────────────────── */
-export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fileTree = [], isLoadingTree, projectId, snapshotId }) {
+export default function Editor({
+  tabs,
+  activeTabId,
+  onSelectTab,
+  onCloseTab,
+  fileTree = [],
+  isLoadingTree,
+  projectId,
+  snapshotId,
+}) {
   const [fileContents, setFileContents] = useState({}); // cache: { [fileId]: { content, loading, error } }
   const [complexities, setComplexities] = useState({}); // cache: { [fileId]: { [funcName]: { value, decisionPoints } } }
   const fetchedRef = useRef(new Set()); // track what we've already fetched
@@ -297,38 +424,43 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
     const token = localStorage.getItem("token") || userToken;
 
     fetch(`http://localhost:5000/api/cyclomatic?snapshotId=${snapshotId}`, {
-      method: 'GET',
+      method: "GET",
       headers: {
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json"
-      }
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
     })
-      .then(res => {
+      .then((res) => {
         return res.text(); // Read as text first to debug
       })
-      .then(text => {
+      .then((text) => {
         const data = JSON.parse(text);
 
         // If data is not an array, maybe it's { results: [...] } or { data: [...] }
-        const arrayData = Array.isArray(data) ? data : (data.data || data.results || []);
+        const arrayData = Array.isArray(data)
+          ? data
+          : data.data || data.results || [];
 
         if (Array.isArray(arrayData)) {
           const newComplexities = {};
           // Normalize function to match paths: ensure both are relative paths
-          const normalize = (p) => p.replace(/\\/g, '/').replace(/^\.\//, '');
+          const normalize = (p) => p.replace(/\\/g, "/").replace(/^\.\//, "");
 
-          arrayData.forEach(item => {
+          arrayData.forEach((item) => {
             const key = normalize(item.filePath);
             if (!newComplexities[key]) newComplexities[key] = {};
             newComplexities[key][item.functionName] = {
               value: item.value,
-              decisionPoints: item.decisionPoints !== undefined ? item.decisionPoints : Math.max(0, item.value - 1)
+              decisionPoints:
+                item.decisionPoints !== undefined
+                  ? item.decisionPoints
+                  : Math.max(0, item.value - 1),
             };
           });
           setComplexities(newComplexities);
         }
       })
-      .catch(err => console.error("Failed to fetch complexities", err));
+      .catch((err) => console.error("Failed to fetch complexities", err));
   }, [activeTabId, projectId, snapshotId]);
 
   useEffect(() => {
@@ -340,7 +472,11 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
     if (!activeTabId || !projectId) return;
 
     // Already have content or currently loading
-    if (fileContents[activeTabId]?.content !== undefined || fileContents[activeTabId]?.loading) return;
+    if (
+      fileContents[activeTabId]?.content !== undefined ||
+      fileContents[activeTabId]?.loading
+    )
+      return;
     // Already fetched (prevents double fetch in StrictMode)
     if (fetchedRef.current.has(activeTabId)) return;
 
@@ -355,13 +491,21 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
       .then((res) => {
         setFileContents((prev) => ({
           ...prev,
-          [activeTabId]: { content: res.data.content, loading: false, error: null },
+          [activeTabId]: {
+            content: res.data.content,
+            loading: false,
+            error: null,
+          },
         }));
       })
       .catch((err) => {
         setFileContents((prev) => ({
           ...prev,
-          [activeTabId]: { content: undefined, loading: false, error: err.message || "Failed to load file" },
+          [activeTabId]: {
+            content: undefined,
+            loading: false,
+            error: err.message || "Failed to load file",
+          },
         }));
       });
   }, [activeTabId, projectId, fileContents]);
@@ -375,10 +519,24 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
         animate={{ opacity: 1 }}
         style={{ background: "var(--ide-bg)" }}
       >
-        <div style={{ color: "#8b949e", fontSize: 24, fontWeight: 500, fontFamily: "var(--font-sans)" }}>
+        <div
+          style={{
+            color: "#8b949e",
+            fontSize: 24,
+            fontWeight: 500,
+            fontFamily: "var(--font-sans)",
+          }}
+        >
           No files found
         </div>
-        <div style={{ color: "#6e7681", fontSize: 14, marginTop: 8, fontFamily: "var(--font-sans)" }}>
+        <div
+          style={{
+            color: "#6e7681",
+            fontSize: 14,
+            marginTop: 8,
+            fontFamily: "var(--font-sans)",
+          }}
+        >
           Please import a project or wait for extraction to complete.
         </div>
       </motion.div>
@@ -394,7 +552,13 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
         animate={{ opacity: 1 }}
         style={{ background: "var(--ide-bg)" }}
       >
-        <div style={{ color: "#8b949e", fontSize: 20, fontFamily: "var(--font-sans)" }}>
+        <div
+          style={{
+            color: "#8b949e",
+            fontSize: 20,
+            fontFamily: "var(--font-sans)",
+          }}
+        >
           Select a file from the Explorer to view code
         </div>
       </motion.div>
@@ -414,19 +578,21 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
   // Parse content into lines with tokens
   const lines = currentFile.content
     ? currentFile.content.split("\n").map((line, i) => {
-      const fnName = line.match(/(?:async\s+)?function\s+([a-zA-Z0-9_$]+)/)?.[1]
-        ?? line.match(/(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s*)?\(/)?.[1];
-      return {
-        lineNum: i + 1,
-        tokens: tokenizeLine(line, lang),
-        isFunction: !!fnName,
-        functionName: fnName
-      };
-    })
+        const fnName =
+          line.match(/(?:async\s+)?function\s+([a-zA-Z0-9_$]+)/)?.[1] ??
+          line.match(
+            /(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s*)?\(/,
+          )?.[1];
+        return {
+          lineNum: i + 1,
+          tokens: tokenizeLine(line, lang),
+          isFunction: !!fnName,
+          functionName: fnName,
+        };
+      })
     : [];
 
-  const handleAnalyze = (functionName) => {
-  };
+  const handleAnalyze = (functionName) => {};
 
   const handleChange = (value) => {
     setSaveError("");
@@ -438,7 +604,14 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
 
   const handleSave = async () => {
     const file = fileContents[activeTabId];
-    if (!projectId || !activeTabId || !file || file.draft === undefined || saving) return;
+    if (
+      !projectId ||
+      !activeTabId ||
+      !file ||
+      file.draft === undefined ||
+      saving
+    )
+      return;
 
     setSaving(true);
     setSaveError("");
@@ -446,7 +619,11 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
       await updateFileContentApi(projectId, activeTabId, file.draft);
       setFileContents((prev) => ({
         ...prev,
-        [activeTabId]: { ...prev[activeTabId], content: file.draft, draft: undefined },
+        [activeTabId]: {
+          ...prev[activeTabId],
+          content: file.draft,
+          draft: undefined,
+        },
       }));
     } catch (err) {
       setSaveError(err.message || "Could not save file");
@@ -457,7 +634,9 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
 
   saveHandlerRef.current = handleSave;
 
-  const hasUnsavedChanges = currentFile.draft !== undefined && currentFile.draft !== currentFile.content;
+  const hasUnsavedChanges =
+    currentFile.draft !== undefined &&
+    currentFile.draft !== currentFile.content;
 
   return (
     <motion.div
@@ -503,7 +682,12 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
       >
         {breadcrumb.map((crumb, i) => (
           <span key={i} className="flex items-center">
-            {i > 0 && <ChevronRight size={11} style={{ margin: "0 3px", opacity: 0.4 }} />}
+            {i > 0 && (
+              <ChevronRight
+                size={11}
+                style={{ margin: "0 3px", opacity: 0.4 }}
+              />
+            )}
             <span
               style={{
                 color: i === breadcrumb.length - 1 ? "#8b949e" : "#484f58",
@@ -514,7 +698,9 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
           </span>
         ))}
         <div className="ml-auto flex items-center gap-2">
-          {saveError && <span style={{ color: "#f85149", fontSize: 11 }}>{saveError}</span>}
+          {saveError && (
+            <span style={{ color: "#f85149", fontSize: 11 }}>{saveError}</span>
+          )}
           <button
             type="button"
             onClick={handleSave}
@@ -522,12 +708,20 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
             className="flex items-center gap-1 rounded px-2 py-1"
             style={{
               color: hasUnsavedChanges ? "#ddd6fe" : "#6e7681",
-              background: hasUnsavedChanges ? "rgba(124,58,237,0.18)" : "transparent",
+              background: hasUnsavedChanges
+                ? "rgba(124,58,237,0.18)"
+                : "transparent",
               cursor: hasUnsavedChanges && !saving ? "pointer" : "default",
             }}
             title="Save file (Ctrl/Cmd + S)"
           >
-            {saving ? <Loader2 size={13} className="animate-spin" /> : hasUnsavedChanges ? <Save size={13} /> : <Check size={13} />}
+            {saving ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : hasUnsavedChanges ? (
+              <Save size={13} />
+            ) : (
+              <Check size={13} />
+            )}
             {saving ? "Saving" : hasUnsavedChanges ? "Save" : "Saved"}
           </button>
         </div>
@@ -545,8 +739,18 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
               className="flex flex-col items-center justify-center h-full"
               style={{ gap: 12 }}
             >
-              <Loader2 size={24} className="animate-spin" style={{ color: "#a78bfa" }} />
-              <span style={{ color: "#6e7681", fontSize: 13, fontFamily: "var(--font-sans)" }}>
+              <Loader2
+                size={24}
+                className="animate-spin"
+                style={{ color: "#a78bfa" }}
+              />
+              <span
+                style={{
+                  color: "#6e7681",
+                  fontSize: 13,
+                  fontFamily: "var(--font-sans)",
+                }}
+              >
                 Loading file content...
               </span>
             </motion.div>
@@ -560,25 +764,42 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
               style={{ gap: 12 }}
             >
               <AlertCircle size={24} style={{ color: "#f85149" }} />
-              <span style={{ color: "#f85149", fontSize: 13, fontFamily: "var(--font-sans)" }}>
+              <span
+                style={{
+                  color: "#f85149",
+                  fontSize: 13,
+                  fontFamily: "var(--font-sans)",
+                }}
+              >
                 {currentFile.error}
               </span>
             </motion.div>
           ) : (
             <>
-            <MonacoEditor
-              key={activeTabId}
-              height="100%"
-              language={lang}
-              theme="vs-dark"
-              value={currentFile.draft ?? currentFile.content ?? ""}
-              onChange={handleChange}
-              onMount={(editor, monaco) => {
-                editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => saveHandlerRef.current?.());
-              }}
-              options={{ fontSize: 13, fontFamily: "var(--font-mono)", lineHeight: 21, minimap: { enabled: false }, scrollBeyondLastLine: false, automaticLayout: true, padding: { top: 8 } }}
-            />
-            {/* Legacy read-only renderer retained for future CodeLens integration.
+              <MonacoEditor
+                key={activeTabId}
+                height="100%"
+                language={lang}
+                theme="vs-dark"
+                value={currentFile.draft ?? currentFile.content ?? ""}
+                onChange={handleChange}
+                onMount={(editor, monaco) => {
+                  editor.addCommand(
+                    monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
+                    () => saveHandlerRef.current?.(),
+                  );
+                }}
+                options={{
+                  fontSize: 13,
+                  fontFamily: "var(--font-mono)",
+                  lineHeight: 21,
+                  minimap: { enabled: false },
+                  scrollBeyondLastLine: false,
+                  automaticLayout: true,
+                  padding: { top: 8 },
+                }}
+              />
+              {/* Legacy read-only renderer retained for future CodeLens integration.
               {lines.map((line) => {
                 const normalize = (p) => p.replace(/\\/g, '/').replace(/^\.\//, '');
                 const normalizedPath = normalize(activeTabId);
@@ -617,7 +838,8 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
           gap: 20,
           padding: "8px 20px",
           borderTop: "1px solid var(--ide-border)",
-          background: "linear-gradient(0deg, rgba(124,58,237,0.04) 0%, transparent 100%)",
+          background:
+            "linear-gradient(0deg, rgba(124,58,237,0.04) 0%, transparent 100%)",
           fontFamily: "var(--font-mono)",
           fontSize: 12,
         }}
@@ -629,11 +851,12 @@ export default function Editor({ tabs, activeTabId, onSelectTab, onCloseTab, fil
           </span>
         </div>
         {currentFile.content && (
-          <span style={{ color: "#484f58" }}>
-            {lines.length} lines
-          </span>
+          <span style={{ color: "#484f58" }}>{lines.length} lines</span>
         )}
-        <div className="ml-auto flex items-center gap-1.5" style={{ color: "#484f58" }}>
+        <div
+          className="ml-auto flex items-center gap-1.5"
+          style={{ color: "#484f58" }}
+        >
           <GitBranch size={11} />
           <span>main</span>
           <Zap size={11} style={{ color: "#fde68a", marginLeft: 6 }} />

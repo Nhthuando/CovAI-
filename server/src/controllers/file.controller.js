@@ -1,15 +1,21 @@
-import { discoverSourceFiles } from '../services/fileDiscovery.service.js';
+import { ServiceError } from "../utils/serviceError.js";
+import { listOwnedSnapshotSourceFiles, rejectLegacyRootDir } from "../services/projectSourceFiles.service.js";
 
-export const getFiles = (req, res) => {
+/** GET /api/files?projectId=...&snapshotId=... */
+export const getFiles = async (req, res) => {
   try {
-    const { rootDir } = req.query;
-    if (!rootDir) {
-      return res.status(400).json({ error: 'Thiếu tham số rootDir' });
+    rejectLegacyRootDir(req.query);
+    const { projectId, snapshotId } = req.query;
+    if (!projectId || typeof projectId !== "string") {
+      return res.status(400).json({ success: false, message: "projectId is required" });
     }
-    // Gọi service đã test
-    const files = discoverSourceFiles(rootDir);
-    res.status(200).json({ success: true, data: files });
+    const data = await listOwnedSnapshotSourceFiles({ projectId, snapshotId, userId: req.user.id });
+    return res.status(200).json({ success: true, data });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    if (error instanceof ServiceError) {
+      return res.status(error.statusCode).json({ success: false, message: error.message });
+    }
+    console.error(error);
+    return res.status(500).json({ success: false, message: "Failed to list source files" });
   }
 };

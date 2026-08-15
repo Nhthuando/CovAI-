@@ -1,0 +1,5 @@
+{
+  "included": ["src/broken.ts", "src/readable.js", "src/unreadable.js"],
+  "diagnostics": [{"path": "src/unreadable.js", "category": "read"}],
+  "excluded": ["node_modules", ".git", "dist", ".env"]
+}

@@ -10,7 +10,9 @@ let genAI = null;
 if (apiKey) {
   genAI = new GoogleGenerativeAI(apiKey);
 } else {
-  console.warn("[Gemini API] WARNING: GEMINI_API_KEY is not defined in the environment variables.");
+  console.warn(
+    "[Gemini API] WARNING: GEMINI_API_KEY is not defined in the environment variables.",
+  );
 }
 
 // Utility for delaying execution
@@ -27,13 +29,16 @@ async function executeWithRetry(apiCall, maxRetries = 3) {
       return await apiCall();
     } catch (error) {
       const isRateLimit = error.status === 429 || error.message.includes("429");
-      const isServerError = error.status >= 500 || error.message.includes("fetch failed");
+      const isServerError =
+        error.status >= 500 || error.message.includes("fetch failed");
 
       if ((isRateLimit || isServerError) && retries < maxRetries - 1) {
         retries++;
         // Exponential backoff: 2s, 4s, 8s...
         const waitTime = Math.pow(2, retries) * 1000;
-        console.warn(`[Gemini API] Rate limit or server error. Retrying in ${waitTime}ms... (Attempt ${retries}/${maxRetries})`);
+        console.warn(
+          `[Gemini API] Rate limit or server error. Retrying in ${waitTime}ms... (Attempt ${retries}/${maxRetries})`,
+        );
         await delay(waitTime);
       } else {
         // Handle API errors
@@ -55,8 +60,8 @@ export const generateText = async (prompt, systemInstruction = null) => {
     throw new Error("GEMINI_API_KEY is not configured.");
   }
 
-  // Use gemini-2.5-flash as the default fast model
-  const modelOptions = { model: "gemini-2.5-flash" };
+  // Using gemini-1.5-flash as the stable default model.
+  const modelOptions = { model: "gemini-3.5-flash-lite" };
   if (systemInstruction) {
     modelOptions.systemInstruction = systemInstruction;
   }

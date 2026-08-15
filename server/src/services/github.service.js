@@ -26,27 +26,40 @@ export class GitHubRepositoryAccessService {
    */
   static async getUserRepositories(userId) {
     const accessToken = await this.getGitHubToken(userId);
+    let repos = [];
+    let page = 1;
+    const perPage = 15;
 
-    const response = await fetch("https://api.github.com/user/repos", {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: "application/json",
-      },
-    });
+    while (true) {
+      const response = await fetch(
+        `https://api.github.com/user/repos?per_page=${perPage}&page=${page}&sort=created&direction=desc`,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            Accept: "application/json",
+          },
+        },
+      );
 
-    if (response.status === 401) {
-      throw new Error("Unauthorized GitHub account");
+      if (response.status === 401) {
+        throw new Error("Unauthorized GitHub account");
+      }
+
+      if (response.status === 403) {
+        throw new Error("GitHub API rate limit");
+      }
+
+      if (!response.ok) {
+        throw new Error("GitHub API unavailable");
+      }
+
+      const pageRepos = await response.json();
+      if (pageRepos.length === 0) break;
+
+      repos = repos.concat(pageRepos);
+      if (pageRepos.length < perPage) break;
+      page++;
     }
-
-    if (response.status === 403) {
-      throw new Error("GitHub API rate limit");
-    }
-
-    if (!response.ok) {
-      throw new Error("GitHub API unavailable");
-    }
-
-    const repos = await response.json();
 
     return repos.map((repo) => ({
       id: repo.id,

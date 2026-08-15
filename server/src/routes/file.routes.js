@@ -5,7 +5,9 @@ import { authMiddleware } from '../middlewares/auth.middleware.js';
 
 const router = express.Router();
 
-// Endpoint: GET /api/files?rootDir=...
+// Endpoint: GET /api/files?projectId=...&snapshotId=...
+router.get('/', authMiddleware, getFiles);
+// Preserve the former nested URL only with the same safe contract.
 router.get('/files', authMiddleware, getFiles);
 
 // Endpoint: POST /api/files/ai-test-results

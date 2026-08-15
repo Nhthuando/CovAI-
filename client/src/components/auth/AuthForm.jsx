@@ -13,7 +13,6 @@ import {
 } from "lucide-react";
 import { loginApi, registerApi } from "../../services/auth.service";
 
-/* ── Inline GitHub SVG ─────────────────────────────────────── */
 function GithubIcon({ size = 17 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
@@ -22,7 +21,6 @@ function GithubIcon({ size = 17 }) {
   );
 }
 
-/* ── Stagger container ─────────────────────────────────────── */
 const containerVariants = {
   hidden: {},
   visible: { transition: { staggerChildren: 0.07, delayChildren: 0.05 } },
@@ -32,7 +30,6 @@ const itemVariants = {
   visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: "easeOut" } },
 };
 
-/* ── Shake animation for error ─────────────────────────────── */
 const shakeVariants = {
   shake: {
     x: [0, -8, 8, -6, 6, -4, 4, 0],
@@ -40,17 +37,30 @@ const shakeVariants = {
   },
 };
 
-/* ── Email regex validator ─────────────────────────────────── */
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-/* ── Input field ───────────────────────────────────────────── */
-function InputField({ id, label, type = "text", placeholder, icon: Icon, value, onChange, error, rightSlot }) {
+function InputField({
+  id,
+  label,
+  type = "text",
+  placeholder,
+  icon: Icon,
+  value,
+  onChange,
+  error,
+  rightSlot,
+}) {
   const [focused, setFocused] = useState(false);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
       <label
         htmlFor={id}
-        style={{ fontSize: "0.78rem", fontWeight: "600", color: "#8b949e", letterSpacing: "0.04em" }}
+        style={{
+          fontSize: "0.78rem",
+          fontWeight: "600",
+          color: "#8b949e",
+          letterSpacing: "0.04em",
+        }}
       >
         {label}
       </label>
@@ -70,26 +80,30 @@ function InputField({ id, label, type = "text", placeholder, icon: Icon, value, 
             : "none",
         }}
       >
-        <div style={{
-          padding: "0 0 0 14px",
-          display: "flex",
-          alignItems: "center",
-          color: focused ? "#7C3AED" : "#484f58",
-          transition: "color 0.2s",
-        }}>
+        <div
+          style={{
+            padding: "0 0 0 14px",
+            display: "flex",
+            alignItems: "center",
+            color: focused ? "#7C3AED" : "#484f58",
+            transition: "color 0.2s",
+          }}
+        >
           <Icon size={15} />
         </div>
         <input
           id={id}
-          /* Always use type="text" for email to suppress browser native tooltip.
-             We validate email format ourselves via regex. */
           type={type}
           value={value}
           onChange={onChange}
           placeholder={placeholder}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
-          autoComplete={id === "auth-password" || id === "auth-confirm" ? "current-password" : id}
+          autoComplete={
+            id === "auth-password" || id === "auth-confirm"
+              ? "current-password"
+              : id
+          }
           style={{
             flex: 1,
             background: "transparent",
@@ -101,12 +115,9 @@ function InputField({ id, label, type = "text", placeholder, icon: Icon, value, 
             fontFamily: "Inter, sans-serif",
           }}
         />
-        {rightSlot && (
-          <div style={{ padding: "0 12px 0 0" }}>{rightSlot}</div>
-        )}
+        {rightSlot && <div style={{ padding: "0 12px 0 0" }}>{rightSlot}</div>}
       </div>
 
-      {/* ── Error message — same style for all fields ── */}
       <AnimatePresence>
         {error && (
           <motion.div
@@ -136,7 +147,6 @@ function InputField({ id, label, type = "text", placeholder, icon: Icon, value, 
   );
 }
 
-/* ── Eye toggle button ─────────────────────────────────────── */
 function EyeToggle({ show, onToggle }) {
   return (
     <button
@@ -160,35 +170,39 @@ function EyeToggle({ show, onToggle }) {
   );
 }
 
-/* ── Main Auth Form ────────────────────────────────────────── */
 export default function AuthForm({ mode, onToggleMode, setMode }) {
   const isLogin = mode === "login";
 
-  const [formData, setFormData] = useState({ name: "", email: "", password: "", confirm: "" });
+  const [formData, setFormData] = useState({
+    name: "",
+    email: "",
+    password: "",
+    confirm: "",
+  });
   const [errors, setErrors] = useState({});
   const [showPass, setShowPass] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
-  const [status, setStatus] = useState("idle"); // idle | loading | success | error
-  const [serverMessage, setServerMessage] = useState(""); // for top-level server errors
+  const [status, setStatus] = useState("idle");
+  const [serverMessage, setServerMessage] = useState("");
 
   const update = (field) => (e) => {
     setFormData((d) => ({ ...d, [field]: e.target.value }));
-    // Clear field error on change
     if (errors[field]) setErrors((prev) => ({ ...prev, [field]: "" }));
     setServerMessage("");
   };
 
-  /* ── Client-side validation ─────────────────────────────── */
   function validate() {
     const errs = {};
     if (!isLogin && !formData.name.trim()) errs.name = "Vui lòng nhập họ tên";
-    if (!EMAIL_RE.test(formData.email)) errs.email = "Email không hợp lệ, vui lòng kiểm tra lại";
-    if (formData.password.length < 8) errs.password = "Mật khẩu phải có ít nhất 8 ký tự";
-    if (!isLogin && formData.confirm !== formData.password) errs.confirm = "Mật khẩu không khớp";
+    if (!EMAIL_RE.test(formData.email))
+      errs.email = "Email không hợp lệ, vui lòng kiểm tra lại";
+    if (formData.password.length < 8)
+      errs.password = "Mật khẩu phải có ít nhất 8 ký tự";
+    if (!isLogin && formData.confirm !== formData.password)
+      errs.confirm = "Mật khẩu không khớp";
     return errs;
   }
 
-  /* ── Submit ─────────────────────────────────────────────── */
   async function handleSubmit(e) {
     e.preventDefault();
     setServerMessage("");
@@ -206,46 +220,33 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
 
     try {
       if (isLogin) {
-        const data = await loginApi({ email: formData.email, password: formData.password });
-        const userPayload = {
-          id: data.userId || data.id,
-          name: data.name,
-          email: data.email,
-          token: data.token,
-        };
-        localStorage.setItem("token", data.token);
-        localStorage.setItem("user", JSON.stringify(userPayload));
+        const data = await loginApi({
+          email: formData.email,
+          password: formData.password,
+        });
+        localStorage.setItem("token", data.accessToken);
         localStorage.setItem("userName", data.name);
         localStorage.setItem("userEmail", data.email);
-        setStatus("success");
-        setTimeout(() => {
-          window.location.href = "/dashboard";
-        }, 1500);
       } else {
-        const data = await registerApi({ name: formData.name, email: formData.email, password: formData.password });
-        const userPayload = {
-          id: data.userId || data.id,
-          name: data.userName || formData.name,
-          email: data.userEmail || formData.email,
-          token: data.token,
-        };
-        localStorage.setItem("token", data.token);
-        localStorage.setItem("user", JSON.stringify(userPayload));
-        localStorage.setItem("userName", userPayload.name);
-        localStorage.setItem("userEmail", userPayload.email);
-        setStatus("success");
-        setTimeout(() => {
-          window.location.href = "/dashboard";
-        }, 1500);
+        const data = await registerApi({
+          name: formData.name,
+          email: formData.email,
+          password: formData.password,
+        });
+        localStorage.setItem("token", data.accessToken);
+        localStorage.setItem("userName", data.userName);
+        localStorage.setItem("userEmail", data.userEmail);
       }
+      setStatus("success");
+      setTimeout(() => {
+        window.location.href = "/projects";
+      }, 1500);
     } catch (err) {
       if (err.type === "field") {
-        // Map server field errors back onto the form
         setErrors(err.errors);
         setStatus("error");
         setTimeout(() => setStatus("idle"), 600);
       } else {
-        // Top-level message error (e.g. "Tài khoản đã tồn tại!")
         setServerMessage(err.message || "Có lỗi xảy ra, vui lòng thử lại");
         setStatus("error");
         setTimeout(() => setStatus("idle"), 600);
@@ -254,9 +255,14 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
   }
 
   return (
-    <div style={{ width: "100%", maxWidth: "400px", margin: "0 auto", padding: "0 1.5rem" }}>
-
-      {/* Heading */}
+    <div
+      style={{
+        width: "100%",
+        maxWidth: "400px",
+        margin: "0 auto",
+        padding: "0 1.5rem",
+      }}
+    >
       <AnimatePresence mode="wait">
         <motion.div
           key={mode + "-heading"}
@@ -266,16 +272,24 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
           transition={{ duration: 0.3 }}
           style={{ marginBottom: "2rem" }}
         >
-          <h1 style={{
-            fontSize: "1.75rem",
-            fontWeight: "800",
-            color: "#f0f6fc",
-            letterSpacing: "-0.03em",
-            marginBottom: "0.4rem",
-          }}>
+          <h1
+            style={{
+              fontSize: "1.75rem",
+              fontWeight: "800",
+              color: "#f0f6fc",
+              letterSpacing: "-0.03em",
+              marginBottom: "0.4rem",
+            }}
+          >
             {isLogin ? "Welcome back" : "Create account"}
           </h1>
-          <p style={{ color: "#8b949e", fontSize: "0.875rem", lineHeight: "1.6" }}>
+          <p
+            style={{
+              color: "#8b949e",
+              fontSize: "0.875rem",
+              lineHeight: "1.6",
+            }}
+          >
             {isLogin
               ? "Sign in to access your AI test coverage dashboard."
               : "Start automating test coverage in minutes — free forever."}
@@ -283,7 +297,6 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
         </motion.div>
       </AnimatePresence>
 
-      {/* ── Success state ── */}
       <AnimatePresence>
         {status === "success" && (
           <motion.div
@@ -302,14 +315,28 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
               marginBottom: "1.5rem",
             }}
           >
-            <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 200 }}>
+            <motion.div
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              transition={{ type: "spring", stiffness: 200 }}
+            >
               <CheckCircle2 size={44} color="#4ade80" />
             </motion.div>
             <div>
-              <p style={{ fontWeight: "700", color: "#f0f6fc", marginBottom: "0.25rem" }}>
-                {isLogin ? "Đăng nhập thành công!" : "Tạo tài khoản thành công!"}
+              <p
+                style={{
+                  fontWeight: "700",
+                  color: "#f0f6fc",
+                  marginBottom: "0.25rem",
+                }}
+              >
+                {isLogin
+                  ? "Đăng nhập thành công!"
+                  : "Tạo tài khoản thành công!"}
               </p>
-              <p style={{ color: "#8b949e", fontSize: "0.8rem" }}>Đang chuyển hướng…</p>
+              <p style={{ color: "#8b949e", fontSize: "0.8rem" }}>
+                Đang chuyển hướng…
+              </p>
             </div>
           </motion.div>
         )}
@@ -317,13 +344,13 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
 
       {status !== "success" && (
         <>
-          {/* ── GitHub SSO ── */}
           <motion.button
             id="auth-github-btn"
             type="button"
             onClick={() => {
-              const clientId = import.meta.env.VITE_GITHUB_CLIENT_ID || "Ov23liQyAORXbj6NeqAB";
-              const redirectUri = "http://localhost:5173/auth/github/callback";
+              const clientId =
+                import.meta.env.VITE_GITHUB_CLIENT_ID || "Ov23liQyAORXbj6NeqAB";
+              const redirectUri = `${window.location.origin}/auth/github/callback`;
               window.location.href = `https://github.com/login/oauth/authorize?client_id=${clientId}&scope=user:email repo&redirect_uri=${redirectUri}`;
             }}
             whileHover={{ scale: 1.02, background: "rgba(255,255,255,0.08)" }}
@@ -351,14 +378,40 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
             Continue with GitHub
           </motion.button>
 
-          {/* OR divider */}
-          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1.5rem" }}>
-            <div style={{ flex: 1, height: "1px", background: "rgba(255,255,255,0.07)" }} />
-            <span style={{ color: "#484f58", fontSize: "0.75rem", fontWeight: "600", letterSpacing: "0.08em" }}>OR</span>
-            <div style={{ flex: 1, height: "1px", background: "rgba(255,255,255,0.07)" }} />
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.75rem",
+              marginBottom: "1.5rem",
+            }}
+          >
+            <div
+              style={{
+                flex: 1,
+                height: "1px",
+                background: "rgba(255,255,255,0.07)",
+              }}
+            />
+            <span
+              style={{
+                color: "#484f58",
+                fontSize: "0.75rem",
+                fontWeight: "600",
+                letterSpacing: "0.08em",
+              }}
+            >
+              OR
+            </span>
+            <div
+              style={{
+                flex: 1,
+                height: "1px",
+                background: "rgba(255,255,255,0.07)",
+              }}
+            />
           </div>
 
-          {/* ── Top-level server error message ── */}
           <AnimatePresence>
             {serverMessage && (
               <motion.div
@@ -378,16 +431,24 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
                   overflow: "hidden",
                 }}
               >
-                <AlertCircle size={15} color="#f87171" style={{ flexShrink: 0 }} />
-                <span style={{ color: "#f87171", fontSize: "0.85rem", lineHeight: "1.4" }}>
+                <AlertCircle
+                  size={15}
+                  color="#f87171"
+                  style={{ flexShrink: 0 }}
+                />
+                <span
+                  style={{
+                    color: "#f87171",
+                    fontSize: "0.85rem",
+                    lineHeight: "1.4",
+                  }}
+                >
                   {serverMessage}
                 </span>
               </motion.div>
             )}
           </AnimatePresence>
 
-          {/* ── Form ── */}
-          {/* noValidate disables ALL browser native validation tooltips */}
           <motion.form
             key={mode + "-form"}
             id={`auth-${mode}-form`}
@@ -402,7 +463,6 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
               animate="visible"
               style={{ display: "flex", flexDirection: "column", gap: "1rem" }}
             >
-              {/* Name (register only) */}
               <AnimatePresence>
                 {!isLogin && (
                   <motion.div
@@ -429,7 +489,6 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
                 )}
               </AnimatePresence>
 
-              {/* Email — type="text" to suppress browser native tooltip */}
               <motion.div variants={itemVariants}>
                 <InputField
                   id="auth-email"
@@ -443,22 +502,27 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
                 />
               </motion.div>
 
-              {/* Password */}
               <motion.div variants={itemVariants}>
                 <InputField
                   id="auth-password"
                   label="PASSWORD"
                   type={showPass ? "text" : "password"}
-                  placeholder={isLogin ? "Enter your password" : "Min. 8 characters"}
+                  placeholder={
+                    isLogin ? "Enter your password" : "Min. 8 characters"
+                  }
                   icon={Lock}
                   value={formData.password}
                   onChange={update("password")}
                   error={errors.password}
-                  rightSlot={<EyeToggle show={showPass} onToggle={() => setShowPass((v) => !v)} />}
+                  rightSlot={
+                    <EyeToggle
+                      show={showPass}
+                      onToggle={() => setShowPass((v) => !v)}
+                    />
+                  }
                 />
               </motion.div>
 
-              {/* Confirm password (register only) */}
               <AnimatePresence>
                 {!isLogin && (
                   <motion.div
@@ -479,20 +543,35 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
                         value={formData.confirm}
                         onChange={update("confirm")}
                         error={errors.confirm}
-                        rightSlot={<EyeToggle show={showConfirm} onToggle={() => setShowConfirm((v) => !v)} />}
+                        rightSlot={
+                          <EyeToggle
+                            show={showConfirm}
+                            onToggle={() => setShowConfirm((v) => !v)}
+                          />
+                        }
                       />
                     </motion.div>
                   </motion.div>
                 )}
               </AnimatePresence>
 
-              {/* Forgot password */}
               {isLogin && (
-                <motion.div variants={itemVariants} style={{ textAlign: "right", marginTop: "-4px" }}>
+                <motion.div
+                  variants={itemVariants}
+                  style={{ textAlign: "right", marginTop: "-4px" }}
+                >
                   <a
                     href="#forgot"
-                    onClick={(e) => { e.preventDefault(); setMode("forgot_password"); }}
-                    style={{ fontSize: "0.78rem", color: "#7C3AED", textDecoration: "none", fontWeight: "500" }}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setMode("forgot_password");
+                    }}
+                    style={{
+                      fontSize: "0.78rem",
+                      color: "#7C3AED",
+                      textDecoration: "none",
+                      fontWeight: "500",
+                    }}
                     onMouseEnter={(e) => (e.target.style.color = "#9d5cf5")}
                     onMouseLeave={(e) => (e.target.style.color = "#7C3AED")}
                   >
@@ -501,12 +580,17 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
                 </motion.div>
               )}
 
-              {/* Submit button */}
-              <motion.div variants={itemVariants} style={{ marginTop: "0.5rem" }}>
+              <motion.div
+                variants={itemVariants}
+                style={{ marginTop: "0.5rem" }}
+              >
                 <motion.button
                   id="auth-submit-btn"
                   type="submit"
-                  whileHover={{ scale: 1.02, boxShadow: "0 0 32px rgba(124,58,237,0.5)" }}
+                  whileHover={{
+                    scale: 1.02,
+                    boxShadow: "0 0 32px rgba(124,58,237,0.5)",
+                  }}
                   whileTap={{ scale: 0.98 }}
                   disabled={status === "loading"}
                   style={{
@@ -517,9 +601,10 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
                     gap: "0.5rem",
                     padding: "0.825rem",
                     borderRadius: "10px",
-                    background: status === "loading"
-                      ? "rgba(124,58,237,0.5)"
-                      : "linear-gradient(135deg, #7C3AED 0%, #9d5cf5 100%)",
+                    background:
+                      status === "loading"
+                        ? "rgba(124,58,237,0.5)"
+                        : "linear-gradient(135deg, #7C3AED 0%, #9d5cf5 100%)",
                     border: "none",
                     color: "white",
                     fontSize: "0.925rem",
@@ -533,7 +618,14 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
                 >
                   {status === "loading" ? (
                     <>
-                      <motion.div animate={{ rotate: 360 }} transition={{ duration: 0.8, repeat: Infinity, ease: "linear" }}>
+                      <motion.div
+                        animate={{ rotate: 360 }}
+                        transition={{
+                          duration: 0.8,
+                          repeat: Infinity,
+                          ease: "linear",
+                        }}
+                      >
                         <Loader2 size={16} />
                       </motion.div>
                       {isLogin ? "Đang đăng nhập…" : "Đang tạo tài khoản…"}
@@ -547,37 +639,69 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
                 </motion.button>
               </motion.div>
 
-              {/* Terms */}
               {!isLogin && (
                 <motion.p
                   variants={itemVariants}
-                  style={{ textAlign: "center", fontSize: "0.72rem", color: "#484f58", lineHeight: "1.6" }}
+                  style={{
+                    textAlign: "center",
+                    fontSize: "0.72rem",
+                    color: "#484f58",
+                    lineHeight: "1.6",
+                  }}
                 >
                   By creating an account you agree to our{" "}
-                  <a href="#" style={{ color: "#7C3AED", textDecoration: "none" }}>Terms</a>
-                  {" "}and{" "}
-                  <a href="#" style={{ color: "#7C3AED", textDecoration: "none" }}>Privacy Policy</a>.
+                  <a
+                    href="#"
+                    style={{ color: "#7C3AED", textDecoration: "none" }}
+                  >
+                    Terms
+                  </a>{" "}
+                  and{" "}
+                  <a
+                    href="#"
+                    style={{ color: "#7C3AED", textDecoration: "none" }}
+                  >
+                    Privacy Policy
+                  </a>
+                  .
                 </motion.p>
               )}
             </motion.div>
           </motion.form>
 
-          {/* Toggle mode */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.5 }}
-            style={{ marginTop: "1.75rem", textAlign: "center", fontSize: "0.85rem", color: "#8b949e" }}
+            style={{
+              marginTop: "1.75rem",
+              textAlign: "center",
+              fontSize: "0.85rem",
+              color: "#8b949e",
+            }}
           >
             {isLogin ? (
               <>
-                Don&apos;t have an account?{" "}
+                Don't have an account?{" "}
                 <button
                   id="auth-toggle-to-register"
                   onClick={onToggleMode}
-                  style={{ background: "none", border: "none", color: "#7C3AED", fontWeight: "700", cursor: "pointer", fontSize: "0.85rem", fontFamily: "Inter, sans-serif", padding: 0 }}
-                  onMouseEnter={(e) => (e.currentTarget.style.color = "#9d5cf5")}
-                  onMouseLeave={(e) => (e.currentTarget.style.color = "#7C3AED")}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "#7C3AED",
+                    fontWeight: "700",
+                    cursor: "pointer",
+                    fontSize: "0.85rem",
+                    fontFamily: "Inter, sans-serif",
+                    padding: 0,
+                  }}
+                  onMouseEnter={(e) =>
+                    (e.currentTarget.style.color = "#9d5cf5")
+                  }
+                  onMouseLeave={(e) =>
+                    (e.currentTarget.style.color = "#7C3AED")
+                  }
                 >
                   Create account →
                 </button>
@@ -588,9 +712,22 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
                 <button
                   id="auth-toggle-to-login"
                   onClick={onToggleMode}
-                  style={{ background: "none", border: "none", color: "#7C3AED", fontWeight: "700", cursor: "pointer", fontSize: "0.85rem", fontFamily: "Inter, sans-serif", padding: 0 }}
-                  onMouseEnter={(e) => (e.currentTarget.style.color = "#9d5cf5")}
-                  onMouseLeave={(e) => (e.currentTarget.style.color = "#7C3AED")}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "#7C3AED",
+                    fontWeight: "700",
+                    cursor: "pointer",
+                    fontSize: "0.85rem",
+                    fontFamily: "Inter, sans-serif",
+                    padding: 0,
+                  }}
+                  onMouseEnter={(e) =>
+                    (e.currentTarget.style.color = "#9d5cf5")
+                  }
+                  onMouseLeave={(e) =>
+                    (e.currentTarget.style.color = "#7C3AED")
+                  }
                 >
                   Sign in →
                 </button>

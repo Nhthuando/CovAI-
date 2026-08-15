@@ -19,6 +19,7 @@ model User {
   updatedAt            DateTime       @updatedAt
   passwordResetExpires DateTime?
   passwordResetToken   String?
+  refreshToken         String?
   aiUsageCount         Int            @default(0)
   aiUsageDate          String?
   bio                  String?
@@ -30,26 +31,29 @@ model User {
 }
 
 model Project {
-  id              String            @id @default(cuid())
-  ownerId         String
-  name            String
-  description     String?
-  repoUrl         String?
-  defaultBranch   String?
-  rootDir         String?
-  jestConfigPath  String?
-  storageBasePath String?
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-  hasJest         Boolean           @default(false)
-  jestCommand     String?
-  aiSuggestions   AiSuggestion[]
-  aiTests         AiTest[]
-  jobs            Job[]
-  notifications   Notification[]
-  owner           User              @relation(fields: [ownerId], references: [id])
-  snapshots       ProjectSnapshot[]
-  QualityReport   QualityReport[]
+  id               String            @id @default(cuid())
+  ownerId          String
+  name             String
+  description      String?
+  repoUrl          String?
+  defaultBranch    String?
+  rootDir          String?
+  jestConfigPath   String?
+  storageBasePath  String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  hasJest          Boolean           @default(false)
+  jestCommand      String?
+  hasVitest        Boolean           @default(false)
+  vitestCommand    String?
+  vitestConfigPath String?
+  aiSuggestions    AiSuggestion[]
+  aiTests          AiTest[]
+  jobs             Job[]
+  notifications    Notification[]
+  owner            User              @relation(fields: [ownerId], references: [id])
+  snapshots        ProjectSnapshot[]
+  qualityReports   QualityReport[]
 
   @@index([ownerId])
 }
@@ -66,25 +70,61 @@ model ProjectSnapshot {
   createdAt                DateTime                  @default(now())
   hasJest                  Boolean                   @default(false)
   jestCommand              String?
+  testingFrameworksJson    String?
+  hasVitest                Boolean                   @default(false)
+  vitestCommand            String?
+  vitestConfigPath         String?
   aiContextCache           AiContextCache?
   aiSuggestions            AiSuggestion[]
   aiTests                  AiTest[]
   cfgs                     Cfg[]
   coverageFiles            CoverageFile[]
   coverageFuncs            CoverageFunction[]
-  coverageSummary          CoverageSummary?
+  coverageSummaries        CoverageSummary?
   cyclomatics              Cyclomatic[]
-  codeHygieneIssues        CodeHygieneIssue[]
-  codeHygieneSummary       CodeHygieneSummary?
   jobs                     Job[]
   testRuns                 TestRun[]
   performanceMetric        PerformanceMetric?
   project                  Project                   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   ProjectStructureAnalysis ProjectStructureAnalysis?
   QualityReport            QualityReport?
+  vulnerabilities          Vulnerability[]
 
   @@unique([projectId, checksum])
   @@unique([projectId, commitSha])
+  @@index([projectId])
+}
+
+model ProjectStructureAnalysis {
+  id              String          @id @default(cuid())
+  snapshotId      String          @unique
+  schemaVersion   Int
+  resultJson      String
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  ProjectSnapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+}
+
+model QualityReport {
+  id                   String          @id @default(cuid())
+  snapshotId           String          @unique
+  projectId            String
+  performanceScore     Float
+  securityScore        Float
+  coverageScore        Float
+  maintainabilityScore Float
+  overallScore         Float
+  performanceDetails   String
+  securityDetails      String
+  debugReport          String
+  recommendations      String
+  aiAvailable          Boolean         @default(true)
+  aiError              String?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+  Project              Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ProjectSnapshot      ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
   @@index([projectId])
 }
 
@@ -215,50 +255,6 @@ model AiContextCache {
   snapshot    ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 }
 
-model PerformanceMetric {
-  id                    String          @id @default(cuid())
-  snapshotId            String          @unique
-  performanceScore      Float
-  highRiskFunctionCount Int
-  averageComplexity     Float
-  coverageScore         Float
-  executionScore        Float?          @default(0)
-  executionTimeMs       Int?            @default(0)
-  testExecutionType     String?         @default("JEST_UNIT")
-  riskLevel             RiskLevel       @default(MEDIUM)
-  createdAt             DateTime        @default(now())
-  snapshot              ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
-}
-
-model CodeHygieneIssue {
-  id         String          @id @default(cuid())
-  snapshotId String
-  filePath   String
-  line       Int
-  column     Int
-  type       IssueType
-  severity   Severity
-  message    String
-  rule       String
-  createdAt  DateTime        @default(now())
-  snapshot   ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
-
-  @@index([snapshotId])
-}
-
-model CodeHygieneSummary {
-  id            String          @id @default(cuid())
-  snapshotId    String          @unique
-  totalIssues   Int
-  infoCount     Int
-  warningCount  Int
-  highCount     Int
-  criticalCount Int
-  hygieneScore  Float           @default(0)
-  createdAt     DateTime        @default(now())
-  snapshot      ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
-}
-
 model AiSuggestion {
   id           String               @id @default(cuid())
   projectId    String
@@ -335,37 +331,26 @@ model Notification {
   @@index([userId, readAt])
 }
 
-model ProjectStructureAnalysis {
-  id              String          @id
-  snapshotId      String          @unique
-  schemaVersion   Int
-  resultJson      String
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime
-  ProjectSnapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+model Vulnerability {
+  id          String          @id @default(cuid())
+  snapshotId  String
+  type        String
+  severity    String
+  file        String
+  line        Int?
+  description String
+  createdAt   DateTime        @default(now())
+  snapshot    ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@index([snapshotId])
 }
 
-model QualityReport {
-  id                   String          @id
-  snapshotId           String          @unique
-  projectId            String
-  performanceScore     Float
-  securityScore        Float
-  coverageScore        Float
-  maintainabilityScore Float
-  overallScore         Float
-  performanceDetails   String
-  securityDetails      String
-  debugReport          String
-  recommendations      String
-  aiAvailable          Boolean         @default(true)
-  aiError              String?
-  createdAt            DateTime        @default(now())
-  updatedAt            DateTime
-  Project              Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  ProjectSnapshot      ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
-
-  @@index([projectId])
+model PerformanceMetric {
+  id          String          @id @default(cuid())
+  snapshotId  String          @unique
+  metricsJson String
+  createdAt   DateTime        @default(now())
+  snapshot    ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 }
 
 enum SnapshotSource {
@@ -377,8 +362,8 @@ enum JobType {
   INGEST
   INSTALL_DEPS
   RUN_TESTS
-  SUPERTEST_COVERAGE
   PARSE_COVERAGE
+  SUPERTEST_COVERAGE
   BUILD_CFG
   AI_SUGGEST
   AI_TESTS
@@ -386,6 +371,7 @@ enum JobType {
   PERFORMANCE_ANALYSIS
   ANALYSIS
   QUALITY_ANALYSIS
+  SECURITY_ANALYSIS
 }
 
 enum JobStatus {
@@ -394,12 +380,6 @@ enum JobStatus {
   SUCCESS
   FAILED
   CANCELED
-}
-
-enum RiskLevel {
-  LOW
-  MEDIUM
-  HIGH
 }
 
 enum NotificationType {
