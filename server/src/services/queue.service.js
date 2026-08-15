@@ -10,6 +10,7 @@ import { processInstallDepsJob } from "./installDeps.service.js";
 import { processCoverageJob } from "./coverageRunner.service.js";
 import { processQualityAnalysisJob } from "./qualityAnalysisJob.service.js";
 import { processSecurityAnalysisJob } from "./securityScanJob.service.js";
+import { processRunVitestJob } from "./runVitestJob.service.js";
 import {
   getJobById,
   markJobFailed,
@@ -100,6 +101,9 @@ const worker = new Worker(
             userId: customData.userId,
           });
           await processCoverageJob(runJob.id);
+          break;
+        case "RUN_VITEST_TESTS":
+          await processRunVitestJob(jobId);
           break;
         default:
           throw new Error(`Unknown job type: ${type}`);

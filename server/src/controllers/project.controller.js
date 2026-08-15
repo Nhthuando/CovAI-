@@ -1364,6 +1364,58 @@ The user is working on project: ${project.name}.
       });
     }
   }
+
+  /**
+ * POST /projects/:id/run-vitest
+ */
+  async runVitestTests(req, res) {
+    try {
+      const { id: projectId } = req.params;
+      const { snapshotId } = req.body;
+
+      // Import hàm khởi tạo job chúng ta vừa làm ở Bước 1
+      const { createVitestJob } = await import("../services/job.service.js");
+
+      const job = await createVitestJob({
+        projectId,
+        snapshotId,
+        userId: req.user.id,
+      });
+
+      // Đẩy job vào queue để chạy ngầm (trả về kết quả cho client ngay lập tức)
+      addJobToQueue("RUN_VITEST_TESTS", job.id).catch((err) => {
+        console.error("Lỗi khi thêm RUN_VITEST_TESTS vào queue:", err);
+      });
+
+      return res.status(202).json({
+        success: true,
+        data: {
+          job: {
+            id: job.id,
+            type: job.type,
+            snapshotId: job.snapshotId,
+            status: job.status,
+            progress: job.progress,
+            createdAt: job.createdAt,
+            updatedAt: job.updatedAt,
+          },
+        },
+      });
+    } catch (error) {
+      console.error(error);
+
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  }
 }
 
 export default new ProjectController();

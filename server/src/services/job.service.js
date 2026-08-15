@@ -27,6 +27,7 @@ const JOB_TYPES = Object.freeze([
   "ANALYSIS",
   "QUALITY_ANALYSIS",
   "CODE_HYGIENE",
+  "RUN_VITEST_TESTS",
 ]);
 
 /** Terminal statuses — a job in one of these states cannot be mutated. */
@@ -115,20 +116,23 @@ const assertNoActiveJob = async (projectId, type, client = prisma) => {
 
 const createTypedJob =
   (type) =>
-  ({ projectId, snapshotId, userId }) =>
-    createSnapshotJob({
-      projectId,
-      snapshotId,
-      userId,
-      type,
-      payloadJson: { snapshotId },
-    });
+    ({ projectId, snapshotId, userId }) =>
+      createSnapshotJob({
+        projectId,
+        snapshotId,
+        userId,
+        type,
+        payloadJson: { snapshotId },
+      });
 
 /** Creates a queued INSTALL_DEPS job for a snapshot. */
 export const createInstallDepsJob = createTypedJob("INSTALL_DEPS");
 
 /** Creates a queued RUN_TESTS job for a snapshot. */
 export const createRunTestsJob = createTypedJob("RUN_TESTS");
+
+/** Creates a queued RUN_VITEST_TESTS job for a snapshot. */
+export const createVitestJob = createTypedJob("RUN_VITEST_TESTS");
 
 /** Creates a queued Supertest integration-coverage job for a snapshot. */
 export const createSupertestCoverageJob = createTypedJob("SUPERTEST_COVERAGE");

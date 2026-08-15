@@ -59,5 +59,10 @@ router.post(
   "/:id/ai/generate-integration-test",
   projectController.generateIntegrationTest,
 );
+router.post(
+  "/:id/run-vitest",
+  authMiddleware,
+  projectController.runVitestTests.bind(projectController),
+);
 
 export default router;
