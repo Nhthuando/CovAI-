@@ -1,9 +1,7 @@
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 function getAuthHeaders() {
-  const user = localStorage.getItem("user");
-  const userToken = user ? JSON.parse(user).token : null;
-  const token = localStorage.getItem("token") || userToken;
+  const token = localStorage.getItem("token");
   return {
     "Content-Type": "application/json",
     ...(token && { Authorization: `Bearer ${token}` }),
@@ -57,9 +55,7 @@ export async function getProjectTreeApi(projectId) {
 }
 
 export async function uploadZipApi(projectId, file) {
-  const userStr = localStorage.getItem("user");
-  const userToken = userStr ? JSON.parse(userStr).token : null;
-  const token = localStorage.getItem("token") || userToken;
+  const token = localStorage.getItem("token");
   const formData = new FormData();
   formData.append("file", file);
   formData.append("projectId", projectId);

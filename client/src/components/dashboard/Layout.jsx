@@ -7,7 +7,6 @@ import Sidebar from "./Sidebar";
 import Editor from "./Editor";
 import CoverageDashboard from "./CoverageDashboard";
 import AIPanel from "./AIPanel";
-import TestModeSelector from "./TestModeSelector";
 import ImportLayout from "./import/ImportLayout";
 import JobQueue from "./JobQueue";
 import ProjectArchitecturePanel from "./ProjectArchitecturePanel";
@@ -17,6 +16,7 @@ import SettingsSidebar from "./settings/SettingsSidebar";
 import UserProfile from "./settings/UserProfile";
 import Appearance from "./settings/Appearance";
 import { ToastProvider, useToast } from "./ToastContext";
+import MissingTestFilesModal from "./MissingTestFilesModal";
 import {
   PanelLeftClose,
   PanelLeftOpen,
@@ -80,12 +80,11 @@ function LayoutInner() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
 
+  const { logout } = useAuth();
+
   const handleSelectActivity = (id) => {
     if (id === "logout") {
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
-      localStorage.removeItem("userName");
-      localStorage.removeItem("userEmail");
+      logout();
       navigate("/");
       return;
     }
@@ -104,7 +103,8 @@ function LayoutInner() {
   const [showCFG, setShowCFG] = useState(false);
   const [showQualityDashboard, setShowQualityDashboard] = useState(false);
   const [showTestPrompt, setShowTestPrompt] = useState(false);
-  const [showTestModeSelector, setShowTestModeSelector] = useState(false);
+  const [showMissingTestFilesModal, setShowMissingTestFilesModal] = useState(false);
+  const [currentProjectName, setCurrentProjectName] = useState(null);
   const [testPromptSnapshotId, setTestPromptSnapshotId] = useState(null);
 
   const [projects, setProjects] = useState([]);
@@ -361,11 +361,12 @@ function LayoutInner() {
 
   const handleRunTests = async () => {
     if (!project) return;
-    setShowTestModeSelector(true);
+    setShowMissingTestFilesModal(true);
+    setCurrentProjectName(project.name);
   };
 
-  const handleSelectTestMode = async (mode) => {
-    setShowTestModeSelector(false);
+  const handleGenerateTests = async (mode) => {
+    setShowMissingTestFilesModal(false);
     try {
       await generateSkeletonApi(project.id, null, mode);
       showToast({ type: "info", title: "Generation Started", message: `AI Test generation (${mode}) has been queued.` });
@@ -408,7 +409,7 @@ function LayoutInner() {
           </div>
         </div>
         <div className="flex items-center gap-2" style={{ position: "relative" }}>
-          <TestModeSelector isOpen={showTestModeSelector} onClose={() => setShowTestModeSelector(false)} onSelect={handleSelectTestMode} />
+          <MissingTestFilesModal isOpen={showMissingTestFilesModal} onClose={() => setShowMissingTestFilesModal(false)} projectName={currentProjectName} onGenerate={handleGenerateTests} />
           {!isCompact && (
             <div className="flex items-center gap-2 rounded-md" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", color: "#484f58", fontSize: 12, fontFamily: "var(--font-sans)", width: 160, padding: "5px 12px" }}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>
