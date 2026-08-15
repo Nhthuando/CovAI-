@@ -6,10 +6,8 @@ export const useAuth = () => {
 
     const loadUserFromStorage = useCallback(() => {
         const token = localStorage.getItem('token');
-        console.log('[useAuth] token exists:', !!token);
 
         if (!token) {
-            console.log('[useAuth] No token, setting user null');
             setUser(null);
             setIsLoading(false);
             return;
@@ -18,7 +16,6 @@ export const useAuth = () => {
         try {
             // Giải mã payload của JWT (không cần verify chữ ký ở client)
             const payload = JSON.parse(atob(token.split('.')[1]));
-            console.log('[useAuth] JWT payload:', payload);
 
             const userData = {
                 id: payload.userId,
@@ -26,7 +23,6 @@ export const useAuth = () => {
                 name: payload.userName || localStorage.getItem('userName'),
             };
 
-            console.log('[useAuth] userData:', userData);
             setUser({ ...userData, token });
         } catch (e) {
             console.error('Failed to decode token:', e);
@@ -46,7 +42,12 @@ export const useAuth = () => {
         localStorage.removeItem('user');
         localStorage.removeItem('userName');
         localStorage.removeItem('userEmail');
+
+        // Clear any other potential auth keys if they exist
+        // Ensure state is fully reset
         setUser(null);
+
+        // Force reload or redirect handled by component using useAuth
     }, []);
 
     useEffect(() => {

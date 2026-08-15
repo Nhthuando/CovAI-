@@ -16,7 +16,8 @@ import {
   Shield,
 } from "lucide-react";
 
-import { sendAiChatMessageApi, getAiSuggestionsApi, generateSkeletonApi, generateFullTestsApi } from "../../services/project.service";
+import { sendAiChatMessageApi, getAiSuggestionsApi, generateSkeletonApi } from "../../services/project.service";
+import { getProjectJobsApi } from "../../services/job.service";
 import { useToast } from "./ToastContext";
 
 /* ── Initial conversation ───────────────────────────────── */
@@ -222,110 +223,110 @@ function ChatMessage({ msg, onRetry }) {
           </div>
         </div>
       ) : (
-      <div
-        className="relative rounded-xl"
-        style={{
-          marginLeft: 28,
-          padding: "10px 13px",
-          background: isUser
-            ? "rgba(255,255,255,0.025)"
-            : "rgba(124,58,237,0.04)",
-          border: `1px solid ${isUser ? "rgba(255,255,255,0.06)" : "rgba(124,58,237,0.1)"}`,
-          backdropFilter: isUser ? "none" : "blur(12px)",
-          WebkitBackdropFilter: isUser ? "none" : "blur(12px)",
-          fontSize: 13,
-          lineHeight: 1.7,
-          color: "#8b949e",
-          fontFamily: "var(--font-sans)",
-        }}
-      >
-        <div>
-          {msg.content.split("\n").map((line, i) => (
-            <p key={i} className={line === "" ? "h-2" : ""}>
-              {line === "" ? null : renderContent(line)}
-            </p>
-          ))}
-        </div>
-
-        {msg.code && <CodeBlock code={msg.code} />}
-
-        {msg.suggestion && (
-          <div
-            className="mt-3 flex items-start gap-2 px-3 py-2 rounded-lg"
-            style={{
-              background: "rgba(63,185,80,0.05)",
-              border: "1px solid rgba(63,185,80,0.15)",
-              color: "#3fb950",
-              fontSize: 12,
-              lineHeight: 1.5,
-            }}
-          >
-            <span className="flex-shrink-0 mt-0.5">💡</span>
-            <span>{msg.suggestion}</span>
-          </div>
-        )}
-
-        {msg.options && (
-          <div className="flex gap-3" style={{ marginTop: "16px", marginBottom: "8px", flexWrap: "wrap" }}>
-            {msg.options.map((opt) => (
-              <button
-                key={opt.label}
-                onClick={() => opt.onClick && opt.onClick(opt.action)}
-                className="flex-1 rounded-lg transition-colors hover:bg-[rgba(124,58,237,0.2)]"
-                style={{
-                  padding: "10px 12px",
-                  background: "rgba(124,58,237,0.1)",
-                  border: "1px solid rgba(124,58,237,0.3)",
-                  color: "#e6edf3",
-                  fontSize: 12,
-                  fontWeight: 500,
-                  cursor: "pointer",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {opt.label}
-              </button>
+        <div
+          className="relative rounded-xl"
+          style={{
+            marginLeft: 28,
+            padding: "10px 13px",
+            background: isUser
+              ? "rgba(255,255,255,0.025)"
+              : "rgba(124,58,237,0.04)",
+            border: `1px solid ${isUser ? "rgba(255,255,255,0.06)" : "rgba(124,58,237,0.1)"}`,
+            backdropFilter: isUser ? "none" : "blur(12px)",
+            WebkitBackdropFilter: isUser ? "none" : "blur(12px)",
+            fontSize: 13,
+            lineHeight: 1.7,
+            color: "#8b949e",
+            fontFamily: "var(--font-sans)",
+          }}
+        >
+          <div>
+            {msg.content.split("\n").map((line, i) => (
+              <p key={i} className={line === "" ? "h-2" : ""}>
+                {line === "" ? null : renderContent(line)}
+              </p>
             ))}
           </div>
-        )}
 
-        {/* Hover actions */}
-        <AnimatePresence>
-          {hovered && !isUser && (
-            <motion.div
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 4 }}
-              transition={{ duration: 0.12 }}
-              className="absolute -bottom-3 right-2 flex gap-1"
-              style={{ zIndex: 10 }}
+          {msg.code && <CodeBlock code={msg.code} />}
+
+          {msg.suggestion && (
+            <div
+              className="mt-3 flex items-start gap-2 px-3 py-2 rounded-lg"
+              style={{
+                background: "rgba(63,185,80,0.05)",
+                border: "1px solid rgba(63,185,80,0.15)",
+                color: "#3fb950",
+                fontSize: 12,
+                lineHeight: 1.5,
+              }}
             >
-              {[
-                { icon: copied ? Check : Copy, label: copied ? "Copied" : "Copy" },
-                { icon: RotateCcw, label: "Retry" },
-              ].map(({ icon: Icon, label }) => (
-                <motion.button
-                  key={label}
-                  whileTap={{ scale: 0.9 }}
-                  title={label}
-                  onClick={() => handleAction(label)}
-                  className="flex items-center gap-1.5 rounded-md text-xs cursor-pointer"
+              <span className="flex-shrink-0 mt-0.5">💡</span>
+              <span>{msg.suggestion}</span>
+            </div>
+          )}
+
+          {msg.options && (
+            <div className="flex gap-3" style={{ marginTop: "16px", marginBottom: "8px", flexWrap: "wrap" }}>
+              {msg.options.map((opt) => (
+                <button
+                  key={opt.label}
+                  onClick={() => opt.onClick && opt.onClick(opt.action)}
+                  className="flex-1 rounded-lg transition-colors hover:bg-[rgba(124,58,237,0.2)]"
                   style={{
-                    padding: "6px 10px",
-                    background: "#161b22",
-                    border: "1px solid rgba(255,255,255,0.08)",
-                    color: copied && label === "Copied" ? "#4ade80" : "#6e7681",
-                    fontFamily: "var(--font-sans)",
+                    padding: "10px 12px",
+                    background: "rgba(124,58,237,0.1)",
+                    border: "1px solid rgba(124,58,237,0.3)",
+                    color: "#e6edf3",
+                    fontSize: 12,
+                    fontWeight: 500,
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
                   }}
                 >
-                  <Icon size={11} />
-                  {label}
-                </motion.button>
+                  {opt.label}
+                </button>
               ))}
-            </motion.div>
+            </div>
           )}
-        </AnimatePresence>
-      </div>
+
+          {/* Hover actions */}
+          <AnimatePresence>
+            {hovered && !isUser && (
+              <motion.div
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 4 }}
+                transition={{ duration: 0.12 }}
+                className="absolute -bottom-3 right-2 flex gap-1"
+                style={{ zIndex: 10 }}
+              >
+                {[
+                  { icon: copied ? Check : Copy, label: copied ? "Copied" : "Copy" },
+                  { icon: RotateCcw, label: "Retry" },
+                ].map(({ icon: Icon, label }) => (
+                  <motion.button
+                    key={label}
+                    whileTap={{ scale: 0.9 }}
+                    title={label}
+                    onClick={() => handleAction(label)}
+                    className="flex items-center gap-1.5 rounded-md text-xs cursor-pointer"
+                    style={{
+                      padding: "6px 10px",
+                      background: "#161b22",
+                      border: "1px solid rgba(255,255,255,0.08)",
+                      color: copied && label === "Copied" ? "#4ade80" : "#6e7681",
+                      fontFamily: "var(--font-sans)",
+                    }}
+                  >
+                    <Icon size={11} />
+                    {label}
+                  </motion.button>
+                ))}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       )}
     </motion.div>
   );
@@ -380,7 +381,7 @@ function TypingIndicator() {
 
 /* ── Chat Input ──────────────────────────────────────────── */
 function ChatInput({ onSend, isTyping }) {
-  const [input, setInput]   = useState("");
+  const [input, setInput] = useState("");
   const [focused, setFocused] = useState(false);
   const textareaRef = useRef(null);
 
@@ -519,7 +520,7 @@ function ChatInput({ onSend, isTyping }) {
 function QuickActions({ onAction }) {
   const actions = [
     { label: "Analyze Coverage", icon: Shield, color: "#a78bfa" },
-    { label: "View Generated Tests", icon: Wand2,  color: "#67e8f9" },
+    { label: "View Generated Tests", icon: Wand2, color: "#67e8f9" },
   ];
   return (
     <div
@@ -559,6 +560,7 @@ function QuickActions({ onAction }) {
 export default function AIPanel({ projectId }) {
   const [messages, setMessages] = useState(INITIAL_MESSAGES);
   const [isTyping, setIsTyping] = useState(false);
+  const [isModeSelectorOpen, setIsModeSelectorOpen] = useState(false);
   const bottomRef = useRef(null);
   const { showToast } = useToast();
 
@@ -589,7 +591,7 @@ export default function AIPanel({ projectId }) {
 
     try {
       const res = await sendAiChatMessageApi(projectId, text, currentHistory);
-      
+
       setMessages((m) => [
         ...m,
         {
@@ -602,7 +604,7 @@ export default function AIPanel({ projectId }) {
     } catch (error) {
       console.error(error);
       const isQuotaError = error.message && error.message.includes("QUOTA_EXCEEDED");
-      
+
       if (isQuotaError) {
         setMessages((m) => [
           ...m,
@@ -646,14 +648,41 @@ export default function AIPanel({ projectId }) {
       try {
         const res = await getAiSuggestionsApi(projectId);
         if (res.data && res.data.tests && res.data.tests.length > 0) {
-          const testMessages = res.data.tests.map((test, index) => ({
-            id: Date.now() + index,
+          setMessages(m => [...m, {
+            id: Date.now(),
             role: "assistant",
             timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
-            content: `**Đã tìm thấy file test được generate:** \`${test.filePath}\``,
-            code: test.content
-          }));
-          setMessages(m => [...m, ...testMessages]);
+            content: `**Tôi đã tìm thấy các bộ test đã được generate.**`,
+            options: [
+              {
+                label: "View Generated Tests", action: "view", onClick: () => {
+                  res.data.tests.forEach((test, index) => {
+                    setMessages(prev => [...prev, {
+                      id: Date.now() + index,
+                      role: "assistant",
+                      timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
+                      content: `**Test Suite ${index + 1}**`,
+                      code: test.content
+                    }]);
+                  });
+                }
+              },
+              {
+                label: "Generate Again", action: "generate_again", onClick: () => {
+                  setMessages(prev => [...prev, {
+                    id: Date.now(),
+                    role: "assistant",
+                    timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
+                    content: "I can generate tests again for this project. Which type of test would you like to generate?",
+                    options: [
+                      { label: "Generate Skeleton", action: "generate_skeleton", onClick: handleOptionClick },
+                      { label: "Generate Full Test", action: "generate_full", onClick: handleOptionClick }
+                    ]
+                  }]);
+                }
+              }
+            ]
+          }]);
         } else {
           setMessages(m => [
             ...m,
@@ -661,7 +690,7 @@ export default function AIPanel({ projectId }) {
               id: Date.now(),
               role: "assistant",
               timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
-              content: "Không tìm thấy file test nào được tạo trong database.\nBạn muốn tôi tạo **Skeleton Test** (khung test cơ bản) hay **Full Test** (test case chi tiết) cho dự án này?",
+              content: "Tôi nhận thấy project hiện chưa có test được generate. Bạn có muốn tôi tạo test cho project này không?",
               options: [
                 { label: "Generate Skeleton", action: "generate_skeleton", onClick: handleOptionClick },
                 { label: "Generate Full Test", action: "generate_full", onClick: handleOptionClick }
@@ -680,31 +709,34 @@ export default function AIPanel({ projectId }) {
   };
 
   const handleOptionClick = async (action) => {
-    if (action === "generate_skeleton" || action === "generate_full") {
-      setIsTyping(true);
-      try {
-        if (action === "generate_skeleton") {
-          await generateSkeletonApi(projectId);
-          setMessages(m => [...m, {
-            id: Date.now(),
-            role: "assistant",
-            timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
-            content: "🚀 Đã bắt đầu tiến trình tạo Skeleton Test. Tiến trình này chạy ngầm, bạn có thể kiểm tra tiến độ ở tab Queue. Khi hoàn thành hãy ấn nút **View Generated Tests** để xem file sinh ra."
-          }]);
-        } else {
-          await generateFullTestsApi(projectId);
-          setMessages(m => [...m, {
-            id: Date.now(),
-            role: "assistant",
-            timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
-            content: "🚀 Đã bắt đầu tiến trình tạo Full Test. Tiến trình này chạy ngầm, bạn có thể kiểm tra tiến độ ở tab Queue. Khi hoàn thành hãy ấn nút **View Generated Tests** để xem file sinh ra."
-          }]);
-        }
-      } catch (e) {
-        showToast({ type: "error", title: "Lỗi", message: "Không thể bắt đầu tạo test." });
-      } finally {
-        setIsTyping(false);
+    const mode = action === "generate_skeleton" ? "SKELETON" : "FULL";
+
+    setIsTyping(true);
+    try {
+      const jobsRes = await getProjectJobsApi(projectId);
+      const activeJob = jobsRes.jobs?.find(j => (j.type === "AI_TESTS" || j.type === "TEST_GENERATION") && (j.status === "QUEUED" || j.status === "RUNNING"));
+
+      if (activeJob) {
+        setMessages(m => [...m, {
+          id: Date.now(),
+          role: "assistant",
+          timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
+          content: "A test generation is already in progress. Please wait for it to finish."
+        }]);
+        return;
       }
+
+      await generateSkeletonApi(projectId, null, mode);
+      setMessages(m => [...m, {
+        id: Date.now(),
+        role: "assistant",
+        timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
+        content: `🚀 I've started generating the ${mode === "SKELETON" ? "Skeleton Test" : "Full Test"} suite. You can monitor the progress in the Job Queue.`
+      }]);
+    } catch (e) {
+      showToast({ type: "error", title: "Lỗi", message: "Không thể bắt đầu tạo test." });
+    } finally {
+      setIsTyping(false);
     }
   };
 
@@ -797,9 +829,9 @@ export default function AIPanel({ projectId }) {
       >
         <AnimatePresence>
           {messages.map((msg, index) => (
-            <ChatMessage 
-              key={msg.id} 
-              msg={msg} 
+            <ChatMessage
+              key={msg.id}
+              msg={msg}
               onRetry={() => {
                 let userMsg = null;
                 for (let i = index - 1; i >= 0; i--) {
@@ -811,7 +843,7 @@ export default function AIPanel({ projectId }) {
                 if (userMsg) {
                   handleSend(userMsg.content);
                 }
-              }} 
+              }}
             />
           ))}
           {isTyping && <TypingIndicator key="typing" />}

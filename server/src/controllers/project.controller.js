@@ -9,11 +9,7 @@ import { createAiSuggestJob } from "../services/job.service.js";
 import { processAiSuggestJob } from "../services/aiSuggestJob.service.js";
 import { generateText } from "../services/gemini.service.js";
 import { checkAndIncrementQuota } from "../services/aiQuota.service.js";
-import {
-  getAiTestById,
-  listAiTests,
-  generateFullTest,
-} from "../services/aiTest.service.js";
+import { getAiTestById, listAiTests } from "../services/aiTest.service.js";
 import prisma from "../config/prisma.js";
 import {
   ServiceError,
@@ -22,6 +18,8 @@ import {
   getProjectById,
   uploadProjectZip,
   detectJestConfig,
+  detectPlaywrightConfig,
+  detectVitestConfig,
   deleteProject,
   getProjectTree,
   getFileContent,
@@ -30,10 +28,35 @@ import {
   listProjectSnapshots,
   resolveCoverageAnalysisSnapshot,
   startProjectStructureAnalysis,
+  updateFileContent,
+  createProjectFile,
+  createProjectFolder,
+  renameProjectEntry,
+  deleteProjectEntry,
 } from "../services/project.service.js";
 import { createBuildCfgJob } from "../services/job.service.js";
 import { addJobToQueue } from "../services/queue.service.js";
 import { analysisJobResponse } from "../services/analysisResponse.service.js";
+
+const handleEntryMutation = async (req, res, operation, failureMessage) => {
+  try {
+    const result = await operation(
+      req.params.id,
+      req.user.id,
+      req.body.path,
+      req.body.content,
+      req.body.newPath,
+    );
+    return res.status(201).json({ success: true, data: result });
+  } catch (error) {
+    if (error instanceof ServiceError)
+      return res
+        .status(error.statusCode)
+        .json({ success: false, message: error.message });
+    console.error(error);
+    return res.status(500).json({ success: false, message: failureMessage });
+  }
+};
 
 class ProjectController {
   /**
@@ -140,25 +163,29 @@ class ProjectController {
 
   /**
    * GET /projects/:id/snapshots
-   * Snapshot metadata is deliberately selector-safe: no host paths, source,
-   * or storage locations can cross this controller boundary.
    */
   async listSnapshots(req, res) {
     try {
-      const data = await listProjectSnapshots({ projectId: req.params.id, userId: req.user.id });
+      const data = await listProjectSnapshots({
+        projectId: req.params.id,
+        userId: req.user.id,
+      });
       return res.status(200).json({ success: true, data });
     } catch (error) {
       if (error instanceof ServiceError) {
-        return res.status(error.statusCode).json({ success: false, message: error.message });
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
       }
-      console.error(error);
-      return res.status(500).json({ success: false, message: "Failed to get snapshots" });
+      console.error("[listSnapshots] Error:", error);
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to get snapshots" });
     }
   }
 
   /**
    * GET /projects/:id/structure-analysis?snapshotId=...
-   * Reads an existing architecture map only; it never starts background work.
    */
   async getStructureAnalysis(req, res) {
     try {
@@ -170,16 +197,20 @@ class ProjectController {
       return res.status(200).json({ success: true, data });
     } catch (error) {
       if (error instanceof ServiceError) {
-        return res.status(error.statusCode).json({ success: false, message: error.message });
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
       }
       console.error(error);
-      return res.status(500).json({ success: false, message: "Failed to get architecture analysis" });
+      return res.status(500).json({
+        success: false,
+        message: "Failed to get architecture analysis",
+      });
     }
   }
 
   /**
    * POST /projects/:id/structure-analysis
-   * Starts snapshot-bound static architecture analysis.
    */
   async runStructureAnalysis(req, res) {
     try {
@@ -208,56 +239,14 @@ class ProjectController {
       });
     } catch (error) {
       if (error instanceof ServiceError) {
-        return res.status(error.statusCode).json({ success: false, message: error.message });
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
       }
-      console.error(error);
-      return res.status(500).json({ success: false, message: "Failed to start architecture analysis" });
-    }
-  }
-
-  /**
-   * Legacy implementation retained temporarily for an explicit coverage route.
-   */
-  async listSnapshotsUnsafe(req, res) {
-    try {
-      const { id: projectId } = req.params;
-
-      // Verify project ownership
-      const project = await prisma.project.findFirst({
-        where: { id: projectId, ownerId: req.user.id },
-      });
-      if (!project) {
-        return res.status(404).json({
-          success: false,
-          message: "Project not found or unauthorized",
-        });
-      }
-
-      const snapshots = await prisma.projectSnapshot.findMany({
-        where: { projectId },
-        orderBy: { createdAt: "desc" },
-        select: {
-          id: true,
-          source: true,
-          checksum: true,
-          commitSha: true,
-          storagePath: true,
-          rootDir: true,
-          hasJest: true,
-          jestCommand: true,
-          createdAt: true,
-        },
-      });
-
-      return res.status(200).json({
-        success: true,
-        data: snapshots,
-      });
-    } catch (error) {
       console.error(error);
       return res.status(500).json({
         success: false,
-        message: "Failed to get snapshots",
+        message: "Failed to start architecture analysis",
       });
     }
   }
@@ -316,6 +305,74 @@ class ProjectController {
   }
 
   /**
+   * PUT /projects/:id/file-content
+   */
+  async updateFileContent(req, res) {
+    try {
+      const { id } = req.params;
+      const { path: filePath, content } = req.body;
+
+      if (!filePath || typeof content !== "string") {
+        return res.status(400).json({
+          success: false,
+          message: "File path and text content are required",
+        });
+      }
+
+      const result = await updateFileContent(
+        id,
+        req.user.id,
+        filePath,
+        content,
+      );
+      return res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+      console.error(error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to save file content",
+      });
+    }
+  }
+
+  async createFile(req, res) {
+    return handleEntryMutation(req, res, createProjectFile, "Failed to create file");
+  }
+
+  async createFolder(req, res) {
+    return handleEntryMutation(req, res, createProjectFolder, "Failed to create folder");
+  }
+
+  async renameEntry(req, res) {
+    return handleEntryMutation(req, res, renameProjectEntry, "Failed to rename entry");
+  }
+
+  async deleteEntry(req, res) {
+    try {
+      const result = await deleteProjectEntry(
+        req.params.id,
+        req.user.id,
+        req.query.path,
+      );
+      return res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      if (error instanceof ServiceError)
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      console.error(error);
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to delete entry" });
+    }
+  }
+
+  /**
    * POST /projects/:id/upload-zip
    */
   async uploadZip(req, res) {
@@ -329,13 +386,10 @@ class ProjectController {
         userId: req.user.id,
       });
 
-      // The Firebase upload and ZIP extraction run fully in the background inside uploadProjectZip.
-      // The response is sent immediately below.
       result._uploadPromise.catch((err) => {
         console.error("[UploadZip] Background pipeline error:", err);
       });
 
-      // Respond immediately — the job already exists in DB with QUEUED status
       return res.status(201).json({
         success: true,
         message: "Snapshot và Job được tạo thành công",
@@ -373,6 +427,8 @@ class ProjectController {
   async runCoverageAnalysis(req, res) {
     try {
       const { id: projectId } = req.params;
+      const { mode } = req.body;
+
       const targetSnapshot = await resolveCoverageAnalysisSnapshot({
         projectId,
         snapshotId: req.body?.snapshotId,
@@ -384,7 +440,8 @@ class ProjectController {
           success: true,
           needsTests: true,
           snapshotId: targetSnapshot.id,
-          message: "Dự án chưa có file test. Vui lòng tạo test trước khi chạy phân tích."
+          message:
+            "Dự án chưa có file test. Vui lòng tạo test trước khi chạy phân tích.",
         });
       }
 
@@ -392,14 +449,16 @@ class ProjectController {
         projectId,
         snapshotId: targetSnapshot.id,
         userId: req.user.id,
+        mode: mode || "FULL",
       });
       const reused = queuedJob.reused === true;
       const { reused: _reused, ...job } = queuedJob;
 
       // SCRUM-138..144: Kick-off full pipeline bất đồng bộ qua Queue
-      if (!reused) addJobToQueue("RUN_TESTS", job.id).catch((err) => {
-        console.error("Lỗi khi thêm RUN_TESTS vào queue:", err);
-      });
+      if (!reused)
+        addJobToQueue("RUN_TESTS", job.id).catch((err) => {
+          console.error("Lỗi khi thêm RUN_TESTS vào queue:", err);
+        });
 
       return res.status(201).json({
         success: true,
@@ -445,7 +504,8 @@ class ProjectController {
         if (!latestSnapshot) {
           return res.status(404).json({
             success: false,
-            message: "No snapshot found for this project. Please upload a project first.",
+            message:
+              "No snapshot found for this project. Please upload a project first.",
           });
         }
         snapshotId = latestSnapshot.id;
@@ -604,6 +664,142 @@ class ProjectController {
       return res.status(500).json({
         success: false,
         message: error.message,
+      });
+    }
+  }
+
+  /**
+   * POST /projects/:id/detect-playwright
+   */
+  async detectPlaywrightConfig(req, res) {
+    try {
+      const { id } = req.params;
+      const detection = await detectPlaywrightConfig(id);
+
+      return res.status(200).json({ success: true, data: detection });
+    } catch (error) {
+      console.error(error);
+
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: error.message,
+      });
+    }
+  }
+
+  /**
+   * POST /projects/:id/run-playwright
+   */
+  async runPlaywrightTests(req, res) {
+    try {
+      const { id: projectId } = req.params;
+      const { testDirectory, snapshotId } = req.body;
+
+      const { createPlaywrightJob } =
+        await import("../services/job.service.js");
+
+      const job = await createPlaywrightJob({
+        projectId,
+        snapshotId,
+        testDirectory,
+        userId: req.user.id,
+      });
+
+      addJobToQueue("RUN_PLAYWRIGHT_TESTS", job.id).catch((err) => {
+        console.error("Lỗi khi thêm RUN_PLAYWRIGHT_TESTS vào queue:", err);
+      });
+
+      return res.status(202).json({
+        success: true,
+        data: {
+          job: {
+            id: job.id,
+            type: job.type,
+            snapshotId: job.snapshotId,
+            status: job.status,
+            progress: job.progress,
+            createdAt: job.createdAt,
+            updatedAt: job.updatedAt,
+          },
+        },
+      });
+    } catch (error) {
+      console.error(error);
+
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  }
+
+  /**
+   * POST /projects/:id/run-integration-tests
+   */
+  async runIntegrationTests(req, res) {
+    try {
+      const { id: projectId } = req.params;
+      const { snapshotId } = req.body;
+
+      const { runIntegrationTestPipeline } =
+        await import("../services/integrationTest.orchestrator.js");
+
+      const result = await runIntegrationTestPipeline({
+        projectId,
+        snapshotId,
+        userId: req.user.id,
+      });
+
+      return res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      console.error(error);
+
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  }
+
+  /**
+   * POST /projects/:id/detect-vitest
+   */
+  async detectVitestConfig(req, res) {
+    try {
+      const { id } = req.params;
+      const detection = await detectVitestConfig(id);
+
+      return res.status(200).json({ success: true, data: detection });
+    } catch (error) {
+      console.error(error);
+
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
       });
     }
   }
@@ -800,6 +996,7 @@ class ProjectController {
         projectId,
         snapshotId,
         userId: req.user.id,
+        mode: req.body.mode || "SKELETON",
       });
 
       addJobToQueue("AI_TESTS", job.id).catch((err) => {
@@ -874,17 +1071,17 @@ The user is working on project: ${project.name}.
 
         if (latestSnapshot) {
           const summary = await prisma.coverageSummary.findUnique({
-            where: { snapshotId: latestSnapshot.id }
+            where: { snapshotId: latestSnapshot.id },
           });
           const files = await prisma.coverageFile.findMany({
-            where: { snapshotId: latestSnapshot.id }
+            where: { snapshotId: latestSnapshot.id },
           });
 
           if (summary && files.length > 0) {
             prompt += `\n--- Coverage Data for Analysis ---\n`;
             prompt += `Overall Coverage: Lines ${summary.linesPct}%, Branches ${summary.branchesPct}%, Functions ${summary.funcsPct}%, Statements ${summary.stmtsPct}%\n`;
             prompt += `File Coverage Details:\n`;
-            files.forEach(f => {
+            files.forEach((f) => {
               prompt += `- ${f.filePath}: Lines ${f.linesPct}%, Branches ${f.branchesPct}%, Functions ${f.funcsPct}%\n`;
             });
             prompt += `----------------------------------\n`;
@@ -1072,46 +1269,79 @@ The user is working on project: ${project.name}.
     }
   }
 
-  async generateFullTest(req, res) {
+  async generateIntegrationTest(req, res) {
     try {
       const { id: projectId } = req.params;
-      let snapshotId = req.body?.snapshotId;
+      const { snapshotId, framework } = req.body;
 
-      if (!snapshotId) {
-        const latestSnapshot = await prisma.projectSnapshot.findFirst({
-          where: { projectId },
-          orderBy: { createdAt: "desc" },
-        });
-        if (!latestSnapshot) {
-          return res.status(404).json({
-            success: false,
-            message: "No snapshot found for this project",
-          });
-        }
-        snapshotId = latestSnapshot.id;
+      if (!framework) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Framework is required" });
       }
 
-      const { createAiTestsJob } = await import("../services/job.service.js");
-      const { processAiTestsJob } = await import("../services/aiTestsJob.service.js");
+      const { generateIntegrationTest } =
+        await import("../services/aiTest.service.js");
 
-      // Check if project/snapshot exists and matches...
-      // createAiTestsJob already does these assertions.
-      const job = await createAiTestsJob({
+      const aiTest = await generateIntegrationTest({
         projectId,
         snapshotId,
         userId: req.user.id,
-        mode: "FULL",
+        framework,
       });
 
-      // Run pipeline in the background
-      addJobToQueue("AI_TESTS", job.id).catch((err) => {
-        console.error("Lỗi khi thêm AI_TESTS vào queue:", err);
+      return res.status(201).json({ success: true, data: aiTest });
+    } catch (error) {
+      console.error(error);
+
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  }
+
+  /**
+ * POST /projects/:id/run-vitest
+ */
+  async runVitestTests(req, res) {
+    try {
+      const { id: projectId } = req.params;
+      const { snapshotId } = req.body;
+
+      // Import hàm khởi tạo job chúng ta vừa làm ở Bước 1
+      const { createVitestJob } = await import("../services/job.service.js");
+
+      const job = await createVitestJob({
+        projectId,
+        snapshotId,
+        userId: req.user.id,
+      });
+
+      // Đẩy job vào queue để chạy ngầm (trả về kết quả cho client ngay lập tức)
+      addJobToQueue("RUN_VITEST_TESTS", job.id).catch((err) => {
+        console.error("Lỗi khi thêm RUN_VITEST_TESTS vào queue:", err);
       });
 
       return res.status(202).json({
         success: true,
-        message: "AI Full tests generation job queued successfully",
-        jobId: job.id,
+        data: {
+          job: {
+            id: job.id,
+            type: job.type,
+            snapshotId: job.snapshotId,
+            status: job.status,
+            progress: job.progress,
+            createdAt: job.createdAt,
+            updatedAt: job.updatedAt,
+          },
+        },
       });
     } catch (error) {
       console.error(error);

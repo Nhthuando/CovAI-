@@ -1,9 +1,7 @@
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 function getAuthHeaders() {
-  const user = localStorage.getItem("user");
-  const userToken = user ? JSON.parse(user).token : null;
-  const token = localStorage.getItem("token") || userToken;
+  const token = localStorage.getItem("token");
   return {
     "Content-Type": "application/json",
     ...(token && { Authorization: `Bearer ${token}` }),
@@ -57,9 +55,7 @@ export async function getProjectTreeApi(projectId) {
 }
 
 export async function uploadZipApi(projectId, file) {
-  const userStr = localStorage.getItem("user");
-  const userToken = userStr ? JSON.parse(userStr).token : null;
-  const token = localStorage.getItem("token") || userToken;
+  const token = localStorage.getItem("token");
   const formData = new FormData();
   formData.append("file", file);
   formData.append("projectId", projectId);
@@ -109,6 +105,43 @@ export async function getFileContentApi(projectId, filePath) {
       headers: getAuthHeaders(),
     }
   );
+  return handleResponse(res);
+}
+
+export async function updateFileContentApi(projectId, filePath, content) {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/file-content`, {
+    method: "PUT",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ path: filePath, content }),
+  });
+  return handleResponse(res);
+}
+
+export async function createProjectFileApi(projectId, filePath, content = "") {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/files`, {
+    method: "POST", headers: getAuthHeaders(), body: JSON.stringify({ path: filePath, content }),
+  });
+  return handleResponse(res);
+}
+
+export async function createProjectFolderApi(projectId, folderPath) {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/folders`, {
+    method: "POST", headers: getAuthHeaders(), body: JSON.stringify({ path: folderPath }),
+  });
+  return handleResponse(res);
+}
+
+export async function renameProjectEntryApi(projectId, filePath, newPath) {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/entries`, {
+    method: "PATCH", headers: getAuthHeaders(), body: JSON.stringify({ path: filePath, newPath }),
+  });
+  return handleResponse(res);
+}
+
+export async function deleteProjectEntryApi(projectId, filePath) {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/entries?path=${encodeURIComponent(filePath)}`, {
+    method: "DELETE", headers: getAuthHeaders(),
+  });
   return handleResponse(res);
 }
 
@@ -191,20 +224,11 @@ export async function runProjectStructureAnalysisApi(projectId, snapshotId) {
   return handleResponse(res);
 }
 
-export async function generateSkeletonApi(projectId, snapshotId) {
+export async function generateSkeletonApi(projectId, snapshotId, mode = "SKELETON") {
   const res = await fetch(`${BASE_URL}/projects/${projectId}/ai-tests`, {
     method: "POST",
     headers: getAuthHeaders(),
-    body: JSON.stringify({ snapshotId }),
-  });
-  return handleResponse(res);
-}
-
-export async function generateFullTestsApi(projectId, snapshotId) {
-  const res = await fetch(`${BASE_URL}/projects/${projectId}/ai/generate-full-test`, {
-    method: "POST",
-    headers: getAuthHeaders(),
-    body: JSON.stringify({ snapshotId }),
+    body: JSON.stringify({ snapshotId, mode }),
   });
   return handleResponse(res);
 }

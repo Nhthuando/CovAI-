@@ -19,6 +19,7 @@ model User {
   updatedAt            DateTime       @updatedAt
   passwordResetExpires DateTime?
   passwordResetToken   String?
+  refreshToken         String?
   aiUsageCount         Int            @default(0)
   aiUsageDate          String?
   bio                  String?
@@ -30,56 +31,64 @@ model User {
 }
 
 model Project {
-  id              String            @id @default(cuid())
-  ownerId         String
-  name            String
-  description     String?
-  repoUrl         String?
-  defaultBranch   String?
-  rootDir         String?
-  jestConfigPath  String?
-  storageBasePath String?
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-  hasJest         Boolean           @default(false)
-  jestCommand     String?
-  aiSuggestions   AiSuggestion[]
-  aiTests         AiTest[]
-  jobs            Job[]
-  notifications   Notification[]
-  owner           User              @relation(fields: [ownerId], references: [id])
-  snapshots       ProjectSnapshot[]
-  qualityReports  QualityReport[]
+  id               String            @id @default(cuid())
+  ownerId          String
+  name             String
+  description      String?
+  repoUrl          String?
+  defaultBranch    String?
+  rootDir          String?
+  jestConfigPath   String?
+  storageBasePath  String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  hasJest          Boolean           @default(false)
+  jestCommand      String?
+  hasVitest        Boolean           @default(false)
+  vitestCommand    String?
+  vitestConfigPath String?
+  aiSuggestions    AiSuggestion[]
+  aiTests          AiTest[]
+  jobs             Job[]
+  notifications    Notification[]
+  owner            User              @relation(fields: [ownerId], references: [id])
+  snapshots        ProjectSnapshot[]
+  qualityReports   QualityReport[]
 
   @@index([ownerId])
 }
 
 model ProjectSnapshot {
-  id                String                    @id @default(cuid())
-  projectId         String
-  source            SnapshotSource
-  checksum          String?
-  commitSha         String?
-  storagePath       String
-  rootDir           String?
-  jestConfigPath    String?
-  createdAt         DateTime                  @default(now())
-  hasJest           Boolean                   @default(false)
-  jestCommand       String?
-  testingFrameworksJson String?
-  aiContextCache    AiContextCache?
-  aiSuggestions     AiSuggestion[]
-  aiTests           AiTest[]
-  cfgs              Cfg[]
-  coverageFiles     CoverageFile[]
-  coverageFuncs     CoverageFunction[]
-  coverageSummary   CoverageSummary?
-  cyclomatics       Cyclomatic[]
-  jobs              Job[]
-  project           Project                   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  structureAnalysis ProjectStructureAnalysis?
-  qualityReport     QualityReport?
-  vulnerabilities   Vulnerability[]
+  id                       String                    @id @default(cuid())
+  projectId                String
+  source                   SnapshotSource
+  checksum                 String?
+  commitSha                String?
+  storagePath              String
+  rootDir                  String?
+  jestConfigPath           String?
+  createdAt                DateTime                  @default(now())
+  hasJest                  Boolean                   @default(false)
+  jestCommand              String?
+  testingFrameworksJson    String?
+  hasVitest                Boolean                   @default(false)
+  vitestCommand            String?
+  vitestConfigPath         String?
+  aiContextCache           AiContextCache?
+  aiSuggestions            AiSuggestion[]
+  aiTests                  AiTest[]
+  cfgs                     Cfg[]
+  coverageFiles            CoverageFile[]
+  coverageFuncs            CoverageFunction[]
+  coverageSummaries        CoverageSummary?
+  cyclomatics              Cyclomatic[]
+  jobs                     Job[]
+  testRuns                 TestRun[]
+  performanceMetric        PerformanceMetric?
+  project                  Project                   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ProjectStructureAnalysis ProjectStructureAnalysis?
+  QualityReport            QualityReport?
+  vulnerabilities          Vulnerability[]
 
   @@unique([projectId, checksum])
   @@unique([projectId, commitSha])
@@ -87,13 +96,13 @@ model ProjectSnapshot {
 }
 
 model ProjectStructureAnalysis {
-  id            String          @id @default(cuid())
-  snapshotId    String          @unique
-  schemaVersion Int
-  resultJson    String
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
-  snapshot      ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  id              String          @id @default(cuid())
+  snapshotId      String          @unique
+  schemaVersion   Int
+  resultJson      String
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  ProjectSnapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 }
 
 model QualityReport {
@@ -113,8 +122,8 @@ model QualityReport {
   aiError              String?
   createdAt            DateTime        @default(now())
   updatedAt            DateTime        @updatedAt
-  project              Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  snapshot             ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  Project              Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ProjectSnapshot      ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 
   @@index([projectId])
 }
@@ -289,6 +298,24 @@ model AiTestResult {
   aiTest    AiTest   @relation(fields: [aiTestId], references: [id], onDelete: Cascade)
 }
 
+model TestRun {
+  id            String          @id @default(cuid())
+  snapshotId    String
+  type          TestType
+  totalTests    Int
+  passedTests   Int
+  failedTests   Int
+  skippedTests  Int
+  durationMs    Float
+  status        String
+  startedAt     DateTime
+  finishedAt    DateTime
+  createdAt     DateTime        @default(now())
+  snapshot      ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@index([snapshotId])
+}
+
 model Notification {
   id        String           @id @default(cuid())
   userId    String
@@ -305,18 +332,25 @@ model Notification {
 }
 
 model Vulnerability {
-  id          String   @id @default(cuid())
+  id          String          @id @default(cuid())
   snapshotId  String
-  type        String   // "SECRET", "DANGEROUS_API", "INSECURE_PATTERN"
-  severity    String   // "CRITICAL", "HIGH", "MEDIUM", "LOW"
+  type        String
+  severity    String
   file        String
   line        Int?
   description String
-  createdAt   DateTime @default(now())
-  
+  createdAt   DateTime        @default(now())
   snapshot    ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 
   @@index([snapshotId])
+}
+
+model PerformanceMetric {
+  id          String          @id @default(cuid())
+  snapshotId  String          @unique
+  metricsJson String
+  createdAt   DateTime        @default(now())
+  snapshot    ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 }
 
 enum SnapshotSource {
@@ -329,6 +363,7 @@ enum JobType {
   INSTALL_DEPS
   RUN_TESTS
   PARSE_COVERAGE
+  SUPERTEST_COVERAGE
   BUILD_CFG
   AI_SUGGEST
   AI_TESTS
@@ -337,6 +372,7 @@ enum JobType {
   ANALYSIS
   QUALITY_ANALYSIS
   SECURITY_ANALYSIS
+  RUN_VITEST_TESTS
 }
 
 enum JobStatus {
@@ -362,4 +398,24 @@ enum AiSuggestionPriority {
   LOW
   MEDIUM
   HIGH
+}
+
+enum TestType {
+  JEST
+  SUPERTEST
+}
+
+enum IssueType {
+  CONSOLE_LOG
+  DEBUGGER
+  TODO
+  FIXME
+  HACK
+}
+
+enum Severity {
+  INFO
+  WARNING
+  HIGH
+  CRITICAL
 }

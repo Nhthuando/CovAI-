@@ -52,7 +52,6 @@ export default function ImportLayout({ onClose, onSuccess }) {
       .then((data) => {
         // The /user/me endpoint returns the user object directly (not wrapped)
         const githubId = data?.githubUserId || data?.user?.githubUserId;
-        console.log("[ImportLayout] User profile:", data, "hasGithub:", !!githubId);
         setHasGithub(!!githubId);
       })
       .catch((err) => {
@@ -457,13 +456,13 @@ export default function ImportLayout({ onClose, onSuccess }) {
                 style={{ padding: "40px 48px", background: "rgba(17, 24, 39, 0.9)", border: "1px solid rgba(63, 185, 80, 0.3)", boxShadow: "0 20px 60px rgba(0, 0, 0, 0.6), 0 0 80px rgba(63, 185, 80, 0.1)" }}
               >
                 <motion.div
-                   initial={{ scale: 0 }}
-                   animate={{ scale: 1 }}
-                   transition={{ delay: 0.15, type: "spring", stiffness: 300, damping: 20 }}
-                   className="flex items-center justify-center rounded-full mb-6"
-                   style={{ width: 72, height: 72, background: "rgba(63, 185, 80, 0.15)" }}
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  transition={{ delay: 0.15, type: "spring", stiffness: 300, damping: 20 }}
+                  className="flex items-center justify-center rounded-full mb-6"
+                  style={{ width: 72, height: 72, background: "rgba(63, 185, 80, 0.15)" }}
                 >
-                   <CheckCircle2 size={36} strokeWidth={2.5} style={{ color: "#3fb950" }} />
+                  <CheckCircle2 size={36} strokeWidth={2.5} style={{ color: "#3fb950" }} />
                 </motion.div>
                 <h3 style={{ fontSize: 26, fontWeight: 700, color: "#e6edf3", marginBottom: 12, fontFamily: "var(--font-sans)", letterSpacing: "-0.01em" }}>Import Successful</h3>
                 <p style={{ color: "#8b949e", fontSize: 15, fontFamily: "var(--font-sans)" }}>Preparing your project workspace...</p>

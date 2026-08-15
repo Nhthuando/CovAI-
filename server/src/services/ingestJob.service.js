@@ -1,3 +1,5 @@
+import fs from "fs";
+import path from "path";
 import prisma from "../config/prisma.js";
 import { extractZipSnapshot } from "./zipExtraction.service.js";
 import { getBucket } from "../config/firebase.js";
@@ -11,6 +13,7 @@ import {
 } from "./job.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { buildCfgForSnapshot } from "./buildCfg.service.js";
+import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 
 const assertStringField = (value, fieldName) => {
     if (!value || typeof value !== "string" || value.trim().length === 0) {
@@ -65,11 +68,19 @@ export const processIngestJob = async (jobId) => {
             throw new Error("Extracted source path is invalid");
         }
 
+        const resolvedRootDir = resolveProjectRoot(sourcePath);
+        const packageJsonPath = path.join(resolvedRootDir, "package.json");
+        console.log(`[Job ${jobId}] Ingest extracted sourcePath=${sourcePath}, resolvedRootDir=${resolvedRootDir}, packageJsonExists=${fs.existsSync(packageJsonPath)}`);
+
+        if (!fs.existsSync(packageJsonPath)) {
+            console.warn(`[Job ${jobId}] No package.json found under extracted snapshot. rootDir remains=${resolvedRootDir}`);
+        }
+
         await updateJobProgress(jobId, 50);
 
         await prisma.projectSnapshot.update({
             where: { id: job.snapshotId },
-            data: { rootDir: sourcePath },
+            data: { rootDir: resolvedRootDir },
         });
 
         // Build CFG
@@ -82,9 +93,9 @@ export const processIngestJob = async (jobId) => {
 
         await updateJobProgress(jobId, 90);
 
-        await markJobSuccess(jobId, { rootDir: sourcePath });
+        await markJobSuccess(jobId, { rootDir: resolvedRootDir });
 
-        console.log(`[Job ${jobId}] Pipeline ingest hoàn thành: ${sourcePath}`);
+        console.log(`[Job ${jobId}] Pipeline ingest hoàn thành: ${resolvedRootDir}`);
     } catch (error) {
         console.error(`[Job ${jobId}] Lỗi pipeline ingest:`, error);
         try {
@@ -157,9 +168,13 @@ export const processUploadAndIngestJob = async (jobId, fileBuffer, mimeType, sto
             throw new Error("Extracted source path is invalid");
         }
 
+        const resolvedRootDir = resolveProjectRoot(sourcePath);
+        const packageJsonPath = path.join(resolvedRootDir, "package.json");
+        console.log(`[Job ${jobId}] Upload+ingest extracted sourcePath=${sourcePath}, resolvedRootDir=${resolvedRootDir}, packageJsonExists=${fs.existsSync(packageJsonPath)}`);
+
         await prisma.projectSnapshot.update({
             where: { id: job.snapshotId },
-            data: { rootDir: sourcePath },
+            data: { rootDir: resolvedRootDir },
         });
 
         // Build CFG
@@ -171,9 +186,9 @@ export const processUploadAndIngestJob = async (jobId, fileBuffer, mimeType, sto
         });
 
         await updateJobProgress(jobId, 100);
-        await markJobSuccess(jobId, { rootDir: sourcePath });
+        await markJobSuccess(jobId, { rootDir: resolvedRootDir });
 
-        console.log(`[Job ${jobId}] Pipeline upload & ingest hoàn thành: ${sourcePath}`);
+        console.log(`[Job ${jobId}] Pipeline upload & ingest hoàn thành: ${resolvedRootDir}`);
     } catch (error) {
         console.error(`[Job ${jobId}] Lỗi pipeline upload & ingest:`, error);
         try {

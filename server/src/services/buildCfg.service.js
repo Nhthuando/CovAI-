@@ -5,110 +5,65 @@ import { extractFunctions } from './cyclomaticFunctionExtractor.service.js';
 import { calculateComplexityFromAst } from './cyclomaticCalculator.service.js';
 import { buildCFG } from './cfgBuilder.service.js';
 import { storeCfg } from './cfgStorage.service.js';
-import { storeComplexity } from './cyclomaticStorage.service.js';
 
+/** CFG pipeline stage: generates CFG and cyclomatic artifacts only. */
 export async function buildCfgForSnapshot(snapshotId) {
     const snapshot = await prisma.projectSnapshot.findUnique({
         where: { id: snapshotId },
-        select: { storagePath: true, rootDir: true }
+        select: { rootDir: true }
     });
-
     if (!snapshot) throw new Error('Snapshot not found');
 
     let rootDir = snapshot.rootDir;
-
-    // Fallback: if rootDir is missing, try to resolve from storagePath
     if (!rootDir || !fs.existsSync(rootDir)) {
-        console.warn(`[BuildCFG] rootDir not found or invalid for snapshot ${snapshotId}: "${rootDir}"`);
-        
-        // Try storagePath-based resolution (uploads/snapshots/<snapshotId>)
         const fallbackPath = path.join(process.cwd(), 'uploads', 'snapshots', snapshotId);
-        if (fs.existsSync(fallbackPath)) {
-            rootDir = fallbackPath;
-            console.log(`[BuildCFG] Using fallback path: ${fallbackPath}`);
-        } else {
-            console.error(`[BuildCFG] Fallback path also not found: ${fallbackPath}`);
-            throw new Error(`Snapshot root directory not found for ${snapshotId}. rootDir="${snapshot.rootDir}", fallback="${fallbackPath}"`);
-        }
+        if (!fs.existsSync(fallbackPath)) throw new Error(`Snapshot root directory not found for ${snapshotId}.`);
+        rootDir = fallbackPath;
     }
 
-    console.log(`[BuildCFG] Starting CFG build for snapshot ${snapshotId}, rootDir: ${rootDir}`);
-
     const files = getAllFiles(rootDir);
-    let count = 0;
-
-    console.log(`[BuildCFG] Found ${files.length} total files in ${rootDir}`);
-
-    // Clean up existing records for this snapshot to avoid zombie records when names/logic change
+    let functionCount = 0;
     await prisma.cyclomatic.deleteMany({ where: { snapshotId } });
     await prisma.cfg.deleteMany({ where: { snapshotId } });
 
     for (const file of files) {
-        if (file.endsWith('.js') || file.endsWith('.ts') || file.endsWith('.jsx') || file.endsWith('.tsx')) {
-            const relativePath = path.relative(rootDir, file).replace(/\\/g, '/');
-            const code = fs.readFileSync(file, 'utf-8');
-            const functions = extractFunctions(code);
+        if (!/\.(js|ts|jsx|tsx)$/.test(file)) continue;
+        const relativePath = path.relative(rootDir, file).replace(/\\/g, '/');
+        const functions = extractFunctions(fs.readFileSync(file, 'utf-8'));
 
-            for (const func of functions) {
-                count++;
-                let graphJsonStr = JSON.stringify({ nodes: [], edges: [] });
-                let complexityValue = 1;
-
-                try {
-                    const cfgData = buildCFG(func.node);
-                    graphJsonStr = JSON.stringify(cfgData.graphJson);
-                } catch (e) {
-                    console.error(`[BuildCFG] Failed to generate CFG for ${func.functionName} in ${relativePath}`);
-                }
-
-                try {
-                    const complexity = calculateComplexityFromAst(func.node);
-                    complexityValue = complexity.value;
-                } catch (e) {
-                    console.error(`[BuildCFG] Failed to calculate CC for ${func.functionName} in ${relativePath}`);
-                }
-
-                try {
-                    const cfgRecord = await storeCfg({
-                        snapshotId,
-                        filePath: relativePath,
-                        functionName: func.functionName,
-                        startLine: func.startLine,
-                        endLine: func.endLine,
-                        graphJson: graphJsonStr
-                    });
-
-                    await prisma.cyclomatic.create({
-                        data: {
-                            snapshotId,
-                            filePath: relativePath,
-                            functionName: func.functionName,
-                            value: complexityValue,
-                            cfgId: cfgRecord.id
-                        }
-                    });
-                } catch (err) {
-                    console.error(`[BuildCFG] Failed to store data for ${func.functionName} in ${relativePath}:`, err);
-                }
+        for (const func of functions) {
+            functionCount++;
+            let graphJson = { nodes: [], edges: [] };
+            let complexity = 1;
+            try { graphJson = buildCFG(func.node).graphJson; } catch (error) {
+                console.error(`[BuildCFG] Failed to generate CFG for ${func.functionName} in ${relativePath}`);
             }
+            try { complexity = calculateComplexityFromAst(func.node).value; } catch (error) {
+                console.error(`[BuildCFG] Failed to calculate complexity for ${func.functionName} in ${relativePath}`);
+            }
+
+            const cfg = await storeCfg({
+                snapshotId, filePath: relativePath, functionName: func.functionName,
+                startLine: func.startLine, endLine: func.endLine, graphJson: JSON.stringify(graphJson)
+            });
+            await prisma.cyclomatic.create({
+                data: { snapshotId, filePath: relativePath, functionName: func.functionName, value: complexity, cfgId: cfg.id }
+            });
         }
     }
-    console.log(`[BuildCFG] Completed for snapshot ${snapshotId}: ${count} functions processed`);
-    return count;
+
+    console.log(`[BuildCFG] Completed for snapshot ${snapshotId}: ${functionCount} functions processed`);
+    return { functionCount };
 }
 
-function getAllFiles(dirPath, arrayOfFiles = []) {
-    const files = fs.readdirSync(dirPath);
-
-    files.forEach(file => {
-        if (fs.statSync(dirPath + "/" + file).isDirectory()) {
-            if (file !== 'node_modules' && file !== '.git' && file !== 'dist' && file !== 'build' && file !== 'coverage') {
-                arrayOfFiles = getAllFiles(dirPath + "/" + file, arrayOfFiles);
-            }
+function getAllFiles(dirPath, files = []) {
+    for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
+        const filePath = path.join(dirPath, entry.name);
+        if (entry.isDirectory()) {
+            if (!['node_modules', '.git', 'dist', 'build', 'coverage'].includes(entry.name)) getAllFiles(filePath, files);
         } else {
-            arrayOfFiles.push(path.join(dirPath, "/", file));
+            files.push(filePath);
         }
-    });
-
-    return arrayOfFiles;
+    }
+    return files;
 }

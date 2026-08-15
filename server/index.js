@@ -6,7 +6,9 @@ import cors from "cors";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import authRoute from "./src/routes/auth.route.js";
+import refreshRoute from "./src/routes/refresh.route.js";
 import userRoute from "./src/routes/user.route.js";
+import cookieParser from "cookie-parser";
 import projectRoutes from "./src/routes/project.route.js";
 import prisma from "./src/config/prisma.js";
 import uploadRoute from "./src/routes/upload.route.js";
@@ -18,10 +20,18 @@ import aiSuggestionRoute from "./src/routes/aiSuggestion.route.js";
 import aiTestRoute from "./src/routes/aiTest.route.js";
 import fileRoutes from "./src/routes/file.routes.js";
 import notificationRoute from "./src/routes/notification.route.js";
-import { eventDispatcher, NOTIFICATION_EVENT } from "./src/utils/eventDispatcher.js";
+import {
+  eventDispatcher,
+  NOTIFICATION_EVENT,
+} from "./src/utils/eventDispatcher.js";
 import analyticsRoute from "./src/routes/analytics.route.js";
+import codeHygieneRoute from "./src/routes/codeHygiene.route.js";
+import fileManagerRoute from "./src/routes/fileManager.route.js";
 import { globalLimiter } from "./src/middlewares/rateLimit.middleware.js";
+import path from "path";
+import { fileURLToPath } from "url";
 import "./src/services/queue.service.js";
+import "./src/services/codeHygieneJob.service.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -48,12 +58,14 @@ app.use(
   }),
 );
 
+app.use(cookieParser());
 app.use(express.json());
 
 // Global rate limiter
 app.use(globalLimiter);
 
 app.use("/api/auth", authRoute);
+app.use("/api/refresh", refreshRoute);
 app.use("/api/users", userRoute);
 app.use("/api/projects", projectRoutes);
 app.use("/api/upload", uploadRoute);
@@ -66,9 +78,16 @@ app.use("/api/ai-tests", aiTestRoute);
 app.use("/api/files", fileRoutes);
 app.use("/api/notifications", notificationRoute);
 app.use("/api/analytics", analyticsRoute);
+app.use("/api/code-hygiene", codeHygieneRoute);
+app.use("/api/file-manager", fileManagerRoute);
 
-app.get("/", (req, res) => {
-  res.json({ message: "CovAI API is running" });
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+app.use(express.static(path.join(__dirname, "../client/dist")));
+
+app.get(/.*/, (req, res) => {
+  res.sendFile(path.join(__dirname, "../client/dist/index.html"));
 });
 
 // Socket.IO connection handling

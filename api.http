@@ -59,7 +59,7 @@ Content-Type: application/json
 ###
 # @name listProjects
 GET {{baseUrl}}/projects
-Authorization: Bearer YOUR_TOKEN_HERE
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF2cXplcGgwMDAwdXc3ZGw2MzIyNDhsIiwidXNlckVtYWlsIjoiZGluaEBnbWFpbC5jb20iLCJ1c2VyTmFtZSI6ImRpbmgiLCJpYXQiOjE3ODY2MzUyMDksImV4cCI6MTc4NjYzODgwOX0.NkJKvtzCmY3VPfW7ucyFvxkxXVsuPdt-vOcFiGUZ6_8
 
 ###
 # @name getProjectById
@@ -229,3 +229,18 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF2c
 # @name getDashboardAnalytics
 GET {{baseUrl}}/analytics/dashboard
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF2cXplcGgwMDAwdXc3ZGw2MzIyNDhsIiwidXNlckVtYWlsIjoiZGluaEBnbWFpbC5jb20iLCJ1c2VyTmFtZSI6ImRpbmgiLCJpYXQiOjE3ODMyMjM3ODAsImV4cCI6MTc4MzIyNzM4MH0.z6cjre0WXD8RhQY1CiwDNXDafhWezLhEUeerBJMHmB8
+
+###
+# @name detectVitest
+POST {{baseUrl}}/projects/cmspgg2bo000016lmak0v5grh/detect-vitest
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF2cXplcGgwMDAwdXc3ZGw2MzIyNDhsIiwidXNlckVtYWlsIjoiZGluaEBnbWFpbC5jb20iLCJ1c2VyTmFtZSI6ImRpbmgiLCJpYXQiOjE3ODY3Nzg1MjgsImV4cCI6MTc4Njc3OTQyOH0.fPK1-uSbbIqkTpsVVkTOlDF5ThVhefEC80nqsO6Ejow
+
+### Chạy Vitest Tests
+# @name runVitest
+POST {{baseUrl}}/projects/cmsg1btlh00000vptmnj472y3/run-vitest
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF2cXplcGgwMDAwdXc3ZGw2MzIyNDhsIiwidXNlckVtYWlsIjoiZGluaEBnbWFpbC5jb20iLCJ1c2VyTmFtZSI6ImRpbmgiLCJpYXQiOjE3ODY4MDkwNzgsImV4cCI6MTc4NjgwOTk3OH0.SqDVz2z1yXYJpPnJ-vbGsSN_20N5LIQOkQdu9CB7vqY
+Content-Type: application/json
+
+{
+  "snapshotId": "cmsg1c66q00010vpt28gzunxv"
+}

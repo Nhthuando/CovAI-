@@ -22,22 +22,20 @@ export const
 
         // Handle new notification from Socket.IO
         const handleNewNotification = useCallback((notification) => {
-            console.log('[NotificationCenter] Received new notification:', notification);
-            console.log('[NotificationCenter] Current unreadCount before update:', unreadCount); // Log current unreadCount
             setNotifications(prev => [notification, ...prev]);
             setUnreadCount(prev => prev + 1);
-            console.log('[NotificationCenter] New unreadCount after update:', unreadCount + 1); // Log new unreadCount
             const toastEvent = new CustomEvent('showToast', {
                 detail: {
                     title: notification.title,
                     message: notification.message,
                     type: notification.type === 'SYSTEM' ? 'info' :
                         notification.type === 'AI_READY' ? 'success' :
-                            notification.type === 'JOB_FINISHED' ? 'success' : 'info'
+                            notification.type === 'JOB_FINISHED' ? 'success' : 'info',
+                    duration: 4500
                 }
             });
             window.dispatchEvent(toastEvent);
-        }, [setNotifications, setUnreadCount]); // Added dependencies for useCallback
+        }, [setNotifications, setUnreadCount]);
 
         // Use Socket.IO hook
         useSocket(userId, handleNewNotification);
@@ -46,6 +44,12 @@ export const
         const isFetchingRef = useRef(false);
 
         const fetchNotifications = async (pageNum = 1, reset = false) => {
+            if (!userId || !localStorage.getItem('token')) {
+                setNotifications([]);
+                setUnreadCount(0);
+                return;
+            }
+
             if (isFetchingRef.current) return;
             isFetchingRef.current = true;
             setLoading(true);
@@ -54,12 +58,12 @@ export const
             try {
                 const result = await notificationService.getNotifications(pageNum, LIMIT);
                 if (reset) {
-                    setNotifications(result.data);
+                    setNotifications(result.data || []);
                 } else {
-                    setNotifications(prev => [...prev, ...result.data]);
+                    setNotifications(prev => [...prev, ...(result.data || [])]);
                 }
-                setUnreadCount(result.meta.unreadCount);
-                setHasMore(pageNum < result.meta.pagination.totalPages);
+                setUnreadCount(result.meta?.unreadCount ?? 0);
+                setHasMore(pageNum < (result.meta?.pagination?.totalPages ?? 0));
             } catch (err) {
                 setError(err.response?.data?.message || 'Failed to load notifications');
             } finally {
@@ -70,20 +74,22 @@ export const
 
         // Fetch unread count (polling fallback)
         const fetchUnreadCount = async () => {
+            if (!userId || !localStorage.getItem('token')) {
+                setUnreadCount(0);
+                return;
+            }
+
             try {
-                console.log('Fetching unread count...');
                 const count = await notificationService.getUnreadCount();
-                console.log('Unread count received:', count);
-                setUnreadCount(count);
-            } catch (err) {
-                console.error('Error fetching unread count:', err);
+                setUnreadCount(count ?? 0);
+            } catch {
+                setUnreadCount(0);
             }
         };
 
         // Mark notification as read
         const handleMarkAsRead = async (notificationId) => {
             try {
-                console.log('Marking notification as read:', notificationId);
                 await notificationService.markAsRead(notificationId);
 
                 setNotifications(prev =>
@@ -93,7 +99,6 @@ export const
                 );
 
                 setUnreadCount(prev => Math.max(0, prev - 1));
-                console.log('Notification marked as read successfully');
             } catch (err) {
                 console.error('Error marking notification as read:', err);
                 setError('Failed to mark notification as read');
@@ -103,7 +108,6 @@ export const
         // Mark all as read
         const handleMarkAllAsRead = useCallback(async () => {
             try {
-                console.log('Marking all notifications as read');
                 await notificationService.markAllAsRead();
 
                 setNotifications(prev =>
@@ -111,7 +115,6 @@ export const
                 );
 
                 setUnreadCount(0);
-                console.log('All notifications marked as read');
             } catch (err) {
                 console.error('Error marking all notifications as read:', err);
                 setError('Failed to mark all notifications as read');
@@ -129,16 +132,12 @@ export const
 
         // Initialize and handle clicks outside dropdown
         useEffect(() => {
-            console.log('NotificationCenter useEffect triggered, userId:', userId);
             if (userId) {
-                console.log('Fetching notifications for user:', userId);
                 fetchNotifications(1, true);
 
                 // Polling fallback every 20 seconds
                 const pollInterval = setInterval(fetchUnreadCount, 20000);
                 return () => clearInterval(pollInterval);
-            } else {
-                console.log('No userId, skipping notification fetch');
             }
         }, [userId]);
 
@@ -161,7 +160,6 @@ export const
         }, []);
 
         if (!userId) {
-            console.log('NotificationCenter: userId is falsy, returning null');
             return null;
         }
 
