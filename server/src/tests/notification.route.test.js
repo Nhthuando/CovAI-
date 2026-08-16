@@ -24,7 +24,7 @@ jest.unstable_mockModule("../middlewares/auth.middleware.js", () => ({
 }));
 
 // ---------------- IMPORT SAU MOCK ----------------
-const { default: notificationRouter } = await import("../routes/notification.routes.js");
+const { default: notificationRouter } = await import("../routes/notification.route.js");
 
 // ---------------- APP ----------------
 const app = express();

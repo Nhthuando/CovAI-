@@ -1,50 +1,22 @@
-import prisma from "../../src/config/prisma.js";
-import {
-    findReusableSnapshot,
-    getCachedResult,
-    reuseSnapshotHistory,
-} from "../../src/services/snapshotReuse.service.js";
+import { jest } from "@jest/globals";
 
-jest.mock("../../src/config/prisma.js", () => ({
-    projectSnapshot: {
-        findFirst: jest.fn(),
-    },
+const prismaMock = {
+    projectSnapshot: { findFirst: jest.fn() },
+    coverageSummary: { findUnique: jest.fn() },
+    coverageFile: { count: jest.fn(), findMany: jest.fn() },
+    coverageFunction: { count: jest.fn(), findMany: jest.fn() },
+    cfg: { count: jest.fn(), findMany: jest.fn() },
+    cyclomatic: { count: jest.fn(), findMany: jest.fn() },
+    aiSuggestion: { count: jest.fn(), findMany: jest.fn() },
+    aiTest: { count: jest.fn(), findMany: jest.fn() },
+};
 
-    coverageSummary: {
-        findUnique: jest.fn(),
-    },
-
-    coverageFile: {
-        count: jest.fn(),
-        findMany: jest.fn(),
-    },
-
-    coverageFunction: {
-        count: jest.fn(),
-        findMany: jest.fn(),
-    },
-
-    cfg: {
-        count: jest.fn(),
-        findMany: jest.fn(),
-    },
-
-    cyclomatic: {
-        count: jest.fn(),
-        findMany: jest.fn(),
-    },
-
-    aiSuggestion: {
-        count: jest.fn(),
-        findMany: jest.fn(),
-    },
-
-    aiTest: {
-        count: jest.fn(),
-        findMany: jest.fn(),
-    },
+jest.unstable_mockModule("../../src/config/prisma.js", () => ({
+    default: prismaMock
 }));
 
+const { findReusableSnapshot, getCachedResult, reuseSnapshotHistory } = await import("../../src/services/snapshotReuse.service.js");
+const prisma = prismaMock;
 beforeEach(() => {
     jest.clearAllMocks();
 });

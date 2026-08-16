@@ -58,11 +58,18 @@ await jest.unstable_mockModule('../services/coverageRunner.service.js', () => ({
 await jest.unstable_mockModule('../services/codeHygieneJob.service.js', () => ({ processCodeHygieneJob: mockProcessCodeHygieneJob }));
 await jest.unstable_mockModule('../services/performanceJob.service.js', () => ({ processPerformanceAnalysisJob: mockProcessPerformanceAnalysisJob }));
 await jest.unstable_mockModule('../services/supertestCoverageJob.service.js', () => ({ processSupertestCoverageJob: mockProcessSupertestCoverageJob }));
+await jest.unstable_mockModule('../services/qualityAnalysisJob.service.js', () => ({ processQualityAnalysisJob: jest.fn() }));
+await jest.unstable_mockModule('../services/securityScanJob.service.js', () => ({ processSecurityAnalysisJob: jest.fn() }));
+await jest.unstable_mockModule('../services/runVitestJob.service.js', () => ({ processRunVitestJob: jest.fn() }));
 await jest.unstable_mockModule('../services/job.service.js', () => ({
     getJobById: mockGetJobById,
     markJobRunning: mockMarkJobRunning,
+    markJobSuccess: jest.fn(),
     markJobFailed: mockMarkJobFailed,
+    markQueuedJobFailed: jest.fn(),
     createRunTestsJob: mockCreateRunTestsJob,
+    addJobLog: jest.fn(),
+    updateJobProgress: jest.fn(),
 }));
 
 const { addJobToQueue, addSupertestCoveragePipeline } = await import('../services/queue.service.js');

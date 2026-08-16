@@ -1,15 +1,31 @@
-import { parseCoverageFinal } from "../services/coverageFinalParser.service.js";
-import prisma from "../config/prisma.js";
-import fs from "fs";
-import path from "path";
+import { jest } from "@jest/globals";
 
-jest.mock("../config/prisma.js", () => ({
+const prismaMock = {
     coverageFunction: {
-        upsert: jest.fn()
+        upsert: jest.fn().mockResolvedValue({ id: "func-1" })
     }
+};
+
+const fsMock = {
+    existsSync: jest.fn(),
+    readFileSync: jest.fn(),
+    promises: {
+        readFile: jest.fn()
+    }
+};
+
+jest.unstable_mockModule("../config/prisma.js", () => ({
+    default: prismaMock
 }));
 
-jest.mock("fs");
+jest.unstable_mockModule("fs", () => ({
+    default: fsMock,
+    ...fsMock
+}));
+
+const { parseCoverageFinal } = await import("../services/coverageFinalParser.service.js");
+const prisma = prismaMock;
+const fs = fsMock;
 
 describe("coverageFinalParser", () => {
     const snapshotId = "test-snapshot-id";

@@ -21,6 +21,17 @@ jest.unstable_mockModule('../config/prisma.js', () => ({
     default: prismaMock,
 }));
 
+jest.unstable_mockModule('fs', () => ({
+    default: { existsSync: jest.fn().mockReturnValue(true) },
+    existsSync: jest.fn().mockReturnValue(true),
+}));
+
+jest.unstable_mockModule('../services/job.service.js', () => ({
+    createInstallDepsJob: jest.fn().mockResolvedValue({ id: 'install-1' }),
+    createRunTestsJob: jest.fn().mockResolvedValue({ id: 'run-1' }),
+    createSupertestCoverageJob: jest.fn().mockResolvedValue({ id: 'super-1' }),
+}));
+
 const mockAddJobToQueue = jest.fn();
 const mockAddSupertestCoveragePipeline = jest.fn();
 

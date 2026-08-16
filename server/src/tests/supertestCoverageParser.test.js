@@ -1,12 +1,28 @@
-import { parseCoverageSummary } from '../services/coverageSummaryParser.service.js';
+import { jest, describe, beforeEach, afterEach, test, expect } from '@jest/globals';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+
+const prismaMock = {
+    coverageSummary: {
+        upsert: jest.fn().mockResolvedValue({ id: 'summary-1' }),
+    },
+    coverageFile: {
+        upsert: jest.fn().mockResolvedValue({ id: 'file-1' }),
+    },
+};
+
+jest.unstable_mockModule('../config/prisma.js', () => ({
+    default: prismaMock,
+}));
+
+const { parseCoverageSummary } = await import('../services/coverageSummaryParser.service.js');
 
 describe('supertestCoverageParser', () => {
     let tempDir;
 
     beforeEach(() => {
+        jest.clearAllMocks();
         tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-parse-'));
     });
 
@@ -28,9 +44,19 @@ describe('supertestCoverageParser', () => {
         };
         fs.writeFileSync(path.join(tempDir, 'coverage-summary.json'), JSON.stringify(mockCoverage));
 
-        // Note: This test requires a mocked prisma or a real DB connection.
-        // Assuming the existing parser handles DB interaction, we verify the logic flow.
-        // If this fails due to DB, we would need to mock prisma.
-        await expect(parseCoverageSummary(tempDir, 'snapshot-123')).rejects.toThrow();
+        const result = await parseCoverageSummary(tempDir, 'snapshot-123');
+        expect(result.summary).toBeDefined();
+        expect(prismaMock.coverageSummary.upsert).toHaveBeenCalledWith(expect.objectContaining({
+            where: { snapshotId: 'snapshot-123' },
+            create: expect.objectContaining({
+                snapshotId: 'snapshot-123',
+                linesPct: 80,
+                branchesPct: 50,
+                funcsPct: 100,
+                stmtsPct: 80,
+            }),
+        }));
+        expect(prismaMock.coverageFile.upsert).toHaveBeenCalled();
+        expect(result.fileCount).toBe(1);
     });
 });

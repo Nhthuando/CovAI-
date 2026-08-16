@@ -153,6 +153,7 @@ const worker = new Worker(
           });
           await processCoverageJob(runJob.id);
           break;
+        }
         case "RUN_VITEST_TESTS":
           await processRunVitestJob(jobId);
           break;

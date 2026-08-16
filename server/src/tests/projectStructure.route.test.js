@@ -27,11 +27,23 @@ const controller = {
   getAiTests: (_req, res) => res.status(200).json({ success: true }),
   getAiTest: (_req, res) => res.status(200).json({ success: true }),
   generateFullTest: (_req, res) => res.status(200).json({ success: true }),
+  updateFileContent: (_req, res) => res.status(200).json({ success: true }),
+  createFile: (_req, res) => res.status(200).json({ success: true }),
+  createFolder: (_req, res) => res.status(200).json({ success: true }),
+  renameEntry: (_req, res) => res.status(200).json({ success: true }),
+  deleteEntry: (_req, res) => res.status(200).json({ success: true }),
+  detectPlaywrightConfig: (_req, res) => res.status(200).json({ success: true }),
+  detectVitestConfig: (_req, res) => res.status(200).json({ success: true }),
+  runPlaywrightTests: (_req, res) => res.status(200).json({ success: true }),
+  runIntegrationTests: (_req, res) => res.status(200).json({ success: true }),
+  generateIntegrationTest: (_req, res) => res.status(200).json({ success: true }),
+  runVitestTests: (_req, res) => res.status(200).json({ success: true }),
+  detectFrameworks: (_req, res) => res.status(200).json({ success: true, data: {} }),
 };
 
-jest.unstable_mockModule("../controllers/project.controller.js", () => ({ default: controller }));
-jest.unstable_mockModule("../middlewares/auth.middleware.js", () => ({ authMiddleware: (req, _res, next) => { req.user = { id: "owner-1" }; next(); } }));
-jest.unstable_mockModule("../middlewares/upload.middleware.js", () => ({ uploadSingleArchive: (_req, _res, next) => next() }));
+await jest.unstable_mockModule("../controllers/project.controller.js", () => ({ default: controller }));
+await jest.unstable_mockModule("../middlewares/auth.middleware.js", () => ({ authMiddleware: (req, _res, next) => { req.user = { id: "owner-1" }; next(); } }));
+await jest.unstable_mockModule("../middlewares/upload.middleware.js", () => ({ uploadSingleArchive: (_req, _res, next) => next() }));
 
 const { default: projectRouter } = await import("../routes/project.route.js");
 

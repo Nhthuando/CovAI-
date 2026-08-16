@@ -97,13 +97,17 @@ export const includeComplexityScores = (complexityArray) => {
  * SCRUM-389: Request Jest skeleton output
  * Generates instructions based on the mode and hasJest flag.
  */
-export const includeTestingInstructions = (mode = "FULL", existingTestFiles = [], hasJest = false) => {
+export const includeTestingInstructions = (mode = "FULL", existingTestFiles = [], options = {}) => {
+    const hasJest = options.hasJest || false;
+    const hasVitest = options.hasVitest || false;
+    const framework = hasVitest ? "Vitest" : "Jest"; // Default to Jest if neither or both are somehow set (or you could prioritize Jest, but Vitest is more modern if both exist)
+
     let promptSegment = "### Testing Instructions\n\n";
     
-    promptSegment += "You are an expert software tester. Your task is to write tests using the **Jest** framework.\n";
+    promptSegment += `You are an expert software tester. Your task is to write tests using the **${framework}** framework.\n`;
     
-    if (hasJest) {
-        promptSegment += "The project already uses Jest for testing.\n";
+    if (hasJest || hasVitest) {
+        promptSegment += `The project already uses ${framework} for testing.\n`;
         if (existingTestFiles && existingTestFiles.length > 0) {
             promptSegment += "The project contains the following test files. You must analyze the coverage metrics, read the existing test files, and generate the FULL updated test file code that adds missing coverage.\n";
             existingTestFiles.forEach(file => {
@@ -111,10 +115,10 @@ export const includeTestingInstructions = (mode = "FULL", existingTestFiles = []
             });
             promptSegment += "\n";
         } else {
-            promptSegment += "Although Jest is configured, no test files were found. Generate FULL robust, executable test files for the uncovered source code.\n";
+            promptSegment += `Although ${framework} is configured, no test files were found. Generate FULL robust, executable test files for the uncovered source code.\n`;
         }
     } else {
-        promptSegment += "The project currently DOES NOT have Jest set up. Your task is to act as the primary test writer and generate FULL, robust, and executable Jest test files for the source files from scratch.\n";
+        promptSegment += `The project currently DOES NOT have a testing framework set up. Your task is to act as the primary test writer and generate FULL, robust, and executable ${framework} test files for the source files from scratch.\n`;
     }
 
     if (mode === "SKELETON") {
@@ -187,7 +191,6 @@ export const includeMockHints = () => {
  */
 export const buildFinalPrompt = (payload, options = {}) => {
     const mode = options.mode || "FULL";
-    const hasJest = options.hasJest || false;
     
     let finalPrompt = "You are an AI assistant designed to analyze source code and provide highly effective test cases and refactoring suggestions based on context metrics.\n\n";
     
@@ -199,7 +202,7 @@ export const buildFinalPrompt = (payload, options = {}) => {
     finalPrompt += includeCfgInformation(payload.cfg);
     
     finalPrompt += includePrioritizationRules();
-    finalPrompt += includeTestingInstructions(mode, payload.testFiles, hasJest);
+    finalPrompt += includeTestingInstructions(mode, payload.testFiles, options);
     finalPrompt += includeMockHints();
     finalPrompt += includeSuggestionFormat();
     

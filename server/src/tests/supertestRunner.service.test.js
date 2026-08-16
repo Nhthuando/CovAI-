@@ -1,9 +1,14 @@
-import { jest } from '@jest/globals';
-import { runSupertest } from '../services/supertestRunner.service.js';
-import { dockerRunner } from '../services/dockerRunner.service.js';
+import { jest, describe, beforeEach, afterEach, test, expect } from '@jest/globals';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+
+jest.unstable_mockModule('../services/job.service.js', () => ({
+    addJobLog: jest.fn().mockResolvedValue({}),
+}));
+
+const { runSupertest } = await import('../services/supertestRunner.service.js');
+const { dockerRunner } = await import('../services/dockerRunner.service.js');
 
 describe('supertestRunner.service', () => {
     let tempDir;

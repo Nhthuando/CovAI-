@@ -26,9 +26,10 @@ export const processAiTestsJob = async (jobId) => {
 
         const project = await prisma.project.findUnique({
             where: { id: projectId },
-            select: { hasJest: true }
+            select: { hasJest: true, hasVitest: true }
         });
         const hasJest = project ? project.hasJest : false;
+        const hasVitest = project ? project.hasVitest : false;
 
         const payloadJsonObj = JSON.parse(job.payloadJson || "{}");
         const mode = payloadJsonObj.mode || "SKELETON";
@@ -41,7 +42,7 @@ export const processAiTestsJob = async (jobId) => {
         await updateJobStatus({ jobId, progress: 30 });
 
         await addJobLog(jobId, "INFO", `Constructing final prompt for ${mode} mode...`);
-        const finalPrompt = buildFinalPrompt(payload, { mode, hasJest });
+        const finalPrompt = buildFinalPrompt(payload, { mode, hasJest, hasVitest });
 
         await updateJobStatus({ jobId, progress: 40 });
 

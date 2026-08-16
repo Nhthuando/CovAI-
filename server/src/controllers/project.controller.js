@@ -37,6 +37,7 @@ import {
 import { createBuildCfgJob } from "../services/job.service.js";
 import { addJobToQueue } from "../services/queue.service.js";
 import { analysisJobResponse } from "../services/analysisResponse.service.js";
+import { detectProjectFrameworks } from "../services/frameworkDetection.service.js";
 
 const handleEntryMutation = async (req, res, operation, failureMessage) => {
   try {
@@ -665,6 +666,26 @@ class ProjectController {
         success: false,
         message: error.message,
       });
+    }
+  }
+
+  /**
+   * GET /projects/:id/detect-frameworks
+   * Returns detected unit-test frameworks, test file listing, and a recommendation.
+   * Handles projects that have no test files gracefully.
+   */
+  async detectFrameworks(req, res) {
+    try {
+      const { id } = req.params;
+      const userId = req.user.id;
+      const data = await detectProjectFrameworks(id, userId);
+      return res.status(200).json({ success: true, data });
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        return res.status(error.statusCode).json({ success: false, message: error.message });
+      }
+      console.error(error);
+      return res.status(500).json({ success: false, message: error.message });
     }
   }
 

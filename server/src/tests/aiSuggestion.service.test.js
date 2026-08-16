@@ -1,6 +1,4 @@
 import { jest } from '@jest/globals';
-import { refreshAiSuggestions } from '../services/aiSuggestion.service.js';
-import prisma from '../config/prisma.js';
 
 // Mock dependencies
 const mockPrisma = {
@@ -12,14 +10,17 @@ const mockPrisma = {
     }
 };
 
-jest.mock('../config/prisma.js', () => ({
-    __esModule: true,
+jest.unstable_mockModule('../config/prisma.js', () => ({
     default: mockPrisma
 }));
 
-jest.mock('../services/aiSuggestJob.service.js', () => ({
-    processAiSuggestJob: jest.fn()
-}), { virtual: true });
+const mockProcessAiSuggestJob = jest.fn();
+jest.unstable_mockModule('../services/aiSuggestJob.service.js', () => ({
+    processAiSuggestJob: mockProcessAiSuggestJob
+}));
+
+const { refreshAiSuggestions } = await import('../services/aiSuggestion.service.js');
+const prisma = mockPrisma;
 
 describe('aiSuggestion.service - refreshAiSuggestions', () => {
     const mockUserId = 'user123';

@@ -19,6 +19,7 @@ export default {
     testPathIgnorePatterns: [
         '/node_modules/',
         '/storage/',
+        '/uploads/',
     ],
     moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx'],
 };

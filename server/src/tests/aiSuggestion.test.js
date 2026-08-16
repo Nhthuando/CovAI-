@@ -1,17 +1,25 @@
 import { jest } from '@jest/globals';
-import { refreshAiSuggestions } from '../services/aiSuggestion.service.js';
-import prisma from '../config/prisma.js';
 
-jest.mock('../config/prisma.js', () => ({
-    __esModule: true,
-    default: {
-        project: {
-            findUnique: jest.fn()
-        }
+const prismaMock = {
+    project: {
+        findUnique: jest.fn()
+    },
+    snapshot: {
+        findFirst: jest.fn()
     }
+};
+
+jest.unstable_mockModule('../config/prisma.js', () => ({
+    default: prismaMock
 }));
 
-prisma.project.findUnique = jest.fn();
+const mockProcessAiSuggestJob = jest.fn();
+jest.unstable_mockModule('../services/aiSuggestJob.service.js', () => ({
+    processAiSuggestJob: mockProcessAiSuggestJob
+}));
+
+const { refreshAiSuggestions } = await import('../services/aiSuggestion.service.js');
+const prisma = prismaMock;
 
 describe('aiSuggestionService - refreshAiSuggestions', () => {
     const mockUserId = 'user123';
@@ -40,6 +48,7 @@ describe('aiSuggestionService - refreshAiSuggestions', () => {
 
     it('should return success message if valid', async () => {
         prisma.project.findUnique.mockResolvedValue({ ownerId: mockUserId });
+        prisma.snapshot.findFirst.mockResolvedValue({ id: 'snapshot-1' });
         const result = await refreshAiSuggestions({ projectId: mockProjectId, userId: mockUserId });
         expect(result.success).toBe(true);
         expect(result.message).toBe('Suggestions refreshed successfully');

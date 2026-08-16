@@ -42,6 +42,7 @@ router.delete("/:id", projectController.deleteProject);
 router.post("/:id/detect-jest", projectController.detectJestConfig);
 router.post("/:id/detect-playwright", projectController.detectPlaywrightConfig);
 router.post("/:id/detect-vitest", projectController.detectVitestConfig);
+router.get("/:id/detect-frameworks", projectController.detectFrameworks);
 router.post("/:id/run-playwright", projectController.runPlaywrightTests);
 router.post(
   "/:id/run-integration-tests",
