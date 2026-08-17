@@ -65,5 +65,10 @@ router.post(
   authMiddleware,
   projectController.runVitestTests.bind(projectController),
 );
+router.post(
+  "/:id/vitest-coverage",
+  authMiddleware,
+  projectController.runVitestCoverage.bind(projectController),
+);
 
 export default router;
