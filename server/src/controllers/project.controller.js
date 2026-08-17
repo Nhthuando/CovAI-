@@ -38,6 +38,7 @@ import { createBuildCfgJob } from "../services/job.service.js";
 import { addJobToQueue } from "../services/queue.service.js";
 import { analysisJobResponse } from "../services/analysisResponse.service.js";
 import { detectProjectFrameworks } from "../services/frameworkDetection.service.js";
+import { success } from "zod";
 
 const handleEntryMutation = async (req, res, operation, failureMessage) => {
   try {
@@ -1348,6 +1349,56 @@ The user is working on project: ${project.name}.
       // Đẩy job vào queue để chạy ngầm (trả về kết quả cho client ngay lập tức)
       addJobToQueue("RUN_VITEST_TESTS", job.id).catch((err) => {
         console.error("Lỗi khi thêm RUN_VITEST_TESTS vào queue:", err);
+      });
+
+      return res.status(202).json({
+        success: true,
+        data: {
+          job: {
+            id: job.id,
+            type: job.type,
+            snapshotId: job.snapshotId,
+            status: job.status,
+            progress: job.progress,
+            createdAt: job.createdAt,
+            updatedAt: job.updatedAt,
+          },
+        },
+      });
+    } catch (error) {
+      console.error(error);
+
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  }
+
+  /**
+   * POST /projects/:id/vitest-coverage
+   */
+  async runVitestCoverage(req, res) {
+    try {
+      const { id: projectId } = req.params;
+      const { snapshotId } = req.body;
+
+      const { createVitestCoverageJob } = await import("../services/job.service.js");
+
+      const job = await createVitestCoverageJob({
+        projectId,
+        snapshotId,
+        userId: req.user.id,
+      });
+
+      addJobToQueue("VITEST_COVERAGE", job.id).catch((err) => {
+        console.error("Error adding VITEST_COVERAGE to queue:", err);
       });
 
       return res.status(202).json({

@@ -244,3 +244,13 @@ Content-Type: application/json
 {
   "snapshotId": "cmsg1c66q00010vpt28gzunxv"
 }
+
+### Run Vitest Coverage
+# @name runVitestCoverage
+POST {{baseUrl}}/projects/cmsg1btlh00000vptmnj472y3/vitest-coverage
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF2cXplcGgwMDAwdXc3ZGw2MzIyNDhsIiwidXNlckVtYWlsIjoiZGluaEBnbWFpbC5jb20iLCJ1c2VyTmFtZSI6ImRpbmgiLCJpYXQiOjE3ODY5ODIyNTAsImV4cCI6MTc4NzU4NzA1MH0.LVWaH14kQxjUeF2QwWjqjYCIhCOPAh5s3V2NvRIesas
+Content-Type: application/json
+
+{
+  "snapshotId": "cmsg1c66q00010vpt28gzunxv"
+}
