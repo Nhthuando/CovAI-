@@ -1,0 +1,68 @@
+# Supertest Detection Service
+
+## 1. Purpose
+Tính năng này dùng để phát hiện sự hiện diện của thư viện Supertest trong dự án, bao gồm việc kiểm tra các dependency trong `package.json`, quét các file test để tìm các câu lệnh import/require Supertest, và xác định cấu hình Jest liên quan.
+
+## 2. Workflow
+Internal Service
+→ `detectSupertest(rootDir)`
+→ `readPackage` (Đọc `package.json`)
+→ `scanDir` (Quét file hệ thống, bỏ qua `node_modules`, `coverage`, v.v.)
+→ `isTestFile` (Xác định file test)
+→ `findJestConfig` (Tìm cấu hình Jest)
+→ Detection Result
+
+## 3. Logic
+- Nhận `rootDir` làm đầu vào.
+- Giải quyết đường dẫn gốc dự án bằng `resolveProjectRoot`.
+- Đọc `package.json` để lấy danh sách dependencies, devDependencies, và optionalDependencies.
+- Kiểm tra phiên bản Supertest trong các dependencies.
+- Quét đệ quy các thư mục (trừ các thư mục bị bỏ qua như `node_modules`, `coverage`, v.v.).
+- Xác định file test dựa trên tên file (`test`/`spec`) hoặc cấu trúc thư mục (`test`, `tests`, `__tests__`).
+- Kiểm tra nội dung file test để phát hiện import/require Supertest bằng regex `SUPERTEST_IMPORT_RE`.
+- Tìm kiếm cấu hình Jest (`jest.config.*` hoặc trong `package.json`).
+- Xác định framework (mặc định là "jest" nếu có dependency, config, hoặc file test Supertest).
+- Tổng hợp kết quả bao gồm danh sách file, cấu hình, và lý do phát hiện.
+
+## 4. Input API nhận gì?
+Đây là internal service, được gọi bởi `runSupertestCoverage` controller.
+Tham số:
+- `rootDir` (string): Đường dẫn tuyệt đối đến thư mục gốc của dự án cần quét.
+
+API Endpoint liên quan:
+- `POST /api/coverage/:snapshotId/supertest/run`
+
+## 5. Output API trả về gì?
+Service trả về một object chứa thông tin phát hiện:
+
+```json
+{
+  "detected": true,
+  "version": "^7.0.0",
+  "framework": "jest",
+  "testFiles": ["/absolute/path/to/test.spec.js"],
+  "supertestFiles": ["/absolute/path/to/test.spec.js"],
+  "configFile": "jest.config.js",
+  "configPath": "/absolute/path/to/jest.config.js",
+  "testCommand": "jest",
+  "detectionReasons": ["Supertest dependency found in package.json", "..."]
+}
+```
+
+## 6. Related
+- `supertestDetection.service.js`: File thực thi chính.
+- `projectRootResolver.js`: Tiện ích giải quyết đường dẫn gốc dự án.
+- `package.json`: File chứa thông tin dependency.
+- `jest.config.*`: Các file cấu hình Jest.
+- `coverage.controller.js`: Sử dụng `detectSupertest` để lấy thông tin Supertest.
+- `nodeProjectValidator.js`: Sử dụng `detectSupertest` và `detectJest`.
+- `runTestsJob.service.js`: Sử dụng `detectSupertest` để lấy thông tin Supertest.
+- `supertestCoverageJob.service.js`: Sử dụng `detectSupertest` để lấy thông tin Supertest.
+- `jestDetector.js`: Được sử dụng cùng với `detectSupertest` trong `nodeProjectValidator.js`.
+
+## 7. Notes
+- Bỏ qua các thư mục: `node_modules`, `coverage`, `storage`, `.git`, `.next`, `dist`, `build`.
+- Kiểm tra cả `dependencies`, `devDependencies`, và `optionalDependencies`.
+- File test được xác định dựa trên hậu tố `test`/`spec` hoặc nằm trong các thư mục `test`, `tests`, `__tests__`.
+- Việc phát hiện import/require Supertest dựa trên regex `/(?:from\s*["']supertest["']|require\(\s*["']supertest["']\s*\)|import\s*\(\s*["']supertest["']\s*\))/`.
+- Kết quả trả về sử dụng đường dẫn tuyệt đối cho các file để phục vụ runner, trong khi `configFile` là đường dẫn tương đối cho API client.
