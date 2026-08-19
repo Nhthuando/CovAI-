@@ -3,6 +3,7 @@ import { detectJest } from "../utils/jestDetector.js";
 import { detectAndSaveProject } from "./jestDetection.service.js";
 import { detectFrameworks } from "./testDetection.service.js";
 import { detectAndSaveProject as detectVitestAndSave } from "./vitestDetection.service.js";
+import { detectCypressMetadata } from "./cypressDetection.service.js";
 import {
   createAnalysisJob as createArchitectureAnalysisJob,
   createSnapshotIngestJob,
@@ -364,6 +365,10 @@ export const detectPlaywrightConfig = async (projectId, userId) => {
 
 export const detectVitestConfig = async (projectId) => {
   return detectVitestAndSave(projectId);
+};
+
+export const detectCypressConfig = async (projectId) => {
+  return detectCypressMetadata(projectId);
 };
 
 export const listProjectSnapshots = async ({ projectId, userId }) => {
