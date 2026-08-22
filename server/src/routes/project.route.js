@@ -70,5 +70,10 @@ router.post(
   authMiddleware,
   projectController.runVitestCoverage.bind(projectController),
 );
+router.post(
+  "/:id/playwright-detection",
+  authMiddleware,
+  projectController.detectPlaywrightFramework.bind(projectController)
+);
 
 export default router;

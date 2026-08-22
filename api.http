@@ -254,3 +254,8 @@ Content-Type: application/json
 {
   "snapshotId": "cmsg1c66q00010vpt28gzunxv"
 }
+
+### Run Playwright Detection
+# @name detectPlaywright
+POST {{baseUrl}}/projects/cmsg1btlh00000vptmnj472y3/playwright-detection
+Authorization: Bearer 
