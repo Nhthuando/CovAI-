@@ -14,6 +14,7 @@ import { processSupertestCoverageJob } from './supertestCoverageJob.service.js';
 import { processQualityAnalysisJob } from './qualityAnalysisJob.service.js';
 import { processSecurityAnalysisJob } from './securityScanJob.service.js';
 import { processRunVitestJob } from "./runVitestJob.service.js";
+import { processSystemTestAnalysisJob } from "./systemTestAnalysisJob.service.js";
 import {
   getJobById,
   markJobRunning,
@@ -156,6 +157,9 @@ const worker = new Worker(
         }
         case "RUN_VITEST_TESTS":
           await processRunVitestJob(jobId);
+          break;
+        case "SYSTEM_TEST_ANALYSIS":
+          await processSystemTestAnalysisJob(jobId);
           break;
         default:
           throw new Error(`Unknown job type: ${type}`);

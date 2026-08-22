@@ -373,6 +373,7 @@ enum JobType {
   QUALITY_ANALYSIS
   SECURITY_ANALYSIS
   RUN_VITEST_TESTS
+  SYSTEM_TEST_ANALYSIS
 }
 
 enum JobStatus {
@@ -403,6 +404,8 @@ enum AiSuggestionPriority {
 enum TestType {
   JEST
   SUPERTEST
+  PLAYWRIGHT
+  CYPRESS
 }
 
 enum IssueType {

@@ -44,6 +44,8 @@ router.post("/:id/detect-playwright", projectController.detectPlaywrightConfig);
 router.post("/:id/detect-vitest", projectController.detectVitestConfig);
 router.get("/:id/detect-frameworks", projectController.detectFrameworks);
 router.post("/:id/run-playwright", projectController.runPlaywrightTests);
+router.post("/:id/run-cypress", projectController.runCypressTests.bind(projectController));
+router.post("/:id/system-test-analysis", projectController.runSystemTestAnalysis.bind(projectController));
 router.post(
   "/:id/run-integration-tests",
   projectController.runIntegrationTests,
