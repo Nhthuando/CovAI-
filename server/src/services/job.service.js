@@ -30,6 +30,9 @@ const JOB_TYPES = Object.freeze([
   "CODE_HYGIENE",
   "RUN_VITEST_TESTS",
   "SYSTEM_TEST_ANALYSIS",
+  "VITEST_COVERAGE",
+  "CYPRESS_SYSTEM_TEST",
+  "CYPRESS_SYSTEM_COVERAGE",
 ]);
 
 /** Terminal statuses — a job in one of these states cannot be mutated. */
@@ -128,8 +131,12 @@ export const createSystemTestAnalysisJob = ({
   });
 };
 
+export const createVitestCoverageJob = createTypedJob("VITEST_COVERAGE");
+
 /** Creates a queued Supertest integration-coverage job for a snapshot. */
 export const createSupertestCoverageJob = createTypedJob("SUPERTEST_COVERAGE");
+export const createCypressSystemCoverageJob = createTypedJob("CYPRESS_SYSTEM_COVERAGE");
+export const createCypressSystemTestJob = createTypedJob("CYPRESS_SYSTEM_TEST");
 export const createBuildCfgJob = createTypedJob("BUILD_CFG");
 export const createPerformanceAnalysisJob = createTypedJob("PERFORMANCE_ANALYSIS");
 export const createAiSuggestJob = createTypedJob("AI_SUGGEST");

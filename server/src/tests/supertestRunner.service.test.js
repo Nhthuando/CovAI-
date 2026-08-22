@@ -49,8 +49,8 @@ describe('supertestRunner.service', () => {
         await runSupertest('job1', tempDir, null, [file]);
 
         const command = dockerRunner.run.mock.calls[0][0].command;
-        expect(command).toContain('node --experimental-vm-modules');
-        expect(command).toContain('./node_modules/jest/bin/jest.js');
+        expect(command).toContain("NODE_OPTIONS='--experimental-vm-modules'");
+        expect(command).toContain('npx --no-install jest');
     });
 
     test('rejects missing or invalid project roots', async () => {

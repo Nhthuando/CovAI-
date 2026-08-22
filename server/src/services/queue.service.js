@@ -15,6 +15,9 @@ import { processQualityAnalysisJob } from './qualityAnalysisJob.service.js';
 import { processSecurityAnalysisJob } from './securityScanJob.service.js';
 import { processRunVitestJob } from "./runVitestJob.service.js";
 import { processSystemTestAnalysisJob } from "./systemTestAnalysisJob.service.js";
+import { processVitestCoverageJob } from './vitestCoverageJob.service.js';
+import { processCypressSystemCoverageJob } from './cypressSystemCoverageJob.service.js';
+import { processCypressSystemTestJob } from './runCypressSystemTestJob.service.js';
 import {
   getJobById,
   markJobRunning,
@@ -160,6 +163,15 @@ const worker = new Worker(
           break;
         case "SYSTEM_TEST_ANALYSIS":
           await processSystemTestAnalysisJob(jobId);
+          break;
+        case 'VITEST_COVERAGE':
+          await processVitestCoverageJob(jobId);
+          break;
+        case 'CYPRESS_SYSTEM_TEST':
+          await processCypressSystemTestJob(jobId);
+          break;
+        case 'CYPRESS_SYSTEM_COVERAGE':
+          await processCypressSystemCoverageJob(jobId);
           break;
         default:
           throw new Error(`Unknown job type: ${type}`);
