@@ -4,6 +4,9 @@ import { generateText } from "./gemini.service.js";
 import { buildFullTestPrompt } from "./fullTestPromptBuilder.service.js";
 import { buildAiPayload } from "./aiContextBuilder.service.js";
 import { validateGeneratedTest } from "./testValidation.service.js";
+import { createAiTestsJob } from "./job.service.js";
+import { addJobToQueue } from "./queue.service.js";
+
 
 export const generateIntegrationTest = async ({
   projectId,
@@ -261,4 +264,68 @@ export const getAiTestsList = async ({
       totalPages: Math.ceil(total / limit),
     },
   };
+};
+
+/**
+ * Verifies project ownership, resolves the latest snapshot if none specified,
+ * creates a deduped AI_TESTS job with mode="CYPRESS", and enqueues it.
+ *
+ * @param {{ projectId: string, snapshotId?: string, userId: string }} params
+ * @returns {Promise<{ id: string, snapshotId: string, status: string, existing: boolean }>}
+ */
+export const queueCypressGeneration = async ({ projectId, snapshotId, userId }) => {
+  const db = prisma;
+
+  // 1. Verify project ownership
+  const project = await db.project.findUnique({
+    where: { id: projectId },
+    select: { ownerId: true },
+  });
+
+  if (!project) {
+    const err = new Error("Project not found");
+    err.status = 404;
+    throw err;
+  }
+
+  if (project.ownerId !== userId) {
+    const err = new Error("Forbidden: You do not have access to this project");
+    err.status = 403;
+    throw err;
+  }
+
+  // 2. Resolve snapshot — use the provided one or fall back to the latest
+  let resolvedSnapshotId = snapshotId;
+  if (!resolvedSnapshotId) {
+    const latestSnapshot = await db.projectSnapshot.findFirst({
+      where: { projectId },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
+
+    if (!latestSnapshot) {
+      const err = new Error("No snapshot found for this project");
+      err.status = 404;
+      throw err;
+    }
+
+    resolvedSnapshotId = latestSnapshot.id;
+  }
+
+  // 3. Create job (deduped — reuses active CYPRESS job if exists)
+  const job = await createAiTestsJob({
+    projectId,
+    snapshotId: resolvedSnapshotId,
+    userId,
+    mode: "CYPRESS",
+  });
+
+  // 4. Fire-and-forget queue addition (non-blocking)
+  if (!job.existing) {
+    addJobToQueue("AI_TESTS", job.id).catch((err) => {
+      console.error("[queueCypressGeneration] Failed to add job to queue:", err);
+    });
+  }
+
+  return job;
 };
