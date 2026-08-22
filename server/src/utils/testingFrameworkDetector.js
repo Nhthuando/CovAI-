@@ -12,6 +12,11 @@ const FRAMEWORKS = [
         configFiles: ["vitest.config.js", "vitest.config.cjs", "vitest.config.mjs", "vitest.config.ts"],
         packageKey: "vitest",
     },
+    {
+        name: "playwright",
+        configFiles: ["playwright.config.ts, playwright.config.js, playwright.config.mjs, playwright.config.cjs"],
+        packageKey: "@playwright/test",
+    },
 ];
 
 const DEPENDENCY_SECTIONS = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"];
@@ -31,6 +36,7 @@ const readPackageJson = (packagePath, errors) => {
 const classifyTestFile = (content) => {
     if (/@jest\/globals|\bjest\s*\./.test(content)) return "jest";
     if (/from\s+["']vitest["']|\bvi\s*\./.test(content)) return "vitest";
+    if (/from\s+["']@playwright\/test["']/.test(content)) return "playwright";
     return "unknown";
 };
 

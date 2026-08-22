@@ -10,6 +10,7 @@ import { processAiSuggestJob } from "../services/aiSuggestJob.service.js";
 import { generateText } from "../services/gemini.service.js";
 import { checkAndIncrementQuota } from "../services/aiQuota.service.js";
 import { getAiTestById, listAiTests } from "../services/aiTest.service.js";
+import { detectAndSaveProject as detectAndSavePlaywright } from "../services/playwrightDetection.service.js";
 import prisma from "../config/prisma.js";
 import {
   ServiceError,
@@ -1577,6 +1578,19 @@ The user is working on project: ${project.name}.
     }
   }
 
+  async detectPlaywrightFramework(req, res, next) {
+    try {
+      const { id } = req.params;
+      const result = await detectAndSavePlaywright(id);
+      res.json({
+        success: true,
+        message: "Playwright detection completed",
+        data: result
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
   /**
    * POST /projects/:id/cypress-system-test
    */

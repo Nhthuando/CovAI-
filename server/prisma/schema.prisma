@@ -47,6 +47,11 @@ model Project {
   hasVitest        Boolean           @default(false)
   vitestCommand    String?
   vitestConfigPath String?
+  hasPlaywright        Boolean       @default(false)
+  playwrightCommand    String?
+  playwrightConfigPath String?
+  playwrightTestDir    String?
+  playwrightBrowsers   String?
   aiSuggestions    AiSuggestion[]
   aiTests          AiTest[]
   jobs             Job[]
@@ -76,6 +81,11 @@ model ProjectSnapshot {
   hasVitest                Boolean                   @default(false)
   vitestCommand            String?
   vitestConfigPath         String?
+  hasPlaywright            Boolean                   @default(false)
+  playwrightCommand        String?
+  playwrightConfigPath     String?
+  playwrightTestDir        String?
+  playwrightBrowsers       String?
   aiContextCache           AiContextCache?
   aiSuggestions            AiSuggestion[]
   aiTests                  AiTest[]

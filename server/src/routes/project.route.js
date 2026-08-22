@@ -77,6 +77,11 @@ router.post(
   projectController.runVitestCoverage.bind(projectController),
 );
 router.post(
+  "/:id/playwright-detection",
+  authMiddleware,
+  projectController.detectPlaywrightFramework.bind(projectController),
+ );
+router.post(
   "/:id/cypress-system-test",
   authMiddleware,
   projectController.runCypressSystemTests.bind(projectController),
