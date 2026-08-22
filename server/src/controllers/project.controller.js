@@ -21,6 +21,7 @@ import {
   detectJestConfig,
   detectPlaywrightConfig,
   detectVitestConfig,
+  detectCypressConfig,
   deleteProject,
   getProjectTree,
   getFileContent,
@@ -39,7 +40,41 @@ import { createBuildCfgJob } from "../services/job.service.js";
 import { addJobToQueue } from "../services/queue.service.js";
 import { analysisJobResponse } from "../services/analysisResponse.service.js";
 import { detectProjectFrameworks } from "../services/frameworkDetection.service.js";
-import { success } from "zod";
+import { getFrameworkRecommendation, selectTestingFramework } from "../services/frameworkRecommendation.service.js";
+import { detectMissingTests } from "../services/missingTestDetection.service.js";
+
+const queueSystemTestAnalysis = async ({ projectId, snapshotId, runner, userId }) => {
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, ownerId: userId },
+    select: { id: true },
+  });
+  if (!project) throw new ServiceError("Project not found or unauthorized", 404);
+
+  const snapshot = await prisma.projectSnapshot.findFirst(
+    snapshotId
+      ? { where: { id: snapshotId, projectId }, select: { id: true, rootDir: true } }
+      : { where: { projectId }, orderBy: { createdAt: "desc" }, select: { id: true, rootDir: true } },
+  );
+  if (!snapshot) throw new ServiceError("Project snapshot not found", 404);
+  if (!snapshot.rootDir) throw new ServiceError("Project snapshot is not ready for system tests", 409);
+
+  const { createSystemTestAnalysisJob, markQueuedJobFailed } = await import("../services/job.service.js");
+  const job = await createSystemTestAnalysisJob({
+    projectId,
+    snapshotId: snapshot.id,
+    userId,
+    runner,
+  });
+
+  try {
+    await addJobToQueue("SYSTEM_TEST_ANALYSIS", job.id);
+  } catch (error) {
+    await markQueuedJobFailed(job.id, error).catch(() => {});
+    throw new ServiceError("Unable to queue system test analysis", 503);
+  }
+
+  return job;
+};
 
 const handleEntryMutation = async (req, res, operation, failureMessage) => {
   try {
@@ -692,6 +727,23 @@ class ProjectController {
   }
 
   /**
+   * GET /projects/:id/missing-test-framework
+   */
+  async detectMissingTestFramework(req, res) {
+    try {
+      const { id } = req.params;
+      const data = await detectMissingTests(id);
+      return res.status(200).json(data);
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        return res.status(error.statusCode).json({ success: false, message: error.message });
+      }
+      console.error(error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
+  /**
    * POST /projects/:id/detect-playwright
    */
   async detectPlaywrightConfig(req, res) {
@@ -722,20 +774,11 @@ class ProjectController {
   async runPlaywrightTests(req, res) {
     try {
       const { id: projectId } = req.params;
-      const { testDirectory, snapshotId } = req.body;
-
-      const { createPlaywrightJob } =
-        await import("../services/job.service.js");
-
-      const job = await createPlaywrightJob({
+      const job = await queueSystemTestAnalysis({
         projectId,
-        snapshotId,
-        testDirectory,
+        snapshotId: req.body?.snapshotId,
+        runner: "playwright",
         userId: req.user.id,
-      });
-
-      addJobToQueue("RUN_PLAYWRIGHT_TESTS", job.id).catch((err) => {
-        console.error("Lỗi khi thêm RUN_PLAYWRIGHT_TESTS vào queue:", err);
       });
 
       return res.status(202).json({
@@ -765,6 +808,84 @@ class ProjectController {
         success: false,
         message: "Internal server error",
       });
+    }
+  }
+
+  async getFrameworkRecommendation(req, res) {
+    try {
+      const data = await getFrameworkRecommendation({
+        projectId: req.params.id,
+        snapshotId: req.query.snapshotId,
+        userId: req.user.id,
+      });
+      return res.status(200).json({ success: true, data });
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        return res.status(error.statusCode).json({ success: false, message: error.message });
+      }
+      console.error(error);
+      return res.status(500).json({ success: false, message: "Internal server error" });
+    }
+  }
+
+  async selectTestingFramework(req, res) {
+    try {
+      const data = await selectTestingFramework({
+        projectId: req.params.id,
+        snapshotId: req.body?.snapshotId,
+        framework: req.body?.framework,
+        userId: req.user.id,
+      });
+      return res.status(200).json({ success: true, data });
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        return res.status(error.statusCode).json({ success: false, message: error.message });
+      }
+      console.error(error);
+      return res.status(500).json({ success: false, message: "Internal server error" });
+    }
+  }
+
+  /**
+   * POST /projects/:id/run-cypress
+   */
+  async runCypressTests(req, res) {
+    try {
+      const job = await queueSystemTestAnalysis({
+        projectId: req.params.id,
+        snapshotId: req.body?.snapshotId,
+        runner: "cypress",
+        userId: req.user.id,
+      });
+      return res.status(202).json({ success: true, data: { job } });
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        return res.status(error.statusCode).json({ success: false, message: error.message });
+      }
+      console.error(error);
+      return res.status(500).json({ success: false, message: "Internal server error" });
+    }
+  }
+
+  /**
+   * POST /projects/:id/system-test-analysis
+   * Body: { snapshotId?: string, runner?: "playwright" | "cypress" }
+   */
+  async runSystemTestAnalysis(req, res) {
+    try {
+      const job = await queueSystemTestAnalysis({
+        projectId: req.params.id,
+        snapshotId: req.body?.snapshotId,
+        runner: req.body?.runner ?? null,
+        userId: req.user.id,
+      });
+      return res.status(202).json({ success: true, data: { job } });
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        return res.status(error.statusCode).json({ success: false, message: error.message });
+      }
+      console.error(error);
+      return res.status(500).json({ success: false, message: "Internal server error" });
     }
   }
 
@@ -809,6 +930,31 @@ class ProjectController {
     try {
       const { id } = req.params;
       const detection = await detectVitestConfig(id);
+
+      return res.status(200).json({ success: true, data: detection });
+    } catch (error) {
+      console.error(error);
+
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  }
+
+  /**
+   * POST /projects/:id/detect-cypress
+   */
+  async detectCypressConfig(req, res) {
+    try {
+      const { id } = req.params;
+      const detection = await detectCypressConfig(id);
 
       return res.status(200).json({ success: true, data: detection });
     } catch (error) {
@@ -1445,6 +1591,105 @@ The user is working on project: ${project.name}.
       next(error);
     }
   };
+  /**
+   * POST /projects/:id/cypress-system-test
+   */
+  async runCypressSystemTests(req, res) {
+    try {
+      const { id: projectId } = req.params;
+      const { snapshotId } = req.body;
+
+      const { createCypressSystemTestJob } = await import("../services/job.service.js");
+
+      const job = await createCypressSystemTestJob({
+        projectId,
+        snapshotId,
+        userId: req.user.id,
+      });
+
+      addJobToQueue("CYPRESS_SYSTEM_TEST", job.id).catch((err) => {
+        console.error("Error adding CYPRESS_SYSTEM_TEST to queue:", err);
+      });
+
+      return res.status(202).json({
+        success: true,
+        data: {
+          job: {
+            id: job.id,
+            type: job.type,
+            snapshotId: job.snapshotId,
+            status: job.status,
+            progress: job.progress,
+            createdAt: job.createdAt,
+            updatedAt: job.updatedAt,
+          },
+        },
+      });
+    } catch (error) {
+      console.error(error);
+
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  }
+
+  /**
+   * POST /projects/:id/cypress-coverage
+   */
+  async runCypressCoverage(req, res) {
+    try {
+      const { id: projectId } = req.params;
+      const { snapshotId } = req.body;
+
+      const { createCypressSystemCoverageJob } = await import("../services/job.service.js");
+
+      const job = await createCypressSystemCoverageJob({
+        projectId,
+        snapshotId,
+        userId: req.user.id,
+      });
+
+      addJobToQueue("CYPRESS_SYSTEM_COVERAGE", job.id).catch((err) => {
+        console.error("Error adding CYPRESS_SYSTEM_COVERAGE to queue:", err);
+      });
+
+      return res.status(202).json({
+        success: true,
+        data: {
+          job: {
+            id: job.id,
+            type: job.type,
+            snapshotId: job.snapshotId,
+            status: job.status,
+            progress: job.progress,
+            createdAt: job.createdAt,
+            updatedAt: job.updatedAt,
+          },
+        },
+      });
+    } catch (error) {
+      console.error(error);
+
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  }
 }
 
 export default new ProjectController();

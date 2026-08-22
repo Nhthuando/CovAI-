@@ -76,6 +76,8 @@ model ProjectSnapshot {
   hasJest                  Boolean                   @default(false)
   jestCommand              String?
   testingFrameworksJson    String?
+  frameworkRecommendationJson String?
+  selectedTestingFramework String?
   hasVitest                Boolean                   @default(false)
   vitestCommand            String?
   vitestConfigPath         String?
@@ -383,7 +385,10 @@ enum JobType {
   QUALITY_ANALYSIS
   SECURITY_ANALYSIS
   RUN_VITEST_TESTS
+  SYSTEM_TEST_ANALYSIS
   VITEST_COVERAGE
+  CYPRESS_SYSTEM_TEST
+  CYPRESS_SYSTEM_COVERAGE
 }
 
 enum JobStatus {
@@ -414,6 +419,9 @@ enum AiSuggestionPriority {
 enum TestType {
   JEST
   SUPERTEST
+  PLAYWRIGHT
+  VITEST
+  CYPRESS
 }
 
 enum IssueType {

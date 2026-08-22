@@ -36,9 +36,10 @@ export const dockerRunner = {
    * @param {string} params.command - Command to execute (e.g., "npm install")
    * @param {number} [params.timeoutMs] - Optional execution timeout
    * @param {string} [params.jobId] - Optional Job ID for real-time logging
+   * @param {string} [params.image] - Optional Docker image; ignored by direct-shell fallback
    * @returns {Promise<{ success: boolean, exitCode: number, stdout: string, stderr: string }>}
    */
-  run: async ({ snapshotPath, command, timeoutMs = DEFAULT_TIMEOUT_MS, jobId = null }) => {
+  run: async ({ snapshotPath, command, timeoutMs = DEFAULT_TIMEOUT_MS, jobId = null, image = "node:22" }) => {
     return new Promise((resolve, reject) => {
       let stdout = "";
       let stderr = "";
@@ -67,7 +68,7 @@ export const dockerRunner = {
           `${snapshotPath}:/workspace`,
           "-w",
           "/workspace",
-          "node:22",
+          image,
           "sh",
           "-c",
           command,

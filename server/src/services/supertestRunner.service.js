@@ -76,7 +76,8 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
 
     const testArgs = normalizedFiles.map(quoteForShell).join(" ");
     const usesEsm = shouldUseNodeJestDirect(resolvedRoot);
-    const jestBinary = usesEsm ? "node --experimental-vm-modules ./node_modules/jest/bin/jest.js" : "npx --no-install jest";
+    const nodeOptions = usesEsm ? "NODE_OPTIONS='--experimental-vm-modules'" : "";
+    const jestBinary = "npx --no-install jest";
 
     const coverageDir = path.join(resolvedRoot, "coverage");
     if (!fs.existsSync(coverageDir)) {
@@ -84,7 +85,7 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
     }
     const resultsPath = path.join(coverageDir, "test-results.json");
 
-    let jestCmd = `CI=true NODE_ENV=test ${jestBinary} --runInBand --coverage --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=${quoteForShell(resultsPath)} --forceExit --testTimeout=30000`;
+    let jestCmd = `CI=true NODE_ENV=test ${nodeOptions} ${jestBinary} --runInBand --coverage --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=${quoteForShell(resultsPath)} --forceExit --testTimeout=30000`;
     jestCmd += ` --runTestsByPath ${testArgs}`;
 
     if (jestConfigPath) {

@@ -4,7 +4,7 @@ import { dockerRunner } from "./dockerRunner.service.js";
 const INSTALL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes for npm install
 const VITEST_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes for testing
 
-/** 
+/**
  * Install dependencies
  */
 export const installVitestDeps = async (jobId, rootDir) => {
@@ -45,7 +45,7 @@ export const runVitestTests = async (jobId, rootDir, vitestCommand) => {
     return result;
 };
 
-/** 
+/**
  * Run Vitest with Coverage
  */
 export const runVitestCoverage = async (jobId, rootDir, vitestCommand) => {

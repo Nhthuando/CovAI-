@@ -42,8 +42,14 @@ router.delete("/:id", projectController.deleteProject);
 router.post("/:id/detect-jest", projectController.detectJestConfig);
 router.post("/:id/detect-playwright", projectController.detectPlaywrightConfig);
 router.post("/:id/detect-vitest", projectController.detectVitestConfig);
+router.post("/:id/detect-cypress", projectController.detectCypressConfig);
 router.get("/:id/detect-frameworks", projectController.detectFrameworks);
+router.get("/:id/test-framework-recommendation", projectController.getFrameworkRecommendation.bind(projectController));
+router.put("/:id/test-framework-selection", projectController.selectTestingFramework.bind(projectController));
+router.get("/:id/missing-test-framework", projectController.detectMissingTestFramework);
 router.post("/:id/run-playwright", projectController.runPlaywrightTests);
+router.post("/:id/run-cypress", projectController.runCypressTests.bind(projectController));
+router.post("/:id/system-test-analysis", projectController.runSystemTestAnalysis.bind(projectController));
 router.post(
   "/:id/run-integration-tests",
   projectController.runIntegrationTests,
@@ -73,7 +79,17 @@ router.post(
 router.post(
   "/:id/playwright-detection",
   authMiddleware,
-  projectController.detectPlaywrightFramework.bind(projectController)
+  projectController.detectPlaywrightFramework.bind(projectController),
+ );
+router.post(
+  "/:id/cypress-system-test",
+  authMiddleware,
+  projectController.runCypressSystemTests.bind(projectController),
+);
+router.post(
+  "/:id/cypress-coverage",
+  authMiddleware,
+  projectController.runCypressCoverage.bind(projectController),
 );
 
 export default router;

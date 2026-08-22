@@ -232,3 +232,20 @@ export async function generateSkeletonApi(projectId, snapshotId, mode = "SKELETO
   });
   return handleResponse(res);
 }
+
+export async function getFrameworkRecommendationApi(projectId, snapshotId) {
+  const query = snapshotId ? `?snapshotId=${encodeURIComponent(snapshotId)}` : "";
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/test-framework-recommendation${query}`, {
+    headers: getAuthHeaders(),
+  });
+  return handleResponse(res);
+}
+
+export async function selectTestingFrameworkApi(projectId, snapshotId, framework) {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/test-framework-selection`, {
+    method: "PUT",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ snapshotId, framework }),
+  });
+  return handleResponse(res);
+}

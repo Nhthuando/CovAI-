@@ -47,3 +47,44 @@ export const listAiTests = async (req, res) => {
     res.status(statusCode).json({ success: false, message: error.message || 'Failed to fetch AI test results' });
   }
 };
+
+/**
+ * POST /ai-tests/generate-cypress
+ * Queues an AI job to generate Cypress E2E tests with positive, negative,
+ * and boundary scenarios for the specified project snapshot.
+ */
+export const generateCypressTests = async (req, res) => {
+  try {
+    const { projectId, snapshotId } = req.body;
+    const userId = req.user?.id;
+
+    // Validate required fields
+    if (!projectId) {
+      return res.status(400).json({
+        success: false,
+        message: 'projectId is required',
+      });
+    }
+
+    // Delegate ownership check + job queuing to service
+    const job = await aiTestService.queueCypressGeneration({
+      projectId,
+      snapshotId,
+      userId,
+    });
+
+    return res.status(202).json({
+      success: true,
+      message: 'Cypress test generation job queued successfully.',
+      jobId: job.id,
+      snapshotId: job.snapshotId,
+    });
+  } catch (error) {
+    console.error('[generateCypressTests] Error:', error);
+    const statusCode = error.status || 500;
+    return res.status(statusCode).json({
+      success: false,
+      message: error.message || 'Failed to queue Cypress test generation.',
+    });
+  }
+};

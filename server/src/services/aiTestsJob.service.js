@@ -3,10 +3,12 @@ import { getJobById, addJobLog } from "./job.service.js";
 import { updateJobStatus } from "./jobUpdate.service.js";
 import { buildAiPayload } from "./aiContextBuilder.service.js";
 import { buildFinalPrompt } from "./aiPromptBuilder.service.js";
+import { buildCypressPrompt } from "./cypressPromptBuilder.service.js";
 import { generateText } from "./gemini.service.js";
 import { processAiSuggestions } from "./aiSuggestionParser.service.js";
 import { processSkeletonTests } from "./skeletonPostProcessor.service.js";
 import { processFullTests } from "./fullTestsPostProcessor.service.js";
+import { processCypressTests } from "./cypressPostProcessor.service.js";
 import { notificationService } from "./notification.service.js";
 
 /**
@@ -42,6 +44,46 @@ export const processAiTestsJob = async (jobId) => {
         await updateJobStatus({ jobId, progress: 30 });
 
         await addJobLog(jobId, "INFO", `Constructing final prompt for ${mode} mode...`);
+
+        // ── Cypress E2E Generation Branch ──────────────────────────────────
+        if (mode === "CYPRESS") {
+            const cypressPrompt = buildCypressPrompt(payload);
+
+            await updateJobStatus({ jobId, progress: 40 });
+
+            await addJobLog(jobId, "INFO", "Calling Gemini AI model for Cypress test generation...");
+            const cypressResponseText = await generateText(cypressPrompt, "gemini-1.5-pro");
+
+            if (!cypressResponseText) {
+                throw new Error("Gemini returned an empty response for Cypress generation.");
+            }
+
+            await updateJobStatus({ jobId, progress: 80 });
+
+            await addJobLog(jobId, "INFO", "Parsing and classifying Cypress test scenarios...");
+            const { allTests, summary } = processCypressTests(cypressResponseText, {
+                projectId,
+                snapshotId,
+            });
+
+            await addJobLog(jobId, "INFO", "Cleaning up old Cypress tests for this snapshot...");
+            await prisma.aiTest.deleteMany({
+                where: { snapshotId, mode: "CYPRESS" },
+            });
+
+            if (allTests.length > 0) {
+                await prisma.aiTest.createMany({ data: allTests });
+                await addJobLog(jobId, "INFO", summary.message);
+            } else {
+                await addJobLog(jobId, "INFO", "No Cypress test files were generated.");
+            }
+
+            await updateJobStatus({ jobId, status: "SUCCESS", progress: 100 });
+            await notificationService.createJobFinishedNotification(jobId);
+            return { success: true, count: allTests.length, summary };
+        }
+
+        // ── Jest / Vitest Generation Branch (existing) ─────────────────────
         const finalPrompt = buildFinalPrompt(payload, { mode, hasJest, hasVitest });
 
         await updateJobStatus({ jobId, progress: 40 });

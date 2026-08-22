@@ -153,14 +153,22 @@ export const validateContextSize = (payloadJson) => {
  */
 export const buildAiPayload = async (snapshotId, forceRebuild = false) => {
     try {
+        const snapshot = await prisma.projectSnapshot.findUnique({
+            where: { id: snapshotId },
+            select: { selectedTestingFramework: true },
+        });
+        const selectedTestingFramework = ["jest", "vitest"].includes(snapshot?.selectedTestingFramework)
+            ? snapshot.selectedTestingFramework
+            : null;
         if (!forceRebuild) {
             try {
                 const cachedPayload = await reuseCachedContext(snapshotId);
                 if (cachedPayload) {
+                    const payload = { ...cachedPayload, selectedTestingFramework };
                     console.log(`[AIContextBuilder] Reusing cached context for snapshot ${snapshotId}`);
                     return {
-                        payload: cachedPayload,
-                        payloadJson: JSON.stringify(cachedPayload),
+                        payload,
+                        payloadJson: JSON.stringify(payload),
                         cached: true
                     };
                 }
@@ -183,7 +191,8 @@ export const buildAiPayload = async (snapshotId, forceRebuild = false) => {
             testFiles,
             complexity,
             cfg,
-            coverage
+            coverage,
+            selectedTestingFramework,
         };
 
         const payloadJson = JSON.stringify(payload);

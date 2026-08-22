@@ -26,6 +26,7 @@ const mockProcessCoverageJob = jest.fn();
 const mockProcessCodeHygieneJob = jest.fn();
 const mockProcessPerformanceAnalysisJob = jest.fn();
 const mockProcessSupertestCoverageJob = jest.fn();
+const mockProcessSystemTestAnalysisJob = jest.fn();
 const mockGetJobById = jest.fn();
 const mockMarkJobRunning = jest.fn();
 const mockMarkJobFailed = jest.fn();
@@ -61,6 +62,7 @@ await jest.unstable_mockModule('../services/supertestCoverageJob.service.js', ()
 await jest.unstable_mockModule('../services/qualityAnalysisJob.service.js', () => ({ processQualityAnalysisJob: jest.fn() }));
 await jest.unstable_mockModule('../services/securityScanJob.service.js', () => ({ processSecurityAnalysisJob: jest.fn() }));
 await jest.unstable_mockModule('../services/runVitestJob.service.js', () => ({ processRunVitestJob: jest.fn() }));
+await jest.unstable_mockModule('../services/systemTestAnalysisJob.service.js', () => ({ processSystemTestAnalysisJob: mockProcessSystemTestAnalysisJob }));
 await jest.unstable_mockModule('../services/job.service.js', () => ({
     getJobById: mockGetJobById,
     markJobRunning: mockMarkJobRunning,
@@ -166,6 +168,16 @@ describe('queue.service supertest pipeline', () => {
         await worker({ data: { type: 'SUPERTEST_COVERAGE_PIPELINE', jobId: 'pipeline-1', installJobId: 'install-1', supertestJobId: 'super-1' } });
 
         expect(mockProcessSupertestCoverageJob).toHaveBeenCalledWith('super-1');
+    });
+});
+
+describe('queue.service system test dispatch', () => {
+    beforeEach(() => jest.clearAllMocks());
+
+    test('dispatches SYSTEM_TEST_ANALYSIS to its dedicated processor', async () => {
+        const worker = globalThis.__TEST_QUEUE_HANDLER__;
+        await worker({ data: { type: 'SYSTEM_TEST_ANALYSIS', jobId: 'system-1' } });
+        expect(mockProcessSystemTestAnalysisJob).toHaveBeenCalledWith('system-1');
     });
 });
 

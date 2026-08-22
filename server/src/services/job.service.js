@@ -29,7 +29,10 @@ const JOB_TYPES = Object.freeze([
   "SECURITY_ANALYSIS",
   "CODE_HYGIENE",
   "RUN_VITEST_TESTS",
+  "SYSTEM_TEST_ANALYSIS",
   "VITEST_COVERAGE",
+  "CYPRESS_SYSTEM_TEST",
+  "CYPRESS_SYSTEM_COVERAGE",
 ]);
 
 /** Terminal statuses — a job in one of these states cannot be mutated. */
@@ -108,10 +111,32 @@ export const createRunTestsJob = ({ projectId, snapshotId, userId, mode = "FULL"
 /** Creates a queued RUN_VITEST_TESTS job for a snapshot. */
 export const createVitestJob = createTypedJob("RUN_VITEST_TESTS");
 
+/** Creates a queued browser system-test analysis job for a snapshot. */
+export const createSystemTestAnalysisJob = ({
+  projectId,
+  snapshotId,
+  userId,
+  runner = null,
+}) => {
+  if (runner !== null && !["playwright", "cypress"].includes(runner)) {
+    throw new ServiceError("runner must be playwright or cypress", 400);
+  }
+
+  return createSnapshotJob({
+    projectId,
+    snapshotId,
+    userId,
+    type: "SYSTEM_TEST_ANALYSIS",
+    payloadJson: { snapshotId, runner },
+  });
+};
+
 export const createVitestCoverageJob = createTypedJob("VITEST_COVERAGE");
 
 /** Creates a queued Supertest integration-coverage job for a snapshot. */
 export const createSupertestCoverageJob = createTypedJob("SUPERTEST_COVERAGE");
+export const createCypressSystemCoverageJob = createTypedJob("CYPRESS_SYSTEM_COVERAGE");
+export const createCypressSystemTestJob = createTypedJob("CYPRESS_SYSTEM_TEST");
 export const createBuildCfgJob = createTypedJob("BUILD_CFG");
 export const createPerformanceAnalysisJob = createTypedJob("PERFORMANCE_ANALYSIS");
 export const createAiSuggestJob = createTypedJob("AI_SUGGEST");
@@ -423,10 +448,12 @@ export const markJobSuccess = async (jobId, resultJson) => {
         resultJson: resultString,
       },
     }),
+    // Runners stream their output while a job is running. Keep that diagnostic
+    // output intact; only use the result JSON as output when nothing was streamed.
     prisma.jobOutput.upsert({
       where: { jobId },
       create: { jobId, stdout: resultString },
-      update: { stdout: resultString },
+      update: {},
     }),
   ]);
 
