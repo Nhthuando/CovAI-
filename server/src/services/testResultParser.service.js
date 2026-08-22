@@ -72,3 +72,36 @@ export const parseVitestResults = (coverageDir) => {
         throw new Error(`Vitest execution result was not available for TestRun persistence. Path: ${resultsPath}. Error: ${err.message}`);
     }
 };
+
+/**
+ * Parse Cypress JSON output file
+ * @param {string} rootDir
+ * @returns {Object|null}
+ */
+export const parseCypressResults = (rootDir) => {
+    const resultsPath = path.join(rootDir, "cypress-results.json");
+    console.log(`[TEST-RESULT] parsing Cypress results from: ${resultsPath}`);
+
+    if (!fs.existsSync(resultsPath)) {
+        console.error(`[TEST-RESULT] File not found: ${resultsPath}`);
+        return null;
+    }
+    try {
+        const raw = JSON.parse(fs.readFileSync(resultsPath, "utf8"));
+
+        const results = {
+            totalTests: raw.stats.tests || 0,
+            passedTests: raw.stats.passes || 0,
+            failedTests: raw.stats.failures || 0,
+            skippedTests: raw.stats.pending || 0,
+            durationMs: raw.stats.duration || 0,
+            status: raw.stats.failures === 0 ? "PASSED" : "FAILED"
+        };
+
+        console.log(`[TEST-RESULT] parsed:`, results);
+        return results;
+    } catch (err) {
+        console.error(`[TEST-RESULT] Error parsing ${resultsPath}:`, err);
+        throw new Error(`Cypress execution result was not available for TestRun persistence. Path: ${resultsPath}. Error: ${err.message}`);
+    }
+};

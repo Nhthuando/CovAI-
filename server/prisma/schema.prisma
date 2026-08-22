@@ -374,6 +374,8 @@ enum JobType {
   SECURITY_ANALYSIS
   RUN_VITEST_TESTS
   VITEST_COVERAGE
+  CYPRESS_SYSTEM_TEST
+  CYPRESS_SYSTEM_COVERAGE
 }
 
 enum JobStatus {
@@ -404,6 +406,8 @@ enum AiSuggestionPriority {
 enum TestType {
   JEST
   SUPERTEST
+  VITEST
+  CYPRESS
 }
 
 enum IssueType {
