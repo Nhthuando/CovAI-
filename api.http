@@ -259,3 +259,14 @@ Content-Type: application/json
 # @name detectPlaywright
 POST {{baseUrl}}/projects/cmsg1btlh00000vptmnj472y3/playwright-detection
 Authorization: Bearer 
+
+### Run Playwright System Tests Pipeline
+# @name runPlaywrightTests
+POST {{baseUrl}}/projects/cmsi9yjqw001g0vpkro646et8/playwright-test
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF2cXplcGgwMDAwdXc3ZGw2MzIyNDhsIiwidXNlckVtYWlsIjoiZGluaEBnbWFpbC5jb20iLCJ1c2VyTmFtZSI6ImRpbmgiLCJpYXQiOjE3ODc0MTQ5NTMsImV4cCI6MTc4ODAxOTc1M30.dUIFaTp2eBGl6sa7MPQAYm-TgcsI0jujKKET4giyizQ
+Content-Type: application/json
+
+{
+  "snapshotId": "cmsi9ylbz001h0vpkt76dvghn",
+  "testDirectory": "tests"
+}

@@ -69,7 +69,7 @@ const queueSystemTestAnalysis = async ({ projectId, snapshotId, runner, userId }
   try {
     await addJobToQueue("SYSTEM_TEST_ANALYSIS", job.id);
   } catch (error) {
-    await markQueuedJobFailed(job.id, error).catch(() => {});
+    await markQueuedJobFailed(job.id, error).catch(() => { });
     throw new ServiceError("Unable to queue system test analysis", 503);
   }
 
@@ -1688,6 +1688,47 @@ The user is working on project: ${project.name}.
         success: false,
         message: "Internal server error",
       });
+    }
+  }
+
+  /**
+ * POST /projects/:id/playwright-test
+ */
+  async runPlaywrightSystemTests(req, res) {
+    try {
+      const { id: projectId } = req.params;
+      const { snapshotId, testDirectory } = req.body;
+
+      // Import muộn để tránh vòng lặp dependencies
+      const { createPlaywrightJob } = await import("../services/job.service.js");
+      const { addJobToQueue } = await import("../services/queue.service.js");
+
+      // Khởi tạo job
+      const job = await createPlaywrightJob({
+        projectId,
+        snapshotId,
+        userId: req.user.id,
+        testDirectory,
+      });
+
+      // Đẩy job vào queue để worker chạy ngầm
+      addJobToQueue("PLAYWRIGHT_SYSTEM_TEST", job.id).catch((err) => {
+        console.error("Lỗi khi thêm PLAYWRIGHT_SYSTEM_TEST vào queue:", err);
+      });
+
+      return res.status(202).json({
+        success: true,
+        data: {
+          job: {
+            id: job.id,
+            type: job.type,
+            status: job.status,
+          },
+        },
+      });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ success: false, message: "Internal server error" });
     }
   }
 }

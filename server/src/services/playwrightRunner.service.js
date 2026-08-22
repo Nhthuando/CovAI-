@@ -13,7 +13,7 @@ export const installPlaywrightDeps = async (jobId, rootDir) => {
     jobId,
     "INFO",
     "Bắt đầu cài đặt dependencies (Playwright)...",
-  ).catch(() => {});
+  ).catch(() => { });
 
   // Sử dụng image playwright để đảm bảo có đủ trình duyệt
   const result = await dockerRunner.run({
@@ -32,12 +32,15 @@ export const installPlaywrightDeps = async (jobId, rootDir) => {
  * Chạy Playwright test
  */
 export const runPlaywrightTests = async (jobId, rootDir, testDirectory) => {
-  // Playwright test command
-  const testCmd = testDirectory
-    ? `npx playwright test ${testDirectory}`
-    : "npx playwright test";
+  // Config lệnh chạy để đáp ứng toàn bộ Jira Requirements
+  // --browser=chromium (Configure browser)
+  // --reporter=json (Capture test results)
+  // (Lưu ý: Playwright mặc định chạy headless trên Docker)
 
-  await addJobLog(jobId, "INFO", `Chạy lệnh: ${testCmd}`).catch(() => {});
+  const targetDir = testDirectory ? ` ${testDirectory}` : "";
+  const testCmd = `npx playwright test${targetDir} --browser=chromium --reporter=json`;
+
+  await addJobLog(jobId, "INFO", `Chạy lệnh: ${testCmd}`).catch(() => { });
 
   const result = await dockerRunner.run({
     snapshotPath: rootDir,
@@ -48,3 +51,4 @@ export const runPlaywrightTests = async (jobId, rootDir, testDirectory) => {
 
   return result;
 };
+
