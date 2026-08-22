@@ -80,7 +80,12 @@ router.post(
   "/:id/playwright-detection",
   authMiddleware,
   projectController.detectPlaywrightFramework.bind(projectController),
- );
+);
+router.post(
+  "/:id/playwright-test",
+  authMiddleware,
+  projectController.runPlaywrightSystemTests.bind(projectController)
+);
 router.post(
   "/:id/cypress-system-test",
   authMiddleware,

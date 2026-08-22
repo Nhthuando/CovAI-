@@ -643,3 +643,27 @@ export const getJobStats = async (projectId) => {
 
   return { queued, running, success, failed };
 };
+
+/**
+ * Create a job to run Playwright System Tests
+ */
+export const createPlaywrightJob = async ({ projectId, snapshotId, userId, testDirectory }) => {
+  if (!projectId || !snapshotId) {
+    throw new Error("projectId and snapshotId are required");
+  }
+
+  const job = await prisma.job.create({
+    data: {
+      type: "PLAYWRIGHT_SYSTEM_TEST",
+      status: "QUEUED",
+      projectId,
+      snapshotId,
+      // Store testDirectory (if any) as a stringified JSON in payloadJson
+      payloadJson: testDirectory ? JSON.stringify({ testDirectory }) : null,
+      ...(userId ? { userId } : {}),
+    },
+  });
+
+  return job;
+};
+
