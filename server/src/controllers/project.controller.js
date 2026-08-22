@@ -38,6 +38,7 @@ import { createBuildCfgJob } from "../services/job.service.js";
 import { addJobToQueue } from "../services/queue.service.js";
 import { analysisJobResponse } from "../services/analysisResponse.service.js";
 import { detectProjectFrameworks } from "../services/frameworkDetection.service.js";
+import { getFrameworkRecommendation, selectTestingFramework } from "../services/frameworkRecommendation.service.js";
 
 const queueSystemTestAnalysis = async ({ projectId, snapshotId, runner, userId }) => {
   const project = await prisma.project.findFirst({
@@ -787,6 +788,41 @@ class ProjectController {
         success: false,
         message: "Internal server error",
       });
+    }
+  }
+
+  async getFrameworkRecommendation(req, res) {
+    try {
+      const data = await getFrameworkRecommendation({
+        projectId: req.params.id,
+        snapshotId: req.query.snapshotId,
+        userId: req.user.id,
+      });
+      return res.status(200).json({ success: true, data });
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        return res.status(error.statusCode).json({ success: false, message: error.message });
+      }
+      console.error(error);
+      return res.status(500).json({ success: false, message: "Internal server error" });
+    }
+  }
+
+  async selectTestingFramework(req, res) {
+    try {
+      const data = await selectTestingFramework({
+        projectId: req.params.id,
+        snapshotId: req.body?.snapshotId,
+        framework: req.body?.framework,
+        userId: req.user.id,
+      });
+      return res.status(200).json({ success: true, data });
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        return res.status(error.statusCode).json({ success: false, message: error.message });
+      }
+      console.error(error);
+      return res.status(500).json({ success: false, message: "Internal server error" });
     }
   }
 

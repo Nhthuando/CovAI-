@@ -100,7 +100,10 @@ export const includeComplexityScores = (complexityArray) => {
 export const includeTestingInstructions = (mode = "FULL", existingTestFiles = [], options = {}) => {
     const hasJest = options.hasJest || false;
     const hasVitest = options.hasVitest || false;
-    const framework = hasVitest ? "Vitest" : "Jest"; // Default to Jest if neither or both are somehow set (or you could prioritize Jest, but Vitest is more modern if both exist)
+    const selectedFramework = ["jest", "vitest"].includes(options.selectedFramework)
+        ? options.selectedFramework
+        : null;
+    const framework = selectedFramework === "jest" ? "Jest" : selectedFramework === "vitest" ? "Vitest" : hasVitest ? "Vitest" : "Jest";
 
     let promptSegment = "### Testing Instructions\n\n";
     
@@ -202,7 +205,10 @@ export const buildFinalPrompt = (payload, options = {}) => {
     finalPrompt += includeCfgInformation(payload.cfg);
     
     finalPrompt += includePrioritizationRules();
-    finalPrompt += includeTestingInstructions(mode, payload.testFiles, options);
+    finalPrompt += includeTestingInstructions(mode, payload.testFiles, {
+        ...options,
+        selectedFramework: options.selectedFramework || payload.selectedTestingFramework,
+    });
     finalPrompt += includeMockHints();
     finalPrompt += includeSuggestionFormat();
     

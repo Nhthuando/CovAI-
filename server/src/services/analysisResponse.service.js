@@ -13,6 +13,8 @@ export const snapshotResponse = (snapshot) => ({
     hasStructureAnalysis: Boolean(snapshot.structureAnalysis),
     schemaVersion: snapshot.structureAnalysis?.schemaVersion || null,
     testingFrameworks: parseTestingFrameworks(snapshot.testingFrameworksJson),
+    frameworkRecommendation: parseTestingFrameworks(snapshot.frameworkRecommendationJson),
+    selectedTestingFramework: snapshot.selectedTestingFramework || null,
 });
 
 const parseTestingFrameworks = (value) => {

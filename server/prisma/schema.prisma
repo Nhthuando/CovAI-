@@ -71,6 +71,8 @@ model ProjectSnapshot {
   hasJest                  Boolean                   @default(false)
   jestCommand              String?
   testingFrameworksJson    String?
+  frameworkRecommendationJson String?
+  selectedTestingFramework String?
   hasVitest                Boolean                   @default(false)
   vitestCommand            String?
   vitestConfigPath         String?

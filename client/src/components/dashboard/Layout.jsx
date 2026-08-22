@@ -489,7 +489,10 @@ function LayoutInner() {
             <>
               {!isMobile && <div onMouseDown={handleAiPanelResize} style={{ width: 4, cursor: "col-resize", background: "transparent", zIndex: 10, marginLeft: -2, marginRight: -2 }} className="hover:bg-purple-500/20 transition-colors" />}
               <motion.div key="ai-panel" initial={isMobile ? { x: 320, opacity: 0 } : { width: 0, opacity: 0 }} animate={isMobile ? { x: 0, opacity: 1 } : { width: aiPanelWidth, opacity: 1 }} exit={isMobile ? { x: 320, opacity: 0 } : { width: 0, opacity: 0 }} transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }} style={isMobile ? { position: "fixed", top: 42, bottom: 26, right: 0, width: "100%", maxWidth: 360, overflow: "hidden", zIndex: 35, boxShadow: "-4px 0 24px rgba(0,0,0,0.4)" } : { overflow: "hidden", flexShrink: 0 }}>
-                <AIPanel projectId={project?.id} />
+                <AIPanel
+                  projectId={project?.id}
+                  snapshotId={project?.latestSnapshotId || (project?.id ? localStorage.getItem(`latestSnapshot_${project.id}`) : null) || testPromptSnapshotId}
+                />
               </motion.div>
             </>
           )}

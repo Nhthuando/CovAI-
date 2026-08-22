@@ -19,6 +19,7 @@ import {
 import { sendAiChatMessageApi, getAiSuggestionsApi, generateSkeletonApi } from "../../services/project.service";
 import { getProjectJobsApi } from "../../services/job.service";
 import { useToast } from "./ToastContext";
+import FrameworkRecommendationPanel from "./FrameworkRecommendationPanel";
 
 /* ── Initial conversation ───────────────────────────────── */
 const INITIAL_MESSAGES = [
@@ -557,7 +558,7 @@ function QuickActions({ onAction }) {
 }
 
 /* ── AI Agent Panel — Main Export ────────────────────────── */
-export default function AIPanel({ projectId }) {
+export default function AIPanel({ projectId, snapshotId }) {
   const [messages, setMessages] = useState(INITIAL_MESSAGES);
   const [isTyping, setIsTyping] = useState(false);
   const [isModeSelectorOpen, setIsModeSelectorOpen] = useState(false);
@@ -827,6 +828,7 @@ export default function AIPanel({ projectId }) {
           scrollbarColor: "rgba(124,58,237,0.25) transparent",
         }}
       >
+        <FrameworkRecommendationPanel projectId={projectId} snapshotId={snapshotId} />
         <AnimatePresence>
           {messages.map((msg, index) => (
             <ChatMessage
