@@ -96,5 +96,10 @@ router.post(
   authMiddleware,
   projectController.runCypressCoverage.bind(projectController),
 );
+router.post(
+  "/:id/playwright-coverage",
+  authMiddleware,
+  projectController.runPlaywrightCoverage.bind(projectController),
+);
 
 export default router;

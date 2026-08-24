@@ -38,7 +38,8 @@ export const runPlaywrightTests = async (jobId, rootDir, testDirectory) => {
   // (Lưu ý: Playwright mặc định chạy headless trên Docker)
 
   const targetDir = testDirectory ? ` ${testDirectory}` : "";
-  const testCmd = `npx playwright test${targetDir} --browser=chromium --reporter=json`;
+  // Ensure Playwright outputs JSON to a specific file instead of stdout
+  const testCmd = `PLAYWRIGHT_JSON_OUTPUT_NAME=playwright-results.json npx playwright test${targetDir} --browser=chromium --reporter=json`;
 
   await addJobLog(jobId, "INFO", `Chạy lệnh: ${testCmd}`).catch(() => { });
 

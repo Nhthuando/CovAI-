@@ -11,6 +11,7 @@ import { generateText } from "../services/gemini.service.js";
 import { checkAndIncrementQuota } from "../services/aiQuota.service.js";
 import { getAiTestById, listAiTests } from "../services/aiTest.service.js";
 import { detectAndSaveProject as detectAndSavePlaywright } from "../services/playwrightDetection.service.js";
+import { createPlaywrightSystemCoverageJob } from "../services/job.service.js";
 import prisma from "../config/prisma.js";
 import {
   ServiceError,
@@ -1731,6 +1732,44 @@ The user is working on project: ${project.name}.
       return res.status(500).json({ success: false, message: "Internal server error" });
     }
   }
+  async runPlaywrightCoverage(req, res, next) {
+    try {
+      const { id: projectId } = req.params;
+      const { snapshotId, testDirectory } = req.body;
+      const userId = req.user?.id;
+
+      if (!snapshotId) {
+        throw new AppError("snapshotId is required", 400);
+      }
+
+      const job = await createPlaywrightSystemCoverageJob({
+        projectId,
+        snapshotId,
+        userId,
+        testDirectory
+      });
+
+      await addJobToQueue(job.type, job.id, {
+        projectId,
+        snapshotId,
+        userId,
+        testDirectory
+      });
+
+      res.status(202).json({
+        success: true,
+        data: {
+          job: {
+            id: job.id,
+            type: job.type,
+            status: job.status,
+          },
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
 export default new ProjectController();

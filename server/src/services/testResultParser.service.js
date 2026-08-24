@@ -105,3 +105,41 @@ export const parseCypressResults = (rootDir) => {
         throw new Error(`Cypress execution result was not available for TestRun persistence. Path: ${resultsPath}. Error: ${err.message}`);
     }
 };
+
+/**
+ * Parse Playwright JSON output file
+ * @param {string} rootDir
+ * @returns {Object|null}
+ */
+export const parsePlaywrightResults = (rootDir) => {
+    const resultsPath = path.join(rootDir, "playwright-results.json");
+    console.log(`[TEST-RESULT] parsing Playwright results from: ${resultsPath}`);
+
+    if (!fs.existsSync(resultsPath)) {
+        console.error(`[TEST-RESULT] File not found: ${resultsPath}`);
+        return null;
+    }
+    try {
+        const raw = JSON.parse(fs.readFileSync(resultsPath, "utf8"));
+
+        const passed = raw.stats?.expected || 0;
+        const failed = (raw.stats?.unexpected || 0) + (raw.stats?.flaky || 0);
+        const skipped = raw.stats?.skipped || 0;
+        const total = passed + failed + skipped;
+
+        const results = {
+            totalTests: total,
+            passedTests: passed,
+            failedTests: failed,
+            skippedTests: skipped,
+            durationMs: raw.stats?.duration || 0,
+            status: failed === 0 ? "PASSED" : "FAILED"
+        };
+
+        console.log(`[TEST-RESULT] parsed:`, results);
+        return results;
+    } catch (err) {
+        console.error(`[TEST-RESULT] Error parsing ${resultsPath}:`, err);
+        throw new Error(`Playwright execution result was not available for TestRun persistence. Path: ${resultsPath}. Error: ${err.message}`);
+    }
+};
