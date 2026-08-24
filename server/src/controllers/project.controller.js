@@ -11,6 +11,7 @@ import { generateText } from "../services/gemini.service.js";
 import { checkAndIncrementQuota } from "../services/aiQuota.service.js";
 import { getAiTestById, listAiTests } from "../services/aiTest.service.js";
 import { detectAndSaveProject as detectAndSavePlaywright } from "../services/playwrightDetection.service.js";
+import { detectSystemTestFrameworks } from "../services/systemTestFrameworkDetection.service.js";
 import prisma from "../config/prisma.js";
 import {
   ServiceError,
@@ -40,25 +41,46 @@ import { createBuildCfgJob } from "../services/job.service.js";
 import { addJobToQueue } from "../services/queue.service.js";
 import { analysisJobResponse } from "../services/analysisResponse.service.js";
 import { detectProjectFrameworks } from "../services/frameworkDetection.service.js";
-import { getFrameworkRecommendation, selectTestingFramework } from "../services/frameworkRecommendation.service.js";
+import {
+  getFrameworkRecommendation,
+  selectTestingFramework,
+} from "../services/frameworkRecommendation.service.js";
 import { detectMissingTests } from "../services/missingTestDetection.service.js";
 
-const queueSystemTestAnalysis = async ({ projectId, snapshotId, runner, userId }) => {
+const queueSystemTestAnalysis = async ({
+  projectId,
+  snapshotId,
+  runner,
+  userId,
+}) => {
   const project = await prisma.project.findFirst({
     where: { id: projectId, ownerId: userId },
     select: { id: true },
   });
-  if (!project) throw new ServiceError("Project not found or unauthorized", 404);
+  if (!project)
+    throw new ServiceError("Project not found or unauthorized", 404);
 
   const snapshot = await prisma.projectSnapshot.findFirst(
     snapshotId
-      ? { where: { id: snapshotId, projectId }, select: { id: true, rootDir: true } }
-      : { where: { projectId }, orderBy: { createdAt: "desc" }, select: { id: true, rootDir: true } },
+      ? {
+          where: { id: snapshotId, projectId },
+          select: { id: true, rootDir: true },
+        }
+      : {
+          where: { projectId },
+          orderBy: { createdAt: "desc" },
+          select: { id: true, rootDir: true },
+        },
   );
   if (!snapshot) throw new ServiceError("Project snapshot not found", 404);
-  if (!snapshot.rootDir) throw new ServiceError("Project snapshot is not ready for system tests", 409);
+  if (!snapshot.rootDir)
+    throw new ServiceError(
+      "Project snapshot is not ready for system tests",
+      409,
+    );
 
-  const { createSystemTestAnalysisJob, markQueuedJobFailed } = await import("../services/job.service.js");
+  const { createSystemTestAnalysisJob, markQueuedJobFailed } =
+    await import("../services/job.service.js");
   const job = await createSystemTestAnalysisJob({
     projectId,
     snapshotId: snapshot.id,
@@ -69,7 +91,7 @@ const queueSystemTestAnalysis = async ({ projectId, snapshotId, runner, userId }
   try {
     await addJobToQueue("SYSTEM_TEST_ANALYSIS", job.id);
   } catch (error) {
-    await markQueuedJobFailed(job.id, error).catch(() => { });
+    await markQueuedJobFailed(job.id, error).catch(() => {});
     throw new ServiceError("Unable to queue system test analysis", 503);
   }
 
@@ -379,15 +401,30 @@ class ProjectController {
   }
 
   async createFile(req, res) {
-    return handleEntryMutation(req, res, createProjectFile, "Failed to create file");
+    return handleEntryMutation(
+      req,
+      res,
+      createProjectFile,
+      "Failed to create file",
+    );
   }
 
   async createFolder(req, res) {
-    return handleEntryMutation(req, res, createProjectFolder, "Failed to create folder");
+    return handleEntryMutation(
+      req,
+      res,
+      createProjectFolder,
+      "Failed to create folder",
+    );
   }
 
   async renameEntry(req, res) {
-    return handleEntryMutation(req, res, renameProjectEntry, "Failed to rename entry");
+    return handleEntryMutation(
+      req,
+      res,
+      renameProjectEntry,
+      "Failed to rename entry",
+    );
   }
 
   async deleteEntry(req, res) {
@@ -719,7 +756,9 @@ class ProjectController {
       return res.status(200).json({ success: true, data });
     } catch (error) {
       if (error instanceof ServiceError) {
-        return res.status(error.statusCode).json({ success: false, message: error.message });
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
       }
       console.error(error);
       return res.status(500).json({ success: false, message: error.message });
@@ -736,7 +775,9 @@ class ProjectController {
       return res.status(200).json(data);
     } catch (error) {
       if (error instanceof ServiceError) {
-        return res.status(error.statusCode).json({ success: false, message: error.message });
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
       }
       console.error(error);
       return res.status(500).json({ success: false, message: error.message });
@@ -821,10 +862,14 @@ class ProjectController {
       return res.status(200).json({ success: true, data });
     } catch (error) {
       if (error instanceof ServiceError) {
-        return res.status(error.statusCode).json({ success: false, message: error.message });
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
       }
       console.error(error);
-      return res.status(500).json({ success: false, message: "Internal server error" });
+      return res
+        .status(500)
+        .json({ success: false, message: "Internal server error" });
     }
   }
 
@@ -839,10 +884,14 @@ class ProjectController {
       return res.status(200).json({ success: true, data });
     } catch (error) {
       if (error instanceof ServiceError) {
-        return res.status(error.statusCode).json({ success: false, message: error.message });
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
       }
       console.error(error);
-      return res.status(500).json({ success: false, message: "Internal server error" });
+      return res
+        .status(500)
+        .json({ success: false, message: "Internal server error" });
     }
   }
 
@@ -860,10 +909,14 @@ class ProjectController {
       return res.status(202).json({ success: true, data: { job } });
     } catch (error) {
       if (error instanceof ServiceError) {
-        return res.status(error.statusCode).json({ success: false, message: error.message });
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
       }
       console.error(error);
-      return res.status(500).json({ success: false, message: "Internal server error" });
+      return res
+        .status(500)
+        .json({ success: false, message: "Internal server error" });
     }
   }
 
@@ -882,10 +935,14 @@ class ProjectController {
       return res.status(202).json({ success: true, data: { job } });
     } catch (error) {
       if (error instanceof ServiceError) {
-        return res.status(error.statusCode).json({ success: false, message: error.message });
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
       }
       console.error(error);
-      return res.status(500).json({ success: false, message: "Internal server error" });
+      return res
+        .status(500)
+        .json({ success: false, message: "Internal server error" });
     }
   }
 
@@ -969,6 +1026,70 @@ class ProjectController {
       return res.status(500).json({
         success: false,
         message: "Internal server error",
+      });
+    }
+  }
+
+  /**
+   * GET /projects/:id/system-test/frameworks
+   * Detects available System Test frameworks (Playwright, Cypress)
+   */
+  async detectSystemTestFrameworks(req, res) {
+    try {
+      const { id: projectId } = req.params;
+      const snapshotId = req.query.snapshotId;
+
+      // Verify project ownership
+      const project = await prisma.project.findFirst({
+        where: { id: projectId, ownerId: req.user.id },
+        select: { id: true },
+      });
+
+      if (!project) {
+        return res.status(404).json({
+          success: false,
+          message: "Project not found or unauthorized",
+        });
+      }
+
+      // Get snapshot (use latest if not provided)
+      const snapshot = await prisma.projectSnapshot.findFirst(
+        snapshotId
+          ? { where: { id: snapshotId, projectId } }
+          : { where: { projectId }, orderBy: { createdAt: "desc" } },
+      );
+
+      if (!snapshot) {
+        return res.status(404).json({
+          success: false,
+          message: "No snapshot found for this project",
+        });
+      }
+
+      if (!snapshot.rootDir) {
+        return res.status(409).json({
+          success: false,
+          message: "Snapshot is not ready for analysis",
+        });
+      }
+
+      // Detect system test frameworks
+      const detection = await detectSystemTestFrameworks(snapshot.rootDir);
+
+      return res.status(200).json({ success: true, data: detection });
+    } catch (error) {
+      console.error("[detectSystemTestFrameworks] Error:", error);
+
+      if (error instanceof ServiceError) {
+        return res.status(error.statusCode).json({
+          success: false,
+          message: error.message,
+        });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Failed to detect system test frameworks",
       });
     }
   }
@@ -1477,8 +1598,8 @@ The user is working on project: ${project.name}.
   }
 
   /**
- * POST /projects/:id/run-vitest
- */
+   * POST /projects/:id/run-vitest
+   */
   async runVitestTests(req, res) {
     try {
       const { id: projectId } = req.params;
@@ -1536,7 +1657,8 @@ The user is working on project: ${project.name}.
       const { id: projectId } = req.params;
       const { snapshotId } = req.body;
 
-      const { createVitestCoverageJob } = await import("../services/job.service.js");
+      const { createVitestCoverageJob } =
+        await import("../services/job.service.js");
 
       const job = await createVitestCoverageJob({
         projectId,
@@ -1585,12 +1707,12 @@ The user is working on project: ${project.name}.
       res.json({
         success: true,
         message: "Playwright detection completed",
-        data: result
+        data: result,
       });
     } catch (error) {
       next(error);
     }
-  };
+  }
   /**
    * POST /projects/:id/cypress-system-test
    */
@@ -1599,7 +1721,8 @@ The user is working on project: ${project.name}.
       const { id: projectId } = req.params;
       const { snapshotId } = req.body;
 
-      const { createCypressSystemTestJob } = await import("../services/job.service.js");
+      const { createCypressSystemTestJob } =
+        await import("../services/job.service.js");
 
       const job = await createCypressSystemTestJob({
         projectId,
@@ -1649,7 +1772,8 @@ The user is working on project: ${project.name}.
       const { id: projectId } = req.params;
       const { snapshotId } = req.body;
 
-      const { createCypressSystemCoverageJob } = await import("../services/job.service.js");
+      const { createCypressSystemCoverageJob } =
+        await import("../services/job.service.js");
 
       const job = await createCypressSystemCoverageJob({
         projectId,
@@ -1692,15 +1816,16 @@ The user is working on project: ${project.name}.
   }
 
   /**
- * POST /projects/:id/playwright-test
- */
+   * POST /projects/:id/playwright-test
+   */
   async runPlaywrightSystemTests(req, res) {
     try {
       const { id: projectId } = req.params;
       const { snapshotId, testDirectory } = req.body;
 
       // Import muộn để tránh vòng lặp dependencies
-      const { createPlaywrightJob } = await import("../services/job.service.js");
+      const { createPlaywrightJob } =
+        await import("../services/job.service.js");
       const { addJobToQueue } = await import("../services/queue.service.js");
 
       // Khởi tạo job
@@ -1728,7 +1853,9 @@ The user is working on project: ${project.name}.
       });
     } catch (error) {
       console.error(error);
-      return res.status(500).json({ success: false, message: "Internal server error" });
+      return res
+        .status(500)
+        .json({ success: false, message: "Internal server error" });
     }
   }
 }

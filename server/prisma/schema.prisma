@@ -52,6 +52,10 @@ model Project {
   playwrightConfigPath String?
   playwrightTestDir    String?
   playwrightBrowsers   String?
+  webhookEnabled   Boolean           @default(false)
+  webhookSecretEnc String?
+  webhookBranch    String?
+  lastAnalyzedCommit String?
   aiSuggestions    AiSuggestion[]
   aiTests          AiTest[]
   jobs             Job[]

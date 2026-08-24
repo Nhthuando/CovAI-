@@ -10,6 +10,7 @@ import refreshRoute from "./src/routes/refresh.route.js";
 import userRoute from "./src/routes/user.route.js";
 import cookieParser from "cookie-parser";
 import projectRoutes from "./src/routes/project.route.js";
+import pipelineRoutes from "./src/routes/pipeline.route.js";
 import prisma from "./src/config/prisma.js";
 import uploadRoute from "./src/routes/upload.route.js";
 import jobRoute from "./src/routes/job.route.js";
@@ -27,6 +28,7 @@ import {
 import analyticsRoute from "./src/routes/analytics.route.js";
 import codeHygieneRoute from "./src/routes/codeHygiene.route.js";
 import fileManagerRoute from "./src/routes/fileManager.route.js";
+import webhookRoute from "./src/routes/webhook.route.js";
 import { globalLimiter } from "./src/middlewares/rateLimit.middleware.js";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -59,6 +61,19 @@ app.use(
 );
 
 app.use(cookieParser());
+
+// Middleware to capture raw body for webhook signature verification
+app.use((req, res, next) => {
+  let data = "";
+  req.on("data", (chunk) => {
+    data += chunk;
+  });
+  req.on("end", () => {
+    req.rawBody = data;
+    next();
+  });
+});
+
 app.use(express.json());
 
 // Global rate limiter
@@ -68,6 +83,7 @@ app.use("/api/auth", authRoute);
 app.use("/api/refresh", refreshRoute);
 app.use("/api/users", userRoute);
 app.use("/api/projects", projectRoutes);
+app.use("/api/pipeline", pipelineRoutes);
 app.use("/api/upload", uploadRoute);
 app.use("/api/job", jobRoute);
 app.use("/api/coverage", coverageRoute);
@@ -80,6 +96,7 @@ app.use("/api/notifications", notificationRoute);
 app.use("/api/analytics", analyticsRoute);
 app.use("/api/code-hygiene", codeHygieneRoute);
 app.use("/api/file-manager", fileManagerRoute);
+app.use("/webhook", webhookRoute);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

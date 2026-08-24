@@ -8,18 +8,20 @@ import {
   Copy,
   Check,
   Loader2,
-  Paperclip,
-  Mic,
   RotateCcw,
-  ChevronDown,
   Wand2,
   Shield,
 } from "lucide-react";
 
-import { sendAiChatMessageApi, getAiSuggestionsApi, generateSkeletonApi } from "../../services/project.service";
+import {
+  sendAiChatMessageApi,
+  getAiSuggestionsApi,
+  generateSkeletonApi,
+} from "../../services/project.service";
 import { getProjectJobsApi } from "../../services/job.service";
 import { useToast } from "./ToastContext";
 import FrameworkRecommendationPanel from "./FrameworkRecommendationPanel";
+import SystemTestPanel from "./SystemTestPanel";
 
 /* ── Initial conversation ───────────────────────────────── */
 const INITIAL_MESSAGES = [
@@ -28,7 +30,10 @@ const INITIAL_MESSAGES = [
     role: "assistant",
     content:
       "Xin chào! Tôi là **AI Agent** của TestCovAI. Tôi đã được kết nối với API backend.\n\nBạn có câu hỏi nào về source code hoặc cần gợi ý test case không?",
-    timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
+    timestamp: new Date().toLocaleTimeString("vi-VN", {
+      hour: "2-digit",
+      minute: "2-digit",
+    }),
   },
 ];
 
@@ -55,9 +60,30 @@ function CodeBlock({ code }) {
         }}
       >
         <div className="flex items-center gap-1.5">
-          <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#f85149" }} />
-          <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#d29922" }} />
-          <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#3fb950" }} />
+          <div
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: "50%",
+              background: "#f85149",
+            }}
+          />
+          <div
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: "50%",
+              background: "#d29922",
+            }}
+          />
+          <div
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: "50%",
+              background: "#3fb950",
+            }}
+          />
           <span
             style={{
               color: "#484f58",
@@ -173,7 +199,11 @@ function ChatMessage({ msg, onRetry }) {
                 ? "rgba(248,113,113,0.15)"
                 : "linear-gradient(135deg, rgba(124,58,237,0.35), rgba(34,211,238,0.15))",
             border: `1px solid ${isUser ? "rgba(124,58,237,0.3)" : msg.type === "error" || msg.type === "quota" ? "rgba(248,113,113,0.3)" : "rgba(34,211,238,0.2)"}`,
-            boxShadow: isUser ? "none" : msg.type === "error" || msg.type === "quota" ? "0 0 8px rgba(248,113,113,0.15)" : "0 0 8px rgba(34,211,238,0.1)",
+            boxShadow: isUser
+              ? "none"
+              : msg.type === "error" || msg.type === "quota"
+                ? "0 0 8px rgba(248,113,113,0.15)"
+                : "0 0 8px rgba(34,211,238,0.1)",
           }}
         >
           {isUser ? (
@@ -187,13 +217,24 @@ function ChatMessage({ msg, onRetry }) {
         <span
           style={{
             fontWeight: 500,
-            color: isUser ? "#8b949e" : msg.type === "error" || msg.type === "quota" ? "#f87171" : "#67e8f9",
+            color: isUser
+              ? "#8b949e"
+              : msg.type === "error" || msg.type === "quota"
+                ? "#f87171"
+                : "#67e8f9",
             fontFamily: "var(--font-sans)",
           }}
         >
           {isUser ? "You" : "AI Agent"}
         </span>
-        <span style={{ color: "#30363d", marginLeft: "auto", fontFamily: "var(--font-mono)", fontSize: 10 }}>
+        <span
+          style={{
+            color: "#30363d",
+            marginLeft: "auto",
+            fontFamily: "var(--font-mono)",
+            fontSize: 10,
+          }}
+        >
           {msg.timestamp}
         </span>
       </div>
@@ -210,15 +251,38 @@ function ChatMessage({ msg, onRetry }) {
           }}
         >
           {/* Top highlight bar */}
-          <div style={{ height: 3, background: "linear-gradient(90deg, #f87171, #fb923c)" }} />
+          <div
+            style={{
+              height: 3,
+              background: "linear-gradient(90deg, #f87171, #fb923c)",
+            }}
+          />
           <div style={{ padding: "16px 20px" }}>
-            <h4 style={{ color: "#f87171", fontSize: 14, fontWeight: 600, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+            <h4
+              style={{
+                color: "#f87171",
+                fontSize: 14,
+                fontWeight: 600,
+                marginBottom: 6,
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
               <span style={{ fontSize: 16 }}>🛑</span> Daily Limit Reached
             </h4>
             <p style={{ color: "#e6edf3", fontSize: 13, lineHeight: 1.6 }}>
-              Bạn đã vượt quá giới hạn lượt chat miễn phí hôm nay để đảm bảo chất lượng máy chủ.
+              Bạn đã vượt quá giới hạn lượt chat miễn phí hôm nay để đảm bảo
+              chất lượng máy chủ.
             </p>
-            <p style={{ color: "#8b949e", fontSize: 12, marginTop: 10, fontStyle: "italic" }}>
+            <p
+              style={{
+                color: "#8b949e",
+                fontSize: 12,
+                marginTop: 10,
+                fontStyle: "italic",
+              }}
+            >
               Hãy quay lại vào ngày mai nhé! Cảm ơn bạn đã sử dụng hệ thống.
             </p>
           </div>
@@ -268,7 +332,14 @@ function ChatMessage({ msg, onRetry }) {
           )}
 
           {msg.options && (
-            <div className="flex gap-3" style={{ marginTop: "16px", marginBottom: "8px", flexWrap: "wrap" }}>
+            <div
+              className="flex gap-3"
+              style={{
+                marginTop: "16px",
+                marginBottom: "8px",
+                flexWrap: "wrap",
+              }}
+            >
               {msg.options.map((opt) => (
                 <button
                   key={opt.label}
@@ -303,7 +374,10 @@ function ChatMessage({ msg, onRetry }) {
                 style={{ zIndex: 10 }}
               >
                 {[
-                  { icon: copied ? Check : Copy, label: copied ? "Copied" : "Copy" },
+                  {
+                    icon: copied ? Check : Copy,
+                    label: copied ? "Copied" : "Copy",
+                  },
                   { icon: RotateCcw, label: "Retry" },
                 ].map(({ icon: Icon, label }) => (
                   <motion.button
@@ -316,7 +390,8 @@ function ChatMessage({ msg, onRetry }) {
                       padding: "6px 10px",
                       background: "#161b22",
                       border: "1px solid rgba(255,255,255,0.08)",
-                      color: copied && label === "Copied" ? "#4ade80" : "#6e7681",
+                      color:
+                        copied && label === "Copied" ? "#4ade80" : "#6e7681",
                       fontFamily: "var(--font-sans)",
                     }}
                   >
@@ -345,14 +420,23 @@ function TypingIndicator() {
         <div
           className="flex items-center justify-center rounded-full flex-shrink-0"
           style={{
-            width: 20, height: 20,
-            background: "linear-gradient(135deg, rgba(124,58,237,0.35), rgba(34,211,238,0.15))",
+            width: 20,
+            height: 20,
+            background:
+              "linear-gradient(135deg, rgba(124,58,237,0.35), rgba(34,211,238,0.15))",
             border: "1px solid rgba(34,211,238,0.2)",
           }}
         >
           <Bot size={10} style={{ color: "#67e8f9" }} />
         </div>
-        <span style={{ color: "#67e8f9", fontSize: 11, fontFamily: "var(--font-sans)", fontWeight: 500 }}>
+        <span
+          style={{
+            color: "#67e8f9",
+            fontSize: 11,
+            fontFamily: "var(--font-sans)",
+            fontWeight: 500,
+          }}
+        >
           AI Agent
         </span>
         <span style={{ color: "#484f58", fontSize: 10 }}>thinking…</span>
@@ -371,8 +455,18 @@ function TypingIndicator() {
           <motion.div
             key={i}
             animate={{ scale: [1, 1.6, 1], opacity: [0.3, 1, 0.3] }}
-            transition={{ duration: 1.1, repeat: Infinity, delay: i * 0.22, ease: "easeInOut" }}
-            style={{ width: 5, height: 5, borderRadius: "50%", background: "#a78bfa" }}
+            transition={{
+              duration: 1.1,
+              repeat: Infinity,
+              delay: i * 0.22,
+              ease: "easeInOut",
+            }}
+            style={{
+              width: 5,
+              height: 5,
+              borderRadius: "50%",
+              background: "#a78bfa",
+            }}
           />
         ))}
       </div>
@@ -411,10 +505,7 @@ function ChatInput({ onSend, isTyping }) {
   const canSend = input.trim() && !isTyping;
 
   return (
-    <div
-      className="flex-shrink-0"
-      style={{ padding: "10px 24px 20px" }}
-    >
+    <div className="flex-shrink-0" style={{ padding: "10px 24px 20px" }}>
       <div
         className="relative rounded-2xl overflow-hidden transition-all duration-300"
         style={{
@@ -479,7 +570,10 @@ function ChatInput({ onSend, isTyping }) {
           />
 
           {/* Actions row */}
-          <div className="flex items-center justify-end" style={{ padding: "4px 16px 12px 16px" }}>
+          <div
+            className="flex items-center justify-end"
+            style={{ padding: "4px 16px 12px 16px" }}
+          >
             <motion.button
               whileHover={canSend ? { scale: 1.08 } : {}}
               whileTap={canSend ? { scale: 0.92 } : {}}
@@ -509,7 +603,11 @@ function ChatInput({ onSend, isTyping }) {
 
       <div
         className="mt-1.5 text-center"
-        style={{ color: "#30363d", fontSize: 10, fontFamily: "var(--font-sans)" }}
+        style={{
+          color: "#30363d",
+          fontSize: 10,
+          fontFamily: "var(--font-sans)",
+        }}
       >
         Enter ↵ to send · Shift+Enter for new line
       </div>
@@ -528,7 +626,7 @@ function QuickActions({ onAction }) {
       className="flex gap-3 flex-shrink-0"
       style={{
         padding: "8px 24px 12px",
-        flexWrap: "wrap"
+        flexWrap: "wrap",
       }}
     >
       {actions.map(({ label, icon: Icon, color }) => (
@@ -561,8 +659,9 @@ function QuickActions({ onAction }) {
 export default function AIPanel({ projectId, snapshotId }) {
   const [messages, setMessages] = useState(INITIAL_MESSAGES);
   const [isTyping, setIsTyping] = useState(false);
-  const [isModeSelectorOpen, setIsModeSelectorOpen] = useState(false);
   const bottomRef = useRef(null);
+  const messageIdRef = useRef(0);
+  const getNextId = () => ++messageIdRef.current;
   const { showToast } = useToast();
 
   useEffect(() => {
@@ -580,13 +679,19 @@ export default function AIPanel({ projectId, snapshotId }) {
     }
 
     const userMsg = {
-      id: Date.now(),
+      id: getNextId(),
       role: "user",
       content: text,
-      timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
+      timestamp: new Date().toLocaleTimeString("vi-VN", {
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
     };
 
-    const currentHistory = messages.map(m => ({ role: m.role, content: m.content }));
+    const currentHistory = messages.map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
     setMessages((m) => [...m, userMsg]);
     setIsTyping(true);
 
@@ -596,24 +701,31 @@ export default function AIPanel({ projectId, snapshotId }) {
       setMessages((m) => [
         ...m,
         {
-          id: Date.now() + 1,
+          id: getNextId(),
           role: "assistant",
-          timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
+          timestamp: new Date().toLocaleTimeString("vi-VN", {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
           content: res.data.reply,
         },
       ]);
-    } catch (error) {
-      console.error(error);
-      const isQuotaError = error.message && error.message.includes("QUOTA_EXCEEDED");
+    } catch (err) {
+      console.error(err);
+      const isQuotaError =
+        err.message && err.message.includes("QUOTA_EXCEEDED");
 
       if (isQuotaError) {
         setMessages((m) => [
           ...m,
           {
-            id: Date.now() + 1,
+            id: getNextId(),
             role: "assistant",
             type: "quota",
-            timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
+            timestamp: new Date().toLocaleTimeString("vi-VN", {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
             content: "",
           },
         ]);
@@ -626,11 +738,15 @@ export default function AIPanel({ projectId, snapshotId }) {
         setMessages((m) => [
           ...m,
           {
-            id: Date.now() + 1,
+            id: getNextId(),
             role: "assistant",
             type: "error",
-            timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
-            content: "❌ Lỗi khi kết nối với backend API. Vui lòng kiểm tra lại log server.",
+            timestamp: new Date().toLocaleTimeString("vi-VN", {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+            content:
+              "❌ Lỗi khi kết nối với backend API. Vui lòng kiểm tra lại log server.",
           },
         ]);
       }
@@ -642,65 +758,116 @@ export default function AIPanel({ projectId, snapshotId }) {
   const handleQuickAction = async (label) => {
     if (label === "View Generated Tests") {
       if (!projectId) {
-        showToast({ type: "warning", title: "No Project", message: "Vui lòng chọn một dự án." });
+        showToast({
+          type: "warning",
+          title: "No Project",
+          message: "Vui lòng chọn một dự án.",
+        });
         return;
       }
       setIsTyping(true);
       try {
         const res = await getAiSuggestionsApi(projectId);
         if (res.data && res.data.tests && res.data.tests.length > 0) {
-          setMessages(m => [...m, {
-            id: Date.now(),
-            role: "assistant",
-            timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
-            content: `**Tôi đã tìm thấy các bộ test đã được generate.**`,
-            options: [
-              {
-                label: "View Generated Tests", action: "view", onClick: () => {
-                  res.data.tests.forEach((test, index) => {
-                    setMessages(prev => [...prev, {
-                      id: Date.now() + index,
-                      role: "assistant",
-                      timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
-                      content: `**Test Suite ${index + 1}**`,
-                      code: test.content
-                    }]);
-                  });
-                }
-              },
-              {
-                label: "Generate Again", action: "generate_again", onClick: () => {
-                  setMessages(prev => [...prev, {
-                    id: Date.now(),
-                    role: "assistant",
-                    timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
-                    content: "I can generate tests again for this project. Which type of test would you like to generate?",
-                    options: [
-                      { label: "Generate Skeleton", action: "generate_skeleton", onClick: handleOptionClick },
-                      { label: "Generate Full Test", action: "generate_full", onClick: handleOptionClick }
-                    ]
-                  }]);
-                }
-              }
-            ]
-          }]);
-        } else {
-          setMessages(m => [
+          setMessages((m) => [
             ...m,
             {
-              id: Date.now(),
+              id: getNextId(),
               role: "assistant",
-              timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
-              content: "Tôi nhận thấy project hiện chưa có test được generate. Bạn có muốn tôi tạo test cho project này không?",
+              timestamp: new Date().toLocaleTimeString("vi-VN", {
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+              content: `**Tôi đã tìm thấy các bộ test đã được generate.**`,
               options: [
-                { label: "Generate Skeleton", action: "generate_skeleton", onClick: handleOptionClick },
-                { label: "Generate Full Test", action: "generate_full", onClick: handleOptionClick }
-              ]
-            }
+                {
+                  label: "View Generated Tests",
+                  action: "view",
+                  onClick: () => {
+                    res.data.tests.forEach((test, index) => {
+                      setMessages((prev) => [
+                        ...prev,
+                        {
+                          id: getNextId(),
+                          role: "assistant",
+                          timestamp: new Date().toLocaleTimeString("vi-VN", {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          }),
+                          content: `**Test Suite ${index + 1}**`,
+                          code: test.content,
+                        },
+                      ]);
+                    });
+                  },
+                },
+                {
+                  label: "Generate Again",
+                  action: "generate_again",
+                  onClick: () => {
+                    setMessages((prev) => [
+                      ...prev,
+                      {
+                        id: getNextId(),
+                        role: "assistant",
+                        timestamp: new Date().toLocaleTimeString("vi-VN", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        }),
+                        content:
+                          "I can generate tests again for this project. Which type of test would you like to generate?",
+                        options: [
+                          {
+                            label: "Generate Skeleton",
+                            action: "generate_skeleton",
+                            onClick: handleOptionClick,
+                          },
+                          {
+                            label: "Generate Full Test",
+                            action: "generate_full",
+                            onClick: handleOptionClick,
+                          },
+                        ],
+                      },
+                    ]);
+                  },
+                },
+              ],
+            },
+          ]);
+        } else {
+          setMessages((m) => [
+            ...m,
+            {
+              id: getNextId(),
+              role: "assistant",
+              timestamp: new Date().toLocaleTimeString("vi-VN", {
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+              content:
+                "Tôi nhận thấy project hiện chưa có test được generate. Bạn có muốn tôi tạo test cho project này không?",
+              options: [
+                {
+                  label: "Generate Skeleton",
+                  action: "generate_skeleton",
+                  onClick: handleOptionClick,
+                },
+                {
+                  label: "Generate Full Test",
+                  action: "generate_full",
+                  onClick: handleOptionClick,
+                },
+              ],
+            },
           ]);
         }
-      } catch (error) {
-        showToast({ type: "error", title: "Lỗi", message: "Không thể lấy dữ liệu test AI." });
+      } catch {
+        showToast({
+          type: "error",
+          title: "Lỗi",
+          message: "Không thể lấy dữ liệu test AI.",
+        });
       } finally {
         setIsTyping(false);
       }
@@ -715,27 +882,48 @@ export default function AIPanel({ projectId, snapshotId }) {
     setIsTyping(true);
     try {
       const jobsRes = await getProjectJobsApi(projectId);
-      const activeJob = jobsRes.jobs?.find(j => (j.type === "AI_TESTS" || j.type === "TEST_GENERATION") && (j.status === "QUEUED" || j.status === "RUNNING"));
+      const activeJob = jobsRes.jobs?.find(
+        (j) =>
+          (j.type === "AI_TESTS" || j.type === "TEST_GENERATION") &&
+          (j.status === "QUEUED" || j.status === "RUNNING"),
+      );
 
       if (activeJob) {
-        setMessages(m => [...m, {
-          id: Date.now(),
-          role: "assistant",
-          timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
-          content: "A test generation is already in progress. Please wait for it to finish."
-        }]);
+        setMessages((m) => [
+          ...m,
+          {
+            id: getNextId(),
+            role: "assistant",
+            timestamp: new Date().toLocaleTimeString("vi-VN", {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+            content:
+              "A test generation is already in progress. Please wait for it to finish.",
+          },
+        ]);
         return;
       }
 
       await generateSkeletonApi(projectId, null, mode);
-      setMessages(m => [...m, {
-        id: Date.now(),
-        role: "assistant",
-        timestamp: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
-        content: `🚀 I've started generating the ${mode === "SKELETON" ? "Skeleton Test" : "Full Test"} suite. You can monitor the progress in the Job Queue.`
-      }]);
-    } catch (e) {
-      showToast({ type: "error", title: "Lỗi", message: "Không thể bắt đầu tạo test." });
+      setMessages((m) => [
+        ...m,
+        {
+          id: getNextId(),
+          role: "assistant",
+          timestamp: new Date().toLocaleTimeString("vi-VN", {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          content: `🚀 I've started generating the ${mode === "SKELETON" ? "Skeleton Test" : "Full Test"} suite. You can monitor the progress in the Job Queue.`,
+        },
+      ]);
+    } catch {
+      showToast({
+        type: "error",
+        title: "Lỗi",
+        message: "Không thể bắt đầu tạo test.",
+      });
     } finally {
       setIsTyping(false);
     }
@@ -760,7 +948,8 @@ export default function AIPanel({ projectId, snapshotId }) {
           height: 54,
           padding: "0 24px",
           borderBottom: "1px solid rgba(255,255,255,0.06)",
-          background: "linear-gradient(180deg, rgba(124,58,237,0.04) 0%, transparent 100%)",
+          background:
+            "linear-gradient(180deg, rgba(124,58,237,0.04) 0%, transparent 100%)",
         }}
       >
         <div className="flex items-center gap-2.5">
@@ -769,7 +958,8 @@ export default function AIPanel({ projectId, snapshotId }) {
             style={{
               width: 28,
               height: 28,
-              background: "linear-gradient(135deg, rgba(124,58,237,0.3), rgba(34,211,238,0.1))",
+              background:
+                "linear-gradient(135deg, rgba(124,58,237,0.3), rgba(34,211,238,0.1))",
               border: "1px solid rgba(124,58,237,0.4)",
               boxShadow: "0 0 10px rgba(124,58,237,0.2)",
             }}
@@ -800,10 +990,17 @@ export default function AIPanel({ projectId, snapshotId }) {
           >
             READY
           </span>
-          <div className="relative flex items-center justify-center" style={{ width: 10, height: 10 }}>
+          <div
+            className="relative flex items-center justify-center"
+            style={{ width: 10, height: 10 }}
+          >
             <div
               className="absolute inset-0 rounded-full animate-ping"
-              style={{ background: "#3fb950", opacity: 0.4, animationDuration: "1.5s" }}
+              style={{
+                background: "#3fb950",
+                opacity: 0.4,
+                animationDuration: "1.5s",
+              }}
             />
             <div
               className="relative rounded-full"
@@ -828,7 +1025,11 @@ export default function AIPanel({ projectId, snapshotId }) {
           scrollbarColor: "rgba(124,58,237,0.25) transparent",
         }}
       >
-        <FrameworkRecommendationPanel projectId={projectId} snapshotId={snapshotId} />
+        <FrameworkRecommendationPanel
+          projectId={projectId}
+          snapshotId={snapshotId}
+        />
+        <SystemTestPanel projectId={projectId} snapshotId={snapshotId} />
         <AnimatePresence>
           {messages.map((msg, index) => (
             <ChatMessage

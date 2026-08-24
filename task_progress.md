@@ -1,0 +1,32 @@
+- [ ] Analyze requirements and inspect existing codebase
+  - [ ] Inspect existing GitHub OAuth and token management.
+  - [ ] Examine GitHub clone/import services.
+  - [ ] Review ProjectSnapshot and Commit Hash Snapshot Service.
+  - [ ] Understand Job/Queue services.
+  - [ ] Verify Automatic Analysis Pipeline implementation.
+  - [ ] Check Notification system.
+  - [ ] Assess current project settings UI and GitHub integration.
+- [ ] Implement Backend
+  - [ ] Add GitHub webhook endpoint for processing push events.
+  - [ ] Verify webhook signature for security.
+  - [ ] Handle push events and extract relevant data (repo URL, branch, commit SHA).
+  - [ ] Identify corresponding CovAI Project and ensure GitHub connection.
+  - [ ] Clone or update the repository using existing services.
+  - [ ] Create ProjectSnapshot for the commit.
+  - [ ] Trigger Automatic Analysis Pipeline for snapshots.
+  - [ ] Track and update Job progress/status.
+  - [ ] Create notifications for analysis completion or failure.
+  - [ ] Handle various edge cases (e.g., invalid signature, private repo access issues).
+- [ ] Modify Prisma Schema (if needed)
+  - [ ] Add/extend models to store GitHub webhook configurations.
+- [ ] Implement Frontend
+  - [ ] Extend Project Settings to show GitHub integration details:
+    - [ ] Allow connection of GitHub repositories to projects.
+    - [ ] Toggle automatic analysis on push.
+    - [ ] Display connected repository/branch, webhook status, latest commit/analysis.
+- [ ] Test the implementation
+  - [ ] Write unit tests for webhook handling.
+  - [ ] Validate security measures (e.g., signature verification).
+  - [ ] Test frontend changes.
+  - [ ] Ensure all edge cases are covered.
+  - [ ] Verify overall integration workflow.
