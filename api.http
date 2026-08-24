@@ -270,3 +270,14 @@ Content-Type: application/json
   "snapshotId": "cmsi9ylbz001h0vpkt76dvghn",
   "testDirectory": "tests"
 }
+
+### Run Playwright Coverage Pipeline
+# @name runPlaywrightCoverage
+POST {{baseUrl}}/projects/cmsi9yjqw001g0vpkro646et8/playwright-coverage
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbXF2cXplcGgwMDAwdXc3ZGw2MzIyNDhsIiwidXNlckVtYWlsIjoiZGluaEBnbWFpbC5jb20iLCJ1c2VyTmFtZSI6ImRpbmgiLCJpYXQiOjE3ODc1ODA3NTEsImV4cCI6MTc4ODE4NTU1MX0.31VJkbEqbK_q8GA41YIu3sT1ggqcpZXS-ztrklD-CgQ
+Content-Type: application/json
+
+{
+  "snapshotId": "cmsi9ylbz001h0vpkt76dvghn",
+  "testDirectory": "tests"
+}

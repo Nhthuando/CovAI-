@@ -111,6 +111,11 @@ router.post(
   authMiddleware,
   projectController.runCypressCoverage.bind(projectController),
 );
+router.post(
+  "/:id/playwright-coverage",
+  authMiddleware,
+  projectController.runPlaywrightCoverage.bind(projectController),
+);
 router.get(
   "/:id/system-test/frameworks",
   authMiddleware,

@@ -33,6 +33,7 @@ const JOB_TYPES = Object.freeze([
   "VITEST_COVERAGE",
   "CYPRESS_SYSTEM_TEST",
   "CYPRESS_SYSTEM_COVERAGE",
+  "PLAYWRIGHT_SYSTEM_COVERAGE",
 ]);
 
 /** Terminal statuses — a job in one of these states cannot be mutated. */
@@ -665,5 +666,15 @@ export const createPlaywrightJob = async ({ projectId, snapshotId, userId, testD
   });
 
   return job;
+};
+
+export const createPlaywrightSystemCoverageJob = async ({ projectId, snapshotId, userId, testDirectory }) => {
+  return createSnapshotJob({
+    projectId,
+    snapshotId,
+    userId,
+    type: "PLAYWRIGHT_SYSTEM_COVERAGE",
+    payloadJson: { snapshotId, testDirectory }
+  });
 };
 
