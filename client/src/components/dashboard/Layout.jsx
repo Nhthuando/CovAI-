@@ -1,7 +1,8 @@
+/* eslint-disable no-unused-vars */
 /* eslint-disable react-hooks/set-state-in-effect */
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import ActivityBar from "./ActivityBar";
 import Sidebar from "./Sidebar";
 import Editor from "./Editor";
@@ -71,9 +72,11 @@ const panelVariants = {
 function LayoutInner() {
   const { showToast } = useToast();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
-  const searchParams = new URLSearchParams(window.location.search);
+  const searchParams = new URLSearchParams(location.search);
   const initialProjectId = searchParams.get("projectId");
+  const initialTab = searchParams.get("tab") || "explorer";
   const { isMobile, isTablet } = useBreakpoints();
   const isCompact = isMobile || isTablet;
 
@@ -88,10 +91,19 @@ function LayoutInner() {
       navigate("/");
       return;
     }
-    setActiveActivity(id);
+    const params = new URLSearchParams(location.search);
+    params.set("tab", id);
+    navigate(`${location.pathname}?${params.toString()}`);
   };
 
-  const [activeActivity, setActiveActivity] = useState("explorer");
+  const [activeActivity, setActiveActivity] = useState(initialTab);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const tab = params.get("tab") || "explorer";
+    setActiveActivity(tab);
+  }, [location.search]);
+
   const [activeSetting, setActiveSetting] = useState("profile");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [aiPanelOpen, setAiPanelOpen] = useState(true);
@@ -139,7 +151,9 @@ function LayoutInner() {
             .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] ||
           null;
         if (!cancelled) setLatestRunJob(latest);
-      } catch {}
+      } catch (err) {
+        console.error("Failed to refresh jobs", err);
+      }
     };
     refreshRunJob();
     const timer = window.setInterval(refreshRunJob, 4000);
@@ -503,13 +517,6 @@ function LayoutInner() {
             >
               TestCovAI
             </span>
-            {!isMobile && (
-              <>
-                <Sidebar />
-                <AnalysisButton projectId="PROJECT_ID_PLACEHOLDER" />
-                <MainContent />
-              </>
-            )}
           </div>
         </div>
         <div
