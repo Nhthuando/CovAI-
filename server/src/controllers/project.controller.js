@@ -526,6 +526,7 @@ class ProjectController {
         snapshotId: targetSnapshot.id,
         userId: req.user.id,
         mode: mode || "FULL",
+        testType: req.body?.testType,
       });
       const reused = queuedJob.reused === true;
       const { reused: _reused, ...job } = queuedJob;
@@ -1873,14 +1874,14 @@ The user is working on project: ${project.name}.
         projectId,
         snapshotId,
         userId,
-        testDirectory
+        testDirectory,
       });
 
       await addJobToQueue(job.type, job.id, {
         projectId,
         snapshotId,
         userId,
-        testDirectory
+        testDirectory,
       });
 
       res.status(202).json({
@@ -1896,7 +1897,7 @@ The user is working on project: ${project.name}.
     } catch (error) {
       next(error);
     }
-  };
+  }
 }
 
 export default new ProjectController();

@@ -509,7 +509,7 @@ function ChatInput({ onSend, isTyping }) {
       <div
         className="relative rounded-2xl overflow-hidden transition-all duration-300"
         style={{
-          background: "#0d1117",
+          background: "#21252B",
           border: `1.5px solid ${focused ? "rgba(124,58,237,0.5)" : "rgba(255,255,255,0.08)"}`,
           boxShadow: focused
             ? "0 0 0 3px rgba(124,58,237,0.08), 0 0 24px rgba(124,58,237,0.12)"

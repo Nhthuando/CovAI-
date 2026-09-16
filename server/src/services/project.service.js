@@ -23,7 +23,10 @@ import path from "path";
 import { createHash, randomUUID } from "crypto";
 import { ServiceError } from "../utils/serviceError.js";
 import fs from "fs";
-import { validateNodeProject, validateArchiveContainsPackageJson } from "../utils/nodeProjectValidator.js";
+import {
+  validateNodeProject,
+  validateArchiveContainsPackageJson,
+} from "../utils/nodeProjectValidator.js";
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 
 export { ServiceError };
@@ -248,12 +251,8 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
   });
 
   const uploadAndProcess = async () => {
-    const {
-      markJobRunning,
-      updateJobProgress,
-      markJobSuccess,
-      markJobFailed,
-    } = await import("./job.service.js");
+    const { markJobRunning, updateJobProgress, markJobSuccess, markJobFailed } =
+      await import("./job.service.js");
     const { extractZipSnapshot } = await import("./zipExtraction.service.js");
 
     try {
@@ -267,14 +266,14 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
         blobStream.on("error", reject);
         blobStream.on("finish", resolve);
         blobStream.end(file.buffer);
-      }).then(() => updateJobProgress(job.id, 50).catch(() => { }));
+      }).then(() => updateJobProgress(job.id, 50).catch(() => {}));
 
       const extractPromise = extractZipSnapshot(
         snapshot.id,
         storagePath,
         file.buffer,
       ).then((path) => {
-        updateJobProgress(job.id, 90).catch(() => { });
+        updateJobProgress(job.id, 90).catch(() => {});
         return path;
       });
 
@@ -303,7 +302,9 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
         data: {
           hasJest: detection.hasJest,
           jestConfigPath: detection.configPath,
-          testingFrameworksJson: detection.testingFrameworks ? JSON.stringify(detection.testingFrameworks) : null,
+          testingFrameworksJson: detection.testingFrameworks
+            ? JSON.stringify(detection.testingFrameworks)
+            : null,
           jestCommand: detection.jestCommand,
         },
       });
@@ -317,13 +318,20 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
         },
       });
 
-      await updateJobProgress(job.id, 100).catch(() => { });
+      await updateJobProgress(job.id, 100).catch(() => {});
       await markJobSuccess(job.id, { rootDir: validation.rootDir });
-      console.log(`[Job ${job.id}] Pipeline upload & ingest hoàn thành: ${validation.rootDir}`);
+      console.log(
+        `[Job ${job.id}] Pipeline upload & ingest hoàn thành: ${validation.rootDir}`,
+      );
     } catch (uploadErr) {
-      console.error(`[UploadProjectZip] Firebase upload or ingest failed for Job ${job.id}:`, uploadErr);
+      console.error(
+        `[UploadProjectZip] Firebase upload or ingest failed for Job ${job.id}:`,
+        uploadErr,
+      );
       const { markJobFailed } = await import("./job.service.js");
-      try { await markJobFailed(job.id, uploadErr); } catch (_) { }
+      try {
+        await markJobFailed(job.id, uploadErr);
+      } catch (_) {}
       throw uploadErr;
     }
   };
@@ -462,6 +470,7 @@ export const createCoverageAnalysisJob = async ({
   snapshotId,
   userId,
   mode = "FULL",
+  testType,
 }) => {
   if (!projectId || typeof projectId !== "string") {
     throw new ServiceError("projectId is required", 400);
@@ -515,6 +524,7 @@ export const createCoverageAnalysisJob = async ({
     snapshotId,
     userId,
     mode,
+    testType,
   });
 
   const { createSnapshotJob } = await import("./job.service.js");
@@ -571,17 +581,26 @@ export const deleteProject = async (projectId, userId) => {
         try {
           await bucket.file(snap.storagePath).delete();
         } catch (fbErr) {
-          if (fbErr.code !== 404) console.warn(`[DeleteProject] Failed to delete Firebase file ${snap.storagePath}:`, fbErr.message);
+          if (fbErr.code !== 404)
+            console.warn(
+              `[DeleteProject] Failed to delete Firebase file ${snap.storagePath}:`,
+              fbErr.message,
+            );
         }
       }
     }
     try {
-      const [files] = await bucket.getFiles({ prefix: `projects/${projectId}/` });
+      const [files] = await bucket.getFiles({
+        prefix: `projects/${projectId}/`,
+      });
       if (files.length > 0) {
-        await Promise.all(files.map((file) => file.delete().catch(() => { })));
+        await Promise.all(files.map((file) => file.delete().catch(() => {})));
       }
     } catch (prefixErr) {
-      console.warn(`[DeleteProject] Failed to cleanup Firebase prefix for ${projectId}:`, prefixErr.message);
+      console.warn(
+        `[DeleteProject] Failed to cleanup Firebase prefix for ${projectId}:`,
+        prefixErr.message,
+      );
     }
   } catch (fbCleanupErr) {
     console.error("[DeleteProject] Firebase cleanup error:", fbCleanupErr);

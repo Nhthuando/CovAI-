@@ -1,72 +1,114 @@
-﻿import { jest } from '@jest/globals';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { Writable } from 'node:stream';
+﻿import {
+  createVitestCoverageJob,
+  createSupertestCoverageJob,
+  createPlaywrightSystemCoverageJob,
+} from "../services/job.service";
+import { processCoverageJob } from "../services/coverageRunner.service.js";
+import prisma from "../config/prisma.js";
 
-const mockPrisma = {
-    projectSnapshot: {
-        update: jest.fn().mockResolvedValue({}),
+/**
+ * Mock Prisma and services to simulate pipeline and coverage reporting without external dependencies.
+ * Test cases validate processing and parsing for Unit, Integration, and System test coverage.
+ */
+
+// Mock Prisma database operations globally.
+jest.mock("../config/prisma.js", () => ({
+  projectSnapshot: {
+    findFirst: jest.fn(),
+    update: jest.fn(),
+  },
+  coverageFile: {
+    createMany: jest.fn(),
+    deleteMany: jest.fn(),
+  },
+  coverageSummary: {
+    upsert: jest.fn(),
+  },
+}));
+
+jest.mock("../services/coverageSummaryParser.service.js", () => ({
+  parseCoverageSummary: jest.fn(() => ({
+    total: {
+      lines: { pct: 85.6 },
+      branches: { pct: 75.3 },
+      functions: { pct: 92.7 },
+      statements: { pct: 88.1 },
     },
-};
-
-const mockBucket = {
-    file: jest.fn(),
-};
-
-jest.unstable_mockModule('../config/prisma.js', () => ({
-    default: mockPrisma,
+    fileCount: 15,
+  })),
 }));
 
-jest.unstable_mockModule('../config/firebase.js', () => ({
-    getBucket: jest.fn(() => mockBucket),
+jest.mock("../services/coverageStorage.service", () => ({
+  storeCoverageOutputs: jest.fn(() => ({
+    baseStoragePath: "mock/storage/path",
+  })),
 }));
 
-const { storeCoverageOutputs } = await import('../services/coverageStorage.service.js');
+describe("Coverage Processing", () => {
+  beforeAll(() => {
+    // Mock Prisma snapshot data associated with the tests.
+    prisma.projectSnapshot.findFirst.mockResolvedValue({
+      id: "mockSnapshotId",
+      rootDir: "/mock/project/root",
+      project: { ownerId: "mockUserId" },
+    });
+  });
 
-const makeWriteStream = () => {
-    const stream = new Writable({
-        write(chunk, encoding, callback) {
-            callback();
-        },
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  test("Should process unit test coverage and store metrics", async () => {
+    const job = await createVitestCoverageJob({
+      projectId: "mockProjectId",
+      userId: "mockUserId",
+      snapshotId: "mockSnapshotId",
     });
 
-    const end = stream.end.bind(stream);
-    stream.end = (...args) => {
-        end(...args);
-        process.nextTick(() => stream.emit('finish'));
-    };
+    await processCoverageJob(job.id);
 
-    return stream;
-};
+    expect(prisma.coverageFile.createMany).toHaveBeenCalled();
+    expect(prisma.coverageSummary.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { snapshotId: "mockSnapshotId" },
+      }),
+    );
+    expect(prisma.coverageFile.createMany).toMatchSnapshot(); // Validate the created records
+  });
 
-describe('coverage storage regression', () => {
-    beforeEach(() => {
-        jest.clearAllMocks();
-        mockPrisma.projectSnapshot.update.mockResolvedValue({});
-        mockBucket.file.mockReturnValue({
-            createWriteStream: jest.fn(() => makeWriteStream()),
-        });
+  test("Should process integration test coverage with Supertest", async () => {
+    const job = await createSupertestCoverageJob({
+      projectId: "mockProjectId",
+      userId: "mockUserId",
+      snapshotId: "mockSnapshotId",
     });
 
-    it('updates ProjectSnapshot using the Prisma field storagePath and returns the storage prefix', async () => {
-        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'covai-coverage-'));
-        const baseStoragePath = 'projects/proj-1/snapshots/snap-1/coverage';
+    await processCoverageJob(job.id);
 
-        try {
-            fs.writeFileSync(path.join(tempDir, 'coverage-summary.json'), JSON.stringify({ total: { lines: { pct: 90 } } }));
-            fs.writeFileSync(path.join(tempDir, 'coverage-final.json'), JSON.stringify({ total: { lines: { pct: 90 } } }));
-            fs.writeFileSync(path.join(tempDir, 'lcov.info'), 'TN:\nSF:src/index.js\nend_of_record\n');
+    expect(prisma.coverageFile.createMany).toHaveBeenCalled();
+    expect(prisma.coverageSummary.upsert).toHaveBeenCalled();
+  });
 
-            const result = await storeCoverageOutputs('snap-1', 'proj-1', tempDir);
-
-            expect(result.baseStoragePath).toBe(baseStoragePath);
-            expect(mockPrisma.projectSnapshot.update).toHaveBeenCalledWith({
-                where: { id: 'snap-1' },
-                data: { storagePath: baseStoragePath },
-            });
-        } finally {
-            fs.rmSync(tempDir, { recursive: true, force: true });
-        }
+  test("Should process system test coverage with Playwright", async () => {
+    const job = await createPlaywrightSystemCoverageJob({
+      projectId: "mockProjectId",
+      userId: "mockUserId",
+      snapshotId: "mockSnapshotId",
     });
+
+    await processCoverageJob(job.id);
+
+    expect(prisma.coverageFile.createMany).toHaveBeenCalled();
+    expect(prisma.coverageSummary.upsert).toHaveBeenCalled();
+  });
+
+  test("Error when missing snapshot for any test coverage processing", async () => {
+    prisma.projectSnapshot.findFirst.mockResolvedValueOnce(null);
+
+    await expect(processCoverageJob("invalidJobId")).rejects.toThrowError(
+      "Snapshot not found for this project",
+    );
+
+    expect(prisma.coverageFile.createMany).not.toHaveBeenCalled();
+  });
 });

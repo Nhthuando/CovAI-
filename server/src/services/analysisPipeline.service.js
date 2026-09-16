@@ -12,7 +12,7 @@ import prisma from "../config/prisma.js";
  * Process the entire automatic analysis pipeline for a given job.
  * @param {string} jobId - The ID of the job.
  */
-export async function processAnalysisPipeline(jobId) {
+export async function processAnalysisPipeline(jobId, testType = null) {
   try {
     // Retrieve Job Details
     const job = await getJobById(jobId);
@@ -40,6 +40,14 @@ export async function processAnalysisPipeline(jobId) {
     // Step 2: Classify Frameworks
     await addJobLog(jobId, "INFO", "Classifying frameworks by test category");
     const testFrameworks = classifyFrameworks(detectedFrameworks);
+
+    // Filter by requested test type if provided
+    let frameworksToRun = testFrameworks;
+    if (testType && testFrameworks[testType]) {
+      frameworksToRun = { [testType]: testFrameworks[testType] };
+      await addJobLog(jobId, "INFO", `Filtering for ${testType} tests only`);
+    }
+
     await addJobLog(
       jobId,
       "INFO",

@@ -7,12 +7,14 @@ import {
   Settings,
   Zap,
   BarChart3,
+  GitGraph,
 } from "lucide-react";
 import { useState } from "react";
 
 const TOP_ITEMS = [
   { id: "explorer", icon: Files, label: "Explorer" },
-  { id: "dashboard", icon: LayoutDashboard, label: "Dashboard" },
+  { id: "git", icon: GitGraph, label: "Git Control" },
+
   { id: "coverage", icon: BarChart3, label: "Coverage" },
   { id: "jobs", icon: Cpu, label: "Job Queue" },
   { id: "architecture", icon: Network, label: "Architecture" },

@@ -273,6 +273,7 @@ function TreeNode({
 /* ── Sidebar ─────────────────────────────────────────────── */
 
 export default function Sidebar({
+  sidebarWidth = 260,
   onOpenFile,
   activeFileId,
   fileTree = [],
@@ -356,10 +357,12 @@ export default function Sidebar({
     <motion.div
       className="flex flex-col h-full flex-shrink-0"
       initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.25 }}
+      animate={{ opacity: 1, width: sidebarWidth }}
+      transition={{
+        opacity: { duration: 0.25 },
+        width: { duration: 0.18, ease: [0.4, 0, 0.2, 1] },
+      }}
       style={{
-        width: 260,
         background: "var(--ide-sidebar)",
         borderRight: "1px solid var(--ide-border)",
         position: "relative",
