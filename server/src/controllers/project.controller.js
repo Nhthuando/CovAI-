@@ -64,14 +64,14 @@ const queueSystemTestAnalysis = async ({
   const snapshot = await prisma.projectSnapshot.findFirst(
     snapshotId
       ? {
-          where: { id: snapshotId, projectId },
-          select: { id: true, rootDir: true },
-        }
+        where: { id: snapshotId, projectId },
+        select: { id: true, rootDir: true },
+      }
       : {
-          where: { projectId },
-          orderBy: { createdAt: "desc" },
-          select: { id: true, rootDir: true },
-        },
+        where: { projectId },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, rootDir: true },
+      },
   );
   if (!snapshot) throw new ServiceError("Project snapshot not found", 404);
   if (!snapshot.rootDir)
@@ -92,7 +92,7 @@ const queueSystemTestAnalysis = async ({
   try {
     await addJobToQueue("SYSTEM_TEST_ANALYSIS", job.id);
   } catch (error) {
-    await markQueuedJobFailed(job.id, error).catch(() => {});
+    await markQueuedJobFailed(job.id, error).catch(() => { });
     throw new ServiceError("Unable to queue system test analysis", 503);
   }
 
@@ -1109,7 +1109,7 @@ class ProjectController {
     } catch (error) {
       console.error(error);
 
-      if (error instanceof ServiceError) {
+      if (error instanceof ServiceError || error.statusCode) {
         return res
           .status(error.statusCode)
           .json({ success: false, message: error.message });

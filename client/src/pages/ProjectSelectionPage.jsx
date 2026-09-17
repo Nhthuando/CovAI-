@@ -37,7 +37,11 @@ export default function ProjectSelectionPage() {
       setProjects((prev) => prev.filter((p) => p.id !== projectId));
     } catch (err) {
       console.error(err);
-      alert("Failed to delete project");
+      if (err?.status === 404) {
+        setProjects((prev) => prev.filter((p) => p.id !== projectId));
+      } else {
+        alert(err?.message || "Failed to delete project");
+      }
     }
   };
 

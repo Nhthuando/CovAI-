@@ -3,5 +3,6 @@ export class ServiceError extends Error {
         super(message);
         this.name = "ServiceError";
         this.statusCode = statusCode;
+        this.status = statusCode;
     }
 }

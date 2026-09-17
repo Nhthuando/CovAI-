@@ -139,7 +139,7 @@ function LayoutInner() {
             .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] ||
           null;
         if (!cancelled) setLatestRunJob(latest);
-      } catch {}
+      } catch { }
     };
     refreshRunJob();
     const timer = window.setInterval(refreshRunJob, 4000);
@@ -173,9 +173,12 @@ function LayoutInner() {
           setProjects(loadedProjects);
           const targetProj = activeProjId
             ? loadedProjects.find((p) => p.id === activeProjId) ||
-              loadedProjects[0]
+            loadedProjects[0]
             : loadedProjects[0];
           setProject(targetProj);
+          if (!targetProj?.latestSnapshotId && targetProj?.id) {
+            localStorage.removeItem(`latestSnapshot_${targetProj.id}`);
+          }
           let lastError = null;
           for (let attempt = 1; attempt <= retries; attempt++) {
             try {
@@ -505,9 +508,19 @@ function LayoutInner() {
             </span>
             {!isMobile && (
               <>
-                <Sidebar />
-                <AnalysisButton projectId="PROJECT_ID_PLACEHOLDER" />
-                <MainContent />
+                <span style={{ color: "#30363d" }}>—</span>
+                <span
+                  style={{
+                    color: "#484f58",
+                    fontFamily: "var(--font-sans)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    maxWidth: isTablet ? 120 : 240,
+                  }}
+                >
+                  {project ? project.name : "Main IDE"}
+                </span>
               </>
             )}
           </div>
@@ -714,16 +727,16 @@ function LayoutInner() {
               style={
                 isMobile
                   ? {
-                      position: "fixed",
-                      top: 42,
-                      bottom: 26,
-                      left: 0,
-                      width: 280,
-                      maxWidth: "85vw",
-                      overflow: "hidden",
-                      zIndex: 35,
-                      boxShadow: "4px 0 24px rgba(0,0,0,0.4)",
-                    }
+                    position: "fixed",
+                    top: 42,
+                    bottom: 26,
+                    left: 0,
+                    width: 280,
+                    maxWidth: "85vw",
+                    overflow: "hidden",
+                    zIndex: 35,
+                    boxShadow: "4px 0 24px rgba(0,0,0,0.4)",
+                  }
                   : { overflow: "hidden", flexShrink: 0 }
               }
             >
@@ -840,16 +853,16 @@ function LayoutInner() {
                 style={
                   isMobile
                     ? {
-                        position: "fixed",
-                        top: 42,
-                        bottom: 26,
-                        right: 0,
-                        width: "100%",
-                        maxWidth: 360,
-                        overflow: "hidden",
-                        zIndex: 35,
-                        boxShadow: "-4px 0 24px rgba(0,0,0,0.4)",
-                      }
+                      position: "fixed",
+                      top: 42,
+                      bottom: 26,
+                      right: 0,
+                      width: "100%",
+                      maxWidth: 360,
+                      overflow: "hidden",
+                      zIndex: 35,
+                      boxShadow: "-4px 0 24px rgba(0,0,0,0.4)",
+                    }
                     : { overflow: "hidden", flexShrink: 0 }
                 }
               >
