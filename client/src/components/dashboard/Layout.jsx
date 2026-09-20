@@ -1,11 +1,17 @@
+/* eslint-disable no-unused-vars */
 /* eslint-disable react-hooks/set-state-in-effect */
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import ActivityBar from "./ActivityBar";
 import Sidebar from "./Sidebar";
+import CoveragePanel from "./CoveragePanel";
 import Editor from "./Editor";
+import GitPanel from "./GitPanel";
 import CoverageDashboard from "./CoverageDashboard";
+import UnitTestDashboard from "./UnitTestDashboard";
+import IntegrationTestDashboard from "./IntegrationTestDashboard";
+import SystemTestDashboard from "./SystemTestDashboard";
 import AIPanel from "./AIPanel";
 import ImportLayout from "./import/ImportLayout";
 import JobQueue from "./JobQueue";
@@ -71,9 +77,11 @@ const panelVariants = {
 function LayoutInner() {
   const { showToast } = useToast();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
-  const searchParams = new URLSearchParams(window.location.search);
+  const searchParams = new URLSearchParams(location.search);
   const initialProjectId = searchParams.get("projectId");
+  const initialTab = searchParams.get("tab") || "explorer";
   const { isMobile, isTablet } = useBreakpoints();
   const isCompact = isMobile || isTablet;
 
@@ -88,17 +96,29 @@ function LayoutInner() {
       navigate("/");
       return;
     }
-    setActiveActivity(id);
+    const params = new URLSearchParams(location.search);
+    params.set("tab", id);
+    navigate(`${location.pathname}?${params.toString()}`);
   };
 
-  const [activeActivity, setActiveActivity] = useState("explorer");
+  const [activeActivity, setActiveActivity] = useState(initialTab);
+  const [showGit, setShowGit] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const tab = params.get("tab") || "explorer";
+    setActiveActivity(tab);
+  }, [location.search]);
+
   const [activeSetting, setActiveSetting] = useState("profile");
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarWidth, setSidebarWidth] = useState(260);
   const [aiPanelOpen, setAiPanelOpen] = useState(true);
   const [aiPanelWidth, setAiPanelWidth] = useState(340);
   const [tabs, setTabs] = useState(INITIAL_TABS);
   const [activeTabId, setActiveTabId] = useState(null);
   const [activeFileId, setActiveFileId] = useState(null);
+  const [coverageType, setCoverageType] = useState("unit");
   const [showImport, setShowImport] = useState(false);
   const [showCFG, setShowCFG] = useState(false);
   const [showQualityDashboard, setShowQualityDashboard] = useState(false);
@@ -139,7 +159,9 @@ function LayoutInner() {
             .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] ||
           null;
         if (!cancelled) setLatestRunJob(latest);
-      } catch {}
+      } catch (err) {
+        console.error("Failed to refresh jobs", err);
+      }
     };
     refreshRunJob();
     const timer = window.setInterval(refreshRunJob, 4000);
@@ -214,6 +236,26 @@ function LayoutInner() {
       }
     },
     [showToast],
+  );
+
+  const handleSidebarResize = useCallback(
+    (e) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startWidth = sidebarWidth;
+      const onMouseMove = (moveEvent) => {
+        const deltaX = moveEvent.clientX - startX;
+        const newWidth = Math.max(200, Math.min(600, startWidth + deltaX));
+        setSidebarWidth(newWidth);
+      };
+      const onMouseUp = () => {
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+      };
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+    },
+    [sidebarWidth],
   );
 
   const handleAiPanelResize = useCallback(
@@ -503,13 +545,6 @@ function LayoutInner() {
             >
               TestCovAI
             </span>
-            {!isMobile && (
-              <>
-                <Sidebar />
-                <AnalysisButton projectId="PROJECT_ID_PLACEHOLDER" />
-                <MainContent />
-              </>
-            )}
           </div>
         </div>
         <div
@@ -549,27 +584,9 @@ function LayoutInner() {
               <span>Search files…</span>
             </div>
           )}
-          <motion.button
-            whileHover={{ scale: 1.03 }}
-            whileTap={{ scale: 0.97 }}
-            onClick={handleRunTests}
-            disabled={runButtonLocked}
-            className="flex items-center gap-1.5 rounded-lg text-xs font-medium"
-            style={{
-              background: "linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)",
-              color: "#fff",
-              border: "none",
-              cursor: runButtonLocked ? "not-allowed" : "pointer",
-              opacity: runButtonLocked ? 0.62 : 1,
-              fontFamily: "var(--font-sans)",
-              boxShadow: "0 0 12px rgba(124,58,237,0.3)",
-              padding: isMobile ? "6px 8px" : "6px 14px",
-              whiteSpace: "nowrap",
-            }}
-          >
-            <Play size={11} strokeWidth={3} />
-            {!isMobile && runButtonLabel}
-          </motion.button>
+
+          {/* Removed "Run Tests" button */}
+
           {!isMobile && (
             <>
               <motion.button
@@ -705,7 +722,9 @@ function LayoutInner() {
                 isMobile ? { x: -280, opacity: 0 } : { width: 0, opacity: 0 }
               }
               animate={
-                isMobile ? { x: 0, opacity: 1 } : { width: 260, opacity: 1 }
+                isMobile
+                  ? { x: 0, opacity: 1 }
+                  : { width: sidebarWidth, opacity: 1 }
               }
               exit={
                 isMobile ? { x: -280, opacity: 0 } : { width: 0, opacity: 0 }
@@ -724,7 +743,12 @@ function LayoutInner() {
                       zIndex: 35,
                       boxShadow: "4px 0 24px rgba(0,0,0,0.4)",
                     }
-                  : { overflow: "hidden", flexShrink: 0 }
+                  : {
+                      overflow: "hidden",
+                      flexShrink: 0,
+                      borderRight: "2px solid #a78bfa",
+                      boxShadow: "1px 0 0 #a78bfa",
+                    }
               }
             >
               {activeActivity === "settings" ? (
@@ -735,8 +759,17 @@ function LayoutInner() {
                     if (isMobile) setSidebarOpen(false);
                   }}
                 />
+              ) : activeActivity === "coverage" ? (
+                <CoveragePanel
+                  sidebarWidth={sidebarWidth}
+                  coverageType={coverageType}
+                  setCoverageType={setCoverageType}
+                />
+              ) : activeActivity === "git" ? (
+                <GitPanel projectId={project?.id} />
               ) : (
                 <Sidebar
+                  sidebarWidth={sidebarWidth}
                   onOpenFile={(node) => {
                     handleOpenFile(node);
                     if (isMobile && node.type !== "folder")
@@ -759,8 +792,20 @@ function LayoutInner() {
             </motion.div>
           )}
         </AnimatePresence>
+        {!isMobile && sidebarOpen && (
+          <div
+            onMouseDown={handleSidebarResize}
+            style={{
+              width: 4,
+              cursor: "col-resize",
+              background: "transparent",
+              zIndex: 10,
+            }}
+            className="hover:bg-purple-500/20 transition-colors"
+          />
+        )}
         <motion.div
-          className="flex flex-1 min-w-0 min-h-0"
+          className="flex flex-1 min-w-0 min-h-0 relative"
           variants={panelVariants}
         >
           {activeActivity === "settings" ? (
@@ -782,17 +827,41 @@ function LayoutInner() {
             <ProjectArchitecturePanel projectId={project?.id} />
           ) : activeActivity === "coverage" ? (
             <div className="w-full h-full overflow-y-auto">
-              <CoverageDashboard
-                snapshotId={
-                  project?.latestSnapshotId ||
-                  (project?.id
-                    ? localStorage.getItem(`latestSnapshot_${project.id}`)
-                    : null) ||
-                  testPromptSnapshotId
-                }
-                projectId={project?.id}
-                onOpenFile={handleOpenFileByPath}
-              />
+              {coverageType === "unit" ? (
+                <UnitTestDashboard
+                  snapshotId={
+                    project?.latestSnapshotId ||
+                    (project?.id
+                      ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                      : null) ||
+                    testPromptSnapshotId
+                  }
+                  projectId={project?.id}
+                  onOpenFile={handleOpenFileByPath}
+                />
+              ) : coverageType === "integration" ? (
+                <IntegrationTestDashboard
+                  snapshotId={
+                    project?.latestSnapshotId ||
+                    (project?.id
+                      ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                      : null) ||
+                    testPromptSnapshotId
+                  }
+                  projectId={project?.id}
+                  onOpenFile={handleOpenFileByPath}
+                />
+              ) : (
+                <SystemTestDashboard
+                  snapshotId={
+                    project?.latestSnapshotId ||
+                    (project?.id
+                      ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                      : null) ||
+                    testPromptSnapshotId
+                  }
+                />
+              )}
             </div>
           ) : (
             <Editor

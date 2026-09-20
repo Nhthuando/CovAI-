@@ -85,3 +85,18 @@ export async function getTestExecution(snapshotId) {
 
     return handleResponse(res);
 }
+
+export async function getCoverageFrameworks(snapshotId) {
+  const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/frameworks`, {
+    headers: getAuthHeaders(),
+  });
+  return handleResponse(res);
+}
+
+export async function runCoverageByType(snapshotId, coverageType) {
+  const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/${coverageType}/run`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+  });
+  return handleResponse(res);
+}

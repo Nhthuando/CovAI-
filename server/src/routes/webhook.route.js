@@ -15,7 +15,20 @@ const router = express.Router();
  */
 
 // Public endpoint for GitHub to send webhook events (no auth required)
-router.post("/github", handleGithubWebhook);
+router.post(
+  "/github",
+  (req, res, next) => {
+    let data = "";
+    req.on("data", (chunk) => {
+      data += chunk;
+    });
+    req.on("end", () => {
+      req.rawBody = data;
+      next();
+    });
+  },
+  handleGithubWebhook,
+);
 
 // Protected endpoints for managing webhooks
 router.post("/enable", authMiddleware, enableWebhook);

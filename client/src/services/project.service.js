@@ -74,20 +74,26 @@ export async function uploadZipApi(projectId, file) {
 }
 
 export async function importGithubUrlApi(projectId, url) {
-  const res = await fetch(`${BASE_URL}/github/projects/${projectId}/import-github-url`, {
-    method: "POST",
-    headers: getAuthHeaders(),
-    body: JSON.stringify({ url }),
-  });
+  const res = await fetch(
+    `${BASE_URL}/github/projects/${projectId}/import-github-url`,
+    {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ url }),
+    },
+  );
   return handleResponse(res);
 }
 
 export async function importGithubRepoApi(projectId, owner, repo) {
-  const res = await fetch(`${BASE_URL}/github/projects/${projectId}/import-github-repo`, {
-    method: "POST",
-    headers: getAuthHeaders(),
-    body: JSON.stringify({ owner, repo }),
-  });
+  const res = await fetch(
+    `${BASE_URL}/github/projects/${projectId}/import-github-repo`,
+    {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ owner, repo }),
+    },
+  );
   return handleResponse(res);
 }
 
@@ -103,7 +109,7 @@ export async function getFileContentApi(projectId, filePath) {
     `${BASE_URL}/projects/${projectId}/file-content?path=${encodeURIComponent(filePath)}`,
     {
       headers: getAuthHeaders(),
-    }
+    },
   );
   return handleResponse(res);
 }
@@ -119,29 +125,39 @@ export async function updateFileContentApi(projectId, filePath, content) {
 
 export async function createProjectFileApi(projectId, filePath, content = "") {
   const res = await fetch(`${BASE_URL}/projects/${projectId}/files`, {
-    method: "POST", headers: getAuthHeaders(), body: JSON.stringify({ path: filePath, content }),
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ path: filePath, content }),
   });
   return handleResponse(res);
 }
 
 export async function createProjectFolderApi(projectId, folderPath) {
   const res = await fetch(`${BASE_URL}/projects/${projectId}/folders`, {
-    method: "POST", headers: getAuthHeaders(), body: JSON.stringify({ path: folderPath }),
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ path: folderPath }),
   });
   return handleResponse(res);
 }
 
 export async function renameProjectEntryApi(projectId, filePath, newPath) {
   const res = await fetch(`${BASE_URL}/projects/${projectId}/entries`, {
-    method: "PATCH", headers: getAuthHeaders(), body: JSON.stringify({ path: filePath, newPath }),
+    method: "PATCH",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ path: filePath, newPath }),
   });
   return handleResponse(res);
 }
 
 export async function deleteProjectEntryApi(projectId, filePath) {
-  const res = await fetch(`${BASE_URL}/projects/${projectId}/entries?path=${encodeURIComponent(filePath)}`, {
-    method: "DELETE", headers: getAuthHeaders(),
-  });
+  const res = await fetch(
+    `${BASE_URL}/projects/${projectId}/entries?path=${encodeURIComponent(filePath)}`,
+    {
+      method: "DELETE",
+      headers: getAuthHeaders(),
+    },
+  );
   return handleResponse(res);
 }
 
@@ -162,16 +178,22 @@ export async function sendAiChatMessageApi(projectId, message, history) {
 }
 
 export async function getProjectCfgApi(projectId, snapshotId) {
-  const res = await fetch(`${BASE_URL}/projects/${projectId}/cfg?snapshotId=${snapshotId}`, {
-    headers: getAuthHeaders(),
-  });
+  const res = await fetch(
+    `${BASE_URL}/projects/${projectId}/cfg?snapshotId=${snapshotId}`,
+    {
+      headers: getAuthHeaders(),
+    },
+  );
   return handleResponse(res);
 }
 
 export async function getProjectCcApi(projectId, snapshotId) {
-  const res = await fetch(`${BASE_URL}/projects/${projectId}/cc?snapshotId=${snapshotId}`, {
-    headers: getAuthHeaders(),
-  });
+  const res = await fetch(
+    `${BASE_URL}/projects/${projectId}/cc?snapshotId=${snapshotId}`,
+    {
+      headers: getAuthHeaders(),
+    },
+  );
   return handleResponse(res);
 }
 
@@ -199,32 +221,46 @@ export async function getProjectSnapshotsApi(projectId) {
 }
 
 export async function getProjectStructureAnalysisApi(projectId, snapshotId) {
-  const query = snapshotId ? `?snapshotId=${encodeURIComponent(snapshotId)}` : "";
-  const res = await fetch(`${BASE_URL}/projects/${projectId}/structure-analysis${query}`, {
-    headers: getAuthHeaders(),
-  });
+  const query = snapshotId
+    ? `?snapshotId=${encodeURIComponent(snapshotId)}`
+    : "";
+  const res = await fetch(
+    `${BASE_URL}/projects/${projectId}/structure-analysis${query}`,
+    {
+      headers: getAuthHeaders(),
+    },
+  );
   return handleResponse(res);
 }
 
-export async function runAnalysisApi(projectId, snapshotId) {
+export async function runAnalysisApi(projectId, { snapshotId, testType } = {}) {
   const res = await fetch(`${BASE_URL}/projects/${projectId}/run-analysis`, {
     method: "POST",
     headers: getAuthHeaders(),
-    body: JSON.stringify(snapshotId ? { snapshotId } : {}),
+    body: JSON.stringify({ snapshotId, testType }),
   });
-  return handleResponse(res);
+  // Trả về job để client có thể polling
+  const data = await handleResponse(res);
+  return data && data.data && data.data.job ? data.data.job : data;
 }
 
 export async function runProjectStructureAnalysisApi(projectId, snapshotId) {
-  const res = await fetch(`${BASE_URL}/projects/${projectId}/structure-analysis`, {
-    method: "POST",
-    headers: getAuthHeaders(),
-    body: JSON.stringify(snapshotId ? { snapshotId } : {}),
-  });
+  const res = await fetch(
+    `${BASE_URL}/projects/${projectId}/structure-analysis`,
+    {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify(snapshotId ? { snapshotId } : {}),
+    },
+  );
   return handleResponse(res);
 }
 
-export async function generateSkeletonApi(projectId, snapshotId, mode = "SKELETON") {
+export async function generateSkeletonApi(
+  projectId,
+  snapshotId,
+  mode = "SKELETON",
+) {
   const res = await fetch(`${BASE_URL}/projects/${projectId}/ai-tests`, {
     method: "POST",
     headers: getAuthHeaders(),
@@ -234,18 +270,30 @@ export async function generateSkeletonApi(projectId, snapshotId, mode = "SKELETO
 }
 
 export async function getFrameworkRecommendationApi(projectId, snapshotId) {
-  const query = snapshotId ? `?snapshotId=${encodeURIComponent(snapshotId)}` : "";
-  const res = await fetch(`${BASE_URL}/projects/${projectId}/test-framework-recommendation${query}`, {
-    headers: getAuthHeaders(),
-  });
+  const query = snapshotId
+    ? `?snapshotId=${encodeURIComponent(snapshotId)}`
+    : "";
+  const res = await fetch(
+    `${BASE_URL}/projects/${projectId}/test-framework-recommendation${query}`,
+    {
+      headers: getAuthHeaders(),
+    },
+  );
   return handleResponse(res);
 }
 
-export async function selectTestingFrameworkApi(projectId, snapshotId, framework) {
-  const res = await fetch(`${BASE_URL}/projects/${projectId}/test-framework-selection`, {
-    method: "PUT",
-    headers: getAuthHeaders(),
-    body: JSON.stringify({ snapshotId, framework }),
-  });
+export async function selectTestingFrameworkApi(
+  projectId,
+  snapshotId,
+  framework,
+) {
+  const res = await fetch(
+    `${BASE_URL}/projects/${projectId}/test-framework-selection`,
+    {
+      method: "PUT",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ snapshotId, framework }),
+    },
+  );
   return handleResponse(res);
 }

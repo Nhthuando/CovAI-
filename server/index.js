@@ -29,6 +29,7 @@ import analyticsRoute from "./src/routes/analytics.route.js";
 import codeHygieneRoute from "./src/routes/codeHygiene.route.js";
 import fileManagerRoute from "./src/routes/fileManager.route.js";
 import webhookRoute from "./src/routes/webhook.route.js";
+import gitRoute from "./src/routes/git.route.js";
 import { globalLimiter } from "./src/middlewares/rateLimit.middleware.js";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -62,18 +63,6 @@ app.use(
 
 app.use(cookieParser());
 
-// Middleware to capture raw body for webhook signature verification
-app.use((req, res, next) => {
-  let data = "";
-  req.on("data", (chunk) => {
-    data += chunk;
-  });
-  req.on("end", () => {
-    req.rawBody = data;
-    next();
-  });
-});
-
 app.use(express.json());
 
 // Global rate limiter
@@ -96,6 +85,7 @@ app.use("/api/notifications", notificationRoute);
 app.use("/api/analytics", analyticsRoute);
 app.use("/api/code-hygiene", codeHygieneRoute);
 app.use("/api/file-manager", fileManagerRoute);
+app.use("/api/git", gitRoute);
 app.use("/webhook", webhookRoute);
 
 const __filename = fileURLToPath(import.meta.url);

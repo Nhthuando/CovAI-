@@ -23,10 +23,11 @@ router.post("/:projectId/run-analysis", authMiddleware, async (req, res) => {
     }
 
     // Create and start pipeline (non-blocking)
-    const jobId = await processAnalysisPipeline(projectId);
+    const { testType } = req.body;
+    const jobId = await processAnalysisPipeline(projectId, testType);
     return res.status(202).json({
       success: true,
-      message: "Analysis job queued successfully.",
+      message: `Analysis job for ${testType || "all"} queued successfully.`,
       jobId,
     });
   } catch (error) {

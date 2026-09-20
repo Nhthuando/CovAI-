@@ -1,11 +1,12 @@
 import express from "express";
 import { authMiddleware } from "../middlewares/auth.middleware.js";
-import { getCoverageSummary, runCoverage, runSupertestCoverage, getCoverageFiles, getCoverageFunctions, getTestExecution } from "../controllers/coverage.controller.js";
+import { getCoverageSummary, runCoverage, runSupertestCoverage, getCoverageFiles, getCoverageFunctions, getTestExecution, getCoverageFrameworks, runCoverageByType } from "../controllers/coverage.controller.js";
 
 const router = express.Router();
 
 // GET /api/coverage/:snapshotId/summary — lấy kết quả coverage summary
 router.get("/:snapshotId/summary", authMiddleware, getCoverageSummary);
+router.get("/:snapshotId/frameworks", authMiddleware, getCoverageFrameworks);
 
 // SCRUM-155: GET /api/coverage/:snapshotId/files — lấy danh sách CoverageFile
 // Query: ?sortBy=filePath|linesPct|branchesPct|funcsPct|stmtsPct&order=asc|desc&page=1&limit=50
@@ -15,6 +16,7 @@ router.get("/:snapshotId/files", authMiddleware, getCoverageFiles);
 router.post("/:snapshotId/run", authMiddleware, runCoverage);
 
 router.post("/:snapshotId/supertest/run", authMiddleware, runSupertestCoverage);
+router.post("/:snapshotId/:coverageType/run", authMiddleware, runCoverageByType);
 
 // SCRUM-160: GET /api/coverage/:snapshotId/functions — lấy danh sách CoverageFunction
 // Query: ?filePath=<filter>&sortBy=functionName|filePath|hit|startLine&order=asc|desc&page=1&limit=50

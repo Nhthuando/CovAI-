@@ -19,92 +19,88 @@ model User {
   updatedAt            DateTime       @updatedAt
   passwordResetExpires DateTime?
   passwordResetToken   String?
-  refreshToken         String?
   aiUsageCount         Int            @default(0)
   aiUsageDate          String?
   bio                  String?
   jobTitle             String?
   aiTokenUsage         Int            @default(0)
+  refreshToken         String?
   jobs                 Job[]          @relation("UserJobs")
   notifications        Notification[]
   projects             Project[]
 }
 
 model Project {
-  id               String            @id @default(cuid())
-  ownerId          String
-  name             String
-  description      String?
-  repoUrl          String?
-  defaultBranch    String?
-  rootDir          String?
-  jestConfigPath   String?
-  storageBasePath  String?
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
-  hasJest          Boolean           @default(false)
-  jestCommand      String?
-  hasVitest        Boolean           @default(false)
-  vitestCommand    String?
-  vitestConfigPath String?
-  hasPlaywright        Boolean       @default(false)
+  id                   String            @id @default(cuid())
+  ownerId              String
+  name                 String
+  description          String?
+  repoUrl              String?
+  defaultBranch        String?
+  rootDir              String?
+  jestConfigPath       String?
+  storageBasePath      String?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+  hasJest              Boolean           @default(false)
+  jestCommand          String?
+  hasVitest            Boolean           @default(false)
+  vitestCommand        String?
+  vitestConfigPath     String?
+  hasPlaywright        Boolean           @default(false)
+  playwrightBrowsers   String?
   playwrightCommand    String?
   playwrightConfigPath String?
   playwrightTestDir    String?
-  playwrightBrowsers   String?
-  webhookEnabled   Boolean           @default(false)
-  webhookSecretEnc String?
-  webhookBranch    String?
-  lastAnalyzedCommit String?
-  aiSuggestions    AiSuggestion[]
-  aiTests          AiTest[]
-  jobs             Job[]
-  notifications    Notification[]
-  owner            User              @relation(fields: [ownerId], references: [id])
-  snapshots        ProjectSnapshot[]
-  qualityReports   QualityReport[]
+  aiSuggestions        AiSuggestion[]
+  aiTests              AiTest[]
+  jobs                 Job[]
+  notifications        Notification[]
+  owner                User              @relation(fields: [ownerId], references: [id])
+  snapshots            ProjectSnapshot[]
+  qualityReports       QualityReport[]
 
   @@index([ownerId])
 }
 
 model ProjectSnapshot {
-  id                       String                    @id @default(cuid())
-  projectId                String
-  source                   SnapshotSource
-  checksum                 String?
-  commitSha                String?
-  storagePath              String
-  rootDir                  String?
-  jestConfigPath           String?
-  createdAt                DateTime                  @default(now())
-  hasJest                  Boolean                   @default(false)
-  jestCommand              String?
-  testingFrameworksJson    String?
+  id                          String                    @id @default(cuid())
+  projectId                   String
+  source                      SnapshotSource
+  checksum                    String?
+  commitSha                   String?
+  storagePath                 String
+  rootDir                     String?
+  jestConfigPath              String?
+  createdAt                   DateTime                  @default(now())
+  hasJest                     Boolean                   @default(false)
+  jestCommand                 String?
+  testingFrameworksJson       String?
+  hasVitest                   Boolean                   @default(false)
+  vitestCommand               String?
+  vitestConfigPath            String?
+  hasPlaywright               Boolean                   @default(false)
+  playwrightBrowsers          String?
+  playwrightCommand           String?
+  playwrightConfigPath        String?
+  playwrightTestDir           String?
   frameworkRecommendationJson String?
-  selectedTestingFramework String?
-  hasVitest                Boolean                   @default(false)
-  vitestCommand            String?
-  vitestConfigPath         String?
-  hasPlaywright            Boolean                   @default(false)
-  playwrightCommand        String?
-  playwrightConfigPath     String?
-  playwrightTestDir        String?
-  playwrightBrowsers       String?
-  aiContextCache           AiContextCache?
-  aiSuggestions            AiSuggestion[]
-  aiTests                  AiTest[]
-  cfgs                     Cfg[]
-  coverageFiles            CoverageFile[]
-  coverageFuncs            CoverageFunction[]
-  coverageSummaries        CoverageSummary?
-  cyclomatics              Cyclomatic[]
-  jobs                     Job[]
-  testRuns                 TestRun[]
-  performanceMetric        PerformanceMetric?
-  project                  Project                   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  ProjectStructureAnalysis ProjectStructureAnalysis?
-  QualityReport            QualityReport?
-  vulnerabilities          Vulnerability[]
+  selectedTestingFramework    String?
+  aiContextCache              AiContextCache?
+  aiSuggestions               AiSuggestion[]
+  aiTests                     AiTest[]
+  cfgs                        Cfg[]
+  coverageFiles               CoverageFile[]
+  coverageFuncs               CoverageFunction[]
+  coverageSummaries           CoverageSummary?
+  cyclomatics                 Cyclomatic[]
+  jobs                        Job[]
+  performanceMetric           PerformanceMetric?
+  project                     Project                   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ProjectStructureAnalysis    ProjectStructureAnalysis?
+  QualityReport               QualityReport?
+  testRuns                    TestRun[]
+  vulnerabilities             Vulnerability[]
 
   @@unique([projectId, checksum])
   @@unique([projectId, commitSha])
@@ -315,19 +311,19 @@ model AiTestResult {
 }
 
 model TestRun {
-  id            String          @id @default(cuid())
-  snapshotId    String
-  type          TestType
-  totalTests    Int
-  passedTests   Int
-  failedTests   Int
-  skippedTests  Int
-  durationMs    Float
-  status        String
-  startedAt     DateTime
-  finishedAt    DateTime
-  createdAt     DateTime        @default(now())
-  snapshot      ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  id           String          @id @default(cuid())
+  snapshotId   String
+  type         TestType
+  totalTests   Int
+  passedTests  Int
+  failedTests  Int
+  skippedTests Int
+  durationMs   Float
+  status       String
+  startedAt    DateTime
+  finishedAt   DateTime
+  createdAt    DateTime        @default(now())
+  snapshot     ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 
   @@index([snapshotId])
 }
@@ -379,7 +375,6 @@ enum JobType {
   INSTALL_DEPS
   RUN_TESTS
   PARSE_COVERAGE
-  SUPERTEST_COVERAGE
   BUILD_CFG
   AI_SUGGEST
   AI_TESTS
@@ -388,9 +383,10 @@ enum JobType {
   ANALYSIS
   QUALITY_ANALYSIS
   SECURITY_ANALYSIS
+  SUPERTEST_COVERAGE
   RUN_VITEST_TESTS
-  SYSTEM_TEST_ANALYSIS
   VITEST_COVERAGE
+  SYSTEM_TEST_ANALYSIS
   CYPRESS_SYSTEM_TEST
   CYPRESS_SYSTEM_COVERAGE
   PLAYWRIGHT_SYSTEM_TEST
@@ -426,8 +422,8 @@ enum TestType {
   JEST
   SUPERTEST
   PLAYWRIGHT
-  VITEST
   CYPRESS
+  VITEST
 }
 
 enum IssueType {

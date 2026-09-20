@@ -14,6 +14,7 @@ import {
   Check,
 } from "lucide-react";
 import MonacoEditor from "@monaco-editor/react";
+import { GitPanel } from "./GitPanel";
 import {
   getFileContentApi,
   updateFileContentApi,
@@ -410,6 +411,7 @@ export default function Editor({
   const saveHandlerRef = useRef(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [showGitPanel, setShowGitPanel] = useState(false);
 
   // Fetch complexities when active tab changes
   useEffect(() => {
@@ -729,6 +731,16 @@ export default function Editor({
 
       {/* ── Code Area ─────────────────────────────────────── */}
       <div className="flex-1 overflow-auto relative">
+        {showGitPanel && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="absolute top-4 right-4 z-50 w-96"
+          >
+            <GitPanel projectId={projectId} />
+          </motion.div>
+        )}
         <AnimatePresence mode="wait">
           {currentFile.loading ? (
             <motion.div
@@ -854,8 +866,9 @@ export default function Editor({
           <span style={{ color: "#484f58" }}>{lines.length} lines</span>
         )}
         <div
-          className="ml-auto flex items-center gap-1.5"
+          className="ml-auto flex items-center gap-1.5 cursor-pointer"
           style={{ color: "#484f58" }}
+          onClick={() => setShowGitPanel(!showGitPanel)}
         >
           <GitBranch size={11} />
           <span>main</span>

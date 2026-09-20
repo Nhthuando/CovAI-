@@ -8,7 +8,11 @@ const SETTINGS_OPTIONS = [
   { id: "billing", label: "Billing", icon: CreditCard },
 ];
 
-export default function SettingsSidebar({ activeSetting, onSelectSetting, variant = "sidebar" }) {
+export default function SettingsSidebar({
+  activeSetting,
+  onSelectSetting,
+  variant = "sidebar",
+}) {
   if (variant === "tabs") {
     return (
       <div
@@ -18,7 +22,7 @@ export default function SettingsSidebar({ activeSetting, onSelectSetting, varian
           padding: "10px 12px",
           overflowX: "auto",
           borderBottom: "1px solid #21262d",
-          background: "#0d1117",
+          background: "#21252B",
           position: "sticky",
           top: 0,
           zIndex: 5,
@@ -40,9 +44,13 @@ export default function SettingsSidebar({ activeSetting, onSelectSetting, varian
                 fontSize: 12,
                 whiteSpace: "nowrap",
                 flexShrink: 0,
-                background: isActive ? "rgba(124,58,237,0.15)" : "rgba(255,255,255,0.03)",
+                background: isActive
+                  ? "rgba(124,58,237,0.15)"
+                  : "rgba(255,255,255,0.03)",
                 color: isActive ? "#c4b5fd" : "#8b949e",
-                border: isActive ? "1px solid rgba(124,58,237,0.3)" : "1px solid #21262d",
+                border: isActive
+                  ? "1px solid rgba(124,58,237,0.3)"
+                  : "1px solid #21262d",
                 cursor: "pointer",
               }}
             >
@@ -85,7 +93,7 @@ export default function SettingsSidebar({ activeSetting, onSelectSetting, varian
         display: "flex",
         flexDirection: "column",
         height: "100%",
-        backgroundColor: "#0d1117",
+        backgroundColor: "#21252B",
         borderRight: "1px solid #30363d",
         width: "100%",
         justifyContent: "space-between",
@@ -104,7 +112,14 @@ export default function SettingsSidebar({ activeSetting, onSelectSetting, varian
         >
           Settings
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: "4px", padding: "0 8px" }}>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "4px",
+            padding: "0 8px",
+          }}
+        >
           {SETTINGS_OPTIONS.map((option) => {
             const Icon = option.icon;
             const isActive = activeSetting === option.id;
@@ -119,7 +134,9 @@ export default function SettingsSidebar({ activeSetting, onSelectSetting, varian
                   padding: "8px 12px",
                   borderRadius: "6px",
                   fontSize: "14px",
-                  background: isActive ? "rgba(255,255,255,0.05)" : "transparent",
+                  background: isActive
+                    ? "rgba(255,255,255,0.05)"
+                    : "transparent",
                   color: isActive ? "#e6edf3" : "#8b949e",
                   border: "none",
                   cursor: "pointer",

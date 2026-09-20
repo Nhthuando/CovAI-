@@ -1,10 +1,11 @@
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
-import { createInstallDepsJob, createRunTestsJob, createSupertestCoverageJob } from "../services/job.service.js";
+import { createInstallDepsJob, createRunTestsJob, createSupertestCoverageJob, createVitestCoverageJob, createCypressSystemCoverageJob, createPlaywrightSystemCoverageJob } from "../services/job.service.js";
 import { jobQueue, addSupertestCoveragePipeline } from "../services/queue.service.js";
 import { processCoverageJob } from "../services/coverageRunner.service.js";
 import { addJobToQueue } from "../services/queue.service.js";
 import { detectSupertest } from "../services/supertestDetection.service.js";
+import { detectCoverageFrameworks, selectCoverageFramework } from "../services/coverageFramework.service.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -13,6 +14,67 @@ const ALLOWED_SORT_ORDERS = ["asc", "desc"];
 
 // SCRUM-160: Functions endpoint sort fields
 const ALLOWED_FUNC_SORT_FIELDS = ["functionName", "filePath", "hit", "startLine"];
+
+const findOwnedSnapshot = (snapshotId, userId) => prisma.projectSnapshot.findFirst({
+    where: { id: snapshotId, project: { ownerId: userId } },
+    select: { id: true, projectId: true, rootDir: true },
+});
+
+export const getCoverageFrameworks = async (req, res) => {
+    try {
+        const snapshot = await findOwnedSnapshot(req.params.snapshotId, req.user?.id);
+        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
+        if (!snapshot.rootDir) return res.status(409).json({ success: false, message: "Snapshot is not ready for analysis." });
+        return res.json({ success: true, data: detectCoverageFrameworks(snapshot.rootDir) });
+    } catch (error) {
+        return res.status(error.statusCode || 500).json({ success: false, message: error.message });
+    }
+};
+
+export const runCoverageByType = async (req, res) => {
+    try {
+        const { snapshotId, coverageType } = req.params;
+        const userId = req.user?.id;
+        const snapshot = await findOwnedSnapshot(snapshotId, userId);
+        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
+        if (!snapshot.rootDir) return res.status(409).json({ success: false, message: "Snapshot is not ready for analysis." });
+
+        const detection = detectCoverageFrameworks(snapshot.rootDir);
+        const framework = selectCoverageFramework(detection, coverageType);
+        let job;
+
+        if (framework === "jest") {
+            job = await createRunTestsJob({ projectId: snapshot.projectId, snapshotId, userId, mode: "FULL" });
+            await addJobToQueue("RUN_TESTS", job.id);
+        } else if (framework === "vitest") {
+            job = await createVitestCoverageJob({ projectId: snapshot.projectId, snapshotId, userId });
+            await addJobToQueue("VITEST_COVERAGE", job.id);
+        } else if (framework === "supertest") {
+            const installJob = await createInstallDepsJob({ projectId: snapshot.projectId, snapshotId, userId });
+            job = await createSupertestCoverageJob({ projectId: snapshot.projectId, snapshotId, userId });
+            await addSupertestCoveragePipeline(installJob.id, job.id);
+        } else if (framework === "playwright") {
+            job = await createPlaywrightSystemCoverageJob({ projectId: snapshot.projectId, snapshotId, userId });
+            await addJobToQueue("PLAYWRIGHT_SYSTEM_COVERAGE", job.id);
+        } else {
+            job = await createCypressSystemCoverageJob({ projectId: snapshot.projectId, snapshotId, userId });
+            await addJobToQueue("CYPRESS_SYSTEM_COVERAGE", job.id);
+        }
+
+        return res.status(202).json({
+            success: true,
+            message: `${framework} ${coverageType} coverage queued.`,
+            data: { framework, coverageType, detectedFrameworks: detection.all, job },
+        });
+    } catch (error) {
+        return res.status(error.statusCode || 500).json({
+            success: false,
+            code: error.code,
+            message: error.message || "Unable to run coverage analysis.",
+            details: error.details,
+        });
+    }
+};
 
 /**
  * SCRUM-151: Create summary endpoint
@@ -408,14 +470,16 @@ export const getTestExecution = async (req, res) => {
         });
 
         // Map to expected frontend structure
-        const jestRun = testRuns.find(r => r.type === "JEST");
-        const supertestRun = testRuns.find(r => r.type === "SUPERTEST");
+        const latestByType = (type) => testRuns.find(r => r.type === type) || null;
 
         return res.status(200).json({
             success: true,
             data: {
-                jest: jestRun || null,
-                supertest: supertestRun || null
+                jest: latestByType("JEST"),
+                vitest: latestByType("VITEST"),
+                supertest: latestByType("SUPERTEST"),
+                playwright: latestByType("PLAYWRIGHT"),
+                cypress: latestByType("CYPRESS")
             }
         });
     } catch (error) {

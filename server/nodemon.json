@@ -1,4 +1,6 @@
 {
-  "ignore": ["storage/**/*", "uploads/**/*"],
-  "legacyWatch": true
+  "watch": ["src"],
+  "ignore": ["storage/*", "node_modules"],
+  "ext": "js,json,ts",
+  "exec": "node index.js"
 }

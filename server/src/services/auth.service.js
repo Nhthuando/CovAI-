@@ -2,7 +2,7 @@ import prisma from "../config/prisma.js";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 
-const JWT_TTL = process.env.JWT_EXPIRES_IN || "7d";
+const JWT_TTL = "15m";
 
 export const register = async (name, email, password) => {
   const existEmail = await prisma.user.findUnique({ where: { email } });
@@ -16,13 +16,13 @@ export const register = async (name, email, password) => {
   const accessToken = jwt.sign(
     { userId: user.id, userEmail: user.email, userName: user.name },
     process.env.JWT_SECRET,
-    { expiresIn: JWT_TTL }
+    { expiresIn: JWT_TTL },
   );
 
   const refreshToken = jwt.sign(
     { userId: user.id },
     process.env.JWT_REFRESH_SECRET,
-    { expiresIn: "7d" }
+    { expiresIn: "7d" },
   );
 
   await prisma.user.update({
@@ -49,13 +49,13 @@ export const login = async (email, password) => {
   const accessToken = jwt.sign(
     { userId: user.id, userEmail: user.email, userName: user.name },
     process.env.JWT_SECRET,
-    { expiresIn: JWT_TTL }
+    { expiresIn: JWT_TTL },
   );
 
   const refreshToken = jwt.sign(
     { userId: user.id },
     process.env.JWT_REFRESH_SECRET,
-    { expiresIn: "7d" }
+    { expiresIn: "7d" },
   );
 
   await prisma.user.update({

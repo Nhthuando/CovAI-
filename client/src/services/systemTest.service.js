@@ -1,14 +1,24 @@
 import axios from "axios";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3000/api";
+const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 export const getSystemTestFrameworks = async (projectId, snapshotId = null) => {
   const params = new URLSearchParams();
   if (snapshotId) {
     params.append("snapshotId", snapshotId);
   }
+  const user = localStorage.getItem("user");
+  const userToken = user ? JSON.parse(user).token : null;
+  const token = localStorage.getItem("token") || userToken;
+  if (!token) throw new Error("No access token found for API call.");
   const response = await axios.get(
     `${API_BASE}/projects/${projectId}/system-test/frameworks?${params.toString()}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    },
   );
   return response.data;
 };

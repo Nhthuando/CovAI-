@@ -1,3 +1,4 @@
+/* eslint-disable no-useless-assignment */
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 function clearAuthState() {
@@ -7,25 +8,30 @@ function clearAuthState() {
   localStorage.removeItem("userEmail");
 }
 
-function getAuthHeaders() {
-  try {
+/**
+ * ASYNC: Retry for token a few times to avoid race condition after login (REMOVE AFTER FIX VALIDATED)
+ */
+async function getAuthHeaders() {
+  let tries = 0;
+  let token = null;
+  let userToken;
+  while (tries < 20) {
+    // wait up to 2s total
     const user = localStorage.getItem("user");
-    const userToken = user ? JSON.parse(user).token : null;
-    const token = localStorage.getItem("token") || userToken;
-
-    if (!token) {
-      clearAuthState();
-      return { "Content-Type": "application/json" };
-    }
-
-    return {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    };
-  } catch {
+    userToken = user ? JSON.parse(user).token : null;
+    token = localStorage.getItem("token") || userToken;
+    if (token) break;
+    await new Promise((res) => setTimeout(res, 100));
+    tries++;
+  }
+  if (!token) {
     clearAuthState();
     return { "Content-Type": "application/json" };
   }
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${token}`,
+  };
 }
 
 async function handleResponse(res) {
@@ -54,12 +60,14 @@ async function handleResponse(res) {
 export async function getProjectJobsApi(projectId) {
   try {
     const res = await fetch(`${BASE_URL}/job/${projectId}/jobs`, {
-      headers: getAuthHeaders(),
+      headers: await getAuthHeaders(),
     });
     return handleResponse(res);
   } catch (error) {
     if (error instanceof TypeError) {
-      throw new Error("Không thể kết nối tới backend. Server có thể đang restart hoặc offline.");
+      throw new Error(
+        "Không thể kết nối tới backend. Server có thể đang restart hoặc offline.",
+      );
     }
     throw error;
   }
@@ -72,12 +80,14 @@ export async function getProjectJobsApi(projectId) {
 export async function getUserJobsApi() {
   try {
     const res = await fetch(`${BASE_URL}/job/user`, {
-      headers: getAuthHeaders(),
+      headers: await getAuthHeaders(),
     });
     return handleResponse(res);
   } catch (error) {
     if (error instanceof TypeError) {
-      throw new Error("Không thể kết nối tới backend. Server có thể đang restart hoặc offline.");
+      throw new Error(
+        "Không thể kết nối tới backend. Server có thể đang restart hoặc offline.",
+      );
     }
     throw error;
   }
@@ -90,12 +100,14 @@ export async function getUserJobsApi() {
 export async function getJobDetailApi(jobId) {
   try {
     const res = await fetch(`${BASE_URL}/job/${jobId}`, {
-      headers: getAuthHeaders(),
+      headers: await getAuthHeaders(),
     });
     return handleResponse(res);
   } catch (error) {
     if (error instanceof TypeError) {
-      throw new Error("Không thể kết nối tới backend. Server có thể đang restart hoặc offline.");
+      throw new Error(
+        "Không thể kết nối tới backend. Server có thể đang restart hoặc offline.",
+      );
     }
     throw error;
   }
