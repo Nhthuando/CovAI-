@@ -18,7 +18,9 @@ async function handleResponse(res) {
       localStorage.removeItem("userEmail");
       window.location.href = "/login";
     }
-    throw new Error(data.message || "Failed API call");
+    const err = new Error(data.message || "Failed API call");
+    err.status = res.status;
+    throw err;
   }
   return data;
 }

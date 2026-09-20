@@ -62,19 +62,13 @@ app.use(
 
 app.use(cookieParser());
 
-// Middleware to capture raw body for webhook signature verification
-app.use((req, res, next) => {
-  let data = "";
-  req.on("data", (chunk) => {
-    data += chunk;
-  });
-  req.on("end", () => {
-    req.rawBody = data;
-    next();
-  });
-});
-
-app.use(express.json());
+app.use(
+  express.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf.toString();
+    },
+  }),
+);
 
 // Global rate limiter
 app.use(globalLimiter);
@@ -105,6 +99,16 @@ app.use(express.static(path.join(__dirname, "../client/dist")));
 
 app.get(/.*/, (req, res) => {
   res.sendFile(path.join(__dirname, "../client/dist/index.html"));
+});
+
+// Centralized error handling middleware
+app.use((err, req, res, next) => {
+  console.error("[ServerError]", err);
+  const status = err.statusCode || err.status || 500;
+  res.status(status).json({
+    success: false,
+    message: err.message || "Internal server error",
+  });
 });
 
 // Socket.IO connection handling

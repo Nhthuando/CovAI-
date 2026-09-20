@@ -48,6 +48,10 @@ const controller = {
   detectFrameworks: (_req, res) => res.status(200).json({ success: true, data: {} }),
   getFrameworkRecommendation: (_req, res) => res.status(200).json({ success: true, data: { recommendedFramework: "vitest" } }),
   selectTestingFramework: (_req, res) => res.status(200).json({ success: true, data: { selectedTestingFramework: "jest" } }),
+  detectPlaywrightFramework: (_req, res) => res.status(200).json({ success: true }),
+  runPlaywrightSystemTests: (_req, res) => res.status(200).json({ success: true }),
+  runPlaywrightCoverage: (_req, res) => res.status(200).json({ success: true }),
+  detectSystemTestFrameworks: (_req, res) => res.status(200).json({ success: true }),
 };
 
 await jest.unstable_mockModule("../controllers/project.controller.js", () => ({ default: controller }));

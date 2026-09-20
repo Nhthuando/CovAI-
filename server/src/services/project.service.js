@@ -554,6 +554,8 @@ export const deleteProject = async (projectId, userId) => {
       prisma.aiContextCache.deleteMany({ where: { snapshot: { projectId } } }),
       prisma.aiSuggestion.deleteMany({ where: { projectId } }),
       prisma.aiTest.deleteMany({ where: { projectId } }),
+      prisma.vulnerability.deleteMany({ where: { snapshot: { projectId } } }),
+      prisma.performanceMetric.deleteMany({ where: { snapshot: { projectId } } }),
       prisma.jobLog.deleteMany({ where: { job: { projectId } } }),
       prisma.jobOutput.deleteMany({ where: { job: { projectId } } }),
       prisma.job.deleteMany({ where: { projectId } }),

@@ -4,10 +4,16 @@ import { getSystemTestFrameworks } from "../../services/systemTest.service";
 
 export default function SystemTestPanel({ projectId, snapshotId }) {
   const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
   useEffect(() => {
+    if (!projectId || !snapshotId) {
+      setData(null);
+      setLoading(false);
+      return;
+    }
+
     const loadFrameworks = async () => {
       try {
         setLoading(true);
@@ -15,16 +21,21 @@ export default function SystemTestPanel({ projectId, snapshotId }) {
         const response = await getSystemTestFrameworks(projectId, snapshotId);
         setData(response.data);
       } catch (err) {
-        setError(err.message || "Failed to detect system test frameworks");
+        if (err?.response?.status === 404 || err?.response?.status === 409) {
+          setData(null);
+          setError("Chưa có bản snapshot mã nguồn sẵn sàng để phân tích.");
+        } else {
+          setError(err.message || "Failed to detect system test frameworks");
+        }
       } finally {
         setLoading(false);
       }
     };
 
-    if (projectId) {
-      loadFrameworks();
-    }
+    loadFrameworks();
   }, [projectId, snapshotId]);
+
+  if (!projectId || !snapshotId) return null;
 
   if (loading) {
     return (

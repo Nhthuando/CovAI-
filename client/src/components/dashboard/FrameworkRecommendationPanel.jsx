@@ -21,7 +21,12 @@ export default function FrameworkRecommendationPanel({ projectId, snapshotId }) 
       const response = await getFrameworkRecommendationApi(projectId, snapshotId);
       setData(response.data);
     } catch (loadError) {
-      setError(loadError.message || "Không thể phân tích test framework.");
+      if (loadError?.status === 404 || loadError?.status === 409) {
+        setData(null);
+        setError("Chưa có bản snapshot mã nguồn sẵn sàng để phân tích.");
+      } else {
+        setError(loadError.message || "Không thể phân tích test framework.");
+      }
     } finally {
       setLoading(false);
     }
