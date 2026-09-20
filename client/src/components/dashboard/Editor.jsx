@@ -1,17 +1,31 @@
 /* eslint-disable react-hooks/refs */
 /* eslint-disable no-unused-vars */
-import { useState, useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { motion, AnimatePresence, Reorder } from "framer-motion";
 import {
   X,
-  BarChart3,
-  GitBranch,
-  Zap,
-  ChevronRight,
+  FileCode2,
+  FileJson,
+  FileText,
+  Braces,
+  TestTube2,
+  Sliders,
+  Box,
+  Lock,
+  File,
   Loader2,
   AlertCircle,
   Save,
   Check,
+  ChevronRight,
+  Eye,
+  EyeOff,
+  Copy,
+  WrapText,
+  Sparkles,
+  Layers,
+  Code2,
+  Terminal,
 } from "lucide-react";
 import MonacoEditor from "@monaco-editor/react";
 import { GitPanel } from "./GitPanel";
@@ -20,7 +34,96 @@ import {
   updateFileContentApi,
 } from "../../services/project.service";
 
-/* ── Token color map (for simple syntax highlighting) ────── */
+/* ── Smart File Icon Resolver ────────────────────────────── */
+function getFileIcon(fileName = "") {
+  const lower = fileName.toLowerCase();
+
+  // Tests
+  if (
+    lower.endsWith(".spec.ts") ||
+    lower.endsWith(".spec.js") ||
+    lower.endsWith(".test.ts") ||
+    lower.endsWith(".test.js") ||
+    lower.endsWith(".spec.jsx") ||
+    lower.endsWith(".test.jsx")
+  ) {
+    return <TestTube2 size={13} style={{ color: "#c084fc", flexShrink: 0 }} />;
+  }
+
+  // React & TypeScript
+  if (lower.endsWith(".tsx")) {
+    return <FileCode2 size={13} style={{ color: "#67e8f9", flexShrink: 0 }} />;
+  }
+  if (lower.endsWith(".jsx")) {
+    return <FileCode2 size={13} style={{ color: "#22d3ee", flexShrink: 0 }} />;
+  }
+  if (lower.endsWith(".ts")) {
+    return <Braces size={13} style={{ color: "#38bdf8", flexShrink: 0 }} />;
+  }
+  if (
+    lower.endsWith(".js") ||
+    lower.endsWith(".mjs") ||
+    lower.endsWith(".cjs")
+  ) {
+    return <FileCode2 size={13} style={{ color: "#fbbf24", flexShrink: 0 }} />;
+  }
+
+  // Config files
+  if (
+    lower.includes(".config.") ||
+    lower.startsWith("tsconfig") ||
+    lower.startsWith("vite.config") ||
+    lower.startsWith("tailwind") ||
+    lower.startsWith("eslint")
+  ) {
+    return <Sliders size={13} style={{ color: "#facc15", flexShrink: 0 }} />;
+  }
+
+  // Package & JSON
+  if (lower === "package.json" || lower === "package-lock.json") {
+    return <Box size={13} style={{ color: "#fb923c", flexShrink: 0 }} />;
+  }
+  if (lower.endsWith(".json") || lower.endsWith(".jsonc")) {
+    return <FileJson size={13} style={{ color: "#4ade80", flexShrink: 0 }} />;
+  }
+
+  // Styles
+  if (
+    lower.endsWith(".css") ||
+    lower.endsWith(".scss") ||
+    lower.endsWith(".sass") ||
+    lower.endsWith(".less")
+  ) {
+    return <FileText size={13} style={{ color: "#f472b6", flexShrink: 0 }} />;
+  }
+
+  // HTML
+  if (lower.endsWith(".html") || lower.endsWith(".htm")) {
+    return <FileCode2 size={13} style={{ color: "#fb923c", flexShrink: 0 }} />;
+  }
+
+  // Markdown & Docs
+  if (
+    lower.endsWith(".md") ||
+    lower.endsWith(".markdown") ||
+    lower.endsWith(".txt")
+  ) {
+    return <FileText size={13} style={{ color: "#38bdf8", flexShrink: 0 }} />;
+  }
+
+  // Git / Env / Lock
+  if (
+    lower.startsWith(".git") ||
+    lower.startsWith(".env") ||
+    lower.endsWith(".lock")
+  ) {
+    return <Lock size={13} style={{ color: "#86efac", flexShrink: 0 }} />;
+  }
+
+  return <File size={13} style={{ color: "#94a3b8", flexShrink: 0 }} />;
+}
+
+/* ── Extension to Language Mapping ───────────────────────── */
 const EXT_LANG_MAP = {
   ".js": "javascript",
   ".jsx": "javascript",
@@ -40,446 +143,331 @@ const EXT_LANG_MAP = {
   ".txt": "text",
 };
 
-/* ── Simple keyword highlighting ─────────────────────────── */
-const JS_KEYWORDS = new Set([
-  "import",
-  "export",
-  "from",
-  "default",
-  "const",
-  "let",
-  "var",
-  "function",
-  "return",
-  "if",
-  "else",
-  "for",
-  "while",
-  "do",
-  "switch",
-  "case",
-  "break",
-  "continue",
-  "new",
-  "delete",
-  "typeof",
-  "instanceof",
-  "in",
-  "of",
-  "class",
-  "extends",
-  "super",
-  "this",
-  "try",
-  "catch",
-  "finally",
-  "throw",
-  "async",
-  "await",
-  "yield",
-  "null",
-  "undefined",
-  "true",
-  "false",
-  "void",
-  "static",
-  "interface",
-  "type",
-  "enum",
-  "implements",
-  "abstract",
-  "private",
-  "public",
-  "protected",
-  "readonly",
-  "declare",
-  "module",
-  "namespace",
-]);
-
-const PYTHON_KEYWORDS = new Set([
-  "import",
-  "from",
-  "def",
-  "class",
-  "return",
-  "if",
-  "elif",
-  "else",
-  "for",
-  "while",
-  "break",
-  "continue",
-  "pass",
-  "raise",
-  "try",
-  "except",
-  "finally",
-  "with",
-  "as",
-  "lambda",
-  "yield",
-  "global",
-  "nonlocal",
-  "True",
-  "False",
-  "None",
-  "and",
-  "or",
-  "not",
-  "in",
-  "is",
-  "del",
-  "assert",
-  "async",
-  "await",
-]);
-
-function getKeywords(lang) {
-  if (lang === "javascript" || lang === "typescript") return JS_KEYWORDS;
-  if (lang === "python") return PYTHON_KEYWORDS;
-  return JS_KEYWORDS; // fallback
-}
-
-/* ── Tokenize a single line ──────────────────────────────── */
-function tokenizeLine(line, lang) {
-  const tokens = [];
-  const keywords = getKeywords(lang);
-  let i = 0;
-
-  while (i < line.length) {
-    // Comments: // or #
-    if (
-      (line[i] === "/" && line[i + 1] === "/") ||
-      (lang === "python" && line[i] === "#")
-    ) {
-      tokens.push({ type: "comment", value: line.slice(i) });
-      break;
-    }
-
-    // Multi-line comment start /*
-    if (line[i] === "/" && line[i + 1] === "*") {
-      const end = line.indexOf("*/", i + 2);
-      if (end !== -1) {
-        tokens.push({ type: "comment", value: line.slice(i, end + 2) });
-        i = end + 2;
-      } else {
-        tokens.push({ type: "comment", value: line.slice(i) });
-        break;
-      }
-      continue;
-    }
-
-    // Strings: single, double, backtick
-    if (line[i] === '"' || line[i] === "'" || line[i] === "`") {
-      const quote = line[i];
-      let j = i + 1;
-      while (j < line.length && line[j] !== quote) {
-        if (line[j] === "\\") j++; // skip escape
-        j++;
-      }
-      tokens.push({ type: "string", value: line.slice(i, j + 1) });
-      i = j + 1;
-      continue;
-    }
-
-    // Numbers
-    if (
-      /\d/.test(line[i]) &&
-      (i === 0 || /[\s(,=+\-*/<>:[\]{};!&|^~%?]/.test(line[i - 1]))
-    ) {
-      let j = i;
-      while (j < line.length && /[\d.xXa-fA-FeEnN_]/.test(line[j])) j++;
-      tokens.push({ type: "number", value: line.slice(i, j) });
-      i = j;
-      continue;
-    }
-
-    // Words (keywords, identifiers)
-    if (/[a-zA-Z_$]/.test(line[i])) {
-      let j = i;
-      while (j < line.length && /[a-zA-Z0-9_$]/.test(line[j])) j++;
-      const word = line.slice(i, j);
-      if (keywords.has(word)) {
-        tokens.push({ type: "keyword", value: word });
-      } else if (j < line.length && line[j] === "(") {
-        tokens.push({ type: "function", value: word });
-      } else {
-        tokens.push({ type: "plain", value: word });
-      }
-      i = j;
-      continue;
-    }
-
-    // JSX/HTML tags
-    if (
-      line[i] === "<" &&
-      i + 1 < line.length &&
-      /[a-zA-Z/]/.test(line[i + 1])
-    ) {
-      let j = i;
-      let depth = 0;
-      while (j < line.length) {
-        if (line[j] === "<") depth++;
-        if (line[j] === ">") {
-          j++;
-          break;
-        }
-        j++;
-      }
-      tokens.push({ type: "tag", value: line.slice(i, j) });
-      i = j;
-      continue;
-    }
-
-    // Operators and punctuation
-    tokens.push({ type: "plain", value: line[i] });
-    i++;
-  }
-
-  return tokens;
-}
-
-/* ── Token colors ────────────────────────────────────────── */
-const TOKEN_COLORS = {
-  keyword: "#c084fc",
-  function: "#93c5fd",
-  string: "#86efac",
-  number: "#fca5a5",
-  comment: "#4b5563",
-  tag: "#f9a8d4",
-  plain: "#e2e8f0",
-};
-
-/* ── File Tab ────────────────────────────────────────────── */
-function Tab({ tab, isActive, onSelect, onClose }) {
+/* ── Tab Component (Reorderable with Drag & Drop) ────────── */
+function ReorderableTab({ tab, isActive, onSelect, onClose }) {
   const [hovered, setHovered] = useState(false);
-
-  const getTabColor = (name) => {
-    if (name.endsWith(".tsx") || name.endsWith(".jsx")) return "#61dafb";
-    if (name.endsWith(".ts")) return "#3b82f6";
-    if (name.endsWith(".js")) return "#fbbf24";
-    if (name.endsWith(".css")) return "#38bdf8";
-    if (name.endsWith(".py")) return "#3572A5";
-    if (name.endsWith(".json")) return "#4ade80";
-    return "#8b949e";
-  };
+  const icon = getFileIcon(tab.name);
 
   return (
-    <motion.div
+    <Reorder.Item
+      as="div"
+      key={tab.id}
+      value={tab}
+      id={`tab-${tab.id}`}
       layout
-      initial={{ opacity: 0, x: -8 }}
+      initial={{ opacity: 0, x: -6 }}
       animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: -8, width: 0 }}
+      exit={{ opacity: 0, x: -6, width: 0 }}
+      whileDrag={{
+        scale: 1.04,
+        zIndex: 50,
+        boxShadow:
+          "0 8px 24px rgba(0, 0, 0, 0.7), 0 0 12px rgba(124, 58, 237, 0.5)",
+        cursor: "grabbing",
+      }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       onClick={() => onSelect(tab.id)}
-      className="relative flex items-center gap-2 h-full cursor-pointer select-none"
+      className="relative flex items-center gap-2 h-full cursor-grab select-none group flex-shrink-0"
       style={{
-        minWidth: 110,
-        maxWidth: 180,
-        padding: "0 16px",
-        background: isActive ? "var(--ide-bg)" : "transparent",
-        color: isActive ? "#e6edf3" : "#6e7681",
-        borderRight: "1px solid var(--ide-border)",
+        minWidth: 120,
+        maxWidth: 200,
+        padding: "0 12px",
+        background: isActive ? "#0d1117" : "transparent",
+        color: isActive ? "#f0f6fc" : "#8b949e",
+        borderRight: "1px solid rgba(255, 255, 255, 0.06)",
         fontFamily: "var(--font-sans)",
-        fontSize: 12.5,
-        transition: "background 0.15s ease",
+        fontSize: 12,
+        fontWeight: isActive ? 500 : 400,
+        transition: "background 0.15s ease, color 0.15s ease",
       }}
-      id={`tab-${tab.id}`}
     >
+      {/* Active Top Highlight Line */}
       {isActive && (
         <motion.div
           layoutId="tab-top-indicator"
           className="absolute top-0 left-0 right-0"
           style={{
-            height: 1.5,
-            background: "#7c3aed",
-            boxShadow: "0 0 8px rgba(124,58,237,0.6)",
+            height: 2,
+            background: "linear-gradient(90deg, #7c3aed 0%, #22d3ee 100%)",
+            boxShadow: "0 0 10px rgba(124, 58, 237, 0.7)",
           }}
         />
       )}
-      {tab.unsaved && (
-        <div
-          style={{
-            width: 5,
-            height: 5,
-            borderRadius: "50%",
-            background: "#a78bfa",
-            flexShrink: 0,
-          }}
-        />
-      )}
-      <span
-        className="truncate"
-        style={{ color: isActive ? getTabColor(tab.name) : undefined }}
+
+      {/* File Icon */}
+      {icon}
+
+      {/* File Name */}
+      <span className="truncate flex-1 min-w-0">{tab.name}</span>
+
+      {/* Unsaved indicator or Close Button */}
+      <div
+        className="flex items-center justify-center flex-shrink-0 ml-1"
+        style={{ width: 16, height: 16 }}
       >
-        {tab.name}
-      </span>
-      <motion.button
-        animate={{ opacity: hovered || isActive ? 1 : 0 }}
-        transition={{ duration: 0.1 }}
-        onClick={(e) => {
-          e.stopPropagation();
-          onClose(tab.id);
-        }}
-        whileHover={{ background: "rgba(255,255,255,0.1)" }}
-        whileTap={{ scale: 0.85 }}
-        className="ml-auto p-0.5 rounded flex-shrink-0"
-        style={{ color: "#6e7681", lineHeight: 0 }}
-      >
-        <X size={12} />
-      </motion.button>
-    </motion.div>
+        {tab.unsaved ? (
+          <span
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: "50%",
+              background: "#a78bfa",
+              boxShadow: "0 0 6px #a78bfa",
+              display: "inline-block",
+            }}
+          />
+        ) : (
+          <motion.button
+            animate={{ opacity: hovered || isActive ? 1 : 0 }}
+            transition={{ duration: 0.1 }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onClose(tab.id);
+            }}
+            whileHover={{ scale: 1.15, background: "rgba(255,255,255,0.12)" }}
+            whileTap={{ scale: 0.9 }}
+            className="p-0.5 rounded cursor-pointer flex items-center justify-center"
+            style={{
+              color: "#8b949e",
+              background: "transparent",
+              border: "none",
+            }}
+            title="Close (Ctrl+W)"
+          >
+            <X size={12} />
+          </motion.button>
+        )}
+      </div>
+    </Reorder.Item>
   );
 }
 
-/* ── Code Line ───────────────────────────────────────────── */
-function CodeLine({
-  lineNum,
-  tokens,
-  isFunction,
-  complexity,
-  decisionPoints,
-  onAnalyze,
-}) {
+/* ── Rich Markdown Previewer ─────────────────────────────── */
+function MarkdownPreview({ content }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const renderLines = () => {
+    if (!content)
+      return <p className="text-gray-500 italic">No content to preview.</p>;
+
+    const lines = content.split("\n");
+    let inCodeBlock = false;
+    let codeContent = [];
+    let codeLang = "";
+    const elements = [];
+
+    lines.forEach((line, idx) => {
+      if (line.startsWith("```")) {
+        if (!inCodeBlock) {
+          inCodeBlock = true;
+          codeLang = line.slice(3).trim();
+          codeContent = [];
+        } else {
+          inCodeBlock = false;
+          elements.push(
+            <div
+              key={`code-${idx}`}
+              className="my-3 rounded-lg overflow-hidden"
+              style={{
+                background: "#090d13",
+                border: "1px solid rgba(255, 255, 255, 0.08)",
+              }}
+            >
+              <div
+                className="flex items-center justify-between px-3 py-1.5"
+                style={{
+                  background: "rgba(255, 255, 255, 0.02)",
+                  borderBottom: "1px solid rgba(255, 255, 255, 0.06)",
+                  fontSize: 11,
+                  color: "#8b949e",
+                }}
+              >
+                <span>{codeLang || "text"}</span>
+              </div>
+              <pre
+                className="p-3 text-xs overflow-x-auto m-0"
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  color: "#e6edf3",
+                  lineHeight: 1.6,
+                }}
+              >
+                <code>{codeContent.join("\n")}</code>
+              </pre>
+            </div>,
+          );
+        }
+        return;
+      }
+
+      if (inCodeBlock) {
+        codeContent.push(line);
+        return;
+      }
+
+      const trimmed = line.trim();
+      if (!trimmed) {
+        elements.push(<div key={`empty-${idx}`} className="h-2" />);
+        return;
+      }
+
+      if (trimmed.startsWith("# ")) {
+        elements.push(
+          <h1
+            key={idx}
+            className="text-xl font-bold pb-2 mb-3 mt-4"
+            style={{
+              color: "#f0f6fc",
+              borderBottom: "1px solid rgba(255, 255, 255, 0.1)",
+            }}
+          >
+            {trimmed.slice(2)}
+          </h1>,
+        );
+        return;
+      }
+
+      if (trimmed.startsWith("## ")) {
+        elements.push(
+          <h2
+            key={idx}
+            className="text-base font-semibold pb-1 mb-2 mt-4"
+            style={{
+              color: "#e6edf3",
+              borderBottom: "1px solid rgba(255, 255, 255, 0.06)",
+            }}
+          >
+            {trimmed.slice(3)}
+          </h2>,
+        );
+        return;
+      }
+
+      if (trimmed.startsWith("### ")) {
+        elements.push(
+          <h3
+            key={idx}
+            className="text-sm font-semibold mb-1 mt-3"
+            style={{ color: "#c4b5fd" }}
+          >
+            {trimmed.slice(4)}
+          </h3>,
+        );
+        return;
+      }
+
+      if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
+        elements.push(
+          <div
+            key={idx}
+            className="flex items-start gap-2 text-sm text-[#c9d1d9] pl-2 py-0.5"
+          >
+            <span
+              style={{
+                width: 4,
+                height: 4,
+                borderRadius: "50%",
+                background: "#a78bfa",
+                marginTop: 8,
+                flexShrink: 0,
+              }}
+            />
+            <span>{trimmed.slice(2)}</span>
+          </div>,
+        );
+        return;
+      }
+
+      elements.push(
+        <p
+          key={idx}
+          className="text-sm text-[#c9d1d9] leading-relaxed m-0 py-0.5"
+        >
+          {line}
+        </p>,
+      );
+    });
+
+    return elements;
+  };
+
   return (
     <div
-      className="flex items-stretch group"
-      style={{ paddingRight: 16, minHeight: 22 }}
+      className="flex-1 overflow-y-auto p-8 custom-scrollbar"
+      style={{
+        background: "#0d1117",
+        maxWidth: 900,
+        margin: "0 auto",
+        width: "100%",
+      }}
     >
-      {/* Line number */}
-      <div
-        className="select-none text-right flex-shrink-0"
-        style={{
-          width: 60,
-          paddingRight: 20,
-          paddingTop: 2,
-          color: "var(--ide-line-num)",
-          fontFamily: "var(--font-mono)",
-          fontSize: 13,
-          lineHeight: "1.6",
-        }}
-      >
-        {lineNum}
+      <div className="flex items-center justify-between pb-4 mb-4 border-b border-white/5">
+        <div className="flex items-center gap-2">
+          <FileText size={16} className="text-cyan-400" />
+          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+            Markdown Preview
+          </span>
+        </div>
+        <button
+          onClick={handleCopy}
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 transition-colors"
+        >
+          {copied ? (
+            <Check size={12} className="text-green-400" />
+          ) : (
+            <Copy size={12} />
+          )}
+          <span>{copied ? "Copied" : "Copy Markdown"}</span>
+        </button>
       </div>
 
-      {/* Code tokens */}
-      <div
-        style={{
-          fontFamily: "var(--font-mono)",
-          fontSize: 13,
-          lineHeight: "1.6",
-          whiteSpace: "pre",
-          paddingTop: 2,
-          paddingLeft: 4,
-          display: "flex",
-          alignItems: "center",
-        }}
-      >
-        {tokens.length === 0 ? (
-          <span>&nbsp;</span>
-        ) : (
-          tokens.map((tok, i) => (
-            <span
-              key={i}
-              style={{ color: TOKEN_COLORS[tok.type] || TOKEN_COLORS.plain }}
-            >
-              {tok.value}
-            </span>
-          ))
-        )}
-      </div>
+      <div className="space-y-1">{renderLines()}</div>
     </div>
   );
 }
 
-/* ── Editor ─────────────────────────────────────────────── */
+/* ── Main Editor Component ───────────────────────────────── */
 export default function Editor({
   tabs,
   activeTabId,
   onSelectTab,
   onCloseTab,
+  onReorderTabs,
   fileTree = [],
   isLoadingTree,
   projectId,
   snapshotId,
 }) {
-  const [fileContents, setFileContents] = useState({}); // cache: { [fileId]: { content, loading, error } }
-  const [complexities, setComplexities] = useState({}); // cache: { [fileId]: { [funcName]: { value, decisionPoints } } }
-  const fetchedRef = useRef(new Set()); // track what we've already fetched
+  const [fileContents, setFileContents] = useState({});
+  const fetchedRef = useRef(new Set());
   const saveHandlerRef = useRef(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [showGitPanel, setShowGitPanel] = useState(false);
 
-  // Fetch complexities when active tab changes
-  useEffect(() => {
-    if (!activeTabId || !projectId || !snapshotId) return;
-
-    if (!snapshotId) {
-      return;
-    }
-
-    const user = localStorage.getItem("user");
-    const userToken = user ? JSON.parse(user).token : null;
-    const token = localStorage.getItem("token") || userToken;
-
-    fetch(`http://localhost:5000/api/cyclomatic?snapshotId=${snapshotId}`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-    })
-      .then((res) => {
-        return res.text(); // Read as text first to debug
-      })
-      .then((text) => {
-        const data = JSON.parse(text);
-
-        // If data is not an array, maybe it's { results: [...] } or { data: [...] }
-        const arrayData = Array.isArray(data)
-          ? data
-          : data.data || data.results || [];
-
-        if (Array.isArray(arrayData)) {
-          const newComplexities = {};
-          // Normalize function to match paths: ensure both are relative paths
-          const normalize = (p) => p.replace(/\\/g, "/").replace(/^\.\//, "");
-
-          arrayData.forEach((item) => {
-            const key = normalize(item.filePath);
-            if (!newComplexities[key]) newComplexities[key] = {};
-            newComplexities[key][item.functionName] = {
-              value: item.value,
-              decisionPoints:
-                item.decisionPoints !== undefined
-                  ? item.decisionPoints
-                  : Math.max(0, item.value - 1),
-            };
-          });
-          setComplexities(newComplexities);
-        }
-      })
-      .catch((err) => console.error("Failed to fetch complexities", err));
-  }, [activeTabId, projectId, snapshotId]);
-
-  useEffect(() => {
-    // console.log("🔍 Complexities updated:", JSON.stringify(complexities, null, 2));
-  }, [complexities]);
+  // Editor View Preferences
+  const [wordWrap, setWordWrap] = useState(true);
+  const [showMinimap, setShowMinimap] = useState(false);
+  const [previewMode, setPreviewMode] = useState(false);
+  const [cursorPos, setCursorPos] = useState({ line: 1, col: 1 });
+  const [copiedCode, setCopiedCode] = useState(false);
 
   // Fetch file content when active tab changes
   useEffect(() => {
     if (!activeTabId || !projectId) return;
 
-    // Already have content or currently loading
     if (
       fileContents[activeTabId]?.content !== undefined ||
       fileContents[activeTabId]?.loading
     )
       return;
-    // Already fetched (prevents double fetch in StrictMode)
     if (fetchedRef.current.has(activeTabId)) return;
 
     fetchedRef.current.add(activeTabId);
@@ -512,89 +500,17 @@ export default function Editor({
       });
   }, [activeTabId, projectId, fileContents]);
 
-  // No files state
-  if (!isLoadingTree && fileTree.length === 0) {
-    return (
-      <motion.div
-        className="flex flex-col flex-1 h-full min-w-0 items-center justify-center"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        style={{ background: "var(--ide-bg)" }}
-      >
-        <div
-          style={{
-            color: "#8b949e",
-            fontSize: 24,
-            fontWeight: 500,
-            fontFamily: "var(--font-sans)",
-          }}
-        >
-          No files found
-        </div>
-        <div
-          style={{
-            color: "#6e7681",
-            fontSize: 14,
-            marginTop: 8,
-            fontFamily: "var(--font-sans)",
-          }}
-        >
-          Please import a project or wait for extraction to complete.
-        </div>
-      </motion.div>
-    );
-  }
-
-  // No tabs open
-  if (tabs.length === 0) {
-    return (
-      <motion.div
-        className="flex flex-col flex-1 h-full min-w-0 items-center justify-center"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        style={{ background: "var(--ide-bg)" }}
-      >
-        <div
-          style={{
-            color: "#8b949e",
-            fontSize: 20,
-            fontFamily: "var(--font-sans)",
-          }}
-        >
-          Select a file from the Explorer to view code
-        </div>
-      </motion.div>
-    );
-  }
-
   const currentFile = fileContents[activeTabId] || {};
   const activeTab = tabs.find((t) => t.id === activeTabId);
 
-  // Determine language from file extension
+  // Determine language
   const ext = activeTab ? "." + activeTab.name.split(".").pop() : "";
   const lang = EXT_LANG_MAP[ext.toLowerCase()] || "text";
+  const isMarkdown =
+    ext.toLowerCase() === ".md" || ext.toLowerCase() === ".markdown";
 
-  // Build breadcrumb from file path (id is the relative path)
+  // Build breadcrumb
   const breadcrumb = activeTabId ? activeTabId.split("/") : [];
-
-  // Parse content into lines with tokens
-  const lines = currentFile.content
-    ? currentFile.content.split("\n").map((line, i) => {
-        const fnName =
-          line.match(/(?:async\s+)?function\s+([a-zA-Z0-9_$]+)/)?.[1] ??
-          line.match(
-            /(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s*)?\(/,
-          )?.[1];
-        return {
-          lineNum: i + 1,
-          tokens: tokenizeLine(line, lang),
-          isFunction: !!fnName,
-          functionName: fnName,
-        };
-      })
-    : [];
-
-  const handleAnalyze = (functionName) => {};
 
   const handleChange = (value) => {
     setSaveError("");
@@ -636,70 +552,303 @@ export default function Editor({
 
   saveHandlerRef.current = handleSave;
 
+  const handleCopyCurrentCode = () => {
+    const code = currentFile.draft ?? currentFile.content ?? "";
+    if (!code) return;
+    navigator.clipboard.writeText(code);
+    setCopiedCode(true);
+    setTimeout(() => setCopiedCode(false), 2000);
+  };
+
   const hasUnsavedChanges =
     currentFile.draft !== undefined &&
     currentFile.draft !== currentFile.content;
+
+  // Configure custom Monaco Theme
+  const handleEditorWillMount = (monaco) => {
+    monaco.editor.defineTheme("covai-dark", {
+      base: "vs-dark",
+      inherit: true,
+      rules: [
+        { token: "comment", foreground: "6e7681", fontStyle: "italic" },
+        { token: "keyword", foreground: "c084fc", fontStyle: "bold" },
+        { token: "identifier", foreground: "e6edf3" },
+        { token: "string", foreground: "7ee787" },
+        { token: "number", foreground: "fca5a5" },
+        { token: "type", foreground: "67e8f9" },
+        { token: "function", foreground: "93c5fd" },
+        { token: "delimiter", foreground: "8b949e" },
+      ],
+      colors: {
+        "editor.background": "#0d1117",
+        "editor.foreground": "#e6edf3",
+        "editor.lineHighlightBackground": "#161b2280",
+        "editor.lineHighlightBorder": "#00000000",
+        "editorCursor.foreground": "#a78bfa",
+        "editorWhitespace.foreground": "#21262d",
+        "editorIndentGuide.background": "#21262d",
+        "editorIndentGuide.activeBackground": "#7c3aed60",
+        "editorLineNumber.foreground": "#484f58",
+        "editorLineNumber.activeForeground": "#c4b5fd",
+        "scrollbarSlider.background": "#7c3aed20",
+        "scrollbarSlider.hoverBackground": "#7c3aed50",
+        "scrollbarSlider.activeBackground": "#7c3aed80",
+        "editor.selectionBackground": "#7c3aed35",
+        "editor.inactiveSelectionBackground": "#7c3aed20",
+      },
+    });
+  };
+
+  const handleEditorDidMount = (editor, monaco) => {
+    // Save shortcut
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () =>
+      saveHandlerRef.current?.(),
+    );
+
+    // Track cursor position
+    editor.onDidChangeCursorPosition((e) => {
+      setCursorPos({
+        line: e.position.lineNumber,
+        col: e.position.column,
+      });
+    });
+  };
+
+  // Empty state: No files found in workspace
+  if (!isLoadingTree && fileTree.length === 0) {
+    return (
+      <motion.div
+        className="flex flex-col flex-1 h-full min-w-0 items-center justify-center p-6 text-center"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        style={{ background: "#0d1117" }}
+      >
+        <div
+          className="flex items-center justify-center w-14 h-14 rounded-2xl mb-4"
+          style={{
+            background: "rgba(124, 58, 237, 0.1)",
+            border: "1px solid rgba(124, 58, 237, 0.25)",
+            boxShadow: "0 0 20px rgba(124, 58, 237, 0.2)",
+          }}
+        >
+          <Code2 size={26} className="text-purple-400" />
+        </div>
+        <div style={{ color: "#f0f6fc", fontSize: 18, fontWeight: 600 }}>
+          No workspace files detected
+        </div>
+        <div
+          style={{
+            color: "#8b949e",
+            fontSize: 13,
+            marginTop: 6,
+            maxWidth: 360,
+          }}
+        >
+          Import your repository or wait for the source code extraction process
+          to complete.
+        </div>
+      </motion.div>
+    );
+  }
+
+  // Empty state: No tabs open
+  if (tabs.length === 0) {
+    return (
+      <motion.div
+        className="flex flex-col flex-1 h-full min-w-0 items-center justify-center p-6 text-center select-none"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        style={{ background: "#0d1117" }}
+      >
+        <div
+          className="flex items-center justify-center w-16 h-16 rounded-2xl mb-4"
+          style={{
+            background:
+              "linear-gradient(135deg, rgba(124, 58, 237, 0.15), rgba(34, 211, 238, 0.1))",
+            border: "1px solid rgba(124, 58, 237, 0.3)",
+            boxShadow: "0 0 24px rgba(124, 58, 237, 0.25)",
+          }}
+        >
+          <Sparkles size={28} style={{ color: "#a78bfa" }} />
+        </div>
+
+        <div style={{ color: "#f0f6fc", fontSize: 18, fontWeight: 600 }}>
+          Welcome to TestCovAI Editor
+        </div>
+        <div
+          style={{
+            color: "#8b949e",
+            fontSize: 13,
+            marginTop: 6,
+            maxWidth: 380,
+            lineHeight: 1.6,
+          }}
+        >
+          Select a file from the explorer on the left to start viewing, editing,
+          or generating comprehensive tests.
+        </div>
+
+        {/* Shortcut Hints */}
+        <div className="flex items-center gap-4 mt-6 text-xs text-slate-400">
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10">
+            <kbd className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-[11px] text-purple-300">
+              Ctrl + S
+            </kbd>
+            <span>Save file</span>
+          </div>
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10">
+            <kbd className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-[11px] text-cyan-300">
+              Alt + Z
+            </kbd>
+            <span>Toggle wrap</span>
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
+
+  const codeContent = currentFile.draft ?? currentFile.content ?? "";
+  const totalLines = codeContent ? codeContent.split("\n").length : 0;
 
   return (
     <motion.div
       className="flex flex-col flex-1 h-full min-w-0"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      transition={{ duration: 0.3, delay: 0.1 }}
-      style={{ background: "var(--ide-bg)" }}
+      transition={{ duration: 0.2 }}
+      style={{ background: "#0d1117" }}
     >
       {/* ── Tab Bar ──────────────────────────────────────── */}
       <div
-        className="flex items-end overflow-x-auto flex-shrink-0"
+        className="flex items-center justify-between flex-shrink-0"
         style={{
-          height: 44,
-          background: "var(--ide-tabbar)",
-          borderBottom: "1px solid var(--ide-border)",
+          height: 38,
+          background: "#161b22",
+          borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
         }}
       >
-        <AnimatePresence mode="popLayout">
-          {tabs.map((tab) => (
-            <Tab
-              key={tab.id}
-              tab={tab}
-              isActive={tab.id === activeTabId}
-              onSelect={onSelectTab}
-              onClose={onCloseTab}
-            />
-          ))}
-        </AnimatePresence>
+        {/* Left: Drag & Drop Reorderable Tabs */}
+        <Reorder.Group
+          as="div"
+          axis="x"
+          values={tabs}
+          onReorder={(newTabs) => {
+            if (onReorderTabs) {
+              onReorderTabs(newTabs);
+            }
+          }}
+          className="flex items-center h-full overflow-x-auto flex-1 min-w-0 custom-scrollbar"
+          style={{ listStyle: "none", margin: 0, padding: 0 }}
+        >
+          <AnimatePresence mode="popLayout">
+            {tabs.map((tab) => (
+              <ReorderableTab
+                key={tab.id}
+                tab={tab}
+                isActive={tab.id === activeTabId}
+                onSelect={onSelectTab}
+                onClose={onCloseTab}
+              />
+            ))}
+          </AnimatePresence>
+        </Reorder.Group>
+
+        {/* Right: Quick Action Controls */}
+        <div className="flex items-center gap-1 px-3 flex-shrink-0">
+          {/* Markdown Preview Toggle */}
+          {isMarkdown && (
+            <button
+              onClick={() => setPreviewMode(!previewMode)}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs transition-colors cursor-pointer"
+              style={{
+                color: previewMode ? "#67e8f9" : "#8b949e",
+                background: previewMode
+                  ? "rgba(34, 211, 238, 0.15)"
+                  : "transparent",
+                border: previewMode
+                  ? "1px solid rgba(34, 211, 238, 0.3)"
+                  : "1px solid transparent",
+              }}
+              title={
+                previewMode
+                  ? "Switch to Code View"
+                  : "Switch to Markdown Preview"
+              }
+            >
+              {previewMode ? <EyeOff size={13} /> : <Eye size={13} />}
+              <span>{previewMode ? "Code" : "Preview"}</span>
+            </button>
+          )}
+
+          {/* Word Wrap Toggle */}
+          {!previewMode && (
+            <button
+              onClick={() => setWordWrap(!wordWrap)}
+              className="flex items-center gap-1 p-1.5 rounded text-xs transition-colors cursor-pointer"
+              style={{
+                color: wordWrap ? "#a78bfa" : "#8b949e",
+                background: wordWrap
+                  ? "rgba(124, 58, 237, 0.12)"
+                  : "transparent",
+              }}
+              title={`Word Wrap: ${wordWrap ? "ON" : "OFF"} (Alt+Z)`}
+            >
+              <WrapText size={14} />
+            </button>
+          )}
+
+          {/* Copy Code */}
+          <button
+            onClick={handleCopyCurrentCode}
+            className="flex items-center gap-1 p-1.5 rounded text-xs text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+            title="Copy all code"
+          >
+            {copiedCode ? (
+              <Check size={14} className="text-green-400" />
+            ) : (
+              <Copy size={14} />
+            )}
+          </button>
+        </div>
       </div>
 
-      {/* ── Breadcrumb ────────────────────────────────────── */}
+      {/* ── Breadcrumb & Action Header ────────────────────── */}
       <div
-        className="flex items-center flex-shrink-0"
+        className="flex items-center justify-between flex-shrink-0"
         style={{
-          borderBottom: "1px solid var(--ide-border)",
-          color: "#484f58",
-          fontFamily: "var(--font-sans)",
-          background: "var(--ide-bg)",
+          height: 32,
+          padding: "0 16px",
+          borderBottom: "1px solid rgba(255, 255, 255, 0.06)",
+          background: "rgba(13, 17, 23, 0.6)",
           fontSize: 12,
-          padding: "6px 20px",
+          fontFamily: "var(--font-sans)",
         }}
       >
-        {breadcrumb.map((crumb, i) => (
-          <span key={i} className="flex items-center">
-            {i > 0 && (
-              <ChevronRight
-                size={11}
-                style={{ margin: "0 3px", opacity: 0.4 }}
-              />
-            )}
-            <span
-              style={{
-                color: i === breadcrumb.length - 1 ? "#8b949e" : "#484f58",
-              }}
-            >
-              {crumb}
+        {/* Left: Path Segments */}
+        <div className="flex items-center gap-1 overflow-hidden truncate">
+          {getFileIcon(activeTab?.name)}
+          {breadcrumb.map((crumb, i) => (
+            <span key={i} className="flex items-center">
+              {i > 0 && (
+                <ChevronRight
+                  size={11}
+                  style={{ margin: "0 2px", color: "#484f58" }}
+                />
+              )}
+              <span
+                style={{
+                  color: i === breadcrumb.length - 1 ? "#f0f6fc" : "#8b949e",
+                  fontWeight: i === breadcrumb.length - 1 ? 500 : 400,
+                }}
+              >
+                {crumb}
+              </span>
             </span>
-          </span>
-        ))}
-        <div className="ml-auto flex items-center gap-2">
+          ))}
+        </div>
+
+        {/* Right: Save Status Button */}
+        <div className="flex items-center gap-2">
           {saveError && (
             <span style={{ color: "#f85149", fontSize: 11 }}>{saveError}</span>
           )}
@@ -707,40 +856,52 @@ export default function Editor({
             type="button"
             onClick={handleSave}
             disabled={!hasUnsavedChanges || saving}
-            className="flex items-center gap-1 rounded px-2 py-1"
+            className="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-all"
             style={{
-              color: hasUnsavedChanges ? "#ddd6fe" : "#6e7681",
+              color: hasUnsavedChanges ? "#fff" : "#8b949e",
               background: hasUnsavedChanges
-                ? "rgba(124,58,237,0.18)"
-                : "transparent",
+                ? "linear-gradient(135deg, #7c3aed 0%, #6366f1 100%)"
+                : "rgba(255, 255, 255, 0.04)",
+              border: hasUnsavedChanges
+                ? "none"
+                : "1px solid rgba(255, 255, 255, 0.06)",
+              boxShadow: hasUnsavedChanges
+                ? "0 0 10px rgba(124, 58, 237, 0.4)"
+                : "none",
               cursor: hasUnsavedChanges && !saving ? "pointer" : "default",
             }}
-            title="Save file (Ctrl/Cmd + S)"
+            title="Save changes (Ctrl/Cmd + S)"
           >
             {saving ? (
-              <Loader2 size={13} className="animate-spin" />
+              <Loader2 size={12} className="animate-spin text-purple-300" />
             ) : hasUnsavedChanges ? (
-              <Save size={13} />
+              <Save size={12} />
             ) : (
-              <Check size={13} />
+              <Check size={12} style={{ color: "#4ade80" }} />
             )}
-            {saving ? "Saving" : hasUnsavedChanges ? "Save" : "Saved"}
+            <span>
+              {saving ? "Saving..." : hasUnsavedChanges ? "Save" : "Saved"}
+            </span>
           </button>
         </div>
       </div>
 
-      {/* ── Code Area ─────────────────────────────────────── */}
-      <div className="flex-1 overflow-auto relative">
+      {/* ── Code Editor Body ──────────────────────────────── */}
+      <div
+        className="flex-1 overflow-hidden relative"
+        style={{ background: "#0d1117" }}
+      >
         {showGitPanel && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="absolute top-4 right-4 z-50 w-96"
+            className="absolute top-4 right-4 z-50 w-96 shadow-2xl"
           >
             <GitPanel projectId={projectId} />
           </motion.div>
         )}
+
         <AnimatePresence mode="wait">
           {currentFile.loading ? (
             <motion.div
@@ -748,22 +909,11 @@ export default function Editor({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="flex flex-col items-center justify-center h-full"
-              style={{ gap: 12 }}
+              className="flex flex-col items-center justify-center h-full gap-3"
             >
-              <Loader2
-                size={24}
-                className="animate-spin"
-                style={{ color: "#a78bfa" }}
-              />
-              <span
-                style={{
-                  color: "#6e7681",
-                  fontSize: 13,
-                  fontFamily: "var(--font-sans)",
-                }}
-              >
-                Loading file content...
+              <Loader2 size={28} className="animate-spin text-purple-400" />
+              <span className="text-xs text-[#8b949e] font-sans">
+                Reading file content...
               </span>
             </motion.div>
           ) : currentFile.error ? (
@@ -772,108 +922,85 @@ export default function Editor({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="flex flex-col items-center justify-center h-full"
-              style={{ gap: 12 }}
+              className="flex flex-col items-center justify-center h-full gap-3"
             >
-              <AlertCircle size={24} style={{ color: "#f85149" }} />
-              <span
-                style={{
-                  color: "#f85149",
-                  fontSize: 13,
-                  fontFamily: "var(--font-sans)",
-                }}
-              >
+              <AlertCircle size={28} className="text-red-400" />
+              <span className="text-xs text-red-400 font-sans">
                 {currentFile.error}
               </span>
             </motion.div>
+          ) : previewMode && isMarkdown ? (
+            <MarkdownPreview key="md-preview" content={codeContent} />
           ) : (
-            <>
-              <MonacoEditor
-                key={activeTabId}
-                height="100%"
-                language={lang}
-                theme="vs-dark"
-                value={currentFile.draft ?? currentFile.content ?? ""}
-                onChange={handleChange}
-                onMount={(editor, monaco) => {
-                  editor.addCommand(
-                    monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
-                    () => saveHandlerRef.current?.(),
-                  );
-                }}
-                options={{
-                  fontSize: 13,
-                  fontFamily: "var(--font-mono)",
-                  lineHeight: 21,
-                  minimap: { enabled: false },
-                  scrollBeyondLastLine: false,
-                  automaticLayout: true,
-                  padding: { top: 8 },
-                }}
-              />
-              {/* Legacy read-only renderer retained for future CodeLens integration.
-              {lines.map((line) => {
-                const normalize = (p) => p.replace(/\\/g, '/').replace(/^\.\//, '');
-                const normalizedPath = normalize(activeTabId);
-                const comp = complexities[normalizedPath]?.[line.functionName];
-                if (line.isFunction) {
-                  // console.log(`🔍 Checking complexity for ${normalizedPath} -> ${line.functionName}:`, comp);
-                }
-                return (
-                  <React.Fragment key={line.lineNum}>
-                    {line.isFunction && comp && (
-                      <div className="px-[60px] py-1">
-                        <CodeLens
-                          complexity={comp.value}
-                          decisionPoints={comp.decisionPoints}
-                        />
-                      </div>
-                    )}
-                    <CodeLine
-                      lineNum={line.lineNum}
-                      tokens={line.tokens}
-                      isFunction={line.isFunction}
-                    />
-                  </React.Fragment>
-                );
-              })}
-            */}
-            </>
+            <MonacoEditor
+              key={activeTabId}
+              height="100%"
+              language={lang}
+              theme="covai-dark"
+              value={codeContent}
+              onChange={handleChange}
+              beforeMount={handleEditorWillMount}
+              onMount={handleEditorDidMount}
+              options={{
+                fontSize: 13.5,
+                fontFamily: "var(--font-mono), monospace",
+                lineHeight: 22,
+                minimap: { enabled: showMinimap },
+                scrollBeyondLastLine: false,
+                automaticLayout: true,
+                wordWrap: wordWrap ? "on" : "off",
+                wrappingStrategy: "advanced",
+                smoothScrolling: true,
+                cursorBlinking: "smooth",
+                cursorSmoothCaretAnimation: "on",
+                bracketPairColorization: { enabled: true },
+                guides: {
+                  bracketPairs: true,
+                  indentation: true,
+                },
+                renderLineHighlight: "all",
+                renderWhitespace: "selection",
+                padding: { top: 10, bottom: 10 },
+                scrollbar: {
+                  vertical: "visible",
+                  horizontal: "visible",
+                  verticalScrollbarSize: 7,
+                  horizontalScrollbarSize: 7,
+                  useShadows: false,
+                },
+              }}
+            />
           )}
         </AnimatePresence>
       </div>
 
-      {/* ── Bottom Info Bar ────────────────────────────────── */}
+      {/* ── Editor Status Strip ────────────────────────────── */}
       <div
-        className="flex items-center flex-shrink-0"
+        className="flex items-center justify-between flex-shrink-0 select-none"
         style={{
-          gap: 20,
-          padding: "8px 20px",
-          borderTop: "1px solid var(--ide-border)",
-          background:
-            "linear-gradient(0deg, rgba(124,58,237,0.04) 0%, transparent 100%)",
+          height: 24,
+          padding: "0 14px",
+          borderTop: "1px solid rgba(255, 255, 255, 0.06)",
+          background: "#090d13",
           fontFamily: "var(--font-mono)",
-          fontSize: 12,
+          fontSize: 11,
+          color: "#8b949e",
         }}
       >
-        <div className="flex items-center gap-1.5">
-          <BarChart3 size={12} style={{ color: "#a78bfa" }} />
-          <span style={{ color: "#a78bfa", fontWeight: 600 }}>
-            {lang.charAt(0).toUpperCase() + lang.slice(1)}
+        <div className="flex items-center gap-4">
+          <span className="flex items-center gap-1 text-[#c4b5fd]">
+            <Code2 size={11} />
+            <span>{lang.charAt(0).toUpperCase() + lang.slice(1)}</span>
+          </span>
+          <span>{totalLines} lines</span>
+          <span>
+            Ln {cursorPos.line}, Col {cursorPos.col}
           </span>
         </div>
-        {currentFile.content && (
-          <span style={{ color: "#484f58" }}>{lines.length} lines</span>
-        )}
-        <div
-          className="ml-auto flex items-center gap-1.5 cursor-pointer"
-          style={{ color: "#484f58" }}
-          onClick={() => setShowGitPanel(!showGitPanel)}
-        >
-          <GitBranch size={11} />
-          <span>main</span>
-          <Zap size={11} style={{ color: "#fde68a", marginLeft: 6 }} />
-          <span style={{ color: "#fde68a" }}>AI Ready</span>
+
+        <div className="flex items-center gap-3">
+          <span>UTF-8</span>
+          <span>Spaces: 2</span>
         </div>
       </div>
     </motion.div>

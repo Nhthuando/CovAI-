@@ -21,8 +21,11 @@ import QualityDashboard from "./QualityDashboard";
 import SettingsSidebar from "./settings/SettingsSidebar";
 import UserProfile from "./settings/UserProfile";
 import Appearance from "./settings/Appearance";
+import Security from "./settings/Security";
+import Billing from "./settings/Billing";
 import { ToastProvider, useToast } from "./ToastContext";
 import MissingTestFilesModal from "./MissingTestFilesModal";
+import PanelResizer from "./PanelResizer";
 import {
   PanelLeftClose,
   PanelLeftOpen,
@@ -37,7 +40,6 @@ import {
   Menu,
   X,
   MoreHorizontal,
-  Award,
 } from "lucide-react";
 
 import { useAuth } from "../../hooks/useAuth";
@@ -57,6 +59,8 @@ import {
 import { getProjectJobsApi } from "../../services/job.service";
 
 const INITIAL_TABS = [];
+const DEFAULT_SIDEBAR_WIDTH = 260;
+const DEFAULT_AI_PANEL_WIDTH = 340;
 
 const containerVariants = {
   hidden: {},
@@ -96,6 +100,10 @@ function LayoutInner() {
       navigate("/");
       return;
     }
+    if (id === "logic-analysis") {
+      setShowCFG(true);
+      return;
+    }
     const params = new URLSearchParams(location.search);
     params.set("tab", id);
     navigate(`${location.pathname}?${params.toString()}`);
@@ -107,14 +115,19 @@ function LayoutInner() {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const tab = params.get("tab") || "explorer";
+    if (tab === "logic-analysis") {
+      setShowCFG(true);
+    }
     setActiveActivity(tab);
   }, [location.search]);
 
   const [activeSetting, setActiveSetting] = useState("profile");
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sidebarWidth, setSidebarWidth] = useState(260);
+  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
+  const [isDraggingSidebar, setIsDraggingSidebar] = useState(false);
   const [aiPanelOpen, setAiPanelOpen] = useState(true);
-  const [aiPanelWidth, setAiPanelWidth] = useState(340);
+  const [aiPanelWidth, setAiPanelWidth] = useState(DEFAULT_AI_PANEL_WIDTH);
+  const [isDraggingAiPanel, setIsDraggingAiPanel] = useState(false);
   const [tabs, setTabs] = useState(INITIAL_TABS);
   const [activeTabId, setActiveTabId] = useState(null);
   const [activeFileId, setActiveFileId] = useState(null);
@@ -122,6 +135,15 @@ function LayoutInner() {
   const [showImport, setShowImport] = useState(false);
   const [showCFG, setShowCFG] = useState(false);
   const [showQualityDashboard, setShowQualityDashboard] = useState(false);
+
+  const handleCloseCFG = () => {
+    setShowCFG(false);
+    if (activeActivity === "logic-analysis") {
+      const params = new URLSearchParams(location.search);
+      params.set("tab", "explorer");
+      navigate(`${location.pathname}?${params.toString()}`);
+    }
+  };
   const [showTestPrompt, setShowTestPrompt] = useState(false);
   const [showMissingTestFilesModal, setShowMissingTestFilesModal] =
     useState(false);
@@ -241,6 +263,9 @@ function LayoutInner() {
   const handleSidebarResize = useCallback(
     (e) => {
       e.preventDefault();
+      setIsDraggingSidebar(true);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
       const startX = e.clientX;
       const startWidth = sidebarWidth;
       const onMouseMove = (moveEvent) => {
@@ -249,6 +274,9 @@ function LayoutInner() {
         setSidebarWidth(newWidth);
       };
       const onMouseUp = () => {
+        setIsDraggingSidebar(false);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
         document.removeEventListener("mousemove", onMouseMove);
         document.removeEventListener("mouseup", onMouseUp);
       };
@@ -261,6 +289,9 @@ function LayoutInner() {
   const handleAiPanelResize = useCallback(
     (e) => {
       e.preventDefault();
+      setIsDraggingAiPanel(true);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
       const startX = e.clientX;
       const startWidth = aiPanelWidth;
       const onMouseMove = (moveEvent) => {
@@ -269,6 +300,9 @@ function LayoutInner() {
         setAiPanelWidth(newWidth);
       };
       const onMouseUp = () => {
+        setIsDraggingAiPanel(false);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
         document.removeEventListener("mousemove", onMouseMove);
         document.removeEventListener("mouseup", onMouseUp);
       };
@@ -277,6 +311,14 @@ function LayoutInner() {
     },
     [aiPanelWidth],
   );
+
+  const handleResetSidebarWidth = () => {
+    setSidebarWidth(DEFAULT_SIDEBAR_WIDTH);
+  };
+
+  const handleResetAiPanelWidth = () => {
+    setAiPanelWidth(DEFAULT_AI_PANEL_WIDTH);
+  };
 
   useEffect(() => {
     loadData(initialProjectId);
@@ -588,62 +630,24 @@ function LayoutInner() {
           {/* Removed "Run Tests" button */}
 
           {!isMobile && (
-            <>
-              <motion.button
-                whileHover={{ scale: 1.03 }}
-                whileTap={{ scale: 0.97 }}
-                onClick={() => setShowCFG(true)}
-                className="flex items-center gap-1.5 rounded-lg text-xs font-medium"
-                style={{
-                  background: "rgba(34, 211, 238, 0.1)",
-                  color: "#22d3ee",
-                  border: "1px solid rgba(34, 211, 238, 0.2)",
-                  cursor: "pointer",
-                  fontFamily: "var(--font-sans)",
-                  padding: "6px 14px",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                <GitBranch size={11} />
-                {!isTablet && "Logic Analysis"}
-              </motion.button>
-              <motion.button
-                whileHover={{ scale: 1.03 }}
-                whileTap={{ scale: 0.97 }}
-                onClick={() => setShowQualityDashboard(true)}
-                className="flex items-center gap-1.5 rounded-lg text-xs font-medium"
-                style={{
-                  background: "rgba(168, 85, 247, 0.12)",
-                  color: "#c084fc",
-                  border: "1px solid rgba(168, 85, 247, 0.25)",
-                  cursor: "pointer",
-                  fontFamily: "var(--font-sans)",
-                  padding: "6px 14px",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                <Award size={12} />
-                {!isTablet && "Quality Dashboard"}
-              </motion.button>
-              <motion.button
-                whileHover={{ scale: 1.03 }}
-                whileTap={{ scale: 0.97 }}
-                onClick={() => navigate("/projects")}
-                className="flex items-center gap-1.5 rounded-lg text-xs font-medium"
-                style={{
-                  background: "rgba(255,255,255,0.04)",
-                  color: "#8b949e",
-                  border: "1px solid rgba(255,255,255,0.07)",
-                  cursor: "pointer",
-                  fontFamily: "var(--font-sans)",
-                  padding: "6px 14px",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                <FolderPlus size={11} />
-                {!isTablet && "Projects"}
-              </motion.button>
-            </>
+            <motion.button
+              whileHover={{ scale: 1.03 }}
+              whileTap={{ scale: 0.97 }}
+              onClick={() => navigate("/projects")}
+              className="flex items-center gap-1.5 rounded-lg text-xs font-medium"
+              style={{
+                background: "rgba(255,255,255,0.04)",
+                color: "#8b949e",
+                border: "1px solid rgba(255,255,255,0.07)",
+                cursor: "pointer",
+                fontFamily: "var(--font-sans)",
+                padding: "6px 14px",
+                whiteSpace: "nowrap",
+              }}
+            >
+              <FolderPlus size={11} />
+              {!isTablet && "Projects"}
+            </motion.button>
           )}
           <div
             className="flex items-center"
@@ -709,7 +713,7 @@ function LayoutInner() {
         {!isMobile && (
           <motion.div variants={panelVariants}>
             <ActivityBar
-              active={activeActivity}
+              active={showCFG ? "logic-analysis" : activeActivity}
               onSelect={handleSelectActivity}
             />
           </motion.div>
@@ -746,8 +750,7 @@ function LayoutInner() {
                   : {
                       overflow: "hidden",
                       flexShrink: 0,
-                      borderRight: "2px solid #a78bfa",
-                      boxShadow: "1px 0 0 #a78bfa",
+                      borderRight: "1px solid var(--ide-border)",
                     }
               }
             >
@@ -793,15 +796,14 @@ function LayoutInner() {
           )}
         </AnimatePresence>
         {!isMobile && sidebarOpen && (
-          <div
+          <PanelResizer
             onMouseDown={handleSidebarResize}
-            style={{
-              width: 4,
-              cursor: "col-resize",
-              background: "transparent",
-              zIndex: 10,
-            }}
-            className="hover:bg-purple-500/20 transition-colors"
+            isDragging={isDraggingSidebar}
+            onDoubleClick={handleResetSidebarWidth}
+            currentWidth={sidebarWidth}
+            defaultWidth={DEFAULT_SIDEBAR_WIDTH}
+            side="left"
+            label="Explorer"
           />
         )}
         <motion.div
@@ -819,7 +821,9 @@ function LayoutInner() {
               )}
               {activeSetting === "profile" && <UserProfile />}
               {activeSetting === "appearance" && <Appearance />}
+              {activeSetting === "security" && <Security />}
               {activeSetting === "notifications" && <NotificationsSettings />}
+              {activeSetting === "billing" && <Billing />}
             </div>
           ) : activeActivity === "jobs" ? (
             <JobQueue projectId={project?.id} />
@@ -869,6 +873,7 @@ function LayoutInner() {
               activeTabId={activeTabId}
               onSelectTab={setActiveTabId}
               onCloseTab={handleCloseTab}
+              onReorderTabs={setTabs}
               fileTree={fileTree}
               isLoadingTree={isLoadingTree}
               projectId={project?.id}
@@ -879,17 +884,14 @@ function LayoutInner() {
           {aiPanelOpen && (
             <>
               {!isMobile && (
-                <div
+                <PanelResizer
                   onMouseDown={handleAiPanelResize}
-                  style={{
-                    width: 4,
-                    cursor: "col-resize",
-                    background: "transparent",
-                    zIndex: 10,
-                    marginLeft: -2,
-                    marginRight: -2,
-                  }}
-                  className="hover:bg-purple-500/20 transition-colors"
+                  isDragging={isDraggingAiPanel}
+                  onDoubleClick={handleResetAiPanelWidth}
+                  currentWidth={aiPanelWidth}
+                  defaultWidth={DEFAULT_AI_PANEL_WIDTH}
+                  side="right"
+                  label="COV Assistant"
                 />
               )}
               <motion.div
@@ -1018,7 +1020,7 @@ function LayoutInner() {
       </AnimatePresence>
       <AnimatePresence>
         {showCFG && (
-          <CFGCalculator project={project} onClose={() => setShowCFG(false)} />
+          <CFGCalculator project={project} onClose={handleCloseCFG} />
         )}
       </AnimatePresence>
       <AnimatePresence>
