@@ -82,11 +82,14 @@ function InputField({
       >
         <div
           style={{
-            padding: "0 0 0 14px",
+            position: "absolute",
+            left: 14,
             display: "flex",
             alignItems: "center",
             color: focused ? "#7C3AED" : "#484f58",
             transition: "color 0.2s",
+            pointerEvents: "none",
+            zIndex: 2,
           }}
         >
           <Icon size={15} />
@@ -105,17 +108,34 @@ function InputField({
               : id
           }
           style={{
-            flex: 1,
+            width: "100%",
+            borderRadius: "10px",
             background: "transparent",
             border: "none",
             outline: "none",
-            padding: "0.75rem 0.75rem",
+            padding: rightSlot
+              ? "0.75rem 2.5rem 0.75rem 2.6rem"
+              : "0.75rem 0.75rem 0.75rem 2.6rem",
             color: "#f0f6fc",
             fontSize: "0.875rem",
             fontFamily: "Inter, sans-serif",
+            position: "relative",
+            zIndex: 1,
           }}
         />
-        {rightSlot && <div style={{ padding: "0 12px 0 0" }}>{rightSlot}</div>}
+        {rightSlot && (
+          <div
+            style={{
+              position: "absolute",
+              right: 12,
+              display: "flex",
+              alignItems: "center",
+              zIndex: 2,
+            }}
+          >
+            {rightSlot}
+          </div>
+        )}
       </div>
 
       <AnimatePresence>

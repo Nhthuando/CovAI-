@@ -217,23 +217,53 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
     where: { id: projectId, ownerId: userId },
   });
   if (!project) {
+    if (file.path && fs.existsSync(file.path)) {
+      try {
+        fs.unlinkSync(file.path);
+      } catch (_) {}
+    }
     throw new ServiceError(
       "Project not found or you don't have permission",
       404,
     );
   }
 
+  const filePath = file.path;
+  const fileSource = filePath || file.buffer;
+
   try {
-    await scanArchiveBomb(file.buffer, file.originalname);
+    await scanArchiveBomb(fileSource, file.originalname);
   } catch (scanError) {
+    if (filePath && fs.existsSync(filePath)) {
+      try {
+        fs.unlinkSync(filePath);
+      } catch (_) {}
+    }
     throw new ServiceError(scanError.message, 400);
   }
 
-  const checksum = createHash("sha256").update(file.buffer).digest("hex");
+  let checksum;
+  if (filePath && fs.existsSync(filePath)) {
+    checksum = await new Promise((resolve, reject) => {
+      const hash = createHash("sha256");
+      const stream = fs.createReadStream(filePath);
+      stream.on("data", (chunk) => hash.update(chunk));
+      stream.on("end", () => resolve(hash.digest("hex")));
+      stream.on("error", reject);
+    });
+  } else {
+    checksum = createHash("sha256").update(file.buffer).digest("hex");
+  }
+
   const duplicateSnapshot = await prisma.projectSnapshot.findFirst({
     where: { projectId, checksum },
   });
   if (duplicateSnapshot) {
+    if (filePath && fs.existsSync(filePath)) {
+      try {
+        fs.unlinkSync(filePath);
+      } catch (_) {}
+    }
     throw new ServiceError("Duplicate snapshot already exists", 409);
   }
 
@@ -265,13 +295,18 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
         });
         blobStream.on("error", reject);
         blobStream.on("finish", resolve);
-        blobStream.end(file.buffer);
+
+        if (filePath && fs.existsSync(filePath)) {
+          fs.createReadStream(filePath).pipe(blobStream);
+        } else {
+          blobStream.end(file.buffer);
+        }
       }).then(() => updateJobProgress(job.id, 50).catch(() => {}));
 
       const extractPromise = extractZipSnapshot(
         snapshot.id,
         storagePath,
-        file.buffer,
+        fileSource,
       ).then((path) => {
         updateJobProgress(job.id, 90).catch(() => {});
         return path;
@@ -281,6 +316,13 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
         uploadPromise,
         extractPromise,
       ]);
+
+      // Clean up temporary disk upload file after extraction & Firebase upload
+      if (filePath && fs.existsSync(filePath)) {
+        try {
+          fs.unlinkSync(filePath);
+        } catch (_) {}
+      }
 
       if (!sourcePath || typeof sourcePath !== "string") {
         throw new Error("Extracted source path is invalid");
@@ -321,9 +363,14 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
       await updateJobProgress(job.id, 100).catch(() => {});
       await markJobSuccess(job.id, { rootDir: validation.rootDir });
       console.log(
-        `[Job ${job.id}] Pipeline upload & ingest hoàn thành: ${validation.rootDir}`,
+        `[Job ${job.id}] Pipeline upload & ingest completed: ${validation.rootDir}`,
       );
     } catch (uploadErr) {
+      if (filePath && fs.existsSync(filePath)) {
+        try {
+          fs.unlinkSync(filePath);
+        } catch (_) {}
+      }
       console.error(
         `[UploadProjectZip] Firebase upload or ingest failed for Job ${job.id}:`,
         uploadErr,

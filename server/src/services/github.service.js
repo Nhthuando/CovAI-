@@ -1,4 +1,5 @@
 import prisma from "../config/prisma.js";
+import { decrypt } from "../utils/crypto.js";
 
 /**
  * Service to interact with GitHub APIs using the authenticated user's access token.
@@ -17,8 +18,11 @@ export class GitHubRepositoryAccessService {
       throw new Error("Missing GitHub token");
     }
 
-    // In a real production app, githubAccessTokenEnc should be decrypted here.
-    return user.githubAccessTokenEnc;
+    try {
+      return decrypt(user.githubAccessTokenEnc);
+    } catch {
+      return user.githubAccessTokenEnc;
+    }
   }
 
   /**

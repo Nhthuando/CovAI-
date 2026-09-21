@@ -56,14 +56,46 @@ export class GitHubCloneService {
         cwd: repoDir,
       });
 
-      // Automatically remove .git to save a lot of server storage space
-      fs.rmSync(path.join(repoDir, ".git"), { recursive: true, force: true });
-      // Remove node_modules if the user accidentally committed it
-      fs.rmSync(path.join(repoDir, "node_modules"), { recursive: true, force: true });
+      // 3. Get default branch
+      let defaultBranch = "main";
+      try {
+        const { stdout: branchOut } = await execAsync(
+          `git rev-parse --abbrev-ref HEAD`,
+          { cwd: repoDir },
+        );
+        if (branchOut && branchOut.trim()) {
+          defaultBranch = branchOut.trim();
+        }
+      } catch (_) {}
+
+      // Configure local git user info and settings inside repo
+      try {
+        const authorName = owner || "CovAI Developer";
+        const authorEmail = owner
+          ? `${owner}@users.noreply.github.com`
+          : "developer@covai.dev";
+        await execAsync(`git config user.name "${authorName}"`, {
+          cwd: repoDir,
+        });
+        await execAsync(`git config user.email "${authorEmail}"`, {
+          cwd: repoDir,
+        });
+        await execAsync(`git config commit.gpgsign false`, { cwd: repoDir });
+      } catch (_) {}
+
+      // IMPORTANT: DO NOT remove .git! Keeping .git preserves the repository history,
+      // branches, and origin remote so the user can push, pull, checkout, and commit.
+      // Only remove node_modules if accidentally committed in the repository
+      fs.rmSync(path.join(repoDir, "node_modules"), {
+        recursive: true,
+        force: true,
+      });
 
       return {
         localPath: repoDir,
         commitSha: commitSha.trim(),
+        defaultBranch,
+        repoUrl: `https://github.com/${owner}/${repo}`,
       };
     } catch (error) {
       // Cleanup on failure

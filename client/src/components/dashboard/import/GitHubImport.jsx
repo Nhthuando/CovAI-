@@ -1,8 +1,18 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Link, ArrowRight, Loader2 } from "lucide-react";
+import {
+  Link2,
+  ArrowRight,
+  Loader2,
+  AlertCircle,
+  CheckCircle2,
+} from "lucide-react";
 import RepoList from "./RepoList";
-import { createProjectApi, importGithubUrlApi, getProjectsApi } from "../../../services/project.service";
+import {
+  createProjectApi,
+  importGithubUrlApi,
+  getProjectsApi,
+} from "../../../services/project.service";
 import { useToast } from "../ToastContext";
 
 export default function GitHubImport({ onClose, onSuccess }) {
@@ -13,7 +23,7 @@ export default function GitHubImport({ onClose, onSuccess }) {
   const { showToast } = useToast();
 
   const isValidUrl =
-    urlValue.startsWith("https://github.com/") && urlValue.length > 25;
+    urlValue.startsWith("https://github.com/") && urlValue.length > 22;
 
   const handleImportUrl = async () => {
     if (!isValidUrl || uploading) return;
@@ -21,17 +31,22 @@ export default function GitHubImport({ onClose, onSuccess }) {
     setErrorMsg("");
     try {
       const match = urlValue.match(/github\.com\/([^/]+)\/([^/]+)/);
-      if (!match) throw new Error("URL GitHub không hợp lệ");
+      if (!match) throw new Error("Invalid GitHub repository URL.");
       const repoName = match[2].replace(".git", "");
 
       let projectId;
 
       try {
-        const projRes = await createProjectApi({ name: repoName, repoUrl: urlValue });
+        const projRes = await createProjectApi({
+          name: repoName,
+          repoUrl: urlValue,
+        });
         projectId = projRes.data.id;
       } catch (createErr) {
-        // Handle 409 — project already exists
-        if (createErr.message?.includes("already exists") || createErr.message?.includes("Duplicate")) {
+        if (
+          createErr.message?.includes("already exists") ||
+          createErr.message?.includes("Duplicate")
+        ) {
           const { projects } = await getProjectsApi();
           const existing = projects?.find((p) => p.name === repoName);
           if (existing) {
@@ -44,7 +59,6 @@ export default function GitHubImport({ onClose, onSuccess }) {
         }
       }
 
-      // Fire import in background — don't await!
       importGithubUrlApi(projectId, urlValue).catch((err) => {
         console.error("[GitHubImport] Background import failed:", err);
       });
@@ -55,11 +69,10 @@ export default function GitHubImport({ onClose, onSuccess }) {
         message: `"${repoName}" is being imported. Track progress in Job Queue.`,
       });
 
-      // Close overlay immediately
       if (onSuccess) onSuccess();
       else if (onClose) onClose();
     } catch (err) {
-      setErrorMsg(err.message);
+      setErrorMsg(err.message || "An unexpected error occurred during import.");
       showToast({
         type: "error",
         title: "Import failed",
@@ -70,159 +83,107 @@ export default function GitHubImport({ onClose, onSuccess }) {
   };
 
   return (
-    <div className="flex flex-col h-full" style={{ gap: 28 }}>
-      {/* ── Import via URL ─────────────────────────────────── */}
-      <div className="flex flex-col" style={{ gap: 14 }}>
-        {/* Section label */}
-        <span
-          style={{
-            fontSize: 12,
-            fontWeight: 600,
-            color: "#8b949e",
-            fontFamily: "var(--font-sans)",
-            letterSpacing: "0.06em",
-            textTransform: "uppercase",
-          }}
-        >
-          Import via GitHub URL
-        </span>
+    <div className="flex flex-col h-full gap-6">
+      {/* ── Import via URL Section ───────────────────────────── */}
+      <div className="flex flex-col gap-2.5">
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-semibold text-neutral-300 uppercase tracking-wider flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
+            Import via GitHub URL
+          </label>
+          <span className="text-[11px] text-neutral-500 font-mono">
+            Public or Private repos
+          </span>
+        </div>
 
         {/* URL Input Row */}
-        <div className="flex items-center" style={{ gap: 12 }}>
+        <div className="flex items-center gap-3">
           <div
-            className="flex items-center flex-1 rounded-xl"
-            style={{
-              gap: 12,
-              padding: "14px 16px",
-              background: urlFocused
-                ? "rgba(124,58,237,0.06)"
-                : "rgba(255,255,255,0.04)",
-              border: "1px solid",
-              borderColor: urlFocused
-                ? "rgba(124,58,237,0.3)"
-                : "rgba(255,255,255,0.08)",
-              transition: "all 0.25s ease",
-              boxShadow: urlFocused
-                ? "0 0 24px rgba(124,58,237,0.08)"
-                : "none",
-            }}
+            className={`flex items-center flex-1 rounded-xl px-3.5 py-2.5 bg-neutral-900/60 border transition-all ${
+              urlFocused
+                ? "border-violet-500/50 shadow-[0_0_20px_rgba(124,58,237,0.15)] bg-neutral-900"
+                : "border-white/10 hover:border-white/15"
+            }`}
           >
-            <Link
+            <Link2
               size={16}
-              style={{
-                color: urlFocused ? "#a78bfa" : "#484f58",
-                flexShrink: 0,
-                transition: "color 0.2s ease",
-              }}
+              className={`mr-2.5 transition-colors ${
+                urlFocused ? "text-violet-400" : "text-neutral-500"
+              }`}
             />
             <input
               type="text"
-              placeholder="https://github.com/username/repository"
+              placeholder="https://github.com/organization/repository"
               value={urlValue}
               onChange={(e) => setUrlValue(e.target.value)}
               onFocus={() => setUrlFocused(true)}
               onBlur={() => setUrlFocused(false)}
-              className="w-full bg-transparent outline-none"
-              style={{
-                color: "#e6edf3",
-                fontFamily: "var(--font-mono)",
-                fontSize: 13,
-                border: "none",
-              }}
+              className="w-full bg-transparent outline-none text-xs text-neutral-100 placeholder:text-neutral-600 font-mono"
               id="github-url-input"
             />
             {urlValue && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.5 }}
-                animate={{ opacity: 1, scale: 1 }}
-                style={{
-                  width: 7,
-                  height: 7,
-                  borderRadius: "50%",
-                  background: isValidUrl ? "#3fb950" : "#f85149",
-                  boxShadow: isValidUrl
-                    ? "0 0 8px rgba(63,185,80,0.6)"
-                    : "0 0 8px rgba(248,81,73,0.6)",
-                  flexShrink: 0,
-                }}
-              />
+              <div className="ml-2 flex items-center">
+                {isValidUrl ? (
+                  <CheckCircle2
+                    size={15}
+                    className="text-emerald-400 animate-in fade-in"
+                  />
+                ) : (
+                  <div className="w-2 h-2 rounded-full bg-amber-400/80 animate-pulse" />
+                )}
+              </div>
             )}
           </div>
 
           <motion.button
-            whileHover={!uploading ? { scale: 1.02, y: -1 } : {}}
-            whileTap={!uploading ? { scale: 0.98 } : {}}
+            whileHover={!uploading && isValidUrl ? { scale: 1.02 } : {}}
+            whileTap={!uploading && isValidUrl ? { scale: 0.98 } : {}}
             onClick={handleImportUrl}
             disabled={uploading || !isValidUrl}
-            className="flex items-center rounded-xl flex-shrink-0 cursor-pointer"
+            className="h-10 px-5 rounded-xl flex items-center gap-2 text-xs font-semibold tracking-wide uppercase text-white shadow-lg transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
             style={{
-              gap: 8,
-              padding: "14px 24px",
               background: isValidUrl
-                ? (uploading ? "rgba(124,58,237,0.5)" : "linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)")
-                : "#7c3aed",
-              color: "#fff",
-              fontSize: 14,
-              fontWeight: 600,
-              border: "none",
-              fontFamily: "var(--font-sans)",
-              boxShadow: uploading
-                  ? "none"
-                  : "0 0 16px rgba(124,58,237,0.25), 0 2px 8px rgba(0,0,0,0.2)",
-              opacity: isValidUrl ? (uploading ? 0.7 : 1) : 0.8,
-              cursor: uploading || !isValidUrl ? "not-allowed" : "pointer",
+                ? "linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)"
+                : "rgba(255, 255, 255, 0.08)",
+              boxShadow: isValidUrl
+                ? "0 4px 16px rgba(124,58,237,0.3)"
+                : "none",
             }}
             id="url-import-btn"
           >
             {uploading ? (
               <>
-                <Loader2 size={16} className="animate-spin" />
-                Importing...
+                <Loader2 size={14} className="animate-spin" />
+                <span>Importing</span>
               </>
             ) : (
               <>
-                Import
-                <ArrowRight size={15} />
+                <span>Import</span>
+                <ArrowRight size={14} />
               </>
             )}
           </motion.button>
         </div>
+
         {errorMsg && (
-          <div style={{ color: "#f85149", fontSize: 13, marginTop: 4 }}>
-            {errorMsg}
-          </div>
+          <motion.div
+            initial={{ opacity: 0, y: 3 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="rounded-lg bg-red-500/10 border border-red-500/20 p-2.5 text-xs text-red-300 flex items-center gap-2"
+          >
+            <AlertCircle size={14} className="text-red-400 flex-shrink-0" />
+            <span>{errorMsg}</span>
+          </motion.div>
         )}
       </div>
 
-      {/* ── Divider: OR SELECT FROM ACCOUNT ─────────────────── */}
-      <div className="flex items-center" style={{ gap: 16 }}>
-        <div
-          style={{
-            flex: 1,
-            height: 1,
-            background: "rgba(255,255,255,0.07)",
-          }}
-        />
-        <span
-          style={{
-            fontSize: 11,
-            fontWeight: 600,
-            color: "#484f58",
-            fontFamily: "var(--font-sans)",
-            letterSpacing: "0.1em",
-            textTransform: "uppercase",
-            whiteSpace: "nowrap",
-          }}
-        >
-          Or select from account
+      {/* ── Divider ─────────────────────────────────────────── */}
+      <div className="flex items-center gap-3">
+        <div className="flex-1 h-[1px] bg-white/5" />
+        <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider font-mono">
+          Or Select From Account
         </span>
-        <div
-          style={{
-            flex: 1,
-            height: 1,
-            background: "rgba(255,255,255,0.07)",
-          }}
-        />
+        <div className="flex-1 h-[1px] bg-white/5" />
       </div>
 
       {/* ── Repository Browser ─────────────────────────────── */}

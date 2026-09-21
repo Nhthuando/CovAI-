@@ -1,7 +1,21 @@
 import { useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { CloudUpload, FileArchive, X, CheckCircle2, Loader2 } from "lucide-react";
-import { createProjectApi, uploadZipApi, getProjectsApi } from "../../../services/project.service";
+import {
+  CloudUpload,
+  FileArchive,
+  X,
+  CheckCircle2,
+  Loader2,
+  AlertCircle,
+  FolderArchive,
+  ArrowUpRight,
+  HardDrive,
+} from "lucide-react";
+import {
+  createProjectApi,
+  uploadZipApi,
+  getProjectsApi,
+} from "../../../services/project.service";
 import { useToast } from "../ToastContext";
 
 /* ── Drag states ─────────────────────────────────────────── */
@@ -10,6 +24,15 @@ const DRAG_STATES = {
   over: "over",
   dropped: "dropped",
 };
+
+function formatBytes(bytes, decimals = 1) {
+  if (!bytes || bytes === 0) return "0 B";
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
+}
 
 export default function LocalUpload({ onClose, onSuccess }) {
   const [dragState, setDragState] = useState(DRAG_STATES.idle);
@@ -46,7 +69,7 @@ export default function LocalUpload({ onClose, onSuccess }) {
   const handleFileSelect = useCallback(() => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ".zip,.tar.gz,.rar";
+    input.accept = ".zip,.rar,.tar.gz";
     input.onchange = (e) => {
       const file = e.target.files?.[0];
       if (file) {
@@ -71,15 +94,17 @@ export default function LocalUpload({ onClose, onSuccess }) {
     setUploading(true);
     setErrorMsg("");
     try {
-      const projectName = fileName.replace(/\.[^/.]+$/, ""); 
+      const projectName = fileName.replace(/\.[^/.]+$/, "");
       let projectId;
 
       try {
         const projRes = await createProjectApi({ name: projectName });
         projectId = projRes.data.id;
       } catch (createErr) {
-        // Handle 409 — project already exists
-        if (createErr.message?.includes("already exists") || createErr.message?.includes("Duplicate")) {
+        if (
+          createErr.message?.includes("already exists") ||
+          createErr.message?.includes("Duplicate")
+        ) {
           const { projects } = await getProjectsApi();
           const existing = projects?.find((p) => p.name === projectName);
           if (existing) {
@@ -91,8 +116,7 @@ export default function LocalUpload({ onClose, onSuccess }) {
           throw createErr;
         }
       }
-      
-      // Server now creates the Job in DB immediately and uploads to Firebase async
+
       await uploadZipApi(projectId, fileObj);
 
       showToast({
@@ -100,15 +124,19 @@ export default function LocalUpload({ onClose, onSuccess }) {
         title: "Processing started",
         message: `"${projectName}" is being processed. Track progress in Job Queue.`,
       });
-      
+
       if (onSuccess) onSuccess();
       else if (onClose) onClose();
     } catch (error) {
-      setErrorMsg(error.message);
+      const msg =
+        error.message === "Failed to fetch"
+          ? "Network error or server unreachable. Please verify the backend service is active."
+          : error.message || "An unexpected error occurred during upload.";
+      setErrorMsg(msg);
       showToast({
         type: "error",
         title: "Upload failed",
-        message: error.message || "An unexpected error occurred.",
+        message: msg,
       });
     } finally {
       setUploading(false);
@@ -117,270 +145,245 @@ export default function LocalUpload({ onClose, onSuccess }) {
 
   const isOver = dragState === DRAG_STATES.over;
   const isDropped = dragState === DRAG_STATES.dropped;
+  const isRar = fileName?.toLowerCase().endsWith(".rar");
 
   return (
-    <motion.div
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
-      animate={{
-        borderColor: isOver
-          ? "rgba(124,58,237,0.5)"
-          : isDropped
-          ? "rgba(63,185,80,0.3)"
-          : "rgba(255,255,255,0.1)",
-        boxShadow: isOver
-          ? "0 0 30px rgba(124,58,237,0.15), inset 0 0 30px rgba(124,58,237,0.05)"
-          : "none",
-      }}
-      transition={{ duration: 0.3 }}
-      className="flex flex-col items-center justify-center flex-1 rounded-2xl cursor-pointer relative overflow-hidden"
-      style={{
-        border: "2px dashed",
-        borderColor: "rgba(255,255,255,0.1)",
-        background: isOver
-          ? "rgba(124,58,237,0.04)"
-          : "rgba(255,255,255,0.015)",
-        minHeight: 220,
-        transition: "background 0.3s ease",
-      }}
-      onClick={!isDropped ? handleFileSelect : undefined}
-      id="dropzone-area"
-    >
-      {/* Background grid pattern */}
-      <div
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          backgroundImage:
-            "radial-gradient(circle at 1px 1px, rgba(255,255,255,0.03) 1px, transparent 0)",
-          backgroundSize: "24px 24px",
-          opacity: isOver ? 0.8 : 0.4,
-          transition: "opacity 0.3s ease",
+    <div className="flex flex-col flex-1">
+      <motion.div
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        animate={{
+          borderColor: isOver
+            ? "rgba(168,85,247,0.7)"
+            : isDropped
+              ? "rgba(34,197,94,0.4)"
+              : "rgba(255,255,255,0.1)",
+          backgroundColor: isOver
+            ? "rgba(124,58,237,0.06)"
+            : isDropped
+              ? "rgba(16,185,129,0.03)"
+              : "rgba(255,255,255,0.02)",
         }}
-      />
+        transition={{ duration: 0.2 }}
+        className={`relative flex flex-col items-center justify-center flex-1 rounded-2xl border-2 border-dashed p-6 transition-all min-h-[300px] overflow-hidden ${
+          !isDropped ? "cursor-pointer hover:border-violet-500/40" : ""
+        }`}
+        onClick={!isDropped ? handleFileSelect : undefined}
+        id="dropzone-area"
+      >
+        {/* Background ambient pattern */}
+        <div
+          className="absolute inset-0 pointer-events-none opacity-40"
+          style={{
+            backgroundImage:
+              "radial-gradient(circle at 1px 1px, rgba(255,255,255,0.06) 1px, transparent 0)",
+            backgroundSize: "20px 20px",
+          }}
+        />
 
-      <AnimatePresence mode="wait">
-        {isDropped ? (
-          /* ── File Dropped State ── */
-          <motion.div
-            key="dropped"
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.9 }}
-            transition={{ duration: 0.35, ease: "easeOut" }}
-            className="flex flex-col items-center relative z-10"
-            style={{ gap: 16, padding: "24px 0" }}
-          >
+        <AnimatePresence mode="wait">
+          {isDropped ? (
+            /* ── File Dropped State ── */
             <motion.div
-              initial={{ scale: 0 }}
-              animate={{ scale: 1 }}
-              transition={{
-                type: "spring",
-                stiffness: 260,
-                damping: 20,
-                delay: 0.1,
-              }}
-              className="flex items-center justify-center rounded-2xl"
-              style={{
-                width: 56,
-                height: 56,
-                background:
-                  "linear-gradient(135deg, rgba(63,185,80,0.15), rgba(63,185,80,0.05))",
-                border: "1px solid rgba(63,185,80,0.2)",
-              }}
+              key="dropped"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.25 }}
+              className="flex flex-col items-center w-full max-w-sm relative z-10 gap-5"
             >
-              <CheckCircle2 size={26} style={{ color: "#3fb950" }} />
-            </motion.div>
-
-            <div className="flex flex-col items-center" style={{ gap: 8 }}>
-              <span
-                style={{
-                  fontSize: 14,
-                  fontWeight: 600,
-                  color: "#e6edf3",
-                  fontFamily: "var(--font-sans)",
-                }}
-              >
-                File Ready
-              </span>
-              <div
-                className="flex items-center rounded-lg"
-                style={{
-                  gap: 8,
-                  padding: "6px 14px",
-                  background: "rgba(255,255,255,0.04)",
-                  border: "1px solid rgba(255,255,255,0.08)",
-                }}
-              >
-                <FileArchive
-                  size={14}
-                  style={{ color: "#a78bfa", flexShrink: 0 }}
-                />
-                <span
+              {/* Status icon */}
+              <div className="relative">
+                <div
+                  className="w-16 h-16 rounded-2xl flex items-center justify-center border shadow-xl"
                   style={{
-                    fontSize: 12,
-                    color: "#8b949e",
-                    fontFamily: "var(--font-mono)",
+                    background: isRar
+                      ? "linear-gradient(135deg, rgba(245,158,11,0.15), rgba(245,158,11,0.05))"
+                      : "linear-gradient(135deg, rgba(124,58,237,0.15), rgba(124,58,237,0.05))",
+                    borderColor: isRar
+                      ? "rgba(245,158,11,0.3)"
+                      : "rgba(124,58,237,0.3)",
                   }}
                 >
-                  {fileName}
-                </span>
-                <motion.button
-                  whileHover={{ scale: 1.15 }}
-                  whileTap={{ scale: 0.9 }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleClear();
-                  }}
-                  className="rounded-full cursor-pointer"
-                  style={{
-                    padding: 3,
-                    background: "rgba(255,255,255,0.06)",
-                    color: "#6e7681",
-                    border: "none",
-                    lineHeight: 0,
-                  }}
-                >
-                  <X size={10} />
-                </motion.button>
+                  <FolderArchive
+                    size={30}
+                    className={isRar ? "text-amber-400" : "text-violet-400"}
+                  />
+                </div>
+                <div className="absolute -bottom-1.5 -right-1.5 w-6 h-6 rounded-full bg-emerald-500 text-black flex items-center justify-center shadow-lg ring-2 ring-[#111827]">
+                  <CheckCircle2 size={14} strokeWidth={3} />
+                </div>
               </div>
-            </div>
 
-            <motion.button
-              whileHover={!uploading ? { scale: 1.02, y: -1 } : {}}
-              whileTap={!uploading ? { scale: 0.98 } : {}}
-              onClick={handleUpload}
-              disabled={uploading}
-              className="rounded-xl flex items-center justify-center cursor-pointer"
-              style={{
-                padding: "10px 28px",
-                gap: 8,
-                background: uploading
-                  ? "rgba(124,58,237,0.5)"
-                  : "linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)",
-                color: "#fff",
-                fontSize: 13,
-                fontWeight: 600,
-                border: "none",
-                fontFamily: "var(--font-sans)",
-                boxShadow: uploading
-                  ? "none"
-                  : "0 0 20px rgba(124,58,237,0.3), 0 4px 12px rgba(0,0,0,0.3)",
-                opacity: uploading ? 0.7 : 1,
-                cursor: uploading ? "not-allowed" : "pointer",
-              }}
-              id="upload-import-btn"
-            >
-              {uploading ? (
-                <>
-                  <Loader2 size={16} className="animate-spin" />
-                  Sending...
-                </>
-              ) : (
-                "Import Project"
+              {/* File details card */}
+              <div className="w-full rounded-xl bg-white/[0.04] border border-white/10 p-3.5 flex flex-col gap-2.5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <FileArchive
+                      size={18}
+                      className={
+                        isRar
+                          ? "text-amber-400 flex-shrink-0"
+                          : "text-violet-400 flex-shrink-0"
+                      }
+                    />
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-white truncate font-mono">
+                        {fileName}
+                      </p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-[11px] text-neutral-400 font-mono">
+                          {formatBytes(fileObj?.size)}
+                        </span>
+                        <span className="text-neutral-600">•</span>
+                        <span
+                          className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${
+                            isRar
+                              ? "bg-amber-500/10 text-amber-300 border-amber-500/30"
+                              : "bg-violet-500/10 text-violet-300 border-violet-500/30"
+                          }`}
+                        >
+                          {isRar ? "RAR Archive" : "ZIP Archive"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Remove button */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleClear();
+                    }}
+                    title="Remove file"
+                    className="p-1 rounded-lg hover:bg-white/10 text-neutral-400 hover:text-white transition-colors"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Import button */}
+              <motion.button
+                whileHover={!uploading ? { scale: 1.02 } : {}}
+                whileTap={!uploading ? { scale: 0.98 } : {}}
+                onClick={handleUpload}
+                disabled={uploading}
+                className="w-full h-11 rounded-xl flex items-center justify-center gap-2 font-semibold text-xs tracking-wide uppercase text-white shadow-xl transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{
+                  background:
+                    "linear-gradient(135deg, #7c3aed 0%, #6d28d9 50%, #4f46e5 100%)",
+                  boxShadow: "0 4px 20px rgba(124,58,237,0.35)",
+                }}
+                id="upload-import-btn"
+              >
+                {uploading ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin text-white" />
+                    <span>Extracting & Ingesting...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Import Project</span>
+                    <ArrowUpRight size={15} />
+                  </>
+                )}
+              </motion.button>
+
+              {/* Error message card */}
+              {errorMsg && (
+                <motion.div
+                  initial={{ opacity: 0, y: 5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="w-full rounded-xl bg-red-500/10 border border-red-500/25 p-3 flex items-start gap-2.5 text-red-300 text-xs"
+                >
+                  <AlertCircle
+                    size={16}
+                    className="text-red-400 flex-shrink-0 mt-0.5"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-red-200">Import Failed</p>
+                    <p className="mt-0.5 text-[11px] leading-relaxed opacity-90">
+                      {errorMsg}
+                    </p>
+                  </div>
+                </motion.div>
               )}
-            </motion.button>
-            {errorMsg && (
-              <div style={{ color: "#f85149", fontSize: 13, marginTop: 4 }}>
-                {errorMsg}
-              </div>
-            )}
-          </motion.div>
-        ) : (
-          /* ── Idle / Drag-over State ── */
-          <motion.div
-            key="idle"
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.3 }}
-            className="flex flex-col items-center relative z-10"
-            style={{ gap: 16, padding: "24px 0" }}
-          >
-            <motion.div
-              animate={{
-                y: isOver ? -6 : 0,
-                scale: isOver ? 1.08 : 1,
-              }}
-              transition={{ type: "spring", stiffness: 300, damping: 20 }}
-              className="flex items-center justify-center rounded-2xl"
-              style={{
-                width: 64,
-                height: 64,
-                background: isOver
-                  ? "linear-gradient(135deg, rgba(124,58,237,0.2), rgba(124,58,237,0.08))"
-                  : "linear-gradient(135deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02))",
-                border: `1px solid ${
-                  isOver
-                    ? "rgba(124,58,237,0.3)"
-                    : "rgba(255,255,255,0.08)"
-                }`,
-                transition: "background 0.3s, border 0.3s",
-              }}
-            >
-              <CloudUpload
-                size={28}
-                strokeWidth={1.5}
-                style={{
-                  color: isOver ? "#a78bfa" : "#6e7681",
-                  transition: "color 0.3s ease",
-                }}
-              />
             </motion.div>
-
-            <div className="flex flex-col items-center" style={{ gap: 6 }}>
-              <span
-                style={{
-                  fontSize: 15,
-                  fontWeight: 600,
-                  color: isOver ? "#c4b5fd" : "#e6edf3",
-                  fontFamily: "var(--font-sans)",
-                  transition: "color 0.2s ease",
-                }}
-              >
-                Local Upload
-              </span>
-              <span
-                className="text-center"
-                style={{
-                  fontSize: 13,
-                  color: "#484f58",
-                  fontFamily: "var(--font-sans)",
-                  lineHeight: 1.5,
-                }}
-              >
-                Drag & drop .zip or .rar project here
-              </span>
-            </div>
-
-            <motion.button
-              whileHover={{ scale: 1.03, y: -1 }}
-              whileTap={{ scale: 0.97 }}
-              onClick={(e) => {
-                e.stopPropagation();
-                handleFileSelect();
-              }}
-              className="flex items-center rounded-xl cursor-pointer"
-              style={{
-                gap: 8,
-                padding: "10px 24px",
-                background:
-                  "linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)",
-                border: "none",
-                color: "#fff",
-                fontSize: 13,
-                fontWeight: 600,
-                fontFamily: "var(--font-sans)",
-                boxShadow:
-                  "0 0 16px rgba(124,58,237,0.25), 0 2px 8px rgba(0,0,0,0.3)",
-              }}
-              id="browse-files-btn"
+          ) : (
+            /* ── Idle / Drag-over State ── */
+            <motion.div
+              key="idle"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.25 }}
+              className="flex flex-col items-center text-center relative z-10 gap-4 max-w-xs"
             >
-              Browse Files
-            </motion.button>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </motion.div>
+              {/* Icon */}
+              <motion.div
+                animate={{
+                  y: isOver ? -4 : 0,
+                  scale: isOver ? 1.08 : 1,
+                }}
+                className="w-16 h-16 rounded-2xl flex items-center justify-center transition-all shadow-lg"
+                style={{
+                  background: isOver
+                    ? "linear-gradient(135deg, rgba(124,58,237,0.25), rgba(79,70,229,0.15))"
+                    : "rgba(255,255,255,0.03)",
+                  border: isOver
+                    ? "1px solid rgba(168,85,247,0.4)"
+                    : "1px solid rgba(255,255,255,0.08)",
+                }}
+              >
+                <CloudUpload
+                  size={28}
+                  strokeWidth={1.75}
+                  className={isOver ? "text-violet-300" : "text-neutral-400"}
+                />
+              </motion.div>
+
+              {/* Title & Description */}
+              <div>
+                <h3 className="text-sm font-semibold text-white tracking-tight">
+                  Upload Project Archive
+                </h3>
+                <p className="text-xs text-neutral-400 mt-1 leading-relaxed">
+                  Drag & drop your codebase archive here to parse & generate
+                  test suites
+                </p>
+              </div>
+
+              {/* Supported formats */}
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold font-mono px-2 py-0.5 rounded-md bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
+                  .ZIP
+                </span>
+                <span className="text-[10px] font-bold font-mono px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                  .RAR
+                </span>
+                <span className="text-[11px] text-neutral-500">Max 200MB</span>
+              </div>
+
+              {/* Browse Button */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleFileSelect();
+                }}
+                className="mt-1 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-white/[0.08] hover:bg-white/[0.14] border border-white/10 hover:border-violet-500/30 transition-all flex items-center gap-2 cursor-pointer shadow-sm"
+                id="browse-files-btn"
+              >
+                <HardDrive size={13} className="text-violet-400" />
+                Browse Local Files
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
+    </div>
   );
 }

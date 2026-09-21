@@ -1,6 +1,16 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Search, Folder, Lock, User, Loader2 } from "lucide-react";
+import {
+  Search,
+  FolderGit2,
+  Lock,
+  User,
+  Loader2,
+  ChevronLeft,
+  ChevronRight,
+  Sparkles,
+  ExternalLink,
+} from "lucide-react";
 import {
   getGithubRepositoriesApi,
   createProjectApi,
@@ -18,15 +28,16 @@ function getLangColor(lang) {
     Vue: "#41b883",
     HTML: "#e34c26",
     CSS: "#563d7c",
+    Go: "#00add8",
+    Rust: "#dea584",
+    Java: "#b07219",
   };
   return colors[lang] || "#8b949e";
 }
 
 /* ── Single Repo Row ─────────────────────────────────────── */
 function RepoItem({ repo, index, onClose, onSuccess, showToast }) {
-  const [hovered, setHovered] = useState(false);
   const [importing, setImporting] = useState(false);
-  const Icon = repo.isPrivate ? Lock : Folder;
 
   const handleImport = async () => {
     if (importing) return;
@@ -38,11 +49,10 @@ function RepoItem({ repo, index, onClose, onSuccess, showToast }) {
     ) {
       showToast({
         type: "warning",
-        title: "Language not supported",
+        title: "Language not fully supported",
         message:
-          "This project currently only supports JavaScript/Jest. Please wait for future updates.",
+          "This project currently focuses on JavaScript/TypeScript. We will attempt parsing, but coverage generation may vary.",
       });
-      return;
     }
 
     setImporting(true);
@@ -50,10 +60,13 @@ function RepoItem({ repo, index, onClose, onSuccess, showToast }) {
       let projectId;
 
       try {
-        const projRes = await createProjectApi({ name: repo.name });
+        const repoUrl = `https://github.com/${repo.owner}/${repo.name}`;
+        const projRes = await createProjectApi({
+          name: repo.name,
+          repoUrl,
+        });
         projectId = projRes.data.id;
       } catch (createErr) {
-        // Handle 409 — project already exists, find it and reuse
         if (
           createErr.message?.includes("already exists") ||
           createErr.message?.includes("Duplicate")
@@ -70,7 +83,6 @@ function RepoItem({ repo, index, onClose, onSuccess, showToast }) {
         }
       }
 
-      // Fire import in background — don't await!
       importGithubRepoApi(projectId, repo.owner, repo.name).catch((err) => {
         console.error("[RepoList] Background import failed:", err);
       });
@@ -81,7 +93,6 @@ function RepoItem({ repo, index, onClose, onSuccess, showToast }) {
         message: `"${repo.name}" is being imported. Track progress in Job Queue.`,
       });
 
-      // Close overlay immediately
       if (onSuccess) onSuccess();
       else if (onClose) onClose();
     } catch (err) {
@@ -96,119 +107,73 @@ function RepoItem({ repo, index, onClose, onSuccess, showToast }) {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
+      initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.06 * index, duration: 0.3, ease: "easeOut" }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      className="flex items-center justify-between rounded-xl"
-      style={{
-        padding: "14px 16px",
-        background: hovered ? "rgba(255,255,255,0.04)" : "transparent",
-        border: "1px solid",
-        borderColor: hovered
-          ? "rgba(255,255,255,0.08)"
-          : "rgba(255,255,255,0.04)",
-        transition: "all 0.2s ease",
-        cursor: "pointer",
-      }}
+      transition={{ delay: 0.04 * Math.min(index, 10), duration: 0.2 }}
+      className="group flex items-center justify-between p-3 rounded-xl bg-neutral-900/40 hover:bg-neutral-800/60 border border-white/5 hover:border-violet-500/30 transition-all cursor-pointer"
       id={`repo-item-${repo.id}`}
     >
-      {/* Left: icon + info */}
-      <div className="flex items-center min-w-0" style={{ gap: 14 }}>
-        <Icon
-          size={18}
-          style={{
-            color: repo.isPrivate ? "#d29922" : "#6e7681",
-            flexShrink: 0,
-          }}
-        />
-        <div className="flex flex-col min-w-0" style={{ gap: 3 }}>
-          <div className="flex items-center" style={{ gap: 10 }}>
-            <span
-              className="truncate"
-              style={{
-                color: "#e6edf3",
-                fontSize: 14,
-                fontWeight: 500,
-                fontFamily: "var(--font-sans)",
-              }}
-            >
+      {/* Left info */}
+      <div className="flex items-center gap-3 min-w-0">
+        <div className="w-8 h-8 rounded-lg bg-neutral-800/80 border border-white/5 group-hover:border-violet-500/20 flex items-center justify-center flex-shrink-0">
+          {repo.isPrivate ? (
+            <Lock size={14} className="text-amber-400/80" />
+          ) : (
+            <FolderGit2
+              size={15}
+              className="text-neutral-400 group-hover:text-violet-300 transition-colors"
+            />
+          )}
+        </div>
+
+        <div className="flex flex-col min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors truncate font-sans">
               {repo.name}
             </span>
             {repo.isPrivate && (
-              <span
-                className="rounded flex-shrink-0"
-                style={{
-                  padding: "1px 8px",
-                  background: "rgba(255,255,255,0.06)",
-                  border: "1px solid rgba(255,255,255,0.08)",
-                  fontSize: 10,
-                  fontWeight: 600,
-                  color: "#8b949e",
-                  fontFamily: "var(--font-sans)",
-                  letterSpacing: "0.04em",
-                  textTransform: "uppercase",
-                }}
-              >
+              <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">
                 Private
               </span>
             )}
           </div>
-          <div
-            className="flex items-center"
-            style={{ gap: 10, fontSize: 12, color: "#484f58" }}
-          >
-            <span className="flex items-center" style={{ gap: 5 }}>
-              <span
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: "50%",
-                  background: repo.langColor,
-                  display: "inline-block",
-                }}
-              />
-              {repo.language}
-            </span>
+
+          <div className="flex items-center gap-2.5 mt-0.5 text-[11px] text-neutral-400">
+            {repo.language && (
+              <span className="flex items-center gap-1.5">
+                <span
+                  className="w-2 h-2 rounded-full inline-block shadow-sm"
+                  style={{ backgroundColor: repo.langColor }}
+                />
+                {repo.language}
+              </span>
+            )}
+            <span className="text-neutral-600">•</span>
             <span>Updated {repo.updatedAt}</span>
           </div>
         </div>
       </div>
 
-      {/* Right: Import button (always visible) */}
+      {/* Right action */}
       <motion.button
-        whileHover={!importing ? { scale: 1.03 } : {}}
-        whileTap={!importing ? { scale: 0.97 } : {}}
-        onClick={handleImport}
-        disabled={importing}
-        className="flex items-center rounded-lg flex-shrink-0 cursor-pointer"
-        style={{
-          padding: "8px 20px",
-          gap: 6,
-          background: importing
-            ? "rgba(124,58,237,0.5)"
-            : hovered
-              ? "linear-gradient(135deg, #7c3aed, #6d28d9)"
-              : "rgba(255,255,255,0.06)",
-          border:
-            hovered && !importing
-              ? "1px solid rgba(124,58,237,0.4)"
-              : "1px solid rgba(255,255,255,0.08)",
-          color: hovered || importing ? "#fff" : "#8b949e",
-          fontSize: 13,
-          fontWeight: 500,
-          fontFamily: "var(--font-sans)",
-          transition: "all 0.2s ease",
-          boxShadow:
-            hovered && !importing ? "0 0 12px rgba(124,58,237,0.2)" : "none",
-          opacity: importing ? 0.8 : 1,
-          cursor: importing ? "not-allowed" : "pointer",
+        whileHover={!importing ? { scale: 1.04 } : {}}
+        whileTap={!importing ? { scale: 0.96 } : {}}
+        onClick={(e) => {
+          e.stopPropagation();
+          handleImport();
         }}
+        disabled={importing}
+        className="px-3.5 py-1.5 rounded-lg text-xs font-medium text-neutral-300 group-hover:text-white bg-white/5 group-hover:bg-violet-600 hover:!bg-violet-500 border border-white/10 group-hover:border-violet-400/40 transition-all flex items-center gap-1.5 flex-shrink-0 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
         id={`repo-import-${repo.id}`}
       >
-        {importing ? <Loader2 size={14} className="animate-spin" /> : null}
-        {importing ? "Importing..." : "Import"}
+        {importing ? (
+          <>
+            <Loader2 size={12} className="animate-spin" />
+            <span>Importing...</span>
+          </>
+        ) : (
+          <span>Import</span>
+        )}
       </motion.button>
     </motion.div>
   );
@@ -217,12 +182,11 @@ function RepoItem({ repo, index, onClose, onSuccess, showToast }) {
 /* ── Repo List ───────────────────────────────────────────── */
 export default function RepoList({ onClose, onSuccess }) {
   const [searchQuery, setSearchQuery] = useState("");
-  const [focused, setFocused] = useState(false);
   const [repos, setRepos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
-  const reposPerPage = 10;
+  const reposPerPage = 6;
   const { showToast } = useToast();
 
   useEffect(() => {
@@ -244,7 +208,7 @@ export default function RepoList({ onClose, onSuccess }) {
         setRepos(mapped);
       })
       .catch((err) => {
-        setErrorMsg(err.message);
+        setErrorMsg(err.message || "Failed to load repositories.");
       })
       .finally(() => setLoading(false));
   }, []);
@@ -253,7 +217,7 @@ export default function RepoList({ onClose, onSuccess }) {
     r.name.toLowerCase().includes(searchQuery.toLowerCase()),
   );
 
-  const totalPages = Math.ceil(filteredRepos.length / reposPerPage);
+  const totalPages = Math.ceil(filteredRepos.length / reposPerPage) || 1;
   const displayedRepos = filteredRepos.slice(
     (currentPage - 1) * reposPerPage,
     currentPage * reposPerPage,
@@ -263,93 +227,52 @@ export default function RepoList({ onClose, onSuccess }) {
     setCurrentPage(1);
   }, [searchQuery]);
 
+  const ownerName = repos[0]?.owner || "Connected Account";
+
   return (
-    <div className="flex flex-col" style={{ gap: 16 }}>
-      {/* User account + filter row */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center" style={{ gap: 10 }}>
-          <div
-            className="rounded-full"
-            style={{
-              width: 28,
-              height: 28,
-              background: "rgba(255,255,255,0.06)",
-              border: "1px solid rgba(255,255,255,0.1)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <User size={14} style={{ color: "#6e7681" }} />
+    <div className="flex flex-col h-full gap-3">
+      {/* Search and account header */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <div className="w-6 h-6 rounded-full bg-neutral-800 border border-white/10 flex items-center justify-center">
+            <User size={12} className="text-neutral-400" />
           </div>
-          <span
-            style={{
-              fontSize: 14,
-              fontWeight: 500,
-              color: "#e6edf3",
-              fontFamily: "var(--font-sans)",
-            }}
-          >
-            user-account
+          <span className="text-xs font-semibold text-neutral-200 font-mono">
+            {ownerName}
+          </span>
+          <span className="text-[10px] text-neutral-500 font-mono">
+            ({filteredRepos.length} repos)
           </span>
         </div>
 
-        {/* Search filter */}
-        <div
-          className="flex items-center rounded-lg"
-          style={{
-            gap: 8,
-            padding: "8px 14px",
-            background: focused
-              ? "rgba(124,58,237,0.06)"
-              : "rgba(255,255,255,0.04)",
-            border: "1px solid",
-            borderColor: focused
-              ? "rgba(124,58,237,0.25)"
-              : "rgba(255,255,255,0.08)",
-            transition: "all 0.25s ease",
-            width: 200,
-          }}
-        >
+        {/* Filter input */}
+        <div className="relative w-48">
           <Search
-            size={14}
-            style={{
-              color: focused ? "#a78bfa" : "#484f58",
-              flexShrink: 0,
-              transition: "color 0.2s ease",
-            }}
+            size={13}
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-500"
           />
           <input
             type="text"
-            placeholder="Filter repositories..."
+            placeholder="Search repos..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            onFocus={() => setFocused(true)}
-            onBlur={() => setFocused(false)}
-            className="w-full bg-transparent outline-none placeholder:text-[#484f58]"
-            style={{
-              color: "#e6edf3",
-              fontFamily: "var(--font-sans)",
-              fontSize: 12,
-              border: "none",
-            }}
+            className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg bg-neutral-900/80 border border-white/10 focus:border-violet-500/40 outline-none text-neutral-200 placeholder:text-neutral-600 transition-all font-sans"
             id="repo-search-input"
           />
         </div>
       </div>
 
-      {/* Repo list */}
-      <div
-        className="flex flex-col overflow-y-auto"
-        style={{ gap: 6, maxHeight: 300 }}
-      >
+      {/* Repo list container */}
+      <div className="flex flex-col gap-2 overflow-y-auto max-h-[290px] pr-1 scrollbar-thin scrollbar-thumb-white/10">
         {loading ? (
-          <div className="flex justify-center p-8">
-            <Loader2 className="animate-spin text-gray-400" size={24} />
+          <div className="flex flex-col items-center justify-center py-12 gap-2 text-neutral-500">
+            <Loader2 className="animate-spin text-violet-400" size={22} />
+            <span className="text-xs">Loading repositories...</span>
           </div>
         ) : errorMsg ? (
-          <div className="flex flex-col items-center justify-center p-8 text-red-400 text-sm">
-            {errorMsg}
+          <div className="flex flex-col items-center justify-center py-8 text-red-400 text-xs text-center">
+            <p className="font-semibold">Unable to fetch repositories</p>
+            <p className="text-neutral-500 mt-1">{errorMsg}</p>
           </div>
         ) : displayedRepos.length > 0 ? (
           displayedRepos.map((repo, i) => (
@@ -363,42 +286,39 @@ export default function RepoList({ onClose, onSuccess }) {
             />
           ))
         ) : (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="flex flex-col items-center justify-center"
-            style={{ gap: 8, padding: "40px 0" }}
-          >
-            <Search size={24} style={{ color: "#30363d" }} />
-            <span style={{ color: "#484f58", fontSize: 13 }}>
-              No repositories found
-            </span>
-          </motion.div>
+          <div className="flex flex-col items-center justify-center py-10 gap-2 text-neutral-500">
+            <Search size={22} className="text-neutral-600" />
+            <span className="text-xs">No repositories match your filter</span>
+          </div>
         )}
       </div>
 
-      {/* Pagination Controls */}
+      {/* Pagination controls */}
       {totalPages > 1 && (
-        <div className="flex justify-center items-center gap-2 mt-2 pt-2 border-t border-[rgba(255,255,255,0.05)]">
-          <button
-            disabled={currentPage === 1}
-            onClick={() => setCurrentPage((curr) => Math.max(curr - 1, 1))}
-            className="px-2 py-1 text-xs text-[#8b949e] hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-          >
-            Prev
-          </button>
-          <span className="text-[10px] text-[#484f58] uppercase font-bold">
-            {currentPage} / {totalPages}
+        <div className="flex items-center justify-between pt-2 border-t border-white/5 text-xs text-neutral-400">
+          <span className="text-[11px] font-mono text-neutral-500">
+            Page {currentPage} of {totalPages}
           </span>
-          <button
-            disabled={currentPage === totalPages}
-            onClick={() =>
-              setCurrentPage((curr) => Math.min(curr + 1, totalPages))
-            }
-            className="px-2 py-1 text-xs text-[#8b949e] hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-          >
-            Next
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              disabled={currentPage === 1}
+              onClick={() => setCurrentPage((curr) => Math.max(curr - 1, 1))}
+              className="p-1 rounded-md hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-neutral-300"
+              title="Previous page"
+            >
+              <ChevronLeft size={14} />
+            </button>
+            <button
+              disabled={currentPage === totalPages}
+              onClick={() =>
+                setCurrentPage((curr) => Math.min(curr + 1, totalPages))
+              }
+              className="p-1 rounded-md hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-neutral-300"
+              title="Next page"
+            >
+              <ChevronRight size={14} />
+            </button>
+          </div>
         </div>
       )}
     </div>

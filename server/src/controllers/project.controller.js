@@ -1181,6 +1181,15 @@ class ProjectController {
         },
       });
 
+      // Update project with repoUrl
+      const repoUrl = `https://github.com/${owner}/${repo}`;
+      await prisma.project
+        .update({
+          where: { id: projectId },
+          data: { repoUrl },
+        })
+        .catch((err) => console.error("Error updating project repoUrl:", err));
+
       return res.status(201).json({
         message: "Repository imported successfully",
         snapshot: {

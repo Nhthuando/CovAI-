@@ -44,15 +44,30 @@ export const cloneGitHubRepositoryByUrl = async (req, res) => {
         jestConfigPath: detection.configPath,
         jestCommand: detection.jestCommand,
         testingFrameworksJson: JSON.stringify(detection.testingFrameworks),
-      }
+      },
     });
+
+    // Save repoUrl and defaultBranch to project
+    await prisma.project
+      .update({
+        where: { id: projectId },
+        data: {
+          repoUrl: url,
+          defaultBranch: cloneResult.defaultBranch || "main",
+        },
+      })
+      .catch((err) => console.error("Error updating project repoUrl:", err));
 
     // Build CFG in background
     buildCfgForSnapshot(snapshot.id).catch((err) => {
       console.error("Error building CFG for GitHub URL import:", err);
     });
 
-    res.status(200).json({ ...cloneResult, snapshotId: snapshot.id, testingFrameworks: detection.testingFrameworks });
+    res.status(200).json({
+      ...cloneResult,
+      snapshotId: snapshot.id,
+      testingFrameworks: detection.testingFrameworks,
+    });
   } catch (error) {
     console.error("Error cloning GitHub repository by URL:", error);
     res.status(500).json({ message: "Error during repository cloning." });
@@ -103,15 +118,31 @@ export const importGitHubRepository = async (req, res) => {
         jestConfigPath: detection.configPath,
         jestCommand: detection.jestCommand,
         testingFrameworksJson: JSON.stringify(detection.testingFrameworks),
-      }
+      },
     });
+
+    // Save repoUrl and defaultBranch to project
+    const repoUrl = `https://github.com/${owner}/${repo}`;
+    await prisma.project
+      .update({
+        where: { id: projectId },
+        data: {
+          repoUrl,
+          defaultBranch: cloneResult.defaultBranch || "main",
+        },
+      })
+      .catch((err) => console.error("Error updating project repoUrl:", err));
 
     // Build CFG in background
     buildCfgForSnapshot(snapshot.id).catch((err) => {
       console.error("Error building CFG for GitHub Repo import:", err);
     });
 
-    res.status(200).json({ ...cloneResult, snapshotId: snapshot.id, testingFrameworks: detection.testingFrameworks });
+    res.status(200).json({
+      ...cloneResult,
+      snapshotId: snapshot.id,
+      testingFrameworks: detection.testingFrameworks,
+    });
   } catch (error) {
     console.error("Error importing GitHub repository:", error);
 
@@ -125,7 +156,10 @@ export const importGitHubRepository = async (req, res) => {
     } else if (error.message === "Invalid repository") {
       return res.status(400).json({ message: "Invalid repository format." });
     } else if (error.message === "Missing GitHub token") {
-      return res.status(401).json({ message: "GitHub authentication token is missing. Please connect your GitHub account." });
+      return res.status(401).json({
+        message:
+          "GitHub authentication token is missing. Please connect your GitHub account.",
+      });
     } else if (error.message.includes("clone failure")) {
       return res.status(500).json({
         message: "Failed to clone repository due to an internal error.",
