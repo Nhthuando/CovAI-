@@ -1,3 +1,5 @@
+import fs from "fs";
+import path from "path";
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 
@@ -38,12 +40,30 @@ const extractFilePath = (entry, key) => {
     return null;
 };
 
-const extractFunctionRowsFromIstanbul = (entry, snapshotId, filePath) => {
+const extractFunctionRowsFromIstanbul = (entry, snapshotId, filePath, rootDir = null) => {
     const fnMap = entry.fnMap;
     const counts = entry.f;
 
     if (!fnMap || typeof fnMap !== "object" || !counts || typeof counts !== "object") {
         return [];
+    }
+
+    let codeLines = null;
+    if (rootDir && typeof filePath === "string") {
+        const candidatePaths = [
+            filePath,
+            path.join(rootDir, filePath),
+            path.join(rootDir, filePath.replace(/^(\.?[\\/])+/, "")),
+            path.join(rootDir, "src", path.basename(filePath))
+        ];
+        for (const cp of candidatePaths) {
+            if (cp && fs.existsSync(cp)) {
+                try {
+                    codeLines = fs.readFileSync(cp, "utf8").split("\n");
+                    break;
+                } catch { }
+            }
+        }
     }
 
     return Object.entries(fnMap)
@@ -53,7 +73,7 @@ const extractFunctionRowsFromIstanbul = (entry, snapshotId, filePath) => {
                 return null;
             }
 
-            const functionName =
+            let functionName =
                 (fnMeta && typeof fnMeta.name === "string" && fnMeta.name.trim()) ||
                 `anonymous_${fnId}`;
 
@@ -71,6 +91,19 @@ const extractFunctionRowsFromIstanbul = (entry, snapshotId, filePath) => {
                 }
                 if (startLine === null && typeof fnMeta.line === "number") {
                     startLine = normalizeNumber(fnMeta.line);
+                }
+            }
+
+            if ((!functionName || functionName.startsWith("anonymous") || functionName.startsWith("(anonymous")) && Array.isArray(codeLines)) {
+                const targetLineIdx = startLine ?? (typeof fnMeta?.line === "number" ? fnMeta.line : null);
+                if (targetLineIdx && codeLines[targetLineIdx - 1]) {
+                    const lineText = codeLines[targetLineIdx - 1];
+                    const match = lineText.match(/(?:export\s+)?(?:default\s+)?(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=/i) ||
+                        lineText.match(/([a-zA-Z0-9_$]+)\s*[:=]\s*(?:async\s*)?\(/i) ||
+                        lineText.match(/(?:function\s+)?([a-zA-Z0-9_$]+)\s*\(/i);
+                    if (match && match[1]) {
+                        functionName = match[1];
+                    }
                 }
             }
 
@@ -120,7 +153,7 @@ const extractFunctionRowsFromList = (entry, snapshotId, filePath) => {
         .filter(Boolean);
 };
 
-const getFunctionCoverageRecords = (coverageReport, snapshotId) => {
+const getFunctionCoverageRecords = (coverageReport, snapshotId, rootDir = null) => {
     if (!coverageReport || typeof coverageReport !== "object") {
         return [];
     }
@@ -144,7 +177,7 @@ const getFunctionCoverageRecords = (coverageReport, snapshotId) => {
             return [];
         }
 
-        const istanbulRecords = extractFunctionRowsFromIstanbul(entry, snapshotId, filePath);
+        const istanbulRecords = extractFunctionRowsFromIstanbul(entry, snapshotId, filePath, rootDir);
         if (istanbulRecords.length > 0) {
             return istanbulRecords;
         }
@@ -189,7 +222,7 @@ export const parseCoverageFunctionsForSnapshot = async ({
         throw new ServiceError("You do not have permission to update coverage for this project", 403);
     }
 
-    const functionRows = getFunctionCoverageRecords(coverageReport, snapshotId);
+    const functionRows = getFunctionCoverageRecords(coverageReport, snapshotId, snapshot.rootDir);
 
     if (functionRows.length === 0) {
         throw new ServiceError("No function coverage records found in coverage report", 400);

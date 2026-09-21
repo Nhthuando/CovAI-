@@ -70,7 +70,7 @@ const runNpmInstall = async (jobId, rootDir) => {
  * @returns {Promise<{ exitCode: number }>}
  */
 const runJestCoverage = async (jobId, rootDir, jestConfigPath) => {
-    let jestCmd = "npx jest --coverage --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=test-results.json --forceExit --testTimeout=30000";
+    let jestCmd = 'npx jest --coverage --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=test-results.json --forceExit --testTimeout=30000 --testPathIgnorePatterns="playwright|cypress|supertest|vitest"';
 
     if (jestConfigPath) {
         // Path inside Docker must be relative to /workspace
@@ -84,11 +84,38 @@ const runJestCoverage = async (jobId, rootDir, jestConfigPath) => {
         snapshotPath: rootDir,
         command: jestCmd,
         timeoutMs: JEST_TIMEOUT_MS,
-        jobId
+        jobId,
+        env: {
+            NODE_OPTIONS: "--experimental-vm-modules"
+        }
     });
+
+    // Ensure test-results.json is synced to coverage/ if created in rootDir
+    const rootTestResults = path.join(rootDir, "test-results.json");
+    const covDir = path.join(rootDir, "coverage");
+    const covTestResults = path.join(covDir, "test-results.json");
+    const jestResultsPath = path.join(covDir, "jest-results.json");
+    if (fs.existsSync(rootTestResults)) {
+        try {
+            if (!fs.existsSync(covDir)) {
+                fs.mkdirSync(covDir, { recursive: true });
+            }
+            fs.copyFileSync(rootTestResults, covTestResults);
+            fs.copyFileSync(rootTestResults, jestResultsPath);
+        } catch { }
+    }
 
     // Jest exit code 1 = có test fail nhưng coverage vẫn sinh → chấp nhận
     // exit code >= 2 = lỗi nghiêm trọng (config sai, không chạy được)
+    // Nếu exit code khác 0 và không sinh coverage-summary.json thì coi như lỗi nghiêm trọng
+    const summaryFile = path.join(covDir, "coverage-summary.json");
+    if (!result.success && !fs.existsSync(summaryFile) && (result.exitCode === null || result.exitCode >= 1)) {
+        const errorDetail = result.stderr?.trim() || result.stdout?.trim() || `exit code ${result.exitCode}`;
+        const msg = `[SCRUM-140] jest kết thúc với exit code ${result.exitCode} và không sinh coverage: ${errorDetail.slice(-300)}`;
+        await addJobLog(jobId, "ERROR", msg).catch(() => { });
+        throw new Error(msg);
+    }
+
     if (!result.success && result.exitCode !== null && result.exitCode >= 2) {
         const msg = `[SCRUM-140] jest kết thúc với exit code ${result.exitCode} (lỗi nghiêm trọng)`;
         await addJobLog(jobId, "ERROR", msg).catch(() => { });

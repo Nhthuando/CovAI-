@@ -47,6 +47,14 @@ export function detectCoverageFrameworks(rootDir) {
 
   const dependencies = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
   const scripts = Object.values(pkg.scripts || {}).join(" ").toLowerCase();
+  const testScript = (pkg.scripts?.test || "").toLowerCase();
+  let testScriptFramework = null;
+  if (/\bvitest\b/.test(testScript)) {
+    testScriptFramework = "vitest";
+  } else if (/\bjest\b/.test(testScript)) {
+    testScriptFramework = "jest";
+  }
+
   const all = [];
 
   for (const [framework, packageNames] of Object.entries(PACKAGE_NAMES)) {
@@ -59,17 +67,31 @@ export function detectCoverageFrameworks(rootDir) {
   const supported = Object.fromEntries(
     Object.entries(COVERAGE_FRAMEWORKS).map(([type, names]) => [type, names.filter((name) => all.includes(name))]),
   );
-  return { all, supported, unsupported: all.filter((name) => !Object.values(COVERAGE_FRAMEWORKS).flat().includes(name)) };
+  return { all, supported, unsupported: all.filter((name) => !Object.values(COVERAGE_FRAMEWORKS).flat().includes(name)), testScriptFramework };
 }
 
-export function selectCoverageFramework(detection, type) {
+export function selectCoverageFramework(detection, type, requestedFramework = null) {
   const allowed = COVERAGE_FRAMEWORKS[type];
   if (!allowed) {
     const error = new Error("coverageType must be unit, integration, or system.");
     error.statusCode = 400;
     throw error;
   }
-  const framework = detection.supported[type][0];
+
+  const supported = detection.supported[type] || [];
+
+  // 1. If a specific framework was requested and is supported, use it
+  if (requestedFramework && supported.includes(requestedFramework.toLowerCase())) {
+    return requestedFramework.toLowerCase();
+  }
+
+  // 2. If package.json explicitly defines a framework in "test" script, prioritize it for unit tests
+  if (type === "unit" && detection.testScriptFramework && supported.includes(detection.testScriptFramework)) {
+    return detection.testScriptFramework;
+  }
+
+  // 3. Fallback to first supported framework
+  const framework = supported[0];
   if (framework) return framework;
 
   const detectedText = detection.all.length ? detection.all.join(", ") : "none";

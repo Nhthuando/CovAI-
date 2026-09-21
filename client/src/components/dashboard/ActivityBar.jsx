@@ -8,6 +8,7 @@ import {
   Zap,
   BarChart3,
   GitGraph,
+  GitBranch,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -18,6 +19,7 @@ const TOP_ITEMS = [
   { id: "coverage", icon: BarChart3, label: "Coverage" },
   { id: "jobs", icon: Cpu, label: "Job Queue" },
   { id: "architecture", icon: Network, label: "Architecture" },
+  { id: "logic-analysis", icon: GitBranch, label: "Logic Analysis" },
 ];
 
 const BOTTOM_ITEMS = [{ id: "settings", icon: Settings, label: "Settings" }];
