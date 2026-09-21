@@ -1,18 +1,19 @@
+import fs from "fs";
+import path from "path";
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { createInstallDepsJob, createRunTestsJob, createSupertestCoverageJob, createVitestCoverageJob, createCypressSystemCoverageJob, createPlaywrightSystemCoverageJob } from "../services/job.service.js";
-import { jobQueue, addSupertestCoveragePipeline } from "../services/queue.service.js";
+import { jobQueue, addSupertestCoveragePipeline, addJobToQueue } from "../services/queue.service.js";
 import { processCoverageJob } from "../services/coverageRunner.service.js";
-import { addJobToQueue } from "../services/queue.service.js";
 import { detectSupertest } from "../services/supertestDetection.service.js";
 import { detectCoverageFrameworks, selectCoverageFramework } from "../services/coverageFramework.service.js";
+import { getFileCoverageDetails } from "../services/fileCoverage.service.js";
+import { suggestUnitTestcases } from "../services/unitTestSuggestion.service.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const ALLOWED_SORT_FIELDS = ["filePath", "linesPct", "branchesPct", "funcsPct", "stmtsPct"];
 const ALLOWED_SORT_ORDERS = ["asc", "desc"];
-
-// SCRUM-160: Functions endpoint sort fields
 const ALLOWED_FUNC_SORT_FIELDS = ["functionName", "filePath", "hit", "startLine"];
 
 const findOwnedSnapshot = (snapshotId, userId) => prisma.projectSnapshot.findFirst({
@@ -34,37 +35,61 @@ export const getCoverageFrameworks = async (req, res) => {
 export const runCoverageByType = async (req, res) => {
     try {
         const { snapshotId, coverageType } = req.params;
+        const requestedFramework = req.body?.framework || req.query?.framework || null;
         const userId = req.user?.id;
         const snapshot = await findOwnedSnapshot(snapshotId, userId);
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
         if (!snapshot.rootDir) return res.status(409).json({ success: false, message: "Snapshot is not ready for analysis." });
 
         const detection = detectCoverageFrameworks(snapshot.rootDir);
-        const framework = selectCoverageFramework(detection, coverageType);
         let job;
+        let jobs = [];
+        let framework;
 
-        if (framework === "jest") {
-            job = await createRunTestsJob({ projectId: snapshot.projectId, snapshotId, userId, mode: "FULL" });
-            await addJobToQueue("RUN_TESTS", job.id);
-        } else if (framework === "vitest") {
-            job = await createVitestCoverageJob({ projectId: snapshot.projectId, snapshotId, userId });
-            await addJobToQueue("VITEST_COVERAGE", job.id);
-        } else if (framework === "supertest") {
-            const installJob = await createInstallDepsJob({ projectId: snapshot.projectId, snapshotId, userId });
-            job = await createSupertestCoverageJob({ projectId: snapshot.projectId, snapshotId, userId });
-            await addSupertestCoveragePipeline(installJob.id, job.id);
-        } else if (framework === "playwright") {
-            job = await createPlaywrightSystemCoverageJob({ projectId: snapshot.projectId, snapshotId, userId });
-            await addJobToQueue("PLAYWRIGHT_SYSTEM_COVERAGE", job.id);
+        if (coverageType === "unit") {
+            const unitFws = detection.supported?.unit || [];
+            // If both Jest and Vitest are detected, run BOTH automatically!
+            if (unitFws.includes("jest") && unitFws.includes("vitest")) {
+                framework = "jest & vitest";
+                const jestJob = await createRunTestsJob({ projectId: snapshot.projectId, snapshotId, userId, mode: "FULL" });
+                const vitestJob = await createVitestCoverageJob({ projectId: snapshot.projectId, snapshotId, userId });
+                await addJobToQueue("RUN_TESTS", jestJob.id);
+                await addJobToQueue("VITEST_COVERAGE", vitestJob.id);
+                job = jestJob;
+                jobs = [jestJob, vitestJob];
+            } else if (unitFws.includes("vitest")) {
+                framework = "vitest";
+                job = await createVitestCoverageJob({ projectId: snapshot.projectId, snapshotId, userId });
+                await addJobToQueue("VITEST_COVERAGE", job.id);
+                jobs = [job];
+            } else {
+                framework = "jest";
+                job = await createRunTestsJob({ projectId: snapshot.projectId, snapshotId, userId, mode: "FULL" });
+                await addJobToQueue("RUN_TESTS", job.id);
+                jobs = [job];
+            }
         } else {
-            job = await createCypressSystemCoverageJob({ projectId: snapshot.projectId, snapshotId, userId });
-            await addJobToQueue("CYPRESS_SYSTEM_COVERAGE", job.id);
+            framework = selectCoverageFramework(detection, coverageType, requestedFramework);
+            if (framework === "supertest") {
+                const installJob = await createInstallDepsJob({ projectId: snapshot.projectId, snapshotId, userId });
+                job = await createSupertestCoverageJob({ projectId: snapshot.projectId, snapshotId, userId });
+                await addSupertestCoveragePipeline(installJob.id, job.id);
+                jobs = [installJob, job];
+            } else if (framework === "playwright") {
+                job = await createPlaywrightSystemCoverageJob({ projectId: snapshot.projectId, snapshotId, userId });
+                await addJobToQueue("PLAYWRIGHT_SYSTEM_COVERAGE", job.id);
+                jobs = [job];
+            } else {
+                job = await createCypressSystemCoverageJob({ projectId: snapshot.projectId, snapshotId, userId });
+                await addJobToQueue("CYPRESS_SYSTEM_COVERAGE", job.id);
+                jobs = [job];
+            }
         }
 
         return res.status(202).json({
             success: true,
             message: `${framework} ${coverageType} coverage queued.`,
-            data: { framework, coverageType, detectedFrameworks: detection.all, job },
+            data: { framework, coverageType, detectedFrameworks: detection.all, job, jobs },
         });
     } catch (error) {
         return res.status(error.statusCode || 500).json({
@@ -107,6 +132,7 @@ export const getCoverageSummary = async (req, res) => {
                 source: true,
                 commitSha: true,
                 createdAt: true,
+                rootDir: true,
                 project: {
                     select: { ownerId: true, name: true },
                 },
@@ -140,6 +166,25 @@ export const getCoverageSummary = async (req, res) => {
                 statements: 0,
             };
 
+        // Read rawTotals from coverage-summary.json if exists
+        let rawTotals = null;
+        if (snapshot.rootDir) {
+            const summaryFile = path.join(snapshot.rootDir, "coverage", "coverage-summary.json");
+            if (fs.existsSync(summaryFile)) {
+                try {
+                    const raw = JSON.parse(fs.readFileSync(summaryFile, "utf8"));
+                    if (raw && raw.total) {
+                        rawTotals = {
+                            statements: raw.total.statements || null,
+                            branches: raw.total.branches || null,
+                            functions: raw.total.functions || null,
+                            lines: raw.total.lines || null,
+                        };
+                    }
+                } catch (_) { }
+            }
+        }
+
         // Return formatted response even before the first coverage run completes.
         return res.status(200).json({
             success: true,
@@ -151,6 +196,7 @@ export const getCoverageSummary = async (req, res) => {
                 commitSha: snapshot.commitSha ?? null,
                 snapshotCreatedAt: snapshot.createdAt,
                 coverage,
+                rawTotals,
                 summaryCreatedAt: summary?.createdAt ?? null,
             },
         });
@@ -488,6 +534,191 @@ export const getTestExecution = async (req, res) => {
     }
 };
 
+/**
+ * GET /api/coverage/:snapshotId/test-suites?type=unit|integration|system
+ * Returns test files executed for this snapshot, with classification and test case counts.
+ * For type=unit: strictly returns Jest and Vitest test files only.
+ */
+export const getCoverageTestSuites = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
+
+        const { snapshotId } = req.params;
+        if (!snapshotId) return res.status(400).json({ success: false, message: "snapshotId is required." });
+
+        const requestedType = (req.query.type || "unit").toLowerCase();
+
+        const snapshot = await prisma.projectSnapshot.findUnique({
+            where: { id: snapshotId },
+            select: {
+                id: true,
+                projectId: true,
+                rootDir: true,
+                project: { select: { ownerId: true } }
+            }
+        });
+
+        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
+        if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
+
+        if (!snapshot.rootDir || !fs.existsSync(snapshot.rootDir)) {
+            return res.status(200).json({ success: true, data: { testSuites: [] } });
+        }
+
+        // 1. Locate test-results.json (check candidate paths and merge results from both Jest & Vitest)
+        const candidatePaths = [
+            path.join(snapshot.rootDir, "coverage", "jest-results.json"),
+            path.join(snapshot.rootDir, "coverage", "vitest-results.json"),
+            path.join(snapshot.rootDir, "jest-results.json"),
+            path.join(snapshot.rootDir, "vitest-results.json"),
+            path.join(snapshot.rootDir, "test-results.json"),
+            path.join(snapshot.rootDir, "coverage", "test-results.json"),
+            path.join(snapshot.rootDir, "coverage", "test-result.json"),
+        ];
+
+        const allTestResults = [];
+        const seenFiles = new Set();
+        for (const p of candidatePaths) {
+            if (fs.existsSync(p) && !seenFiles.has(p)) {
+                seenFiles.add(p);
+                try {
+                    const parsed = JSON.parse(fs.readFileSync(p, "utf8"));
+                    if (Array.isArray(parsed?.testResults)) {
+                        allTestResults.push(...parsed.testResults);
+                    }
+                } catch (_) { }
+            }
+        }
+
+        const norm = (p) => (p || "").replace(/\\/g, "/").replace(/^\.?\//, "").trim();
+
+        // Map results by normalized relative path
+        const resultsByPath = new Map();
+        for (const suite of allTestResults) {
+            const normName = suite.name ? norm(path.relative(snapshot.rootDir, suite.name)) : "";
+            const cleanName = normName || (suite.name ? norm(suite.name) : "");
+            resultsByPath.set(cleanName, suite);
+            resultsByPath.set(path.basename(cleanName), suite);
+        }
+
+        // 2. Discover test files in snapshot rootDir
+        const testFiles = [];
+        const scanDir = (dir) => {
+            if (!fs.existsSync(dir)) return;
+            const entries = fs.readdirSync(dir, { withFileTypes: true });
+            for (const entry of entries) {
+                const fullPath = path.join(dir, entry.name);
+                if (entry.isDirectory()) {
+                    if (entry.name !== "node_modules" && entry.name !== ".git" && entry.name !== "coverage") {
+                        scanDir(fullPath);
+                    }
+                } else if (entry.isFile()) {
+                    const isTest = /(^|\/)(tests?|__tests__|spec)\//i.test(fullPath.replace(/\\/g, "/")) ||
+                        /\.(test|spec)\.[a-z0-9]+$/i.test(entry.name);
+                    if (isTest) {
+                        testFiles.push(fullPath);
+                    }
+                }
+            }
+        };
+
+        scanDir(snapshot.rootDir);
+
+        // 3. Classify and assemble test suites
+        const suites = [];
+        for (const fullPath of testFiles) {
+            const relPath = norm(path.relative(snapshot.rootDir, fullPath));
+            const baseName = path.basename(fullPath);
+            const lowerPath = relPath.toLowerCase();
+
+            // Read header content to detect framework imports
+            let contentHeader = "";
+            try {
+                const buf = Buffer.alloc(1024);
+                const fd = fs.openSync(fullPath, "r");
+                const bytesRead = fs.readSync(fd, buf, 0, 1024, 0);
+                fs.closeSync(fd);
+                contentHeader = buf.toString("utf8", 0, bytesRead).toLowerCase();
+            } catch (_) { }
+
+            // Framework classification
+            let framework = "jest";
+            let category = "unit";
+
+            if (lowerPath.includes("supertest") || contentHeader.includes("supertest")) {
+                framework = "supertest";
+                category = "integration";
+            } else if (lowerPath.includes("playwright") || contentHeader.includes("@playwright/test")) {
+                framework = "playwright";
+                category = "system";
+            } else if (lowerPath.includes("cypress") || contentHeader.includes("cypress")) {
+                framework = "cypress";
+                category = "system";
+            } else if (lowerPath.includes("vitest") || contentHeader.includes("vitest")) {
+                framework = "vitest";
+                category = "unit";
+            } else {
+                framework = "jest";
+                category = "unit";
+            }
+
+            // Filter strictly by requested type!
+            // If requestedType === "unit", ONLY return unit (Jest & Vitest)
+            if (category !== requestedType) {
+                continue;
+            }
+
+            // Find matching execution results from test-results.json
+            const suiteResult = resultsByPath.get(relPath) || resultsByPath.get(baseName);
+            const assertions = (suiteResult && Array.isArray(suiteResult.assertionResults))
+                ? suiteResult.assertionResults.map(a => ({
+                    title: a.title || a.fullName || "Test case",
+                    status: a.status || "passed",
+                    duration: a.duration || 0
+                }))
+                : [];
+
+            const totalTests = assertions.length || (suiteResult?.numPassingTests ?? 0) + (suiteResult?.numFailingTests ?? 0) || 1;
+            const passedTests = assertions.filter(a => a.status === "passed").length || (suiteResult?.numPassingTests ?? (suiteResult?.status === "passed" ? totalTests : 0));
+            const failedTests = assertions.filter(a => a.status === "failed").length || (suiteResult?.numFailingTests ?? (suiteResult?.status === "failed" ? totalTests : 0));
+
+            let status = "passed";
+            if (suiteResult) {
+                status = suiteResult.status === "failed" || failedTests > 0 ? "failed" : "passed";
+            }
+
+            const durationMs = suiteResult ? (suiteResult.endTime - suiteResult.startTime) || 10 : 0;
+
+            suites.push({
+                filePath: relPath,
+                fileName: baseName,
+                framework,
+                category,
+                status,
+                totalTests,
+                passedTests,
+                failedTests,
+                durationMs,
+                assertions,
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                snapshotId,
+                type: requestedType,
+                totalSuites: suites.length,
+                testSuites: suites
+            }
+        });
+    } catch (error) {
+        console.error("[getCoverageTestSuites] Error:", error);
+        return res.status(500).json({ success: false, message: "Server error." });
+    }
+};
+
 export const getCoverageFunctions = async (req, res) => {
     try {
         // ── Auth ─────────────────────────────────────────────────────────────
@@ -599,5 +830,76 @@ export const getCoverageFunctions = async (req, res) => {
             return res.status(error.statusCode).json({ success: false, message: error.message });
         }
         return res.status(500).json({ success: false, message: "Có lỗi server!" });
+    }
+};
+
+/**
+ * GET /api/coverage/:snapshotId/file-coverage?filePath=...
+ * Line-by-line coverage metrics and assertion failure gutter marks.
+ */
+export const getFileCoverage = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
+
+        const { snapshotId } = req.params;
+        const filePath = req.query.filePath;
+        if (!filePath) {
+            return res.status(400).json({ success: false, message: "filePath query parameter is required." });
+        }
+
+        const data = await getFileCoverageDetails(snapshotId, filePath, userId);
+        return res.status(200).json({ success: true, data });
+    } catch (error) {
+        console.error("[getFileCoverage] Error:", error);
+        return res.status(error.statusCode || 500).json({
+            success: false,
+            message: error.message || "Failed to retrieve file coverage."
+        });
+    }
+};
+
+/**
+ * POST /api/coverage/:snapshotId/suggest-testcase
+ * Generates unit test cases for uncovered branches/lines using AI Agent.
+ */
+export const suggestUnitTestcase = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
+
+        const { snapshotId } = req.params;
+        let { projectId, filePath, framework } = req.body || {};
+
+        if (!filePath) {
+            return res.status(400).json({ success: false, message: "filePath is required in body." });
+        }
+
+        if (!projectId) {
+            const snapshot = await prisma.projectSnapshot.findUnique({
+                where: { id: snapshotId },
+                select: { projectId: true }
+            });
+            if (snapshot) projectId = snapshot.projectId;
+        }
+
+        const result = await suggestUnitTestcases({
+            projectId,
+            snapshotId,
+            filePath,
+            userId,
+            framework
+        });
+
+        return res.status(200).json({
+            success: true,
+            data: result
+        });
+    } catch (error) {
+        console.error("[suggestUnitTestcase] Error:", error);
+        return res.status(error.statusCode || 500).json({
+            success: false,
+            message: error.message || "Failed to suggest unit testcases."
+        });
     }
 };

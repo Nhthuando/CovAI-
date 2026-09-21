@@ -87,16 +87,79 @@ export async function getTestExecution(snapshotId) {
 }
 
 export async function getCoverageFrameworks(snapshotId) {
-  const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/frameworks`, {
-    headers: getAuthHeaders(),
-  });
-  return handleResponse(res);
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/frameworks`, {
+        headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
 }
 
-export async function runCoverageByType(snapshotId, coverageType) {
-  const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/${coverageType}/run`, {
-    method: "POST",
-    headers: getAuthHeaders(),
-  });
-  return handleResponse(res);
+export async function runCoverageByType(snapshotId, coverageType, framework) {
+    const headers = getAuthHeaders();
+    const options = {
+        method: "POST",
+        headers: framework ? { ...headers, "Content-Type": "application/json" } : headers,
+        body: framework ? JSON.stringify({ framework }) : undefined,
+    };
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/${coverageType}/run`, options);
+    return handleResponse(res);
+}
+
+export async function getFileCoverage(snapshotId, filePath) {
+    const res = await fetch(
+        `${BASE_URL}/coverage/${snapshotId}/file-coverage?filePath=${encodeURIComponent(filePath)}`,
+        {
+            headers: getAuthHeaders(),
+        }
+    );
+    return handleResponse(res);
+}
+
+export async function suggestUnitTestcase(snapshotId, filePath, projectId) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/suggest-testcase`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ filePath, projectId }),
+    });
+    return handleResponse(res);
+}
+
+export async function getCoverageFunctions(
+    snapshotId,
+    {
+        filePath = "",
+        sortBy = "filePath",
+        order = "asc",
+        page = 1,
+        limit = 200,
+    } = {}
+) {
+    const params = new URLSearchParams({
+        sortBy,
+        order,
+        page,
+        limit,
+    });
+    if (filePath) {
+        params.set("filePath", filePath);
+    }
+
+    const res = await fetch(
+        `${BASE_URL}/coverage/${snapshotId}/functions?${params}`,
+        {
+            headers: getAuthHeaders(),
+        }
+    );
+
+    return handleResponse(res);
+}
+
+export async function getCoverageTestSuites(snapshotId, type = "unit") {
+    const res = await fetch(
+        `${BASE_URL}/coverage/${snapshotId}/test-suites?type=${encodeURIComponent(type)}`,
+        {
+            headers: getAuthHeaders(),
+        }
+    );
+
+    return handleResponse(res);
 }

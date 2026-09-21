@@ -39,7 +39,7 @@ export const dockerRunner = {
    * @param {string} [params.image] - Optional Docker image; ignored by direct-shell fallback
    * @returns {Promise<{ success: boolean, exitCode: number, stdout: string, stderr: string }>}
    */
-  run: async ({ snapshotPath, command, timeoutMs = DEFAULT_TIMEOUT_MS, jobId = null, image = "node:22" }) => {
+  run: async ({ snapshotPath, command, timeoutMs = DEFAULT_TIMEOUT_MS, jobId = null, image = "node:22", env = {} }) => {
     return new Promise((resolve, reject) => {
       let stdout = "";
       let stderr = "";
@@ -60,10 +60,23 @@ export const dockerRunner = {
       let child;
       let timer;
 
+      const mergedEnv = {
+        ...process.env,
+        NODE_OPTIONS: "--experimental-vm-modules",
+        ...env,
+      };
+
       if (DOCKER_AVAILABLE) {
+        const envArgs = [];
+        for (const [k, v] of Object.entries(mergedEnv)) {
+          if (["NODE_OPTIONS", "CI", "NODE_ENV"].includes(k) || k in env) {
+            envArgs.push("-e", `${k}=${v}`);
+          }
+        }
         const args = [
           "run",
           "--rm",
+          ...envArgs,
           "-v",
           `${snapshotPath}:/workspace`,
           "-w",
@@ -75,7 +88,7 @@ export const dockerRunner = {
         ];
         child = spawn("docker", args);
       } else {
-        child = spawn(command, { shell: true, cwd: snapshotPath });
+        child = spawn(command, { shell: true, cwd: snapshotPath, env: mergedEnv });
       }
 
       timer = setTimeout(async () => {

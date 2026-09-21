@@ -63,7 +63,9 @@ export const processVitestCoverageJob = async (jobId) => {
         console.log("=== VITEST STDERR ===", runResult.stderr);
 
         if (!fs.existsSync(summaryPath) || !fs.existsSync(finalPath)) {
-            throw new ServiceError("Vitest completed without producing the required coverage JSON files. Missing @vitest/coverage-v8 or configuration error", 422);
+            const errDetail = (runResult.stderr || runResult.stdout || "").trim();
+            const detailSnippet = errDetail ? ` (${errDetail.split("\n").slice(0, 3).join(" ")})` : "";
+            throw new ServiceError(`Vitest completed without producing the required coverage JSON files. Missing @vitest/coverage-v8 or configuration error.${detailSnippet}`, 422);
         }
 
         // 3. Parse global coverage summary
@@ -78,7 +80,7 @@ export const processVitestCoverageJob = async (jobId) => {
                     type: "VITEST",
                     totalTests: vitestResults.totalTests,
                     passedTests: vitestResults.passedTests,
-                    failedTest: vitestResults.failedTests,
+                    failedTests: vitestResults.failedTests,
                     skippedTests: vitestResults.skippedTests,
                     durationMs: vitestResults.durationMs,
                     status: vitestResults.status, // PASSED or FAILED
@@ -100,7 +102,21 @@ export const processVitestCoverageJob = async (jobId) => {
         await updateJobProgress(jobId, 80);
 
         // 6. Save results to Firebase Storage
-        const storageResult = await storeCoverageOutputs(snapshotId, projectId, coverageDir);
+        let storageResult = {};
+        try {
+            storageResult = await storeCoverageOutputs(snapshotId, projectId, coverageDir);
+            await addJobLog(
+                jobId,
+                "INFO",
+                `[VitestCoverage] Uploaded coverage files: ${storageResult.baseStoragePath}`
+            ).catch(() => { });
+        } catch (storageErr) {
+            await addJobLog(
+                jobId,
+                "WARN",
+                `[VitestCoverage] Could not upload coverage files: ${storageErr.message}`
+            ).catch(() => { });
+        }
 
         // 7. Complete Job
         await markJobSuccess(jobId, {
@@ -110,10 +126,26 @@ export const processVitestCoverageJob = async (jobId) => {
                 functions: summaryResult.total.functions.pct,
                 statements: summaryResult.total.statements.pct,
             },
-            storageBasePath: storageResult.baseStoragePath,
+            storageBasePath: storageResult.baseStoragePath ?? null,
         });
 
         await addJobLog(jobId, "INFO", "Vitest coverage pipline completed successfully.");
+
+        // Chain to BUILD_CFG
+        try {
+            const { default: prisma } = await import("../config/prisma.js");
+            const buildCfgJob = await prisma.job.findFirst({
+                where: { snapshotId, type: "BUILD_CFG", status: "QUEUED" },
+                orderBy: { createdAt: "desc" }
+            });
+            if (buildCfgJob) {
+                const { addJobToQueue } = await import("./queue.service.js");
+                await addJobToQueue("BUILD_CFG", buildCfgJob.id);
+                console.log(`[VitestCoverageJob ${jobId}] Auto-triggered BUILD_CFG job: ${buildCfgJob.id}`);
+            }
+        } catch (chainErr) {
+            console.error(`[VitestCoverageJob ${jobId}] Error triggering BUILD_CFG:`, chainErr);
+        }
     } catch (error) {
         console.error(`[VitestCoverageJob ${jobId}] Error:`, error);
         await markJobFailed(jobId, error).catch(() => { });

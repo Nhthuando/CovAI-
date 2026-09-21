@@ -12,6 +12,8 @@ import {
   AlertCircle,
   Save,
   Check,
+  Sparkles,
+  CheckCircle2,
 } from "lucide-react";
 import MonacoEditor from "@monaco-editor/react";
 import { GitPanel } from "./GitPanel";
@@ -19,6 +21,7 @@ import {
   getFileContentApi,
   updateFileContentApi,
 } from "../../services/project.service";
+import { getFileCoverage } from "../../services/coverage.service";
 
 /* ── Token color map (for simple syntax highlighting) ────── */
 const EXT_LANG_MAP = {
@@ -38,6 +41,15 @@ const EXT_LANG_MAP = {
   ".sh": "shell",
   ".bash": "shell",
   ".txt": "text",
+};
+
+export const isTestFile = (filePath) => {
+  if (!filePath) return false;
+  const normalized = filePath.replace(/\\/g, "/").toLowerCase();
+  return (
+    /(^|\/)(tests?|__tests__|spec|cypress|e2e)\//i.test(normalized) ||
+    /\.(test|spec)\.[a-z0-9]+$/i.test(normalized)
+  );
 };
 
 /* ── Simple keyword highlighting ─────────────────────────── */
@@ -334,66 +346,6 @@ function Tab({ tab, isActive, onSelect, onClose }) {
   );
 }
 
-/* ── Code Line ───────────────────────────────────────────── */
-function CodeLine({
-  lineNum,
-  tokens,
-  isFunction,
-  complexity,
-  decisionPoints,
-  onAnalyze,
-}) {
-  return (
-    <div
-      className="flex items-stretch group"
-      style={{ paddingRight: 16, minHeight: 22 }}
-    >
-      {/* Line number */}
-      <div
-        className="select-none text-right flex-shrink-0"
-        style={{
-          width: 60,
-          paddingRight: 20,
-          paddingTop: 2,
-          color: "var(--ide-line-num)",
-          fontFamily: "var(--font-mono)",
-          fontSize: 13,
-          lineHeight: "1.6",
-        }}
-      >
-        {lineNum}
-      </div>
-
-      {/* Code tokens */}
-      <div
-        style={{
-          fontFamily: "var(--font-mono)",
-          fontSize: 13,
-          lineHeight: "1.6",
-          whiteSpace: "pre",
-          paddingTop: 2,
-          paddingLeft: 4,
-          display: "flex",
-          alignItems: "center",
-        }}
-      >
-        {tokens.length === 0 ? (
-          <span>&nbsp;</span>
-        ) : (
-          tokens.map((tok, i) => (
-            <span
-              key={i}
-              style={{ color: TOKEN_COLORS[tok.type] || TOKEN_COLORS.plain }}
-            >
-              {tok.value}
-            </span>
-          ))
-        )}
-      </div>
-    </div>
-  );
-}
-
 /* ── Editor ─────────────────────────────────────────────── */
 export default function Editor({
   tabs,
@@ -404,6 +356,10 @@ export default function Editor({
   isLoadingTree,
   projectId,
   snapshotId,
+  coverageType = "unit",
+  onOpenFile,
+  onRunAnalysis,
+  onSuggestTestcase,
 }) {
   const [fileContents, setFileContents] = useState({}); // cache: { [fileId]: { content, loading, error } }
   const [complexities, setComplexities] = useState({}); // cache: { [fileId]: { [funcName]: { value, decisionPoints } } }
@@ -413,13 +369,18 @@ export default function Editor({
   const [saveError, setSaveError] = useState("");
   const [showGitPanel, setShowGitPanel] = useState(false);
 
+  // Coverage state
+  const [fileCoverage, setFileCoverage] = useState(null);
+  const [isLoadingCoverage, setIsLoadingCoverage] = useState(false);
+  const [appliedNotification, setAppliedNotification] = useState(null);
+
+  const editorRef = useRef(null);
+  const monacoRef = useRef(null);
+  const decorationsCollectionRef = useRef(null);
+
   // Fetch complexities when active tab changes
   useEffect(() => {
     if (!activeTabId || !projectId || !snapshotId) return;
-
-    if (!snapshotId) {
-      return;
-    }
 
     const user = localStorage.getItem("user");
     const userToken = user ? JSON.parse(user).token : null;
@@ -432,54 +393,77 @@ export default function Editor({
         "Content-Type": "application/json",
       },
     })
-      .then((res) => {
-        return res.text(); // Read as text first to debug
-      })
+      .then((res) => res.text())
       .then((text) => {
-        const data = JSON.parse(text);
+        try {
+          const data = JSON.parse(text);
+          const arrayData = Array.isArray(data)
+            ? data
+            : data.data || data.results || [];
 
-        // If data is not an array, maybe it's { results: [...] } or { data: [...] }
-        const arrayData = Array.isArray(data)
-          ? data
-          : data.data || data.results || [];
+          if (Array.isArray(arrayData)) {
+            const newComplexities = {};
+            const normalize = (p) => p.replace(/\\/g, "/").replace(/^\.\//, "");
 
-        if (Array.isArray(arrayData)) {
-          const newComplexities = {};
-          // Normalize function to match paths: ensure both are relative paths
-          const normalize = (p) => p.replace(/\\/g, "/").replace(/^\.\//, "");
-
-          arrayData.forEach((item) => {
-            const key = normalize(item.filePath);
-            if (!newComplexities[key]) newComplexities[key] = {};
-            newComplexities[key][item.functionName] = {
-              value: item.value,
-              decisionPoints:
-                item.decisionPoints !== undefined
-                  ? item.decisionPoints
-                  : Math.max(0, item.value - 1),
-            };
-          });
-          setComplexities(newComplexities);
+            arrayData.forEach((item) => {
+              const key = normalize(item.filePath);
+              if (!newComplexities[key]) newComplexities[key] = {};
+              newComplexities[key][item.functionName] = {
+                value: item.value,
+                decisionPoints:
+                  item.decisionPoints !== undefined
+                    ? item.decisionPoints
+                    : Math.max(0, item.value - 1),
+              };
+            });
+            setComplexities(newComplexities);
+          }
+        } catch (e) {
+          // ignore parsing error
         }
       })
       .catch((err) => console.error("Failed to fetch complexities", err));
   }, [activeTabId, projectId, snapshotId]);
 
+  const isCurrentTestFile = isTestFile(activeTabId);
+
+  // Fetch file coverage when active tab or snapshot changes
   useEffect(() => {
-    // console.log("🔍 Complexities updated:", JSON.stringify(complexities, null, 2));
-  }, [complexities]);
+    if (!activeTabId || !snapshotId || isCurrentTestFile) {
+      setFileCoverage(null);
+      return;
+    }
+
+    let isMounted = true;
+    setIsLoadingCoverage(true);
+
+    getFileCoverage(snapshotId, activeTabId)
+      .then((res) => {
+        if (!isMounted) return;
+        setFileCoverage(res?.data || null);
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setFileCoverage(null);
+      })
+      .finally(() => {
+        if (isMounted) setIsLoadingCoverage(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [activeTabId, snapshotId, isCurrentTestFile]);
 
   // Fetch file content when active tab changes
   useEffect(() => {
     if (!activeTabId || !projectId) return;
 
-    // Already have content or currently loading
     if (
       fileContents[activeTabId]?.content !== undefined ||
       fileContents[activeTabId]?.loading
     )
       return;
-    // Already fetched (prevents double fetch in StrictMode)
     if (fetchedRef.current.has(activeTabId)) return;
 
     fetchedRef.current.add(activeTabId);
@@ -511,6 +495,70 @@ export default function Editor({
         }));
       });
   }, [activeTabId, projectId, fileContents]);
+
+  const currentFile = fileContents[activeTabId] || {};
+  const activeTab = tabs.find((t) => t.id === activeTabId);
+
+  // Update Monaco decorations for coverage gutters (✓, ⚑, ×)
+  useEffect(() => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    if (!editor || !monaco) return;
+
+    if (decorationsCollectionRef.current) {
+      if (typeof decorationsCollectionRef.current.clear === "function") {
+        decorationsCollectionRef.current.clear();
+      } else if (Array.isArray(decorationsCollectionRef.current)) {
+        editor.deltaDecorations(decorationsCollectionRef.current, []);
+        decorationsCollectionRef.current = [];
+      }
+    }
+
+    if (isCurrentTestFile || !fileCoverage || !fileCoverage.lines) return;
+
+    const decorations = [];
+    const lineEntries = Object.entries(fileCoverage.lines);
+
+    for (const [lineStr, info] of lineEntries) {
+      const lineNum = Number(lineStr);
+      if (isNaN(lineNum) || lineNum < 1) continue;
+
+      let glyphMarginClassName = "";
+      let className = "";
+      let hoverText = "";
+
+      if (info.status === "failed") {
+        glyphMarginClassName = "coverage-glyph-failed";
+        className = "coverage-line-failed";
+        hoverText = `**× Test Assertion Failed** on line ${lineNum}\n\n${info.error || "Assertion failure in test run"}${info.details ? `\n\n\`\`\`\n${info.details.slice(0, 300)}\n\`\`\`` : ""}`;
+      } else if (info.status === "uncovered") {
+        glyphMarginClassName = "coverage-glyph-uncovered";
+        className = "coverage-line-uncovered";
+        hoverText = `**⚑ Uncovered** (Line ${lineNum})\n\n${info.reason || "Not executed by any unit tests"}`;
+      } else if (info.status === "covered") {
+        glyphMarginClassName = "coverage-glyph-passed";
+        hoverText = `**✓ Covered** (Line ${lineNum})\n\nExecuted by tests (${info.hits || 1} hits)`;
+      }
+
+      if (glyphMarginClassName) {
+        decorations.push({
+          range: new monaco.Range(lineNum, 1, lineNum, 1),
+          options: {
+            isWholeLine: true,
+            glyphMarginClassName,
+            className: className || undefined,
+            glyphMarginHoverMessage: hoverText ? { value: hoverText } : undefined,
+          },
+        });
+      }
+    }
+
+    if (typeof editor.createDecorationsCollection === "function") {
+      decorationsCollectionRef.current = editor.createDecorationsCollection(decorations);
+    } else {
+      decorationsCollectionRef.current = editor.deltaDecorations([], decorations);
+    }
+  }, [fileCoverage, activeTabId, currentFile.content, isCurrentTestFile]);
 
   // No files state
   if (!isLoadingTree && fileTree.length === 0) {
@@ -567,34 +615,12 @@ export default function Editor({
     );
   }
 
-  const currentFile = fileContents[activeTabId] || {};
-  const activeTab = tabs.find((t) => t.id === activeTabId);
-
   // Determine language from file extension
   const ext = activeTab ? "." + activeTab.name.split(".").pop() : "";
   const lang = EXT_LANG_MAP[ext.toLowerCase()] || "text";
 
-  // Build breadcrumb from file path (id is the relative path)
+  // Build breadcrumb from file path
   const breadcrumb = activeTabId ? activeTabId.split("/") : [];
-
-  // Parse content into lines with tokens
-  const lines = currentFile.content
-    ? currentFile.content.split("\n").map((line, i) => {
-        const fnName =
-          line.match(/(?:async\s+)?function\s+([a-zA-Z0-9_$]+)/)?.[1] ??
-          line.match(
-            /(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s*)?\(/,
-          )?.[1];
-        return {
-          lineNum: i + 1,
-          tokens: tokenizeLine(line, lang),
-          isFunction: !!fnName,
-          functionName: fnName,
-        };
-      })
-    : [];
-
-  const handleAnalyze = (functionName) => {};
 
   const handleChange = (value) => {
     setSaveError("");
@@ -640,6 +666,9 @@ export default function Editor({
     currentFile.draft !== undefined &&
     currentFile.draft !== currentFile.content;
 
+  const covPctColor = (pct) =>
+    pct >= 80 ? "#22c55e" : pct >= 60 ? "#fbbf24" : "#f87171";
+
   return (
     <motion.div
       className="flex flex-col flex-1 h-full min-w-0"
@@ -670,39 +699,104 @@ export default function Editor({
         </AnimatePresence>
       </div>
 
-      {/* ── Breadcrumb ────────────────────────────────────── */}
+      {/* ── Breadcrumb & Action Bar ────────────────────────── */}
       <div
-        className="flex items-center flex-shrink-0"
+        className="flex items-center flex-shrink-0 flex-wrap gap-2"
         style={{
           borderBottom: "1px solid var(--ide-border)",
           color: "#484f58",
           fontFamily: "var(--font-sans)",
           background: "var(--ide-bg)",
           fontSize: 12,
-          padding: "6px 20px",
+          padding: "6px 16px",
         }}
       >
-        {breadcrumb.map((crumb, i) => (
-          <span key={i} className="flex items-center">
-            {i > 0 && (
-              <ChevronRight
-                size={11}
-                style={{ margin: "0 3px", opacity: 0.4 }}
-              />
-            )}
-            <span
-              style={{
-                color: i === breadcrumb.length - 1 ? "#8b949e" : "#484f58",
-              }}
-            >
-              {crumb}
+        <div className="flex items-center">
+          {breadcrumb.map((crumb, i) => (
+            <span key={i} className="flex items-center">
+              {i > 0 && (
+                <ChevronRight
+                  size={11}
+                  style={{ margin: "0 3px", opacity: 0.4 }}
+                />
+              )}
+              <span
+                style={{
+                  color: i === breadcrumb.length - 1 ? "#8b949e" : "#484f58",
+                }}
+              >
+                {crumb}
+              </span>
             </span>
-          </span>
-        ))}
-        <div className="ml-auto flex items-center gap-2">
+          ))}
+        </div>
+
+        {/* Coverage summary tags and Suggest testcase button */}
+        <div className="ml-auto flex items-center gap-3">
+          {!isCurrentTestFile && fileCoverage?.summary && (
+            <div
+              className="flex items-center gap-2 text-xs"
+              style={{ fontFamily: "var(--font-mono)" }}
+            >
+              <span
+                className="px-2 py-0.5 rounded"
+                style={{
+                  background: "rgba(255,255,255,0.05)",
+                  color: covPctColor(fileCoverage.summary.linesPct),
+                  border: "1px solid rgba(255,255,255,0.08)",
+                }}
+                title="Line Coverage"
+              >
+                Lines: {fileCoverage.summary.linesPct}%
+              </span>
+              <span
+                className="px-2 py-0.5 rounded"
+                style={{
+                  background: "rgba(255,255,255,0.05)",
+                  color: covPctColor(fileCoverage.summary.branchesPct),
+                  border: "1px solid rgba(255,255,255,0.08)",
+                }}
+                title="Branch Coverage"
+              >
+                Branches: {fileCoverage.summary.branchesPct}%
+              </span>
+              <span
+                className="px-2 py-0.5 rounded"
+                style={{
+                  background: "rgba(255,255,255,0.05)",
+                  color: covPctColor(fileCoverage.summary.stmtsPct),
+                  border: "1px solid rgba(255,255,255,0.08)",
+                }}
+                title="Statement Coverage"
+              >
+                Stmts: {fileCoverage.summary.stmtsPct}%
+              </span>
+            </div>
+          )}
+
+          {snapshotId && !isCurrentTestFile && (
+            <button
+              type="button"
+              onClick={() => onSuggestTestcase?.(activeTabId)}
+              className="flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-semibold"
+              style={{
+                background: "rgba(168, 85, 247, 0.15)",
+                color: "#c084fc",
+                border: "1px solid rgba(168, 85, 247, 0.35)",
+                cursor: "pointer",
+                transition: "all 0.15s ease",
+              }}
+              title="Yêu cầu AI Agent gợi ý testcase Jest/Vitest trong chat"
+            >
+              <Sparkles size={12} style={{ color: "#c084fc" }} />
+              <span>Suggest testcase</span>
+            </button>
+          )}
+
           {saveError && (
             <span style={{ color: "#f85149", fontSize: 11 }}>{saveError}</span>
           )}
+
           <button
             type="button"
             onClick={handleSave}
@@ -728,6 +822,66 @@ export default function Editor({
           </button>
         </div>
       </div>
+
+      {/* ── Applied Notification Banner ─────────────────────── */}
+      {appliedNotification && (
+        <div
+          className="flex items-center justify-between px-4 py-2 text-xs flex-shrink-0"
+          style={{
+            background: "rgba(124, 58, 237, 0.15)",
+            borderBottom: "1px solid rgba(124, 58, 237, 0.3)",
+            color: "#e9d5ff",
+          }}
+        >
+          <div className="flex items-center gap-2">
+            <CheckCircle2
+              size={15}
+              style={{ color: "#34d399", flexShrink: 0 }}
+            />
+            <span>
+              Đã áp dụng testcase vào file{" "}
+              <strong style={{ color: "#ffffff" }}>
+                {appliedNotification.targetTestFile}
+              </strong>
+              . Hãy xem lại mã dự thảo và bấm <strong>Run Analysis</strong> để
+              xác nhận test vượt qua và độ bao phủ tăng.
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            {onRunAnalysis && (
+              <button
+                type="button"
+                onClick={() => {
+                  setAppliedNotification(null);
+                  onRunAnalysis();
+                }}
+                className="px-3 py-1 rounded font-semibold text-xs transition-colors"
+                style={{
+                  background: "#7c3aed",
+                  color: "#ffffff",
+                  border: "none",
+                  cursor: "pointer",
+                }}
+              >
+                Run Analysis
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setAppliedNotification(null)}
+              className="p-1 rounded hover:bg-white/10"
+              style={{
+                color: "#a78bfa",
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+              }}
+            >
+              <X size={13} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Code Area ─────────────────────────────────────── */}
       <div className="flex-1 overflow-auto relative">
@@ -787,58 +941,33 @@ export default function Editor({
               </span>
             </motion.div>
           ) : (
-            <>
-              <MonacoEditor
-                key={activeTabId}
-                height="100%"
-                language={lang}
-                theme="vs-dark"
-                value={currentFile.draft ?? currentFile.content ?? ""}
-                onChange={handleChange}
-                onMount={(editor, monaco) => {
-                  editor.addCommand(
-                    monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
-                    () => saveHandlerRef.current?.(),
-                  );
-                }}
-                options={{
-                  fontSize: 13,
-                  fontFamily: "var(--font-mono)",
-                  lineHeight: 21,
-                  minimap: { enabled: false },
-                  scrollBeyondLastLine: false,
-                  automaticLayout: true,
-                  padding: { top: 8 },
-                }}
-              />
-              {/* Legacy read-only renderer retained for future CodeLens integration.
-              {lines.map((line) => {
-                const normalize = (p) => p.replace(/\\/g, '/').replace(/^\.\//, '');
-                const normalizedPath = normalize(activeTabId);
-                const comp = complexities[normalizedPath]?.[line.functionName];
-                if (line.isFunction) {
-                  // console.log(`🔍 Checking complexity for ${normalizedPath} -> ${line.functionName}:`, comp);
-                }
-                return (
-                  <React.Fragment key={line.lineNum}>
-                    {line.isFunction && comp && (
-                      <div className="px-[60px] py-1">
-                        <CodeLens
-                          complexity={comp.value}
-                          decisionPoints={comp.decisionPoints}
-                        />
-                      </div>
-                    )}
-                    <CodeLine
-                      lineNum={line.lineNum}
-                      tokens={line.tokens}
-                      isFunction={line.isFunction}
-                    />
-                  </React.Fragment>
+            <MonacoEditor
+              key={activeTabId}
+              height="100%"
+              language={lang}
+              theme="vs-dark"
+              value={currentFile.draft ?? currentFile.content ?? ""}
+              onChange={handleChange}
+              onMount={(editor, monaco) => {
+                editorRef.current = editor;
+                monacoRef.current = monaco;
+                editor.addCommand(
+                  monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
+                  () => saveHandlerRef.current?.(),
                 );
-              })}
-            */}
-            </>
+              }}
+              options={{
+                fontSize: 13,
+                fontFamily: "var(--font-mono)",
+                lineHeight: 21,
+                minimap: { enabled: false },
+                scrollBeyondLastLine: false,
+                automaticLayout: true,
+                padding: { top: 8 },
+                glyphMargin: true,
+                lineNumbersMinChars: 3,
+              }}
+            />
           )}
         </AnimatePresence>
       </div>
@@ -862,8 +991,16 @@ export default function Editor({
             {lang.charAt(0).toUpperCase() + lang.slice(1)}
           </span>
         </div>
-        {currentFile.content && (
-          <span style={{ color: "#484f58" }}>{lines.length} lines</span>
+        {!isCurrentTestFile && fileCoverage?.summary && (
+          <span style={{ color: "#8b949e", fontSize: 11 }}>
+            Coverage: {fileCoverage.summary.linesPct}% (
+            {fileCoverage.coveredLines?.length || 0} covered,{" "}
+            {fileCoverage.uncoveredLines?.length || 0} uncovered
+            {fileCoverage.failedLines?.length
+              ? `, ${fileCoverage.failedLines.length} failed`
+              : ""}
+            )
+          </span>
         )}
         <div
           className="ml-auto flex items-center gap-1.5 cursor-pointer"

@@ -11,13 +11,18 @@ import {
   RotateCcw,
   Wand2,
   Shield,
+  FileCode,
 } from "lucide-react";
 
 import {
   sendAiChatMessageApi,
   getAiSuggestionsApi,
   generateSkeletonApi,
+  getFileContentApi,
+  updateFileContentApi,
+  createProjectFileApi,
 } from "../../services/project.service";
+import { suggestUnitTestcase } from "../../services/coverage.service";
 import { getProjectJobsApi } from "../../services/job.service";
 import { useToast } from "./ToastContext";
 import FrameworkRecommendationPanel from "./FrameworkRecommendationPanel";
@@ -38,7 +43,7 @@ const INITIAL_MESSAGES = [
 ];
 
 /* ── Code Block ─────────────────────────────────────────── */
-function CodeBlock({ code }) {
+function CodeBlock({ code, language = "javascript" }) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
@@ -93,7 +98,7 @@ function CodeBlock({ code }) {
               letterSpacing: "0.04em",
             }}
           >
-            javascript
+            {language}
           </span>
         </div>
         <motion.button
@@ -106,6 +111,7 @@ function CodeBlock({ code }) {
             fontFamily: "var(--font-sans)",
             background: "rgba(255,255,255,0.04)",
             transition: "all 0.2s ease",
+            cursor: "pointer",
           }}
         >
           {copied ? <Check size={11} /> : <Copy size={11} />}
@@ -130,8 +136,268 @@ function CodeBlock({ code }) {
   );
 }
 
+/* ── Test Suggestion Card (supports Jest & Vitest) ────────── */
+function TestSuggestionCard({
+  msg,
+  onApplySuggestion,
+  onUndoSuggestion,
+  onApplyAllSuggestions,
+  onRunAnalysis,
+}) {
+  const suggestions = msg.testSuggestions?.length
+    ? msg.testSuggestions
+    : msg.testSuggestion
+      ? [msg.testSuggestion]
+      : [];
+
+  const [activeFw, setActiveFw] = useState(
+    suggestions[0]?.framework || "jest"
+  );
+
+  if (suggestions.length === 0) return null;
+
+  const current =
+    suggestions.find((s) => s.framework === activeFw) || suggestions[0];
+  const isMulti = suggestions.length > 1;
+  const allApplied = suggestions.every((s) => s.applied);
+  const anyApplying = suggestions.some((s) => s.isApplying);
+
+  return (
+    <div
+      className="mt-3 rounded-xl overflow-hidden"
+      style={{
+        border: "1px solid rgba(168, 85, 247, 0.3)",
+        background: "rgba(168, 85, 247, 0.05)",
+      }}
+    >
+      {/* Framework Tabs if multi-framework (Jest & Vitest) */}
+      {isMulti && (
+        <div
+          className="flex items-center gap-1.5 px-3 py-2 flex-wrap"
+          style={{
+            background: "rgba(0,0,0,0.35)",
+            borderBottom: "1px solid rgba(255,255,255,0.08)",
+          }}
+        >
+          <span className="text-[11px] font-semibold text-slate-400 mr-1">
+            Framework:
+          </span>
+          {suggestions.map((sug) => {
+            const isSelected = activeFw === sug.framework;
+            const isVitest = sug.framework === "vitest";
+            return (
+              <button
+                key={sug.framework}
+                type="button"
+                onClick={() => setActiveFw(sug.framework)}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold cursor-pointer transition-all"
+                style={{
+                  background: isSelected
+                    ? isVitest
+                      ? "rgba(245, 158, 11, 0.25)"
+                      : "rgba(124, 58, 237, 0.3)"
+                    : "rgba(255, 255, 255, 0.05)",
+                  color: isSelected
+                    ? isVitest
+                      ? "#fcd34d"
+                      : "#c084fc"
+                    : "#94a3b8",
+                  border: isSelected
+                    ? isVitest
+                      ? "1px solid rgba(245, 158, 11, 0.5)"
+                      : "1px solid rgba(124, 58, 237, 0.6)"
+                    : "1px solid transparent",
+                }}
+              >
+                <span>{isVitest ? "⚡ Vitest" : "🃏 Jest"}</span>
+                {sug.applied && (
+                  <Check size={11} className="text-green-400" />
+                )}
+              </button>
+            );
+          })}
+
+          {/* Quick Apply All button if multiple */}
+          {!allApplied && (
+            <button
+              type="button"
+              disabled={anyApplying}
+              onClick={() => onApplyAllSuggestions?.(msg.id, suggestions)}
+              className="ml-auto flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors cursor-pointer"
+              style={{
+                background: "rgba(34, 197, 94, 0.15)",
+                color: "#86efac",
+                border: "1px solid rgba(34, 197, 94, 0.35)",
+              }}
+              title="Tự động áp dụng test case cho cả Jest và Vitest"
+            >
+              <Sparkles size={11} />
+              <span>Apply cả 2</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Target test file info bar */}
+      <div
+        className="flex items-center justify-between px-3 py-2 text-xs"
+        style={{
+          background:
+            current.framework === "vitest"
+              ? "rgba(245, 158, 11, 0.12)"
+              : "rgba(168, 85, 247, 0.12)",
+          borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
+        }}
+      >
+        <div className="flex items-center gap-1.5 overflow-hidden">
+          <FileCode
+            size={13}
+            style={{
+              color: current.framework === "vitest" ? "#fbbf24" : "#c084fc",
+              flexShrink: 0,
+            }}
+          />
+          <span
+            style={{
+              color: current.framework === "vitest" ? "#fbbf24" : "#c084fc",
+              fontWeight: 600,
+            }}
+          >
+            {current.framework === "vitest" ? "VITEST" : "JEST"} Test:
+          </span>
+          <span
+            className="truncate font-mono"
+            style={{ color: "#e6edf3", fontSize: 11 }}
+          >
+            {current.targetTestFile}
+          </span>
+        </div>
+        <span
+          className="px-1.5 py-0.5 rounded text-[10px] font-medium"
+          style={{
+            background: current.isExisting
+              ? "rgba(59, 130, 246, 0.2)"
+              : "rgba(34, 197, 94, 0.2)",
+            color: current.isExisting ? "#93c5fd" : "#86efac",
+          }}
+        >
+          {current.isExisting ? "File có sẵn" : "File mới"}
+        </span>
+      </div>
+
+      {/* Code block */}
+      <CodeBlock
+        code={current.suggestedTestCode}
+        language="javascript"
+      />
+
+      {/* Actions footer */}
+      <div
+        className="p-3 flex items-center gap-2 flex-wrap"
+        style={{
+          background: "rgba(0,0,0,0.25)",
+          borderTop: "1px solid rgba(255,255,255,0.06)",
+        }}
+      >
+        {!current.applied ? (
+          <motion.button
+            type="button"
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            disabled={current.isApplying}
+            onClick={() => onApplySuggestion?.(msg.id, current)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold"
+            style={{
+              background:
+                current.framework === "vitest" ? "#d97706" : "#7c3aed",
+              color: "#ffffff",
+              border: "none",
+              cursor: current.isApplying ? "wait" : "pointer",
+              boxShadow:
+                current.framework === "vitest"
+                  ? "0 0 12px rgba(217, 119, 6, 0.35)"
+                  : "0 0 12px rgba(124, 58, 237, 0.35)",
+            }}
+            title={`Ghi test case ${current.framework?.toUpperCase()} vào ${current.targetTestFile}`}
+          >
+            {current.isApplying ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : (
+              <Check size={13} />
+            )}
+            <span>Apply vào {current.targetTestFile}</span>
+          </motion.button>
+        ) : (
+          <>
+            <div
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold"
+              style={{
+                background: "rgba(34, 197, 94, 0.15)",
+                color: "#4ade80",
+                border: "1px solid rgba(34, 197, 94, 0.3)",
+              }}
+            >
+              <Check size={13} />
+              <span>Đã apply ({current.framework?.toUpperCase()})</span>
+            </div>
+
+            <motion.button
+              type="button"
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              disabled={current.isUndoing}
+              onClick={() => onUndoSuggestion?.(msg.id, current)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium"
+              style={{
+                background: "rgba(255, 255, 255, 0.05)",
+                color: "#e6edf3",
+                border: "1px solid rgba(255, 255, 255, 0.15)",
+                cursor: current.isUndoing ? "wait" : "pointer",
+              }}
+              title="Hoàn tác file test về trạng thái trước khi Apply"
+            >
+              {current.isUndoing ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <RotateCcw size={13} />
+              )}
+              <span>Undo (Hoàn tác)</span>
+            </motion.button>
+
+            {onRunAnalysis && (
+              <motion.button
+                type="button"
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={onRunAnalysis}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold ml-auto"
+                style={{
+                  background: "rgba(124, 58, 237, 0.2)",
+                  color: "#c4b5fd",
+                  border: "1px solid rgba(124, 58, 237, 0.4)",
+                  cursor: "pointer",
+                }}
+                title="Chạy lại Unit Test Coverage để xác nhận độ bao phủ tăng"
+              >
+                <span>Run Analysis ↵</span>
+              </motion.button>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ── Chat Message ────────────────────────────────────────── */
-function ChatMessage({ msg, onRetry }) {
+function ChatMessage({
+  msg,
+  onRetry,
+  onApplySuggestion,
+  onUndoSuggestion,
+  onApplyAllSuggestions,
+  onRunAnalysis,
+}) {
   const isUser = msg.role === "user";
   const [hovered, setHovered] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -250,7 +516,6 @@ function ChatMessage({ msg, onRetry }) {
             backdropFilter: "blur(12px)",
           }}
         >
-          {/* Top highlight bar */}
           <div
             style={{
               height: 3,
@@ -298,14 +563,16 @@ function ChatMessage({ msg, onRetry }) {
               : "rgba(124,58,237,0.04)",
             border: `1px solid ${isUser ? "rgba(255,255,255,0.06)" : "rgba(124,58,237,0.1)"}`,
             backdropFilter: isUser ? "none" : "blur(12px)",
-            WebkitBackdropFilter: isUser ? "none" : "blur(12px)",
-            fontSize: 13,
-            lineHeight: 1.7,
-            color: "#8b949e",
-            fontFamily: "var(--font-sans)",
           }}
         >
-          <div>
+          <div
+            className="text-xs space-y-1.5"
+            style={{
+              color: isUser ? "#c9d1d9" : "#e6edf3",
+              lineHeight: 1.65,
+              fontFamily: "var(--font-sans)",
+            }}
+          >
             {msg.content.split("\n").map((line, i) => (
               <p key={i} className={line === "" ? "h-2" : ""}>
                 {line === "" ? null : renderContent(line)}
@@ -314,6 +581,17 @@ function ChatMessage({ msg, onRetry }) {
           </div>
 
           {msg.code && <CodeBlock code={msg.code} />}
+
+          {/* AI Unit Test Suggestion Card (supports Jest & Vitest) */}
+          {(msg.testSuggestions?.length > 0 || msg.testSuggestion) && (
+            <TestSuggestionCard
+              msg={msg}
+              onApplySuggestion={onApplySuggestion}
+              onUndoSuggestion={onUndoSuggestion}
+              onApplyAllSuggestions={onApplyAllSuggestions}
+              onRunAnalysis={onRunAnalysis}
+            />
+          )}
 
           {msg.suggestion && (
             <div
@@ -620,6 +898,7 @@ function QuickActions({ onAction }) {
   const actions = [
     { label: "Analyze Coverage", icon: Shield, color: "#a78bfa" },
     { label: "View Generated Tests", icon: Wand2, color: "#67e8f9" },
+    { label: "Suggest Unit Test", icon: Sparkles, color: "#c084fc" },
   ];
   return (
     <div
@@ -655,18 +934,366 @@ function QuickActions({ onAction }) {
   );
 }
 
+const isTestFile = (filePath) => {
+  if (!filePath) return false;
+  const normalized = filePath.replace(/\\/g, "/").toLowerCase();
+  return (
+    /(^|\/)(tests?|__tests__|spec|cypress|e2e)\//i.test(normalized) ||
+    /\.(test|spec)\.[a-z0-9]+$/i.test(normalized)
+  );
+};
+
 /* ── AI Agent Panel — Main Export ────────────────────────── */
-export default function AIPanel({ projectId, snapshotId }) {
+export default function AIPanel({
+  projectId,
+  snapshotId,
+  pendingAiSuggestion,
+  onClearPendingSuggestion,
+  onOpenFile,
+  onRunAnalysis,
+}) {
   const [messages, setMessages] = useState(INITIAL_MESSAGES);
   const [isTyping, setIsTyping] = useState(false);
   const bottomRef = useRef(null);
-  const messageIdRef = useRef(0);
+  const messageIdRef = useRef(10);
   const getNextId = () => ++messageIdRef.current;
   const { showToast } = useToast();
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
+
+  const handleSuggestForFile = async (filePath) => {
+    if (!projectId) {
+      showToast({
+        type: "warning",
+        title: "No Project",
+        message: "Vui lòng chọn hoặc tạo một dự án trước khi sử dụng AI.",
+      });
+      return;
+    }
+
+    const isTest = isTestFile(filePath);
+
+    const userMsg = {
+      id: getNextId(),
+      role: "user",
+      content: isTest
+        ? `✨ Hãy gợi ý test case bổ sung cho file test \`${filePath}\``
+        : `✨ Hãy gợi ý test case Jest & Vitest cho file \`${filePath}\``,
+      timestamp: new Date().toLocaleTimeString("vi-VN", {
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+    };
+
+    setMessages((m) => [...m, userMsg]);
+    setIsTyping(true);
+
+    try {
+      const res = await suggestUnitTestcase(snapshotId, filePath, projectId);
+      const data = res?.data;
+
+      if (!data) {
+        throw new Error("Không nhận được dữ liệu gợi ý test case từ server.");
+      }
+
+      const suggestionsList =
+        Array.isArray(data.suggestions) && data.suggestions.length > 0
+          ? data.suggestions.map((s, idx) => ({
+            ...s,
+            id: s.framework || `sug-${idx}`,
+            applied: false,
+            previousContent: null,
+            isApplying: false,
+            isUndoing: false,
+          }))
+          : [
+            {
+              sourceFile: data.sourceFile,
+              targetTestFile: data.targetTestFile,
+              isExisting: data.isExisting,
+              framework: data.framework || "jest",
+              explanation: data.explanation,
+              suggestedTestCode: data.suggestedTestCode,
+              fullUpdatedContent: data.fullUpdatedContent,
+              applied: false,
+              previousContent: null,
+              isApplying: false,
+              isUndoing: false,
+            },
+          ];
+
+      const hasMultiple = suggestionsList.length > 1;
+      let summaryText = "";
+      if (hasMultiple) {
+        summaryText =
+          `Tôi đã phân tích file **\`${data.sourceFile || filePath}\`** và đề xuất bộ test cho cả **Jest** và **Vitest**:\n\n` +
+          suggestionsList
+            .map(
+              (s) =>
+                `- **${s.framework?.toUpperCase()}**: file \`${s.targetTestFile}\` (${s.isExisting ? "Đã có sẵn - sẽ cập nhật" : "File mới"})`,
+            )
+            .join("\n") +
+          `\n- **Dòng chưa cover**: ${data.uncoveredLines?.length ? data.uncoveredLines.join(", ") : "100% dòng đã được kiểm thử"}\n` +
+          `- **Lỗi assertion**: ${data.failedLines?.length ? data.failedLines.join(", ") : "0 lỗi"}\n\n` +
+          `Bạn có thể chuyển đổi giữa các tab **JEST** và **VITEST** bên dưới để xem mã test và bấm **Apply** vào từng file test tương ứng (hoặc bấm **Apply cả 2**)!`;
+      } else {
+        const single = suggestionsList[0];
+        summaryText = isTest
+          ? `Tôi đã phân tích và đề xuất bổ sung test case cho file test **\`${single.targetTestFile}\`** (${single.framework?.toUpperCase()}):\n\n` +
+          (single.sourceFile && single.sourceFile !== single.targetTestFile
+            ? `- **File mã nguồn tương ứng**: \`${single.sourceFile}\`\n`
+            : "") +
+          `- **Dòng chưa cover trong mã nguồn**: ${data.uncoveredLines?.length ? data.uncoveredLines.join(", ") : "100% dòng đã được kiểm thử"}\n` +
+          `- **Lỗi assertion**: ${data.failedLines?.length ? data.failedLines.join(", ") : "0 lỗi"}\n` +
+          `- **File test**: \`${single.targetTestFile}\` (${single.isExisting ? "Đã có sẵn - sẽ cập nhật test case" : "File mới"})\n\n` +
+          `${single.explanation}`
+          : `Tôi đã phân tích file **\`${single.sourceFile}\`** (${single.framework?.toUpperCase()}):\n\n` +
+          `- **Dòng chưa cover**: ${data.uncoveredLines?.length ? data.uncoveredLines.join(", ") : "100% dòng đã được kiểm thử"}\n` +
+          `- **Lỗi assertion**: ${data.failedLines?.length ? data.failedLines.join(", ") : "0 lỗi"}\n` +
+          `- **File test đích**: \`${single.targetTestFile}\` (${single.isExisting ? "Đã có sẵn - sẽ nối thêm" : "File mới"})\n\n` +
+          `${single.explanation}`;
+      }
+
+      const assistantMsg = {
+        id: getNextId(),
+        role: "assistant",
+        timestamp: new Date().toLocaleTimeString("vi-VN", {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        content: summaryText,
+        testSuggestions: suggestionsList,
+        testSuggestion: suggestionsList[0],
+      };
+
+      setMessages((m) => [...m, assistantMsg]);
+    } catch (err) {
+      setMessages((m) => [
+        ...m,
+        {
+          id: getNextId(),
+          role: "assistant",
+          type: "error",
+          timestamp: new Date().toLocaleTimeString("vi-VN", {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          content: `❌ Lỗi khi gợi ý testcase cho \`${filePath}\`: ${err.message || "Không thể kết nối API AI."}`,
+        },
+      ]);
+    } finally {
+      setIsTyping(false);
+    }
+  };
+
+  // Watch for external suggest trigger (e.g. from Coverage table or Editor)
+  useEffect(() => {
+    if (!pendingAiSuggestion || !pendingAiSuggestion.filePath) return;
+    const targetFile = pendingAiSuggestion.filePath;
+    onClearPendingSuggestion?.();
+    handleSuggestForFile(targetFile);
+  }, [pendingAiSuggestion]);
+
+  const handleApplySuggestion = async (msgId, suggestion) => {
+    if (!projectId || !suggestion) return;
+
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.id !== msgId) return m;
+        const updatedList = (m.testSuggestions || []).map((s) =>
+          s.framework === suggestion.framework ? { ...s, isApplying: true } : s,
+        );
+        return {
+          ...m,
+          testSuggestions: updatedList,
+          testSuggestion:
+            m.testSuggestion?.framework === suggestion.framework
+              ? { ...m.testSuggestion, isApplying: true }
+              : m.testSuggestion,
+        };
+      }),
+    );
+
+    try {
+      let previousContent = "";
+      if (suggestion.isExisting) {
+        try {
+          const prevRes = await getFileContentApi(
+            projectId,
+            suggestion.targetTestFile,
+          );
+          previousContent = prevRes?.data?.content || "";
+        } catch {
+          previousContent = "";
+        }
+      }
+
+      const contentToWrite =
+        suggestion.fullUpdatedContent || suggestion.suggestedTestCode;
+
+      if (suggestion.isExisting) {
+        await updateFileContentApi(
+          projectId,
+          suggestion.targetTestFile,
+          contentToWrite,
+        );
+      } else {
+        await createProjectFileApi(
+          projectId,
+          suggestion.targetTestFile,
+          contentToWrite,
+        );
+      }
+
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== msgId) return m;
+          const updatedList = (m.testSuggestions || []).map((s) =>
+            s.framework === suggestion.framework
+              ? { ...s, applied: true, previousContent, isApplying: false }
+              : s,
+          );
+          return {
+            ...m,
+            testSuggestions: updatedList,
+            testSuggestion:
+              m.testSuggestion?.framework === suggestion.framework
+                ? {
+                  ...m.testSuggestion,
+                  applied: true,
+                  previousContent,
+                  isApplying: false,
+                }
+                : m.testSuggestion,
+          };
+        }),
+      );
+
+      showToast({
+        type: "success",
+        title: "Test Applied",
+        message: `Đã áp dụng test case ${suggestion.framework?.toUpperCase()} vào ${suggestion.targetTestFile}`,
+      });
+
+      onOpenFile?.(suggestion.targetTestFile);
+    } catch (err) {
+      showToast({
+        type: "error",
+        title: "Apply Failed",
+        message: err.message || "Không thể áp dụng test case vào file.",
+      });
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== msgId) return m;
+          const updatedList = (m.testSuggestions || []).map((s) =>
+            s.framework === suggestion.framework
+              ? { ...s, isApplying: false }
+              : s,
+          );
+          return {
+            ...m,
+            testSuggestions: updatedList,
+            testSuggestion:
+              m.testSuggestion?.framework === suggestion.framework
+                ? { ...m.testSuggestion, isApplying: false }
+                : m.testSuggestion,
+          };
+        }),
+      );
+    }
+  };
+
+  const handleApplyAllSuggestions = async (msgId, suggestions) => {
+    if (!projectId || !Array.isArray(suggestions)) return;
+    for (const s of suggestions) {
+      if (!s.applied) {
+        await handleApplySuggestion(msgId, s);
+      }
+    }
+  };
+
+  const handleUndoSuggestion = async (msgId, suggestion) => {
+    if (!projectId || !suggestion) return;
+
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.id !== msgId) return m;
+        const updatedList = (m.testSuggestions || []).map((s) =>
+          s.framework === suggestion.framework ? { ...s, isUndoing: true } : s,
+        );
+        return {
+          ...m,
+          testSuggestions: updatedList,
+          testSuggestion:
+            m.testSuggestion?.framework === suggestion.framework
+              ? { ...m.testSuggestion, isUndoing: true }
+              : m.testSuggestion,
+        };
+      }),
+    );
+
+    try {
+      const prevContent = suggestion.previousContent ?? "";
+      await updateFileContentApi(
+        projectId,
+        suggestion.targetTestFile,
+        prevContent,
+      );
+
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== msgId) return m;
+          const updatedList = (m.testSuggestions || []).map((s) =>
+            s.framework === suggestion.framework
+              ? { ...s, applied: false, isUndoing: false }
+              : s,
+          );
+          return {
+            ...m,
+            testSuggestions: updatedList,
+            testSuggestion:
+              m.testSuggestion?.framework === suggestion.framework
+                ? { ...m.testSuggestion, applied: false, isUndoing: false }
+                : m.testSuggestion,
+          };
+        }),
+      );
+
+      showToast({
+        type: "info",
+        title: "Undone",
+        message: `Đã hoàn tác file ${suggestion.targetTestFile} về trạng thái trước đó.`,
+      });
+
+      onOpenFile?.(suggestion.targetTestFile);
+    } catch (err) {
+      showToast({
+        type: "error",
+        title: "Undo Failed",
+        message: err.message || "Không thể hoàn tác file test.",
+      });
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== msgId) return m;
+          const updatedList = (m.testSuggestions || []).map((s) =>
+            s.framework === suggestion.framework
+              ? { ...s, isUndoing: false }
+              : s,
+          );
+          return {
+            ...m,
+            testSuggestions: updatedList,
+            testSuggestion:
+              m.testSuggestion?.framework === suggestion.framework
+                ? { ...m.testSuggestion, isUndoing: false }
+                : m.testSuggestion,
+          };
+        }),
+      );
+    }
+  };
 
   const handleSend = async (text) => {
     if (!projectId) {
@@ -756,6 +1383,18 @@ export default function AIPanel({ projectId, snapshotId }) {
   };
 
   const handleQuickAction = async (label) => {
+    if (label === "Suggest Unit Test") {
+      handleSend(
+        "Hãy gợi ý các test case Jest/Vitest cho những file có độ bao phủ thấp trong dự án.",
+      );
+      return;
+    }
+
+    if (label === "Analyze Coverage") {
+      onRunAnalysis?.();
+      return;
+    }
+
     if (label === "View Generated Tests") {
       if (!projectId) {
         showToast({
@@ -794,42 +1433,11 @@ export default function AIPanel({ projectId, snapshotId }) {
                             hour: "2-digit",
                             minute: "2-digit",
                           }),
-                          content: `**Test Suite ${index + 1}**`,
-                          code: test.content,
+                          content: `**Test Suite ${index + 1}: ${test.name}**\n${test.description || ""}`,
+                          code: test.code,
                         },
                       ]);
                     });
-                  },
-                },
-                {
-                  label: "Generate Again",
-                  action: "generate_again",
-                  onClick: () => {
-                    setMessages((prev) => [
-                      ...prev,
-                      {
-                        id: getNextId(),
-                        role: "assistant",
-                        timestamp: new Date().toLocaleTimeString("vi-VN", {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        }),
-                        content:
-                          "I can generate tests again for this project. Which type of test would you like to generate?",
-                        options: [
-                          {
-                            label: "Generate Skeleton",
-                            action: "generate_skeleton",
-                            onClick: handleOptionClick,
-                          },
-                          {
-                            label: "Generate Full Test",
-                            action: "generate_full",
-                            onClick: handleOptionClick,
-                          },
-                        ],
-                      },
-                    ]);
                   },
                 },
               ],
@@ -846,176 +1454,36 @@ export default function AIPanel({ projectId, snapshotId }) {
                 minute: "2-digit",
               }),
               content:
-                "Tôi nhận thấy project hiện chưa có test được generate. Bạn có muốn tôi tạo test cho project này không?",
-              options: [
-                {
-                  label: "Generate Skeleton",
-                  action: "generate_skeleton",
-                  onClick: handleOptionClick,
-                },
-                {
-                  label: "Generate Full Test",
-                  action: "generate_full",
-                  onClick: handleOptionClick,
-                },
-              ],
+                "Chưa có bộ test nào được tạo tự động cho dự án này. Hãy bấm **Suggest testcase** tại danh sách Source file coverage.",
             },
           ]);
         }
-      } catch {
+      } catch (err) {
+        console.error(err);
         showToast({
           type: "error",
-          title: "Lỗi",
-          message: "Không thể lấy dữ liệu test AI.",
+          title: "Lỗi tải test",
+          message: "Không thể lấy danh sách test đã generate.",
         });
       } finally {
         setIsTyping(false);
       }
-    } else {
-      handleSend(label);
-    }
-  };
-
-  const handleOptionClick = async (action) => {
-    const mode = action === "generate_skeleton" ? "SKELETON" : "FULL";
-
-    setIsTyping(true);
-    try {
-      const jobsRes = await getProjectJobsApi(projectId);
-      const activeJob = jobsRes.jobs?.find(
-        (j) =>
-          (j.type === "AI_TESTS" || j.type === "TEST_GENERATION") &&
-          (j.status === "QUEUED" || j.status === "RUNNING"),
-      );
-
-      if (activeJob) {
-        setMessages((m) => [
-          ...m,
-          {
-            id: getNextId(),
-            role: "assistant",
-            timestamp: new Date().toLocaleTimeString("vi-VN", {
-              hour: "2-digit",
-              minute: "2-digit",
-            }),
-            content:
-              "A test generation is already in progress. Please wait for it to finish.",
-          },
-        ]);
-        return;
-      }
-
-      await generateSkeletonApi(projectId, null, mode);
-      setMessages((m) => [
-        ...m,
-        {
-          id: getNextId(),
-          role: "assistant",
-          timestamp: new Date().toLocaleTimeString("vi-VN", {
-            hour: "2-digit",
-            minute: "2-digit",
-          }),
-          content: `🚀 I've started generating the ${mode === "SKELETON" ? "Skeleton Test" : "Full Test"} suite. You can monitor the progress in the Job Queue.`,
-        },
-      ]);
-    } catch {
-      showToast({
-        type: "error",
-        title: "Lỗi",
-        message: "Không thể bắt đầu tạo test.",
-      });
-    } finally {
-      setIsTyping(false);
     }
   };
 
   return (
     <motion.div
-      className="flex flex-col h-full flex-shrink-0"
-      initial={{ opacity: 0, x: 20 }}
-      animate={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.35, ease: "easeOut", delay: 0.15 }}
+      className="flex flex-col h-full overflow-hidden"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
       style={{
-        width: "100%",
-        background: "#0d1117",
+        background: "var(--ide-sidebar)",
         borderLeft: "1px solid var(--ide-border)",
+        fontFamily: "var(--font-sans)",
       }}
     >
-      {/* ── Header ──────────────────────────────────── */}
-      <div
-        className="flex items-center justify-between flex-shrink-0"
-        style={{
-          height: 54,
-          padding: "0 24px",
-          borderBottom: "1px solid rgba(255,255,255,0.06)",
-          background:
-            "linear-gradient(180deg, rgba(124,58,237,0.04) 0%, transparent 100%)",
-        }}
-      >
-        <div className="flex items-center gap-2.5">
-          <div
-            className="flex items-center justify-center rounded-lg"
-            style={{
-              width: 28,
-              height: 28,
-              background:
-                "linear-gradient(135deg, rgba(124,58,237,0.3), rgba(34,211,238,0.1))",
-              border: "1px solid rgba(124,58,237,0.4)",
-              boxShadow: "0 0 10px rgba(124,58,237,0.2)",
-            }}
-          >
-            <Sparkles size={13} style={{ color: "#a78bfa" }} />
-          </div>
-          <span
-            style={{
-              fontSize: 13,
-              fontWeight: 600,
-              color: "#e6edf3",
-              fontFamily: "var(--font-sans)",
-              letterSpacing: "-0.01em",
-            }}
-          >
-            AI Agent
-          </span>
-        </div>
-
-        {/* Status indicator */}
-        <div className="flex items-center gap-2">
-          <span
-            style={{
-              fontSize: 10,
-              color: "#484f58",
-              fontFamily: "var(--font-mono)",
-            }}
-          >
-            READY
-          </span>
-          <div
-            className="relative flex items-center justify-center"
-            style={{ width: 10, height: 10 }}
-          >
-            <div
-              className="absolute inset-0 rounded-full animate-ping"
-              style={{
-                background: "#3fb950",
-                opacity: 0.4,
-                animationDuration: "1.5s",
-              }}
-            />
-            <div
-              className="relative rounded-full"
-              style={{
-                width: 6,
-                height: 6,
-                background: "#3fb950",
-                boxShadow: "0 0 8px rgba(63,185,80,0.6)",
-              }}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* ── Messages ───────────────────────────────── */}
+      {/* ── Messages Scroll Area ─────────────────────── */}
       <div
         className="flex-1 overflow-y-auto flex flex-col"
         style={{
@@ -1035,6 +1503,10 @@ export default function AIPanel({ projectId, snapshotId }) {
             <ChatMessage
               key={msg.id}
               msg={msg}
+              onApplySuggestion={handleApplySuggestion}
+              onUndoSuggestion={handleUndoSuggestion}
+              onApplyAllSuggestions={handleApplyAllSuggestions}
+              onRunAnalysis={onRunAnalysis}
               onRetry={() => {
                 let userMsg = null;
                 for (let i = index - 1; i >= 0; i--) {

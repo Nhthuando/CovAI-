@@ -127,6 +127,12 @@ function LayoutInner() {
     useState(false);
   const [currentProjectName, setCurrentProjectName] = useState(null);
   const [testPromptSnapshotId, setTestPromptSnapshotId] = useState(null);
+  const [pendingAiSuggestion, setPendingAiSuggestion] = useState(null);
+
+  const handleSuggestTestcase = (filePath) => {
+    setAiPanelOpen(true);
+    setPendingAiSuggestion({ filePath, timestamp: Date.now() });
+  };
 
   const [projects, setProjects] = useState([]);
   const [project, setProject] = useState(null);
@@ -195,7 +201,7 @@ function LayoutInner() {
           setProjects(loadedProjects);
           const targetProj = activeProjId
             ? loadedProjects.find((p) => p.id === activeProjId) ||
-              loadedProjects[0]
+            loadedProjects[0]
             : loadedProjects[0];
           setProject(targetProj);
           let lastError = null;
@@ -581,7 +587,7 @@ function LayoutInner() {
                 <circle cx="11" cy="11" r="8" />
                 <path d="m21 21-4.35-4.35" />
               </svg>
-              <span>Search files…</span>
+              <span>Search files...</span>
             </div>
           )}
 
@@ -733,22 +739,22 @@ function LayoutInner() {
               style={
                 isMobile
                   ? {
-                      position: "fixed",
-                      top: 42,
-                      bottom: 26,
-                      left: 0,
-                      width: 280,
-                      maxWidth: "85vw",
-                      overflow: "hidden",
-                      zIndex: 35,
-                      boxShadow: "4px 0 24px rgba(0,0,0,0.4)",
-                    }
+                    position: "fixed",
+                    top: 42,
+                    bottom: 26,
+                    left: 0,
+                    width: 280,
+                    maxWidth: "85vw",
+                    overflow: "hidden",
+                    zIndex: 35,
+                    boxShadow: "4px 0 24px rgba(0,0,0,0.4)",
+                  }
                   : {
-                      overflow: "hidden",
-                      flexShrink: 0,
-                      borderRight: "2px solid #a78bfa",
-                      boxShadow: "1px 0 0 #a78bfa",
-                    }
+                    overflow: "hidden",
+                    flexShrink: 0,
+                    borderRight: "2px solid #a78bfa",
+                    boxShadow: "1px 0 0 #a78bfa",
+                  }
               }
             >
               {activeActivity === "settings" ? (
@@ -838,6 +844,8 @@ function LayoutInner() {
                   }
                   projectId={project?.id}
                   onOpenFile={handleOpenFileByPath}
+                  onSuggestTestcase={handleSuggestTestcase}
+                  onOpenCFG={() => setShowCFG(true)}
                 />
               ) : coverageType === "integration" ? (
                 <IntegrationTestDashboard
@@ -860,6 +868,8 @@ function LayoutInner() {
                       : null) ||
                     testPromptSnapshotId
                   }
+                  projectId={project?.id}
+                  onOpenFile={handleOpenFileByPath}
                 />
               )}
             </div>
@@ -872,6 +882,20 @@ function LayoutInner() {
               fileTree={fileTree}
               isLoadingTree={isLoadingTree}
               projectId={project?.id}
+              snapshotId={
+                project?.latestSnapshotId ||
+                (project?.id
+                  ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                  : null) ||
+                testPromptSnapshotId
+              }
+              coverageType={coverageType}
+              onOpenFile={handleOpenFileByPath}
+              onRunAnalysis={() => {
+                setActiveActivity("coverage");
+                setCoverageType("unit");
+              }}
+              onSuggestTestcase={handleSuggestTestcase}
             />
           )}
         </motion.div>
@@ -909,16 +933,16 @@ function LayoutInner() {
                 style={
                   isMobile
                     ? {
-                        position: "fixed",
-                        top: 42,
-                        bottom: 26,
-                        right: 0,
-                        width: "100%",
-                        maxWidth: 360,
-                        overflow: "hidden",
-                        zIndex: 35,
-                        boxShadow: "-4px 0 24px rgba(0,0,0,0.4)",
-                      }
+                      position: "fixed",
+                      top: 42,
+                      bottom: 26,
+                      right: 0,
+                      width: "100%",
+                      maxWidth: 360,
+                      overflow: "hidden",
+                      zIndex: 35,
+                      boxShadow: "-4px 0 24px rgba(0,0,0,0.4)",
+                    }
                     : { overflow: "hidden", flexShrink: 0 }
                 }
               >
@@ -931,6 +955,13 @@ function LayoutInner() {
                       : null) ||
                     testPromptSnapshotId
                   }
+                  pendingAiSuggestion={pendingAiSuggestion}
+                  onClearPendingSuggestion={() => setPendingAiSuggestion(null)}
+                  onOpenFile={handleOpenFileByPath}
+                  onRunAnalysis={() => {
+                    setActiveActivity("coverage");
+                    setCoverageType("unit");
+                  }}
                 />
               </motion.div>
             </>

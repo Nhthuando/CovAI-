@@ -49,20 +49,51 @@ export const runVitestTests = async (jobId, rootDir, vitestCommand) => {
  * Run Vitest with Coverage
  */
 export const runVitestCoverage = async (jobId, rootDir, vitestCommand) => {
-    // Handle missing coverage provider by installing it explicitly
-    await addJobLog(jobId, "INFO", `Ensuring coverage provider (@vitest/coverage-v8) is installed...`).catch(() => { });
-    await dockerRunner.run({
-        snapshotPath: rootDir,
-        command: "npm install -D @vitest/coverage-v8",
-        timeoutMs: INSTALL_TIMEOUT_MS,
-        jobId,
-    });
+    // Handle missing coverage provider by installing it explicitly if not already present
+    const fs = await import("fs");
+    const path = await import("path");
+    const hasCoverageV8 = fs.existsSync(path.join(rootDir, "node_modules", "@vitest", "coverage-v8"));
+
+    if (!hasCoverageV8) {
+        await addJobLog(jobId, "INFO", `Installing coverage provider (@vitest/coverage-v8)...`).catch(() => { });
+        await dockerRunner.run({
+            snapshotPath: rootDir,
+            command: "npm install -D @vitest/coverage-v8 --no-package-lock --legacy-peer-deps",
+            timeoutMs: INSTALL_TIMEOUT_MS,
+            jobId,
+        });
+    }
 
     // Vitest base command
     const baseCmd = vitestCommand ? vitestCommand : "npx vitest run";
 
-    // Execute Vitest with coverage, generate JSON, LCOV, and test results
-    const coverageCmd = `${baseCmd} --coverage.enabled=true --coverage.provider=v8 --coverage.reporter=json-summary --coverage.reporter=json --coverage.reporter=lcov --reporter=json --outputFile=coverage/test-results.json`;
+    // Detect non-unit and Jest-specific test files (e.g. files importing @jest/globals which crash outside Jest)
+    const excludes = ["**/*playwright*", "**/*supertest*", "**/*cypress*", "**/*.jest.*"];
+    const testsDir = path.join(rootDir, "tests");
+    if (fs.existsSync(testsDir)) {
+        try {
+            const scan = (dir) => {
+                for (const item of fs.readdirSync(dir)) {
+                    const full = path.join(dir, item);
+                    if (fs.statSync(full).isDirectory()) {
+                        scan(full);
+                    } else if (/\.(test|spec)\.[a-z0-9]+$/i.test(item)) {
+                        const content = fs.readFileSync(full, "utf8");
+                        if (content.includes("@jest/globals") || content.includes("@jest/")) {
+                            const rel = path.relative(rootDir, full).replace(/\\/g, "/");
+                            excludes.push(`**/${rel}`);
+                        }
+                    }
+                }
+            };
+            scan(testsDir);
+        } catch (_) { }
+    }
+
+    const excludeFlags = excludes.map(e => `--exclude="${e}"`).join(" ");
+
+    // Execute Vitest with coverage, globals enabled, generate JSON, LCOV, and test results
+    const coverageCmd = `${baseCmd} --globals --coverage.enabled=true --coverage.provider=v8 --coverage.reporter=json-summary --coverage.reporter=json --coverage.reporter=lcov --reporter=json --outputFile=coverage/test-results.json ${excludeFlags}`;
 
     await addJobLog(jobId, "INFO", `Run coverage command: ${coverageCmd}`).catch(() => { });
 
@@ -71,10 +102,24 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand) => {
         command: coverageCmd,
         timeoutMs: VITEST_TIMEOUT_MS,
         jobId,
+        env: {
+            NODE_OPTIONS: "--experimental-vm-modules",
+        },
     });
+
+    // Ensure test-results.json is synced to rootDir as well as vitest-results.json
+    const covTestResults = path.join(rootDir, "coverage", "test-results.json");
+    const rootTestResults = path.join(rootDir, "test-results.json");
+    const vitestResultsPath = path.join(rootDir, "coverage", "vitest-results.json");
+    if (fs.existsSync(covTestResults)) {
+        try {
+            fs.copyFileSync(covTestResults, rootTestResults);
+            fs.copyFileSync(covTestResults, vitestResultsPath);
+        } catch { }
+    }
 
     return {
         ...result,
-        coverageDir: `${rootDir}/coverage`
+        coverageDir: `${rootDir}/coverage`,
     };
 };
