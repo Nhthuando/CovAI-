@@ -1,6 +1,6 @@
 import express from "express";
 import { authMiddleware } from "../middlewares/auth.middleware.js";
-import { getCoverageSummary, runCoverage, runSupertestCoverage, getCoverageFiles, getCoverageFunctions, getTestExecution, getCoverageFrameworks, runCoverageByType } from "../controllers/coverage.controller.js";
+import { getCoverageSummary, runCoverage, runSupertestCoverage, getCoverageFiles, getCoverageFunctions, getTestExecution, getCoverageFrameworks, runCoverageByType, getIntegrationWorkspace, approveIntegrationTests } from "../controllers/coverage.controller.js";
 
 const router = express.Router();
 
@@ -24,6 +24,9 @@ router.get("/:snapshotId/functions", authMiddleware, getCoverageFunctions);
 
 router.get("/:snapshotId/test-execution", authMiddleware, getTestExecution);
 
+// Integration Workspace (Phase 1)
+router.get("/:snapshotId/integration/workspace", authMiddleware, getIntegrationWorkspace);
+router.post("/:snapshotId/integration/approve", authMiddleware, approveIntegrationTests);
 
 export default router;
 

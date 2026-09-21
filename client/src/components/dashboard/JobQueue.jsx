@@ -28,6 +28,18 @@ const JOB_TYPE_CONFIG = {
   BUILD_CFG: { label: "Build CFG", icon: Cpu, taskLabel: "Building control flow graphs" },
   AI_SUGGEST: { label: "AI Suggest", icon: BrainCircuit, taskLabel: "Generating AI improvement suggestions" },
   AI_TESTS: { label: "AI Tests", icon: BrainCircuit, taskLabel: "Generating AI test cases" },
+  CODE_HYGIENE: { label: "Code Hygiene", icon: Activity, taskLabel: "Analyzing code hygiene and quality" },
+  PERFORMANCE_ANALYSIS: { label: "Performance", icon: Activity, taskLabel: "Analyzing performance metrics" },
+  ANALYSIS: { label: "Project Analysis", icon: Activity, taskLabel: "Analyzing project structure" },
+  QUALITY_ANALYSIS: { label: "Quality Analysis", icon: Activity, taskLabel: "Evaluating AI generated tests" },
+  SECURITY_ANALYSIS: { label: "Security Analysis", icon: Activity, taskLabel: "Scanning for security vulnerabilities" },
+  RUN_VITEST_TESTS: { label: "Run Vitest", icon: TestTube2, taskLabel: "Running Vitest test suite" },
+  VITEST_COVERAGE: { label: "Vitest Coverage", icon: TestTube2, taskLabel: "Running Vitest coverage" },
+  SYSTEM_TEST_ANALYSIS: { label: "System Test Analysis", icon: Cpu, taskLabel: "Analyzing E2E tests" },
+  CYPRESS_SYSTEM_TEST: { label: "Cypress System Test", icon: TestTube2, taskLabel: "Running Cypress E2E tests" },
+  CYPRESS_SYSTEM_COVERAGE: { label: "Cypress Coverage", icon: TestTube2, taskLabel: "Running Cypress E2E coverage" },
+  PLAYWRIGHT_SYSTEM_TEST: { label: "Playwright System Test", icon: TestTube2, taskLabel: "Running Playwright E2E tests" },
+  PLAYWRIGHT_SYSTEM_COVERAGE: { label: "Playwright Coverage", icon: TestTube2, taskLabel: "Running Playwright E2E coverage" },
 };
 
 const JOB_STATUS_CONFIG = {

@@ -36,8 +36,23 @@ export const processSupertestCoverageJob = async (jobId) => {
         const userId = job.userId;
 
         const supertestInfo = await detectSupertest(rootDir);
-        if (!supertestInfo.detected || supertestInfo.supertestFiles.length === 0) {
-            throw new ServiceError("No Supertest test files were found in this snapshot.", 422);
+        
+        // Use ONLY generated AI tests to avoid running broken user tests
+        const aiTests = await prisma.aiTest.findMany({
+            where: { snapshotId }
+        });
+        
+        const supertestFiles = aiTests
+            .filter(t => {
+                if (!t.metaJson) return false;
+                const meta = typeof t.metaJson === 'string' ? JSON.parse(t.metaJson) : t.metaJson;
+                return meta.framework === "SUPERTEST" && meta.status === "APPROVED";
+            })
+            .map(t => path.join(rootDir, t.filePath))
+            .filter(p => fs.existsSync(p));
+
+        if (supertestFiles.length === 0) {
+            throw new ServiceError("No valid AI-generated Supertest files were found in this snapshot.", 422);
         }
 
         await saveJobOutput(jobId, { stdout: "", stderr: "" }).catch(() => { });
@@ -49,7 +64,7 @@ export const processSupertestCoverageJob = async (jobId) => {
             jobId,
             rootDir,
             jestConfigPath ?? supertestInfo.configPath,
-            supertestInfo.supertestFiles,
+            supertestFiles,
         );
         // DockerRunner streams output live. Saving the final buffers also covers
         // alternative runners and guarantees a complete output record.
@@ -111,7 +126,7 @@ export const processSupertestCoverageJob = async (jobId) => {
             },
             supertest: {
                 version: supertestInfo.version,
-                testFileCount: supertestInfo.supertestFiles.length,
+                testFileCount: supertestFiles.length,
                 configFile: supertestInfo.configFile,
                 exitCode: runResult.exitCode,
             },

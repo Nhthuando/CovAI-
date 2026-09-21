@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getCoverageFiles, getCoverageFrameworks, getCoverageSummary, getTestExecution, runCoverageByType } from "../../services/coverage.service.js";
 import { getJobDetailApi } from "../../services/job.service.js";
+import { getProjectCfgApi } from "../../services/project.service.js";
 
 const CONFIG = {
   unit: { title: "Unit Test Coverage", subtitle: "Kiểm thử độc lập của hàm, nhánh điều kiện và câu lệnh.", supported: "Jest · Vitest", accent: "#a78bfa", focus: ["Statements", "Branches", "Functions", "Lines"], explanation: [["Statement coverage", "Bao nhiêu câu lệnh đã được test thực thi."], ["Branch coverage", "Bao nhiêu nhánh if/else/switch đã được đi qua."], ["Function coverage", "Bao nhiêu hàm hoặc method đã được gọi."]] },
@@ -24,7 +25,7 @@ async function waitForJob(jobId) {
   throw new Error("Coverage analysis timed out. Open Job Queue to inspect logs.");
 }
 
-export default function CoverageTypeDashboard({ type, snapshotId, onOpenFile }) {
+export default function CoverageTypeDashboard({ type, projectId, snapshotId, onOpenFile, onGenerate, generating }) {
   const config = CONFIG[type];
   const [summary, setSummary] = useState(null);
   const [files, setFiles] = useState([]);
@@ -34,13 +35,32 @@ export default function CoverageTypeDashboard({ type, snapshotId, onOpenFile }) 
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
   const [activeFramework, setActiveFramework] = useState("");
+  const [generateError, setGenerateError] = useState("");
 
   const load = useCallback(async () => {
     if (!snapshotId) { setLoading(false); return; }
     setLoading(true);
     try {
       const [a, b, c] = await Promise.all([getCoverageSummary(snapshotId), getCoverageFiles(snapshotId, { sortBy: "linesPct", order: "asc", limit: 200 }), getTestExecution(snapshotId)]);
-      setSummary(a.data); setFiles(b.data?.files || []); setExecutions(c.data || {}); setError("");
+      
+      let mergedFiles = b.data?.files || [];
+      if (type === "integration" && projectId) {
+        try {
+          const cfgRes = await getProjectCfgApi(projectId, snapshotId);
+          const cfgs = cfgRes.data || [];
+          const uniquePaths = [...new Set(cfgs.map(c => c.filePath))];
+          const existingPaths = new Set(mergedFiles.map(f => f.filePath));
+          for (const filePath of uniquePaths) {
+            if (!existingPaths.has(filePath)) {
+              mergedFiles.push({ filePath, linesPct: 0, branchesPct: 0, funcsPct: 0, stmtsPct: 0 });
+            }
+          }
+        } catch (e) {
+          console.error("Failed to fetch CFG for source files", e);
+        }
+      }
+
+      setSummary(a.data); setFiles(mergedFiles); setExecutions(c.data || {}); setError("");
       // Framework metadata enriches the header, but must never block reports or Run.
       try {
         const detection = await getCoverageFrameworks(snapshotId);
@@ -80,9 +100,21 @@ export default function CoverageTypeDashboard({ type, snapshotId, onOpenFile }) 
   return <div style={{ minHeight: "100%", padding: "28px 34px", color: "#e6edf3", background: "#0d1117", boxSizing: "border-box" }}>
     <div style={{ display: "flex", justifyContent: "space-between", gap: 20, alignItems: "flex-start", marginBottom: 22 }}>
       <div><h1 style={{ margin: 0, fontSize: 27 }}>{config.title}</h1><p style={{ color: "#8b949e", fontSize: 13, margin: "7px 0 0" }}>{config.subtitle}</p><div style={{ color: "#6e7681", fontSize: 12, marginTop: 7 }}>Hỗ trợ: <span style={{ color: config.accent }}>{config.supported}</span>{frameworks && <span> · Phát hiện: <b style={{ color: "#c9d1d9" }}>{frameworks.supported?.[type]?.join(", ") || "không có"}</b></span>}{activeFramework && <span> · Vừa chạy: <b style={{ color: config.accent }}>{activeFramework}</b></span>}</div></div>
-      <div style={{ display: "flex", gap: 9 }}><button onClick={load} disabled={loading || running} style={buttonStyle("#8b949e")}>Refresh</button><button onClick={run} disabled={!snapshotId || running} style={buttonStyle(config.accent)}>{running ? "Running analysis..." : "Run Analysis"}</button></div>
+      <div style={{ display: "flex", gap: 9 }}>
+        {onGenerate && (
+          <button onClick={async () => {
+            setGenerateError("");
+            try { await onGenerate(type); }
+            catch (err) { setGenerateError(err.message || "Generation failed."); }
+          }} disabled={loading || running || generating} style={buttonStyle("#67e8f9")}>
+            {generating ? "Generating..." : "Generate AI Tests"}
+          </button>
+        )}
+        <button onClick={load} disabled={loading || running || generating} style={buttonStyle("#8b949e")}>Refresh</button>
+        <button onClick={run} disabled={!snapshotId || running || generating} style={buttonStyle(config.accent)}>{running ? "Running analysis..." : "Run Analysis"}</button>
+      </div>
     </div>
-    {error && <div style={{ padding: "12px 15px", marginBottom: 18, borderRadius: 9, color: "#fca5a5", background: "rgba(239,68,68,.1)", border: "1px solid rgba(239,68,68,.3)" }}>{error}</div>}
+    {(error || generateError) && <div style={{ padding: "12px 15px", marginBottom: 18, borderRadius: 9, color: "#fca5a5", background: "rgba(239,68,68,.1)", border: "1px solid rgba(239,68,68,.3)" }}>{error || generateError}</div>}
     {loading ? <div style={{ color: "#8b949e", padding: 40, textAlign: "center" }}>Loading coverage analysis...</div> : <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(165px, 1fr))", gap: 13 }}>{config.focus.map((label, i) => <div key={label} style={cardStyle}><div style={{ color: "#8b949e", fontSize: 11, fontWeight: 700, textTransform: "uppercase" }}>{label}</div><div style={{ color: type === "unit" ? coverageColor(values[i]) : config.accent, fontSize: 27, fontWeight: 750, marginTop: 8 }}>{type === "unit" ? pct(values[i]) : values[i]}</div></div>)}</div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 13, marginTop: 18 }}>{config.explanation.map(([title, text]) => <div key={title} style={cardStyle}><div style={{ color: config.accent, fontWeight: 650, fontSize: 14 }}>{title}</div><div style={{ color: "#8b949e", fontSize: 12, lineHeight: 1.55, marginTop: 7 }}>{text}</div></div>)}</div>

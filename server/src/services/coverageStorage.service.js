@@ -92,6 +92,16 @@ export const storeCoverageOutputs = async (snapshotId, projectId, coverageDir) =
         console.warn(`[CoverageStorage] Không tìm thấy lcov.info tại ${lcovFile}`);
     }
 
+    // ── Integration Scenarios ───────────────────────────────────────
+    const scenariosFile = path.join(coverageDir, "integration-scenarios.json");
+    if (fs.existsSync(scenariosFile)) {
+        const buf = fs.readFileSync(scenariosFile);
+        const dest = `${baseStoragePath}/integration-scenarios.json`;
+        await uploadBufferToFirebase(buf, dest, "application/json");
+        results.scenariosStoragePath = dest;
+        console.log(`[CoverageStorage] Uploaded integration-scenarios.json → ${dest}`);
+    }
+
     // ── SCRUM-117: Associate outputs với Snapshot ─────────────────────────
     // ProjectSnapshot uses the real Prisma field `storagePath`, not `storageBasePath`.
     await prisma.projectSnapshot.update({

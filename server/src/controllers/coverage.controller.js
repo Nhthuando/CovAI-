@@ -6,6 +6,8 @@ import { processCoverageJob } from "../services/coverageRunner.service.js";
 import { addJobToQueue } from "../services/queue.service.js";
 import { detectSupertest } from "../services/supertestDetection.service.js";
 import { detectCoverageFrameworks, selectCoverageFramework } from "../services/coverageFramework.service.js";
+import { buildIntegrationWorkspace } from "../services/integrationWorkspace.service.js";
+
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -599,5 +601,92 @@ export const getCoverageFunctions = async (req, res) => {
             return res.status(error.statusCode).json({ success: false, message: error.message });
         }
         return res.status(500).json({ success: false, message: "Có lỗi server!" });
+    }
+};
+
+/**
+ * GET /api/coverage/:snapshotId/integration/workspace
+ * Retrieves the data for the new Integration Test Workspace
+ */
+export const getIntegrationWorkspace = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({ success: false, message: "Unauthorized." });
+        }
+
+        const { snapshotId } = req.params;
+        if (!snapshotId) {
+            return res.status(400).json({ success: false, message: "snapshotId is required." });
+        }
+
+        const snapshot = await prisma.projectSnapshot.findUnique({
+            where: { id: snapshotId },
+            select: { project: { select: { ownerId: true } } }
+        });
+
+        if (!snapshot) {
+            return res.status(404).json({ success: false, message: "Snapshot not found." });
+        }
+        if (snapshot.project.ownerId !== userId) {
+            return res.status(403).json({ success: false, message: "Forbidden." });
+        }
+
+        const workspaceData = await buildIntegrationWorkspace(snapshotId);
+
+        return res.status(200).json({
+            success: true,
+            data: workspaceData
+        });
+    } catch (error) {
+        console.error("[getIntegrationWorkspace] Server error:", error);
+        if (error instanceof ServiceError) {
+            return res.status(error.statusCode).json({ success: false, message: error.message });
+        }
+        return res.status(500).json({ success: false, message: "Server error while fetching integration workspace." });
+    }
+};
+
+export const approveIntegrationTests = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
+
+        const { snapshotId } = req.params;
+        if (!snapshotId) return res.status(400).json({ success: false, message: "snapshotId is required." });
+
+        const snapshot = await prisma.projectSnapshot.findUnique({
+            where: { id: snapshotId },
+            select: { project: { select: { ownerId: true } } }
+        });
+
+        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
+        if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
+
+        const aiTests = await prisma.aiTest.findMany({
+            where: { snapshotId }
+        });
+
+        for (const t of aiTests) {
+            try {
+                if (t.metaJson) {
+                    const meta = typeof t.metaJson === 'string' ? JSON.parse(t.metaJson) : t.metaJson;
+                    if (meta.framework === "SUPERTEST") {
+                        meta.status = "APPROVED";
+                        await prisma.aiTest.update({
+                            where: { id: t.id },
+                            data: { metaJson: JSON.stringify(meta) }
+                        });
+                    }
+                }
+            } catch (e) {
+                console.error("Failed to parse metaJson for AiTest", t.id, e);
+            }
+        }
+
+        return res.status(200).json({ success: true, message: "Approved successfully." });
+    } catch (error) {
+        console.error("[approveIntegrationTests] Server error:", error);
+        return res.status(500).json({ success: false, message: "Server error while approving tests." });
     }
 };

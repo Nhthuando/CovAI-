@@ -133,7 +133,7 @@ export const processInstallDepsJob = async (jobId) => {
 
         const child = spawn(command, args, {
             cwd: resolvedRootDir,
-            shell: false,
+            shell: process.platform === "win32",
             env: { ...process.env, CI: "true" },
             stdio: ["ignore", "pipe", "pipe"],
         });

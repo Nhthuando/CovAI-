@@ -269,6 +269,18 @@ export async function generateSkeletonApi(
   return handleResponse(res);
 }
 
+export async function generateIntegrationTestApi(
+  projectId,
+  snapshotId,
+) {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/ai/generate-integration-test`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ snapshotId, framework: "SUPERTEST" }),
+  });
+  return handleResponse(res);
+}
+
 export async function getFrameworkRecommendationApi(projectId, snapshotId) {
   const query = snapshotId
     ? `?snapshotId=${encodeURIComponent(snapshotId)}`
