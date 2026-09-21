@@ -163,3 +163,10 @@ export async function getCoverageTestSuites(snapshotId, type = "unit") {
 
     return handleResponse(res);
 }
+
+export async function getIntegrationWorkspace(snapshotId) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/workspace`, {
+        headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
+}

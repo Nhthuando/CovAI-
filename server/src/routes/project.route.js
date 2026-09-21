@@ -79,6 +79,7 @@ router.get("/:id/ai/tests", projectController.getAiTests);
 router.get("/:id/ai/tests/:testId", projectController.getAiTest);
 router.post(
   "/:id/ai/generate-integration-test",
+  authMiddleware,
   projectController.generateIntegrationTest,
 );
 router.post(

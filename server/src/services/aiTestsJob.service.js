@@ -4,12 +4,15 @@ import { updateJobStatus } from "./jobUpdate.service.js";
 import { buildAiPayload } from "./aiContextBuilder.service.js";
 import { buildFinalPrompt } from "./aiPromptBuilder.service.js";
 import { buildCypressPrompt } from "./cypressPromptBuilder.service.js";
+import { buildSupertestPrompt } from "./supertestPromptBuilder.service.js";
 import { generateText } from "./gemini.service.js";
 import { processAiSuggestions } from "./aiSuggestionParser.service.js";
 import { processSkeletonTests } from "./skeletonPostProcessor.service.js";
 import { processFullTests } from "./fullTestsPostProcessor.service.js";
 import { processCypressTests } from "./cypressPostProcessor.service.js";
+import { processSupertestTests } from "./supertestPostProcessor.service.js";
 import { notificationService } from "./notification.service.js";
+import { saveAiTestsToFilesystem, removeAiTestsFromFilesystem } from "./aiTestStorage.service.js";
 
 /**
  * Orchestrates the full Skeleton Test Generation Pipeline
@@ -44,6 +47,62 @@ export const processAiTestsJob = async (jobId) => {
         await updateJobStatus({ jobId, progress: 30 });
 
         await addJobLog(jobId, "INFO", `Constructing final prompt for ${mode} mode...`);
+
+        // ── Supertest Integration Generation Branch ────────────────────────
+        if (mode === "SUPERTEST") {
+            const supertestPrompt = buildSupertestPrompt(payload);
+
+            await updateJobStatus({ jobId, progress: 40 });
+
+            await addJobLog(jobId, "INFO", "Calling Gemini AI model for Supertest test generation...");
+            const supertestResponseText = await generateText(supertestPrompt, "gemini-1.5-pro");
+
+            if (!supertestResponseText) {
+                throw new ServiceError("AI Model failed to return test scenarios", 500);
+            }
+
+            await addJobLog(jobId, "INFO", "Parsing and validating generated test scenarios...");
+            await updateJobStatus({ jobId, progress: 80 });
+
+            await addJobLog(jobId, "INFO", "Parsing Supertest scenarios...");
+            const { allTests, summary } = processSupertestTests(supertestResponseText, {
+                projectId,
+                snapshotId,
+            });
+
+            await addJobLog(jobId, "INFO", "Cleaning up old Supertest tests for this snapshot...");
+            // Clean up old SUPERTEST files using in-memory filtering because Prisma doesn't support json filtering cleanly on all DBs
+            const existingTests = await prisma.aiTest.findMany({
+                where: { snapshotId }
+            });
+            const supertestTests = existingTests
+                .filter(t => {
+                    if (!t.metaJson) return false;
+                    try {
+                        return JSON.parse(t.metaJson).framework === "SUPERTEST";
+                    } catch { return false; }
+                });
+            const supertestIds = supertestTests.map(t => t.id);
+
+            if (supertestIds.length > 0) {
+                removeAiTestsFromFilesystem(job.snapshot.rootDir, supertestTests);
+                await prisma.aiTest.deleteMany({
+                    where: { id: { in: supertestIds } }
+                });
+            }
+
+            if (allTests.length > 0) {
+                saveAiTestsToFilesystem(job.snapshot.rootDir, allTests);
+                await prisma.aiTest.createMany({ data: allTests });
+                await addJobLog(jobId, "INFO", summary.message);
+            } else {
+                await addJobLog(jobId, "INFO", "No Supertest integration test files were generated.");
+            }
+
+            await updateJobStatus({ jobId, status: "SUCCESS", progress: 100 });
+            await notificationService.createJobFinishedNotification(jobId);
+            return { success: true, count: allTests.length, summary };
+        }
 
         // ── Cypress E2E Generation Branch ──────────────────────────────────
         if (mode === "CYPRESS") {

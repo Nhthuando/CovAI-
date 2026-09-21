@@ -1572,17 +1572,19 @@ The user is working on project: ${project.name}.
           .json({ success: false, message: "Framework is required" });
       }
 
-      const { generateIntegrationTest } =
+      const { queueSupertestGeneration } =
         await import("../services/aiTest.service.js");
 
-      const aiTest = await generateIntegrationTest({
+      const job = await queueSupertestGeneration({
         projectId,
         snapshotId,
         userId: req.user.id,
-        framework,
       });
 
-      return res.status(201).json({ success: true, data: aiTest });
+      return res.status(202).json({
+        success: true,
+        data: { job, message: "Supertest integration generation job queued" },
+      });
     } catch (error) {
       console.error(error);
 

@@ -7,6 +7,8 @@ import { jobQueue, addSupertestCoveragePipeline, addJobToQueue } from "../servic
 import { processCoverageJob } from "../services/coverageRunner.service.js";
 import { detectSupertest } from "../services/supertestDetection.service.js";
 import { detectCoverageFrameworks, selectCoverageFramework } from "../services/coverageFramework.service.js";
+import { buildIntegrationWorkspace } from "../services/integrationWorkspace.service.js";
+
 import { getFileCoverageDetails } from "../services/fileCoverage.service.js";
 import { suggestUnitTestcases } from "../services/unitTestSuggestion.service.js";
 
@@ -834,8 +836,81 @@ export const getCoverageFunctions = async (req, res) => {
 };
 
 /**
+ * GET /api/coverage/:snapshotId/integration/workspace
+ * Retrieves the data for the new Integration Test Workspace
+ */
+export const getIntegrationWorkspace = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
+
+        const { snapshotId } = req.params;
+        if (!snapshotId) return res.status(400).json({ success: false, message: "snapshotId is required." });
+
+        const snapshot = await prisma.projectSnapshot.findUnique({
+            where: { id: snapshotId },
+            select: { project: { select: { ownerId: true } } }
+        });
+
+        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
+        if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
+
+        const workspaceData = await buildIntegrationWorkspace(snapshotId);
+
+        return res.status(200).json({ success: true, data: workspaceData });
+    } catch (error) {
+        console.error("[getIntegrationWorkspace] Server error:", error);
+        if (error.statusCode) {
+            return res.status(error.statusCode).json({ success: false, message: error.message });
+        }
+        return res.status(500).json({ success: false, message: "Server error while fetching integration workspace." });
+    }
+};
+
+export const approveIntegrationTests = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
+
+        const { snapshotId } = req.params;
+        if (!snapshotId) return res.status(400).json({ success: false, message: "snapshotId is required." });
+
+        const snapshot = await prisma.projectSnapshot.findUnique({
+            where: { id: snapshotId },
+            select: { project: { select: { ownerId: true } } }
+        });
+
+        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
+        if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
+
+        const aiTests = await prisma.aiTest.findMany({ where: { snapshotId } });
+
+        for (const t of aiTests) {
+            try {
+                if (t.metaJson) {
+                    const meta = typeof t.metaJson === 'string' ? JSON.parse(t.metaJson) : t.metaJson;
+                    if (meta.framework === "SUPERTEST") {
+                        meta.status = "APPROVED";
+                        await prisma.aiTest.update({
+                            where: { id: t.id },
+                            data: { metaJson: JSON.stringify(meta) }
+                        });
+                    }
+                }
+            } catch (e) {
+                console.error("Failed to parse metaJson for AiTest", t.id, e);
+            }
+        }
+
+        return res.status(200).json({ success: true, message: "Approved successfully." });
+    } catch (error) {
+        console.error("[approveIntegrationTests] Server error:", error);
+        return res.status(500).json({ success: false, message: "Server error while approving tests." });
+    }
+};
+
+/**
  * GET /api/coverage/:snapshotId/file-coverage?filePath=...
- * Line-by-line coverage metrics and assertion failure gutter marks.
  */
 export const getFileCoverage = async (req, res) => {
     try {
@@ -844,24 +919,18 @@ export const getFileCoverage = async (req, res) => {
 
         const { snapshotId } = req.params;
         const filePath = req.query.filePath;
-        if (!filePath) {
-            return res.status(400).json({ success: false, message: "filePath query parameter is required." });
-        }
+        if (!filePath) return res.status(400).json({ success: false, message: "filePath query parameter is required." });
 
         const data = await getFileCoverageDetails(snapshotId, filePath, userId);
         return res.status(200).json({ success: true, data });
     } catch (error) {
         console.error("[getFileCoverage] Error:", error);
-        return res.status(error.statusCode || 500).json({
-            success: false,
-            message: error.message || "Failed to retrieve file coverage."
-        });
+        return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to retrieve file coverage." });
     }
 };
 
 /**
  * POST /api/coverage/:snapshotId/suggest-testcase
- * Generates unit test cases for uncovered branches/lines using AI Agent.
  */
 export const suggestUnitTestcase = async (req, res) => {
     try {
@@ -871,9 +940,7 @@ export const suggestUnitTestcase = async (req, res) => {
         const { snapshotId } = req.params;
         let { projectId, filePath, framework } = req.body || {};
 
-        if (!filePath) {
-            return res.status(400).json({ success: false, message: "filePath is required in body." });
-        }
+        if (!filePath) return res.status(400).json({ success: false, message: "filePath is required in body." });
 
         if (!projectId) {
             const snapshot = await prisma.projectSnapshot.findUnique({
@@ -883,23 +950,10 @@ export const suggestUnitTestcase = async (req, res) => {
             if (snapshot) projectId = snapshot.projectId;
         }
 
-        const result = await suggestUnitTestcases({
-            projectId,
-            snapshotId,
-            filePath,
-            userId,
-            framework
-        });
-
-        return res.status(200).json({
-            success: true,
-            data: result
-        });
+        const result = await suggestUnitTestcases({ projectId, snapshotId, filePath, userId, framework });
+        return res.status(200).json({ success: true, data: result });
     } catch (error) {
         console.error("[suggestUnitTestcase] Error:", error);
-        return res.status(error.statusCode || 500).json({
-            success: false,
-            message: error.message || "Failed to suggest unit testcases."
-        });
+        return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to suggest unit testcases." });
     }
 };

@@ -33,16 +33,41 @@ export const parseJestResults = (coverageDir) => {
         // Calculate duration
         const duration = raw.testResults ? raw.testResults.reduce((acc, suite) => acc + (suite.endTime - suite.startTime), 0) : 0;
 
+        const scenarios = [];
+        if (raw.testResults) {
+            raw.testResults.forEach(suite => {
+                if (suite.assertionResults) {
+                    suite.assertionResults.forEach(assertion => {
+                        scenarios.push({
+                            title: assertion.title,
+                            suiteName: assertion.ancestorTitles ? assertion.ancestorTitles.join(" > ") : "",
+                            status: assertion.status, // "passed", "failed", "pending"
+                            duration: assertion.duration || 0,
+                            failureMessages: assertion.failureMessages || [],
+                            testFile: suite.name // Full path, we might need to normalize
+                        });
+                    });
+                }
+            });
+        }
+
         const results = {
             totalTests: raw.numTotalTests || 0,
             passedTests: raw.numPassedTests || 0,
             failedTests: raw.numFailedTests || 0,
             skippedTests: raw.numPendingTests || 0,
             durationMs: duration,
-            status: raw.success ? "PASSED" : "FAILED"
+            status: raw.success ? "PASSED" : "FAILED",
+            scenarios
         };
 
-        console.log(`[TEST-RESULT] parsed:`, results);
+        const scenariosPath = path.join(coverageDir, "integration-scenarios.json");
+        fs.writeFileSync(scenariosPath, JSON.stringify(scenarios, null, 2), "utf8");
+
+        console.log(`[TEST-RESULT] parsed ${scenarios.length} scenarios.`, {
+            total: results.totalTests,
+            status: results.status
+        });
         return results;
     } catch (err) {
         console.error(`[TEST-RESULT] Error parsing ${resultsPath}:`, err);

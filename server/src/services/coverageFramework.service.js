@@ -3,7 +3,7 @@ import path from "path";
 
 export const COVERAGE_FRAMEWORKS = Object.freeze({
   unit: ["jest", "vitest"],
-  integration: ["playwright", "supertest"],
+  integration: ["supertest"],
   system: ["playwright", "cypress"],
 });
 

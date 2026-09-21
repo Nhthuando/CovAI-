@@ -2,73 +2,77 @@ import prisma from "../config/prisma.js";
 import { ServiceError } from "./project.service.js";
 import { generateText } from "./gemini.service.js";
 import { buildFullTestPrompt } from "./fullTestPromptBuilder.service.js";
-import { buildAiPayload } from "./aiContextBuilder.service.js";
+import { buildAiPayload, loadSourceCode } from "./aiContextBuilder.service.js";
 import { validateGeneratedTest } from "./testValidation.service.js";
 import { createAiTestsJob } from "./job.service.js";
 import { addJobToQueue } from "./queue.service.js";
+import { extractValidEndpoints } from "./apiEndpointParser.service.js";
 
 
-export const generateIntegrationTest = async ({
-  projectId,
-  snapshotId,
-  userId,
-  framework,
-}) => {
-  // 1. Verify access
-  const project = await prisma.project.findFirst({
-    where: { id: projectId, ownerId: userId },
+export const queueSupertestGeneration = async ({ projectId, snapshotId, userId }) => {
+  const db = prisma;
+
+  // 1. Verify project ownership
+  const project = await db.project.findUnique({
+    where: { id: projectId },
+    select: { ownerId: true },
   });
-  if (!project) throw new ServiceError("Project not found", 404);
 
-  const snapshot = await prisma.projectSnapshot.findUnique({
-    where: { id: snapshotId },
-    include: {
-      coverageSummary: true,
-      coverageFuncs: true,
-      cfgs: true,
-      cyclomatics: true,
-    },
-  });
-  if (!snapshot) throw new ServiceError("Snapshot not found", 404);
-
-  const aiPayloadResult = await buildAiPayload(snapshotId);
-  const payload = aiPayloadResult.payload;
-
-  // 2. Build prompt
-  const prompt = `Bạn là một chuyên gia testing. Hãy tạo một file integration test sử dụng framework ${framework} dựa trên các thông tin dự án dưới đây.
-Dự án có cấu trúc như sau:
-${JSON.stringify(payload.sourceCode, null, 2)}
-
-Hãy viết các test case tập trung vào API endpoint và business logic chính.
-Trả về code file test hoàn chỉnh.
-`;
-
-  // 3. AI Generation
-  let generatedCode;
-  try {
-    generatedCode = await generateText(prompt);
-  } catch (error) {
-    generatedCode = `// TODO: AI Generation failed. Manual intervention required.\n// Error: ${error.message}`;
+  if (!project) {
+    const err = new Error("Project not found");
+    err.status = 404;
+    throw err;
   }
 
-  // 4. Validate
-  const validation = validateGeneratedTest(generatedCode);
-  if (!validation.valid) {
-    throw new ServiceError(
-      `AI generated invalid test code: ${validation.errors.join(", ")}`,
-      422,
-    );
+  if (project.ownerId !== userId) {
+    const err = new Error("Forbidden: You do not have access to this project");
+    err.status = 403;
+    throw err;
   }
 
-  // 5. Save
-  return await prisma.aiTest.create({
-    data: {
-      projectId,
-      snapshotId,
-      mode: "FULL",
-      content: generatedCode,
-    },
+  // 2. Resolve snapshot — use the provided one or fall back to the latest
+  let resolvedSnapshotId = snapshotId;
+  if (!resolvedSnapshotId) {
+    const latestSnapshot = await db.projectSnapshot.findFirst({
+      where: { projectId },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
+
+    if (!latestSnapshot) {
+      const err = new Error("No snapshot found for this project");
+      err.status = 404;
+      throw err;
+    }
+
+    resolvedSnapshotId = latestSnapshot.id;
+  }
+
+  // 2.5 Verify Analysis exists
+  const sourceCode = await loadSourceCode(resolvedSnapshotId).catch(() => []);
+  const discoveredEndpoints = extractValidEndpoints(sourceCode);
+  if (discoveredEndpoints.length === 0) {
+    const err = new Error("ANALYSIS_REQUIRED");
+    err.status = 400;
+    throw err;
+  }
+
+  // 3. Create job (deduped — reuses active SUPERTEST job if exists)
+  const job = await createAiTestsJob({
+    projectId,
+    snapshotId: resolvedSnapshotId,
+    userId,
+    mode: "SUPERTEST",
   });
+
+  // 4. Fire-and-forget queue addition (non-blocking)
+  if (!job.existing) {
+    addJobToQueue("AI_TESTS", job.id).catch((err) => {
+      console.error("[queueSupertestGeneration] Failed to add job to queue:", err);
+    });
+  }
+
+  return job;
 };
 
 export const getAiTestById = async ({ projectId, testId, userId }) => {

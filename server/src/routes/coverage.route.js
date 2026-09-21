@@ -9,6 +9,8 @@ import {
     getTestExecution,
     getCoverageFrameworks,
     runCoverageByType,
+    getIntegrationWorkspace,
+    approveIntegrationTests,
     getFileCoverage,
     suggestUnitTestcase,
     getCoverageTestSuites
@@ -41,6 +43,10 @@ router.post("/:snapshotId/:coverageType/run", authMiddleware, runCoverageByType)
 router.get("/:snapshotId/functions", authMiddleware, getCoverageFunctions);
 
 router.get("/:snapshotId/test-execution", authMiddleware, getTestExecution);
+
+// Integration Workspace (Phase 1)
+router.get("/:snapshotId/integration/workspace", authMiddleware, getIntegrationWorkspace);
+router.post("/:snapshotId/integration/approve", authMiddleware, approveIntegrationTests);
 router.get("/:snapshotId/test-suites", authMiddleware, getCoverageTestSuites);
 
 export default router;

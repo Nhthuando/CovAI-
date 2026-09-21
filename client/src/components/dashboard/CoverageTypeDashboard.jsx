@@ -32,6 +32,7 @@ import {
   getFileCoverage
 } from "../../services/coverage.service.js";
 import { getJobDetailApi } from "../../services/job.service.js";
+import { getProjectCfgApi } from "../../services/project.service.js";
 import FunctionExecutionFlow from "./FunctionExecutionFlow.jsx";
 import FileCodeExecutionView from "./FileCodeExecutionView.jsx";
 import FileBranchCFGView from "./FileBranchCFGView.jsx";
@@ -180,6 +181,8 @@ export default function CoverageTypeDashboard({
   snapshotId,
   projectId,
   onOpenFile,
+  onGenerate, 
+  generating,
   onSuggestTestcase,
   onOpenCFG,
 }) {
@@ -192,6 +195,7 @@ export default function CoverageTypeDashboard({
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
   const [activeFramework, setActiveFramework] = useState("");
+  const [generateError, setGenerateError] = useState("");
 
   // Mode view for Unit test: "testcases" (default for unit) | "all" | "statements" | "branches" | "functions"
   const [activeMetricView, setActiveMetricView] = useState(
@@ -309,20 +313,27 @@ export default function CoverageTypeDashboard({
     }
     setLoading(true);
     try {
-      const [a, b, c] = await Promise.all([
-        getCoverageSummary(snapshotId),
-        getCoverageFiles(snapshotId, {
-          sortBy: "linesPct",
-          order: "asc",
-          limit: 200,
-        }),
-        getTestExecution(snapshotId),
-      ]);
-      setSummary(a.data);
-      setFiles(b.data?.files || []);
-      setExecutions(c.data || {});
-      setError("");
+      const [a, b, c] = await Promise.all([getCoverageSummary(snapshotId), getCoverageFiles(snapshotId, { sortBy: "linesPct", order: "asc", limit: 200 }), getTestExecution(snapshotId)]);
+      
+      let mergedFiles = b.data?.files || [];
+      if (type === "integration" && projectId) {
+        try {
+          const cfgRes = await getProjectCfgApi(projectId, snapshotId);
+          const cfgs = cfgRes.data || [];
+          const uniquePaths = [...new Set(cfgs.map(c => c.filePath))];
+          const existingPaths = new Set(mergedFiles.map(f => f.filePath));
+          for (const filePath of uniquePaths) {
+            if (!existingPaths.has(filePath)) {
+              mergedFiles.push({ filePath, linesPct: 0, branchesPct: 0, funcsPct: 0, stmtsPct: 0 });
+            }
+          }
+        } catch (e) {
+          console.error("Failed to fetch CFG for source files", e);
+        }
+      }
 
+      setSummary(a.data); setFiles(mergedFiles); setExecutions(c.data || {}); setError("");
+      // Framework metadata enriches the header, but must never block reports or Run.
       try {
         const detection = await getCoverageFrameworks(snapshotId);
         setFrameworks(detection.data || null);
@@ -368,6 +379,7 @@ export default function CoverageTypeDashboard({
   };
 
   const cov = summary?.coverage || {};
+
   const rawTotals = summary?.rawTotals || null;
 
   const selectedFiles = useMemo(() => {
@@ -529,6 +541,19 @@ export default function CoverageTypeDashboard({
           </div>
         </div>
         <div style={{ display: "flex", gap: 9 }}>
+          {onGenerate && (
+            <button
+              onClick={async () => {
+                setGenerateError("");
+                try { await onGenerate(type); }
+                catch (err) { setGenerateError(err.message || "Generation failed."); }
+              }}
+              disabled={loading || running || generating}
+              style={buttonStyle("#67e8f9")}
+            >
+              {generating ? "Generating..." : "Generate AI Tests"}
+            </button>
+          )}
           <button
             onClick={load}
             disabled={loading || running}
@@ -546,6 +571,21 @@ export default function CoverageTypeDashboard({
         </div>
       </div>
 
+      {generateError && (
+        <div
+          style={{
+            padding: "12px 15px",
+            marginBottom: 18,
+            borderRadius: 9,
+            color: "#fca5a5",
+            background: "rgba(239,68,68,.1)",
+            border: "1px solid rgba(239,68,68,.3)",
+          }}
+        >
+          {generateError}
+        </div>
+      )}
+      
       {error && (
         <div
           style={{

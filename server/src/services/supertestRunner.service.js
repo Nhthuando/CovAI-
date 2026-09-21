@@ -84,8 +84,9 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
         fs.mkdirSync(coverageDir, { recursive: true });
     }
     const resultsPath = path.join(coverageDir, "test-results.json");
+    const relativeResultsPath = path.relative(resolvedRoot, resultsPath).replace(/\\/g, "/");
 
-    let jestCmd = `CI=true NODE_ENV=test ${nodeOptions} ${jestBinary} --runInBand --coverage --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=${quoteForShell(resultsPath)} --forceExit --testTimeout=30000`;
+    let jestCmd = `CI=true NODE_ENV=test ${nodeOptions} ${jestBinary} --runInBand --coverage --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=${quoteForShell(relativeResultsPath)} --forceExit --testTimeout=30000`;
     jestCmd += ` --runTestsByPath ${testArgs}`;
 
     if (jestConfigPath) {
@@ -106,14 +107,18 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
         throw error;
     }
 
-    if (!result.success || result.exitCode !== 0) {
-        const details = result.exitCode === null ? "process terminated unexpectedly" : `exit code ${result.exitCode}`;
-        const message = `[SUPERTEST] Integration tests failed (${details}).`;
+    if (!result.success && result.exitCode === null) {
+        const message = `[SUPERTEST] Integration tests failed (process terminated unexpectedly).`;
         await addJobLog(jobId, "ERROR", message).catch(() => { });
         throw new ServiceError(message, 422);
     }
 
-    await addJobLog(jobId, "INFO", "[SUPERTEST] Integration tests completed successfully.").catch(() => { });
+    if (result.exitCode !== 0) {
+        await addJobLog(jobId, "WARN", `[SUPERTEST] Integration tests failed with exit code ${result.exitCode}. Proceeding to parse results.`).catch(() => { });
+    } else {
+        await addJobLog(jobId, "INFO", "[SUPERTEST] Integration tests completed successfully.").catch(() => { });
+    }
+
     return {
         exitCode: result.exitCode,
         stdout: result.stdout ?? "",

@@ -7,6 +7,7 @@ import {
     markJobRunning,
     markJobSuccess,
     updateJobProgress,
+    addJobLog,
 } from "./job.service.js";
 
 const assertStringField = (value, fieldName) => {
@@ -46,9 +47,12 @@ export const processAnalysisJob = async (jobId) => {
 
     try {
         await updateJobProgress(jobId, 15);
+        await addJobLog(jobId, "INFO", "Scanning snapshot for source code files...");
         const result = analyzeProjectStructure(job.snapshot.rootDir, { snapshotId: job.snapshotId });
+        await addJobLog(jobId, "INFO", `Analyzed ${result.sourceFiles?.length || 0} files. Discovered ${result.endpoints?.length || 0} API endpoints.`);
         await updateJobProgress(jobId, 75);
 
+        await addJobLog(jobId, "INFO", "Saving analysis results to database...");
         const analysis = await prisma.projectStructureAnalysis.upsert({
             where: { snapshotId: job.snapshotId },
             create: {
@@ -62,6 +66,7 @@ export const processAnalysisJob = async (jobId) => {
             },
         });
         await updateJobProgress(jobId, 95);
+        await addJobLog(jobId, "INFO", "Analysis completed successfully.");
         await markJobSuccess(jobId, {
             analysisId: analysis.id,
             snapshotId: job.snapshotId,
