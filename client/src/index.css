@@ -111,14 +111,17 @@ body {
   width: 0 !important;
   height: 0 !important;
 }
+
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
 ::-webkit-scrollbar-thumb {
   background: rgba(124, 58, 237, 0.35);
   border-radius: 9999px;
   transition: background 0.2s ease;
 }
+
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(167, 139, 250, 0.7);
 }
@@ -169,11 +172,9 @@ body {
 }
 
 .text-gradient-violet {
-  background: linear-gradient(
-    135deg,
-    var(--primary-light) 0%,
-    var(--accent-cyan) 100%
-  );
+  background: linear-gradient(135deg,
+      var(--primary-light) 0%,
+      var(--accent-cyan) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -185,28 +186,36 @@ body {
 .token-keyword {
   color: #c084fc;
 }
+
 .token-type {
   color: #67e8f9;
 }
+
 .token-fn {
   color: #93c5fd;
 }
+
 .token-string {
   color: #86efac;
 }
+
 .token-number {
   color: #fca5a5;
 }
+
 .token-comment {
   color: #4b5563;
   font-style: italic;
 }
+
 .token-tag {
   color: #f9a8d4;
 }
+
 .token-attr {
   color: #fde68a;
 }
+
 .token-plain {
   color: #e2e8f0;
 }
@@ -215,20 +224,24 @@ body {
    ANIMATION KEYFRAMES
    ============================================================ */
 @keyframes float {
+
   0%,
   100% {
     transform: translateY(0px);
   }
+
   50% {
     transform: translateY(-8px);
   }
 }
 
 @keyframes pulse-glow {
+
   0%,
   100% {
     opacity: 0.5;
   }
+
   50% {
     opacity: 1;
   }
@@ -238,19 +251,23 @@ body {
   0% {
     background-position: 0% 50%;
   }
+
   50% {
     background-position: 100% 50%;
   }
+
   100% {
     background-position: 0% 50%;
   }
 }
 
 @keyframes typing-cursor {
+
   0%,
   100% {
     opacity: 1;
   }
+
   50% {
     opacity: 0;
   }
@@ -260,18 +277,21 @@ body {
   0% {
     transform: translateY(-100%);
   }
+
   100% {
     transform: translateY(100vh);
   }
 }
 
 @keyframes neon-pulse {
+
   0%,
   100% {
     box-shadow:
       0 0 5px rgba(124, 58, 237, 0.3),
       0 0 20px rgba(124, 58, 237, 0.1);
   }
+
   50% {
     box-shadow:
       0 0 15px rgba(124, 58, 237, 0.6),
@@ -282,13 +302,16 @@ body {
 .animate-float {
   animation: float 4s ease-in-out infinite;
 }
+
 .animate-pulse-glow {
   animation: pulse-glow 2s ease-in-out infinite;
 }
+
 .animate-gradient {
   animation: gradient-shift 6s ease infinite;
   background-size: 200% 200%;
 }
+
 .animate-neon-pulse {
   animation: neon-pulse 2s ease-in-out infinite;
 }
@@ -338,15 +361,67 @@ input:-webkit-autofill:focus {
 .line-covered {
   background: rgba(63, 185, 80, 0.06);
 }
+
 .line-uncovered {
   background: rgba(248, 81, 73, 0.06);
 }
+
 .line-partial {
   background: rgba(210, 153, 34, 0.06);
 }
 
 /* ============================================================
-   IDE PANEL SPACING FIXES (REMOVED)
-   Tailwind utilities now handle spacing directly without 
-   global overrides that were conflicting with Tailwind.
+   MONACO COVERAGE GUTTER GLYPHS & LINE HIGHLIGHTS
    ============================================================ */
+.coverage-glyph-passed {
+  color: #22c55e !important;
+  font-weight: 700;
+  font-size: 13px;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  line-height: 1;
+}
+
+.coverage-glyph-passed::before {
+  content: "✓";
+}
+
+.coverage-glyph-uncovered {
+  color: #eab308 !important;
+  font-weight: 700;
+  font-size: 13px;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  line-height: 1;
+}
+
+.coverage-glyph-uncovered::before {
+  content: "⚑";
+}
+
+.coverage-glyph-failed {
+  color: #ef4444 !important;
+  font-weight: 700;
+  font-size: 15px;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  line-height: 1;
+}
+
+.coverage-glyph-failed::before {
+  content: "×";
+}
+
+.coverage-line-failed {
+  background: rgba(239, 68, 68, 0.15) !important;
+}
+
+.coverage-line-uncovered {
+  background: rgba(234, 179, 8, 0.05) !important;
+}

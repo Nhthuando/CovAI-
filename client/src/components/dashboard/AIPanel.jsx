@@ -10,6 +10,7 @@ import {
   Loader2,
   RotateCcw,
   Shield,
+  FileCode,
   Wand2,
   Zap,
   ChevronDown,
@@ -23,7 +24,11 @@ import {
   sendAiChatMessageApi,
   getAiSuggestionsApi,
   generateSkeletonApi,
+  getFileContentApi,
+  updateFileContentApi,
+  createProjectFileApi,
 } from "../../services/project.service";
+import { suggestUnitTestcase } from "../../services/coverage.service";
 import { getProjectJobsApi } from "../../services/job.service";
 import { useToast } from "./ToastContext";
 
@@ -145,6 +150,259 @@ function CodeBlock({ code, language = "javascript" }) {
       >
         <code>{code}</code>
       </pre>
+    </div>
+  );
+}
+
+/* ── Test Suggestion Card (supports Jest & Vitest) ────────── */
+function TestSuggestionCard({
+  msg,
+  onApplySuggestion,
+  onUndoSuggestion,
+  onApplyAllSuggestions,
+  onRunAnalysis,
+}) {
+  const suggestions = msg.testSuggestions?.length
+    ? msg.testSuggestions
+    : msg.testSuggestion
+      ? [msg.testSuggestion]
+      : [];
+
+  const [activeFw, setActiveFw] = useState(
+    suggestions[0]?.framework || "jest"
+  );
+
+  if (suggestions.length === 0) return null;
+
+  const current =
+    suggestions.find((s) => s.framework === activeFw) || suggestions[0];
+  const isMulti = suggestions.length > 1;
+  const allApplied = suggestions.every((s) => s.applied);
+  const anyApplying = suggestions.some((s) => s.isApplying);
+
+  return (
+    <div
+      className="mt-3 rounded-xl overflow-hidden"
+      style={{
+        border: "1px solid rgba(168, 85, 247, 0.3)",
+        background: "rgba(168, 85, 247, 0.05)",
+      }}
+    >
+      {/* Framework Tabs if multi-framework (Jest & Vitest) */}
+      {isMulti && (
+        <div
+          className="flex items-center gap-1.5 px-3 py-2 flex-wrap"
+          style={{
+            background: "rgba(0,0,0,0.35)",
+            borderBottom: "1px solid rgba(255,255,255,0.08)",
+          }}
+        >
+          <span className="text-[11px] font-semibold text-slate-400 mr-1">
+            Framework:
+          </span>
+          {suggestions.map((sug) => {
+            const isSelected = activeFw === sug.framework;
+            const isVitest = sug.framework === "vitest";
+            return (
+              <button
+                key={sug.framework}
+                type="button"
+                onClick={() => setActiveFw(sug.framework)}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold cursor-pointer transition-all"
+                style={{
+                  background: isSelected
+                    ? isVitest
+                      ? "rgba(245, 158, 11, 0.25)"
+                      : "rgba(124, 58, 237, 0.3)"
+                    : "rgba(255, 255, 255, 0.05)",
+                  color: isSelected
+                    ? isVitest
+                      ? "#fcd34d"
+                      : "#c084fc"
+                    : "#94a3b8",
+                  border: isSelected
+                    ? isVitest
+                      ? "1px solid rgba(245, 158, 11, 0.5)"
+                      : "1px solid rgba(124, 58, 237, 0.6)"
+                    : "1px solid transparent",
+                }}
+              >
+                <span>{isVitest ? "⚡ Vitest" : "🃏 Jest"}</span>
+                {sug.applied && (
+                  <Check size={11} className="text-green-400" />
+                )}
+              </button>
+            );
+          })}
+
+          {/* Quick Apply All button if multiple */}
+          {!allApplied && (
+            <button
+              type="button"
+              disabled={anyApplying}
+              onClick={() => onApplyAllSuggestions?.(msg.id, suggestions)}
+              className="ml-auto flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors cursor-pointer"
+              style={{
+                background: "rgba(34, 197, 94, 0.15)",
+                color: "#86efac",
+                border: "1px solid rgba(34, 197, 94, 0.35)",
+              }}
+              title="Tự động áp dụng test case cho cả Jest và Vitest"
+            >
+              <Sparkles size={11} />
+              <span>Apply cả 2</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Target test file info bar */}
+      <div
+        className="flex items-center justify-between px-3 py-2 text-xs"
+        style={{
+          background:
+            current.framework === "vitest"
+              ? "rgba(245, 158, 11, 0.12)"
+              : "rgba(168, 85, 247, 0.12)",
+          borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
+        }}
+      >
+        <div className="flex items-center gap-1.5 overflow-hidden">
+          <FileCode
+            size={13}
+            style={{
+              color: current.framework === "vitest" ? "#fbbf24" : "#c084fc",
+              flexShrink: 0,
+            }}
+          />
+          <span
+            style={{
+              color: current.framework === "vitest" ? "#fbbf24" : "#c084fc",
+              fontWeight: 600,
+            }}
+          >
+            {current.framework === "vitest" ? "VITEST" : "JEST"} Test:
+          </span>
+          <span
+            className="truncate font-mono"
+            style={{ color: "#e6edf3", fontSize: 11 }}
+          >
+            {current.targetTestFile}
+          </span>
+        </div>
+        <span
+          className="px-1.5 py-0.5 rounded text-[10px] font-medium"
+          style={{
+            background: current.isExisting
+              ? "rgba(59, 130, 246, 0.2)"
+              : "rgba(34, 197, 94, 0.2)",
+            color: current.isExisting ? "#93c5fd" : "#86efac",
+          }}
+        >
+          {current.isExisting ? "File có sẵn" : "File mới"}
+        </span>
+      </div>
+
+      {/* Code block */}
+      <CodeBlock
+        code={current.suggestedTestCode}
+        language="javascript"
+      />
+
+      {/* Actions footer */}
+      <div
+        className="p-3 flex items-center gap-2 flex-wrap"
+        style={{
+          background: "rgba(0,0,0,0.25)",
+          borderTop: "1px solid rgba(255,255,255,0.06)",
+        }}
+      >
+        {!current.applied ? (
+          <motion.button
+            type="button"
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            disabled={current.isApplying}
+            onClick={() => onApplySuggestion?.(msg.id, current)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold"
+            style={{
+              background:
+                current.framework === "vitest" ? "#d97706" : "#7c3aed",
+              color: "#ffffff",
+              border: "none",
+              cursor: current.isApplying ? "wait" : "pointer",
+              boxShadow:
+                current.framework === "vitest"
+                  ? "0 0 12px rgba(217, 119, 6, 0.35)"
+                  : "0 0 12px rgba(124, 58, 237, 0.35)",
+            }}
+            title={`Ghi test case ${current.framework?.toUpperCase()} vào ${current.targetTestFile}`}
+          >
+            {current.isApplying ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : (
+              <Check size={13} />
+            )}
+            <span>Apply vào {current.targetTestFile}</span>
+          </motion.button>
+        ) : (
+          <>
+            <div
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold"
+              style={{
+                background: "rgba(34, 197, 94, 0.15)",
+                color: "#4ade80",
+                border: "1px solid rgba(34, 197, 94, 0.3)",
+              }}
+            >
+              <Check size={13} />
+              <span>Đã apply ({current.framework?.toUpperCase()})</span>
+            </div>
+
+            <motion.button
+              type="button"
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              disabled={current.isUndoing}
+              onClick={() => onUndoSuggestion?.(msg.id, current)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium"
+              style={{
+                background: "rgba(255, 255, 255, 0.05)",
+                color: "#e6edf3",
+                border: "1px solid rgba(255, 255, 255, 0.15)",
+                cursor: current.isUndoing ? "wait" : "pointer",
+              }}
+              title="Hoàn tác file test về trạng thái trước khi Apply"
+            >
+              {current.isUndoing ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <RotateCcw size={13} />
+              )}
+              <span>Undo (Hoàn tác)</span>
+            </motion.button>
+
+            {onRunAnalysis && (
+              <motion.button
+                type="button"
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={onRunAnalysis}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold ml-auto"
+                style={{
+                  background: "rgba(124, 58, 237, 0.2)",
+                  color: "#c4b5fd",
+                  border: "1px solid rgba(124, 58, 237, 0.4)",
+                  cursor: "pointer",
+                }}
+                title="Chạy lại Unit Test Coverage để xác nhận độ bao phủ tăng"
+              >
+                <span>Run Analysis ↵</span>
+              </motion.button>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -328,7 +586,14 @@ function FormattedMessage({ content }) {
 }
 
 /* ── Chat Message Component ──────────────────────────────── */
-function ChatMessage({ msg, onRetry }) {
+function ChatMessage({
+  msg,
+  onRetry,
+  onApplySuggestion,
+  onUndoSuggestion,
+  onApplyAllSuggestions,
+  onRunAnalysis,
+}) {
   const isUser = msg.role === "user";
   const [hovered, setHovered] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -419,107 +684,170 @@ function ChatMessage({ msg, onRetry }) {
       </div>
 
       {/* Message Bubble */}
-      <div
-        className="relative group rounded-2xl min-w-0"
-        style={{
-          maxWidth: isUser ? "85%" : "100%",
-          padding: isUser ? "10px 15px" : "14px 18px",
-          background: isUser
-            ? "rgba(124, 58, 237, 0.16)"
-            : "rgba(22, 27, 34, 0.7)",
-          border: isUser
-            ? "1px solid rgba(124, 58, 237, 0.35)"
-            : "1px solid rgba(255, 255, 255, 0.08)",
-          borderRadius: isUser ? "16px 4px 16px 16px" : "4px 16px 16px 16px",
-          boxShadow: isUser
-            ? "0 2px 10px rgba(124, 58, 237, 0.1)"
-            : "0 4px 16px rgba(0, 0, 0, 0.3)",
-          backdropFilter: "blur(10px)",
-          wordBreak: "break-word",
-          overflowWrap: "anywhere",
-          wordWrap: "break-word",
-        }}
-      >
-        <FormattedMessage content={msg.content} />
-
-        {/* Options / Action chips generated by AI */}
-        {msg.options && (
-          <div className="flex gap-2 mt-3 flex-wrap">
-            {msg.options.map((opt) => (
-              <button
-                key={opt.label}
-                onClick={() => opt.onClick && opt.onClick(opt.action)}
-                className="flex items-center gap-1.5 rounded-lg text-xs font-medium cursor-pointer"
-                style={{
-                  padding: "7px 12px",
-                  background: "rgba(124, 58, 237, 0.12)",
-                  border: "1px solid rgba(124, 58, 237, 0.35)",
-                  color: "#c4b5fd",
-                  transition: "all 0.15s ease",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "rgba(124, 58, 237, 0.25)";
-                  e.currentTarget.style.borderColor = "#a78bfa";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "rgba(124, 58, 237, 0.12)";
-                  e.currentTarget.style.borderColor =
-                    "rgba(124, 58, 237, 0.35)";
-                }}
-              >
-                <Sparkles size={11} />
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Hover Actions (Copy / Retry) */}
-        {!isUser && hovered && (
+      {msg.type === "quota" ? (
+        <div
+          className="relative rounded-xl overflow-hidden"
+          style={{
+            maxWidth: "100%",
+            background: "rgba(248,113,113,0.04)",
+            border: "1px solid rgba(248,113,113,0.2)",
+            backdropFilter: "blur(12px)",
+          }}
+        >
           <div
-            className="absolute -bottom-3 right-3 flex items-center gap-1 px-1.5 py-0.5 rounded-md"
             style={{
-              background: "#161b22",
-              border: "1px solid rgba(255, 255, 255, 0.12)",
-              boxShadow: "0 2px 8px rgba(0,0,0,0.5)",
-              zIndex: 10,
+              height: 3,
+              background: "linear-gradient(90deg, #f87171, #fb923c)",
             }}
-          >
-            <button
-              onClick={handleCopy}
-              title="Copy message"
+          />
+          <div style={{ padding: "16px 20px" }}>
+            <h4
               style={{
-                background: "transparent",
-                border: "none",
-                color: copied ? "#4ade80" : "#8b949e",
-                cursor: "pointer",
-                padding: "3px",
+                color: "#f87171",
+                fontSize: 14,
+                fontWeight: 600,
+                marginBottom: 6,
                 display: "flex",
                 alignItems: "center",
+                gap: 6,
               }}
             >
-              {copied ? <Check size={11} /> : <Copy size={11} />}
-            </button>
-            {onRetry && (
+              <span style={{ fontSize: 16 }}>🛑</span> Daily Limit Reached
+            </h4>
+            <p style={{ color: "#e6edf3", fontSize: 13, lineHeight: 1.6 }}>
+              Bạn đã vượt quá giới hạn lượt chat miễn phí hôm nay để đảm bảo
+              chất lượng máy chủ.
+            </p>
+            <p
+              style={{
+                color: "#8b949e",
+                fontSize: 12,
+                marginTop: 10,
+                fontStyle: "italic",
+              }}
+            >
+              Hãy quay lại vào ngày mai nhé! Cảm ơn bạn đã sử dụng hệ thống.
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div
+          className="relative group rounded-2xl min-w-0"
+          style={{
+            maxWidth: isUser ? "85%" : "100%",
+            padding: isUser ? "10px 15px" : "14px 18px",
+            background: isUser
+              ? "rgba(124, 58, 237, 0.16)"
+              : "rgba(22, 27, 34, 0.7)",
+            border: isUser
+              ? "1px solid rgba(124, 58, 237, 0.35)"
+              : "1px solid rgba(255, 255, 255, 0.08)",
+            borderRadius: isUser ? "16px 4px 16px 16px" : "4px 16px 16px 16px",
+            boxShadow: isUser
+              ? "0 2px 10px rgba(124, 58, 237, 0.1)"
+              : "0 4px 16px rgba(0, 0, 0, 0.3)",
+            backdropFilter: "blur(10px)",
+            wordBreak: "break-word",
+            overflowWrap: "anywhere",
+            wordWrap: "break-word",
+          }}
+        >
+          <FormattedMessage content={msg.content} />
+
+          {/* Options / Action chips generated by AI */}
+          {msg.options && (
+            <div className="flex gap-2 mt-3 flex-wrap">
+              {msg.options.map((opt) => (
+                <button
+                  key={opt.label}
+                  onClick={() => opt.onClick && opt.onClick(opt.action)}
+                  className="flex items-center gap-1.5 rounded-lg text-xs font-medium cursor-pointer"
+                  style={{
+                    padding: "7px 12px",
+                    background: "rgba(124, 58, 237, 0.12)",
+                    border: "1px solid rgba(124, 58, 237, 0.35)",
+                    color: "#c4b5fd",
+                    transition: "all 0.15s ease",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background =
+                      "rgba(124, 58, 237, 0.25)";
+                    e.currentTarget.style.borderColor = "#a78bfa";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background =
+                      "rgba(124, 58, 237, 0.12)";
+                    e.currentTarget.style.borderColor =
+                      "rgba(124, 58, 237, 0.35)";
+                  }}
+                >
+                  <Sparkles size={11} />
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {msg.code && <CodeBlock code={msg.code} />}
+
+          {/* AI Unit Test Suggestion Card (supports Jest & Vitest) */}
+          {(msg.testSuggestions?.length > 0 || msg.testSuggestion) && (
+            <TestSuggestionCard
+              msg={msg}
+              onApplySuggestion={onApplySuggestion}
+              onUndoSuggestion={onUndoSuggestion}
+              onApplyAllSuggestions={onApplyAllSuggestions}
+              onRunAnalysis={onRunAnalysis}
+            />
+          )}
+
+          {/* Hover Actions (Copy / Retry) */}
+          {!isUser && hovered && (
+            <div
+              className="absolute -bottom-3 right-3 flex items-center gap-1 px-1.5 py-0.5 rounded-md"
+              style={{
+                background: "#161b22",
+                border: "1px solid rgba(255, 255, 255, 0.12)",
+                boxShadow: "0 2px 8px rgba(0,0,0,0.5)",
+                zIndex: 10,
+              }}
+            >
               <button
-                onClick={onRetry}
-                title="Regenerate response"
+                onClick={handleCopy}
+                title="Copy message"
                 style={{
                   background: "transparent",
                   border: "none",
-                  color: "#8b949e",
+                  color: copied ? "#4ade80" : "#8b949e",
                   cursor: "pointer",
                   padding: "3px",
                   display: "flex",
                   alignItems: "center",
                 }}
               >
-                <RotateCcw size={11} />
+                {copied ? <Check size={11} /> : <Copy size={11} />}
               </button>
-            )}
-          </div>
-        )}
-      </div>
+              {onRetry && (
+                <button
+                  onClick={onRetry}
+                  title="Regenerate response"
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "#8b949e",
+                    cursor: "pointer",
+                    padding: "3px",
+                    display: "flex",
+                    alignItems: "center",
+                  }}
+                >
+                  <RotateCcw size={11} />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </motion.div>
   );
 }
@@ -905,14 +1233,30 @@ function ChatInput({ onSend, isTyping, selectedModel, setSelectedModel }) {
   );
 }
 
+const isTestFile = (filePath) => {
+  if (!filePath) return false;
+  const normalized = filePath.replace(/\\/g, "/").toLowerCase();
+  return (
+    /(^|\/)(tests?|__tests__|spec|cypress|e2e)\//i.test(normalized) ||
+    /\.(test|spec)\.[a-z0-9]+$/i.test(normalized)
+  );
+};
+
 /* ── AI Agent Panel — Main Export ────────────────────────── */
-export default function AIPanel({ projectId }) {
+export default function AIPanel({
+  projectId,
+  snapshotId,
+  pendingAiSuggestion,
+  onClearPendingSuggestion,
+  onOpenFile,
+  onRunAnalysis,
+}) {
   const [messages, setMessages] = useState(INITIAL_MESSAGES);
   const [isTyping, setIsTyping] = useState(false);
   const [selectedModel, setSelectedModel] = useState(AI_MODELS[0]);
   const [generateExpanded, setGenerateExpanded] = useState(false);
   const bottomRef = useRef(null);
-  const messageIdRef = useRef(0);
+  const messageIdRef = useRef(10);
   const getNextId = () => ++messageIdRef.current;
   const { showToast } = useToast();
 
@@ -928,6 +1272,338 @@ export default function AIPanel({ projectId }) {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
+
+  const handleSuggestForFile = async (filePath) => {
+    if (!projectId) {
+      showToast({
+        type: "warning",
+        title: "No Project",
+        message: "Vui lòng chọn hoặc tạo một dự án trước khi sử dụng AI.",
+      });
+      return;
+    }
+
+    const isTest = isTestFile(filePath);
+
+    const userMsg = {
+      id: getNextId(),
+      role: "user",
+      content: isTest
+        ? `✨ Hãy gợi ý test case bổ sung cho file test \`${filePath}\``
+        : `✨ Hãy gợi ý test case Jest & Vitest cho file \`${filePath}\``,
+      timestamp: new Date().toLocaleTimeString("vi-VN", {
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+    };
+
+    setMessages((m) => [...m, userMsg]);
+    setIsTyping(true);
+
+    try {
+      const res = await suggestUnitTestcase(snapshotId, filePath, projectId);
+      const data = res?.data;
+
+      if (!data) {
+        throw new Error("Không nhận được dữ liệu gợi ý test case từ server.");
+      }
+
+      const suggestionsList =
+        Array.isArray(data.suggestions) && data.suggestions.length > 0
+          ? data.suggestions.map((s, idx) => ({
+            ...s,
+            id: s.framework || `sug-${idx}`,
+            applied: false,
+            previousContent: null,
+            isApplying: false,
+            isUndoing: false,
+          }))
+          : [
+            {
+              sourceFile: data.sourceFile,
+              targetTestFile: data.targetTestFile,
+              isExisting: data.isExisting,
+              framework: data.framework || "jest",
+              explanation: data.explanation,
+              suggestedTestCode: data.suggestedTestCode,
+              fullUpdatedContent: data.fullUpdatedContent,
+              applied: false,
+              previousContent: null,
+              isApplying: false,
+              isUndoing: false,
+            },
+          ];
+
+      const hasMultiple = suggestionsList.length > 1;
+      let summaryText = "";
+      if (hasMultiple) {
+        summaryText =
+          `Tôi đã phân tích file **\`${data.sourceFile || filePath}\`** và đề xuất bộ test cho cả **Jest** và **Vitest**:\n\n` +
+          suggestionsList
+            .map(
+              (s) =>
+                `- **${s.framework?.toUpperCase()}**: file \`${s.targetTestFile}\` (${s.isExisting ? "Đã có sẵn - sẽ cập nhật" : "File mới"})`,
+            )
+            .join("\n") +
+          `\n- **Dòng chưa cover**: ${data.uncoveredLines?.length ? data.uncoveredLines.join(", ") : "100% dòng đã được kiểm thử"}\n` +
+          `- **Lỗi assertion**: ${data.failedLines?.length ? data.failedLines.join(", ") : "0 lỗi"}\n\n` +
+          `Bạn có thể chuyển đổi giữa các tab **JEST** và **VITEST** bên dưới để xem mã test và bấm **Apply** vào từng file test tương ứng (hoặc bấm **Apply cả 2**)!`;
+      } else {
+        const single = suggestionsList[0];
+        summaryText = isTest
+          ? `Tôi đã phân tích và đề xuất bổ sung test case cho file test **\`${single.targetTestFile}\`** (${single.framework?.toUpperCase()}):\n\n` +
+          (single.sourceFile && single.sourceFile !== single.targetTestFile
+            ? `- **File mã nguồn tương ứng**: \`${single.sourceFile}\`\n`
+            : "") +
+          `- **Dòng chưa cover trong mã nguồn**: ${data.uncoveredLines?.length ? data.uncoveredLines.join(", ") : "100% dòng đã được kiểm thử"}\n` +
+          `- **Lỗi assertion**: ${data.failedLines?.length ? data.failedLines.join(", ") : "0 lỗi"}\n` +
+          `- **File test**: \`${single.targetTestFile}\` (${single.isExisting ? "Đã có sẵn - sẽ cập nhật test case" : "File mới"})\n\n` +
+          `${single.explanation}`
+          : `Tôi đã phân tích file **\`${single.sourceFile}\`** (${single.framework?.toUpperCase()}):\n\n` +
+          `- **Dòng chưa cover**: ${data.uncoveredLines?.length ? data.uncoveredLines.join(", ") : "100% dòng đã được kiểm thử"}\n` +
+          `- **Lỗi assertion**: ${data.failedLines?.length ? data.failedLines.join(", ") : "0 lỗi"}\n` +
+          `- **File test đích**: \`${single.targetTestFile}\` (${single.isExisting ? "Đã có sẵn - sẽ nối thêm" : "File mới"})\n\n` +
+          `${single.explanation}`;
+      }
+
+      const assistantMsg = {
+        id: getNextId(),
+        role: "assistant",
+        timestamp: new Date().toLocaleTimeString("vi-VN", {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        content: summaryText,
+        testSuggestions: suggestionsList,
+        testSuggestion: suggestionsList[0],
+      };
+
+      setMessages((m) => [...m, assistantMsg]);
+    } catch (err) {
+      setMessages((m) => [
+        ...m,
+        {
+          id: getNextId(),
+          role: "assistant",
+          type: "error",
+          timestamp: new Date().toLocaleTimeString("vi-VN", {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          content: `❌ Lỗi khi gợi ý testcase cho \`${filePath}\`: ${err.message || "Không thể kết nối API AI."}`,
+        },
+      ]);
+    } finally {
+      setIsTyping(false);
+    }
+  };
+
+  // Watch for external suggest trigger (e.g. from Coverage table or Editor)
+  useEffect(() => {
+    if (!pendingAiSuggestion || !pendingAiSuggestion.filePath) return;
+    const targetFile = pendingAiSuggestion.filePath;
+    onClearPendingSuggestion?.();
+    handleSuggestForFile(targetFile);
+  }, [pendingAiSuggestion]);
+
+  const handleApplySuggestion = async (msgId, suggestion) => {
+    if (!projectId || !suggestion) return;
+
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.id !== msgId) return m;
+        const updatedList = (m.testSuggestions || []).map((s) =>
+          s.framework === suggestion.framework ? { ...s, isApplying: true } : s,
+        );
+        return {
+          ...m,
+          testSuggestions: updatedList,
+          testSuggestion:
+            m.testSuggestion?.framework === suggestion.framework
+              ? { ...m.testSuggestion, isApplying: true }
+              : m.testSuggestion,
+        };
+      }),
+    );
+
+    try {
+      let previousContent = "";
+      if (suggestion.isExisting) {
+        try {
+          const prevRes = await getFileContentApi(
+            projectId,
+            suggestion.targetTestFile,
+          );
+          previousContent = prevRes?.data?.content || "";
+        } catch {
+          previousContent = "";
+        }
+      }
+
+      const contentToWrite =
+        suggestion.fullUpdatedContent || suggestion.suggestedTestCode;
+
+      if (suggestion.isExisting) {
+        await updateFileContentApi(
+          projectId,
+          suggestion.targetTestFile,
+          contentToWrite,
+        );
+      } else {
+        await createProjectFileApi(
+          projectId,
+          suggestion.targetTestFile,
+          contentToWrite,
+        );
+      }
+
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== msgId) return m;
+          const updatedList = (m.testSuggestions || []).map((s) =>
+            s.framework === suggestion.framework
+              ? { ...s, applied: true, previousContent, isApplying: false }
+              : s,
+          );
+          return {
+            ...m,
+            testSuggestions: updatedList,
+            testSuggestion:
+              m.testSuggestion?.framework === suggestion.framework
+                ? {
+                  ...m.testSuggestion,
+                  applied: true,
+                  previousContent,
+                  isApplying: false,
+                }
+                : m.testSuggestion,
+          };
+        }),
+      );
+
+      showToast({
+        type: "success",
+        title: "Test Applied",
+        message: `Đã áp dụng test case ${suggestion.framework?.toUpperCase()} vào ${suggestion.targetTestFile}`,
+      });
+
+      onOpenFile?.(suggestion.targetTestFile);
+    } catch (err) {
+      showToast({
+        type: "error",
+        title: "Apply Failed",
+        message: err.message || "Không thể áp dụng test case vào file.",
+      });
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== msgId) return m;
+          const updatedList = (m.testSuggestions || []).map((s) =>
+            s.framework === suggestion.framework
+              ? { ...s, isApplying: false }
+              : s,
+          );
+          return {
+            ...m,
+            testSuggestions: updatedList,
+            testSuggestion:
+              m.testSuggestion?.framework === suggestion.framework
+                ? { ...m.testSuggestion, isApplying: false }
+                : m.testSuggestion,
+          };
+        }),
+      );
+    }
+  };
+
+  const handleApplyAllSuggestions = async (msgId, suggestions) => {
+    if (!projectId || !Array.isArray(suggestions)) return;
+    for (const s of suggestions) {
+      if (!s.applied) {
+        await handleApplySuggestion(msgId, s);
+      }
+    }
+  };
+
+  const handleUndoSuggestion = async (msgId, suggestion) => {
+    if (!projectId || !suggestion) return;
+
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.id !== msgId) return m;
+        const updatedList = (m.testSuggestions || []).map((s) =>
+          s.framework === suggestion.framework ? { ...s, isUndoing: true } : s,
+        );
+        return {
+          ...m,
+          testSuggestions: updatedList,
+          testSuggestion:
+            m.testSuggestion?.framework === suggestion.framework
+              ? { ...m.testSuggestion, isUndoing: true }
+              : m.testSuggestion,
+        };
+      }),
+    );
+
+    try {
+      const prevContent = suggestion.previousContent ?? "";
+      await updateFileContentApi(
+        projectId,
+        suggestion.targetTestFile,
+        prevContent,
+      );
+
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== msgId) return m;
+          const updatedList = (m.testSuggestions || []).map((s) =>
+            s.framework === suggestion.framework
+              ? { ...s, applied: false, isUndoing: false }
+              : s,
+          );
+          return {
+            ...m,
+            testSuggestions: updatedList,
+            testSuggestion:
+              m.testSuggestion?.framework === suggestion.framework
+                ? { ...m.testSuggestion, applied: false, isUndoing: false }
+                : m.testSuggestion,
+          };
+        }),
+      );
+
+      showToast({
+        type: "info",
+        title: "Undone",
+        message: `Đã hoàn tác file ${suggestion.targetTestFile} về trạng thái trước đó.`,
+      });
+
+      onOpenFile?.(suggestion.targetTestFile);
+    } catch (err) {
+      showToast({
+        type: "error",
+        title: "Undo Failed",
+        message: err.message || "Không thể hoàn tác file test.",
+      });
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== msgId) return m;
+          const updatedList = (m.testSuggestions || []).map((s) =>
+            s.framework === suggestion.framework
+              ? { ...s, isUndoing: false }
+              : s,
+          );
+          return {
+            ...m,
+            testSuggestions: updatedList,
+            testSuggestion:
+              m.testSuggestion?.framework === suggestion.framework
+                ? { ...m.testSuggestion, isUndoing: false }
+                : m.testSuggestion,
+          };
+        }),
+      );
+    }
+  };
 
   const handleSend = async (text) => {
     if (!projectId) {
@@ -1027,9 +1703,9 @@ export default function AIPanel({ projectId }) {
       animate={{ opacity: 1, x: 0 }}
       transition={{ duration: 0.3, ease: "easeOut" }}
       style={{
-        width: "100%",
-        background: "#0d1117",
+        background: "var(--ide-sidebar)",
         borderLeft: "1px solid var(--ide-border)",
+        fontFamily: "var(--font-sans)",
       }}
     >
       {/* ── Top Header ──────────────────────────────────── */}
@@ -1521,20 +2197,24 @@ export default function AIPanel({ projectId }) {
             <ChatMessage
               key={msg.id}
               msg={msg}
+              onApplySuggestion={handleApplySuggestion}
+              onUndoSuggestion={handleUndoSuggestion}
+              onApplyAllSuggestions={handleApplyAllSuggestions}
+              onRunAnalysis={onRunAnalysis}
               onRetry={
                 index === messages.length - 1 && msg.role === "assistant"
                   ? () => {
-                      let userMsg = null;
-                      for (let i = index - 1; i >= 0; i--) {
-                        if (messages[i].role === "user") {
-                          userMsg = messages[i];
-                          break;
-                        }
-                      }
-                      if (userMsg) {
-                        handleSend(userMsg.content);
+                    let userMsg = null;
+                    for (let i = index - 1; i >= 0; i--) {
+                      if (messages[i].role === "user") {
+                        userMsg = messages[i];
+                        break;
                       }
                     }
+                    if (userMsg) {
+                      handleSend(userMsg.content);
+                    }
+                  }
                   : null
               }
             />

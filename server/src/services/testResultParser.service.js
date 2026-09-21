@@ -2,16 +2,29 @@ import fs from "fs";
 import path from "path";
 
 /**
+ * Helper to find a file by candidate names in either dir or dir's parent
+ */
+const findExistingFile = (dir, names) => {
+    for (const name of names) {
+        const p1 = path.join(dir, name);
+        if (fs.existsSync(p1)) return p1;
+        const p2 = path.join(path.dirname(dir), name);
+        if (fs.existsSync(p2)) return p2;
+    }
+    return null;
+};
+
+/**
  * Parse Jest JSON output file
  * @param {string} coverageDir 
  * @returns {Object|null}
  */
 export const parseJestResults = (coverageDir) => {
-    const resultsPath = path.join(coverageDir, "test-results.json");
-    console.log(`[TEST-RESULT] parsing Jest results from: ${resultsPath}`);
+    const resultsPath = findExistingFile(coverageDir, ["test-results.json", "test-result.json"]);
+    console.log(`[TEST-RESULT] parsing Jest results from: ${resultsPath || coverageDir}`);
 
-    if (!fs.existsSync(resultsPath)) {
-        console.error(`[TEST-RESULT] File not found: ${resultsPath}`);
+    if (!resultsPath) {
+        console.error(`[TEST-RESULT] File not found in ${coverageDir}`);
         return null;
     }
     try {
@@ -43,11 +56,11 @@ export const parseJestResults = (coverageDir) => {
  * @return {Object|null}
  */
 export const parseVitestResults = (coverageDir) => {
-    const resultsPath = path.join(coverageDir, "test-result.json");
-    console.log(`[TEST-RESULT] parsing Vitest results from: ${resultsPath}`);
+    const resultsPath = findExistingFile(coverageDir, ["test-results.json", "test-result.json"]);
+    console.log(`[TEST-RESULT] parsing Vitest results from: ${resultsPath || coverageDir}`);
 
-    if (!fs.existsSync(resultsPath)) {
-        console.error(`[TEST-RESULT] File not found: ${resultsPath}`);
+    if (!resultsPath) {
+        console.error(`[TEST-RESULT] File not found in ${coverageDir}`);
         return null;
     }
     try {
@@ -90,12 +103,12 @@ export const parseCypressResults = (rootDir) => {
         const raw = JSON.parse(fs.readFileSync(resultsPath, "utf8"));
 
         const results = {
-            totalTests: raw.stats.tests || 0,
-            passedTests: raw.stats.passes || 0,
-            failedTests: raw.stats.failures || 0,
-            skippedTests: raw.stats.pending || 0,
-            durationMs: raw.stats.duration || 0,
-            status: raw.stats.failures === 0 ? "PASSED" : "FAILED"
+            totalTests: raw.stats?.tests || 0,
+            passedTests: raw.stats?.passes || 0,
+            failedTests: raw.stats?.failures || 0,
+            skippedTests: raw.stats?.pending || 0,
+            durationMs: raw.stats?.duration || 0,
+            status: (raw.stats?.failures || 0) === 0 ? "PASSED" : "FAILED"
         };
 
         console.log(`[TEST-RESULT] parsed:`, results);
