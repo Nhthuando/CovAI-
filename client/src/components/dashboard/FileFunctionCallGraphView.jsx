@@ -1,5 +1,5 @@
 import React from "react";
-import { Cpu, FlaskConical, CheckCircle2, AlertCircle, Sparkles, ArrowDown } from "lucide-react";
+import { Cpu, FlaskConical, CheckCircle2, AlertCircle, ArrowDown } from "lucide-react";
 import { cleanDisplayPath } from "./CoverageTypeDashboard.jsx";
 
 export default function FileFunctionCallGraphView({
@@ -178,29 +178,6 @@ export default function FileFunctionCallGraphView({
                       (Dòng {fn.line})
                     </span>
                   </div>
-
-                  {!isCalled && onSuggestTestcase && (
-                    <button
-                      onClick={() => onSuggestTestcase(filePath)}
-                      style={{
-                        marginTop: 6,
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 3,
-                        padding: "2px 8px",
-                        borderRadius: 4,
-                        background: "rgba(168, 85, 247, 0.18)",
-                        border: "1px solid rgba(168, 85, 247, 0.35)",
-                        color: "#c084fc",
-                        fontSize: 10,
-                        fontWeight: 600,
-                        cursor: "pointer",
-                      }}
-                    >
-                      <Sparkles size={10} />
-                      <span>Gợi ý test case gọi hàm</span>
-                    </button>
-                  )}
                 </div>
 
                 {/* Connecting Line to Next Function */}

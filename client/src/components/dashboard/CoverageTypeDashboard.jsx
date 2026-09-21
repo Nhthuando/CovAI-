@@ -1731,26 +1731,6 @@ export default function CoverageTypeDashboard({
                             >
                               Mở code
                             </button>
-                            <button
-                              onClick={() => onSuggestTestcase?.(fn.filePath)}
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 4,
-                                padding: "4px 8px",
-                                borderRadius: 5,
-                                background: "rgba(168, 85, 247, 0.15)",
-                                border: "1px solid rgba(168, 85, 247, 0.35)",
-                                color: "#c084fc",
-                                fontSize: 11,
-                                fontWeight: 600,
-                                cursor: "pointer",
-                              }}
-                              title="AI gợi ý test case gọi hàm này"
-                            >
-                              <Sparkles size={11} />
-                              <span>Suggest</span>
-                            </button>
                           </div>
                         </div>
                       );
