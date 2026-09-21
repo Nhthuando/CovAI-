@@ -162,6 +162,16 @@ function LayoutInner() {
   const [isLoadingTree, setIsLoadingTree] = useState(true);
   const [latestRunJob, setLatestRunJob] = useState(null);
   const [isSubmittingAnalysis, setIsSubmittingAnalysis] = useState(false);
+  const [editorRefreshTrigger, setEditorRefreshTrigger] = useState(0);
+
+  const handleGitSync = async () => {
+    try {
+      await loadData(project?.id, 1, 0);
+      setEditorRefreshTrigger((prev) => prev + 1);
+    } catch (err) {
+      console.error("Failed to sync after git operation", err);
+    }
+  };
 
   useEffect(() => {
     if (!project?.id) {
@@ -223,7 +233,7 @@ function LayoutInner() {
           setProjects(loadedProjects);
           const targetProj = activeProjId
             ? loadedProjects.find((p) => p.id === activeProjId) ||
-            loadedProjects[0]
+              loadedProjects[0]
             : loadedProjects[0];
           setProject(targetProj);
           let lastError = null;
@@ -231,6 +241,29 @@ function LayoutInner() {
             try {
               const { data: tree } = await getProjectTreeApi(targetProj.id);
               setFileTree(tree || []);
+              if (tree && tree.length > 0) {
+                const fileExistsInTree = (nodes, path) => {
+                  for (const node of nodes) {
+                    if (node.id === path) return true;
+                    if (node.children && fileExistsInTree(node.children, path))
+                      return true;
+                  }
+                  return false;
+                };
+                setTabs((prev) => {
+                  const remaining = prev.filter((t) =>
+                    fileExistsInTree(tree, t.id),
+                  );
+                  if (remaining.length !== prev.length) {
+                    setActiveTabId((currActive) => {
+                      if (remaining.some((t) => t.id === currActive))
+                        return currActive;
+                      return remaining[0]?.id || null;
+                    });
+                  }
+                  return remaining;
+                });
+              }
               lastError = null;
               break;
             } catch (treeErr) {
@@ -743,21 +776,21 @@ function LayoutInner() {
               style={
                 isMobile
                   ? {
-                    position: "fixed",
-                    top: 42,
-                    bottom: 26,
-                    left: 0,
-                    width: 280,
-                    maxWidth: "85vw",
-                    overflow: "hidden",
-                    zIndex: 35,
-                    boxShadow: "4px 0 24px rgba(0,0,0,0.4)",
-                  }
+                      position: "fixed",
+                      top: 42,
+                      bottom: 26,
+                      left: 0,
+                      width: 280,
+                      maxWidth: "85vw",
+                      overflow: "hidden",
+                      zIndex: 35,
+                      boxShadow: "4px 0 24px rgba(0,0,0,0.4)",
+                    }
                   : {
-                    overflow: "hidden",
-                    flexShrink: 0,
-                    borderRight: "1px solid var(--ide-border)",
-                  }
+                      overflow: "hidden",
+                      flexShrink: 0,
+                      borderRight: "1px solid var(--ide-border)",
+                    }
               }
             >
               {activeActivity === "settings" ? (
@@ -775,7 +808,7 @@ function LayoutInner() {
                   setCoverageType={setCoverageType}
                 />
               ) : activeActivity === "git" ? (
-                <GitPanel projectId={project?.id} />
+                <GitPanel projectId={project?.id} onSync={handleGitSync} />
               ) : (
                 <Sidebar
                   sidebarWidth={sidebarWidth}
@@ -901,6 +934,7 @@ function LayoutInner() {
                 setCoverageType("unit");
               }}
               onSuggestTestcase={handleSuggestTestcase}
+              refreshTrigger={editorRefreshTrigger}
             />
           )}
         </motion.div>
@@ -935,16 +969,16 @@ function LayoutInner() {
                 style={
                   isMobile
                     ? {
-                      position: "fixed",
-                      top: 42,
-                      bottom: 26,
-                      right: 0,
-                      width: "100%",
-                      maxWidth: 360,
-                      overflow: "hidden",
-                      zIndex: 35,
-                      boxShadow: "-4px 0 24px rgba(0,0,0,0.4)",
-                    }
+                        position: "fixed",
+                        top: 42,
+                        bottom: 26,
+                        right: 0,
+                        width: "100%",
+                        maxWidth: 360,
+                        overflow: "hidden",
+                        zIndex: 35,
+                        boxShadow: "-4px 0 24px rgba(0,0,0,0.4)",
+                      }
                     : { overflow: "hidden", flexShrink: 0 }
                 }
               >

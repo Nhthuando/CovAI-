@@ -459,6 +459,7 @@ export default function Editor({
   onOpenFile,
   onRunAnalysis,
   onSuggestTestcase,
+  refreshTrigger,
 }) {
   const [fileContents, setFileContents] = useState({});
   const fetchedRef = useRef(new Set());
@@ -466,6 +467,14 @@ export default function Editor({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [showGitPanel, setShowGitPanel] = useState(false);
+
+  // Invalidate cache and reload current file when external sync occurs (e.g. Git pull / checkout)
+  useEffect(() => {
+    if (refreshTrigger) {
+      fetchedRef.current.clear();
+      setFileContents({});
+    }
+  }, [refreshTrigger]);
 
   // Coverage state
   const [fileCoverage, setFileCoverage] = useState(null);
@@ -605,16 +614,22 @@ export default function Editor({
             isWholeLine: true,
             glyphMarginClassName,
             className: className || undefined,
-            glyphMarginHoverMessage: hoverText ? { value: hoverText } : undefined,
+            glyphMarginHoverMessage: hoverText
+              ? { value: hoverText }
+              : undefined,
           },
         });
       }
     }
 
     if (typeof editor.createDecorationsCollection === "function") {
-      decorationsCollectionRef.current = editor.createDecorationsCollection(decorations);
+      decorationsCollectionRef.current =
+        editor.createDecorationsCollection(decorations);
     } else {
-      decorationsCollectionRef.current = editor.deltaDecorations([], decorations);
+      decorationsCollectionRef.current = editor.deltaDecorations(
+        [],
+        decorations,
+      );
     }
   }, [fileCoverage, activeTabId, currentFile.content, isCurrentTestFile]);
 
@@ -1139,7 +1154,13 @@ export default function Editor({
             exit={{ opacity: 0, y: 20 }}
             className="absolute top-4 right-4 z-50 w-96 shadow-2xl"
           >
-            <GitPanel projectId={projectId} />
+            <GitPanel
+              projectId={projectId}
+              onSync={() => {
+                fetchedRef.current.clear();
+                setFileContents({});
+              }}
+            />
           </motion.div>
         )}
 

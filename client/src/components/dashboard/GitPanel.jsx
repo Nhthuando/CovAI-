@@ -75,7 +75,7 @@ function getStatusBadge(status) {
   }
 }
 
-export const GitPanel = ({ projectId }) => {
+export const GitPanel = ({ projectId, onSync }) => {
   const [statusData, setStatusData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [commitMessage, setCommitMessage] = useState("");
@@ -265,6 +265,9 @@ export const GitPanel = ({ projectId }) => {
       );
       setStatusData(res.data);
       addLog(`git discard ${filePath}`, "Changes discarded");
+      if (onSync) {
+        await onSync();
+      }
     } catch (err) {
       setErrorMsg(err.message);
       addLog("git discard", err.message, true);
@@ -339,6 +342,9 @@ export const GitPanel = ({ projectId }) => {
       setInfoMsg("Pulled from remote successfully!");
       setTimeout(() => setInfoMsg(""), 3000);
       await fetchStatus();
+      if (onSync) {
+        await onSync();
+      }
     } catch (err) {
       setErrorMsg(err.message);
       addLog("git pull", err.message, true);
@@ -359,6 +365,9 @@ export const GitPanel = ({ projectId }) => {
         "Switched branch",
       );
       await fetchStatus();
+      if (onSync) {
+        await onSync();
+      }
     } catch (err) {
       setErrorMsg(err.message);
       addLog("git checkout", err.message, true);
