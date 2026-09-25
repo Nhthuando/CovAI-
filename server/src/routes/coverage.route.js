@@ -13,7 +13,8 @@ import {
     approveIntegrationTests,
     getFileCoverage,
     suggestUnitTestcase,
-    getCoverageTestSuites
+    getCoverageTestSuites,
+    getIntegrationHistory
 } from "../controllers/coverage.controller.js";
 
 const router = express.Router();
@@ -48,5 +49,25 @@ router.get("/:snapshotId/test-execution", authMiddleware, getTestExecution);
 router.get("/:snapshotId/integration/workspace", authMiddleware, getIntegrationWorkspace);
 router.post("/:snapshotId/integration/approve", authMiddleware, approveIntegrationTests);
 router.get("/:snapshotId/test-suites", authMiddleware, getCoverageTestSuites);
+
+// Integration Workspace (Phase 2)
+router.get("/:snapshotId/integration/history", authMiddleware, getIntegrationHistory);
+
+// Integration Workspace (Phase 3)
+import {
+    updateScenario,
+    addScenario,
+    deleteScenario,
+    toggleScenario,
+    regenerateScenario,
+    getScenario
+} from "../controllers/coverage.controller.js";
+
+router.get("/:snapshotId/integration/ai-test/:aiTestId/scenario/:scenarioId", authMiddleware, getScenario);
+router.put("/:snapshotId/integration/ai-test/:aiTestId/scenario/:scenarioId", authMiddleware, updateScenario);
+router.post("/:snapshotId/integration/ai-test/:aiTestId/scenario", authMiddleware, addScenario);
+router.delete("/:snapshotId/integration/ai-test/:aiTestId/scenario/:scenarioId", authMiddleware, deleteScenario);
+router.patch("/:snapshotId/integration/ai-test/:aiTestId/scenario/:scenarioId/toggle", authMiddleware, toggleScenario);
+router.post("/:snapshotId/integration/ai-test/:aiTestId/scenario/:scenarioId/regenerate", authMiddleware, regenerateScenario);
 
 export default router;

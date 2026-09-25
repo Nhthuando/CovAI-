@@ -3,11 +3,11 @@ import path from "path";
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { createInstallDepsJob, createRunTestsJob, createSupertestCoverageJob, createVitestCoverageJob, createCypressSystemCoverageJob, createPlaywrightSystemCoverageJob } from "../services/job.service.js";
-import { jobQueue, addSupertestCoveragePipeline, addJobToQueue } from "../services/queue.service.js";
+import { jobQueue, addSupertestCoveragePipeline } from "../services/queue.service.js";
 import { processCoverageJob } from "../services/coverageRunner.service.js";
 import { detectSupertest } from "../services/supertestDetection.service.js";
 import { detectCoverageFrameworks, selectCoverageFramework } from "../services/coverageFramework.service.js";
-import { buildIntegrationWorkspace } from "../services/integrationWorkspace.service.js";
+import { buildIntegrationWorkspace, getIntegrationHistoryService } from "../services/integrationWorkspace.service.js";
 
 import { getFileCoverageDetails } from "../services/fileCoverage.service.js";
 import { suggestUnitTestcases } from "../services/unitTestSuggestion.service.js";
@@ -978,5 +978,108 @@ export const suggestUnitTestcase = async (req, res) => {
     } catch (error) {
         console.error("[suggestUnitTestcase] Error:", error);
         return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to suggest unit testcases." });
+    }
+};
+export const getIntegrationHistory = async (req, res) => {
+    try {
+        const { snapshotId } = req.params;
+        const result = await getIntegrationHistoryService(snapshotId);
+        return res.status(200).json({ success: true, data: result });
+    } catch (error) {
+        console.error('[getIntegrationHistory] Error:', error);
+        return res.status(error.statusCode || 500).json({ success: false, message: error.message || 'Failed to fetch history.' });
+    }
+};
+
+
+import { 
+    updateScenarioService, 
+    addScenarioService, 
+    deleteScenarioService, 
+    toggleScenarioService, 
+    regenerateScenarioService 
+} from "../services/scenarioManager.service.js";
+
+export const updateScenario = async (req, res) => {
+    try {
+        const { aiTestId, scenarioId } = req.params;
+        const { code } = req.body;
+        const updatedTest = await updateScenarioService(aiTestId, decodeURIComponent(scenarioId), code);
+        return res.status(200).json({ success: true, data: updatedTest });
+    } catch (error) {
+        console.error('[updateScenario] Error:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+export const addScenario = async (req, res) => {
+    try {
+        const { aiTestId } = req.params;
+        const { code, endpoint } = req.body;
+        const updatedTest = await addScenarioService(aiTestId, code, endpoint);
+        return res.status(200).json({ success: true, data: updatedTest });
+    } catch (error) {
+        console.error('[addScenario] Error:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+export const deleteScenario = async (req, res) => {
+    try {
+        const { aiTestId, scenarioId } = req.params;
+        const updatedTest = await deleteScenarioService(aiTestId, decodeURIComponent(scenarioId));
+        return res.status(200).json({ success: true, data: updatedTest });
+    } catch (error) {
+        console.error('[deleteScenario] Error:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+export const toggleScenario = async (req, res) => {
+    try {
+        const { aiTestId, scenarioId } = req.params;
+        const { enable } = req.body;
+        const updatedTest = await toggleScenarioService(aiTestId, decodeURIComponent(scenarioId), enable);
+        return res.status(200).json({ success: true, data: updatedTest });
+    } catch (error) {
+        console.error('[toggleScenario] Error:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+
+
+export const regenerateScenario = async (req, res) => {
+    try {
+        const { snapshotId, aiTestId, scenarioId } = req.params;
+        const snapshot = await prisma.projectSnapshot.findUnique({ where: { id: snapshotId } });
+        if (!snapshot) throw new Error("Snapshot not found");
+
+        const job = await prisma.job.create({
+            data: {
+                projectId: snapshot.projectId,
+                snapshotId,
+                type: 'AI_TESTS',
+                status: 'QUEUED',
+                payloadJson: JSON.stringify({ mode: 'SUPERTEST_REGENERATE', aiTestId, scenarioId: decodeURIComponent(scenarioId) })
+            }
+        });
+        await jobQueue.add('covai-jobs', { type: 'AI_TESTS', jobId: job.id });
+
+        return res.status(200).json({ success: true, message: "Regeneration job queued", jobId: job.id });
+    } catch (error) {
+        console.error('[regenerateScenario] Error:', error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+import { getScenarioService } from "../services/scenarioManager.service.js";
+export const getScenario = async (req, res) => {
+    try {
+        const { aiTestId, scenarioName } = req.params;
+        const result = await getScenarioService(aiTestId, decodeURIComponent(scenarioName));
+        return res.status(200).json({ success: true, data: result });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
     }
 };

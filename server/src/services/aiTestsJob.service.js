@@ -49,22 +49,35 @@ export const processAiTestsJob = async (jobId) => {
         await addJobLog(jobId, "INFO", `Constructing final prompt for ${mode} mode...`);
 
         // ── Supertest Integration Generation Branch ────────────────────────
+        if (mode === "SUPERTEST_REGENERATE") {
+            const { aiTestId, scenarioId } = payloadJsonObj;
+            
+            await updateJobStatus({ jobId, progress: 40 });
+            await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'GENERATE_AI_TESTS', label: "Regenerating scenario using AI...", progress: 40 }));
+            
+            const { regenerateScenarioService } = await import("./scenarioManager.service.js");
+            await regenerateScenarioService(aiTestId, scenarioId, payload);
+            
+            await updateJobStatus({ jobId, progress: 100, status: "SUCCESS" });
+            return;
+        }
+
         if (mode === "SUPERTEST") {
             const supertestPrompt = buildSupertestPrompt(payload);
 
             await updateJobStatus({ jobId, progress: 40 });
 
-            await addJobLog(jobId, "INFO", "Calling Gemini AI model for Supertest test generation...");
+            await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'BUILD_CONTEXT', label: "Calling Gemini AI model for Supertest test generation...", progress: 40 }));
             const supertestResponseText = await generateText(supertestPrompt, "gemini-1.5-pro");
 
             if (!supertestResponseText) {
                 throw new ServiceError("AI Model failed to return test scenarios", 500);
             }
 
-            await addJobLog(jobId, "INFO", "Parsing and validating generated test scenarios...");
+            await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'GENERATE_AI_TESTS', label: "Parsing and validating generated test scenarios...", progress: 80 }));
             await updateJobStatus({ jobId, progress: 80 });
 
-            await addJobLog(jobId, "INFO", "Parsing Supertest scenarios...");
+            await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'VALIDATE_SCENARIOS', label: "Parsing Supertest scenarios...", progress: 85 }));
             const { allTests, suggestions, summary } = processSupertestTests(supertestResponseText, {
                 projectId,
                 snapshotId,

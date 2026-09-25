@@ -29,6 +29,7 @@ import analyticsRoute from "./src/routes/analytics.route.js";
 import codeHygieneRoute from "./src/routes/codeHygiene.route.js";
 import fileManagerRoute from "./src/routes/fileManager.route.js";
 import webhookRoute from "./src/routes/webhook.route.js";
+import reportRoute from "./src/routes/report.route.js";
 import gitRoute from "./src/routes/git.route.js";
 import { globalLimiter } from "./src/middlewares/rateLimit.middleware.js";
 import path from "path";
@@ -86,6 +87,7 @@ app.use("/api/analytics", analyticsRoute);
 app.use("/api/code-hygiene", codeHygieneRoute);
 app.use("/api/file-manager", fileManagerRoute);
 app.use("/api/git", gitRoute);
+app.use("/api/reports", reportRoute);
 app.use("/webhook", webhookRoute);
 
 const __filename = fileURLToPath(import.meta.url);
