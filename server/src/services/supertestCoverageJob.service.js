@@ -57,9 +57,10 @@ export const processSupertestCoverageJob = async (jobId) => {
 
         await saveJobOutput(jobId, { stdout: "", stderr: "" }).catch(() => { });
         await updateJobProgress(jobId, 10);
-        await addJobLog(jobId, "INFO", "Bắt đầu Supertest coverage pipeline...");
+        await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'PREPARE_ENV', label: "Bắt đầu Supertest coverage pipeline...", progress: 10 }));
 
         // 1. Chạy Supertest
+        await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'RUN_JEST', label: "Running Supertest test suite...", progress: 20 }));
         const runResult = await runSupertest(
             jobId,
             rootDir,
@@ -101,13 +102,14 @@ export const processSupertestCoverageJob = async (jobId) => {
                     finishedAt: new Date() // TODO: Get actual finish time
                 }
             });
-            await addJobLog(jobId, "INFO", `[SCRUM-141] Đã lưu TestRun (SUPERTEST): ${supertestResults.totalTests} tests.`).catch(() => { });
+            await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'PARSE_COVERAGE', label: `[SCRUM-141] Đã lưu TestRun (SUPERTEST): ${supertestResults.totalTests} tests.`, progress: 60 })).catch(() => { });
         }
 
         // Parse chi tiết (reuse logic từ runTestsJob)
         const { parseCoverageFilesForSnapshot } = await import("./coverageFileParser.service.js");
         const { parseCoverageFunctionsForSnapshot } = await import("./coverageFunctionParser.service.js");
 
+        await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'MAP_RESULTS', label: "Parsing coverage files and functions...", progress: 70 }));
         const coverageReport = JSON.parse(fs.readFileSync(finalPath, "utf8"));
         await parseCoverageFilesForSnapshot({ projectId, snapshotId, coverageReport, userId });
         await parseCoverageFunctionsForSnapshot({ projectId, snapshotId, coverageReport, userId });
@@ -133,7 +135,7 @@ export const processSupertestCoverageJob = async (jobId) => {
             storageBasePath: storageResult.baseStoragePath,
         });
 
-        await addJobLog(jobId, "INFO", "Supertest coverage pipeline hoàn thành.");
+        await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'COMPLETE', label: "Supertest coverage pipeline hoàn thành.", progress: 100 }));
     } catch (error) {
         console.error(`[SupertestCoverageJob ${jobId}] Lỗi:`, error);
         await markJobFailed(jobId, error).catch(() => { });

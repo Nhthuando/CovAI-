@@ -7,6 +7,7 @@ const lifecycle = {
   markJobRunning: jest.fn(),
   markJobSuccess: jest.fn(),
   updateJobProgress: jest.fn(),
+  addJobLog: jest.fn(),
 };
 const analyzeProjectStructure = jest.fn();
 

@@ -47,12 +47,12 @@ export const processAnalysisJob = async (jobId) => {
 
     try {
         await updateJobProgress(jobId, 15);
-        await addJobLog(jobId, "INFO", "Scanning snapshot for source code files...");
+        await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'LOAD_SOURCE', label: "Scanning snapshot for source code files...", progress: 15 }));
         const result = analyzeProjectStructure(job.snapshot.rootDir, { snapshotId: job.snapshotId });
-        await addJobLog(jobId, "INFO", `Analyzed ${result.summary?.totalFiles || 0} source files.`);
+        await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'DETECT_ENDPOINTS', label: `Analyzed ${result.summary?.totalFiles || 0} source files.`, progress: 75 }));
         await updateJobProgress(jobId, 75);
 
-        await addJobLog(jobId, "INFO", "Saving analysis results to database...");
+        await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'MAP_DEPENDENCIES', label: "Saving analysis results to database...", progress: 85 }));
         const analysis = await prisma.projectStructureAnalysis.upsert({
             where: { snapshotId: job.snapshotId },
             create: {
@@ -66,7 +66,7 @@ export const processAnalysisJob = async (jobId) => {
             },
         });
         await updateJobProgress(jobId, 95);
-        await addJobLog(jobId, "INFO", "Analysis completed successfully.");
+        await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'COMPLETE', label: "Analysis completed successfully.", progress: 100 }));
         await markJobSuccess(jobId, {
             analysisId: analysis.id,
             snapshotId: job.snapshotId,

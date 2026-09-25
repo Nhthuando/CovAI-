@@ -3,7 +3,7 @@ import { loadSourceCode } from "./aiContextBuilder.service.js";
 import { extractValidEndpoints } from "./apiEndpointParser.service.js";
 import { getBucket } from "../config/firebase.js";
 import { extractTestRequests } from "./testSourceParser.service.js";
-
+import crypto from 'crypto';
 function categorizeScenario(name) {
     const lower = (name || "").toLowerCase();
     if (lower.includes("error") || lower.includes("fail") || lower.includes("invalid") || lower.includes("missing") || lower.includes("not found")) return "Negative";
@@ -292,7 +292,17 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
                 filePath: t.filePath,
                 status: meta.status || "DRAFT",
                 isValid: meta.isValid !== false,
-                requests: extractTestRequests(t.content, t.filePath).map(r => ({ ...r, category: categorizeScenario(r.testName) }))
+                requests: extractTestRequests(t.content, t.filePath).map(r => {
+                    const metaReq = meta.requests ? meta.requests.find(mr => mr.testName === r.testName) : null;
+                    const fallbackId = crypto.createHash('md5').update(r.testName).digest('hex').substring(0, 8);
+                    return { 
+                        ...r, 
+                        scenarioId: metaReq?.scenarioId || fallbackId,
+                        category: categorizeScenario(r.testName),
+                        enabled: metaReq ? metaReq.enabled : true,
+                        userEdited: metaReq ? metaReq.userEdited : false
+                    };
+                })
             };
         }),
         execution: latestRun ? {
@@ -302,3 +312,27 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
         } : null
     };
 };
+
+/**
+ * GET History of Integration Tests for a snapshot
+ */
+export const getIntegrationHistoryService = async (snapshotId) => {
+    const jobs = await prisma.job.findMany({
+        where: { 
+            snapshotId,
+            type: { in: ['ANALYSIS', 'AI_TESTS', 'SUPERTEST_COVERAGE'] }
+        },
+        orderBy: { createdAt: 'desc' }
+    });
+    
+    const testRuns = await prisma.testRun.findMany({
+        where: { snapshotId, type: 'SUPERTEST' },
+        orderBy: { createdAt: 'desc' }
+    });
+    
+    return {
+        jobs,
+        testRuns
+    };
+};
+
