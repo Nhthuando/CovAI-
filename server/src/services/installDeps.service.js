@@ -115,6 +115,27 @@ export const processInstallDepsJob = async (jobId) => {
         }).catch(() => { });
     }
 
+    try {
+        const pkgStr = fs.readFileSync(packageJsonPath, "utf-8");
+        const pkg = JSON.parse(pkgStr);
+        const allDeps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+        
+        const hasJest = !!allDeps.jest;
+        const hasSupertest = !!allDeps.supertest;
+        const hasNodeModules = fs.existsSync(path.join(resolvedRootDir, "node_modules"));
+        
+        if (hasJest && hasSupertest && hasNodeModules) {
+            console.log(`[InstallDeps ${jobId}] Dependencies jest and supertest found in package.json and node_modules exists. Skipping npm install.`);
+            await saveJobOutput(jobId, { stdout: "Skipped npm install because jest and supertest are already installed.", stderr: "" }).catch(() => { });
+            await updateJobProgress(jobId, 100);
+            await addJobLog(jobId, "INFO", "Dependencies already exist. Skipping npm install.");
+            await markJobSuccess(jobId, { installExitCode: 0, skipped: true });
+            return;
+        }
+    } catch (err) {
+        console.warn(`[InstallDeps ${jobId}] Failed to parse package.json, proceeding with npm install:`, err.message);
+    }
+
     // ── Khởi tạo output ───────────────────────────────────────────────────
     await saveJobOutput(jobId, { stdout: "", stderr: "" }).catch(() => { });
     await updateJobProgress(jobId, 10);
@@ -128,7 +149,7 @@ export const processInstallDepsJob = async (jobId) => {
         let settled = false;
 
         const command = process.platform === "win32" ? "npm.cmd" : "npm";
-        const args = ["install", "--prefer-offline"];
+        const args = ["install", "--prefer-offline", "--ignore-scripts"];
         console.log(`[InstallDeps ${jobId}] Chạy command: ${command} ${args.join(" ")} tại ${resolvedRootDir}`);
 
         const child = spawn(command, args, {
@@ -201,7 +222,8 @@ export const processInstallDepsJob = async (jobId) => {
             if (code === 0) {
                 await finalize("success", { installExitCode: 0 });
             } else {
-                const msg = `npm install thất bại với exit code ${code ?? "unknown"}`;
+                const errSnippet = stderrBuf.trim().slice(-500) || stdoutBuf.trim().slice(-500);
+                const msg = `npm install thất bại với exit code ${code ?? "unknown"}. ${errSnippet}`;
                 console.error(`[InstallDeps ${jobId}] FAIL: ${msg}`);
                 console.error(`[InstallDeps ${jobId}] stdout tail: ${stdoutBuf.slice(-2000)}`);
                 console.error(`[InstallDeps ${jobId}] stderr tail: ${stderrBuf.slice(-2000)}`);

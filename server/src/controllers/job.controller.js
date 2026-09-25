@@ -259,3 +259,59 @@ export const ingestJob = async (req, res) => {
     return res.status(500).json({ message: "Có lỗi server!" });
   }
 };
+
+export const streamJobStatus = async (req, res) => {
+  const userId = req.user?.id;
+  if (!userId) return res.status(401).json({ message: "Unauthorized" });
+
+  const { jobId } = req.params;
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  const sendEvent = (data) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  const interval = setInterval(async () => {
+    try {
+      const job = await prisma.job.findUnique({
+        where: { id: jobId },
+        select: { status: true, logs: true, errorMessage: true, userId: true },
+      });
+
+      if (!job) {
+        sendEvent({ error: "Job not found" });
+        clearInterval(interval);
+        res.end();
+        return;
+      }
+
+      if (job.userId !== userId) {
+        sendEvent({ error: "Forbidden" });
+        clearInterval(interval);
+        res.end();
+        return;
+      }
+
+      sendEvent({
+        status: job.status,
+        logs: job.logs || [],
+        errorMessage: job.errorMessage
+      });
+
+      if (["SUCCESS", "FAILED", "CANCELED"].includes(job.status)) {
+        clearInterval(interval);
+        res.end();
+      }
+    } catch (err) {
+      console.error("[streamJobStatus] Error:", err);
+    }
+  }, 1000);
+
+  req.on("close", () => {
+    clearInterval(interval);
+  });
+};

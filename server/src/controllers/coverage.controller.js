@@ -875,6 +875,11 @@ export const approveIntegrationTests = async (req, res) => {
         const { snapshotId } = req.params;
         if (!snapshotId) return res.status(400).json({ success: false, message: "snapshotId is required." });
 
+        const { approvedTestIds } = req.body;
+        if (!Array.isArray(approvedTestIds)) {
+            return res.status(400).json({ success: false, message: "approvedTestIds array is required." });
+        }
+
         const snapshot = await prisma.projectSnapshot.findUnique({
             where: { id: snapshotId },
             select: { project: { select: { ownerId: true } } }
@@ -883,6 +888,19 @@ export const approveIntegrationTests = async (req, res) => {
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
         if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
 
+        // Group approved scenarios by AiTest ID
+        const approvedScenariosByTestId = {};
+        for (const idStr of approvedTestIds) {
+            const separatorIndex = idStr.indexOf("::");
+            if (separatorIndex === -1) continue;
+            
+            const testId = idStr.substring(0, separatorIndex);
+            const scenarioName = idStr.substring(separatorIndex + 2);
+            
+            if (!approvedScenariosByTestId[testId]) approvedScenariosByTestId[testId] = [];
+            if (scenarioName) approvedScenariosByTestId[testId].push(scenarioName);
+        }
+
         const aiTests = await prisma.aiTest.findMany({ where: { snapshotId } });
 
         for (const t of aiTests) {
@@ -890,7 +908,12 @@ export const approveIntegrationTests = async (req, res) => {
                 if (t.metaJson) {
                     const meta = typeof t.metaJson === 'string' ? JSON.parse(t.metaJson) : t.metaJson;
                     if (meta.framework === "SUPERTEST") {
-                        meta.status = "APPROVED";
+                        const approvedScenarios = approvedScenariosByTestId[t.id] || [];
+                        const isApproved = approvedScenarios.length > 0;
+                        
+                        meta.status = isApproved ? "APPROVED" : "DRAFT";
+                        meta.approvedScenarios = approvedScenarios;
+                        
                         await prisma.aiTest.update({
                             where: { id: t.id },
                             data: { metaJson: JSON.stringify(meta) }

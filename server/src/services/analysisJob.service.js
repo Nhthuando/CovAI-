@@ -49,7 +49,7 @@ export const processAnalysisJob = async (jobId) => {
         await updateJobProgress(jobId, 15);
         await addJobLog(jobId, "INFO", "Scanning snapshot for source code files...");
         const result = analyzeProjectStructure(job.snapshot.rootDir, { snapshotId: job.snapshotId });
-        await addJobLog(jobId, "INFO", `Analyzed ${result.sourceFiles?.length || 0} files. Discovered ${result.endpoints?.length || 0} API endpoints.`);
+        await addJobLog(jobId, "INFO", `Analyzed ${result.summary?.totalFiles || 0} source files.`);
         await updateJobProgress(jobId, 75);
 
         await addJobLog(jobId, "INFO", "Saving analysis results to database...");

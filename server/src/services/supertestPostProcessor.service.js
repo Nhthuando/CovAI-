@@ -104,6 +104,23 @@ export const processSupertestTests = (responseText, context) => {
     }
 
     const allTests = [];
+    const suggestions = [];
+
+    // Process suggestions if they exist
+    if (Array.isArray(parsedData.suggestions)) {
+        for (const sug of parsedData.suggestions) {
+            if (sug.filePath && sug.functionName) {
+                suggestions.push({
+                    projectId: context.projectId,
+                    snapshotId: context.snapshotId,
+                    filePath: sug.filePath.trim(),
+                    functionName: sug.functionName.trim(),
+                    priority: sug.priority || "HIGH",
+                    message: sug.message ? sug.message.trim() : "Integration Test Scenario"
+                });
+            }
+        }
+    }
 
     for (const rawTest of parsedData.tests) {
         const processed = processSingleSupertestTest(rawTest, context);
@@ -147,8 +164,8 @@ export const processSupertestTests = (responseText, context) => {
 
     const summary = {
         totalFiles: allTests.length,
-        message: `Generated ${allTests.length} Supertest integration test file(s).`
+        message: `Generated ${allTests.length} Supertest integration test file(s) and ${suggestions.length} scenarios.`
     };
 
-    return { allTests, summary };
+    return { allTests, suggestions, summary };
 };

@@ -46,6 +46,13 @@ const readCoverageSummaryFile = (coverageDir) => {
     return raw;
 };
 
+const parsePct = (val) => {
+    if (val === 'Unknown') return 0;
+    if (typeof val === 'number') return val;
+    const parsed = parseFloat(val);
+    return isNaN(parsed) ? 0 : parsed;
+};
+
 /**
  * SCRUM-118: Parse line coverage từ một entry Jest
  */
@@ -53,7 +60,7 @@ const parseLineCoverage = (entry) => ({
     total: entry.lines?.total ?? 0,
     covered: entry.lines?.covered ?? 0,
     skipped: entry.lines?.skipped ?? 0,
-    pct: entry.lines?.pct ?? 0,
+    pct: parsePct(entry.lines?.pct),
 });
 
 /**
@@ -63,7 +70,7 @@ const parseBranchCoverage = (entry) => ({
     total: entry.branches?.total ?? 0,
     covered: entry.branches?.covered ?? 0,
     skipped: entry.branches?.skipped ?? 0,
-    pct: entry.branches?.pct ?? 0,
+    pct: parsePct(entry.branches?.pct),
 });
 
 /**
@@ -73,7 +80,7 @@ const parseFunctionCoverage = (entry) => ({
     total: entry.functions?.total ?? 0,
     covered: entry.functions?.covered ?? 0,
     skipped: entry.functions?.skipped ?? 0,
-    pct: entry.functions?.pct ?? 0,
+    pct: parsePct(entry.functions?.pct),
 });
 
 /**
@@ -83,7 +90,7 @@ const parseStatementCoverage = (entry) => ({
     total: entry.statements?.total ?? 0,
     covered: entry.statements?.covered ?? 0,
     skipped: entry.statements?.skipped ?? 0,
-    pct: entry.statements?.pct ?? 0,
+    pct: parsePct(entry.statements?.pct),
 });
 
 /**

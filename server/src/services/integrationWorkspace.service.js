@@ -123,7 +123,7 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             return s.requests.some(req => isMatch(req, ep));
         });
 
-        const testCount = mappedScenarios.length;
+        const executedCount = mappedScenarios.length; // From the executed scenarios file in Firebase
         const passedCount = mappedScenarios.filter(s => s.status === 'passed').length;
         const failedCount = mappedScenarios.filter(s => s.status === 'failed').length;
         
@@ -133,10 +133,10 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             return reqs.some(r => isMatch(r, ep));
         });
 
-        if (testCount > 0) {
+        if (executedCount > 0) {
             if (failedCount > 0) {
                 status = "Partial";
-            } else if (passedCount === testCount) {
+            } else if (passedCount === executedCount) {
                 status = "Covered";
                 testedApis++;
             } else {
@@ -155,6 +155,16 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
         const generatedCount = integrationTests.reduce((acc, t) => {
             const reqs = extractTestRequests(t.content, t.filePath);
             return acc + reqs.filter(r => isMatch(r, ep)).length;
+        }, 0);
+
+        const approvedCount = integrationTests.reduce((acc, t) => {
+            const meta = typeof t.metaJson === 'string' ? JSON.parse(t.metaJson) : t.metaJson;
+            if (meta?.status !== 'APPROVED') return acc;
+            const reqs = extractTestRequests(t.content, t.filePath);
+            const approvedReqs = meta.approvedScenarios 
+                ? reqs.filter(r => meta.approvedScenarios.includes(r.testName))
+                : reqs; // Fallback for old data
+            return acc + approvedReqs.filter(r => isMatch(r, ep)).length;
         }, 0);
 
         // Clean up requests payload for frontend and add category
@@ -177,11 +187,12 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             method: ep.method,
             path: ep.fullPath,
             status,
-            testCount,
+            testCount: executedCount, // Legacy for UI if needed
+            executedCount,
             passedCount,
             failedCount,
             skippedCount: mappedScenarios.filter(s => s.status === 'pending').length,
-            passRate: testCount > 0 ? (passedCount / testCount) * 100 : 0,
+            passRate: executedCount > 0 ? (passedCount / executedCount) * 100 : 0,
             mappedCodeCoverage: controllerCoverage ? {
                 statement: controllerCoverage.stmtsPct,
                 branch: controllerCoverage.branchesPct,
@@ -190,13 +201,26 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             } : null,
             source: {
                 sourceFile: ep.sourceFile,
+                controllerMethod: ep.controllerMethod,
+                middleware: ep.middleware,
+                params: ep.params,
+                requestBodySchema: ep.requestBodySchema,
+                databaseModels: ep.databaseModels,
             },
             generatedCount,
+            approvedCount,
             scenarios: cleanScenarios
         };
     });
 
     const targetedApis = endpoints.filter(ep => ep.generatedCount > 0).length;
+    const isValid = integrationTests.length > 0 && integrationTests.every(t => {
+        try {
+            const meta = typeof t.metaJson === 'string' ? JSON.parse(t.metaJson) : t.metaJson;
+            return meta.isValid !== false;
+        } catch { return false; }
+    });
+
     const isApproved = integrationTests.length > 0 && integrationTests.every(t => {
         try {
             const meta = typeof t.metaJson === 'string' ? JSON.parse(t.metaJson) : t.metaJson;
@@ -242,27 +266,39 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
                 branch: coverageSummary.branchesPct,
                 function: coverageSummary.funcsPct,
                 line: coverageSummary.linesPct
-            } : null
+            } : null,
+            fileCoverages: coverageFiles.map(cf => ({
+                filePath: cf.filePath,
+                statement: cf.stmtsPct,
+                branch: cf.branchesPct,
+                function: cf.funcsPct,
+                line: cf.linesPct
+            }))
         },
         generation: {
-            hasAnalysis: discoveredEndpoints.length > 0,
+            hasAnalysis: analyzeJob?.status === "SUCCESS",
             hasGeneratedTests: integrationTests.length > 0,
             targetedApis,
             generatedFiles: integrationTests.length,
             generatedScenarios: allParsedRequests.length,
-            isApproved
+            isApproved,
+            isValid
         },
         endpoints,
-        aiTests: integrationTests.map(t => ({
-            id: t.id,
-            filePath: t.filePath,
-            status: (typeof t.metaJson === 'string' ? JSON.parse(t.metaJson) : t.metaJson)?.status || "DRAFT",
-            requests: extractTestRequests(t.content, t.filePath).map(r => ({ ...r, category: categorizeScenario(r.testName) }))
-        })),
+        aiTests: integrationTests.map(t => {
+            const meta = (typeof t.metaJson === 'string' ? JSON.parse(t.metaJson) : t.metaJson) || {};
+            return {
+                id: t.id,
+                filePath: t.filePath,
+                status: meta.status || "DRAFT",
+                isValid: meta.isValid !== false,
+                requests: extractTestRequests(t.content, t.filePath).map(r => ({ ...r, category: categorizeScenario(r.testName) }))
+            };
+        }),
         execution: latestRun ? {
             status: latestRun.status,
             startedAt: latestRun.startedAt,
-            completedAt: latestRun.finishedAt,
+            completedAt: latestRun.finishedAt || null,
         } : null
     };
 };
