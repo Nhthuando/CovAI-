@@ -6,10 +6,11 @@ export default function IntegrationTestDashboard(props) {
   const [generating, setGenerating] = useState(false);
 
   const handleGenerate = async () => {
-    if (!props.projectId || !props.snapshotId) return;
+    if (!props.projectId || !props.snapshotId) return null;
     setGenerating(true);
     try {
-      await generateIntegrationTestApi(props.projectId, props.snapshotId);
+      const res = await generateIntegrationTestApi(props.projectId, props.snapshotId);
+      return res; // Return job data so IntegrationWorkspace can capture job ID immediately
     } finally {
       setGenerating(false);
     }

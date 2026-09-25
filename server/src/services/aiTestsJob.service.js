@@ -65,7 +65,7 @@ export const processAiTestsJob = async (jobId) => {
             await updateJobStatus({ jobId, progress: 80 });
 
             await addJobLog(jobId, "INFO", "Parsing Supertest scenarios...");
-            const { allTests, summary } = processSupertestTests(supertestResponseText, {
+            const { allTests, suggestions, summary } = processSupertestTests(supertestResponseText, {
                 projectId,
                 snapshotId,
             });
@@ -89,6 +89,16 @@ export const processAiTestsJob = async (jobId) => {
                 await prisma.aiTest.deleteMany({
                     where: { id: { in: supertestIds } }
                 });
+            }
+
+            // Clean up old AiSuggestions (since we are replacing them)
+            await prisma.aiSuggestion.deleteMany({
+                where: { snapshotId }
+            });
+
+            if (suggestions && suggestions.length > 0) {
+                await prisma.aiSuggestion.createMany({ data: suggestions });
+                await addJobLog(jobId, "INFO", `Saved ${suggestions.length} Supertest integration scenario suggestions.`);
             }
 
             if (allTests.length > 0) {

@@ -5,7 +5,8 @@ dotenv.config();
 
 export const authMiddleware = (req, res, next) => {
     try {
-        const bearerToken = req.header("authorization") || req.header("Authorization");
+        const tokenQuery = req.query.token ? `Bearer ${req.query.token}` : null;
+        const bearerToken = req.header("authorization") || req.header("Authorization") || tokenQuery;
         if (!bearerToken) {
             return res.status(401).json({ message: "Không tìm thấy token!" });
         }

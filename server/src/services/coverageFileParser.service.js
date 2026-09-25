@@ -25,8 +25,9 @@ const calculatePct = (section) => {
     return null;
   }
 
-  if (section.pct !== undefined && typeof section.pct === "number") {
-    return section.pct;
+  if (section.pct !== undefined) {
+    if (typeof section.pct === "number") return section.pct;
+    if (section.pct === "Unknown") return 0;
   }
 
   const covered = normalizeCoverageValue(section.covered);
@@ -217,9 +218,6 @@ export const parseCoverageFilesForSnapshot = async ({
   }
 
   const coverageRows = getCoverageRecords(coverageReport);
-  if (coverageRows.length === 0) {
-    throw new ServiceError("No coverage files found in coverage report", 400);
-  }
 
   const testType = coverageReport.testType || "UNIT"; // 'UNIT' or 'INTEGRATION'
 
@@ -232,36 +230,41 @@ export const parseCoverageFilesForSnapshot = async ({
     stmtsPct: row.stmtsPct,
   }));
 
-  const summaryRow = getTotalCoverageSummary(coverageReport);
+  const summaryRow = getTotalCoverageSummary(coverageReport) || {
+    linesPct: 0,
+    branchesPct: 0,
+    funcsPct: 0,
+    stmtsPct: 0,
+  };
 
   await prisma.$transaction(async (tx) => {
     await tx.coverageFile.deleteMany({
       where: { snapshotId },
     });
 
-    await tx.coverageFile.createMany({
-      data: formattedRows,
-      skipDuplicates: true,
-    });
-
-    if (summaryRow) {
-      await tx.coverageSummary.upsert({
-        where: { snapshotId },
-        update: {
-          linesPct: summaryRow.linesPct,
-          branchesPct: summaryRow.branchesPct,
-          funcsPct: summaryRow.funcsPct,
-          stmtsPct: summaryRow.stmtsPct,
-        },
-        create: {
-          snapshotId,
-          linesPct: summaryRow.linesPct,
-          branchesPct: summaryRow.branchesPct,
-          funcsPct: summaryRow.funcsPct,
-          stmtsPct: summaryRow.stmtsPct,
-        },
+    if (formattedRows.length > 0) {
+      await tx.coverageFile.createMany({
+        data: formattedRows,
+        skipDuplicates: true,
       });
     }
+
+    await tx.coverageSummary.upsert({
+      where: { snapshotId },
+      update: {
+        linesPct: summaryRow.linesPct,
+        branchesPct: summaryRow.branchesPct,
+        funcsPct: summaryRow.funcsPct,
+        stmtsPct: summaryRow.stmtsPct,
+      },
+      create: {
+        snapshotId,
+        linesPct: summaryRow.linesPct,
+        branchesPct: summaryRow.branchesPct,
+        funcsPct: summaryRow.funcsPct,
+        stmtsPct: summaryRow.stmtsPct,
+      },
+    });
   });
 
   return {

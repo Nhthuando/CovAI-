@@ -59,10 +59,14 @@ export const includeRouteContext = (sourceCode) => {
 
     if (endpoints.length > 0) {
         segment += "**YOU MUST ONLY USE THESE ENDPOINTS. DO NOT INVENT ANY OTHER ENDPOINTS.**\n\n";
-        segment += "| Method | Path | Source File |\n";
-        segment += "|--------|------|-------------|\n";
+        segment += "| Method | Path | Controller | Middleware | Payload Schema | DB Models | Source File |\n";
+        segment += "|--------|------|------------|------------|----------------|-----------|-------------|\n";
         for (const ep of endpoints) {
-            segment += `| ${ep.method} | ${ep.fullPath} | ${ep.sourceFile} |\n`;
+            const controller = ep.controllerMethod || "-";
+            const middleware = ep.middleware ? ep.middleware.join(", ") : "-";
+            const payload = ep.requestBodySchema ? ep.requestBodySchema.join(", ") : "-";
+            const db = ep.databaseModels ? ep.databaseModels.join(", ") : "-";
+            segment += `| ${ep.method} | ${ep.fullPath} | ${controller} | ${middleware} | ${payload} | ${db} | ${ep.sourceFile} |\n`;
         }
         segment += "\n";
         segment += "**CRITICAL:** If you generate a test for any endpoint NOT listed above, the test WILL FAIL with 404. Only test the endpoints above.\n\n";
@@ -146,11 +150,17 @@ export const includeSupertestInstructions = (sourceCode) => {
     segment += "  - If the source code uses a real database (Prisma, Mongoose, etc.), use `jest.unstable_mockModule()` with dynamic `import()` to mock the database module BEFORE importing the app.\n";
     segment += "- If the source code uses CommonJS, you may use `jest.mock()` normally.\n";
     segment += "- DO NOT mock the route, controller, or the service under test! The test must verify the flow traversing through these layers.\n";
+    segment += "- **TEST ISOLATION (CRITICAL):** You MUST use `beforeAll`, `afterAll`, or `afterEach` hooks to clean up mock data or wrap test operations in DB transactions. The generated code MUST NOT pollute the real database with leftover test records.\n\n";
 
-    segment += "#### 3. Test Scenarios\n";
+    segment += "#### 3. Test Scenarios & Coverage Breadth\n";
+    segment += "- **COVERAGE BREADTH:** You MUST generate at least one \"Happy Path\" AND one \"Error Edge Case\" (e.g., 400 Bad Request, missing fields, or 500 scenarios) per endpoint.\n";
     segment += "- Write tests for successful API flows (Happy Path).\n";
     segment += "- Write tests for validation failures (e.g., missing required fields resulting in 400 Bad Request).\n";
     segment += "- Write tests for error responses (e.g., Not Found, Unauthorized).\n\n";
+
+    segment += "#### 4. Security & Authentication\n";
+    segment += "- **SECURITY (CRITICAL):** Explicitly DO NOT hardcode real production credentials, API keys, or JWT tokens in the test files.\n";
+    segment += "- Require the use of environment variables (e.g., `process.env.TEST_JWT_SECRET`) or inject a mocked auth context to bypass middlewares safely.\n\n";
 
     return segment;
 };
@@ -158,9 +168,17 @@ export const includeSupertestInstructions = (sourceCode) => {
 export const includeSupertestOutputFormat = () => {
     let segment = "### Required Output Format\n\n";
     segment += "You MUST output a **JSON object** wrapped in a markdown code block (```json ... ```).\n";
-    segment += "The JSON must have a single key `tests` containing an array of generated test files:\n\n";
+    segment += "The JSON must have TWO keys: `suggestions` (for test planning / chain of thought) and `tests` (for code generation):\n\n";
     segment += "```json\n";
     segment += "{\n";
+    segment += '  "suggestions": [\n';
+    segment += "    {\n";
+    segment += '      "filePath": "src/controllers/users.controller.js",\n';
+    segment += '      "functionName": "POST /api/users",\n';
+    segment += '      "priority": "HIGH",\n';
+    segment += '      "message": "Missing email should return 400 Bad Request."\n';
+    segment += "    }\n";
+    segment += "  ],\n";
     segment += '  "tests": [\n';
     segment += "    {\n";
     segment += '      "filePath": "tests/integration/users.test.js",\n';
@@ -170,9 +188,16 @@ export const includeSupertestOutputFormat = () => {
     segment += "}\n";
     segment += "```\n\n";
     
-    segment += "**Rules for each test file:**\n";
+    segment += "**Rules for `suggestions`:**\n";
+    segment += "- Think step-by-step! Before writing code, use the `suggestions` array to plan out exactly which endpoints you will test, and what scenarios (happy path, error edges) you will cover.\n";
+    segment += "- `filePath`: The controller or router file related to the endpoint.\n";
+    segment += "- `functionName`: The HTTP method and route path (e.g., `POST /api/users`).\n";
+    segment += "- `priority`: Use `HIGH` for critical happy paths and security errors, `MEDIUM` for standard validation errors.\n";
+    segment += "- `message`: A short description of the test scenario.\n\n";
+
+    segment += "**Rules for `tests`:**\n";
     segment += "- `filePath`: relative path starting with `tests/integration/`.\n";
-    segment += "- `content`: Complete, runnable Jest+Supertest test file code.\n";
+    segment += "- `content`: Complete, runnable Jest+Supertest test file code that implements the scenarios planned in `suggestions`.\n";
     segment += "- Do NOT include explanations outside the JSON.\n\n";
 
     return segment;

@@ -63,7 +63,7 @@ const worker = new Worker(
           const supertestJobId = customData.supertestJobId;
           console.log(`[Queue] SUPERTEST_COVERAGE_PIPELINE started: installJob=${installJobId}, supertestJob=${supertestJobId}`);
 
-          const installJob = await prisma.job.findUnique({ where: { id: installJobId }, select: { status: true } });
+          const installJob = await prisma.job.findUnique({ where: { id: installJobId }, select: { status: true, errorMessage: true } });
           const installStatus = installJob?.status ?? 'UNKNOWN';
           console.log(`[Queue] SUPERTEST_COVERAGE_PIPELINE reads INSTALL_DEPS status: installJob=${installJobId}, status=${installStatus}`);
 
@@ -73,7 +73,7 @@ const worker = new Worker(
           }
 
           if (['FAILED', 'CANCELED'].includes(installStatus)) {
-            const message = 'Dependency installation failed; Supertest was not started.';
+            const message = `Dependency installation failed; Supertest was not started. Reason: ${installJob?.errorMessage || 'Unknown error'}`;
             console.error(`[Queue] Install deps failed => parent will not start Supertest. installJobStatus=${installStatus}, supertestJob=${supertestJobId}`);
             if (supertestJobId) {
               const supertestJob = await prisma.job.findUnique({
