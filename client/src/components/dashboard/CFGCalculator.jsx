@@ -121,15 +121,15 @@ function CFGNode({ label, line, x, y, active = false, isDiamond = false, width =
   );
 }
 
-export default function CFGCalculator({ project, onClose }) {
+export default function CFGCalculator({ project, onClose, initialFile = null, initialFunc = null }) {
   const { isMobile } = useBreakpoints();
   const [cfgs, setCfgs] = useState([]);
   const [ccs, setCcs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [selectedFunc, setSelectedFunc] = useState(null);
+  const [selectedFile, setSelectedFile] = useState(initialFile);
+  const [selectedFunc, setSelectedFunc] = useState(initialFunc);
   const [sourceCode, setSourceCode] = useState("");
   const [zoom, setZoom] = useState(1);
   const [rebuilding, setRebuilding] = useState(false);
@@ -208,8 +208,17 @@ export default function CFGCalculator({ project, onClose }) {
         setCcs(ccRes.data);
 
         if (cfgRes.data.length > 0) {
-          const firstFile = [...new Set(cfgRes.data.map(c => c.filePath))][0];
-          setSelectedFile(firstFile);
+          const uniquePaths = [...new Set(cfgRes.data.map(c => c.filePath))];
+          
+          if (initialFile && uniquePaths.includes(initialFile)) {
+             setSelectedFile(initialFile);
+             if (initialFunc) {
+               const funcExists = cfgRes.data.some(c => c.filePath === initialFile && c.functionName === initialFunc);
+               if (funcExists) setSelectedFunc(initialFunc);
+             }
+          } else {
+             setSelectedFile(uniquePaths[0]);
+          }
         }
       } catch (err) {
         setError(err.message || "Failed to fetch CFG/CC data");

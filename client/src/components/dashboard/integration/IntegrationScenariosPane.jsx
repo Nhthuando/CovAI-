@@ -27,8 +27,10 @@ export default function IntegrationScenariosPane({
     selectedTestIds,
     setSelectedTestIds,
     snapshotId,
+    endpoints = [],
     onScenarioChange,
-    onError
+    onError,
+    onOpenLogic
 }) {
     const [editorOpen, setEditorOpen] = useState(false);
     const [editorCode, setEditorCode] = useState("");
@@ -224,6 +226,11 @@ export default function IntegrationScenariosPane({
                         const data = scenariosByEndpoint[key];
                         if (!data) return null;
                         
+                        const matchedEndpoint = endpoints.find(e => e.method === data.method && e.path === data.path);
+                        const logicFile = matchedEndpoint?.source?.sourceFile;
+                        const logicFunc = matchedEndpoint?.source?.controllerMethod;
+                        const hasLogicMap = !!(logicFile && logicFunc);
+                        
                         return (
                             <div key={key} style={{ marginBottom: 24, background: "rgba(255,255,255,.01)", border: "1px solid rgba(255,255,255,.05)", borderRadius: 8, overflow: "hidden" }}>
                                 <div style={{ padding: "12px 16px", background: "rgba(255,255,255,.03)", borderBottom: "1px solid rgba(255,255,255,.05)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -231,13 +238,24 @@ export default function IntegrationScenariosPane({
                                         <div style={{ fontFamily: "monospace", fontSize: 13, color: "#a78bfa", fontWeight: 600 }}>{key}</div>
                                         <div style={{ fontSize: 11, color: "#8b949e", fontFamily: "monospace", marginTop: 4 }}>{data.filePath}</div>
                                     </div>
-                                    <button 
-                                        onClick={() => handleAddClick(data)}
-                                        disabled={isApproved}
-                                        style={{ ...actionButtonStyle, background: "rgba(167,139,250,.1)", color: "#a78bfa", border: "1px solid rgba(167,139,250,.2)" }}
-                                    >
-                                        + Add Scenario
-                                    </button>
+                                    <div style={{ display: "flex", gap: "8px" }}>
+                                        {hasLogicMap && (
+                                            <button 
+                                                onClick={() => onOpenLogic && onOpenLogic(logicFile, logicFunc)}
+                                                title="View Controller Logic (CFG)"
+                                                style={{ ...actionButtonStyle, background: "rgba(56,189,248,.1)", color: "#38bdf8", border: "1px solid rgba(56,189,248,.2)" }}
+                                            >
+                                                View Logic Analysis
+                                            </button>
+                                        )}
+                                        <button 
+                                            onClick={() => handleAddClick(data)}
+                                            disabled={isApproved}
+                                            style={{ ...actionButtonStyle, background: "rgba(167,139,250,.1)", color: "#a78bfa", border: "1px solid rgba(167,139,250,.2)" }}
+                                        >
+                                            + Add Scenario
+                                        </button>
+                                    </div>
                                 </div>
                                 
                                 {data.scenarios.map((scenario, idx) => {
