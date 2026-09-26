@@ -125,7 +125,7 @@ function useLiveJobLogs(jobId, onComplete, onError) {
     return { logs, logsEndRef };
 }
 
-export default function IntegrationWorkspace({ projectId, snapshotId, onGenerate, generating, onOpenFile }) {
+export default function IntegrationWorkspace({ projectId, snapshotId, onGenerate, generating, onOpenFile, onOpenCFG }) {
     const navigate = useNavigate();
     const [workspace, setWorkspace] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -351,6 +351,7 @@ export default function IntegrationWorkspace({ projectId, snapshotId, onGenerate
                     <IntegrationScenariosPane 
                         aiTests={aiTests}
                         selectedEndpoint={selectedEndpoint}
+                        endpoints={endpoints}
                         hasGeneratedTests={hasGeneratedTests}
                         isApproved={isApproved}
                         selectedTestIds={selectedTestIds}
@@ -358,6 +359,7 @@ export default function IntegrationWorkspace({ projectId, snapshotId, onGenerate
                         snapshotId={snapshotId}
                         onScenarioChange={load}
                         onError={setError}
+                        onOpenLogic={onOpenCFG}
                     />
                 </div>
 

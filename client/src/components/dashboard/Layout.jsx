@@ -134,10 +134,21 @@ function LayoutInner() {
   const [coverageType, setCoverageType] = useState("unit");
   const [showImport, setShowImport] = useState(false);
   const [showCFG, setShowCFG] = useState(false);
+  const [cfgInitialContext, setCfgInitialContext] = useState(null);
   const [showQualityDashboard, setShowQualityDashboard] = useState(false);
+
+  const handleOpenCFG = (filePath = null, functionName = null) => {
+    if (filePath) {
+      setCfgInitialContext({ initialFile: filePath, initialFunc: functionName });
+    } else {
+      setCfgInitialContext(null);
+    }
+    setShowCFG(true);
+  };
 
   const handleCloseCFG = () => {
     setShowCFG(false);
+    setCfgInitialContext(null);
     if (activeActivity === "logic-analysis") {
       const params = new URLSearchParams(location.search);
       params.set("tab", "explorer");
@@ -882,7 +893,7 @@ function LayoutInner() {
                   projectId={project?.id}
                   onOpenFile={handleOpenFileByPath}
                   onSuggestTestcase={handleSuggestTestcase}
-                  onOpenCFG={() => setShowCFG(true)}
+                  onOpenCFG={handleOpenCFG}
                 />
               ) : coverageType === "integration" ? (
                 <IntegrationTestDashboard
@@ -1085,7 +1096,12 @@ function LayoutInner() {
       </AnimatePresence>
       <AnimatePresence>
         {showCFG && (
-          <CFGCalculator project={project} onClose={handleCloseCFG} />
+          <CFGCalculator 
+            project={project} 
+            onClose={handleCloseCFG} 
+            initialFile={cfgInitialContext?.initialFile}
+            initialFunc={cfgInitialContext?.initialFunc}
+          />
         )}
       </AnimatePresence>
       <AnimatePresence>
