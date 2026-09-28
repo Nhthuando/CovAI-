@@ -217,8 +217,41 @@ export const parseCoverageFilesForSnapshot = async ({
   }
 
   const coverageRows = getCoverageRecords(coverageReport);
+  const summaryRow = getTotalCoverageSummary(coverageReport);
+
+  const safeNum = (v) => {
+    if (typeof v === "number" && !isNaN(v)) return v;
+    if (typeof v === "string") {
+      const p = parseFloat(v);
+      if (!isNaN(p)) return p;
+    }
+    return 0;
+  };
+
   if (coverageRows.length === 0) {
-    throw new ServiceError("No coverage files found in coverage report", 400);
+    if (summaryRow) {
+      await prisma.coverageSummary.upsert({
+        where: { snapshotId },
+        update: {
+          linesPct: safeNum(summaryRow.linesPct),
+          branchesPct: safeNum(summaryRow.branchesPct),
+          funcsPct: safeNum(summaryRow.funcsPct),
+          stmtsPct: safeNum(summaryRow.stmtsPct),
+        },
+        create: {
+          snapshotId,
+          linesPct: safeNum(summaryRow.linesPct),
+          branchesPct: safeNum(summaryRow.branchesPct),
+          funcsPct: safeNum(summaryRow.funcsPct),
+          stmtsPct: safeNum(summaryRow.stmtsPct),
+        },
+      });
+    }
+    return {
+      totalFiles: 0,
+      summary: summaryRow,
+      files: [],
+    };
   }
 
   const testType = coverageReport.testType || "UNIT"; // 'UNIT' or 'INTEGRATION'
@@ -232,8 +265,6 @@ export const parseCoverageFilesForSnapshot = async ({
     stmtsPct: row.stmtsPct,
   }));
 
-  const summaryRow = getTotalCoverageSummary(coverageReport);
-
   await prisma.$transaction(async (tx) => {
     await tx.coverageFile.deleteMany({
       where: { snapshotId },
@@ -245,20 +276,21 @@ export const parseCoverageFilesForSnapshot = async ({
     });
 
     if (summaryRow) {
+
       await tx.coverageSummary.upsert({
         where: { snapshotId },
         update: {
-          linesPct: summaryRow.linesPct,
-          branchesPct: summaryRow.branchesPct,
-          funcsPct: summaryRow.funcsPct,
-          stmtsPct: summaryRow.stmtsPct,
+          linesPct: safeNum(summaryRow.linesPct),
+          branchesPct: safeNum(summaryRow.branchesPct),
+          funcsPct: safeNum(summaryRow.funcsPct),
+          stmtsPct: safeNum(summaryRow.stmtsPct),
         },
         create: {
           snapshotId,
-          linesPct: summaryRow.linesPct,
-          branchesPct: summaryRow.branchesPct,
-          funcsPct: summaryRow.funcsPct,
-          stmtsPct: summaryRow.stmtsPct,
+          linesPct: safeNum(summaryRow.linesPct),
+          branchesPct: safeNum(summaryRow.branchesPct),
+          funcsPct: safeNum(summaryRow.funcsPct),
+          stmtsPct: safeNum(summaryRow.stmtsPct),
         },
       });
     }

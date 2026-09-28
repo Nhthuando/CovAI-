@@ -14,7 +14,7 @@ import { saveJobOutput, appendJobOutput } from "./jobOutput.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 
-const INSTALL_TIMEOUT_MS = 3 * 60 * 1000; // 3 phút
+const INSTALL_TIMEOUT_MS = 15 * 60 * 1000; // 15 phút
 
 const assertStringField = (value, fieldName) => {
     if (!value || typeof value !== "string" || value.trim().length === 0) {
@@ -26,7 +26,7 @@ const assertStringField = (value, fieldName) => {
  * INSTALL_DEPS pipeline:
  *  - Chạy `npm install --prefer-offline` trong rootDir của snapshot
  *  - Capture stdout/stderr vào JobOutput
- *  - Timeout 3 phút
+ *  - Timeout 15 phút
  */
 export const processInstallDepsJob = async (jobId) => {
     assertStringField(jobId, "jobId");
@@ -128,7 +128,7 @@ export const processInstallDepsJob = async (jobId) => {
         let settled = false;
 
         const command = process.platform === "win32" ? "npm.cmd" : "npm";
-        const args = ["install", "--prefer-offline"];
+        const args = ["install", "--prefer-offline", "--legacy-peer-deps", "--no-audit", "--no-fund", "--progress=false"];
         console.log(`[InstallDeps ${jobId}] Chạy command: ${command} ${args.join(" ")} tại ${resolvedRootDir}`);
 
         const child = spawn(command, args, {

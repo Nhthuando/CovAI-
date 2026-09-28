@@ -11,12 +11,16 @@ import { buildIntegrationWorkspace } from "../services/integrationWorkspace.serv
 
 import { getFileCoverageDetails } from "../services/fileCoverage.service.js";
 import { suggestUnitTestcases } from "../services/unitTestSuggestion.service.js";
+import { classifyTestFile } from "../utils/testingFrameworkDetector.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const ALLOWED_SORT_FIELDS = ["filePath", "linesPct", "branchesPct", "funcsPct", "stmtsPct"];
 const ALLOWED_SORT_ORDERS = ["asc", "desc"];
 const ALLOWED_FUNC_SORT_FIELDS = ["functionName", "filePath", "hit", "startLine"];
+
+import { isApiFilePath } from "../utils/apiFileDetector.js";
+export { isApiFilePath };
 
 const findOwnedSnapshot = (snapshotId, userId) => prisma.projectSnapshot.findFirst({
     where: { id: snapshotId, project: { ownerId: userId } },
@@ -50,26 +54,19 @@ export const runCoverageByType = async (req, res) => {
 
         if (coverageType === "unit") {
             const unitFws = detection.supported?.unit || [];
-            // If both Jest and Vitest are detected, run BOTH automatically!
-            if (unitFws.includes("jest") && unitFws.includes("vitest")) {
-                framework = "jest & vitest";
-                const jestJob = await createRunTestsJob({ projectId: snapshot.projectId, snapshotId, userId, mode: "FULL" });
-                const vitestJob = await createVitestCoverageJob({ projectId: snapshot.projectId, snapshotId, userId });
-                await addJobToQueue("RUN_TESTS", jestJob.id);
-                await addJobToQueue("VITEST_COVERAGE", vitestJob.id);
-                job = jestJob;
-                jobs = [jestJob, vitestJob];
-            } else if (unitFws.includes("vitest")) {
-                framework = "vitest";
-                job = await createVitestCoverageJob({ projectId: snapshot.projectId, snapshotId, userId });
-                await addJobToQueue("VITEST_COVERAGE", job.id);
-                jobs = [job];
-            } else {
-                framework = "jest";
-                job = await createRunTestsJob({ projectId: snapshot.projectId, snapshotId, userId, mode: "FULL" });
-                await addJobToQueue("RUN_TESTS", job.id);
-                jobs = [job];
-            }
+            const hasJest = unitFws.includes("jest");
+            const hasVitest = unitFws.includes("vitest");
+            framework = (hasJest && hasVitest) ? "jest & vitest" : (hasVitest ? "vitest" : "jest");
+
+            // Unified Unit Test Job: Jest & Vitest are run together in 1 single pipeline
+            job = await createRunTestsJob({
+                projectId: snapshot.projectId,
+                snapshotId,
+                userId,
+                mode: "FULL"
+            });
+            await addJobToQueue("RUN_TESTS", job.id);
+            jobs = [job];
         } else {
             framework = selectCoverageFramework(detection, coverageType, requestedFramework);
             if (framework === "supertest") {
@@ -154,7 +151,9 @@ export const getCoverageSummary = async (req, res) => {
             where: { snapshotId },
         });
 
-        const coverage = summary
+        const typeFilter = req.query?.type || req.query?.coverageType || null;
+
+        let coverage = summary
             ? {
                 lines: summary.linesPct,
                 branches: summary.branchesPct,
@@ -175,13 +174,117 @@ export const getCoverageSummary = async (req, res) => {
             if (fs.existsSync(summaryFile)) {
                 try {
                     const raw = JSON.parse(fs.readFileSync(summaryFile, "utf8"));
-                    if (raw && raw.total) {
-                        rawTotals = {
-                            statements: raw.total.statements || null,
-                            branches: raw.total.branches || null,
-                            functions: raw.total.functions || null,
-                            lines: raw.total.lines || null,
-                        };
+                    if (raw) {
+                        if (typeFilter === "unit") {
+                            // SCRUM-Unit: Filter out API files (routes, controllers, endpoints, app, server), frontend, and test files
+                            const unitFileEntries = Object.entries(raw).filter(([filePath]) => {
+                                if (filePath === "total") return false;
+                                const norm = filePath.replace(/\\/g, "/").toLowerCase();
+                                const isFrontend = /(^|\/)(client|frontend|pages|components|ui|web)\//i.test(norm) || /\.[jt]sx$/i.test(norm);
+                                const isTest = /(^|\/)(tests?|__tests__|specs?|e2e|cypress|step-definitions?)\//i.test(norm) || /\.(test|spec|testcase|steps?)\./i.test(norm);
+                                return !isFrontend && !isTest && !isApiFilePath(filePath);
+                            });
+
+                            if (unitFileEntries.length > 0) {
+                                let stmtsCovered = 0, stmtsTotal = 0;
+                                let branchesCovered = 0, branchesTotal = 0;
+                                let funcsCovered = 0, funcsTotal = 0;
+                                let linesCovered = 0, linesTotal = 0;
+
+                                for (const [, data] of unitFileEntries) {
+                                    stmtsCovered += data.statements?.covered || 0;
+                                    stmtsTotal += data.statements?.total || 0;
+                                    branchesCovered += data.branches?.covered || 0;
+                                    branchesTotal += data.branches?.total || 0;
+                                    funcsCovered += data.functions?.covered || 0;
+                                    funcsTotal += data.functions?.total || 0;
+                                    linesCovered += data.lines?.covered || 0;
+                                    linesTotal += data.lines?.total || 0;
+                                }
+
+                                const stmtsPct = stmtsTotal > 0 ? Number(((stmtsCovered / stmtsTotal) * 100).toFixed(1)) : 100;
+                                const branchesPct = branchesTotal > 0 ? Number(((branchesCovered / branchesTotal) * 100).toFixed(1)) : 100;
+                                const funcsPct = funcsTotal > 0 ? Number(((funcsCovered / funcsTotal) * 100).toFixed(1)) : 100;
+                                const linesPct = linesTotal > 0 ? Number(((linesCovered / linesTotal) * 100).toFixed(1)) : 100;
+
+                                rawTotals = {
+                                    statements: { total: stmtsTotal, covered: stmtsCovered, pct: stmtsPct },
+                                    branches: { total: branchesTotal, covered: branchesCovered, pct: branchesPct },
+                                    functions: { total: funcsTotal, covered: funcsCovered, pct: funcsPct },
+                                    lines: { total: linesTotal, covered: linesCovered, pct: linesPct },
+                                };
+
+                                coverage = {
+                                    statements: stmtsPct,
+                                    branches: branchesPct,
+                                    functions: funcsPct,
+                                    lines: linesPct,
+                                };
+                            } else if (raw.total) {
+                                rawTotals = {
+                                    statements: raw.total.statements || null,
+                                    branches: raw.total.branches || null,
+                                    functions: raw.total.functions || null,
+                                    lines: raw.total.lines || null,
+                                };
+                            }
+                        } else if (typeFilter === "integration") {
+                            const apiFileEntries = Object.entries(raw).filter(([filePath]) => {
+                                if (filePath === "total") return false;
+                                return isApiFilePath(filePath);
+                            });
+
+                            if (apiFileEntries.length > 0) {
+                                let stmtsCovered = 0, stmtsTotal = 0;
+                                let branchesCovered = 0, branchesTotal = 0;
+                                let funcsCovered = 0, funcsTotal = 0;
+                                let linesCovered = 0, linesTotal = 0;
+
+                                for (const [, data] of apiFileEntries) {
+                                    stmtsCovered += data.statements?.covered || 0;
+                                    stmtsTotal += data.statements?.total || 0;
+                                    branchesCovered += data.branches?.covered || 0;
+                                    branchesTotal += data.branches?.total || 0;
+                                    funcsCovered += data.functions?.covered || 0;
+                                    funcsTotal += data.functions?.total || 0;
+                                    linesCovered += data.lines?.covered || 0;
+                                    linesTotal += data.lines?.total || 0;
+                                }
+
+                                const stmtsPct = stmtsTotal > 0 ? Number(((stmtsCovered / stmtsTotal) * 100).toFixed(1)) : 100;
+                                const branchesPct = branchesTotal > 0 ? Number(((branchesCovered / branchesTotal) * 100).toFixed(1)) : 100;
+                                const funcsPct = funcsTotal > 0 ? Number(((funcsCovered / funcsTotal) * 100).toFixed(1)) : 100;
+                                const linesPct = linesTotal > 0 ? Number(((linesCovered / linesTotal) * 100).toFixed(1)) : 100;
+
+                                rawTotals = {
+                                    statements: { total: stmtsTotal, covered: stmtsCovered, pct: stmtsPct },
+                                    branches: { total: branchesTotal, covered: branchesCovered, pct: branchesPct },
+                                    functions: { total: funcsTotal, covered: funcsCovered, pct: funcsPct },
+                                    lines: { total: linesTotal, covered: linesCovered, pct: linesPct },
+                                };
+
+                                coverage = {
+                                    statements: stmtsPct,
+                                    branches: branchesPct,
+                                    functions: funcsPct,
+                                    lines: linesPct,
+                                };
+                            } else if (raw.total) {
+                                rawTotals = {
+                                    statements: raw.total.statements || null,
+                                    branches: raw.total.branches || null,
+                                    functions: raw.total.functions || null,
+                                    lines: raw.total.lines || null,
+                                };
+                            }
+                        } else if (raw.total) {
+                            rawTotals = {
+                                statements: raw.total.statements || null,
+                                branches: raw.total.branches || null,
+                                functions: raw.total.functions || null,
+                                lines: raw.total.lines || null,
+                            };
+                        }
                     }
                 } catch (_) { }
             }
@@ -432,9 +535,29 @@ export const getCoverageFiles = async (req, res) => {
         }
 
         // ── SCRUM-157: Retrieve CoverageFile records ─────────────────────────
-        const [files, total] = await Promise.all([
+        const typeFilter = req.query?.type || req.query?.coverageType || null;
+        const where = {
+            snapshotId,
+            ...(typeFilter === "unit" && {
+                AND: [
+                    { NOT: { filePath: { contains: "client/" } } },
+                    { NOT: { filePath: { contains: "frontend/" } } },
+                    { NOT: { filePath: { endsWith: ".jsx" } } },
+                    { NOT: { filePath: { endsWith: ".tsx" } } },
+                    { NOT: { filePath: { contains: "routes/" } } },
+                    { NOT: { filePath: { contains: "controllers/" } } },
+                    { NOT: { filePath: { contains: "endpoints/" } } },
+                    { NOT: { filePath: { endsWith: "app.js" } } },
+                    { NOT: { filePath: { endsWith: "app.ts" } } },
+                    { NOT: { filePath: { endsWith: "server.js" } } },
+                    { NOT: { filePath: { endsWith: "server.ts" } } },
+                ]
+            }),
+        };
+
+        let [files, total] = await Promise.all([
             prisma.coverageFile.findMany({
-                where: { snapshotId },
+                where,
                 orderBy: { [sortBy]: order },
                 skip,
                 take: limit,
@@ -447,8 +570,16 @@ export const getCoverageFiles = async (req, res) => {
                     stmtsPct: true,
                 },
             }),
-            prisma.coverageFile.count({ where: { snapshotId } }),
+            prisma.coverageFile.count({ where }),
         ]);
+
+        if (typeFilter === "unit") {
+            const beforeCount = files.length;
+            files = files.filter(f => !isApiFilePath(f.filePath));
+            if (files.length !== beforeCount) {
+                total = Math.max(files.length, total - (beforeCount - files.length));
+            }
+        }
 
         // Return an empty dataset instead of a 404 so the UI can render a valid
         // "no coverage generated yet" state without treating it as a broken API.
@@ -536,6 +667,115 @@ export const getTestExecution = async (req, res) => {
     }
 };
 
+const isGenericTitle = (raw, cleanFileName) => {
+    if (!raw) return true;
+    const lower = raw.toLowerCase().trim();
+    if (
+        lower === cleanFileName ||
+        lower === `${cleanFileName}.js` ||
+        lower === `${cleanFileName}.ts` ||
+        lower.endsWith(".service") ||
+        lower.endsWith(".controller") ||
+        lower.endsWith(".middleware") ||
+        lower.endsWith(".validation") ||
+        lower.endsWith(".util") ||
+        lower.endsWith(".helper") ||
+        lower.includes("unit test") ||
+        lower.includes("test suite") ||
+        lower.includes("tests for") ||
+        lower.includes("test case") ||
+        lower.startsWith("describe ")
+    ) {
+        return true;
+    }
+    return false;
+};
+
+export const extractTargetFunction = (a, fileName, knownFunctions = []) => {
+    const ancestors = Array.isArray(a.ancestorTitles) ? a.ancestorTitles : [];
+    const cleanFileName = (fileName || "")
+        .replace(/\\.(test|spec|testcase|steps?)\.[a-z0-9]+$/i, "")
+        .replace(/^[._]/, "")
+        .toLowerCase();
+
+    // 1. Check ancestors backwards (from deepest describe block upwards)
+    for (let i = ancestors.length - 1; i >= 0; i--) {
+        const raw = ancestors[i]?.trim();
+        if (!raw || isGenericTitle(raw, cleanFileName)) continue;
+
+        const cleaned = raw
+            .replace(/^(function|method|fn)\s+/i, "")
+            .replace(/\(\)$/, "")
+            .replace(/^#/, "")
+            .trim();
+
+        if (cleaned && !isGenericTitle(cleaned, cleanFileName)) {
+            return cleaned;
+        }
+    }
+
+    // 2. Cross-reference against knownFunctions of the file
+    const fullText = `${a.fullName || ""} ${a.title || ""}`;
+    const fullTextCompressed = fullText.replace(/[^a-z0-9]/gi, "").toLowerCase();
+
+    if (Array.isArray(knownFunctions) && knownFunctions.length > 0) {
+        // 2a. Direct word boundary match
+        for (const fn of knownFunctions) {
+            if (fn && typeof fn === "string" && fn.length > 1) {
+                const regex = new RegExp(`\\b${fn.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, "i");
+                if (regex.test(fullText)) {
+                    return fn;
+                }
+            }
+        }
+
+        // 2b. Check compressed string match (e.g. "run cache benchmark" matches "runcachebenchmark")
+        for (const fn of knownFunctions) {
+            if (fn && typeof fn === "string" && fn.length > 2) {
+                const fnCompressed = fn.replace(/[^a-z0-9]/gi, "").toLowerCase();
+                if (fullTextCompressed.includes(fnCompressed)) {
+                    return fn;
+                }
+            }
+        }
+
+        // 2c. If the file only has 1 known function, all its tests target that function
+        if (knownFunctions.length === 1 && knownFunctions[0]) {
+            return knownFunctions[0];
+        }
+    }
+
+    // 3. Try to extract from title: e.g. "register: should hash...", "login - should fail", "getUser() returns user"
+    const titleMatch = (a.title || "").match(/^([a-zA-Z0-9_$]+)(?:\(\))?\s*[:\-–—\s]/);
+    if (titleMatch && titleMatch[1]) {
+        const cand = titleMatch[1];
+        const lowerCand = cand.toLowerCase();
+        if (!["should", "it", "test", "when", "given", "returns", "verify", "can", "must", "expect", "throws"].includes(lowerCand)) {
+            return cand;
+        }
+    }
+
+    return null;
+};
+
+/**
+ * Extract a repo-relative path from a test suite name.
+ * Handles both Docker paths (/app/storage/.../repo/foo.test.js)
+ * and Windows paths (D:\...\storage\...\repo\foo.test.js).
+ * Returns the part after the last occurrence of /repo/ (or \repo\).
+ */
+const extractRepoRelativePath = (suiteName) => {
+    if (!suiteName) return "";
+    const normalized = suiteName.replace(/\\/g, "/");
+    // Match everything after the last /repo/
+    const repoMatch = normalized.match(/(?:\/|^)repo\/(.+)$/i);
+    if (repoMatch) return repoMatch[1];
+    // Fallback: match storage/projects/<id>/.../<ts>/repo/ pattern
+    const storageMatch = normalized.match(/storage\/projects\/[^/]+(?:\/[^/]+)*?\/repo\/(.+)$/i);
+    if (storageMatch) return storageMatch[1];
+    return normalized;
+};
+
 /**
  * GET /api/coverage/:snapshotId/test-suites?type=unit|integration|system
  * Returns test files executed for this snapshot, with classification and test case counts.
@@ -568,41 +808,67 @@ export const getCoverageTestSuites = async (req, res) => {
             return res.status(200).json({ success: true, data: { testSuites: [] } });
         }
 
-        // 1. Locate test-results.json (check candidate paths and merge results from both Jest & Vitest)
-        const candidatePaths = [
-            path.join(snapshot.rootDir, "coverage", "jest-results.json"),
-            path.join(snapshot.rootDir, "coverage", "vitest-results.json"),
-            path.join(snapshot.rootDir, "jest-results.json"),
-            path.join(snapshot.rootDir, "vitest-results.json"),
-            path.join(snapshot.rootDir, "test-results.json"),
-            path.join(snapshot.rootDir, "coverage", "test-results.json"),
-            path.join(snapshot.rootDir, "coverage", "test-result.json"),
-        ];
+        // Retrieve known functions for snapshot to cross-reference
+        const coverageFunctions = await prisma.coverageFunction.findMany({
+            where: { snapshotId },
+            select: { filePath: true, functionName: true }
+        }).catch(() => []);
 
-        const allTestResults = [];
-        const seenFiles = new Set();
-        for (const p of candidatePaths) {
-            if (fs.existsSync(p) && !seenFiles.has(p)) {
-                seenFiles.add(p);
-                try {
-                    const parsed = JSON.parse(fs.readFileSync(p, "utf8"));
-                    if (Array.isArray(parsed?.testResults)) {
-                        allTestResults.push(...parsed.testResults);
-                    }
-                } catch (_) { }
+        const functionsByBaseName = new Map();
+        for (const cf of coverageFunctions) {
+            const base = path.basename(cf.filePath || "").replace(/\.[^.]+$/, "").toLowerCase();
+            if (!functionsByBaseName.has(base)) functionsByBaseName.set(base, []);
+            if (cf.functionName && !cf.functionName.startsWith("(") && !cf.functionName.startsWith("anonymous")) {
+                functionsByBaseName.get(base).push(cf.functionName);
             }
         }
 
         const norm = (p) => (p || "").replace(/\\/g, "/").replace(/^\.?\//, "").trim();
 
-        // Map results by normalized relative path
-        const resultsByPath = new Map();
-        for (const suite of allTestResults) {
-            const normName = suite.name ? norm(path.relative(snapshot.rootDir, suite.name)) : "";
-            const cleanName = normName || (suite.name ? norm(suite.name) : "");
-            resultsByPath.set(cleanName, suite);
-            resultsByPath.set(path.basename(cleanName), suite);
-        }
+        // 1. Locate test-results.json and separate Jest vs Vitest results
+        const loadTestResultsFromPaths = (paths) => {
+            const list = [];
+            const seen = new Set();
+            for (const p of paths) {
+                if (fs.existsSync(p) && !seen.has(p)) {
+                    seen.add(p);
+                    try {
+                        const parsed = JSON.parse(fs.readFileSync(p, "utf8"));
+                        if (Array.isArray(parsed?.testResults)) {
+                            list.push(...parsed.testResults);
+                        }
+                    } catch (_) { }
+                }
+            }
+            const map = new Map();
+            for (const suite of list) {
+                // extractRepoRelativePath handles Docker paths like /app/storage/.../repo/foo.test.js
+                // path.relative() fails when mixing Docker linux paths with Windows host paths
+                const repoRelative = suite.name ? norm(extractRepoRelativePath(suite.name)) : "";
+                if (!repoRelative) continue;
+                map.set(repoRelative, suite);
+                // Also index by shorter relative path (strip first directory segment)
+                map.set(repoRelative.replace(/^[^/]+\//, ""), suite);
+                // Also index by basename for fallback matching
+                map.set(path.basename(repoRelative), suite);
+            }
+            return map;
+        };
+
+        const jestResultsByPath = loadTestResultsFromPaths([
+            path.join(snapshot.rootDir, "coverage", "jest-results.json"),
+            path.join(snapshot.rootDir, "jest-results.json"),
+        ]);
+
+        const vitestResultsByPath = loadTestResultsFromPaths([
+            path.join(snapshot.rootDir, "coverage", "vitest-results.json"),
+            path.join(snapshot.rootDir, "vitest-results.json"),
+        ]);
+
+        const generalResultsByPath = loadTestResultsFromPaths([
+            path.join(snapshot.rootDir, "coverage", "test-results.json"),
+            path.join(snapshot.rootDir, "test-results.json"),
+        ]);
 
         // 2. Discover test files in snapshot rootDir
         const testFiles = [];
@@ -612,12 +878,26 @@ export const getCoverageTestSuites = async (req, res) => {
             for (const entry of entries) {
                 const fullPath = path.join(dir, entry.name);
                 if (entry.isDirectory()) {
-                    if (entry.name !== "node_modules" && entry.name !== ".git" && entry.name !== "coverage") {
+                    if (requestedType === "unit" && (entry.name === "client" || entry.name === "frontend")) {
+                        continue;
+                    }
+                    if (!["node_modules", ".git", "coverage", "dist", "build", ".next", ".vite", ".vitest", ".cache", "test-data", "test_data", "fixtures", "mocks", "__mocks__"].includes(entry.name)) {
                         scanDir(fullPath);
                     }
                 } else if (entry.isFile()) {
-                    const isTest = /(^|\/)(tests?|__tests__|spec)\//i.test(fullPath.replace(/\\/g, "/")) ||
-                        /\.(test|spec)\.[a-z0-9]+$/i.test(entry.name);
+                    const isSetupOrHelper = /^(setup|global-?setup|setup-?tests|teardown|helpers?|mocks?|fixtures?|config|utils?)\.[a-z0-9]+$/i.test(entry.name);
+                    const relPathNorm = fullPath.replace(/\\/g, "/").toLowerCase();
+                    const isHelperDir = /(^|\/)(test-data|test_data|fixtures?|helpers?|mocks?|__mocks__|utils?|support)\//i.test(relPathNorm);
+                    if (isSetupOrHelper || isHelperDir) {
+                        continue;
+                    }
+                    if (requestedType === "unit" && (relPathNorm.includes("client/") || relPathNorm.includes("frontend/") || /\.[jt]sx$/i.test(entry.name))) {
+                        continue;
+                    }
+                    const isTest = (
+                        /\.(test|spec|testcase|steps?)\.[a-z0-9]+$/i.test(entry.name) ||
+                        (/(^|\/)(tests?|__tests__|unit)\//i.test(relPathNorm) && !/\.(d\.ts|json|md|txt)$/i.test(entry.name))
+                    ) && /\.[cm]?[jt]sx?$/i.test(entry.name);
                     if (isTest) {
                         testFiles.push(fullPath);
                     }
@@ -634,34 +914,24 @@ export const getCoverageTestSuites = async (req, res) => {
             const baseName = path.basename(fullPath);
             const lowerPath = relPath.toLowerCase();
 
-            // Read header content to detect framework imports
-            let contentHeader = "";
+            // Read content to detect framework imports
+            let content = "";
             try {
-                const buf = Buffer.alloc(1024);
+                const buf = Buffer.alloc(8192);
                 const fd = fs.openSync(fullPath, "r");
-                const bytesRead = fs.readSync(fd, buf, 0, 1024, 0);
+                const bytesRead = fs.readSync(fd, buf, 0, 8192, 0);
                 fs.closeSync(fd);
-                contentHeader = buf.toString("utf8", 0, bytesRead).toLowerCase();
+                content = buf.toString("utf8", 0, bytesRead);
             } catch (_) { }
 
-            // Framework classification
-            let framework = "jest";
+            // Framework classification using classifyTestFile
+            const framework = classifyTestFile(content, relPath);
             let category = "unit";
-
-            if (lowerPath.includes("supertest") || contentHeader.includes("supertest")) {
-                framework = "supertest";
+            if (framework === "supertest") {
                 category = "integration";
-            } else if (lowerPath.includes("playwright") || contentHeader.includes("@playwright/test")) {
-                framework = "playwright";
+            } else if (framework === "playwright" || framework === "cypress") {
                 category = "system";
-            } else if (lowerPath.includes("cypress") || contentHeader.includes("cypress")) {
-                framework = "cypress";
-                category = "system";
-            } else if (lowerPath.includes("vitest") || contentHeader.includes("vitest")) {
-                framework = "vitest";
-                category = "unit";
             } else {
-                framework = "jest";
                 category = "unit";
             }
 
@@ -671,26 +941,85 @@ export const getCoverageTestSuites = async (req, res) => {
                 continue;
             }
 
-            // Find matching execution results from test-results.json
-            const suiteResult = resultsByPath.get(relPath) || resultsByPath.get(baseName);
-            const assertions = (suiteResult && Array.isArray(suiteResult.assertionResults))
-                ? suiteResult.assertionResults.map(a => ({
-                    title: a.title || a.fullName || "Test case",
-                    status: a.status || "passed",
-                    duration: a.duration || 0
-                }))
-                : [];
-
-            const totalTests = assertions.length || (suiteResult?.numPassingTests ?? 0) + (suiteResult?.numFailingTests ?? 0) || 1;
-            const passedTests = assertions.filter(a => a.status === "passed").length || (suiteResult?.numPassingTests ?? (suiteResult?.status === "passed" ? totalTests : 0));
-            const failedTests = assertions.filter(a => a.status === "failed").length || (suiteResult?.numFailingTests ?? (suiteResult?.status === "failed" ? totalTests : 0));
-
-            let status = "passed";
-            if (suiteResult) {
-                status = suiteResult.status === "failed" || failedTests > 0 ? "failed" : "passed";
+            // Exclude frontend / client / jsx / tsx for unit test suites
+            if (requestedType === "unit" && (
+                lowerPath.includes("client/") ||
+                lowerPath.includes("frontend/") ||
+                /\.[jt]sx$/i.test(fullPath)
+            )) {
+                continue;
             }
 
-            const durationMs = suiteResult ? (suiteResult.endTime - suiteResult.startTime) || 10 : 0;
+            // Find matching execution results from framework-specific results map
+            let suiteResult = null;
+            if (framework === "jest") {
+                suiteResult = jestResultsByPath.get(relPath) ||
+                    jestResultsByPath.get(relPath.replace(/^[^/]+\//, "")) ||
+                    jestResultsByPath.get(baseName);
+            } else if (framework === "vitest") {
+                suiteResult = vitestResultsByPath.get(relPath) ||
+                    vitestResultsByPath.get(relPath.replace(/^[^/]+\//, "")) ||
+                    vitestResultsByPath.get(baseName);
+            }
+            if (!suiteResult) {
+                suiteResult = generalResultsByPath.get(relPath) ||
+                    generalResultsByPath.get(relPath.replace(/^[^/]+\//, "")) ||
+                    generalResultsByPath.get(baseName);
+            }
+            if (!suiteResult) {
+                if (framework === "jest") {
+                    suiteResult = vitestResultsByPath.get(relPath) || vitestResultsByPath.get(baseName);
+                } else if (framework === "vitest") {
+                    suiteResult = jestResultsByPath.get(relPath) || jestResultsByPath.get(baseName);
+                }
+            }
+
+            const cleanBase = baseName.replace(/\.(test|spec|testcase|steps?)\.[a-z0-9]+$/i, "").toLowerCase();
+            const fileKnownFunctions = functionsByBaseName.get(cleanBase) || [];
+
+            const assertions = (suiteResult && Array.isArray(suiteResult.assertionResults))
+                ? suiteResult.assertionResults.map(a => {
+                    const targetFunction = extractTargetFunction(a, baseName, fileKnownFunctions);
+                    return {
+                        title: a.title || a.fullName || "Test case",
+                        status: a.status || "passed",
+                        duration: typeof a.duration === "number" ? a.duration : 0,
+                        targetFunction: targetFunction || null,
+                        ancestorTitles: Array.isArray(a.ancestorTitles) ? a.ancestorTitles : []
+                    };
+                })
+                : [];
+
+            const numPassing = typeof suiteResult?.numPassingTests === "number" ? suiteResult.numPassingTests : null;
+            const numFailing = typeof suiteResult?.numFailingTests === "number" ? suiteResult.numFailingTests : null;
+
+            const passedTests = assertions.length > 0
+                ? assertions.filter(a => a.status === "passed").length
+                : (numPassing ?? (suiteResult?.status === "passed" ? 1 : 0));
+
+            const failedTests = assertions.length > 0
+                ? assertions.filter(a => a.status === "failed").length
+                : (numFailing ?? (suiteResult?.status === "failed" ? 1 : 0));
+
+            const totalTests = assertions.length > 0
+                ? assertions.length
+                : (passedTests + failedTests || (suiteResult ? 1 : 0));
+
+            // pending = file found but no test run result yet; failed/passed = from results
+            let status = suiteResult ? (suiteResult.status === "failed" || failedTests > 0 ? "failed" : "passed") : "pending";
+
+            const rawDuration = suiteResult?.endTime && suiteResult?.startTime
+                ? (suiteResult.endTime - suiteResult.startTime)
+                : (suiteResult?.durationMs || suiteResult?.duration || 0);
+            const durationMs = Math.max(0, Math.round(rawDuration));
+
+            // Extract error message from failed suite (e.g. SyntaxError, compile error)
+            let message = null;
+            if (suiteResult && suiteResult.status === "failed" && Array.isArray(suiteResult.failureMessage)) {
+                message = suiteResult.failureMessage.filter(Boolean).join("\n").slice(0, 500) || null;
+            } else if (suiteResult && typeof suiteResult.message === "string" && suiteResult.message) {
+                message = suiteResult.message.slice(0, 500);
+            }
 
             suites.push({
                 filePath: relPath,
@@ -703,6 +1032,7 @@ export const getCoverageTestSuites = async (req, res) => {
                 failedTests,
                 durationMs,
                 assertions,
+                message,
             });
         }
 
@@ -777,15 +1107,31 @@ export const getCoverageFunctions = async (req, res) => {
         }
 
         // ── SCRUM-162: Retrieve CoverageFunction records ───────────────────────
+        const typeFilter = req.query?.type || req.query?.coverageType || null;
         const where = {
             snapshotId,
             // SCRUM-163: optional filter by filePath (partial, case-insensitive)
             ...(filePathFilter && {
                 filePath: { contains: filePathFilter, mode: "insensitive" },
             }),
+            ...(typeFilter === "unit" && {
+                AND: [
+                    { NOT: { filePath: { contains: "client/" } } },
+                    { NOT: { filePath: { contains: "frontend/" } } },
+                    { NOT: { filePath: { endsWith: ".jsx" } } },
+                    { NOT: { filePath: { endsWith: ".tsx" } } },
+                    { NOT: { filePath: { contains: "routes/" } } },
+                    { NOT: { filePath: { contains: "controllers/" } } },
+                    { NOT: { filePath: { contains: "endpoints/" } } },
+                    { NOT: { filePath: { endsWith: "app.js" } } },
+                    { NOT: { filePath: { endsWith: "app.ts" } } },
+                    { NOT: { filePath: { endsWith: "server.js" } } },
+                    { NOT: { filePath: { endsWith: "server.ts" } } },
+                ]
+            }),
         };
 
-        const [functions, total] = await Promise.all([
+        let [functions, total] = await Promise.all([
             prisma.coverageFunction.findMany({
                 where,
                 orderBy: { [sortBy]: order },
@@ -802,6 +1148,14 @@ export const getCoverageFunctions = async (req, res) => {
             }),
             prisma.coverageFunction.count({ where }),
         ]);
+
+        if (typeFilter === "unit") {
+            const beforeCount = functions.length;
+            functions = functions.filter(f => !isApiFilePath(f.filePath));
+            if (functions.length !== beforeCount) {
+                total = Math.max(functions.length, total - (beforeCount - functions.length));
+            }
+        }
 
         // Return an empty dataset instead of a 404 so the UI can render a valid
         // empty coverage state while tests are still running or no tests exist.

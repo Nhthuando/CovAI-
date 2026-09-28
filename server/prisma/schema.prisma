@@ -324,8 +324,24 @@ model TestRun {
   finishedAt   DateTime
   createdAt    DateTime        @default(now())
   snapshot     ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  scenarios    TestScenario[]
 
   @@index([snapshotId])
+}
+
+model TestScenario {
+  id              String   @id @default(cuid())
+  testRunId       String
+  title           String
+  suiteName       String?
+  status          String
+  durationMs      Float?
+  failureMessages String[] @default([])
+  testFile        String?
+  createdAt       DateTime @default(now())
+  testRun         TestRun  @relation(fields: [testRunId], references: [id], onDelete: Cascade)
+
+  @@index([testRunId])
 }
 
 model Notification {

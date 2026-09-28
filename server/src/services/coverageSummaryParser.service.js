@@ -46,64 +46,87 @@ const readCoverageSummaryFile = (coverageDir) => {
     return raw;
 };
 
+const parsePct = (val) => {
+    if (typeof val === "number" && !isNaN(val)) return val;
+    if (typeof val === "string") {
+        const parsed = parseFloat(val);
+        if (!isNaN(parsed)) return parsed;
+    }
+    return 0;
+};
+
+const parseNum = (val) => {
+    if (typeof val === "number" && !isNaN(val)) return val;
+    if (typeof val === "string") {
+        const parsed = parseInt(val, 10);
+        if (!isNaN(parsed)) return parsed;
+    }
+    return 0;
+};
+
 /**
  * SCRUM-118: Parse line coverage từ một entry Jest
  */
 const parseLineCoverage = (entry) => ({
-    total: entry.lines?.total ?? 0,
-    covered: entry.lines?.covered ?? 0,
-    skipped: entry.lines?.skipped ?? 0,
-    pct: entry.lines?.pct ?? 0,
+    total: parseNum(entry?.lines?.total),
+    covered: parseNum(entry?.lines?.covered),
+    skipped: parseNum(entry?.lines?.skipped),
+    pct: parsePct(entry?.lines?.pct),
 });
 
 /**
  * SCRUM-119: Parse branch coverage từ một entry Jest
  */
 const parseBranchCoverage = (entry) => ({
-    total: entry.branches?.total ?? 0,
-    covered: entry.branches?.covered ?? 0,
-    skipped: entry.branches?.skipped ?? 0,
-    pct: entry.branches?.pct ?? 0,
+    total: parseNum(entry?.branches?.total),
+    covered: parseNum(entry?.branches?.covered),
+    skipped: parseNum(entry?.branches?.skipped),
+    pct: parsePct(entry?.branches?.pct),
 });
 
 /**
  * SCRUM-120: Parse function coverage từ một entry Jest
  */
 const parseFunctionCoverage = (entry) => ({
-    total: entry.functions?.total ?? 0,
-    covered: entry.functions?.covered ?? 0,
-    skipped: entry.functions?.skipped ?? 0,
-    pct: entry.functions?.pct ?? 0,
+    total: parseNum(entry?.functions?.total),
+    covered: parseNum(entry?.functions?.covered),
+    skipped: parseNum(entry?.functions?.skipped),
+    pct: parsePct(entry?.functions?.pct),
 });
 
 /**
  * SCRUM-121: Parse statement coverage từ một entry Jest
  */
 const parseStatementCoverage = (entry) => ({
-    total: entry.statements?.total ?? 0,
-    covered: entry.statements?.covered ?? 0,
-    skipped: entry.statements?.skipped ?? 0,
-    pct: entry.statements?.pct ?? 0,
+    total: parseNum(entry?.statements?.total),
+    covered: parseNum(entry?.statements?.covered),
+    skipped: parseNum(entry?.statements?.skipped),
+    pct: parsePct(entry?.statements?.pct),
 });
 
 /**
  * SCRUM-122: Tạo hoặc cập nhật CoverageSummary record trong DB.
  */
 const upsertCoverageSummary = async (snapshotId, lines, branches, functions, statements) => {
+    const l = parsePct(lines?.pct ?? lines);
+    const b = parsePct(branches?.pct ?? branches);
+    const f = parsePct(functions?.pct ?? functions);
+    const s = parsePct(statements?.pct ?? statements);
+
     return prisma.coverageSummary.upsert({
         where: { snapshotId },
         create: {
             snapshotId,
-            linesPct: lines.pct,
-            branchesPct: branches.pct,
-            funcsPct: functions.pct,
-            stmtsPct: statements.pct,
+            linesPct: l,
+            branchesPct: b,
+            funcsPct: f,
+            stmtsPct: s,
         },
         update: {
-            linesPct: lines.pct,
-            branchesPct: branches.pct,
-            funcsPct: functions.pct,
-            stmtsPct: statements.pct,
+            linesPct: l,
+            branchesPct: b,
+            funcsPct: f,
+            stmtsPct: s,
         },
     });
 };
@@ -123,16 +146,16 @@ const upsertCoverageFiles = async (snapshotId, fileEntries) => {
             create: {
                 snapshotId,
                 filePath,
-                linesPct: lines.pct,
-                branchesPct: branches.pct,
-                funcsPct: functions.pct,
-                stmtsPct: statements.pct,
+                linesPct: parsePct(lines?.pct),
+                branchesPct: parsePct(branches?.pct),
+                funcsPct: parsePct(functions?.pct),
+                stmtsPct: parsePct(statements?.pct),
             },
             update: {
-                linesPct: lines.pct,
-                branchesPct: branches.pct,
-                funcsPct: functions.pct,
-                stmtsPct: statements.pct,
+                linesPct: parsePct(lines?.pct),
+                branchesPct: parsePct(branches?.pct),
+                funcsPct: parsePct(functions?.pct),
+                stmtsPct: parsePct(statements?.pct),
             },
         });
     }

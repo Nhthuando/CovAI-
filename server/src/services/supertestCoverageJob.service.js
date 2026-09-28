@@ -14,7 +14,7 @@ import { parseCoverageSummary } from "./coverageSummaryParser.service.js";
 import { storeCoverageOutputs } from "./coverageStorage.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { detectSupertest } from "./supertestDetection.service.js";
-import { parseJestResults } from "./testResultParser.service.js";
+import { parseJestResults, formatScenariosForPrisma } from "./testResultParser.service.js";
 import prisma from "../config/prisma.js";
 
 /**
@@ -87,20 +87,23 @@ export const processSupertestCoverageJob = async (jobId) => {
         const supertestResults = parseJestResults(coverageDir);
         // SCRUM-141: Persist Supertest test results
         if (supertestResults) {
-            await prisma.testRun.create({
-                data: {
-                    snapshotId,
-                    type: "SUPERTEST",
-                    totalTests: supertestResults.totalTests,
-                    passedTests: supertestResults.passedTests,
-                    failedTests: supertestResults.failedTests,
-                    skippedTests: supertestResults.skippedTests,
-                    durationMs: supertestResults.durationMs,
-                    status: supertestResults.status, // PASSED or FAILED
-                    startedAt: new Date(), // TODO: Get actual start time
-                    finishedAt: new Date() // TODO: Get actual finish time
-                }
-            });
+            const formattedScenarios = formatScenariosForPrisma(supertestResults.scenarios);
+            const dataPayload = {
+                snapshotId,
+                type: "SUPERTEST",
+                totalTests: supertestResults.totalTests,
+                passedTests: supertestResults.passedTests,
+                failedTests: supertestResults.failedTests,
+                skippedTests: supertestResults.skippedTests,
+                durationMs: supertestResults.durationMs,
+                status: supertestResults.status, // PASSED or FAILED
+                startedAt: new Date(), // TODO: Get actual start time
+                finishedAt: new Date() // TODO: Get actual finish time
+            };
+            if (formattedScenarios) {
+                dataPayload.scenarios = formattedScenarios;
+            }
+            await prisma.testRun.create({ data: dataPayload });
             await addJobLog(jobId, "INFO", `[SCRUM-141] Đã lưu TestRun (SUPERTEST): ${supertestResults.totalTests} tests.`).catch(() => { });
         }
 

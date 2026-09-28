@@ -39,4 +39,13 @@ describe("coverage framework detection", () => {
     fs.writeFileSync(path.join(rootDir, "jest.config.js"), "export default {};");
     expect(selectCoverageFramework(detectCoverageFrameworks(rootDir), "unit")).toBe("jest");
   });
+
+  test("detects unit test support when test files exist in tests/ directory", () => {
+    fs.writeFileSync(path.join(rootDir, "package.json"), "{}");
+    fs.mkdirSync(path.join(rootDir, "tests", "unit", "controllers"), { recursive: true });
+    fs.writeFileSync(path.join(rootDir, "tests", "unit", "controllers", "auth.controller.test.js"), "describe('auth', () => {});");
+
+    const result = detectCoverageFrameworks(rootDir);
+    expect(result.supported.unit.length).toBeGreaterThan(0);
+  });
 });

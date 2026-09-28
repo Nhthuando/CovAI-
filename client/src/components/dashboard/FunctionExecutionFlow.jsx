@@ -111,7 +111,7 @@ export default function FunctionExecutionFlow({
           >
             <Cpu size={16} />
             <span style={{ fontSize: 13, fontWeight: 700 }}>
-              Sơ đồ luồng phương thức & hàm (Method Execution Map)
+              Method Execution Map
             </span>
           </div>
         </div>
@@ -128,7 +128,7 @@ export default function FunctionExecutionFlow({
               color: "#8b949e",
             }}
           >
-            Tổng số hàm: <b style={{ color: "#e6edf3" }}>{totalFns} hàm</b>
+            Total functions: <b style={{ color: "#e6edf3" }}>{totalFns} functions</b>
           </div>
 
           <div
@@ -141,7 +141,7 @@ export default function FunctionExecutionFlow({
               color: "#8b949e",
             }}
           >
-            Đã gọi:{" "}
+            Called:{" "}
             <b style={{ color: "#38bdf8" }}>
               {calledFns}/{totalFns} ({funcsPct}%)
             </b>
@@ -157,8 +157,8 @@ export default function FunctionExecutionFlow({
               color: "#8b949e",
             }}
           >
-            Tổng số lượt gọi:{" "}
-            <b style={{ color: "#22c55e" }}>{totalHits} lượt gọi</b>
+            Total call hits:{" "}
+            <b style={{ color: "#22c55e" }}>{totalHits} hits</b>
           </div>
 
           {uncalledFns > 0 && (
@@ -173,7 +173,7 @@ export default function FunctionExecutionFlow({
                 fontWeight: 600,
               }}
             >
-              ⚑ {uncalledFns} hàm chưa được gọi
+              ⚑ {uncalledFns} uncalled functions
             </div>
           )}
         </div>
@@ -202,9 +202,9 @@ export default function FunctionExecutionFlow({
           >
             <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <BarChart3 size={13} style={{ color: "#38bdf8" }} />
-              Phân bổ số lượt gọi giữa các phương thức
+              Call count distribution across methods
             </span>
-            <span>Tổng: {totalHits} lần gọi</span>
+            <span>Total: {totalHits} calls</span>
           </div>
 
           {/* Multi-color distribution bar */}
@@ -244,7 +244,7 @@ export default function FunctionExecutionFlow({
                       background: color,
                       borderRight: "1px solid rgba(0,0,0,0.5)",
                     }}
-                    title={`${fn.displayName}(): ${fn.hit} lượt gọi (${pctWidth}%)`}
+                    title={`${fn.displayName}(): ${fn.hit} call hits (${pctWidth}%)`}
                   />
                 );
               })}
@@ -315,11 +315,11 @@ export default function FunctionExecutionFlow({
       >
         <div style={{ display: "flex", gap: 6 }}>
           {[
-            { id: "all", label: `Tất cả (${totalFns})` },
-            { id: "called", label: `✓ Đã gọi (${calledFns})`, color: "#38bdf8" },
+            { id: "all", label: `All (${totalFns})` },
+            { id: "called", label: `✓ Called (${calledFns})`, color: "#38bdf8" },
             {
               id: "uncalled",
-              label: `⚑ Chưa gọi (${uncalledFns})`,
+              label: `⚑ Uncalled (${uncalledFns})`,
               color: "#fbbf24",
             },
           ].map((tab) => (
@@ -369,7 +369,7 @@ export default function FunctionExecutionFlow({
           <Search size={13} style={{ color: "#8b949e" }} />
           <input
             type="text"
-            placeholder="Tìm tên hàm hoặc file..."
+            placeholder="Search function or file..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             style={{
@@ -394,7 +394,7 @@ export default function FunctionExecutionFlow({
             color: "#8b949e",
           }}
         >
-          Đang tải dữ liệu sơ đồ luồng hàm...
+          Loading method execution map data...
         </div>
       )}
 
@@ -409,8 +409,8 @@ export default function FunctionExecutionFlow({
           }}
         >
           {cleanedFunctions.length === 0
-            ? "Chưa có dữ liệu hàm. Hãy bấm 'Run Analysis' để phân tích Jest/Vitest."
-            : "Không tìm thấy hàm phù hợp với bộ lọc."}
+            ? "No function data available. Click 'Run Analysis' to analyze Jest/Vitest."
+            : "No matching functions found for the filter."}
         </div>
       )}
 
@@ -551,7 +551,7 @@ export default function FunctionExecutionFlow({
                   >
                     <div>
                       <div style={{ fontSize: 10, color: "#8b949e" }}>
-                        Số lượt thực thi
+                        Execution Hits
                       </div>
                       <div
                         style={{
@@ -567,7 +567,7 @@ export default function FunctionExecutionFlow({
 
                     <div style={{ textAlign: "right" }}>
                       <div style={{ fontSize: 10, color: "#8b949e" }}>
-                        Vị trí dòng
+                        Line Location
                       </div>
                       <div
                         style={{
@@ -631,10 +631,10 @@ export default function FunctionExecutionFlow({
                       fontSize: 11,
                       cursor: "pointer",
                     }}
-                    title="Mở file mã nguồn tại vị trí hàm"
+                    title="Open source file at function definition"
                   >
                     <Code2 size={12} />
-                    <span>Mở code</span>
+                    <span>Open code</span>
                   </button>
 
                   <div style={{ display: "flex", gap: 6 }}>
@@ -654,10 +654,10 @@ export default function FunctionExecutionFlow({
                           fontWeight: 600,
                           cursor: "pointer",
                         }}
-                        title="Xem Control Flow Graph (CFG) của hàm này"
+                        title="View Control Flow Graph (CFG) for this function"
                       >
                         <Network size={12} />
-                        <span>Xem CFG</span>
+                        <span>View CFG</span>
                       </button>
                     )}
                   </div>

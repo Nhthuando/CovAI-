@@ -151,9 +151,13 @@ function LayoutInner() {
   const [testPromptSnapshotId, setTestPromptSnapshotId] = useState(null);
   const [pendingAiSuggestion, setPendingAiSuggestion] = useState(null);
 
-  const handleSuggestTestcase = (filePath) => {
+  const handleSuggestTestcase = (filePath, options = {}) => {
     setAiPanelOpen(true);
-    setPendingAiSuggestion({ filePath, timestamp: Date.now() });
+    if (typeof filePath === "object" && filePath !== null) {
+      setPendingAiSuggestion({ ...filePath, timestamp: Date.now() });
+    } else {
+      setPendingAiSuggestion({ filePath, ...options, timestamp: Date.now() });
+    }
   };
 
   const [projects, setProjects] = useState([]);
@@ -233,7 +237,7 @@ function LayoutInner() {
           setProjects(loadedProjects);
           const targetProj = activeProjId
             ? loadedProjects.find((p) => p.id === activeProjId) ||
-              loadedProjects[0]
+            loadedProjects[0]
             : loadedProjects[0];
           setProject(targetProj);
           let lastError = null;
@@ -776,21 +780,21 @@ function LayoutInner() {
               style={
                 isMobile
                   ? {
-                      position: "fixed",
-                      top: 42,
-                      bottom: 26,
-                      left: 0,
-                      width: 280,
-                      maxWidth: "85vw",
-                      overflow: "hidden",
-                      zIndex: 35,
-                      boxShadow: "4px 0 24px rgba(0,0,0,0.4)",
-                    }
+                    position: "fixed",
+                    top: 42,
+                    bottom: 26,
+                    left: 0,
+                    width: 280,
+                    maxWidth: "85vw",
+                    overflow: "hidden",
+                    zIndex: 35,
+                    boxShadow: "4px 0 24px rgba(0,0,0,0.4)",
+                  }
                   : {
-                      overflow: "hidden",
-                      flexShrink: 0,
-                      borderRight: "1px solid var(--ide-border)",
-                    }
+                    overflow: "hidden",
+                    flexShrink: 0,
+                    borderRight: "1px solid var(--ide-border)",
+                  }
               }
             >
               {activeActivity === "settings" ? (
@@ -969,16 +973,16 @@ function LayoutInner() {
                 style={
                   isMobile
                     ? {
-                        position: "fixed",
-                        top: 42,
-                        bottom: 26,
-                        right: 0,
-                        width: "100%",
-                        maxWidth: 360,
-                        overflow: "hidden",
-                        zIndex: 35,
-                        boxShadow: "-4px 0 24px rgba(0,0,0,0.4)",
-                      }
+                      position: "fixed",
+                      top: 42,
+                      bottom: 26,
+                      right: 0,
+                      width: "100%",
+                      maxWidth: 360,
+                      overflow: "hidden",
+                      zIndex: 35,
+                      boxShadow: "-4px 0 24px rgba(0,0,0,0.4)",
+                    }
                     : { overflow: "hidden", flexShrink: 0 }
                 }
               >

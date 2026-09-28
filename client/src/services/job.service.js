@@ -114,6 +114,27 @@ export async function getJobDetailApi(jobId) {
 }
 
 /**
+ * POST /api/job/:jobId/cancel
+ * Cancels or stops a running/queued job
+ */
+export async function cancelJobApi(jobId) {
+  try {
+    const res = await fetch(`${BASE_URL}/job/${jobId}/cancel`, {
+      method: "POST",
+      headers: await getAuthHeaders(),
+    });
+    return handleResponse(res);
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new Error(
+        "Không thể kết nối tới backend. Server có thể đang restart hoặc offline.",
+      );
+    }
+    throw error;
+  }
+}
+
+/**
  * GET /api/performance/snapshot/:snapshotId
  * Returns { metric, slowFunctions }
  */

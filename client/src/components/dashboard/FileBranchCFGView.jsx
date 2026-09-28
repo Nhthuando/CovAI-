@@ -76,7 +76,7 @@ export default function FileBranchCFGView({
         {/* Function Selector Tabs */}
         {functionsWithCfg.length > 1 && (
           <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 11, color: "#8b949e" }}>Hàm:</span>
+            <span style={{ fontSize: 11, color: "#8b949e" }}>Function:</span>
             {functionsWithCfg.map((fn, idx) => {
               const isSelected = idx === selectedFnIndex;
               const hasBranches = fn.branches.length > 0;
@@ -96,7 +96,7 @@ export default function FileBranchCFGView({
                     cursor: "pointer",
                   }}
                 >
-                  {fn.name}() {hasBranches ? `(${fn.branches.length} rẽ nhánh)` : ""}
+                  {fn.name}() {hasBranches ? `(${fn.branches.length} branches)` : ""}
                 </button>
               );
             })}
@@ -310,7 +310,7 @@ export default function FileBranchCFGView({
                 {(!isTrueCovered || !isFalseCovered) && onSuggestTestcase && (
                   <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ fontSize: 11, color: "#f87171" }}>
-                      ⚠️ Còn nhánh chưa được kiểm thử
+                      ⚠️ Remaining un-tested branches
                     </span>
                     <button
                       onClick={() => onSuggestTestcase(filePath)}
@@ -329,7 +329,7 @@ export default function FileBranchCFGView({
                       }}
                     >
                       <Sparkles size={11} />
-                      <span>Gợi ý testcase</span>
+                      <span>Suggest testcase</span>
                     </button>
                   </div>
                 )}
@@ -349,7 +349,7 @@ export default function FileBranchCFGView({
               fontFamily: "var(--font-mono)",
             }}
           >
-            Thực thi tuần tự (Không có rẽ nhánh điều kiện)
+            Sequential execution (No conditional branches)
           </div>
         )}
 

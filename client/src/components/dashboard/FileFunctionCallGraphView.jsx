@@ -55,14 +55,14 @@ export default function FileFunctionCallGraphView({
 
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ fontSize: 11, color: "#8b949e" }}>
-            Hàm được gọi:{" "}
+            Called functions:{" "}
             <b style={{ color: "#38bdf8" }}>
               {coveredFuncs}/{functions.length} ({functions.length > 0 ? Math.round((coveredFuncs / functions.length) * 100) : 100}%)
             </b>
           </span>
 
           <span style={{ fontSize: 11, color: "#8b949e" }}>
-            Tổng lượt gọi: <b style={{ color: "#22c55e" }}>{totalCalls} calls</b>
+            Total calls: <b style={{ color: "#22c55e" }}>{totalCalls} calls</b>
           </span>
         </div>
       </div>
@@ -114,7 +114,7 @@ export default function FileFunctionCallGraphView({
         {/* Function Nodes Chain */}
         {functions.length === 0 ? (
           <div style={{ padding: 24, textAlign: "center", color: "#6e7681", fontSize: 12 }}>
-            Không tìm thấy định nghĩa hàm nào trong file này.
+            No function definitions found in this file.
           </div>
         ) : (
           functions.map((fn, index) => {
@@ -171,11 +171,11 @@ export default function FileFunctionCallGraphView({
                         fontFamily: "var(--font-mono)",
                       }}
                     >
-                      {isCalled ? `✓ ${calls} call${calls > 1 ? "s" : ""}` : "⚑ 0 calls (Chưa gọi)"}
+                      {isCalled ? `✓ ${calls} call${calls > 1 ? "s" : ""}` : "⚑ 0 calls (Uncalled)"}
                     </span>
 
                     <span style={{ fontSize: 10, color: "#6e7681", fontFamily: "var(--font-mono)" }}>
-                      (Dòng {fn.line})
+                      (Line {fn.line})
                     </span>
                   </div>
                 </div>

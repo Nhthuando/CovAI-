@@ -31,49 +31,50 @@ import {
   runCoverageByType,
   getFileCoverage
 } from "../../services/coverage.service.js";
-import { getJobDetailApi } from "../../services/job.service.js";
+import { getJobDetailApi, cancelJobApi } from "../../services/job.service.js";
 import { getProjectCfgApi } from "../../services/project.service.js";
 import FunctionExecutionFlow from "./FunctionExecutionFlow.jsx";
 import FileCodeExecutionView from "./FileCodeExecutionView.jsx";
 import FileBranchCFGView from "./FileBranchCFGView.jsx";
 import FileFunctionCallGraphView from "./FileFunctionCallGraphView.jsx";
 import CFGCalculator from "./CFGCalculator.jsx";
+import WaveProgressBar from "./WaveProgressBar.jsx";
 
 const CONFIG = {
   unit: {
     title: "Unit Test Coverage",
-    subtitle: "Kiểm thử độc lập của hàm, nhánh điều kiện và câu lệnh.",
+    subtitle: "Independent testing of functions, condition branches, and statements.",
     supported: "Jest · Vitest",
     accent: "#a78bfa",
     focus: ["Statements", "Branches", "Functions", "Lines"],
     explanation: [
-      ["Statement coverage", "Bao nhiêu câu lệnh đã được test thực thi."],
-      ["Branch coverage", "Bao nhiêu nhánh if/else/switch đã được đi qua."],
-      ["Function coverage", "Bao nhiêu hàm hoặc method đã được gọi."],
+      ["Statement coverage", "Percentage of statements executed by tests."],
+      ["Branch coverage", "Percentage of if/else/switch condition paths executed."],
+      ["Function coverage", "Percentage of functions or methods executed."],
     ],
   },
   integration: {
     title: "Integration Test Coverage",
-    subtitle: "Kiểm tra API và trao đổi dữ liệu giữa frontend, backend và dịch vụ.",
+    subtitle: "Testing APIs and data exchange between frontend, backend, and services.",
     supported: "Playwright · Supertest",
     accent: "#fbbf24",
     focus: ["API files", "Covered API files", "Average coverage", "Critical APIs"],
     explanation: [
-      ["API contracts", "Request, response, status code và dữ liệu trả về."],
-      ["Frontend ↔ Backend", "Các lời gọi API từ giao diện đến route/controller."],
-      ["Service integration", "Luồng controller, service và database/dependency."],
+      ["API contracts", "Requests, responses, status codes, and returned payload."],
+      ["Frontend ↔ Backend", "API calls from interface to route/controller."],
+      ["Service integration", "Controller, service, and database/dependency flow."],
     ],
   },
   system: {
     title: "System Test Coverage",
-    subtitle: "Kiểm tra E2E các tính năng hoàn chỉnh theo góc nhìn người dùng.",
+    subtitle: "E2E testing of complete features from a user perspective.",
     supported: "Playwright · Cypress",
     accent: "#ec4899",
     focus: ["E2E tests", "Passed", "Failed", "Feature coverage"],
     explanation: [
-      ["User journeys", "Các luồng đăng nhập, thao tác và hoàn thành nghiệp vụ."],
-      ["Browser behavior", "Giao diện, điều hướng và tương tác trên trình duyệt."],
-      ["Full system", "Frontend, backend và dữ liệu hoạt động cùng nhau."],
+      ["User journeys", "Login, operation, and task completion user flows."],
+      ["Browser behavior", "Interface, navigation, and browser interactions."],
+      ["Full system", "Frontend, backend, and data operating together."],
     ],
   },
 };
@@ -93,32 +94,31 @@ const isTestFile = (filePath) => {
     /\.(test|spec)\.[a-z0-9]+$/i.test(normalized)
   );
 };
+const isFrontendFile = (filePath) => {
+  if (!filePath) return false;
+  const normalized = filePath.replace(/\\/g, "/").toLowerCase();
+  return (
+    /(^|\/)(client|frontend|components|pages|views)\//i.test(normalized) ||
+    /\.[jt]sx(\?.*)?$/i.test(normalized) ||
+    normalized.includes(".jsx") ||
+    normalized.includes(".tsx")
+  );
+};
 
 export const cleanDisplayPath = (fullPath = "") => {
   if (!fullPath) return "";
-  const normalized = fullPath.replace(/\\/g, "/").replace(/^\.?\//, "");
+  let normalized = fullPath.replace(/\\/g, "/").replace(/^\.?\//, "");
 
-  // Match inside docker snapshots: uploads/snapshots/<id>/<repo>/<relativePath>
-  const uploadMatch = normalized.match(
-    /(?:^|\/)uploads\/snapshots\/[^/]+(?:\/[^/]+)*?\/(src\/.*|tests?\/.*|__tests__\/.*|spec\/.*|[a-zA-Z0-9_\-.]+\.[a-zA-Z0-9]+)$/i,
-  );
+  // Match inside docker or repo storage: storage/projects/<id>/.../repo/<relativePath>
+  const repoMatch = normalized.match(/(?:^|\/)repo\/(.+)$/i);
+  if (repoMatch) return repoMatch[1];
+
+  const storageMatch = normalized.match(/(?:^|\/)storage\/projects\/[^/]+(?:\/[^/]+)*?\/(.+)$/i);
+  if (storageMatch) return storageMatch[1];
+
+  const uploadMatch = normalized.match(/(?:^|\/)uploads\/snapshots\/[^/]+(?:\/[^/]+)*?\/(.+)$/i);
   if (uploadMatch) return uploadMatch[1];
 
-  // Match standard subdirectories: src/, tests/, __tests__/, spec/
-  const subMatch = normalized.match(
-    /(?:^|\/)((?:src|tests?|__tests__|spec)\/.*)$/i,
-  );
-  if (subMatch) return subMatch[1];
-
-  const genericMatch = normalized.match(
-    /(?:^|\/)(src\/.*|tests?\/.*|__tests__\/.*|lib\/.*)$/i,
-  );
-  if (genericMatch) return genericMatch[1];
-
-  const parts = normalized.split("/").filter(Boolean);
-  if (parts.length > 3) {
-    return parts.slice(-2).join("/");
-  }
   return normalized;
 };
 
@@ -160,20 +160,34 @@ const buttonStyle = (color) => ({
   cursor: "pointer",
 });
 
-async function waitForJob(jobId) {
+async function waitForJob(jobId, onProgress) {
+  let lastProgress = 8;
   for (let attempt = 0; attempt < 180; attempt += 1) {
     const response = await getJobDetailApi(jobId);
     const job = response?.job;
-    if (job?.status === "SUCCESS") return;
+    if (job) {
+      const prog = typeof job.progress === "number" ? Math.max(lastProgress, job.progress) : lastProgress;
+      lastProgress = prog;
+      if (onProgress) {
+        onProgress(prog, job.status);
+      }
+    }
+    if (job?.status === "SUCCESS") {
+      if (onProgress) onProgress(100, "SUCCESS");
+      return;
+    }
     if (["FAILED", "CANCELED"].includes(job?.status))
       throw new Error(
         job?.errorMessage ||
         job?.error ||
         `${job.status}: coverage analysis failed.`,
       );
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await new Promise((resolve) => setTimeout(resolve, 1500));
   }
-  throw new Error("Coverage analysis timed out. Open Job Queue to inspect logs.");
+  try {
+    await cancelJobApi(jobId);
+  } catch (_) { }
+  throw new Error("Coverage analysis timed out. The job was automatically paused/canceled to unblock the project.");
 }
 
 export default function CoverageTypeDashboard({
@@ -181,7 +195,7 @@ export default function CoverageTypeDashboard({
   snapshotId,
   projectId,
   onOpenFile,
-  onGenerate, 
+  onGenerate,
   generating,
   onSuggestTestcase,
   onOpenCFG,
@@ -193,6 +207,8 @@ export default function CoverageTypeDashboard({
   const [frameworks, setFrameworks] = useState(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const [runProgress, setRunProgress] = useState(0);
+  const [runStep, setRunStep] = useState("");
   const [error, setError] = useState("");
   const [activeFramework, setActiveFramework] = useState("");
   const [generateError, setGenerateError] = useState("");
@@ -296,6 +312,7 @@ export default function CoverageTypeDashboard({
         limit: 500,
         sortBy: "hit",
         order: "asc",
+        type,
       });
       setFunctionsList(res?.data?.functions || []);
     } catch (err) {
@@ -304,7 +321,7 @@ export default function CoverageTypeDashboard({
     } finally {
       setLoadingFunctions(false);
     }
-  }, [snapshotId]);
+  }, [snapshotId, type]);
 
   const load = useCallback(async () => {
     if (!snapshotId) {
@@ -313,8 +330,12 @@ export default function CoverageTypeDashboard({
     }
     setLoading(true);
     try {
-      const [a, b, c] = await Promise.all([getCoverageSummary(snapshotId), getCoverageFiles(snapshotId, { sortBy: "linesPct", order: "asc", limit: 200 }), getTestExecution(snapshotId)]);
-      
+      const [a, b, c] = await Promise.all([
+        getCoverageSummary(snapshotId),
+        getCoverageFiles(snapshotId, { sortBy: "linesPct", order: "asc", limit: 200, type }),
+        getTestExecution(snapshotId)
+      ]);
+
       let mergedFiles = b.data?.files || [];
       if (type === "integration" && projectId) {
         try {
@@ -359,22 +380,46 @@ export default function CoverageTypeDashboard({
   const run = async () => {
     if (!snapshotId || running) return;
     setRunning(true);
+    setRunProgress(8);
+    setRunStep("Khởi động môi trường phân tích kiểm thử...");
     setError("");
     try {
       const response = await runCoverageByType(snapshotId, type);
-      setActiveFramework(response.data?.framework || "");
+      const fw = response.data?.framework || (type === "unit" ? "jest & vitest" : "");
+      setActiveFramework(fw);
       const jobs = response.data?.jobs || (response.data?.job ? [response.data.job] : []);
-      if (jobs.length === 0) throw new Error("Backend did not return a coverage job.");
+      if (jobs.length === 0) throw new Error("Backend không trả về job chạy kiểm thử.");
       for (const j of jobs) {
         if (j?.id) {
-          await waitForJob(j.id);
+          await waitForJob(j.id, (prog) => {
+            setRunProgress(prog);
+            if (prog <= 20) {
+              setRunStep("Đang chuẩn bị dependencies & môi trường Docker...");
+            } else if (prog <= 45) {
+              setRunStep("Đang chạy Jest unit test suites & sinh coverage...");
+            } else if (prog <= 65) {
+              setRunStep("Đang chạy Vitest unit test suites & sinh coverage...");
+            } else if (prog <= 85) {
+              setRunStep("Hợp nhất báo cáo coverage đa khung & phân tích AST functions...");
+            } else if (prog < 100) {
+              setRunStep("Lưu trữ kết quả phân tích & đồng bộ dữ liệu...");
+            } else {
+              setRunStep("Hoàn thành phân tích kiểm thử!");
+            }
+          });
         }
       }
+      setRunProgress(100);
+      setRunStep("Hoàn thành phân tích thành công!");
       await load();
     } catch (runError) {
-      setError(runError.message || "Coverage analysis failed.");
+      setError(runError.message || "Quá trình phân tích thất bại.");
     } finally {
-      setRunning(false);
+      setTimeout(() => {
+        setRunning(false);
+        setRunProgress(0);
+        setRunStep("");
+      }, 1800);
     }
   };
 
@@ -383,7 +428,10 @@ export default function CoverageTypeDashboard({
   const rawTotals = summary?.rawTotals || null;
 
   const selectedFiles = useMemo(() => {
-    const nonTestFiles = files.filter((f) => !isTestFile(f.filePath));
+    let nonTestFiles = files.filter((f) => !isTestFile(f.filePath));
+    if (type === "unit") {
+      nonTestFiles = nonTestFiles.filter((f) => !isFrontendFile(f.filePath));
+    }
     return type === "integration" ? nonTestFiles.filter(apiFile) : nonTestFiles;
   }, [files, type]);
 
@@ -429,6 +477,9 @@ export default function CoverageTypeDashboard({
   // Filtered functions list for Function Coverage view
   const filteredFunctions = useMemo(() => {
     let list = functionsList.filter((f) => !isTestFile(f.filePath));
+    if (type === "unit") {
+      list = list.filter((f) => !isFrontendFile(f.filePath));
+    }
     if (functionStatusFilter === "covered") {
       list = list.filter((f) => f.hit > 0);
     } else if (functionStatusFilter === "uncovered") {
@@ -443,19 +494,146 @@ export default function CoverageTypeDashboard({
       );
     }
     return list;
-  }, [functionsList, functionStatusFilter, functionSearch]);
+  }, [functionsList, functionStatusFilter, functionSearch, type]);
+
+  // Unit test suites list (Jest & Vitest backend test files only)
+  const unitTestSuites = useMemo(() => {
+    let list = testSuites;
+    if (type === "unit") {
+      list = list.filter((s) => !isFrontendFile(s.filePath) && !isFrontendFile(s.fileName));
+    }
+    return list;
+  }, [testSuites, type]);
 
   // Filtered unit test suites list (Jest & Vitest test files only)
   const filteredTestSuites = useMemo(() => {
-    if (!testSuiteSearch.trim()) return testSuites;
+    if (!testSuiteSearch.trim()) return unitTestSuites;
     const q = testSuiteSearch.toLowerCase();
-    return testSuites.filter(
+    return unitTestSuites.filter(
       (s) =>
         s.filePath?.toLowerCase().includes(q) ||
         s.fileName?.toLowerCase().includes(q) ||
         s.framework?.toLowerCase().includes(q),
     );
-  }, [testSuites, testSuiteSearch]);
+  }, [unitTestSuites, testSuiteSearch]);
+
+  // Bulk suggest tests based on Source File coverage (Lines, Branches, Funcs, Stmts)
+  // Cross-references with existing Jest & Vitest test files to provide targeted test improvements
+  const handleBulkSuggestTest = async () => {
+    let sourceFiles = selectedFiles;
+    if ((!sourceFiles || sourceFiles.length === 0) && snapshotId) {
+      try {
+        const res = await getCoverageFiles(snapshotId, { sortBy: "linesPct", order: "asc", limit: 200, type });
+        sourceFiles = res?.data?.files?.filter((f) => !isTestFile(f.filePath) && !isFrontendFile(f.filePath)) || [];
+      } catch (err) {
+        console.warn("Could not load source files:", err);
+      }
+    }
+
+    let testFiles = unitTestSuites;
+    if ((!testFiles || testFiles.length === 0) && snapshotId) {
+      try {
+        const res = await getCoverageTestSuites(snapshotId, type);
+        testFiles = res?.data?.testSuites || [];
+        setTestSuites(testFiles);
+      } catch (err) {
+        console.warn("Could not load test suites:", err);
+      }
+    }
+
+    const getCleanBase = (p) => {
+      if (!p) return "";
+      let name = p.replace(/\\/g, "/").split("/").pop() || "";
+      name = name.replace(/(\.(test|spec|jest|vitest))+/gi, "");
+      name = name.replace(/\.[a-z0-9]+$/i, "");
+      return name.toLowerCase();
+    };
+
+    const findMatchingTests = (sourcePath) => {
+      const clean = getCleanBase(sourcePath);
+      return (testFiles || []).filter((t) => {
+        const tc = getCleanBase(t.filePath);
+        return tc === clean || tc.includes(clean) || clean.includes(tc);
+      });
+    };
+
+    const passed100Files = [];
+    const needImprovementFiles = [];
+
+    for (const sf of sourceFiles) {
+      const linesPct = sf.linesPct ?? 100;
+      const branchesPct = sf.branchesPct ?? 100;
+      const funcsPct = sf.funcsPct ?? 100;
+      const stmtsPct = sf.stmtsPct ?? 100;
+
+      const matchingTests = findMatchingTests(sf.filePath);
+      const is100 =
+        branchesPct >= 100 &&
+        stmtsPct >= 100 &&
+        linesPct >= 100 &&
+        funcsPct >= 100 &&
+        (!sf.uncoveredLines || sf.uncoveredLines.length === 0);
+
+      let reason = "";
+      if (branchesPct < 100 && stmtsPct < 100) {
+        reason = `Branch: ${branchesPct}%, Statements: ${stmtsPct}% (${sf.uncoveredLines?.length || 0} nhánh/dòng chưa test)`;
+      } else if (branchesPct < 100) {
+        reason = `Branch coverage mới đạt ${branchesPct}% (${sf.uncoveredLines?.length || 0} nhánh chưa test)`;
+      } else if (stmtsPct < 100) {
+        reason = `Statement coverage mới đạt ${stmtsPct}%`;
+      } else if (linesPct < 100) {
+        reason = `Line coverage mới đạt ${linesPct}%`;
+      }
+
+      const itemData = {
+        filePath: sf.filePath,
+        fileName: sf.filePath.split("/").pop(),
+        linesPct,
+        branchesPct,
+        funcsPct,
+        stmtsPct,
+        uncoveredLines: sf.uncoveredLines || [],
+        matchingTests: matchingTests.map((t) => ({ filePath: t.filePath, framework: t.framework, status: t.status })),
+        primaryTestFile: matchingTests[0]?.filePath || null,
+        reason,
+      };
+
+      if (is100) {
+        passed100Files.push(itemData);
+      } else {
+        needImprovementFiles.push(itemData);
+      }
+    }
+
+    const totalCount = passed100Files.length + needImprovementFiles.length;
+    const primaryTarget =
+      needImprovementFiles[0]?.filePath ||
+      (sourceFiles[0]?.filePath || "");
+
+    onSuggestTestcase?.(primaryTarget, {
+      isBulk: true,
+      snapshotId,
+      projectId,
+      totalCount,
+      totalTestSuitesCount: testFiles?.length || 0,
+      allSuitesSummary: {
+        total: totalCount,
+        passed100Files,
+        needImprovementFiles,
+        passed100Suites: passed100Files,
+        needImprovementSuites: needImprovementFiles,
+      },
+      uncoveredFiles: needImprovementFiles.map((s) => s.filePath),
+      hasUncovered: needImprovementFiles.length > 0,
+      uncoveredCount: needImprovementFiles.length,
+      overallCoverage: {
+        statements: cov.statements,
+        branches: cov.branches,
+        functions: cov.functions,
+        lines: cov.lines,
+      },
+    });
+  };
 
   const relevantRuns = useMemo(
     () =>
@@ -520,21 +698,21 @@ export default function CoverageTypeDashboard({
             {config.subtitle}
           </p>
           <div style={{ color: "#6e7681", fontSize: 12, marginTop: 7 }}>
-            Hỗ trợ:{" "}
+            Supported:{" "}
             <span style={{ color: config.accent }}>{config.supported}</span>
             {frameworks && (
               <span>
                 {" "}
-                · Phát hiện:{" "}
+                · Detected:{" "}
                 <b style={{ color: "#c9d1d9" }}>
-                  {frameworks.supported?.[type]?.join(", ") || "không có"}
+                  {frameworks.supported?.[type]?.join(", ") || "none"}
                 </b>
               </span>
             )}
             {activeFramework && (
               <span>
                 {" "}
-                · Vừa chạy:{" "}
+                · Last run:{" "}
                 <b style={{ color: config.accent }}>{activeFramework}</b>
               </span>
             )}
@@ -555,6 +733,25 @@ export default function CoverageTypeDashboard({
             </button>
           )}
           <button
+            onClick={handleBulkSuggestTest}
+            disabled={loading || running}
+            style={{
+              ...buttonStyle("#d8b4fe"),
+              background: "linear-gradient(135deg, rgba(168,85,247,0.25), rgba(99,102,241,0.25))",
+              border: "1px solid rgba(168,85,247,0.5)",
+              color: "#d8b4fe",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+            title="Gợi ý testcase AI cho toàn bộ các file chưa đạt 100% coverage"
+          >
+            <Sparkles size={14} className="text-purple-400" />
+            <span>Suggest test</span>
+          </button>
+          <button
             onClick={load}
             disabled={loading || running}
             style={buttonStyle("#8b949e")}
@@ -566,10 +763,19 @@ export default function CoverageTypeDashboard({
             disabled={!snapshotId || running}
             style={buttonStyle(config.accent)}
           >
-            {running ? "Running analysis..." : "Run Analysis"}
+            {running ? `Running (${Math.max(5, Math.min(100, Math.round(runProgress)))}%)...` : "Run Analysis"}
           </button>
         </div>
       </div>
+
+      {running && (
+        <WaveProgressBar
+          progress={runProgress}
+          step={runStep}
+          framework={activeFramework || (type === "unit" ? "Jest & Vitest" : config.title)}
+          color={config.accent}
+        />
+      )}
 
       {generateError && (
         <div
@@ -585,7 +791,7 @@ export default function CoverageTypeDashboard({
           {generateError}
         </div>
       )}
-      
+
       {error && (
         <div
           style={{
@@ -658,7 +864,7 @@ export default function CoverageTypeDashboard({
                 {
                   key: "statements",
                   title: "Statement coverage",
-                  description: "Bao nhiêu câu lệnh đã được test thực thi.",
+                  description: "Percentage of statements executed by tests.",
                   pctValue: cov.statements,
                   raw: rawTotals?.statements,
                   icon: FileCode,
@@ -667,7 +873,7 @@ export default function CoverageTypeDashboard({
                 {
                   key: "branches",
                   title: "Branch coverage",
-                  description: "Bao nhiêu nhánh if/else/switch đã được đi qua.",
+                  description: "Percentage of if/else/switch condition paths executed.",
                   pctValue: cov.branches,
                   raw: rawTotals?.branches,
                   icon: GitBranch,
@@ -676,7 +882,7 @@ export default function CoverageTypeDashboard({
                 {
                   key: "functions",
                   title: "Function coverage",
-                  description: "Bao nhiêu hàm hoặc method đã được gọi.",
+                  description: "Percentage of functions or methods executed.",
                   pctValue: cov.functions,
                   raw: rawTotals?.functions,
                   icon: Cpu,
@@ -712,7 +918,7 @@ export default function CoverageTypeDashboard({
                       transition: "all 0.2s ease",
                     }}
                     className="hover:border-white/20 transition-all"
-                    title={`Nhấn để xem chi tiết ${item.title}`}
+                    title={`Click to view details for ${item.title}`}
                   >
                     <div
                       style={{
@@ -747,7 +953,7 @@ export default function CoverageTypeDashboard({
                           color: isActive ? item.accentColor : "#8b949e",
                         }}
                       >
-                        {isActive ? "Đang chọn" : "Chi tiết →"}
+                        {isActive ? "Selected" : "Details →"}
                       </span>
                     </div>
 
@@ -859,7 +1065,7 @@ export default function CoverageTypeDashboard({
               {[
                 {
                   id: "testcases",
-                  label: `File Testcase (Jest / Vitest) (${testSuites.length})`,
+                  label: `File Testcase (Jest / Vitest) (${unitTestSuites.length})`,
                   icon: FlaskConical,
                   accent: "#c084fc",
                 },
@@ -949,17 +1155,17 @@ export default function CoverageTypeDashboard({
                     cursor: "pointer",
                     marginLeft: "auto",
                   }}
-                  title="Quay lại danh sách file testcase"
+                  title="Back to test case files list"
                 >
                   <FlaskConical size={12} />
-                  <span>Xem file testcase</span>
+                  <span>View testcase files</span>
                 </button>
               )}
             </div>
           )}
 
           {/* Active View Explanatory Banner */}
-          {type === "unit" && (
+          {type === "unit" && activeMetricView !== "testcases" && (
             <div
               style={{
                 marginTop: 10,
@@ -1008,35 +1214,35 @@ export default function CoverageTypeDashboard({
                   <>
                     <FlaskConical size={15} style={{ flexShrink: 0, color: "#c084fc" }} />
                     <span>
-                      <b>File Testcase Unit Test:</b> Danh sách các file kịch bản kiểm thử của <b>Jest</b> và <b>Vitest</b>. Các file Playwright, Cypress và Supertest tự động được lọc bỏ khỏi phạm vi Unit Test.
+                      <b>Unit Testcase Files:</b> List of test suite files from <b>Jest</b> and <b>Vitest</b>. Playwright, Cypress, and Supertest files are automatically filtered out from Unit Test scope.
                     </span>
                   </>
                 ) : activeMetricView === "statements" ? (
                   <>
                     <FileCode size={15} style={{ flexShrink: 0, color: "#a78bfa" }} />
                     <span>
-                      <b>Statement Coverage:</b> Bảng thống kê tỷ lệ phần trăm các câu lệnh (statements) trong mã nguồn đã được thực thi khi chạy unit test.
+                      <b>Statement Coverage:</b> Percentage breakdown of source code statements executed during unit tests.
                     </span>
                   </>
                 ) : activeMetricView === "branches" ? (
                   <>
                     <GitBranch size={15} style={{ flexShrink: 0, color: "#fbbf24" }} />
                     <span>
-                      <b>Branch Coverage:</b> Bảng thống kê tỷ lệ phần trăm các nhánh rẽ điều kiện (if/else, switch, ternary) đã được kiểm thử đầy đủ các hướng.
+                      <b>Branch Coverage:</b> Percentage breakdown of conditional branch paths (if/else, switch, ternary) tested across all directions.
                     </span>
                   </>
                 ) : activeMetricView === "functions" ? (
                   <>
                     <Cpu size={15} style={{ flexShrink: 0, color: "#38bdf8" }} />
                     <span>
-                      <b>Function Coverage:</b> Danh sách phương thức và hàm với tên thật đã được nhận diện, đo lường số lần gọi và tích hợp CFG.
+                      <b>Function Coverage:</b> Identified functions and methods with actual names, execution hit counts, and CFG integration.
                     </span>
                   </>
                 ) : (
                   <>
                     <ListChecks size={15} style={{ flexShrink: 0 }} />
                     <span>
-                      <b>Source File Coverage:</b> Bảng tổng hợp độ bao phủ của các file mã nguồn (Source code under test: Lines, Branches, Functions, Statements).
+                      <b>Source File Coverage:</b> Comprehensive coverage summary of source code files under test (Lines, Branches, Functions, Statements).
                     </span>
                   </>
                 )}
@@ -1064,7 +1270,7 @@ export default function CoverageTypeDashboard({
                     }}
                   >
                     <Cpu size={12} />
-                    <span>🕸️ Sơ đồ luồng hàm (Method Map)</span>
+                    <span>🕸️ Method Call Map</span>
                   </button>
                   <button
                     onClick={() => setFunctionViewMode("table")}
@@ -1084,7 +1290,7 @@ export default function CoverageTypeDashboard({
                     }}
                   >
                     <ListChecks size={12} />
-                    <span>📋 Bảng chi tiết</span>
+                    <span>📋 Detail Table</span>
                   </button>
                 </div>
               )}
@@ -1120,7 +1326,7 @@ export default function CoverageTypeDashboard({
                   <span
                     style={{ fontSize: 11, color: "#8b949e", fontWeight: 400 }}
                   >
-                    ({filteredTestSuites.length} file test)
+                    ({filteredTestSuites.length} test files)
                   </span>
                 </div>
 
@@ -1141,7 +1347,7 @@ export default function CoverageTypeDashboard({
                     <Search size={13} style={{ color: "#8b949e" }} />
                     <input
                       type="text"
-                      placeholder="Tìm file testcase..."
+                      placeholder="Search testcase files..."
                       value={testSuiteSearch}
                       onChange={(e) => setTestSuiteSearch(e.target.value)}
                       style={{
@@ -1159,11 +1365,11 @@ export default function CoverageTypeDashboard({
 
               {loadingTestSuites ? (
                 <div style={{ padding: 30, textAlign: "center", color: "#6e7681" }}>
-                  Đang tải danh sách file testcase...
+                  Loading test case files list...
                 </div>
               ) : filteredTestSuites.length === 0 ? (
                 <div style={{ padding: 30, textAlign: "center", color: "#6e7681" }}>
-                  Chưa tìm thấy file testcase nào của Jest hoặc Vitest. Hãy bấm "Run Analysis" để chạy và phân tích.
+                  No Jest or Vitest test case files found. Click "Run Analysis" to run and analyze.
                 </div>
               ) : (
                 <div>
@@ -1172,7 +1378,7 @@ export default function CoverageTypeDashboard({
                     style={{
                       display: "grid",
                       gridTemplateColumns:
-                        "minmax(220px, 1.4fr) 100px 120px 90px 105px 190px",
+                        "minmax(220px, 1.4fr) 100px 120px 90px 105px 110px",
                       gap: 10,
                       padding: "10px 18px",
                       background: "rgba(255,255,255,0.02)",
@@ -1186,9 +1392,9 @@ export default function CoverageTypeDashboard({
                     <span>File Testcase</span>
                     <span style={{ textAlign: "center" }}>Framework</span>
                     <span style={{ textAlign: "right" }}>Test Cases</span>
-                    <span style={{ textAlign: "right" }}>Thời gian</span>
-                    <span style={{ textAlign: "center" }}>Trạng thái</span>
-                    <span style={{ textAlign: "center" }}>Hành động</span>
+                    <span style={{ textAlign: "right" }}>Duration</span>
+                    <span style={{ textAlign: "center" }}>Status</span>
+                    <span style={{ textAlign: "center" }}>Actions</span>
                   </div>
 
                   {/* Rows */}
@@ -1202,7 +1408,7 @@ export default function CoverageTypeDashboard({
                           style={{
                             display: "grid",
                             gridTemplateColumns:
-                              "minmax(220px, 1.4fr) 100px 120px 90px 105px 190px",
+                              "minmax(220px, 1.4fr) 100px 120px 90px 105px 110px",
                             gap: 10,
                             padding: "12px 18px",
                             alignItems: "center",
@@ -1224,7 +1430,7 @@ export default function CoverageTypeDashboard({
                               gap: 8,
                               overflow: "hidden",
                             }}
-                            title={`Mở file test ${suite.filePath}`}
+                            title={`Open test file ${suite.filePath}`}
                           >
                             <FlaskConical
                               size={15}
@@ -1236,19 +1442,44 @@ export default function CoverageTypeDashboard({
                                 flexShrink: 0,
                               }}
                             />
-                            <span
-                              style={{
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                                color: "#e6edf3",
-                                fontSize: 13,
-                                fontWeight: 600,
-                                fontFamily: "var(--font-mono)",
-                              }}
-                            >
-                              {cleanDisplayPath(suite.filePath)}
-                            </span>
+                            {(() => {
+                              const cleaned = cleanDisplayPath(suite.filePath);
+                              const parts = cleaned.split("/");
+                              if (parts.length <= 1) {
+                                return (
+                                  <span
+                                    style={{
+                                      overflow: "hidden",
+                                      textOverflow: "ellipsis",
+                                      whiteSpace: "nowrap",
+                                      color: "#e6edf3",
+                                      fontSize: 13,
+                                      fontWeight: 600,
+                                      fontFamily: "var(--font-mono)",
+                                    }}
+                                  >
+                                    {cleaned}
+                                  </span>
+                                );
+                              }
+                              const dir = parts.slice(0, -1).join(" / ");
+                              const file = parts[parts.length - 1];
+                              return (
+                                <span
+                                  style={{
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap",
+                                    fontSize: 13,
+                                    fontFamily: "var(--font-mono)",
+                                  }}
+                                  title={cleaned}
+                                >
+                                  <span style={{ color: "#8b949e", marginRight: 5 }}>{dir} /</span>
+                                  <span style={{ color: "#e6edf3", fontWeight: 600 }}>{file}</span>
+                                </span>
+                              );
+                            })()}
                           </div>
 
                           {/* Framework Badge */}
@@ -1324,14 +1555,18 @@ export default function CoverageTypeDashboard({
                                 borderRadius: 10,
                                 background: isPassed
                                   ? "rgba(34, 197, 94, 0.15)"
-                                  : "rgba(239, 68, 68, 0.15)",
-                                color: isPassed ? "#4ade80" : "#fca5a5",
+                                  : suite.status === "pending"
+                                    ? "rgba(234, 179, 8, 0.15)"
+                                    : "rgba(239, 68, 68, 0.15)",
+                                color: isPassed ? "#4ade80" : suite.status === "pending" ? "#fde047" : "#fca5a5",
                                 border: isPassed
                                   ? "1px solid rgba(34, 197, 94, 0.3)"
-                                  : "1px solid rgba(239, 68, 68, 0.3)",
+                                  : suite.status === "pending"
+                                    ? "1px solid rgba(234, 179, 8, 0.3)"
+                                    : "1px solid rgba(239, 68, 68, 0.3)",
                               }}
                             >
-                              {isPassed ? "✓ PASSED" : "× FAILED"}
+                              {isPassed ? "✓ PASSED" : suite.status === "pending" ? "— PENDING" : "× FAILED"}
                             </span>
                           </div>
 
@@ -1356,39 +1591,12 @@ export default function CoverageTypeDashboard({
                                 fontSize: 11,
                                 cursor: "pointer",
                               }}
-                              title="Mở file test trong editor"
+                              title="Open test file in editor"
                             >
-                              Mở test
+                              Open test
                             </button>
 
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onSuggestTestcase?.(suite.filePath);
-                              }}
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 4,
-                                padding: "4px 8px",
-                                borderRadius: 5,
-                                background: "rgba(168, 85, 247, 0.15)",
-                                border: "1px solid rgba(168, 85, 247, 0.35)",
-                                color: "#c084fc",
-                                fontSize: 11,
-                                fontWeight: 600,
-                                cursor: "pointer",
-                                transition: "all 0.15s ease",
-                                whiteSpace: "nowrap",
-                              }}
-                              className="hover:bg-purple-500/25 hover:border-purple-400"
-                              title={`Yêu cầu AI Agent gợi ý test case bổ sung cho ${suite.fileName}`}
-                            >
-                              <Sparkles size={11} />
-                              <span>Suggest test</span>
-                            </button>
-
-                            {suite.assertions && suite.assertions.length > 0 && (
+                            {(suite.assertions && suite.assertions.length > 0 || suite.message) && (
                               <button
                                 onClick={() =>
                                   setExpandedSuite(
@@ -1406,7 +1614,7 @@ export default function CoverageTypeDashboard({
                                   display: "flex",
                                   alignItems: "center",
                                 }}
-                                title="Xem danh sách test case con"
+                                title={suite.message ? "View error details" : "View inner test cases list"}
                               >
                                 {isExpanded ? (
                                   <ChevronDown size={13} />
@@ -1419,7 +1627,7 @@ export default function CoverageTypeDashboard({
                         </div>
 
                         {/* Expanded Test Cases Accordion */}
-                        {isExpanded && suite.assertions && (
+                        {isExpanded && (suite.assertions?.length > 0 || suite.message) && (
                           <div
                             style={{
                               background: "rgba(0,0,0,0.25)",
@@ -1427,58 +1635,123 @@ export default function CoverageTypeDashboard({
                               borderBottom: "1px solid rgba(255,255,255,.05)",
                             }}
                           >
-                            <div
-                              style={{
+                            {/* Error message banner */}
+                            {suite.message && (
+                              <div style={{
+                                background: "rgba(239,68,68,0.08)",
+                                border: "1px solid rgba(239,68,68,0.25)",
+                                borderRadius: 6,
+                                padding: "8px 12px",
+                                marginBottom: suite.assertions?.length > 0 ? 10 : 0,
                                 fontSize: 11,
-                                fontWeight: 700,
-                                color: "#8b949e",
-                                marginBottom: 6,
-                                textTransform: "uppercase",
-                              }}
-                            >
-                              Danh sách test case trong {suite.fileName}:
-                            </div>
-                            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-                              {suite.assertions.map((testCase, idx) => (
+                                fontFamily: "var(--font-mono)",
+                                color: "#fca5a5",
+                                whiteSpace: "pre-wrap",
+                                wordBreak: "break-all",
+                                maxHeight: 200,
+                                overflowY: "auto",
+                              }}>
+                                <span style={{ fontWeight: 700, display: "block", marginBottom: 4, color: "#f87171" }}>
+                                  ⚠ Error Detail:
+                                </span>
+                                {suite.message}
+                              </div>
+                            )}
+                            {suite.assertions && suite.assertions.length > 0 && (
+                              <>
                                 <div
-                                  key={idx}
                                   style={{
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: 8,
-                                    fontSize: 12,
-                                    fontFamily: "var(--font-mono)",
+                                    fontSize: 11,
+                                    fontWeight: 700,
+                                    color: "#8b949e",
+                                    marginBottom: 6,
+                                    textTransform: "uppercase",
                                   }}
                                 >
-                                  {testCase.status === "passed" ? (
-                                    <Check size={12} style={{ color: "#4ade80" }} />
-                                  ) : (
-                                    <X size={12} style={{ color: "#f87171" }} />
-                                  )}
-                                  <span
-                                    style={{
-                                      color:
-                                        testCase.status === "passed"
-                                          ? "#c9d1d9"
-                                          : "#fca5a5",
-                                    }}
-                                  >
-                                    {testCase.title}
-                                  </span>
-                                  {testCase.duration ? (
-                                    <span
-                                      style={{
-                                        color: "#6e7681",
-                                        fontSize: 11,
-                                        marginLeft: "auto",
-                                      }}
-                                    >
-                                      {testCase.duration}ms
-                                    </span>
-                                  ) : null}
+                                  Test cases in {suite.fileName}:
                                 </div>
-                              ))}
-                            </div>
+                                <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                                  {suite.assertions.map((testCase, idx) => {
+                                    const targetFn = testCase.targetFunction ||
+                                      (Array.isArray(testCase.ancestorTitles) && testCase.ancestorTitles.length > 1
+                                        ? testCase.ancestorTitles[testCase.ancestorTitles.length - 1]
+                                        : null);
+
+                                    return (
+                                      <div
+                                        key={idx}
+                                        style={{
+                                          display: "flex",
+                                          alignItems: "center",
+                                          gap: 9,
+                                          fontSize: 12,
+                                          fontFamily: "var(--font-mono)",
+                                          padding: "3px 0",
+                                          borderBottom: "1px dashed rgba(255,255,255,0.03)",
+                                        }}
+                                      >
+                                        {testCase.status === "passed" ? (
+                                          <Check size={13} style={{ color: "#4ade80", flexShrink: 0 }} />
+                                        ) : (
+                                          <X size={13} style={{ color: "#f87171", flexShrink: 0 }} />
+                                        )}
+                                        {targetFn && (
+                                          <span
+                                            style={{
+                                              display: "inline-flex",
+                                              alignItems: "center",
+                                              gap: 3,
+                                              fontSize: 10.5,
+                                              fontWeight: 700,
+                                              padding: "1px 7px",
+                                              borderRadius: 4,
+                                              background: "rgba(59, 130, 246, 0.16)",
+                                              color: "#60a5fa",
+                                              border: "1px solid rgba(59, 130, 246, 0.35)",
+                                              whiteSpace: "nowrap",
+                                              flexShrink: 0,
+                                              letterSpacing: "0.2px",
+                                            }}
+                                            title={`Target function: ${targetFn}`}
+                                          >
+                                            <span style={{ color: "#93c5fd", opacity: 0.8 }}>ƒ</span>
+                                            {targetFn}
+                                          </span>
+                                        )}
+                                        <span
+                                          style={{
+                                            color:
+                                              testCase.status === "passed"
+                                                ? "#c9d1d9"
+                                                : "#fca5a5",
+                                            flex: 1,
+                                            overflow: "hidden",
+                                            textOverflow: "ellipsis",
+                                            whiteSpace: "nowrap",
+                                          }}
+                                          title={testCase.title}
+                                        >
+                                          {testCase.title}
+                                        </span>
+                                        {testCase.duration ? (
+                                          <span
+                                            style={{
+                                              color: "#6e7681",
+                                              fontSize: 11,
+                                              marginLeft: "auto",
+                                              flexShrink: 0,
+                                              paddingLeft: 10,
+                                            }}
+                                          >
+                                            {testCase.duration}ms
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </>
+                            )}
                           </div>
                         )}
                       </div>
@@ -1535,7 +1808,7 @@ export default function CoverageTypeDashboard({
                     <span
                       style={{ fontSize: 11, color: "#8b949e", fontWeight: 400 }}
                     >
-                      ({filteredFunctions.length} hàm)
+                      ({filteredFunctions.length} functions)
                     </span>
                   </div>
 
@@ -1555,7 +1828,7 @@ export default function CoverageTypeDashboard({
                       <Search size={13} style={{ color: "#8b949e" }} />
                       <input
                         type="text"
-                        placeholder="Tìm hàm hoặc file..."
+                        placeholder="Search function or file..."
                         value={functionSearch}
                         onChange={(e) => setFunctionSearch(e.target.value)}
                         style={{
@@ -1571,9 +1844,9 @@ export default function CoverageTypeDashboard({
 
                     <div style={{ display: "flex", gap: 4 }}>
                       {[
-                        { id: "all", label: "Tất cả" },
-                        { id: "uncovered", label: "⚑ Chưa gọi (0 hits)" },
-                        { id: "covered", label: "✓ Đã gọi" },
+                        { id: "all", label: "All" },
+                        { id: "uncovered", label: "⚑ Uncalled (0 hits)" },
+                        { id: "covered", label: "✓ Called" },
                       ].map((st) => (
                         <button
                           key={st.id}
@@ -1606,13 +1879,13 @@ export default function CoverageTypeDashboard({
 
                 {loadingFunctions ? (
                   <div style={{ padding: 30, textAlign: "center", color: "#6e7681" }}>
-                    Đang tải danh sách hàm...
+                    Loading functions list...
                   </div>
                 ) : filteredFunctions.length === 0 ? (
                   <div style={{ padding: 30, textAlign: "center", color: "#6e7681" }}>
                     {functionsList.length === 0
-                      ? "Chưa có dữ liệu hàm. Hãy bấm 'Run Analysis' để phân tích Jest/Vitest."
-                      : "Không tìm thấy hàm phù hợp với bộ lọc."}
+                      ? "No function data available. Click 'Run Analysis' to analyze Jest/Vitest."
+                      : "No matching functions found for the filter."}
                   </div>
                 ) : (
                   <div>
@@ -1631,12 +1904,12 @@ export default function CoverageTypeDashboard({
                         textTransform: "uppercase",
                       }}
                     >
-                      <span>Tên Hàm</span>
-                      <span>File Mã Nguồn</span>
-                      <span>Vị trí</span>
-                      <span style={{ textAlign: "right" }}>Số lần gọi</span>
-                      <span style={{ textAlign: "center" }}>Trạng thái</span>
-                      <span style={{ textAlign: "center" }}>Hành động</span>
+                      <span>Function Name</span>
+                      <span>Source File</span>
+                      <span>Location</span>
+                      <span style={{ textAlign: "right" }}>Call Count</span>
+                      <span style={{ textAlign: "center" }}>Status</span>
+                      <span style={{ textAlign: "center" }}>Actions</span>
                     </div>
 
                     {filteredFunctions.slice(0, 100).map((fn) => {
@@ -1665,7 +1938,7 @@ export default function CoverageTypeDashboard({
                               overflow: "hidden",
                               cursor: "pointer",
                             }}
-                            title={`Mở file ${fn.filePath} tại hàm ${fn.functionName}`}
+                            title={`Open file ${fn.filePath} at function ${fn.functionName}`}
                           >
                             <Code2
                               size={14}
@@ -1767,9 +2040,9 @@ export default function CoverageTypeDashboard({
                                 fontSize: 11,
                                 cursor: "pointer",
                               }}
-                              title="Xem mã nguồn hàm"
+                              title="View function source code"
                             >
-                              Mở code
+                              Open code
                             </button>
                           </div>
                         </div>
@@ -1805,23 +2078,25 @@ export default function CoverageTypeDashboard({
                     : type === "system"
                       ? "Files exercised by E2E tests"
                       : activeMetricView === "statements"
-                        ? "Source files (Sắp xếp theo câu lệnh)"
+                        ? "Source files (Sorted by statements)"
                         : activeMetricView === "branches"
-                          ? "Source files (Sắp xếp theo nhánh rẽ)"
+                          ? "Source files (Sorted by branches)"
                           : "Source file coverage"}
                 </span>
-                <span
-                  style={{ fontSize: 11, color: "#8b949e", fontWeight: 400 }}
-                >
-                  {displayFiles.length} file được phân tích
-                </span>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span
+                    style={{ fontSize: 11, color: "#8b949e", fontWeight: 400 }}
+                  >
+                    {displayFiles.length} files analyzed
+                  </span>
+                </div>
               </div>
 
               {displayFiles.length === 0 ? (
                 <div
                   style={{ padding: 30, textAlign: "center", color: "#6e7681" }}
                 >
-                  Chưa có dữ liệu. Nhấn Run Analysis để bắt đầu.
+                  No data available. Click Run Analysis to start.
                 </div>
               ) : (
                 <div>
@@ -1841,7 +2116,7 @@ export default function CoverageTypeDashboard({
                       textTransform: "uppercase",
                     }}
                   >
-                    <span>File Mã Nguồn</span>
+                    <span>Source File</span>
                     <span style={{ textAlign: "right" }}>Lines</span>
                     <span
                       style={{
@@ -1866,7 +2141,7 @@ export default function CoverageTypeDashboard({
                     >
                       Stmts
                     </span>
-                    <span style={{ textAlign: "center" }}>Hành động</span>
+                    <span style={{ textAlign: "center" }}>Actions</span>
                   </div>
 
                   {/* Table Rows */}
@@ -1929,7 +2204,7 @@ export default function CoverageTypeDashboard({
                                 fontWeight: isExpanded ? 700 : 500,
                                 fontFamily: "var(--font-mono)",
                               }}
-                              title="Bấm để mở phân tích luồng hoạt động"
+                              title="Click to view execution flow analysis"
                             >
                               {cleanDisplayPath(file.filePath)}
                             </span>
@@ -1997,9 +2272,9 @@ export default function CoverageTypeDashboard({
                                 transition: "all 0.15s ease",
                               }}
                               className="hover:bg-white/10 hover:text-white"
-                              title="Mở file mã nguồn trong editor"
+                              title="Open source file in editor"
                             >
-                              Mở code
+                              Open code
                             </button>
 
                             <button
@@ -2025,8 +2300,8 @@ export default function CoverageTypeDashboard({
                               className="hover:bg-white/10 hover:text-white"
                               title={
                                 isExpanded
-                                  ? "Thu gọn phân tích luồng"
-                                  : "Xem phân tích luồng hoạt động"
+                                  ? "Collapse flow analysis"
+                                  : "View execution flow analysis"
                               }
                             >
                               {isExpanded ? (
@@ -2056,7 +2331,7 @@ export default function CoverageTypeDashboard({
                                   fontSize: 12,
                                 }}
                               >
-                                Đang tự động phân tích luồng hoạt động cho{" "}
+                                Analyzing execution flow for{" "}
                                 {cleanDisplayPath(file.filePath)}...
                               </div>
                             ) : fileDetails ? (
@@ -2092,7 +2367,7 @@ export default function CoverageTypeDashboard({
                                   fontSize: 12,
                                 }}
                               >
-                                Không thể tải dữ liệu phân tích luồng cho file này.
+                                Failed to load flow analysis data for this file.
                               </div>
                             )}
                           </div>

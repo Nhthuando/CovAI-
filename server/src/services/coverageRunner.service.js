@@ -14,7 +14,7 @@ import { ServiceError } from "../utils/serviceError.js";
 import { storeCoverageOutputs } from "./coverageStorage.service.js";
 import { parseCoverageSummary } from "./coverageSummaryParser.service.js";
 
-const RUN_TESTS_TIMEOUT_MS = 5 * 60 * 1000; // 5 phút
+const RUN_TESTS_TIMEOUT_MS = 15 * 60 * 1000; // 15 phút
 
 const assertStringField = (value, fieldName) => {
     if (!value || typeof value !== "string" || value.trim().length === 0) {

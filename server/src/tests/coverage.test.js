@@ -1,8 +1,8 @@
-﻿import {
+import {
   createVitestCoverageJob,
   createSupertestCoverageJob,
   createPlaywrightSystemCoverageJob,
-} from "../services/job.service";
+} from "../services/job.service.js";
 import { processCoverageJob } from "../services/coverageRunner.service.js";
 import prisma from "../config/prisma.js";
 
@@ -38,7 +38,7 @@ jest.mock("../services/coverageSummaryParser.service.js", () => ({
   })),
 }));
 
-jest.mock("../services/coverageStorage.service", () => ({
+jest.mock("../services/coverageStorage.service.js", () => ({
   storeCoverageOutputs: jest.fn(() => ({
     baseStoragePath: "mock/storage/path",
   })),

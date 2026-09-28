@@ -304,7 +304,7 @@ We need to improve and add new unit test cases to the EXISTING test file: ${test
 which tests the source file: ${sourceFileToInspect}
 
 PROJECT CONTEXT:
-- Testing Framework: ${framework.toUpperCase()} (${isVitest ? "Vitest syntax: import { describe, test, expect } from 'vitest';" : "Jest syntax: describe, test, expect"})
+- Testing Framework: ${framework.toUpperCase()} (${isVitest ? "Vitest syntax: import { describe, test, expect, vi } from 'vitest';" : "Jest syntax: if using jest.fn(), jest.spyOn(), or jest.mock(), always include: import { jest } from '@jest/globals';"})
 - Test File to update: ${testFileInfo.relativePath}
 - Tested Source File: ${sourceFileToInspect}
 - Current Coverage of Source: Lines ${coverageDetails.summary?.linesPct ?? 0}%, Branches ${coverageDetails.summary?.branchesPct ?? 0}%
@@ -326,7 +326,7 @@ ${testFileInfo.content.slice(0, 3000)}
 REQUIREMENTS:
 1. Write unit tests targeting the uncovered branches, conditions, and fixing any failed assertions.
 2. Seamlessly merge the new test cases into ${testFileInfo.relativePath} without duplicating existing imports.
-3. ${isVitest ? "Use Vitest syntax: import { describe, test, expect } from 'vitest';" : "Use standard Jest syntax."}
+3. ${isVitest ? "Use Vitest syntax: import { describe, test, expect, vi } from 'vitest';" : "Use standard Jest syntax. If using jest.fn() or jest.mock(), MUST include: import { jest } from '@jest/globals';"}
 4. Provide an explanation in Vietnamese summarizing the added test cases.
 5. Format your output strictly in JSON:
 {
@@ -338,7 +338,7 @@ REQUIREMENTS:
 We need to generate comprehensive unit tests to achieve high test coverage and fix failed assertions for this source file.
 
 PROJECT CONTEXT:
-- Testing Framework: ${framework.toUpperCase()} (${isVitest ? "Vitest ESM syntax: import { describe, test, expect } from 'vitest';" : "Jest syntax: describe, test, expect"})
+- Testing Framework: ${framework.toUpperCase()} (${isVitest ? "Vitest ESM syntax: import { describe, test, expect, vi } from 'vitest';" : "Jest ESM syntax: if using jest.fn(), jest.spyOn(), or jest.mock(), always include: import { jest } from '@jest/globals';"})
 - Source File: ${sourceFileToInspect}
 - Target Test File: ${testFileInfo.relativePath} (Existing file: ${testFileInfo.found ? "YES" : "NO"})
 - Current Coverage: Lines ${coverageDetails.summary?.linesPct ?? 0}%, Branches ${coverageDetails.summary?.branchesPct ?? 0}%
@@ -359,7 +359,7 @@ ${testFileInfo.content.slice(0, 3000)}
 
 REQUIREMENTS:
 1. Write unit tests targeting the uncovered branches, conditions, and fixing any failed assertions.
-2. ${isVitest ? "Use Vitest syntax: import { describe, test, expect } from 'vitest'; and import source functions using relative path from target test file." : "Use Jest syntax and import source functions using relative path from target test file."}
+2. ${isVitest ? "Use Vitest syntax: import { describe, test, expect, vi } from 'vitest'; and import source functions using relative path from target test file." : "Use Jest syntax: always include import { jest } from '@jest/globals'; if using jest.fn() or jest.mock(), and import source functions using relative path from target test file."}
 3. Provide an explanation in Vietnamese summarizing the added test cases.
 4. If this is an EXISTING test file, output the updated full file content with the new test cases seamlessly merged into the existing structure, preserving existing tests.
 5. If this is a NEW test file, output the complete test file including required imports and test blocks.
@@ -392,12 +392,29 @@ REQUIREMENTS:
         });
     }
 
+    const cleanRepoPath = (p) => {
+        if (!p) return "";
+        let norm = normalizePath(p);
+        if (snapshot?.rootDir) {
+            const normRoot = normalizePath(snapshot.rootDir);
+            if (norm.startsWith(normRoot)) {
+                norm = norm.slice(normRoot.length);
+            }
+        }
+        norm = norm.replace(/^.*\/repo\//, "");
+        return norm.replace(/^\/+/, "");
+    };
+
+    const cleanSourceFile = cleanRepoPath(sourceFileToInspect);
+    const cleanTargetTest = cleanRepoPath(testFileInfo.relativePath);
+
     return {
         framework,
-        sourceFile: sourceFileToInspect,
-        targetTestFile: testFileInfo.relativePath,
+        sourceFile: cleanSourceFile,
+        targetTestFile: cleanTargetTest,
         isExisting: testFileInfo.found,
-        explanation: aiResult.explanation || `Đề xuất test ${framework.toUpperCase()} cho ${sourceFileToInspect}`,
+        existingContent: testFileInfo.content || "",
+        explanation: aiResult.explanation || `Đề xuất test ${framework.toUpperCase()} cho ${cleanSourceFile}`,
         suggestedTestCode: aiResult.suggestedTestCode || aiResult.fullUpdatedContent,
         fullUpdatedContent: aiResult.fullUpdatedContent,
         uncoveredLines: coverageDetails.uncoveredLines,
@@ -413,8 +430,6 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
     if (!projectId || !filePath) {
         throw new ServiceError("projectId and filePath are required", 400);
     }
-
-    const isTest = /(^|\/)(tests?|__tests__|spec)\//i.test(filePath) || /\.(test|spec)\.[a-z0-9]+$/i.test(filePath);
 
     const project = await prisma.project.findFirst({
         where: { id: projectId, ownerId: userId },
@@ -455,11 +470,34 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
         }
     }
 
-    let sourceFileToInspect = filePath;
+    let targetFilePath = filePath;
+    if (filePath === "all") {
+        try {
+            const candidateFiles = await prisma.coverageFile.findMany({
+                where: {
+                    snapshotId: snapshot.id,
+                    AND: [
+                        { NOT: { filePath: { contains: "client/" } } },
+                        { NOT: { filePath: { contains: "frontend/" } } },
+                        { NOT: { filePath: { endsWith: ".jsx" } } },
+                        { NOT: { filePath: { endsWith: ".tsx" } } },
+                    ]
+                }
+            });
+            const uncovered = candidateFiles.find(f => (f.stmtsPct != null && f.stmtsPct < 100) || (f.branchesPct != null && f.branchesPct < 100) || (f.linesPct != null && f.linesPct < 100));
+            targetFilePath = uncovered ? uncovered.filePath : (candidateFiles[0]?.filePath || "backend/src/controllers/product.controller.js");
+        } catch (_) {
+            targetFilePath = "backend/src/controllers/product.controller.js";
+        }
+    }
+
+    const isTest = /(^|\/)(tests?|__tests__|spec)\//i.test(targetFilePath) || /\.(test|spec)\.[a-z0-9]+$/i.test(targetFilePath);
+
+    let sourceFileToInspect = targetFilePath;
     let sourceCode = "";
 
     if (isTest) {
-        const associated = findAssociatedSourceFile(snapshot.rootDir, filePath);
+        const associated = findAssociatedSourceFile(snapshot.rootDir, targetFilePath);
         if (associated) {
             sourceFileToInspect = associated;
         }
@@ -470,11 +508,11 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
             sourceCode = fs.readFileSync(fullSourcePath, "utf8");
         }
     } else {
-        const fullSourcePath = path.join(snapshot.rootDir, filePath);
+        const fullSourcePath = path.join(snapshot.rootDir, targetFilePath);
         if (fs.existsSync(fullSourcePath)) {
             sourceCode = fs.readFileSync(fullSourcePath, "utf8");
         } else {
-            const directPath = path.isAbsolute(filePath) ? filePath : path.resolve(snapshot.rootDir, filePath);
+            const directPath = path.isAbsolute(targetFilePath) ? targetFilePath : path.resolve(snapshot.rootDir, targetFilePath);
             if (fs.existsSync(directPath)) {
                 sourceCode = fs.readFileSync(directPath, "utf8");
             }
@@ -487,6 +525,32 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
         coverageDetails = await getFileCoverageDetails(snapshot.id, sourceFileToInspect, userId);
     } catch (covErr) {
         console.warn(`[unitTestSuggestion] File coverage lookup warning: ${covErr.message}`);
+    }
+
+    // Check if file is genuinely 100% covered across all metrics with 0 failures
+    const hasUncovered = coverageDetails.uncoveredLines && coverageDetails.uncoveredLines.length > 0;
+    const hasFailed = coverageDetails.failedLines && coverageDetails.failedLines.length > 0;
+    const bPct = coverageDetails.summary?.branchesPct;
+    const sPct = coverageDetails.summary?.statementsPct ?? coverageDetails.summary?.stmtsPct;
+    const lPct = coverageDetails.summary?.linesPct;
+
+    const is100Coverage = (bPct == null || bPct >= 100) &&
+        (sPct == null || sPct >= 100) &&
+        (lPct == null || lPct >= 100) &&
+        !hasUncovered && !hasFailed;
+
+    if (is100Coverage && coverageDetails.summary) {
+        const testFileRef = isTest ? targetFilePath : findExistingTestFile(snapshot.rootDir, sourceFileToInspect, "jest").relativePath;
+        return {
+            isFullyCovered: true,
+            sourceFile: sourceFileToInspect,
+            targetTestFile: testFileRef,
+            framework: isTest ? (targetFilePath.includes("vitest") ? "vitest" : "jest") : "jest",
+            explanation: `File \`${sourceFileToInspect}\` đã đạt 100% kiểm thử (Statements: 100%, Branches: 100%, Lines: 100%) với 0 lỗi assertion. Không cần gợi ý thêm testcase!`,
+            uncoveredLines: [],
+            failedLines: [],
+            suggestions: []
+        };
     }
 
     // 3. Determine frameworks to generate suggestions for

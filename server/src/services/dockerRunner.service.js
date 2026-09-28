@@ -3,7 +3,7 @@ import { ServiceError } from "../utils/serviceError.js";
 import { addJobLog } from "./job.service.js";
 import { appendJobOutput } from "./jobOutput.service.js";
 
-const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes default
+const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes default
 
 /**
  * Auto-detect whether Docker CLI is available on this host.
@@ -105,24 +105,57 @@ export const dockerRunner = {
         );
       }, timeoutMs);
 
-      child.stdout.on("data", async (data) => {
+      let pendingStdout = "";
+      let pendingStderr = "";
+      let flushTimer = null;
+
+      const flushOutput = async () => {
+        if (!jobId) return;
+        const out = pendingStdout;
+        const err = pendingStderr;
+        if (!out && !err) return;
+        pendingStdout = "";
+        pendingStderr = "";
+        await appendJobOutput(jobId, {
+          stdout: out || undefined,
+          stderr: err || undefined,
+        }).catch(() => { });
+      };
+
+      const scheduleFlush = () => {
+        if (!flushTimer) {
+          flushTimer = setTimeout(async () => {
+            flushTimer = null;
+            await flushOutput();
+          }, 800);
+        }
+      };
+
+      child.stdout.on("data", (data) => {
         const text = data.toString();
         stdout += text;
         if (jobId) {
-          await appendJobOutput(jobId, { stdout: text }).catch(() => { });
+          pendingStdout += text;
+          scheduleFlush();
         }
       });
 
-      child.stderr.on("data", async (data) => {
+      child.stderr.on("data", (data) => {
         const text = data.toString();
         stderr += text;
         if (jobId) {
-          await appendJobOutput(jobId, { stderr: text }).catch(() => { });
+          pendingStderr += text;
+          scheduleFlush();
         }
       });
 
       child.on("error", async (err) => {
         clearTimeout(timer);
+        if (flushTimer) {
+          clearTimeout(flushTimer);
+          flushTimer = null;
+        }
+        await flushOutput();
         if (timedOut) return;
         const mode = DOCKER_AVAILABLE ? "Docker" : "shell";
         if (jobId) {
@@ -133,6 +166,11 @@ export const dockerRunner = {
 
       child.on("close", async (code) => {
         clearTimeout(timer);
+        if (flushTimer) {
+          clearTimeout(flushTimer);
+          flushTimer = null;
+        }
+        await flushOutput();
         if (timedOut) return;
 
         if (jobId) {

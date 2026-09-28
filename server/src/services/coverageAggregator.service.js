@@ -84,14 +84,23 @@ export const aggregateCoverageReports = async (rootDir, snapshotId) => {
 
     await prisma.coverageFile.deleteMany({ where: { snapshotId } });
     
+    const parsePct = (val, fallback) => {
+        if (typeof val === "number" && !isNaN(val)) return val;
+        if (typeof val === "string") {
+            const p = parseFloat(val);
+            if (!isNaN(p)) return p;
+        }
+        return typeof fallback === "number" && !isNaN(fallback) ? fallback : 0;
+    };
+
     const fileInserts = Object.entries(allFiles).map(([filePath, data]) => {
         return {
             snapshotId,
             filePath: filePath.replace(rootDir + path.sep, ''), 
-            linesPct: data.lines?.pct ?? calcPct(data.lines?.covered, data.lines?.total),
-            branchesPct: data.branches?.pct ?? calcPct(data.branches?.covered, data.branches?.total),
-            funcsPct: data.functions?.pct ?? calcPct(data.functions?.covered, data.functions?.total),
-            stmtsPct: data.statements?.pct ?? data.lines?.pct ?? calcPct(data.lines?.covered, data.lines?.total)
+            linesPct: parsePct(data.lines?.pct, calcPct(data.lines?.covered, data.lines?.total)),
+            branchesPct: parsePct(data.branches?.pct, calcPct(data.branches?.covered, data.branches?.total)),
+            funcsPct: parsePct(data.functions?.pct, calcPct(data.functions?.covered, data.functions?.total)),
+            stmtsPct: parsePct(data.statements?.pct ?? data.lines?.pct, calcPct(data.statements?.covered ?? data.lines?.covered, data.statements?.total ?? data.lines?.total))
         };
     });
 

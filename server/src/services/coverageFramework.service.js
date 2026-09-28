@@ -64,6 +64,73 @@ export function detectCoverageFrameworks(rootDir) {
     if (installed || configured || scripted) all.push(framework);
   }
 
+  // Scan test files for framework indicators as well
+  const scanTestFiles = (dir) => {
+    if (!fs.existsSync(dir)) return;
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const full = path.join(dir, entry.name);
+        const normPath = full.replace(/\\/g, "/").toLowerCase();
+        const relPath = path.relative(rootDir, full).replace(/\\/g, "/").toLowerCase();
+
+        if (entry.isDirectory()) {
+          if (!["node_modules", ".git", "coverage", "dist", "build", ".next", ".vite", ".vitest"].includes(entry.name)) {
+            scanTestFiles(full);
+          }
+        } else if (entry.isFile()) {
+          const isSetupOrHelper = /^(setup|global-?setup|setup-?tests|teardown|helpers?|mocks?|fixtures?|config|utils?)\.[a-z0-9]+$/i.test(entry.name);
+          const isTestFile = !isSetupOrHelper && (
+            /\.(test|spec|testcase)\.[a-z0-9]+$/i.test(entry.name) ||
+            /(?:^|\/)(tests?|__tests__|specs?|unit)\//i.test(relPath)
+          ) && /\.[cm]?[jt]sx?$/i.test(entry.name);
+
+          if (!isTestFile) continue;
+
+          let content = "";
+          try {
+            const buf = Buffer.alloc(1024);
+            const fd = fs.openSync(full, "r");
+            const bytesRead = fs.readSync(fd, buf, 0, 1024, 0);
+            fs.closeSync(fd);
+            content = buf.toString("utf8", 0, bytesRead).toLowerCase();
+          } catch (_) { }
+
+          if (relPath.includes("vitest") || content.includes("vitest") || content.includes("vi.")) {
+            if (!all.includes("vitest")) all.push("vitest");
+          }
+          if (relPath.includes("jest") || content.includes("@jest/") || content.includes("jest.")) {
+            if (!all.includes("jest")) all.push("jest");
+          }
+          if (relPath.includes("supertest") || content.includes("supertest") || content.includes("request(app)")) {
+            if (!all.includes("supertest")) all.push("supertest");
+          }
+          if (relPath.includes("playwright") || content.includes("@playwright/test") || content.includes("page.goto")) {
+            if (!all.includes("playwright")) all.push("playwright");
+          }
+          if (relPath.includes("cypress") || content.includes("cypress")) {
+            if (!all.includes("cypress")) all.push("cypress");
+          }
+
+          // Default unit fallback for test files: if it's a test file and not exclusively e2e/system (playwright/cypress),
+          // ensure unit test frameworks (vitest, jest) are included if neither is present.
+          const isE2EOnly = (relPath.includes("playwright") || relPath.includes("cypress")) && !relPath.includes("unit");
+          if (!isE2EOnly) {
+            if (!all.includes("vitest") && !all.includes("jest")) {
+              if (testScriptFramework) {
+                all.push(testScriptFramework);
+              } else {
+                all.push("vitest", "jest");
+              }
+            }
+          }
+        }
+      }
+    } catch (_) { }
+  };
+
+  scanTestFiles(rootDir);
+
   const supported = Object.fromEntries(
     Object.entries(COVERAGE_FRAMEWORKS).map(([type, names]) => [type, names.filter((name) => all.includes(name))]),
   );

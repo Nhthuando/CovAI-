@@ -12,7 +12,7 @@ import { saveJobOutput } from "./jobOutput.service.js";
 import { parseCoverageSummary } from "./coverageSummaryParser.service.js";
 import { storeCoverageOutputs } from "./coverageStorage.service.js";
 import { ServiceError } from "../utils/serviceError.js";
-import { parsePlaywrightResults } from "./testResultParser.service.js";
+import { parsePlaywrightResults, formatScenariosForPrisma } from "./testResultParser.service.js";
 import prisma from "../config/prisma.js";
 import { runPlaywrightTests, installPlaywrightDeps } from "./playwrightRunner.service.js";
 
@@ -73,20 +73,23 @@ export const processPlaywrightSystemCoverageJob = async (jobId) => {
         // 4. Parse test results
         const playwrightResults = parsePlaywrightResults(rootDir);
         if (playwrightResults) {
-            await prisma.testRun.create({
-                data: {
-                    snapshotId,
-                    type: "PLAYWRIGHT",
-                    totalTests: playwrightResults.totalTests,
-                    passedTests: playwrightResults.passedTests,
-                    failedTests: playwrightResults.failedTests,
-                    skippedTests: playwrightResults.skippedTests,
-                    durationMs: playwrightResults.durationMs,
-                    status: playwrightResults.status,
-                    startedAt: new Date(),
-                    finishedAt: new Date()
-                }
-            });
+            const formattedScenarios = formatScenariosForPrisma(playwrightResults.scenarios);
+            const dataPayload = {
+                snapshotId,
+                type: "PLAYWRIGHT",
+                totalTests: playwrightResults.totalTests,
+                passedTests: playwrightResults.passedTests,
+                failedTests: playwrightResults.failedTests,
+                skippedTests: playwrightResults.skippedTests,
+                durationMs: playwrightResults.durationMs,
+                status: playwrightResults.status,
+                startedAt: new Date(),
+                finishedAt: new Date()
+            };
+            if (formattedScenarios) {
+                dataPayload.scenarios = formattedScenarios;
+            }
+            await prisma.testRun.create({ data: dataPayload });
             await addJobLog(jobId, "INFO", `[PLAYWRIGHT] Saved TestRun: ${playwrightResults.totalTests} tests.`);
         }
 

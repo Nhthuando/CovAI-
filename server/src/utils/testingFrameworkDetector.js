@@ -14,7 +14,7 @@ const FRAMEWORKS = [
     },
     {
         name: "playwright",
-        configFiles: ["playwright.config.ts, playwright.config.js, playwright.config.mjs, playwright.config.cjs"],
+        configFiles: ["playwright.config.ts", "playwright.config.js", "playwright.config.mjs", "playwright.config.cjs"],
         packageKey: "@playwright/test",
     },
 ];
@@ -33,14 +33,52 @@ const readPackageJson = (packagePath, errors) => {
     }
 };
 
-const classifyTestFile = (content) => {
-    if (/@jest\/globals|\bjest\s*\./.test(content)) return "jest";
-    if (/from\s+["']vitest["']|\bvi\s*\./.test(content)) return "vitest";
-    if (/from\s+["']@playwright\/test["']/.test(content)) return "playwright";
-    return "unknown";
+const HELPER_FILE_PATTERN = /^(setup|global-?setup|setup-?tests|teardown|helpers?|mocks?|fixtures?|config|utils?)\.[cm]?[jt]sx?$/i;
+
+export const classifyTestFile = (content, filePath = "", detectedUnitFrameworks = []) => {
+    const lowerContent = (content || "").toLowerCase();
+    const lowerPath = (filePath || "").toLowerCase();
+
+    if (lowerPath.includes("supertest") || lowerContent.includes("supertest") || lowerContent.includes("request(app)")) return "supertest";
+    if (lowerPath.includes("playwright") || lowerContent.includes("@playwright/test") || lowerContent.includes("page.goto")) return "playwright";
+    if (lowerPath.includes("cypress") || lowerContent.includes("cypress")) return "cypress";
+
+    // Vitest detection
+    const isVitest = lowerPath.includes(".vitest.") ||
+        lowerPath.includes("vitest") ||
+        lowerContent.includes("from 'vitest'") ||
+        lowerContent.includes('from "vitest"') ||
+        lowerContent.includes("require('vitest')") ||
+        lowerContent.includes('require("vitest")') ||
+        /\bvi\s*\./.test(content);
+
+    // Jest detection
+    const isJest = lowerPath.includes(".jest.") ||
+        lowerPath.includes("jest") ||
+        lowerContent.includes("@jest/") ||
+        lowerContent.includes("from 'jest'") ||
+        lowerContent.includes('from "jest"') ||
+        /\bjest\s*\./.test(content) ||
+        lowerContent.includes("// jest") ||
+        lowerContent.includes("/* jest");
+
+    if (isVitest && !isJest) return "vitest";
+    if (isJest && !isVitest) return "jest";
+    if (isVitest) return "vitest";
+    if (isJest) return "jest";
+
+    // Fallback: If test file doesn't import vitest or use vi., but uses describe/test/expect
+    if (!lowerContent.includes("vitest") && !/\bvi\s*\./.test(content)) {
+        return "jest";
+    }
+
+    // Default unit test framework classification if test file uses standard BDD globals (describe/test/it/expect)
+    if (detectedUnitFrameworks.includes("vitest")) return "vitest";
+    if (detectedUnitFrameworks.includes("jest")) return "jest";
+    return "vitest";
 };
 
-const discoverTestFiles = (rootDir, errors) => {
+const discoverTestFiles = (rootDir, errors, detectedUnitFrameworks = []) => {
     const files = [];
     const visit = (directory, isTestDirectory = false) => {
         let entries;
@@ -53,11 +91,16 @@ const discoverTestFiles = (rootDir, errors) => {
 
         for (const entry of entries) {
             if (entry.isDirectory()) {
-                if (!IGNORED_DIRECTORIES.has(entry.name)) visit(path.join(directory, entry.name), isTestDirectory || entry.name === "__tests__");
+                const inTestDir = isTestDirectory || /^(tests?|__tests__|specs?|unit)$/i.test(entry.name);
+                if (!IGNORED_DIRECTORIES.has(entry.name)) visit(path.join(directory, entry.name), inTestDir);
                 continue;
             }
-            if (!entry.isFile() || !(isTestDirectory || TEST_FILE_PATTERN.test(entry.name))) continue;
+            if (!entry.isFile()) continue;
             if (!/\.[cm]?[jt]sx?$/i.test(entry.name)) continue;
+            if (HELPER_FILE_PATTERN.test(entry.name)) continue;
+
+            const isTestFile = isTestDirectory || TEST_FILE_PATTERN.test(entry.name);
+            if (!isTestFile) continue;
 
             const filePath = path.join(directory, entry.name);
             let content = "";
@@ -66,7 +109,8 @@ const discoverTestFiles = (rootDir, errors) => {
             } catch {
                 errors.push(`Unable to read test file: ${path.relative(rootDir, filePath)}`);
             }
-            files.push({ path: path.relative(rootDir, filePath).split(path.sep).join("/"), framework: classifyTestFile(content) });
+            const relPath = path.relative(rootDir, filePath).split(path.sep).join("/");
+            files.push({ path: relPath, framework: classifyTestFile(content, relPath, detectedUnitFrameworks) });
         }
     };
     visit(rootDir);
@@ -93,8 +137,30 @@ export function detectTestingFrameworks(rootDir) {
         const hasPackageConfig = Boolean(packageJson[packageKey]);
         return { name, detected: Boolean(configPaths.length || dependencyTypes.length || frameworkScripts.length || hasPackageConfig), version: dependencyTypes.map((section) => packageJson[section][packageKey])[0] || null, configPaths, hasPackageConfig, scripts: frameworkScripts, dependencyTypes };
     });
-    const detectedFrameworks = frameworks.filter(({ detected }) => detected).map(({ name }) => name);
-    const testFiles = discoverTestFiles(rootDir, errors);
+
+    const detectedUnitFrameworks = frameworks.filter(f => f.detected && (f.name === "vitest" || f.name === "jest")).map(f => f.name);
+    const testFiles = discoverTestFiles(rootDir, errors, detectedUnitFrameworks);
+    const testFileFrameworks = new Set(testFiles.map(f => f.framework).filter(f => f && f !== "unknown"));
+
+    frameworks.forEach(f => {
+        if (testFileFrameworks.has(f.name)) {
+            f.detected = true;
+        }
+    });
+
+    let detectedFrameworks = frameworks.filter(({ detected }) => detected).map(({ name }) => name);
+
+    // If no config/package.json framework detected but test files found, populate from test files
+    if (detectedFrameworks.length === 0 && testFiles.length > 0) {
+        if (testFileFrameworks.has("vitest")) {
+            detectedFrameworks.push("vitest");
+        } else if (testFileFrameworks.has("jest")) {
+            detectedFrameworks.push("jest");
+        } else {
+            detectedFrameworks.push("vitest", "jest");
+        }
+    }
+
     return {
         frameworks,
         detectedFrameworks,

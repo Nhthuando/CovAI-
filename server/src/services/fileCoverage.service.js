@@ -563,28 +563,93 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
 
     // Summary calculation
     const calcPct = (covered, total) => total > 0 ? Number(((covered / total) * 100).toFixed(1)) : 100;
-    const stmtsTotal = Object.keys(matchedFileCoverage.s || {}).length;
-    const stmtsCovered = Object.values(matchedFileCoverage.s || {}).filter(c => c > 0).length;
-    const funcsTotal = Object.keys(matchedFileCoverage.f || {}).length;
-    const funcsCovered = Object.values(matchedFileCoverage.f || {}).filter(c => c > 0).length;
+    const rawStmtsTotal = Object.keys(matchedFileCoverage.s || {}).length;
+    const rawStmtsCovered = Object.values(matchedFileCoverage.s || {}).filter(c => c > 0).length;
+    const rawFuncsTotal = Object.keys(matchedFileCoverage.f || {}).length;
+    const rawFuncsCovered = Object.values(matchedFileCoverage.f || {}).filter(c => c > 0).length;
 
-    let branchesTotal = 0;
-    let branchesCovered = 0;
+    let rawBranchesTotal = 0;
+    let rawBranchesCovered = 0;
     for (const counts of Object.values(matchedFileCoverage.b || {})) {
         if (Array.isArray(counts)) {
-            branchesTotal += counts.length;
-            branchesCovered += counts.filter(c => c > 0).length;
+            rawBranchesTotal += counts.length;
+            rawBranchesCovered += counts.filter(c => c > 0).length;
         }
     }
 
-    const linesTotal = lineCoverage.coveredLines.length + lineCoverage.uncoveredLines.length;
-    const linesCovered = lineCoverage.coveredLines.length;
+    // Read official summary from coverage-summary.json or prisma.coverageFile
+    let officialSummary = null;
+    const summaryCandidatePaths = [
+        path.join(rootDir, "coverage", "coverage-summary.json"),
+        path.join(rootDir, "coverage", "jest-coverage-summary.json"),
+        path.join(rootDir, "coverage", "vitest-coverage-summary.json"),
+        path.join(rootDir, "coverage-summary.json")
+    ];
+    for (const sp of summaryCandidatePaths) {
+        if (fs.existsSync(sp)) {
+            try {
+                const sObj = JSON.parse(fs.readFileSync(sp, "utf8"));
+                for (const [k, v] of Object.entries(sObj)) {
+                    if (k !== "total" && matchesFilePath(k, targetFilePath)) {
+                        officialSummary = v;
+                        break;
+                    }
+                }
+                if (officialSummary) break;
+            } catch (_) { }
+        }
+    }
+
+    let dbCoverageFile = null;
+    try {
+        dbCoverageFile = await prisma.coverageFile.findFirst({
+            where: {
+                snapshotId: snapshot.id,
+                OR: [
+                    { filePath: { endsWith: targetFilePath } },
+                    { filePath: { contains: targetFilePath } }
+                ]
+            }
+        });
+    } catch (_) { }
+
+    const branchesTotal = officialSummary?.branches?.total ?? rawBranchesTotal;
+    const branchesCovered = officialSummary?.branches?.covered ?? rawBranchesCovered;
+    const branchesPct = officialSummary?.branches?.pct ?? (dbCoverageFile?.branchesPct ?? calcPct(branchesCovered, branchesTotal));
+
+    const stmtsTotal = officialSummary?.statements?.total ?? rawStmtsTotal;
+    const stmtsCovered = officialSummary?.statements?.covered ?? rawStmtsCovered;
+    const stmtsPct = officialSummary?.statements?.pct ?? (dbCoverageFile?.stmtsPct ?? calcPct(stmtsCovered, stmtsTotal));
+
+    const linesTotal = officialSummary?.lines?.total ?? (lineCoverage.coveredLines.length + lineCoverage.uncoveredLines.length);
+    const linesCovered = officialSummary?.lines?.covered ?? lineCoverage.coveredLines.length;
+    const linesPct = officialSummary?.lines?.pct ?? (dbCoverageFile?.linesPct ?? calcPct(linesCovered, linesTotal));
+
+    const funcsTotal = officialSummary?.functions?.total ?? rawFuncsTotal;
+    const funcsCovered = officialSummary?.functions?.covered ?? rawFuncsCovered;
+    const funcsPct = officialSummary?.functions?.pct ?? (dbCoverageFile?.funcsPct ?? calcPct(funcsCovered, funcsTotal));
+
+    // If branches are not 100% covered, make sure branch lines are registered in uncoveredLines
+    if (branchesPct < 100 && matchedFileCoverage.branchMap) {
+        for (const [id, branch] of Object.entries(matchedFileCoverage.branchMap)) {
+            const bLine = branch.line || branch.loc?.start?.line;
+            if (bLine && !lineCoverage.uncoveredLines.includes(bLine)) {
+                lineCoverage.uncoveredLines.push(bLine);
+                lineCoverage.lines[bLine] = {
+                    status: "uncovered",
+                    icon: "⚑",
+                    reason: `Uncovered branch (${branchesCovered}/${branchesTotal} branches covered, ${branchesPct}%)`,
+                    hits: 0
+                };
+            }
+        }
+    }
 
     const summary = {
-        linesPct: calcPct(linesCovered, linesTotal),
-        branchesPct: calcPct(branchesCovered, branchesTotal),
-        funcsPct: calcPct(funcsCovered, funcsTotal),
-        stmtsPct: calcPct(stmtsCovered, stmtsTotal),
+        linesPct,
+        branchesPct,
+        funcsPct,
+        stmtsPct,
         linesTotal,
         linesCovered,
         branchesTotal,

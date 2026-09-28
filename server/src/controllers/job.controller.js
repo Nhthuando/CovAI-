@@ -5,7 +5,7 @@ import { getBucket } from "../config/firebase.js";
 import prisma from "../config/prisma.js";
 import { scanArchiveBomb } from "../middlewares/upload.middleware.js";
 import { addJobToQueue } from "../services/queue.service.js";
-import { createSnapshotIngestJob } from "../services/job.service.js";
+import { createSnapshotIngestJob, cleanupAllStaleJobs, cancelJob } from "../services/job.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 
 export const listProjectJobs = async (req, res) => {
@@ -33,6 +33,8 @@ export const listProjectJobs = async (req, res) => {
         });
     }
 
+    await cleanupAllStaleJobs(userId).catch(() => { });
+
     const jobs = await prisma.job.findMany({
       where: { projectId: projectId },
       orderBy: { createdAt: "desc" },
@@ -54,6 +56,9 @@ export const listUserJobs = async (req, res) => {
     const userId = req.user.id;
     if (!userId)
       return res.status(401).json({ message: "Không thể lấy user Id!" });
+
+    await cleanupAllStaleJobs(userId).catch(() => { });
+
     const jobs = await prisma.job.findMany({
       where: { userId },
       orderBy: { createdAt: "desc" },
@@ -237,7 +242,7 @@ export const ingestJob = async (req, res) => {
       } catch (dbError) {
         console.error("[IngestJob] Lỗi Database sau khi upload:", dbError);
         // Rollback: xóa file đã upload nếu DB lỗi
-        await blob.delete().catch(() => {});
+        await blob.delete().catch(() => { });
         if (dbError instanceof ServiceError) {
           return res
             .status(dbError.statusCode)
@@ -257,5 +262,38 @@ export const ingestJob = async (req, res) => {
       return res.status(error.statusCode).json({ message: error.message });
     }
     return res.status(500).json({ message: "Có lỗi server!" });
+  }
+};
+
+export const cancelJobController = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "Unauthorized." });
+    }
+    const { jobId } = req.params;
+    const job = await prisma.job.findUnique({
+      where: { id: jobId },
+      select: { id: true, userId: true, status: true },
+    });
+
+    if (!job) {
+      return res.status(404).json({ success: false, message: "Job không tồn tại." });
+    }
+    if (job.userId !== userId) {
+      return res.status(403).json({ success: false, message: "Không có quyền hủy job này." });
+    }
+
+    const canceled = await cancelJob(jobId);
+    return res.status(200).json({
+      success: true,
+      message: "Job đã được tạm dừng/hủy thành công.",
+      job: canceled,
+    });
+  } catch (error) {
+    if (error instanceof ServiceError) {
+      return res.status(error.statusCode).json({ success: false, message: error.message });
+    }
+    return res.status(500).json({ success: false, message: error.message || "Lỗi khi hủy job." });
   }
 };

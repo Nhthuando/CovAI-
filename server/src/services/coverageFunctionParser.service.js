@@ -225,7 +225,10 @@ export const parseCoverageFunctionsForSnapshot = async ({
     const functionRows = getFunctionCoverageRecords(coverageReport, snapshotId, snapshot.rootDir);
 
     if (functionRows.length === 0) {
-        throw new ServiceError("No function coverage records found in coverage report", 400);
+        return {
+            totalFunctions: 0,
+            functions: [],
+        };
     }
 
     await prisma.$transaction(async (tx) => {

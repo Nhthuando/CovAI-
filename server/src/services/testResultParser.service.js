@@ -20,7 +20,7 @@ const findExistingFile = (dir, names) => {
  * @returns {Object|null}
  */
 export const parseJestResults = (coverageDir) => {
-    const resultsPath = findExistingFile(coverageDir, ["test-results.json", "test-result.json"]);
+    const resultsPath = findExistingFile(coverageDir, ["jest-results.json", "test-results.json", "test-result.json"]);
     console.log(`[TEST-RESULT] parsing Jest results from: ${resultsPath || coverageDir}`);
 
     if (!resultsPath) {
@@ -76,12 +76,33 @@ export const parseJestResults = (coverageDir) => {
 };
 
 /**
+ * Helper to convert raw scenario list to Prisma relation create input
+ * @param {Array} scenarios 
+ * @returns {Object|undefined}
+ */
+export const formatScenariosForPrisma = (scenarios) => {
+    if (!Array.isArray(scenarios) || scenarios.length === 0) {
+        return undefined;
+    }
+    return {
+        create: scenarios.map(s => ({
+            title: s.title || s.name || "Untitled Scenario",
+            suiteName: s.suiteName || (Array.isArray(s.ancestorTitles) ? s.ancestorTitles.join(" > ") : null),
+            status: s.status || "UNKNOWN",
+            durationMs: typeof s.duration === "number" ? s.duration : (typeof s.durationMs === "number" ? s.durationMs : 0),
+            failureMessages: Array.isArray(s.failureMessages) ? s.failureMessages : (s.failureMessages ? [String(s.failureMessages)] : []),
+            testFile: s.testFile || null
+        }))
+    };
+};
+
+/**
  * Parse Vitest JSON output file
  * @param {string} coverageDir
  * @return {Object|null}
  */
 export const parseVitestResults = (coverageDir) => {
-    const resultsPath = findExistingFile(coverageDir, ["test-results.json", "test-result.json"]);
+    const resultsPath = findExistingFile(coverageDir, ["vitest-results.json", "test-results.json", "test-result.json"]);
     console.log(`[TEST-RESULT] parsing Vitest results from: ${resultsPath || coverageDir}`);
 
     if (!resultsPath) {
@@ -94,13 +115,32 @@ export const parseVitestResults = (coverageDir) => {
         // Vitest JSON output format is highly compatible with Jest
         const duration = raw.testResults ? raw.testResults.reduce((acc, suite) => acc + (suite.endTime - suite.startTime), 0) : 0;
 
+        const scenarios = [];
+        if (raw.testResults) {
+            raw.testResults.forEach(suite => {
+                if (suite.assertionResults) {
+                    suite.assertionResults.forEach(assertion => {
+                        scenarios.push({
+                            title: assertion.title,
+                            suiteName: assertion.ancestorTitles ? assertion.ancestorTitles.join(" > ") : "",
+                            status: assertion.status,
+                            duration: assertion.duration || 0,
+                            failureMessages: assertion.failureMessages || [],
+                            testFile: suite.name
+                        });
+                    });
+                }
+            });
+        }
+
         const results = {
             totalTests: raw.numTotalTests || 0,
             passedTests: raw.numPassedTests || 0,
             failedTests: raw.numFailedTests || 0,
             skippedTests: raw.numPendingTests || 0,
             durationMs: duration,
-            status: raw.success ? "PASSED" : "FAILED"
+            status: raw.success ? "PASSED" : "FAILED",
+            scenarios
         };
 
         console.log(`[TEST-RESULT] parsed:`, results);

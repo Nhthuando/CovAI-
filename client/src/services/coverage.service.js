@@ -32,9 +32,12 @@ async function handleResponse(res) {
     return data;
 }
 
-export async function getCoverageSummary(snapshotId) {
+export async function getCoverageSummary(snapshotId, type = null) {
+    const url = type
+        ? `${BASE_URL}/coverage/${snapshotId}/summary?type=${encodeURIComponent(type)}`
+        : `${BASE_URL}/coverage/${snapshotId}/summary`;
     const res = await fetch(
-        `${BASE_URL}/coverage/${snapshotId}/summary`,
+        url,
         {
             headers: getAuthHeaders(),
         }
@@ -50,6 +53,7 @@ export async function getCoverageFiles(
         order = "asc",
         page = 1,
         limit = 200,
+        type = null,
     } = {}
 ) {
     const params = new URLSearchParams({
@@ -58,6 +62,9 @@ export async function getCoverageFiles(
         page,
         limit,
     });
+    if (type) {
+        params.append("type", type);
+    }
 
     const res = await fetch(
         `${BASE_URL}/coverage/${snapshotId}/files?${params}`,
@@ -131,6 +138,7 @@ export async function getCoverageFunctions(
         order = "asc",
         page = 1,
         limit = 200,
+        type = null,
     } = {}
 ) {
     const params = new URLSearchParams({
@@ -141,6 +149,9 @@ export async function getCoverageFunctions(
     });
     if (filePath) {
         params.set("filePath", filePath);
+    }
+    if (type) {
+        params.append("type", type);
     }
 
     const res = await fetch(

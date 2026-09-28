@@ -15,7 +15,7 @@ import {
   BrainCircuit,
   Ban,
 } from "lucide-react";
-import { getUserJobsApi } from "../../services/job.service";
+import { getUserJobsApi, cancelJobApi } from "../../services/job.service";
 
 /* ── Helpers: map backend enums to UI props ────────────────── */
 
@@ -71,7 +71,20 @@ export default function JobQueue({ projectId }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState("ALL"); // ALL | ACTIVE | COMPLETED
+  const [cancelingJobId, setCancelingJobId] = useState(null);
   const intervalRef = useRef(null);
+
+  const handleCancelJob = async (jobId) => {
+    try {
+      setCancelingJobId(jobId);
+      await cancelJobApi(jobId);
+      await fetchJobs(true);
+    } catch (err) {
+      setError(err.message || "Failed to cancel job");
+    } finally {
+      setCancelingJobId(null);
+    }
+  };
 
   const fetchJobs = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -330,31 +343,59 @@ export default function JobQueue({ projectId }) {
                         </div>
                       </div>
 
-                      {/* Status Badge */}
-                      <div
-                        className="rounded-full flex items-center gap-2 flex-shrink-0"
-                        style={{
-                          padding: "6px 14px",
-                          background: `${visual.color}18`,
-                          border: `1px solid ${visual.color}40`,
-                        }}
-                      >
+                      <div className="flex items-center gap-3 flex-shrink-0">
                         {isActive && (
-                          <motion.div
-                            animate={{ opacity: [1, 0.4, 1] }}
-                            transition={{ duration: 1.5, repeat: Infinity }}
-                            className="rounded-full"
+                          <button
+                            onClick={() => handleCancelJob(job.id)}
+                            disabled={cancelingJobId === job.id}
                             style={{
-                              width: 6,
-                              height: 6,
-                              background: visual.color,
-                              boxShadow: `0 0 8px ${visual.color}`,
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                              padding: "6px 12px",
+                              borderRadius: 8,
+                              fontSize: 11,
+                              fontWeight: 650,
+                              color: "#fca5a5",
+                              background: "rgba(239, 68, 68, 0.12)",
+                              border: "1px solid rgba(239, 68, 68, 0.35)",
+                              cursor: "pointer",
+                              transition: "all 0.2s ease",
                             }}
-                          />
+                            title="Tạm dừng / Hủy job đang chạy này"
+                            className="hover:bg-red-500/25 hover:border-red-500/50 transition-all"
+                          >
+                            <Ban size={12} />
+                            <span>{cancelingJobId === job.id ? "Stopping..." : "Stop Job"}</span>
+                          </button>
                         )}
-                        <span style={{ fontSize: 11, fontWeight: 700, color: visual.color, letterSpacing: "0.06em" }}>
-                          {visual.statusLabel}
-                        </span>
+
+                        {/* Status Badge */}
+                        <div
+                          className="rounded-full flex items-center gap-2 flex-shrink-0"
+                          style={{
+                            padding: "6px 14px",
+                            background: `${visual.color}18`,
+                            border: `1px solid ${visual.color}40`,
+                          }}
+                        >
+                          {isActive && (
+                            <motion.div
+                              animate={{ opacity: [1, 0.4, 1] }}
+                              transition={{ duration: 1.5, repeat: Infinity }}
+                              className="rounded-full"
+                              style={{
+                                width: 6,
+                                height: 6,
+                                background: visual.color,
+                                boxShadow: `0 0 8px ${visual.color}`,
+                              }}
+                            />
+                          )}
+                          <span style={{ fontSize: 11, fontWeight: 700, color: visual.color, letterSpacing: "0.06em" }}>
+                            {visual.statusLabel}
+                          </span>
+                        </div>
                       </div>
                     </div>
 

@@ -13,7 +13,7 @@ import { parseCoverageSummary } from "./coverageSummaryParser.service.js";
 import { storeCoverageOutputs } from "./coverageStorage.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { detectCypressMetadata as detectCypress } from "./cypressDetection.service.js";
-import { parseCypressResults } from "./testResultParser.service.js";
+import { parseCypressResults, formatScenariosForPrisma } from "./testResultParser.service.js";
 import prisma from "../config/prisma.js";
 import { dockerRunner } from "./dockerRunner.service.js";
 
@@ -85,20 +85,23 @@ export const processCypressSystemCoverageJob = async (jobId) => {
         // 3. Parse test results
         const cypressResults = parseCypressResults(rootDir);
         if (cypressResults) {
-            await prisma.testRun.create({
-                data: {
-                    snapshotId,
-                    type: "CYPRESS",
-                    totalTests: cypressResults.totalTests,
-                    passedTests: cypressResults.passedTests,
-                    failedTests: cypressResults.failedTests,
-                    skippedTests: cypressResults.skippedTests,
-                    durationMs: cypressResults.durationMs,
-                    status: cypressResults.status,
-                    startedAt: new Date(),
-                    finishedAt: new Date()
-                }
-            });
+            const formattedScenarios = formatScenariosForPrisma(cypressResults.scenarios);
+            const dataPayload = {
+                snapshotId,
+                type: "CYPRESS",
+                totalTests: cypressResults.totalTests,
+                passedTests: cypressResults.passedTests,
+                failedTests: cypressResults.failedTests,
+                skippedTests: cypressResults.skippedTests,
+                durationMs: cypressResults.durationMs,
+                status: cypressResults.status,
+                startedAt: new Date(),
+                finishedAt: new Date()
+            };
+            if (formattedScenarios) {
+                dataPayload.scenarios = formattedScenarios;
+            }
+            await prisma.testRun.create({ data: dataPayload });
             await addJobLog(jobId, "INFO", `[CYPRESS] Saved TestRun: ${cypressResults.totalTests} tests.`);
         }
 

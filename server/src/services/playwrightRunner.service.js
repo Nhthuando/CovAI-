@@ -2,8 +2,8 @@ import { addJobLog } from "./job.service.js";
 import { dockerRunner } from "./dockerRunner.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 
-const INSTALL_TIMEOUT_MS = 5 * 60 * 1000; // 5 phút cho npm install
-const PLAYWRIGHT_TIMEOUT_MS = 10 * 60 * 1000; // 10 phút cho test
+const INSTALL_TIMEOUT_MS = 15 * 60 * 1000; // 15 phút cho npm install
+const PLAYWRIGHT_TIMEOUT_MS = 15 * 60 * 1000; // 15 phút cho test
 
 /**
  * Cài đặt dependencies cho Playwright

@@ -160,13 +160,13 @@ export default function FileCodeExecutionView({
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           {/* Statement & Line summary */}
           <span style={{ fontSize: 11, color: "#8b949e" }}>
-            Bao phủ câu lệnh:{" "}
+            Statement coverage:{" "}
             <b style={{ color: stmtsPct >= 80 ? "#4ade80" : stmtsPct >= 60 ? "#fbbf24" : "#f87171" }}>
               {totalStatements > 0 ? `${coveredStatements}/${totalStatements}` : `${coveredLines}/${executableLines}`} ({stmtsPct}%)
             </b>
             {executableLines > 0 && (
               <span style={{ marginLeft: 6, color: "#6e7681" }}>
-                ({coveredLines}/{executableLines} dòng)
+                ({coveredLines}/{executableLines} lines)
               </span>
             )}
           </span>
@@ -183,7 +183,7 @@ export default function FileCodeExecutionView({
                 border: "1px solid rgba(239, 68, 68, 0.3)",
               }}
             >
-              ⚑ {missedLines} dòng chưa chạy
+              ⚑ {missedLines} unexecuted lines
             </span>
           ) : executableLines > 0 ? (
             <span
@@ -197,7 +197,7 @@ export default function FileCodeExecutionView({
                 border: "1px solid rgba(34, 197, 94, 0.3)",
               }}
             >
-              ✓ 100% Bao phủ
+              ✓ 100% Coverage
             </span>
           ) : null}
 
@@ -216,7 +216,7 @@ export default function FileCodeExecutionView({
                 fontWeight: filterMode === "all" ? 700 : 500,
               }}
             >
-              Tất cả ({codeLines.length})
+              All ({codeLines.length})
             </button>
             <button
               onClick={() => setFilterMode("covered")}
@@ -231,7 +231,7 @@ export default function FileCodeExecutionView({
                 fontWeight: filterMode === "covered" ? 700 : 500,
               }}
             >
-              Đã chạy ({coveredLines})
+              Executed ({coveredLines})
             </button>
             {missedLines > 0 && (
               <button
@@ -247,7 +247,7 @@ export default function FileCodeExecutionView({
                   fontWeight: filterMode === "missed" ? 700 : 500,
                 }}
               >
-                Chưa chạy ({missedLines})
+                Unexecuted ({missedLines})
               </button>
             )}
           </div>
@@ -265,7 +265,7 @@ export default function FileCodeExecutionView({
                 cursor: "pointer",
               }}
             >
-              Mở trong Editor
+              Open in Editor
             </button>
           )}
         </div>
@@ -285,8 +285,8 @@ export default function FileCodeExecutionView({
         {visibleLineEntries.length === 0 ? (
           <div style={{ padding: 24, textAlign: "center", color: "#6e7681" }}>
             {codeLines.length === 0
-              ? "Chưa có nội dung mã nguồn của file này."
-              : "Không có dòng nào phù hợp với bộ lọc đã chọn."}
+              ? "No source code content available for this file."
+              : "No lines match the selected filter."}
           </div>
         ) : (
           visibleLineEntries.map(({ lineNum, codeText, isExecutable, isCovered, isMissed, isFailed, hits, error, reason }) => {
@@ -318,7 +318,7 @@ export default function FileCodeExecutionView({
                   transition: "background 0.1s ease",
                 }}
                 className="hover:bg-white/[0.04]"
-                title={error ? `Lỗi: ${error}` : reason ? reason : isCovered ? `Đã thực thi ${hits} lần` : ""}
+                title={error ? `Error: ${error}` : reason ? reason : isCovered ? `Executed ${hits} time${hits > 1 ? "s" : ""}` : ""}
               >
                 {/* Line number */}
                 <span

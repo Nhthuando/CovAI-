@@ -18,6 +18,7 @@ import { storeCoverageOutputs } from "./coverageStorage.service.js";
 import { resolveSystemTestExecution } from "./systemTestDetection.service.js";
 import { runSystemTests } from "./systemTestRunner.service.js";
 import { parseSystemTestResult } from "./systemTestResultParser.service.js";
+import { formatScenariosForPrisma } from "./testResultParser.service.js";
 
 const readPayload = (payloadJson) => {
   if (!payloadJson) return {};
@@ -126,13 +127,17 @@ export const processSystemTestAnalysisJob = async (jobId) => {
       startedAt,
       finishedAt,
     });
-    await prisma.testRun.create({
-      data: {
-        snapshotId: job.snapshotId,
-        type: testTypeFor(execution.runner),
-        ...testRun,
-      },
-    });
+    const { scenarios, ...testRunData } = testRun;
+    const formattedScenarios = formatScenariosForPrisma(scenarios);
+    const dataPayload = {
+      snapshotId: job.snapshotId,
+      type: testTypeFor(execution.runner),
+      ...testRunData,
+    };
+    if (formattedScenarios) {
+      dataPayload.scenarios = formattedScenarios;
+    }
+    await prisma.testRun.create({ data: dataPayload });
 
     await updateJobProgress(jobId, 85);
     const coverage = await persistCoverageIfPresent({
