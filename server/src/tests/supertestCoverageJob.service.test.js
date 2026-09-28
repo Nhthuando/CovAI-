@@ -16,6 +16,18 @@ const storeCoverageOutputs = jest.fn();
 const parseCoverageFilesForSnapshot = jest.fn();
 const parseCoverageFunctionsForSnapshot = jest.fn();
 
+const mockPrisma = {
+    aiTest: {
+        findMany: jest.fn(),
+    },
+    testRun: {
+        create: jest.fn().mockResolvedValue({}),
+    },
+};
+
+await jest.unstable_mockModule('../config/prisma.js', () => ({
+    default: mockPrisma,
+}));
 await jest.unstable_mockModule('../services/job.service.js', () => ({
     markJobRunning, markJobSuccess, markJobFailed, updateJobProgress, getJobById, addJobLog,
 }));
@@ -33,6 +45,9 @@ describe('supertestCoverageJob.service', () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        mockPrisma.aiTest.findMany.mockResolvedValue([
+            { filePath: 'api.test.js', metaJson: JSON.stringify({ framework: 'SUPERTEST', status: 'APPROVED' }) }
+        ]);
         markJobRunning.mockResolvedValue(undefined);
         markJobSuccess.mockResolvedValue(undefined);
         markJobFailed.mockResolvedValue(undefined);

@@ -45,19 +45,26 @@ const connection = new IORedis(
   redisOptions,
 );
 
-connection.on('connect', () => {
-  isRedisConnected = true;
-  console.log('[Queue] Connected to Redis successfully.');
-});
+if (connection && typeof connection.on === 'function') {
+  connection.on('connect', () => {
+    isRedisConnected = true;
+    console.log('[Queue] Connected to Redis successfully.');
+  });
 
-connection.on('error', (err) => {
-  isRedisConnected = false;
-});
+  connection.on('error', (err) => {
+    isRedisConnected = false;
+  });
+}
 
 export const jobQueue = new Queue('covai-jobs', { connection });
 export const flowProducer = new FlowProducer({ connection });
 
-jobQueue.on('error', () => { isRedisConnected = false; });
+if (jobQueue && typeof jobQueue.on === 'function') {
+  jobQueue.on('error', () => { isRedisConnected = false; });
+}
+if (flowProducer && typeof flowProducer.on === 'function') {
+  flowProducer.on('error', () => {});
+}
 
 export const executeJobDirectly = async (type, jobId, customData = {}) => {
   console.log(`[DirectExecutor] Running job directly: type=${type}, jobId=${jobId}`);
@@ -229,7 +236,7 @@ worker.on('failed', (job, err) => {
 });
 
 export const addJobToQueue = async (type, jobId, customData = {}, jobOptions = {}) => {
-  if (!isRedisConnected) {
+  if (!isRedisConnected && process.env.NODE_ENV !== 'test') {
     console.warn(`[Queue] Redis không khả dụng. Thực thi Job ${jobId} (${type}) trực tiếp in-memory...`);
     setTimeout(() => executeJobDirectly(type, jobId, customData), 10);
     return;
@@ -240,8 +247,12 @@ export const addJobToQueue = async (type, jobId, customData = {}, jobOptions = {
     await jobQueue.add(type, { type, jobId, ...customData }, { jobId: dedupeKey, ...jobOptions });
     console.log(`[Queue] Đã đưa Job ${jobId} (Type: ${type}) vào hàng đợi với dedupe key ${dedupeKey}.`);
   } catch (redisErr) {
-    console.warn(`[Queue] Lỗi khi thêm job vào Redis (${redisErr.message}). Chuyển sang thực thi trực tiếp in-memory...`);
-    setTimeout(() => executeJobDirectly(type, jobId, customData), 10);
+    if (process.env.NODE_ENV !== 'test') {
+      console.warn(`[Queue] Lỗi khi thêm job vào Redis (${redisErr.message}). Chuyển sang thực thi trực tiếp in-memory...`);
+      setTimeout(() => executeJobDirectly(type, jobId, customData), 10);
+    } else {
+      throw redisErr;
+    }
   }
 };
 
@@ -251,7 +262,7 @@ export const addJobToQueue = async (type, jobId, customData = {}, jobOptions = {
 export const addSupertestCoveragePipeline = async (installJobId, supertestJobId, options = {}) => {
   const pipelineJobId = `${supertestJobId}-pipeline`;
 
-  if (!isRedisConnected) {
+  if (!isRedisConnected && process.env.NODE_ENV !== 'test') {
     console.warn(`[Queue] Redis không khả dụng cho Supertest pipeline. Chạy trực tiếp in-memory...`);
     setTimeout(async () => {
       await executeJobDirectly('INSTALL_DEPS', installJobId);

@@ -21,7 +21,7 @@ describe("coverage framework detection", () => {
 
     const result = detectCoverageFrameworks(rootDir);
     expect(result.supported.unit).toEqual(["vitest"]);
-    expect(result.supported.integration).toEqual(["playwright", "supertest"]);
+    expect(result.supported.integration).toEqual(["supertest"]);
     expect(result.supported.system).toEqual(["playwright", "cypress"]);
   });
 
