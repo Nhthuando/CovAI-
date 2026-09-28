@@ -97,11 +97,11 @@ function ActivityItem({ item, isActive, onClick, delay = 0 }) {
 export default function ActivityBar({ active, onSelect }) {
   return (
     <div
-      className="flex flex-col items-center justify-between py-2.5 select-none shrink-0 bg-[var(--color-surface-secondary)] border-r border-[var(--color-border)] font-sans"
+      className="h-full flex flex-col items-center justify-between py-2.5 select-none shrink-0 bg-[var(--color-surface-secondary)] border-r border-[var(--color-border)] font-sans"
       style={{ width: 60 }}
     >
-      {/* Brand Icon */}
-      <div className="flex flex-col items-center gap-1">
+      {/* Brand Icon & Top nav items */}
+      <div className="flex flex-col items-center gap-1 w-full">
         <div
           className="w-8 h-8 rounded-[var(--radius-md)] bg-[var(--color-primary)] text-white flex items-center justify-center mb-2.5 shrink-0"
           title="CovAI Platform"
@@ -124,8 +124,9 @@ export default function ActivityBar({ active, onSelect }) {
         ))}
       </div>
 
-      {/* Bottom icons */}
-      <div className="flex flex-col items-center gap-0.5 pb-1">
+      {/* Bottom icons (Settings pinned at bottom with separate divider) */}
+      <div className="flex flex-col items-center gap-1 pb-1 w-full mt-auto shrink-0">
+        <div className="w-6 h-px bg-[var(--color-border)] mb-1" />
         {BOTTOM_ITEMS.map((item, i) => (
           <ActivityItem
             key={item.id}

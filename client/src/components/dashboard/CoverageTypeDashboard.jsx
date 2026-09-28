@@ -38,6 +38,7 @@ import FileCodeExecutionView from "./FileCodeExecutionView.jsx";
 import FileBranchCFGView from "./FileBranchCFGView.jsx";
 import FileFunctionCallGraphView from "./FileFunctionCallGraphView.jsx";
 import CFGCalculator from "./CFGCalculator.jsx";
+import { CoverageDashboardSkeleton } from "../common/Skeleton.jsx";
 
 const CONFIG = {
   unit: {
@@ -652,9 +653,7 @@ export default function CoverageTypeDashboard({
       )}
 
       {loading ? (
-        <div style={{ color: "#8b949e", padding: 40, textAlign: "center" }}>
-          Loading coverage analysis...
-        </div>
+        <CoverageDashboardSkeleton />
       ) : (
         <>
           {/* Focus Metrics Cards */}

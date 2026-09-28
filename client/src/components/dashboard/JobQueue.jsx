@@ -35,6 +35,7 @@ import {
   createProjectSnapshotApi,
   restoreProjectSnapshotApi,
 } from "../../services/project.service";
+import { SnapshotsListSkeleton, JobsListSkeleton } from "../common/Skeleton";
 
 /* ── Helpers: map backend enums to UI props ────────────────── */
 
@@ -142,25 +143,52 @@ const JOB_TYPE_CONFIG = {
 };
 
 const JOB_STATUS_CONFIG = {
-  QUEUED: { label: "QUEUED", color: "#f59e0b", icon: Clock },
-  RUNNING: { label: "RUNNING", color: "#38bdf8", icon: Activity },
-  SUCCESS: { label: "COMPLETED", color: "#22c55e", icon: CheckCircle2 },
-  FAILED: { label: "FAILED", color: "#ef4444", icon: XCircle },
-  CANCELED: { label: "CANCELED", color: "#6b7280", icon: Ban },
+  QUEUED: {
+    label: "QUEUED",
+    color: "var(--color-warning)",
+    bg: "rgba(217, 119, 6, 0.12)",
+    border: "rgba(217, 119, 6, 0.25)",
+    icon: Clock,
+  },
+  RUNNING: {
+    label: "RUNNING",
+    color: "var(--color-info)",
+    bg: "rgba(2, 132, 199, 0.12)",
+    border: "rgba(2, 132, 199, 0.25)",
+    icon: Activity,
+  },
+  SUCCESS: {
+    label: "COMPLETED",
+    color: "var(--color-success)",
+    bg: "rgba(22, 163, 74, 0.12)",
+    border: "rgba(22, 163, 74, 0.25)",
+    icon: CheckCircle2,
+  },
+  FAILED: {
+    label: "FAILED",
+    color: "var(--color-danger)",
+    bg: "rgba(220, 38, 38, 0.12)",
+    border: "rgba(220, 38, 38, 0.25)",
+    icon: XCircle,
+  },
+  CANCELED: {
+    label: "CANCELED",
+    color: "var(--color-text-muted)",
+    bg: "rgba(100, 116, 139, 0.12)",
+    border: "rgba(100, 116, 139, 0.25)",
+    icon: Ban,
+  },
 };
 
 function getJobVisual(job) {
   const typeConf = JOB_TYPE_CONFIG[job.type] || JOB_TYPE_CONFIG.INGEST;
   const statusConf = JOB_STATUS_CONFIG[job.status] || JOB_STATUS_CONFIG.QUEUED;
 
-  const color = statusConf.color;
-  const gradient = color;
-  const Icon = typeConf.icon;
-
   return {
-    color,
-    gradient,
-    Icon,
+    color: statusConf.color,
+    bg: statusConf.bg,
+    border: statusConf.border,
+    Icon: typeConf.icon,
     typeLabel: typeConf.label,
     taskLabel: typeConf.taskLabel,
     statusLabel: statusConf.label,
@@ -407,75 +435,74 @@ export default function JobQueue({ projectId, onSync }) {
     <div
       className="flex flex-col w-full h-full overflow-y-auto custom-scrollbar"
       style={{
-        background: "var(--ide-bg)",
-        color: "var(--text-primary)",
-        padding: "28px 36px",
+        background: "var(--color-bg)",
+        color: "var(--color-text)",
+        padding: "24px 32px",
         fontFamily: "var(--font-sans)",
       }}
     >
       {/* ── Top Header ─────────────────────────────────────────── */}
       <div
-        className="flex flex-col lg:flex-row lg:items-center justify-between gap-6"
-        style={{ marginBottom: 24 }}
+        className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-5 border-b border-[var(--color-border)]"
+        style={{ marginBottom: 20 }}
       >
         <div>
-          <div className="flex items-center gap-3 mb-1">
+          <div className="flex items-center gap-2.5 mb-1.5">
             <h1
               style={{
-                fontSize: 28,
+                fontSize: 22,
                 fontWeight: 700,
-                color: "#f0f6fc",
-                letterSpacing: "-0.02em",
+                color: "var(--color-text)",
+                letterSpacing: "-0.01em",
               }}
             >
               Pipelines & Version Hub
             </h1>
             <span
-              className="px-2.5 py-0.5 rounded-full text-xs font-semibold"
+              className="px-2 py-0.5 rounded-[var(--radius-sm)] text-[11px] font-medium"
               style={{
-                background: "rgba(124, 58, 237, 0.15)",
-                color: "#c084fc",
-                border: "1px solid rgba(124, 58, 237, 0.3)",
+                background: "var(--color-surface-secondary)",
+                color: "var(--color-text-secondary)",
+                border: "1px solid var(--color-border)",
               }}
             >
               Checkpoints & AI Queues
             </span>
           </div>
-          <p style={{ color: "#8b949e", fontSize: 14 }}>
+          <p style={{ color: "var(--color-text-secondary)", fontSize: 13 }}>
             Capture project checkpoints, restore previous code versions, and
             monitor active test generation pipelines.
           </p>
         </div>
 
         {/* Action Buttons */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
           <motion.button
-            whileHover={{ scale: 1.03 }}
-            whileTap={{ scale: 0.97 }}
+            whileHover={{ scale: 1.01 }}
+            whileTap={{ scale: 0.98 }}
             onClick={() => setShowCreateModal(true)}
-            className="flex items-center gap-2 rounded-lg font-medium text-xs shadow-lg cursor-pointer"
+            className="flex items-center gap-1.5 rounded-[var(--radius-md)] font-medium text-xs cursor-pointer transition-colors"
             style={{
               background: "var(--color-primary)",
               color: "#ffffff",
-              padding: "8px 16px",
-              boxShadow: "none",
-              border: "none",
+              padding: "7px 14px",
+              border: "1px solid transparent",
             }}
           >
-            <BookmarkPlus size={15} />
+            <BookmarkPlus size={14} />
             Create Snapshot
           </motion.button>
 
           <motion.button
-            whileHover={{ scale: 1.03 }}
-            whileTap={{ scale: 0.97 }}
+            whileHover={{ scale: 1.01 }}
+            whileTap={{ scale: 0.98 }}
             onClick={handleRefreshAll}
-            className="flex items-center gap-2 rounded-lg text-xs font-medium cursor-pointer"
+            className="flex items-center gap-1.5 rounded-[var(--radius-md)] text-xs font-medium cursor-pointer transition-colors hover:bg-[var(--color-surface-secondary)]"
             style={{
-              background: "rgba(255,255,255,0.04)",
-              border: "1px solid rgba(255,255,255,0.08)",
-              color: "#8b949e",
-              padding: "8px 14px",
+              background: "var(--color-surface)",
+              border: "1px solid var(--color-border)",
+              color: "var(--color-text)",
+              padding: "7px 12px",
             }}
             title="Refresh Snapshots and Jobs"
           >
@@ -492,33 +519,42 @@ export default function JobQueue({ projectId, onSync }) {
       <AnimatePresence>
         {feedbackNotice && (
           <motion.div
-            initial={{ opacity: 0, y: -10 }}
+            initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="mb-4 rounded-xl flex items-center justify-between px-4 py-3 text-xs"
+            exit={{ opacity: 0, y: -8 }}
+            className="mb-4 rounded-[var(--radius-md)] flex items-center justify-between px-3.5 py-2.5 text-xs font-medium"
             style={{
               background:
                 feedbackNotice.type === "success"
-                  ? "rgba(34, 197, 94, 0.12)"
-                  : "rgba(239, 68, 68, 0.12)",
+                  ? "rgba(22, 163, 74, 0.12)"
+                  : "rgba(220, 38, 38, 0.12)",
               border:
                 feedbackNotice.type === "success"
-                  ? "1px solid rgba(34, 197, 94, 0.25)"
-                  : "1px solid rgba(239, 68, 68, 0.25)",
-              color: feedbackNotice.type === "success" ? "#86efac" : "#fca5a5",
+                  ? "1px solid rgba(22, 163, 74, 0.25)"
+                  : "1px solid rgba(220, 38, 38, 0.25)",
+              color:
+                feedbackNotice.type === "success"
+                  ? "var(--color-success)"
+                  : "var(--color-danger)",
             }}
           >
             <div className="flex items-center gap-2">
               {feedbackNotice.type === "success" ? (
-                <CheckCircle2 size={16} className="text-emerald-400" />
+                <CheckCircle2
+                  size={15}
+                  style={{ color: "var(--color-success)" }}
+                />
               ) : (
-                <AlertCircle size={16} className="text-red-400" />
+                <AlertCircle
+                  size={15}
+                  style={{ color: "var(--color-danger)" }}
+                />
               )}
-              <span className="font-medium">{feedbackNotice.text}</span>
+              <span>{feedbackNotice.text}</span>
             </div>
             <button
               onClick={() => setFeedbackNotice(null)}
-              className="text-slate-400 hover:text-white cursor-pointer"
+              className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer text-xs p-1"
             >
               ✕
             </button>
@@ -528,34 +564,48 @@ export default function JobQueue({ projectId, onSync }) {
 
       {/* ── Tab Switcher ───────────────────────────────────────── */}
       <div
-        className="flex items-center gap-2 border-b border-white/5 pb-3"
-        style={{ marginBottom: 24 }}
+        className="flex items-center gap-2 border-b border-[var(--color-border)] pb-2.5"
+        style={{ marginBottom: 20 }}
       >
         <button
           onClick={() => setActiveTab("snapshots")}
-          className="flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold cursor-pointer transition-all"
+          className="flex items-center gap-2 rounded-[var(--radius-md)] px-3.5 py-1.5 text-xs font-semibold cursor-pointer transition-colors"
           style={{
             background:
               activeTab === "snapshots"
-                ? "rgba(124, 58, 237, 0.18)"
-                : "rgba(255, 255, 255, 0.02)",
-            color: activeTab === "snapshots" ? "#c084fc" : "#8b949e",
+                ? "var(--color-surface-secondary)"
+                : "transparent",
+            color:
+              activeTab === "snapshots"
+                ? "var(--color-text)"
+                : "var(--color-text-muted)",
             border:
               activeTab === "snapshots"
-                ? "1px solid rgba(124, 58, 237, 0.35)"
-                : "1px solid rgba(255, 255, 255, 0.06)",
+                ? "1px solid var(--color-border)"
+                : "1px solid transparent",
           }}
         >
-          <Layers size={14} />
+          <Layers
+            size={13}
+            style={{
+              color:
+                activeTab === "snapshots"
+                  ? "var(--color-primary)"
+                  : "var(--color-text-muted)",
+            }}
+          />
           <span>Code Snapshots & Checkpoints</span>
           <span
-            className="rounded-full px-2 py-0.2 text-[10px]"
+            className="rounded-full px-1.5 py-0.2 text-[10px] font-mono font-medium"
             style={{
               background:
                 activeTab === "snapshots"
-                  ? "rgba(168, 85, 247, 0.25)"
-                  : "rgba(255, 255, 255, 0.06)",
-              color: activeTab === "snapshots" ? "#e9d5ff" : "#6e7681",
+                  ? "rgba(109, 93, 251, 0.12)"
+                  : "var(--color-surface-secondary)",
+              color:
+                activeTab === "snapshots"
+                  ? "var(--color-primary)"
+                  : "var(--color-text-muted)",
             }}
           >
             {snapshots.length}
@@ -564,28 +614,51 @@ export default function JobQueue({ projectId, onSync }) {
 
         <button
           onClick={() => setActiveTab("jobs")}
-          className="flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold cursor-pointer transition-all"
+          className="flex items-center gap-2 rounded-[var(--radius-md)] px-3.5 py-1.5 text-xs font-semibold cursor-pointer transition-colors"
           style={{
             background:
               activeTab === "jobs"
-                ? "rgba(56, 189, 248, 0.15)"
-                : "rgba(255, 255, 255, 0.02)",
-            color: activeTab === "jobs" ? "#38bdf8" : "#8b949e",
+                ? "var(--color-surface-secondary)"
+                : "transparent",
+            color:
+              activeTab === "jobs"
+                ? "var(--color-text)"
+                : "var(--color-text-muted)",
             border:
               activeTab === "jobs"
-                ? "1px solid rgba(56, 189, 248, 0.35)"
-                : "1px solid rgba(255, 255, 255, 0.06)",
+                ? "1px solid var(--color-border)"
+                : "1px solid transparent",
           }}
         >
-          <Cpu size={14} />
+          <Cpu
+            size={13}
+            style={{
+              color:
+                activeTab === "jobs"
+                  ? "var(--color-primary)"
+                  : "var(--color-text-muted)",
+            }}
+          />
           <span>Pipelines & Job Queue</span>
           {activeJobs.length > 0 ? (
-            <span className="flex items-center gap-1 rounded-full px-2 py-0.2 text-[10px] bg-sky-500/20 text-sky-300 font-bold animate-pulse">
-              <span className="w-1.5 h-1.5 rounded-full bg-sky-400" />
+            <span
+              className="flex items-center gap-1 rounded-full px-2 py-0.2 text-[10px] font-semibold"
+              style={{
+                background: "rgba(2, 132, 199, 0.12)",
+                color: "var(--color-info)",
+              }}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-info)]" />
               {activeJobs.length} active
             </span>
           ) : (
-            <span className="rounded-full px-2 py-0.2 text-[10px] bg-white/5 text-slate-500">
+            <span
+              className="rounded-full px-1.5 py-0.2 text-[10px] font-mono font-medium"
+              style={{
+                background: "var(--color-surface-secondary)",
+                color: "var(--color-text-muted)",
+              }}
+            >
               {jobs.length}
             </span>
           )}
@@ -594,38 +667,47 @@ export default function JobQueue({ projectId, onSync }) {
 
       {/* ── TAB 1: CODE SNAPSHOTS & CHECKPOINTS ────────────────── */}
       {activeTab === "snapshots" && (
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
           {/* Left Column: Timeline & Checkpoint List */}
-          <div className="xl:col-span-2 flex flex-col gap-5">
+          <div className="xl:col-span-2 flex flex-col gap-4">
             {/* Search and count header */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-2">
-                <History size={16} className="text-purple-400" />
-                <h2 style={{ fontSize: 16, fontWeight: 600, color: "#f0f6fc" }}>
+                <History size={15} style={{ color: "var(--color-primary)" }} />
+                <h2
+                  style={{
+                    fontSize: 15,
+                    fontWeight: 600,
+                    color: "var(--color-text)",
+                  }}
+                >
                   Snapshot History ({filteredSnapshots.length})
                 </h2>
               </div>
 
               <div
-                className="flex items-center gap-2 rounded-lg px-3 py-1.5"
+                className="flex items-center gap-2 rounded-[var(--radius-md)] px-2.5 py-1.5"
                 style={{
-                  background: "rgba(255, 255, 255, 0.03)",
-                  border: "1px solid rgba(255, 255, 255, 0.07)",
+                  background: "var(--color-surface)",
+                  border: "1px solid var(--color-border)",
                   width: 240,
                 }}
               >
-                <Search size={13} className="text-slate-500" />
+                <Search
+                  size={13}
+                  style={{ color: "var(--color-text-muted)" }}
+                />
                 <input
                   type="text"
                   placeholder="Search checkpoints..."
                   value={snapshotSearch}
                   onChange={(e) => setSnapshotSearch(e.target.value)}
-                  className="bg-transparent border-none text-xs text-white focus:outline-none w-full"
+                  className="bg-transparent border-none text-xs text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:outline-none w-full"
                 />
                 {snapshotSearch && (
                   <button
                     onClick={() => setSnapshotSearch("")}
-                    className="text-slate-500 hover:text-white text-xs"
+                    className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-xs cursor-pointer"
                   >
                     ✕
                   </button>
@@ -635,34 +717,20 @@ export default function JobQueue({ projectId, onSync }) {
 
             {/* Loading state */}
             {loadingSnapshots && snapshots.length === 0 && (
-              <div
-                className="flex flex-col items-center justify-center rounded-xl p-12"
-                style={{
-                  background: "rgba(255,255,255,0.02)",
-                  border: "1px solid rgba(255,255,255,0.06)",
-                }}
-              >
-                <Loader2
-                  size={26}
-                  className="animate-spin text-purple-400 mb-3"
-                />
-                <span style={{ color: "#8b949e", fontSize: 13 }}>
-                  Loading snapshot checkpoints...
-                </span>
-              </div>
+              <SnapshotsListSkeleton count={3} />
             )}
 
             {/* Error state */}
             {errorSnapshots && (
               <div
-                className="rounded-xl flex items-center gap-3 p-4 text-xs"
+                className="rounded-[var(--radius-md)] flex items-center gap-2.5 p-3 text-xs"
                 style={{
-                  background: "rgba(239,68,68,0.08)",
-                  border: "1px solid rgba(239,68,68,0.2)",
-                  color: "#f87171",
+                  background: "rgba(220, 38, 38, 0.1)",
+                  border: "1px solid rgba(220, 38, 38, 0.25)",
+                  color: "var(--color-danger)",
                 }}
               >
-                <XCircle size={16} />
+                <XCircle size={15} />
                 {errorSnapshots}
               </div>
             )}
@@ -672,24 +740,32 @@ export default function JobQueue({ projectId, onSync }) {
               !errorSnapshots &&
               filteredSnapshots.length === 0 && (
                 <div
-                  className="flex flex-col items-center justify-center rounded-xl p-12 text-center"
+                  className="flex flex-col items-center justify-center rounded-[var(--radius-lg)] p-10 text-center"
                   style={{
-                    background: "rgba(255,255,255,0.02)",
-                    border: "1px solid rgba(255,255,255,0.06)",
+                    background: "var(--color-surface)",
+                    border: "1px solid var(--color-border)",
                   }}
                 >
-                  <BookmarkPlus size={32} className="text-slate-600 mb-3" />
+                  <BookmarkPlus
+                    size={28}
+                    style={{ color: "var(--color-text-muted)" }}
+                    className="mb-2.5"
+                  />
                   <p
-                    style={{ color: "#f0f6fc", fontSize: 15, fontWeight: 600 }}
+                    style={{
+                      color: "var(--color-text)",
+                      fontSize: 14,
+                      fontWeight: 600,
+                    }}
                   >
                     No snapshots found
                   </p>
                   <p
                     style={{
-                      color: "#8b949e",
-                      fontSize: 13,
+                      color: "var(--color-text-secondary)",
+                      fontSize: 12,
                       marginTop: 4,
-                      maxWidth: 360,
+                      maxWidth: 320,
                     }}
                   >
                     Click &quot;Create Snapshot&quot; to capture your current
@@ -697,11 +773,11 @@ export default function JobQueue({ projectId, onSync }) {
                   </p>
                   <button
                     onClick={() => setShowCreateModal(true)}
-                    className="mt-4 px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer"
+                    className="mt-3 px-3.5 py-1.5 rounded-[var(--radius-md)] text-xs font-semibold cursor-pointer"
                     style={{
-                      background: "rgba(124, 58, 237, 0.2)",
-                      color: "#c084fc",
-                      border: "1px solid rgba(124, 58, 237, 0.4)",
+                      background: "var(--color-primary)",
+                      color: "#ffffff",
+                      border: "none",
                     }}
                   >
                     Capture First Checkpoint
@@ -710,7 +786,7 @@ export default function JobQueue({ projectId, onSync }) {
               )}
 
             {/* Snapshot Cards Timeline */}
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-3">
               <AnimatePresence mode="popLayout">
                 {filteredSnapshots.map((snap, idx) => {
                   const isCurrent = snap.isCurrent;
@@ -719,44 +795,41 @@ export default function JobQueue({ projectId, onSync }) {
                     <motion.div
                       key={snap.id}
                       layout
-                      initial={{ opacity: 0, y: 12 }}
+                      initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -10 }}
-                      transition={{ delay: idx * 0.04, duration: 0.3 }}
-                      className="relative rounded-xl overflow-hidden flex flex-col transition-all"
+                      exit={{ opacity: 0, y: -8 }}
+                      transition={{ delay: idx * 0.03, duration: 0.25 }}
+                      className="relative rounded-[var(--radius-lg)] overflow-hidden flex flex-col transition-all"
                       style={{
-                        background: isCurrent
-                          ? "rgba(109, 93, 251, 0.08)"
-                          : "var(--color-surface)",
+                        background: "var(--color-surface)",
                         border: isCurrent
                           ? "1px solid var(--color-primary)"
                           : "1px solid var(--color-border)",
-                        boxShadow: "none",
-                        padding: "18px 22px",
+                        padding: "16px 20px",
                       }}
                     >
                       {/* Left Accent Stripe */}
                       <div
                         className="absolute left-0 top-0 bottom-0"
                         style={{
-                          width: 4,
+                          width: 3,
                           background: isCurrent
                             ? "var(--color-primary)"
-                            : "var(--color-border)",
+                            : "transparent",
                         }}
                       />
 
                       {/* Header Row */}
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-2.5">
                         <div className="flex items-center gap-3">
                           <div
-                            className="flex items-center justify-center w-8 h-8 rounded-lg flex-shrink-0"
+                            className="flex items-center justify-center w-8 h-8 rounded-[var(--radius-md)] flex-shrink-0"
                             style={{
                               background: isCurrent
-                                ? "rgba(109, 93, 251, 0.15)"
-                                : "var(--color-bg)",
+                                ? "rgba(109, 93, 251, 0.12)"
+                                : "var(--color-surface-secondary)",
                               border: isCurrent
-                                ? "1px solid var(--color-primary)"
+                                ? "1px solid rgba(109, 93, 251, 0.3)"
                                 : "1px solid var(--color-border)",
                               color: isCurrent
                                 ? "var(--color-primary)"
@@ -770,23 +843,23 @@ export default function JobQueue({ projectId, onSync }) {
                             <div className="flex items-center gap-2">
                               <h3
                                 style={{
-                                  fontSize: 15,
+                                  fontSize: 14,
                                   fontWeight: 600,
-                                  color: "#f0f6fc",
+                                  color: "var(--color-text)",
                                 }}
                               >
                                 {snap.label}
                               </h3>
                               {isCurrent && (
                                 <span
-                                  className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold"
+                                  className="flex items-center gap-1.5 px-2 py-0.5 rounded-[var(--radius-sm)] text-[10px] font-bold"
                                   style={{
-                                    background: "rgba(34, 197, 94, 0.15)",
-                                    color: "#4ade80",
-                                    border: "1px solid rgba(34, 197, 94, 0.3)",
+                                    background: "rgba(22, 163, 74, 0.12)",
+                                    color: "var(--color-success)",
+                                    border: "1px solid rgba(22, 163, 74, 0.25)",
                                   }}
                                 >
-                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-success)]" />
                                   ACTIVE VERSION
                                 </span>
                               )}
@@ -794,11 +867,11 @@ export default function JobQueue({ projectId, onSync }) {
                             <p
                               style={{
                                 fontSize: 12,
-                                color: "#8b949e",
+                                color: "var(--color-text-secondary)",
                                 marginTop: 2,
                               }}
                             >
-                              {snap.message}
+                              {snap.message || "Manual code checkpoint"}
                             </p>
                           </div>
                         </div>
@@ -807,15 +880,14 @@ export default function JobQueue({ projectId, onSync }) {
                         <div className="flex items-center gap-2 self-start sm:self-center">
                           {!isCurrent ? (
                             <motion.button
-                              whileHover={{ scale: 1.04 }}
-                              whileTap={{ scale: 0.96 }}
+                              whileHover={{ scale: 1.02 }}
+                              whileTap={{ scale: 0.98 }}
                               onClick={() => setConfirmRestoreSnapshot(snap)}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer"
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-md)] text-xs font-semibold cursor-pointer transition-colors hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
                               style={{
-                                background: "rgba(124, 58, 237, 0.15)",
-                                color: "#c084fc",
-                                border: "1px solid rgba(124, 58, 237, 0.35)",
-                                transition: "all 0.15s ease",
+                                background: "var(--color-surface-secondary)",
+                                color: "var(--color-text)",
+                                border: "1px solid var(--color-border)",
                               }}
                               title="Revert code to this checkpoint"
                             >
@@ -825,7 +897,7 @@ export default function JobQueue({ projectId, onSync }) {
                           ) : (
                             <span
                               className="text-[11px] font-medium"
-                              style={{ color: "#6e7681" }}
+                              style={{ color: "var(--color-text-muted)" }}
                             >
                               Current Workspace
                             </span>
@@ -835,20 +907,20 @@ export default function JobQueue({ projectId, onSync }) {
 
                       {/* Metadata Row */}
                       <div
-                        className="flex flex-wrap items-center gap-4 text-xs pt-3 border-t border-white/5"
+                        className="flex flex-wrap items-center gap-4 text-xs pt-2.5 border-t border-[var(--color-border)]"
                         style={{
-                          color: "#6e7681",
+                          color: "var(--color-text-muted)",
                           fontFamily: "var(--font-mono)",
                         }}
                       >
                         <div className="flex items-center gap-1.5">
-                          <Clock size={12} className="text-slate-500" />
+                          <Clock size={12} />
                           <span>{formatDateTime(snap.createdAt)}</span>
                         </div>
 
                         <div className="flex items-center gap-1.5">
-                          <Tag size={12} className="text-slate-500" />
-                          <span className="text-slate-400">
+                          <Tag size={12} />
+                          <span>
                             {snap.source === "GITHUB"
                               ? "GitHub"
                               : snap.source === "ZIP"
@@ -859,7 +931,12 @@ export default function JobQueue({ projectId, onSync }) {
 
                         {snap.commitSha && (
                           <div className="flex items-center gap-1.5">
-                            <span className="text-purple-400 font-semibold">
+                            <span
+                              style={{
+                                color: "var(--color-primary)",
+                                fontWeight: 600,
+                              }}
+                            >
                               Commit:
                             </span>
                             <span>{snap.commitSha.slice(0, 7)}</span>
@@ -869,7 +946,7 @@ export default function JobQueue({ projectId, onSync }) {
                         {snap.fileCount !== null &&
                           snap.fileCount !== undefined && (
                             <div className="flex items-center gap-1.5">
-                              <FileCode2 size={12} className="text-slate-500" />
+                              <FileCode2 size={12} />
                               <span>{snap.fileCount} files</span>
                             </div>
                           )}
@@ -877,7 +954,7 @@ export default function JobQueue({ projectId, onSync }) {
                         {snap.sizeBytes !== null &&
                           snap.sizeBytes !== undefined && (
                             <div className="flex items-center gap-1.5">
-                              <HardDrive size={12} className="text-slate-500" />
+                              <HardDrive size={12} />
                               <span>{formatBytes(snap.sizeBytes)}</span>
                             </div>
                           )}
@@ -890,22 +967,37 @@ export default function JobQueue({ projectId, onSync }) {
           </div>
 
           {/* Right Column: Quick Create & Version Insights */}
-          <div className="flex flex-col gap-6">
+          <div className="flex flex-col gap-4">
             {/* Quick Create Checkpoint Card */}
             <div
-              className="rounded-xl flex flex-col p-6"
+              className="rounded-[var(--radius-lg)] flex flex-col p-5"
               style={{
-                background: "rgba(255,255,255,0.02)",
-                border: "1px solid rgba(255,255,255,0.08)",
+                background: "var(--color-surface)",
+                border: "1px solid var(--color-border)",
               }}
             >
-              <div className="flex items-center gap-2 mb-3">
-                <BookmarkPlus size={16} className="text-purple-400" />
-                <h3 style={{ fontSize: 15, fontWeight: 600, color: "#f0f6fc" }}>
+              <div className="flex items-center gap-2 mb-2">
+                <BookmarkPlus
+                  size={15}
+                  style={{ color: "var(--color-primary)" }}
+                />
+                <h3
+                  style={{
+                    fontSize: 14,
+                    fontWeight: 600,
+                    color: "var(--color-text)",
+                  }}
+                >
                   Quick Checkpoint
                 </h3>
               </div>
-              <p style={{ fontSize: 12, color: "#8b949e", marginBottom: 16 }}>
+              <p
+                style={{
+                  fontSize: 12,
+                  color: "var(--color-text-secondary)",
+                  marginBottom: 14,
+                }}
+              >
                 Save the current code state to easily revert anytime.
               </p>
 
@@ -918,7 +1010,7 @@ export default function JobQueue({ projectId, onSync }) {
                     style={{
                       fontSize: 11,
                       fontWeight: 600,
-                      color: "#8b949e",
+                      color: "var(--color-text)",
                       marginBottom: 4,
                       display: "block",
                     }}
@@ -930,10 +1022,10 @@ export default function JobQueue({ projectId, onSync }) {
                     placeholder="e.g. Before refactoring auth..."
                     value={newLabel}
                     onChange={(e) => setNewLabel(e.target.value)}
-                    className="w-full rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none"
+                    className="w-full rounded-[var(--radius-md)] px-3 py-1.5 text-xs text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)] transition-colors"
                     style={{
-                      background: "rgba(255,255,255,0.04)",
-                      border: "1px solid rgba(255,255,255,0.1)",
+                      background: "var(--color-bg)",
+                      border: "1px solid var(--color-border)",
                     }}
                   />
                 </div>
@@ -943,7 +1035,7 @@ export default function JobQueue({ projectId, onSync }) {
                     style={{
                       fontSize: 11,
                       fontWeight: 600,
-                      color: "#8b949e",
+                      color: "var(--color-text)",
                       marginBottom: 4,
                       display: "block",
                     }}
@@ -955,25 +1047,24 @@ export default function JobQueue({ projectId, onSync }) {
                     placeholder="Brief description of current changes..."
                     value={newMessage}
                     onChange={(e) => setNewMessage(e.target.value)}
-                    className="w-full rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none resize-none"
+                    className="w-full rounded-[var(--radius-md)] px-3 py-1.5 text-xs text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)] transition-colors resize-none"
                     style={{
-                      background: "rgba(255,255,255,0.04)",
-                      border: "1px solid rgba(255,255,255,0.1)",
+                      background: "var(--color-bg)",
+                      border: "1px solid var(--color-border)",
                     }}
                   />
                 </div>
 
                 <motion.button
-                  whileHover={{ scale: 1.02 }}
+                  whileHover={{ scale: 1.01 }}
                   whileTap={{ scale: 0.98 }}
                   type="submit"
                   disabled={creatingSnapshot}
-                  className="w-full flex items-center justify-center gap-2 rounded-lg py-2.5 text-xs font-semibold cursor-pointer mt-1"
+                  className="w-full flex items-center justify-center gap-1.5 rounded-[var(--radius-md)] py-2 text-xs font-semibold cursor-pointer mt-1"
                   style={{
                     background: "var(--color-primary)",
                     color: "#ffffff",
                     border: "none",
-                    boxShadow: "none",
                     opacity: creatingSnapshot ? 0.7 : 1,
                   }}
                 >
@@ -994,53 +1085,64 @@ export default function JobQueue({ projectId, onSync }) {
 
             {/* Version Overview Card */}
             <div
-              className="rounded-xl flex flex-col p-6 gap-5"
+              className="rounded-[var(--radius-lg)] flex flex-col p-5 gap-4"
               style={{
-                background: "rgba(255,255,255,0.02)",
-                border: "1px solid rgba(255,255,255,0.06)",
+                background: "var(--color-surface)",
+                border: "1px solid var(--color-border)",
               }}
             >
-              <h3 style={{ fontSize: 14, fontWeight: 600, color: "#f0f6fc" }}>
+              <h3
+                style={{
+                  fontSize: 14,
+                  fontWeight: 600,
+                  color: "var(--color-text)",
+                }}
+              >
                 Version Overview
               </h3>
 
-              <div className="flex justify-between items-center">
-                <span style={{ fontSize: 13, color: "#8b949e" }}>
+              <div className="flex justify-between items-center text-xs">
+                <span style={{ color: "var(--color-text-secondary)" }}>
                   Total Checkpoints
                 </span>
                 <span
-                  style={{ fontSize: 16, fontWeight: 700, color: "#a78bfa" }}
+                  style={{
+                    fontWeight: 700,
+                    color: "var(--color-text)",
+                    fontFamily: "var(--font-mono)",
+                  }}
                 >
                   {snapshots.length}
                 </span>
               </div>
 
-              <div
-                style={{ height: 1, background: "rgba(255,255,255,0.06)" }}
-              />
+              <div style={{ height: 1, background: "var(--color-border)" }} />
 
-              <div className="flex justify-between items-center">
-                <span style={{ fontSize: 13, color: "#8b949e" }}>
+              <div className="flex justify-between items-center text-xs">
+                <span style={{ color: "var(--color-text-secondary)" }}>
                   Active Version
                 </span>
                 <span
-                  className="truncate max-w-[150px]"
-                  style={{ fontSize: 12, fontWeight: 600, color: "#4ade80" }}
+                  className="truncate max-w-[150px] font-semibold"
+                  style={{ color: "var(--color-primary)" }}
                   title={activeSnapshot?.label || "None"}
                 >
                   {activeSnapshot?.label || "None"}
                 </span>
               </div>
 
-              <div
-                style={{ height: 1, background: "rgba(255,255,255,0.06)" }}
-              />
+              <div style={{ height: 1, background: "var(--color-border)" }} />
 
-              <div className="flex justify-between items-center">
-                <span style={{ fontSize: 13, color: "#8b949e" }}>
+              <div className="flex justify-between items-center text-xs">
+                <span style={{ color: "var(--color-text-secondary)" }}>
                   Last Captured
                 </span>
-                <span style={{ fontSize: 12, color: "#e2e8f0" }}>
+                <span
+                  style={{
+                    color: "var(--color-text)",
+                    fontFamily: "var(--font-mono)",
+                  }}
+                >
                   {activeSnapshot?.createdAt
                     ? formatTime(activeSnapshot.createdAt)
                     : "—"}
@@ -1049,16 +1151,17 @@ export default function JobQueue({ projectId, onSync }) {
 
               {/* Safety notice */}
               <div
-                className="rounded-lg p-3 text-[11px] leading-relaxed flex items-start gap-2"
+                className="rounded-[var(--radius-md)] p-3 text-[11px] leading-relaxed flex items-start gap-2"
                 style={{
-                  background: "rgba(124, 58, 237, 0.08)",
-                  border: "1px solid rgba(124, 58, 237, 0.2)",
-                  color: "#d8b4fe",
+                  background: "var(--color-surface-secondary)",
+                  border: "1px solid var(--color-border)",
+                  color: "var(--color-text-secondary)",
                 }}
               >
                 <ShieldCheck
                   size={14}
-                  className="flex-shrink-0 text-purple-400 mt-0.5"
+                  className="flex-shrink-0 mt-0.5"
+                  style={{ color: "var(--color-primary)" }}
                 />
                 <span>
                   All checkpoints are immutable. Restoring a previous version
@@ -1073,36 +1176,45 @@ export default function JobQueue({ projectId, onSync }) {
 
       {/* ── TAB 2: PIPELINES & JOB QUEUE ───────────────────────── */}
       {activeTab === "jobs" && (
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-10">
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
           {/* Left Column: Jobs List */}
           <div className="xl:col-span-2 flex flex-col gap-4">
-            <div className="flex items-center justify-between mb-2">
-              <h2 style={{ fontSize: 17, fontWeight: 600, color: "#f0f6fc" }}>
+            <div className="flex items-center justify-between mb-1">
+              <h2
+                style={{
+                  fontSize: 15,
+                  fontWeight: 600,
+                  color: "var(--color-text)",
+                }}
+              >
                 {filterJobs === "ALL"
                   ? `All Jobs (${jobs.length})`
                   : filterJobs === "ACTIVE"
                     ? `Active Jobs (${activeJobs.length})`
                     : `Completed (${completedJobs.length + failedJobs.length})`}
               </h2>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 {["ALL", "ACTIVE", "COMPLETED"].map((f) => (
                   <button
                     key={f}
                     onClick={() => setFilterJobs(f)}
-                    className="rounded-lg transition-colors cursor-pointer"
+                    className="rounded-[var(--radius-md)] transition-colors cursor-pointer"
                     style={{
                       background:
                         filterJobs === f
-                          ? "rgba(124,58,237,0.15)"
+                          ? "var(--color-surface-secondary)"
                           : "transparent",
                       border:
                         filterJobs === f
-                          ? "1px solid rgba(124,58,237,0.3)"
+                          ? "1px solid var(--color-border)"
                           : "1px solid transparent",
-                      color: filterJobs === f ? "#a78bfa" : "#6e7681",
+                      color:
+                        filterJobs === f
+                          ? "var(--color-text)"
+                          : "var(--color-text-muted)",
                       fontSize: 12,
                       fontWeight: 500,
-                      padding: "5px 12px",
+                      padding: "4px 10px",
                       fontFamily: "var(--font-sans)",
                     }}
                   >
@@ -1113,34 +1225,19 @@ export default function JobQueue({ projectId, onSync }) {
             </div>
 
             {/* Loading state */}
-            {loadingJobs && jobs.length === 0 && (
-              <div
-                className="flex flex-col items-center justify-center"
-                style={{ padding: "60px 0" }}
-              >
-                <Loader2
-                  size={28}
-                  className="animate-spin text-purple-400 mb-3"
-                />
-                <span style={{ color: "#6e7681", fontSize: 14 }}>
-                  Loading jobs...
-                </span>
-              </div>
-            )}
+            {loadingJobs && jobs.length === 0 && <JobsListSkeleton count={3} />}
 
             {/* Error state */}
             {errorJobs && (
               <div
-                className="rounded-xl flex items-center gap-3"
+                className="rounded-[var(--radius-md)] flex items-center gap-2.5 p-3 text-xs"
                 style={{
-                  background: "rgba(239,68,68,0.08)",
-                  border: "1px solid rgba(239,68,68,0.2)",
-                  padding: "16px 20px",
-                  color: "#f87171",
-                  fontSize: 14,
+                  background: "rgba(220, 38, 38, 0.1)",
+                  border: "1px solid rgba(220, 38, 38, 0.25)",
+                  color: "var(--color-danger)",
                 }}
               >
-                <XCircle size={18} />
+                <XCircle size={15} />
                 {errorJobs}
               </div>
             )}
@@ -1148,21 +1245,32 @@ export default function JobQueue({ projectId, onSync }) {
             {/* Empty state */}
             {!loadingJobs && !errorJobs && filteredJobs.length === 0 && (
               <div
-                className="flex flex-col items-center justify-center rounded-xl"
+                className="flex flex-col items-center justify-center rounded-[var(--radius-lg)] p-12 text-center"
                 style={{
-                  background: "rgba(255,255,255,0.02)",
-                  border: "1px solid rgba(255,255,255,0.06)",
-                  padding: "60px 20px",
+                  background: "var(--color-surface)",
+                  border: "1px solid var(--color-border)",
                 }}
               >
                 <Clock
-                  size={36}
-                  style={{ color: "#484f58", marginBottom: 12 }}
+                  size={32}
+                  style={{ color: "var(--color-text-muted)", marginBottom: 8 }}
                 />
-                <p style={{ color: "#8b949e", fontSize: 15, fontWeight: 500 }}>
+                <p
+                  style={{
+                    color: "var(--color-text)",
+                    fontSize: 14,
+                    fontWeight: 600,
+                  }}
+                >
                   No jobs found
                 </p>
-                <p style={{ color: "#6e7681", fontSize: 13, marginTop: 4 }}>
+                <p
+                  style={{
+                    color: "var(--color-text-secondary)",
+                    fontSize: 12,
+                    marginTop: 4,
+                  }}
+                >
                   {filterJobs !== "ALL"
                     ? "Try changing the filter."
                     : "Jobs will appear here when you import a project or run tests."}
@@ -1171,7 +1279,7 @@ export default function JobQueue({ projectId, onSync }) {
             )}
 
             {/* Job Cards */}
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-3">
               <AnimatePresence mode="popLayout">
                 {filteredJobs.map((job, idx) => {
                   const visual = getJobVisual(job);
@@ -1181,85 +1289,93 @@ export default function JobQueue({ projectId, onSync }) {
                     <motion.div
                       key={job.id}
                       layout
-                      initial={{ opacity: 0, y: 15 }}
+                      initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{
                         opacity: 0,
-                        y: -10,
-                        transition: { duration: 0.2 },
+                        y: -8,
+                        transition: { duration: 0.15 },
                       }}
                       transition={{
-                        delay: idx * 0.05,
-                        duration: 0.35,
+                        delay: idx * 0.03,
+                        duration: 0.25,
                         ease: "easeOut",
                       }}
-                      className="relative rounded-xl overflow-hidden flex flex-col"
+                      className="relative rounded-[var(--radius-lg)] overflow-hidden flex flex-col"
                       style={{
-                        background: "rgba(255,255,255,0.03)",
-                        border: "1px solid rgba(255,255,255,0.06)",
-                        padding: "20px 24px",
+                        background: "var(--color-surface)",
+                        border: "1px solid var(--color-border)",
+                        padding: "16px 20px",
                       }}
                     >
                       {/* Left Accent Bar */}
                       <div
                         className="absolute left-0 top-0 bottom-0"
                         style={{
-                          width: 4,
+                          width: 3,
                           background: visual.color,
-                          boxShadow: `0 0 12px ${visual.color}60`,
                         }}
                       />
 
-                      <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-6">
-                        <div className="flex items-center gap-4">
+                      <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-4">
+                        <div className="flex items-center gap-3">
                           <div
-                            className="flex items-center justify-center rounded-lg flex-shrink-0"
+                            className="flex items-center justify-center rounded-[var(--radius-md)] flex-shrink-0"
                             style={{
-                              width: 44,
-                              height: 44,
-                              background: "rgba(255,255,255,0.04)",
-                              border: "1px solid rgba(255,255,255,0.08)",
+                              width: 38,
+                              height: 38,
+                              background: "var(--color-surface-secondary)",
+                              border: "1px solid var(--color-border)",
                             }}
                           >
                             <visual.Icon
-                              size={18}
+                              size={17}
                               style={{ color: visual.color }}
                             />
                           </div>
                           <div>
-                            <h3
-                              style={{
-                                fontSize: 16,
-                                fontWeight: 600,
-                                color: "#f0f6fc",
-                                marginBottom: 4,
-                              }}
-                            >
-                              {visual.typeLabel}
+                            <div className="flex items-center gap-2">
+                              <h3
+                                style={{
+                                  fontSize: 14,
+                                  fontWeight: 600,
+                                  color: "var(--color-text)",
+                                }}
+                              >
+                                {visual.typeLabel}
+                              </h3>
                               {job.project?.name && (
                                 <span
                                   style={{
-                                    marginLeft: 8,
-                                    fontSize: 12,
+                                    fontSize: 11,
                                     fontWeight: 500,
-                                    color: "#a78bfa",
-                                    background: "rgba(124,58,237,0.15)",
-                                    padding: "2px 8px",
-                                    borderRadius: 12,
+                                    color: "var(--color-primary)",
+                                    background: "rgba(109, 93, 251, 0.1)",
+                                    border:
+                                      "1px solid rgba(109, 93, 251, 0.25)",
+                                    padding: "1px 7px",
+                                    borderRadius: "var(--radius-sm)",
                                   }}
                                 >
                                   {job.project.name}
                                 </span>
                               )}
-                            </h3>
-                            <p style={{ fontSize: 13, color: "#8b949e" }}>
+                            </div>
+                            <p
+                              style={{
+                                fontSize: 12,
+                                color: "var(--color-text-secondary)",
+                                marginTop: 2,
+                              }}
+                            >
                               {visual.taskLabel}
                             </p>
                             <p
                               style={{
                                 fontSize: 11,
-                                color: "#484f58",
-                                marginTop: 4,
+                                color: "var(--color-text-muted)",
+                                marginTop: 3,
+                                fontFamily: "var(--font-mono)",
                               }}
                             >
                               Started:{" "}
@@ -1272,11 +1388,11 @@ export default function JobQueue({ projectId, onSync }) {
 
                         {/* Status Badge */}
                         <div
-                          className="rounded-full flex items-center gap-2 flex-shrink-0"
+                          className="rounded-full flex items-center gap-1.5 flex-shrink-0"
                           style={{
-                            padding: "6px 14px",
-                            background: `${visual.color}18`,
-                            border: `1px solid ${visual.color}40`,
+                            padding: "4px 12px",
+                            background: visual.bg,
+                            border: `1px solid ${visual.border}`,
                           }}
                         >
                           {isActive && (
@@ -1288,16 +1404,15 @@ export default function JobQueue({ projectId, onSync }) {
                                 width: 6,
                                 height: 6,
                                 background: visual.color,
-                                boxShadow: `0 0 8px ${visual.color}`,
                               }}
                             />
                           )}
                           <span
                             style={{
-                              fontSize: 11,
+                              fontSize: 10,
                               fontWeight: 700,
                               color: visual.color,
-                              letterSpacing: "0.06em",
+                              letterSpacing: "0.04em",
                             }}
                           >
                             {visual.statusLabel}
@@ -1307,22 +1422,22 @@ export default function JobQueue({ projectId, onSync }) {
 
                       {/* Progress Bar */}
                       <div>
-                        <div className="flex justify-between items-center mb-3">
+                        <div className="flex justify-between items-center mb-1.5">
                           <span
                             style={{
-                              fontSize: 12,
-                              color: "#8b949e",
+                              fontSize: 11,
+                              color: "var(--color-text-secondary)",
                               fontWeight: 500,
-                              letterSpacing: "0.02em",
                             }}
                           >
                             Progress
                           </span>
                           <span
                             style={{
-                              fontSize: 12,
-                              color: "#f0f6fc",
+                              fontSize: 11,
+                              color: "var(--color-text)",
                               fontWeight: 600,
+                              fontFamily: "var(--font-mono)",
                             }}
                           >
                             {job.progress}%
@@ -1332,7 +1447,8 @@ export default function JobQueue({ projectId, onSync }) {
                           className="w-full rounded-full overflow-hidden"
                           style={{
                             height: 6,
-                            background: "rgba(255,255,255,0.06)",
+                            background: "var(--color-surface-secondary)",
+                            border: "1px solid var(--color-border)",
                           }}
                         >
                           <div
@@ -1340,8 +1456,7 @@ export default function JobQueue({ projectId, onSync }) {
                             style={{
                               width: `${job.progress}%`,
                               background: visual.color,
-                              boxShadow: "none",
-                              transition: "width 0.6s ease-out",
+                              transition: "width 0.4s ease-out",
                             }}
                           />
                         </div>
@@ -1350,13 +1465,13 @@ export default function JobQueue({ projectId, onSync }) {
                       {/* Error message */}
                       {job.status === "FAILED" && job.errorMessage && (
                         <div
-                          className="mt-4 rounded-lg"
+                          className="mt-3 rounded-[var(--radius-md)]"
                           style={{
-                            background: "rgba(239,68,68,0.06)",
-                            border: "1px solid rgba(239,68,68,0.15)",
-                            padding: "10px 14px",
-                            fontSize: 12,
-                            color: "#f87171",
+                            background: "rgba(220, 38, 38, 0.08)",
+                            border: "1px solid rgba(220, 38, 38, 0.2)",
+                            padding: "8px 12px",
+                            fontSize: 11,
+                            color: "var(--color-danger)",
                             fontFamily: "var(--font-mono)",
                             wordBreak: "break-word",
                           }}
@@ -1375,12 +1490,11 @@ export default function JobQueue({ projectId, onSync }) {
           <div className="flex flex-col gap-4">
             {/* Stats Summary */}
             <div
-              className="flex items-center gap-6 rounded-2xl w-full"
+              className="flex items-center gap-4 rounded-[var(--radius-lg)] w-full"
               style={{
-                background: "rgba(255,255,255,0.02)",
-                border: "1px solid rgba(255,255,255,0.08)",
-                padding: "12px 24px",
-                marginBottom: 32,
+                background: "var(--color-surface)",
+                border: "1px solid var(--color-border)",
+                padding: "14px 20px",
               }}
             >
               <div className="flex flex-col flex-1">
@@ -1388,20 +1502,20 @@ export default function JobQueue({ projectId, onSync }) {
                   style={{
                     fontSize: 11,
                     fontWeight: 600,
-                    color: "#8b949e",
-                    letterSpacing: "0.08em",
+                    color: "var(--color-text-secondary)",
+                    letterSpacing: "0.04em",
                     textTransform: "uppercase",
-                    marginBottom: 4,
+                    marginBottom: 2,
                   }}
                 >
                   Completed
                 </span>
                 <span
                   style={{
-                    fontSize: 26,
-                    fontWeight: 600,
-                    color: "#2dd4bf",
-                    letterSpacing: "-0.02em",
+                    fontSize: 22,
+                    fontWeight: 700,
+                    color: "var(--color-success)",
+                    fontFamily: "var(--font-mono)",
                   }}
                 >
                   {completedJobs.length}
@@ -1410,8 +1524,8 @@ export default function JobQueue({ projectId, onSync }) {
               <div
                 style={{
                   width: 1,
-                  height: 40,
-                  background: "rgba(255,255,255,0.08)",
+                  height: 36,
+                  background: "var(--color-border)",
                 }}
               />
               <div className="flex flex-col flex-1">
@@ -1419,20 +1533,23 @@ export default function JobQueue({ projectId, onSync }) {
                   style={{
                     fontSize: 11,
                     fontWeight: 600,
-                    color: "#8b949e",
-                    letterSpacing: "0.08em",
+                    color: "var(--color-text-secondary)",
+                    letterSpacing: "0.04em",
                     textTransform: "uppercase",
-                    marginBottom: 4,
+                    marginBottom: 2,
                   }}
                 >
                   Failed
                 </span>
                 <span
                   style={{
-                    fontSize: 26,
-                    fontWeight: 600,
-                    color: failedJobs.length > 0 ? "#ef4444" : "#c084fc",
-                    letterSpacing: "-0.02em",
+                    fontSize: 22,
+                    fontWeight: 700,
+                    color:
+                      failedJobs.length > 0
+                        ? "var(--color-danger)"
+                        : "var(--color-text-muted)",
+                    fontFamily: "var(--font-mono)",
                   }}
                 >
                   {failedJobs.length}
@@ -1440,94 +1557,94 @@ export default function JobQueue({ projectId, onSync }) {
               </div>
             </div>
 
-            <h2
-              style={{
-                fontSize: 17,
-                fontWeight: 600,
-                color: "#f0f6fc",
-                marginBottom: 2,
-              }}
-            >
-              Queue & Resources
-            </h2>
-
+            {/* Queue & Resources Card */}
             <div
-              className="rounded-xl flex flex-col gap-6"
+              className="rounded-[var(--radius-lg)] flex flex-col gap-4 p-5"
               style={{
-                background: "rgba(255,255,255,0.02)",
-                border: "1px solid rgba(255,255,255,0.06)",
-                padding: "24px",
+                background: "var(--color-surface)",
+                border: "1px solid var(--color-border)",
               }}
             >
-              <div className="flex justify-between items-center">
-                <span
-                  style={{ fontSize: 14, color: "#8b949e", fontWeight: 500 }}
-                >
+              <h3
+                style={{
+                  fontSize: 14,
+                  fontWeight: 600,
+                  color: "var(--color-text)",
+                }}
+              >
+                Queue & Resources
+              </h3>
+
+              <div className="flex justify-between items-center text-xs">
+                <span style={{ color: "var(--color-text-secondary)" }}>
                   Pending Jobs
                 </span>
                 <span
-                  style={{ fontSize: 20, fontWeight: 600, color: "#f0f6fc" }}
+                  style={{
+                    fontWeight: 600,
+                    color: "var(--color-warning)",
+                    fontFamily: "var(--font-mono)",
+                  }}
                 >
                   {jobs.filter((j) => j.status === "QUEUED").length}
                 </span>
               </div>
 
-              <div
-                style={{ height: 1, background: "rgba(255,255,255,0.06)" }}
-              />
+              <div style={{ height: 1, background: "var(--color-border)" }} />
 
-              <div className="flex justify-between items-center">
-                <span
-                  style={{ fontSize: 14, color: "#8b949e", fontWeight: 500 }}
-                >
+              <div className="flex justify-between items-center text-xs">
+                <span style={{ color: "var(--color-text-secondary)" }}>
                   Running Jobs
                 </span>
                 <span
-                  style={{ fontSize: 20, fontWeight: 600, color: "#38bdf8" }}
+                  style={{
+                    fontWeight: 600,
+                    color: "var(--color-info)",
+                    fontFamily: "var(--font-mono)",
+                  }}
                 >
                   {jobs.filter((j) => j.status === "RUNNING").length}
                 </span>
               </div>
 
-              <div
-                style={{ height: 1, background: "rgba(255,255,255,0.06)" }}
-              />
+              <div style={{ height: 1, background: "var(--color-border)" }} />
 
-              <div className="flex justify-between items-center">
-                <span
-                  style={{ fontSize: 14, color: "#8b949e", fontWeight: 500 }}
-                >
+              <div className="flex justify-between items-center text-xs">
+                <span style={{ color: "var(--color-text-secondary)" }}>
                   Total Jobs
                 </span>
                 <span
-                  style={{ fontSize: 18, fontWeight: 500, color: "#f0f6fc" }}
+                  style={{
+                    fontWeight: 600,
+                    color: "var(--color-text)",
+                    fontFamily: "var(--font-mono)",
+                  }}
                 >
                   {jobs.length}
                 </span>
               </div>
 
-              <div
-                style={{ height: 1, background: "rgba(255,255,255,0.06)" }}
-              />
+              <div style={{ height: 1, background: "var(--color-border)" }} />
 
               <div>
-                <div className="flex justify-between items-center mb-4">
+                <div className="flex justify-between items-center mb-2">
                   <span
                     style={{
-                      fontSize: 12,
+                      fontSize: 11,
                       fontWeight: 600,
-                      color: "#8b949e",
+                      color: "var(--color-text-secondary)",
                       textTransform: "uppercase",
-                      letterSpacing: "0.05em",
+                      letterSpacing: "0.04em",
                     }}
                   >
                     Worker Load
                   </span>
                   <span
                     style={{
-                      fontSize: 12,
+                      fontSize: 11,
                       fontWeight: 600,
-                      color: "#f0f6fc",
+                      color: "var(--color-text)",
+                      fontFamily: "var(--font-mono)",
                     }}
                   >
                     {workerLoad}%
@@ -1535,7 +1652,11 @@ export default function JobQueue({ projectId, onSync }) {
                 </div>
                 <div
                   className="w-full rounded-full overflow-hidden"
-                  style={{ height: 8, background: "rgba(255,255,255,0.06)" }}
+                  style={{
+                    height: 6,
+                    background: "var(--color-surface-secondary)",
+                    border: "1px solid var(--color-border)",
+                  }}
                 >
                   <div
                     className="h-full rounded-full"
@@ -1547,8 +1668,7 @@ export default function JobQueue({ projectId, onSync }) {
                           : workerLoad > 50
                             ? "var(--color-warning)"
                             : "var(--color-success)",
-                      boxShadow: "none",
-                      transition: "width 0.6s ease-out",
+                      transition: "width 0.4s ease-out",
                     }}
                   />
                 </div>
@@ -1561,25 +1681,30 @@ export default function JobQueue({ projectId, onSync }) {
       {/* ── CREATE SNAPSHOT MODAL ──────────────────────────────── */}
       <AnimatePresence>
         {showCreateModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
             <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              initial={{ opacity: 0, scale: 0.96, y: 8 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              className="w-full max-w-md rounded-2xl p-6 shadow-2xl flex flex-col gap-4"
+              exit={{ opacity: 0, scale: 0.96, y: 8 }}
+              transition={{ duration: 0.15 }}
+              className="w-full max-w-md rounded-[var(--radius-lg)] p-5 shadow-2xl flex flex-col gap-4"
               style={{
                 background: "var(--color-surface)",
                 border: "1px solid var(--color-border)",
+                color: "var(--color-text)",
               }}
             >
-              <div className="flex items-center justify-between pb-2 border-b border-white/5">
+              <div className="flex items-center justify-between pb-3 border-b border-[var(--color-border)]">
                 <div className="flex items-center gap-2">
-                  <BookmarkPlus size={18} className="text-purple-400" />
+                  <BookmarkPlus
+                    size={16}
+                    style={{ color: "var(--color-primary)" }}
+                  />
                   <h3
                     style={{
-                      fontSize: 16,
+                      fontSize: 15,
                       fontWeight: 600,
-                      color: "#f0f6fc",
+                      color: "var(--color-text)",
                     }}
                   >
                     Capture Code Snapshot
@@ -1587,13 +1712,19 @@ export default function JobQueue({ projectId, onSync }) {
                 </div>
                 <button
                   onClick={() => setShowCreateModal(false)}
-                  className="text-slate-400 hover:text-white cursor-pointer text-sm"
+                  className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer text-sm"
                 >
                   ✕
                 </button>
               </div>
 
-              <p style={{ fontSize: 13, color: "#8b949e", lineHeight: 1.5 }}>
+              <p
+                style={{
+                  fontSize: 12,
+                  color: "var(--color-text-secondary)",
+                  lineHeight: 1.5,
+                }}
+              >
                 Save the current code state across all project files as an
                 immutable checkpoint. You can restore this version at any time.
               </p>
@@ -1605,10 +1736,10 @@ export default function JobQueue({ projectId, onSync }) {
                 <div>
                   <label
                     style={{
-                      fontSize: 12,
+                      fontSize: 11,
                       fontWeight: 600,
-                      color: "#f0f6fc",
-                      marginBottom: 6,
+                      color: "var(--color-text)",
+                      marginBottom: 4,
                       display: "block",
                     }}
                   >
@@ -1620,10 +1751,10 @@ export default function JobQueue({ projectId, onSync }) {
                     value={newLabel}
                     onChange={(e) => setNewLabel(e.target.value)}
                     autoFocus
-                    className="w-full rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none"
+                    className="w-full rounded-[var(--radius-md)] px-3 py-1.5 text-xs text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)] transition-colors"
                     style={{
-                      background: "rgba(255,255,255,0.05)",
-                      border: "1px solid rgba(255,255,255,0.12)",
+                      background: "var(--color-bg)",
+                      border: "1px solid var(--color-border)",
                     }}
                   />
                 </div>
@@ -1631,10 +1762,10 @@ export default function JobQueue({ projectId, onSync }) {
                 <div>
                   <label
                     style={{
-                      fontSize: 12,
+                      fontSize: 11,
                       fontWeight: 600,
-                      color: "#f0f6fc",
-                      marginBottom: 6,
+                      color: "var(--color-text)",
+                      marginBottom: 4,
                       display: "block",
                     }}
                   >
@@ -1645,34 +1776,36 @@ export default function JobQueue({ projectId, onSync }) {
                     placeholder="What changed in this checkpoint?"
                     value={newMessage}
                     onChange={(e) => setNewMessage(e.target.value)}
-                    className="w-full rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none resize-none"
+                    className="w-full rounded-[var(--radius-md)] px-3 py-1.5 text-xs text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)] transition-colors resize-none"
                     style={{
-                      background: "rgba(255,255,255,0.05)",
-                      border: "1px solid rgba(255,255,255,0.12)",
+                      background: "var(--color-bg)",
+                      border: "1px solid var(--color-border)",
                     }}
                   />
                 </div>
 
-                <div className="flex items-center justify-end gap-3 mt-3 pt-3 border-t border-white/5">
+                <div className="flex items-center justify-end gap-2.5 mt-2 pt-3 border-t border-[var(--color-border)]">
                   <button
                     type="button"
                     onClick={() => setShowCreateModal(false)}
-                    className="px-4 py-2 rounded-lg text-xs font-medium text-slate-400 hover:text-white cursor-pointer"
-                    style={{ background: "rgba(255,255,255,0.04)" }}
+                    className="px-3.5 py-1.5 rounded-[var(--radius-md)] text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer transition-colors"
+                    style={{
+                      background: "var(--color-surface-secondary)",
+                      border: "1px solid var(--color-border)",
+                    }}
                   >
                     Cancel
                   </button>
                   <motion.button
-                    whileHover={{ scale: 1.02 }}
+                    whileHover={{ scale: 1.01 }}
                     whileTap={{ scale: 0.98 }}
                     type="submit"
                     disabled={creatingSnapshot}
-                    className="flex items-center gap-2 px-5 py-2 rounded-lg text-xs font-semibold cursor-pointer"
+                    className="flex items-center gap-1.5 px-4 py-1.5 rounded-[var(--radius-md)] text-xs font-semibold cursor-pointer"
                     style={{
                       background: "var(--color-primary)",
                       color: "#ffffff",
                       border: "none",
-                      boxShadow: "none",
                     }}
                   >
                     {creatingSnapshot ? (
@@ -1697,22 +1830,27 @@ export default function JobQueue({ projectId, onSync }) {
       {/* ── CONFIRM RESTORE MODAL ──────────────────────────────── */}
       <AnimatePresence>
         {confirmRestoreSnapshot && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
             <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              initial={{ opacity: 0, scale: 0.96, y: 8 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              className="w-full max-w-md rounded-2xl p-6 shadow-2xl flex flex-col gap-4"
+              exit={{ opacity: 0, scale: 0.96, y: 8 }}
+              transition={{ duration: 0.15 }}
+              className="w-full max-w-md rounded-[var(--radius-lg)] p-5 shadow-2xl flex flex-col gap-4"
               style={{
                 background: "var(--color-surface)",
                 border: "1px solid var(--color-border)",
+                color: "var(--color-text)",
               }}
             >
-              <div className="flex items-center gap-3 text-amber-400 pb-2 border-b border-white/5">
-                <RotateCcw size={20} />
+              <div className="flex items-center gap-2.5 pb-2.5 border-b border-[var(--color-border)]">
+                <RotateCcw
+                  size={16}
+                  style={{ color: "var(--color-warning)" }}
+                />
                 <h3
                   style={{
-                    fontSize: 16,
+                    fontSize: 15,
                     fontWeight: 600,
                     color: "var(--color-text)",
                   }}
@@ -1722,16 +1860,15 @@ export default function JobQueue({ projectId, onSync }) {
               </div>
 
               <div
-                className="rounded-xl p-4 flex flex-col gap-2"
+                className="rounded-[var(--radius-md)] p-3 flex flex-col gap-2"
                 style={{
                   background: "var(--color-bg)",
                   border: "1px solid var(--color-border)",
                 }}
               >
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between text-xs">
                   <span
                     style={{
-                      fontSize: 11,
                       color: "var(--color-text-secondary)",
                     }}
                   >
@@ -1739,7 +1876,6 @@ export default function JobQueue({ projectId, onSync }) {
                   </span>
                   <span
                     style={{
-                      fontSize: 13,
                       fontWeight: 700,
                       color: "var(--color-primary)",
                     }}
@@ -1747,16 +1883,20 @@ export default function JobQueue({ projectId, onSync }) {
                     {confirmRestoreSnapshot.label}
                   </span>
                 </div>
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between text-xs">
                   <span
                     style={{
-                      fontSize: 11,
                       color: "var(--color-text-secondary)",
                     }}
                   >
                     Captured at:
                   </span>
-                  <span style={{ fontSize: 12, color: "var(--color-text)" }}>
+                  <span
+                    style={{
+                      color: "var(--color-text)",
+                      fontFamily: "var(--font-mono)",
+                    }}
+                  >
                     {formatDateTime(confirmRestoreSnapshot.createdAt)}
                   </span>
                 </div>
@@ -1768,14 +1908,14 @@ export default function JobQueue({ projectId, onSync }) {
               </div>
 
               <div
-                className="rounded-lg p-3 text-xs leading-relaxed flex items-start gap-2.5"
+                className="rounded-[var(--radius-md)] p-2.5 text-xs leading-relaxed flex items-start gap-2"
                 style={{
-                  background: "rgba(234, 179, 8, 0.1)",
-                  border: "1px solid rgba(234, 179, 8, 0.25)",
-                  color: "#fde047",
+                  background: "rgba(217, 119, 6, 0.1)",
+                  border: "1px solid rgba(217, 119, 6, 0.25)",
+                  color: "var(--color-warning)",
                 }}
               >
-                <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
+                <AlertCircle size={15} className="flex-shrink-0 mt-0.5" />
                 <span>
                   All current workspace files will be reverted to this
                   checkpoint. A new checkpoint will automatically be created
@@ -1783,31 +1923,30 @@ export default function JobQueue({ projectId, onSync }) {
                 </span>
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-2">
+              <div className="flex items-center justify-end gap-2.5 pt-2">
                 <button
                   type="button"
                   disabled={restoring}
                   onClick={() => setConfirmRestoreSnapshot(null)}
-                  className="px-4 py-2 rounded-lg text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer"
+                  className="px-3.5 py-1.5 rounded-[var(--radius-md)] text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer transition-colors"
                   style={{
-                    background: "var(--color-surface)",
+                    background: "var(--color-surface-secondary)",
                     border: "1px solid var(--color-border)",
                   }}
                 >
                   Cancel
                 </button>
                 <motion.button
-                  whileHover={{ scale: 1.02 }}
+                  whileHover={{ scale: 1.01 }}
                   whileTap={{ scale: 0.98 }}
                   type="button"
                   disabled={restoring}
                   onClick={handleConfirmRestore}
-                  className="flex items-center gap-2 px-5 py-2 rounded-lg text-xs font-semibold cursor-pointer"
+                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-[var(--radius-md)] text-xs font-semibold cursor-pointer"
                   style={{
                     background: "var(--color-danger)",
                     color: "#ffffff",
                     border: "none",
-                    boxShadow: "none",
                   }}
                 >
                   {restoring ? (

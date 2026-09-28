@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import dagre from "dagre";
 import {
@@ -12,6 +12,14 @@ import {
   TerminalSquare,
   Network,
   RefreshCw,
+  RotateCcw,
+  CheckCircle2,
+  AlertTriangle,
+  AlertOctagon,
+  ShieldCheck,
+  Calculator,
+  Layers,
+  Activity,
 } from "lucide-react";
 import {
   getProjectCfgApi,
@@ -31,7 +39,7 @@ const containerVariants = {
 function syntaxHighlight(text) {
   return text
     .split(
-      /(\bfunction\b|\bif\b|\belse\b|\breturn\b|\bconst\b|\blet\b|\bvar\b|"[^"]*"|\b\d+\b)/g,
+      /(\bfunction\b|\bif\b|\belse\b|\breturn\b|\bconst\b|\blet\b|\bvar\b|"[^"]*"|'[^']*'|\b\d+\b)/g,
     )
     .map((part, i) => {
       if (
@@ -40,24 +48,24 @@ function syntaxHighlight(text) {
         )
       )
         return (
-          <span key={i} style={{ color: "#c084fc" }}>
+          <span key={i} className="text-[var(--color-primary)] font-semibold">
             {part}
           </span>
         );
       if (part.startsWith('"') || part.startsWith("'"))
         return (
-          <span key={i} style={{ color: "#86efac" }}>
+          <span key={i} className="text-[var(--color-success)]">
             {part}
           </span>
         );
       if (/^\d+$/.test(part))
         return (
-          <span key={i} style={{ color: "#fca5a5" }}>
+          <span key={i} className="text-[var(--color-warning)]">
             {part}
           </span>
         );
       return (
-        <span key={i} style={{ color: "#e2e8f0" }}>
+        <span key={i} className="text-[var(--color-text)]">
           {part}
         </span>
       );
@@ -65,12 +73,13 @@ function syntaxHighlight(text) {
 }
 
 function computeLayout(nodes, edges) {
-  if (!nodes || nodes.length === 0) return { nodes: [], edges: [] };
+  if (!nodes || nodes.length === 0)
+    return { nodes: [], edges: [], width: 400, height: 400 };
   const g = new dagre.graphlib.Graph();
   g.setGraph({
     rankdir: "TB",
-    marginx: 40,
-    marginy: 40,
+    marginx: 50,
+    marginy: 50,
     nodesep: 60,
     ranksep: 80,
   });
@@ -89,7 +98,13 @@ function computeLayout(nodes, edges) {
 
   dagre.layout(g);
 
+  const graphInfo = g.graph();
+  const graphWidth = Math.max(graphInfo.width || 0, 400);
+  const graphHeight = Math.max(graphInfo.height || 0, 300);
+
   return {
+    width: graphWidth,
+    height: graphHeight,
     nodes: nodes.map((n) => {
       const pos = g.node(n.id);
       return { ...n, x: pos.x, y: pos.y, width: pos.width };
@@ -110,18 +125,86 @@ const pointsToSvgPath = (points) => {
   return d;
 };
 
+const getComplexityMeta = (value) => {
+  const v = value || 1;
+  if (v <= 4) {
+    return {
+      level: "Low",
+      riskText: "Low Risk",
+      summary: "Low complexity, concise structure, easy to maintain.",
+      recommendation:
+        "Minimal defect risk. Standard unit test cases provide sufficient coverage.",
+      color: "var(--color-success)",
+      textColor: "text-[var(--color-success)]",
+      badgeClass:
+        "bg-[var(--color-success)]/10 text-[var(--color-success)] border-[var(--color-success)]/30",
+      tier: 1,
+      icon: CheckCircle2,
+    };
+  }
+  if (v <= 10) {
+    return {
+      level: "Moderate",
+      riskText: "Moderate Risk",
+      summary: "Moderate complexity with multiple decision paths.",
+      recommendation:
+        "Thoroughly test all conditional branches (if / else / switch / loop).",
+      color: "var(--color-warning)",
+      textColor: "text-[var(--color-warning)]",
+      badgeClass:
+        "bg-[var(--color-warning)]/10 text-[var(--color-warning)] border-[var(--color-warning)]/30",
+      tier: 2,
+      icon: AlertTriangle,
+    };
+  }
+  if (v <= 20) {
+    return {
+      level: "High",
+      riskText: "High Risk",
+      summary:
+        "High complexity, difficult to exhaustively verify all execution paths.",
+      recommendation:
+        "Refactoring recommended: decompose into smaller helper functions or services.",
+      color: "var(--color-danger)",
+      textColor: "text-[var(--color-danger)]",
+      badgeClass:
+        "bg-[var(--color-danger)]/10 text-[var(--color-danger)] border-[var(--color-danger)]/30",
+      tier: 3,
+      icon: AlertOctagon,
+    };
+  }
+  return {
+    level: "Critical",
+    riskText: "Very High Risk",
+    summary:
+      "Critical complexity (spaghetti flow), very high probability of regression bugs.",
+    recommendation:
+      "Immediate refactoring mandatory before deploying to production.",
+    color: "var(--color-danger)",
+    textColor: "text-[var(--color-danger)]",
+    badgeClass:
+      "bg-[var(--color-danger)]/15 text-[var(--color-danger)] border-[var(--color-danger)]/40",
+    tier: 4,
+    icon: AlertOctagon,
+  };
+};
+
 /* --- NODE COMPONENTS --- */
 function FuncNode({ label, x, y, onClick }) {
   return (
     <motion.div
-      onClick={onClick}
-      className="flex items-center justify-center font-mono select-none cursor-pointer"
+      data-no-pan="true"
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick?.();
+      }}
+      className="flex items-center justify-center font-mono select-none cursor-pointer rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] hover:border-[var(--color-primary)] text-[var(--color-text)] transition-colors shadow-sm"
       initial={{ x: "-50%", y: "-50%", scale: 1 }}
       whileHover={{
         scale: 1.05,
         x: "-50%",
         y: "-50%",
-        boxShadow: "0 0 20px rgba(34, 211, 238, 0.3)",
       }}
       whileTap={{ scale: 0.95, x: "-50%", y: "-50%" }}
       style={{
@@ -130,16 +213,14 @@ function FuncNode({ label, x, y, onClick }) {
         top: y,
         zIndex: 10,
         fontSize: "13px",
-        padding: "12px 28px",
-        borderRadius: "8px",
-        background: "rgba(34, 211, 238, 0.08)",
-        border: "1px solid rgba(34, 211, 238, 0.4)",
-        color: "#67e8f9",
-        backdropFilter: "blur(4px)",
+        padding: "10px 24px",
         whiteSpace: "nowrap",
       }}
     >
-      <Network size={15} style={{ marginRight: "8px", opacity: 0.8 }} />
+      <Network
+        size={15}
+        className="mr-2 text-[var(--color-primary)] opacity-80"
+      />
       {label}()
     </motion.div>
   );
@@ -153,62 +234,80 @@ function CFGNode({
   active = false,
   isDiamond = false,
   width = 120,
+  isSelected = false,
+  onClick,
 }) {
   return (
     <motion.div
+      data-no-pan="true"
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick?.();
+      }}
       initial={{ x: "-50%", y: "-50%", scale: 0.8, opacity: 0 }}
       animate={
-        active
-          ? { x: "-50%", y: "-50%", scale: [1, 1.05, 1], opacity: 1 }
-          : { x: "-50%", y: "-50%", scale: 1, opacity: 1 }
+        isSelected
+          ? { x: "-50%", y: "-50%", scale: 1.08, opacity: 1 }
+          : active
+            ? { x: "-50%", y: "-50%", scale: [1, 1.04, 1], opacity: 1 }
+            : { x: "-50%", y: "-50%", scale: 1, opacity: 1 }
       }
       transition={{
-        scale: active ? { repeat: Infinity, duration: 2 } : { duration: 0.3 },
+        scale: isSelected
+          ? { duration: 0.2 }
+          : active
+            ? { repeat: Infinity, duration: 2.5 }
+            : { duration: 0.3 },
         default: { duration: 0.3 },
       }}
-      className="flex items-center justify-center font-mono select-none text-center"
+      whileHover={{ scale: isSelected ? 1.1 : 1.05 }}
+      whileTap={{ scale: 0.96 }}
+      className={`flex items-center justify-center font-mono select-none text-center shadow-sm cursor-pointer transition-all ${
+        isDiamond ? "rounded-[var(--radius-md)]" : "rounded-full"
+      } ${
+        isSelected
+          ? "border-2 border-[var(--color-primary)] bg-[var(--color-primary)]/15 text-[var(--color-primary)] font-bold ring-2 ring-[var(--color-primary)]/50 ring-offset-2 ring-offset-[var(--color-bg)] z-30 shadow-md"
+          : active
+            ? "border-2 border-[var(--color-primary)] bg-[var(--color-surface)] text-[var(--color-primary)] font-semibold z-10 hover:border-[var(--color-primary)]"
+            : "border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-primary)]/70 text-[var(--color-text)] z-10"
+      }`}
       style={{
         position: "absolute",
         left: x,
         top: y,
-        zIndex: 10,
-        fontSize: "13px",
-        padding: isDiamond ? "10px 24px" : "10px 24px",
-        borderRadius: isDiamond ? "8px" : "9999px",
+        fontSize: "12px",
+        padding: "8px 20px",
         minWidth: `${width}px`,
-        background: active
-          ? "var(--color-primary-light)"
-          : "var(--color-surface)",
-        border: active
-          ? "1px solid var(--color-primary)"
-          : "1px solid var(--color-border)",
-        color: active ? "var(--color-primary)" : "var(--color-text)",
-        boxShadow: active ? "var(--shadow-md)" : "var(--shadow-sm)",
       }}
     >
-      {active && (
-        <span
-          className="absolute animate-ping"
-          style={{
-            left: "-8px",
-            width: "12px",
-            height: "12px",
-            borderRadius: "50%",
-            background: "#7C3AED",
-          }}
-        />
+      {isSelected && (
+        <span className="absolute -top-1.5 -right-1.5 flex h-3 w-3">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-primary)] opacity-75"></span>
+          <span className="relative inline-flex rounded-full h-3 w-3 bg-[var(--color-primary)]"></span>
+        </span>
+      )}
+      {active && !isSelected && (
+        <span className="absolute -left-1.5 w-2.5 h-2.5 rounded-full bg-[var(--color-primary)] animate-ping" />
       )}
       {isDiamond && (
-        <GitBranch size={14} style={{ marginRight: "8px", opacity: 0.7 }} />
+        <GitBranch
+          size={13}
+          className="mr-1.5 text-[var(--color-warning)] opacity-90"
+        />
       )}
-      {label}{" "}
+      <span>{label}</span>
       {line ? (
-        <span style={{ opacity: 0.5, fontSize: "11px", marginLeft: "6px" }}>
+        <span
+          className={`text-[11px] ml-1.5 font-mono ${
+            isSelected
+              ? "text-[var(--color-primary)] font-bold opacity-100"
+              : "opacity-60"
+          }`}
+        >
           (L{line})
         </span>
-      ) : (
-        ""
-      )}
+      ) : null}
     </motion.div>
   );
 }
@@ -222,8 +321,15 @@ export default function CFGCalculator({ project, onClose }) {
 
   const [selectedFile, setSelectedFile] = useState(null);
   const [selectedFunc, setSelectedFunc] = useState(null);
+  const [selectedNodeId, setSelectedNodeId] = useState(null);
+  const [highlightedLine, setHighlightedLine] = useState(null);
+  const codeContainerRef = useRef(null);
   const [sourceCode, setSourceCode] = useState("");
   const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const dragOriginRef = useRef({ startX: 0, startY: 0, panX: 0, panY: 0 });
+  const canvasRef = useRef(null);
   const [rebuilding, setRebuilding] = useState(false);
 
   // Resize state
@@ -374,7 +480,8 @@ export default function CFGCalculator({ project, onClose }) {
         edges.push({ from: nodes[i].id, to: nodes[i + 1].id });
       return computeLayout(nodes, edges);
     } else {
-      if (!activeCfg || !activeCfg.graphJson) return { nodes: [], edges: [] };
+      if (!activeCfg || !activeCfg.graphJson)
+        return { nodes: [], edges: [], width: 400, height: 400 };
       try {
         const parsed = JSON.parse(activeCfg.graphJson);
         let nodes = parsed.nodes || [];
@@ -389,7 +496,12 @@ export default function CFGCalculator({ project, onClose }) {
             const exitNodeId = "virtual_exit_node";
             nodes = [
               ...nodes,
-              { id: exitNodeId, type: "exit", label: "Virtual Exit" },
+              {
+                id: exitNodeId,
+                type: "exit",
+                label: "Virtual Exit",
+                line: activeCfg?.endLine,
+              },
             ];
             leafNodes.forEach((leaf) => {
               edges = [...edges, { from: leaf.id, to: exitNodeId }];
@@ -399,10 +511,139 @@ export default function CFGCalculator({ project, onClose }) {
 
         return computeLayout(nodes, edges);
       } catch (e) {
-        return { nodes: [], edges: [] };
+        return { nodes: [], edges: [], width: 400, height: 400 };
       }
     }
   }, [isCallGraph, fileCfgs, activeCfg]);
+
+  // Auto-center / reset pan & zoom when file or function changes
+  useEffect(() => {
+    setPan({ x: 0, y: 0 });
+    setZoom(1);
+  }, [selectedFile, selectedFunc]);
+
+  // Handle canvas mouse drag for panning
+  const handleCanvasMouseDown = (e) => {
+    if (e.button !== 0) return;
+    if (e.target.closest("button") || e.target.closest("[data-no-pan]")) return;
+
+    setIsDragging(true);
+    dragOriginRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      panX: pan.x,
+      panY: pan.y,
+    };
+  };
+
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const handleMouseMove = (e) => {
+      const dx = e.clientX - dragOriginRef.current.startX;
+      const dy = e.clientY - dragOriginRef.current.startY;
+      setPan({
+        x: dragOriginRef.current.panX + dx,
+        y: dragOriginRef.current.panY + dy,
+      });
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isDragging]);
+
+  // Handle canvas mouse wheel zoom
+  useEffect(() => {
+    const container = canvasRef.current;
+    if (!container) return;
+
+    const onWheel = (e) => {
+      e.preventDefault();
+      const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+      setZoom((z) =>
+        Math.min(Math.max(Number((z * zoomFactor).toFixed(2)), 0.2), 3),
+      );
+    };
+
+    container.addEventListener("wheel", onWheel, { passive: false });
+    return () => container.removeEventListener("wheel", onWheel);
+  }, []);
+
+  // Handle node selection and smooth scroll to source line
+  const handleNodeClick = (node) => {
+    setSelectedNodeId(node.id);
+    const targetLine =
+      node.line ||
+      (node.type === "start"
+        ? activeCfg?.startLine
+        : node.type === "exit"
+          ? activeCfg?.endLine
+          : null);
+
+    if (targetLine) {
+      setHighlightedLine(targetLine);
+      const el = document.getElementById(`cfg-source-line-${targetLine}`);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }
+  };
+
+  const selectedNode = useMemo(() => {
+    if (!selectedNodeId) return null;
+    return graphLayout.nodes.find((n) => n.id === selectedNodeId) || null;
+  }, [selectedNodeId, graphLayout.nodes]);
+
+  const selectedNodeInEdges = useMemo(() => {
+    if (!selectedNode) return [];
+    return graphLayout.edges.filter((e) => e.to === selectedNode.id);
+  }, [selectedNode, graphLayout.edges]);
+
+  const selectedNodeOutEdges = useMemo(() => {
+    if (!selectedNode) return [];
+    return graphLayout.edges.filter((e) => e.from === selectedNode.id);
+  }, [selectedNode, graphLayout.edges]);
+
+  const selectedNodeLineText = useMemo(() => {
+    if (!selectedNode) return "";
+    const targetLine =
+      selectedNode.line ||
+      (selectedNode.type === "start"
+        ? activeCfg?.startLine
+        : selectedNode.type === "exit"
+          ? activeCfg?.endLine
+          : null);
+    if (!targetLine) return "";
+    const lineObj = sourceLines.find((l) => l.num === targetLine);
+    return lineObj ? lineObj.text.trim() : "";
+  }, [selectedNode, sourceLines, activeCfg]);
+
+  // Sync scroll and highlight when active function CFG changes
+  useEffect(() => {
+    setSelectedNodeId(null);
+    if (activeCfg?.startLine) {
+      setHighlightedLine(activeCfg.startLine);
+      const timer = setTimeout(() => {
+        const el = document.getElementById(
+          `cfg-source-line-${activeCfg.startLine}`,
+        );
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }, 150);
+      return () => clearTimeout(timer);
+    } else {
+      setHighlightedLine(null);
+    }
+  }, [selectedFunc, activeCfg]);
 
   return (
     <motion.div
@@ -418,222 +659,89 @@ export default function CFGCalculator({ project, onClose }) {
       }}
     >
       {/* --- HEADER --- */}
-      <div
-        className="flex items-center justify-between flex-shrink-0"
-        style={{
-          padding: "0 24px",
-          height: "56px",
-          background: "var(--color-surface)",
-          borderBottom: "1px solid var(--color-border)",
-        }}
-      >
-        <div className="flex items-center gap-4">
-          <button
-            onClick={onClose}
-            className="flex items-center justify-center p-1.5 rounded-lg hover:bg-[var(--color-bg)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer border border-[var(--color-border)]"
-            title="Close CFG Viewer"
-          >
-            <X size={15} />
-          </button>
-          <div
-            style={{
-              width: "1px",
-              height: "20px",
-              background: "var(--color-border)",
+      <div className="flex items-center justify-between flex-shrink-0 px-5 h-14 bg-[var(--color-surface)] border-b border-[var(--color-border)]">
+        <div className="flex items-center gap-3">
+          <select
+            value={selectedFile || ""}
+            onChange={(e) => {
+              setSelectedFile(e.target.value);
+              setSelectedFunc(null);
             }}
-          />
-          <div className="flex items-center gap-4">
-            <select
-              value={selectedFile || ""}
-              onChange={(e) => {
-                setSelectedFile(e.target.value);
-                setSelectedFunc(null);
-              }}
-              style={{
-                background: "var(--color-bg)",
-                color: "var(--color-text)",
-                border: "1px solid var(--color-border)",
-                borderRadius: "6px",
-                padding: "6px 12px",
-                fontSize: "13px",
-                outline: "none",
-                cursor: "pointer",
-                boxShadow: "none",
-                fontFamily: "monospace",
-              }}
-            >
-              {uniqueFiles.map((f) => (
-                <option
-                  key={f}
-                  value={f}
-                  style={{
-                    background: "var(--color-surface)",
-                    color: "var(--color-text)",
-                    padding: "8px",
-                  }}
-                >
-                  {f}
-                </option>
-              ))}
-            </select>
-            <div className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
-              {!isCallGraph && (
-                <>
-                  <span style={{ color: "var(--color-text-muted)" }}>/</span>
-                  <span
-                    style={{
-                      color: "var(--color-primary)",
-                      fontFamily: "monospace",
-                      fontWeight: "bold",
-                    }}
-                  >
-                    {selectedFunc}()
-                  </span>
-                </>
-              )}
-            </div>
+            className="bg-[var(--color-bg)] text-[var(--color-text)] border border-[var(--color-border)] rounded-[var(--radius-md)] px-3 py-1.5 text-xs outline-none cursor-pointer font-mono focus:border-[var(--color-primary)]"
+          >
+            {uniqueFiles.map((f) => (
+              <option
+                key={f}
+                value={f}
+                className="bg-[var(--color-surface)] text-[var(--color-text)]"
+              >
+                {f}
+              </option>
+            ))}
+          </select>
+          <div className="flex items-center gap-1.5 text-xs text-[var(--color-text-secondary)]">
+            {!isCallGraph && (
+              <>
+                <span className="text-[var(--color-text-muted)]">/</span>
+                <span className="text-[var(--color-primary)] font-mono font-bold">
+                  {selectedFunc}()
+                </span>
+              </>
+            )}
           </div>
         </div>
         <button
-          className="transition-colors cursor-pointer"
+          className="p-1.5 rounded-[var(--radius-sm)] hover:bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer bg-transparent border-none"
           onClick={onClose}
-          style={{
-            padding: "6px",
-            color: "#8B949E",
-            background: "transparent",
-            border: "none",
-            borderRadius: "6px",
-          }}
-          onMouseOver={(e) => {
-            e.currentTarget.style.color = "#ff5f57";
-            e.currentTarget.style.background = "rgba(255,255,255,0.05)";
-          }}
-          onMouseOut={(e) => {
-            e.currentTarget.style.color = "#8B949E";
-            e.currentTarget.style.background = "transparent";
-          }}
+          title="Close"
         >
-          <X size={20} />
+          <X size={18} />
         </button>
       </div>
 
       {loading || rebuilding ? (
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "16px",
-          }}
-        >
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-[var(--color-text-secondary)]">
           <motion.div
             animate={{ rotate: 360 }}
             transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
           >
-            <RefreshCw size={28} style={{ color: "#22D3EE" }} />
+            <RefreshCw size={28} className="text-[var(--color-primary)]" />
           </motion.div>
-          <span style={{ color: "#8B949E", fontSize: "14px" }}>
-            {rebuilding ? "Đang rebuild CFG..." : "Loading analysis data..."}
+          <span className="text-xs font-mono">
+            {rebuilding ? "Rebuilding CFG..." : "Loading analysis data..."}
           </span>
         </div>
       ) : error ? (
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "16px",
-            color: "#ef4444",
-          }}
-        >
-          <span>{error}</span>
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-[var(--color-danger)]">
+          <span className="text-xs">{error}</span>
           <button
             onClick={handleRebuild}
-            style={{
-              padding: "10px 24px",
-              borderRadius: "8px",
-              border: "1px solid rgba(34,211,238,0.4)",
-              background: "rgba(34,211,238,0.1)",
-              color: "#22D3EE",
-              cursor: "pointer",
-              fontSize: "13px",
-              fontWeight: "bold",
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-            }}
+            className="px-4 py-2 rounded-[var(--radius-md)] bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)] cursor-pointer text-xs font-semibold flex items-center gap-2 transition-colors shadow-sm border-none"
           >
-            <RefreshCw size={16} /> Rebuild CFG
+            <RefreshCw size={14} /> Rebuild CFG
           </button>
         </div>
       ) : cfgs.length === 0 ? (
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "24px",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: "12px",
-            }}
-          >
-            <Network size={48} style={{ color: "#8B949E", opacity: 0.5 }} />
-            <span
-              style={{ color: "#c9d1d9", fontSize: "18px", fontWeight: "bold" }}
-            >
-              Chưa có dữ liệu CFG
+        <div className="flex-1 flex flex-col items-center justify-center gap-4 p-6 text-center">
+          <div className="flex flex-col items-center gap-2">
+            <Network
+              size={44}
+              className="text-[var(--color-text-muted)] opacity-60"
+            />
+            <span className="text-base font-bold text-[var(--color-text)]">
+              No CFG Data Available
             </span>
-            <span
-              style={{
-                color: "#8B949E",
-                fontSize: "13px",
-                textAlign: "center",
-                maxWidth: "400px",
-                lineHeight: "1.6",
-              }}
-            >
-              Dữ liệu Control Flow Graph và Cyclomatic Complexity chưa được tạo
-              cho snapshot hiện tại. Nhấn nút bên dưới để build.
+            <span className="text-xs text-[var(--color-text-secondary)] max-w-md leading-relaxed">
+              Control Flow Graph and Cyclomatic Complexity data have not been
+              generated for the current snapshot. Click the button below to
+              build.
             </span>
           </div>
           <button
             onClick={handleRebuild}
-            style={{
-              padding: "12px 28px",
-              borderRadius: "8px",
-              border: "1px solid rgba(34,211,238,0.4)",
-              background: "rgba(34,211,238,0.1)",
-              color: "#22D3EE",
-              cursor: "pointer",
-              fontSize: "14px",
-              fontWeight: "bold",
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-              transition: "all 0.2s",
-            }}
-            onMouseOver={(e) => {
-              e.currentTarget.style.background = "rgba(34,211,238,0.2)";
-              e.currentTarget.style.boxShadow = "0 0 20px rgba(34,211,238,0.2)";
-            }}
-            onMouseOut={(e) => {
-              e.currentTarget.style.background = "rgba(34,211,238,0.1)";
-              e.currentTarget.style.boxShadow = "none";
-            }}
+            className="px-5 py-2.5 rounded-[var(--radius-md)] bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)] cursor-pointer text-xs font-semibold flex items-center gap-2 transition-colors shadow-sm border-none"
           >
-            <RefreshCw size={18} /> Build CFG & CC
+            <RefreshCw size={16} /> Build CFG & CC
           </button>
         </div>
       ) : (
@@ -684,86 +792,75 @@ export default function CFGCalculator({ project, onClose }) {
                   zIndex: 100,
                 }}
               />
-              <div
-                style={{
-                  padding: "20px 32px",
-                  fontSize: "11px",
-                  letterSpacing: "0.2em",
-                  color: "var(--color-text-secondary)",
-                  textTransform: "uppercase",
-                  fontWeight: "bold",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  borderBottom: "1px solid var(--color-border)",
-                  background: "var(--color-bg)",
-                }}
-              >
-                <span>Source Code</span>
-                <span
-                  style={{
-                    background: "rgba(109,93,251,0.15)",
-                    padding: "4px 10px",
-                    borderRadius: "6px",
-                    fontSize: "10px",
-                    color: "var(--color-primary)",
-                  }}
-                >
+              <div className="px-5 py-3 text-[11px] font-mono tracking-wider text-[var(--color-text-secondary)] uppercase font-bold flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)]">
+                <div className="flex items-center gap-2">
+                  <span>Source Code</span>
+                  {highlightedLine && (
+                    <span className="bg-[var(--color-primary)]/15 text-[var(--color-primary)] border border-[var(--color-primary)]/30 px-2 py-0.5 rounded-[var(--radius-sm)] text-[10px] font-mono font-bold">
+                      Line {highlightedLine}
+                    </span>
+                  )}
+                </div>
+                <span className="bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/20 px-2 py-0.5 rounded-[var(--radius-sm)] text-[10px] font-mono font-semibold">
                   JS/TS
                 </span>
               </div>
               <div
-                style={{
-                  flex: 1,
-                  overflowY: "auto",
-                  padding: "24px 0",
-                  fontFamily: "monospace",
-                  fontSize: "14px",
-                  lineHeight: "1.8",
-                }}
+                ref={codeContainerRef}
+                className="flex-1 overflow-y-auto py-3 font-mono text-xs leading-relaxed bg-[var(--color-bg)]"
               >
                 {sourceLines.map((line) => {
+                  const isTargetLine = highlightedLine === line.num;
                   const isActiveScope =
                     activeCfg &&
                     line.num >= activeCfg.startLine &&
                     line.num <= activeCfg.endLine;
-                  const isDimmed = !isCallGraph && !isActiveScope;
+                  const isDimmed =
+                    !isCallGraph && !isActiveScope && !isTargetLine;
 
                   return (
                     <div
                       key={line.num}
-                      style={{
-                        display: "flex",
-                        alignItems: "flex-start",
-                        padding: "4px 32px",
-                        background: isActiveScope
-                          ? "rgba(124, 58, 237, 0.08)"
-                          : "transparent",
-                        borderLeft: isActiveScope
-                          ? "3px solid #7C3AED"
-                          : "3px solid transparent",
-                        opacity: isDimmed ? 0.3 : 1,
-                        transition: "background-color 0.3s, opacity 0.3s",
+                      id={`cfg-source-line-${line.num}`}
+                      onClick={() => {
+                        const matchingNode = graphLayout.nodes.find(
+                          (n) => n.line === line.num,
+                        );
+                        if (matchingNode) {
+                          setSelectedNodeId(matchingNode.id);
+                        }
+                        setHighlightedLine(line.num);
                       }}
+                      className={`flex items-start px-4 py-0.5 transition-all cursor-pointer ${
+                        isTargetLine
+                          ? "bg-[var(--color-primary)]/20 border-l-[4px] border-l-[var(--color-primary)] shadow-sm font-semibold"
+                          : isActiveScope
+                            ? "bg-[var(--color-primary)]/5 border-l-[3px] border-l-[var(--color-primary)]/50 hover:bg-[var(--color-surface-secondary)]/50"
+                            : "border-l-[3px] border-l-transparent hover:bg-[var(--color-surface-secondary)]/40"
+                      } ${isDimmed ? "opacity-35" : "opacity-100"}`}
                     >
                       <span
-                        style={{
-                          width: "40px",
-                          flexShrink: 0,
-                          textAlign: "right",
-                          paddingRight: "24px",
-                          userSelect: "none",
-                          color: isActiveScope ? "#A78BFA" : "#484F58",
-                        }}
+                        className={`w-11 flex-shrink-0 text-right pr-2 select-none font-mono text-[11px] flex items-center justify-end gap-1 ${
+                          isTargetLine
+                            ? "text-[var(--color-primary)] font-bold"
+                            : isActiveScope
+                              ? "text-[var(--color-primary)] font-semibold"
+                              : "text-[var(--color-text-muted)]"
+                        }`}
                       >
-                        {line.num}
+                        {isTargetLine && (
+                          <span className="text-[var(--color-primary)] text-[10px] animate-pulse">
+                            ▶
+                          </span>
+                        )}
+                        <span>{line.num}</span>
                       </span>
                       <span
-                        style={{
-                          whiteSpace: "pre-wrap",
-                          wordBreak: "break-word",
-                          flex: 1,
-                        }}
+                        className={`whitespace-pre-wrap break-all flex-1 font-mono text-xs ${
+                          isTargetLine
+                            ? "text-[var(--color-text)] font-semibold"
+                            : "text-[var(--color-text)]"
+                        }`}
                       >
                         {syntaxHighlight(line.text)}
                       </span>
@@ -786,260 +883,197 @@ export default function CFGCalculator({ project, onClose }) {
                 height: isMobile ? "40%" : "100%",
               }}
             >
-              <div
-                style={{
-                  padding: "20px 32px",
-                  fontSize: "11px",
-                  letterSpacing: "0.2em",
-                  color: "var(--color-text-secondary)",
-                  textTransform: "uppercase",
-                  fontWeight: "bold",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  borderBottom: "1px solid var(--color-border)",
-                  zIndex: 20,
-                  background: "var(--color-surface)",
-                }}
-              >
+              <div className="px-5 py-3 text-[11px] font-mono tracking-wider text-[var(--color-text-secondary)] uppercase font-bold flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] z-20">
                 <div className="flex items-center gap-3">
                   {!isCallGraph && (
                     <motion.button
-                      whileHover={{ x: -3 }}
+                      whileHover={{ x: -2 }}
                       onClick={() => setSelectedFunc(null)}
-                      className="cursor-pointer"
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "6px",
-                        color: "var(--color-primary)",
-                        background: "transparent",
-                        border: "none",
-                        fontWeight: "bold",
-                      }}
+                      className="flex items-center gap-1.5 text-[var(--color-primary)] hover:opacity-80 font-bold font-mono text-xs cursor-pointer bg-transparent border-none"
                     >
-                      <ArrowLeft size={16} /> Back
+                      <ArrowLeft size={14} /> Back
                     </motion.button>
                   )}
-                  <span style={{ color: "var(--color-text)" }}>
+                  <span className="text-[var(--color-text)]">
                     {isCallGraph ? "Functions in File" : "Control Flow Graph"}
                   </span>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1.5 bg-[var(--color-bg)] px-2.5 py-1 rounded-[var(--radius-md)] border border-[var(--color-border)]">
                   <ZoomOut
-                    size={16}
-                    onClick={() => setZoom((z) => Math.max(z - 0.2, 0.2))}
-                    style={{
-                      cursor: "pointer",
-                      color: "var(--color-text-secondary)",
-                    }}
+                    size={14}
+                    onClick={() =>
+                      setZoom((z) =>
+                        Math.min(
+                          Math.max(Number((z - 0.15).toFixed(2)), 0.2),
+                          3,
+                        ),
+                      )
+                    }
+                    className="cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors"
+                    title="Zoom Out"
                   />
-                  <span
-                    style={{
-                      fontSize: "11px",
-                      color: "var(--color-text-secondary)",
-                      width: "36px",
-                      textAlign: "center",
-                      fontFamily: "monospace",
-                      fontWeight: "bold",
-                    }}
-                  >
+                  <span className="text-xs text-[var(--color-text-secondary)] w-11 text-center font-mono font-bold select-none">
                     {Math.round(zoom * 100)}%
                   </span>
                   <ZoomIn
-                    size={16}
-                    onClick={() => setZoom((z) => Math.min(z + 0.2, 3))}
-                    style={{
-                      cursor: "pointer",
-                      color: "var(--color-text-secondary)",
-                    }}
+                    size={14}
+                    onClick={() =>
+                      setZoom((z) =>
+                        Math.min(
+                          Math.max(Number((z + 0.15).toFixed(2)), 0.2),
+                          3,
+                        ),
+                      )
+                    }
+                    className="cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors"
+                    title="Zoom In"
                   />
+                  <div className="w-[1px] h-3.5 bg-[var(--color-border)] mx-1" />
+                  <button
+                    onClick={() => {
+                      setZoom(1);
+                      setPan({ x: 0, y: 0 });
+                    }}
+                    title="Reset View (Center Graph)"
+                    className="flex items-center gap-1 text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] transition-colors p-0.5 cursor-pointer bg-transparent border-none text-[11px] font-mono font-medium"
+                  >
+                    <RotateCcw size={12} />
+                    <span>Reset</span>
+                  </button>
                 </div>
               </div>
 
               <div
+                ref={canvasRef}
+                onMouseDown={handleCanvasMouseDown}
                 style={{
                   flex: 1,
                   position: "relative",
                   overflow: "hidden",
                   background: "var(--color-bg)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-                onWheel={(e) => {
-                  const delta = e.deltaY > 0 ? -0.05 : 0.05;
-                  setZoom((z) => Math.min(Math.max(z + delta, 0.2), 3));
+                  cursor: isDragging ? "grabbing" : "grab",
+                  userSelect: "none",
                 }}
               >
-                <motion.div
-                  drag
-                  dragConstraints={{
-                    left: -1000,
-                    right: 1000,
-                    top: -1000,
-                    bottom: 1000,
-                  }}
-                  dragElastic={0.1}
+                <div
                   style={{
-                    scale: zoom,
-                    cursor: "grab",
                     position: "absolute",
-                    left: "-50%",
-                    top: "-50%",
-                    width: "200%",
-                    height: "200%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
+                    left: "50%",
+                    top: "50%",
+                    transform: `translate(calc(-50% + ${pan.x}px), calc(-50% + ${pan.y}px)) scale(${zoom})`,
+                    transformOrigin: "center center",
+                    transition: isDragging ? "none" : "transform 0.1s ease-out",
+                    willChange: "transform",
                   }}
-                  whileTap={{ cursor: "grabbing" }}
                 >
-                  <AnimatePresence mode="wait">
-                    {isCallGraph ? (
-                      /* --- CALL GRAPH --- */
-                      <motion.div
-                        key="call-graph"
-                        initial={{ opacity: 0, scale: 0.95 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 1.05 }}
-                        transition={{ duration: 0.3 }}
+                  {graphLayout.nodes.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center p-8 text-center text-[var(--color-text-secondary)]">
+                      <GitBranch
+                        size={32}
+                        className="text-[var(--color-text-muted)] mb-3 opacity-50"
+                      />
+                      <span className="text-sm font-semibold text-[var(--color-text)]">
+                        No graph nodes found
+                      </span>
+                      <span className="text-xs text-[var(--color-text-muted)] mt-1">
+                        This function might be empty or unparseable.
+                      </span>
+                    </div>
+                  ) : isCallGraph ? (
+                    /* --- CALL GRAPH --- */
+                    <div
+                      style={{
+                        position: "relative",
+                        width: `${graphLayout.width}px`,
+                        height: `${graphLayout.height}px`,
+                      }}
+                    >
+                      {graphLayout.nodes.map((n) => (
+                        <FuncNode
+                          key={n.id}
+                          label={n.id}
+                          x={n.x}
+                          y={n.y}
+                          onClick={() => setSelectedFunc(n.id)}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    /* --- CFG --- */
+                    <div
+                      style={{
+                        position: "relative",
+                        width: `${graphLayout.width}px`,
+                        height: `${graphLayout.height}px`,
+                      }}
+                    >
+                      <svg
+                        width={graphLayout.width}
+                        height={graphLayout.height}
                         style={{
-                          position: "relative",
-                          width: "100%",
-                          height: "100%",
+                          position: "absolute",
+                          inset: 0,
+                          pointerEvents: "none",
+                          overflow: "visible",
                         }}
                       >
-                        {/* We center the nodes generated by dagre */}
-                        <div
-                          style={{
-                            position: "absolute",
-                            top: "50%",
-                            left: "50%",
-                            transform: "translate(-50%, -50%)",
-                            width: 800,
-                            height: 800,
-                          }}
-                        >
-                          {graphLayout.nodes.map((n) => (
-                            <FuncNode
-                              key={n.id}
-                              label={n.id}
-                              x={n.x}
-                              y={n.y}
-                              onClick={() => setSelectedFunc(n.id)}
-                            />
-                          ))}
-                        </div>
-
-                        <div
-                          style={{
-                            position: "absolute",
-                            bottom: "20%",
-                            left: "50%",
-                            transform: "translateX(-50%)",
-                            fontSize: "13px",
-                            color: "var(--color-text)",
-                            background: "var(--color-surface)",
-                            padding: "12px 24px",
-                            borderRadius: "9999px",
-                            border: "1px solid var(--color-border)",
-                            boxShadow: "none",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "8px",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          <Sparkles
-                            size={16}
-                            style={{ color: "var(--color-primary)" }}
-                          />
-                          Click a function node to analyze its CFG
-                        </div>
-                      </motion.div>
-                    ) : (
-                      /* --- CFG --- */
-                      <motion.div
-                        key="cfg"
-                        initial={{ opacity: 0, scale: 0.95 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 1.05 }}
-                        transition={{ duration: 0.3 }}
-                        style={{
-                          position: "relative",
-                          width: "100%",
-                          height: "100%",
-                        }}
-                      >
-                        <div
-                          style={{
-                            position: "absolute",
-                            top: "50%",
-                            left: "50%",
-                            transform: "translate(-50%, -50%)",
-                            width: 800,
-                            height: 800,
-                          }}
-                        >
-                          <svg
-                            width="100%"
-                            height="100%"
-                            style={{
-                              position: "absolute",
-                              inset: 0,
-                              pointerEvents: "none",
-                              overflow: "visible",
-                            }}
+                        <defs>
+                          <marker
+                            id="arrowhead"
+                            markerWidth="10"
+                            markerHeight="7"
+                            refX="9"
+                            refY="3.5"
+                            orient="auto"
                           >
-                            <defs>
-                              <marker
-                                id="arrowhead"
-                                markerWidth="10"
-                                markerHeight="7"
-                                refX="9"
-                                refY="3.5"
-                                orient="auto"
-                              >
-                                <polygon
-                                  points="0 0, 10 3.5, 0 7"
-                                  fill="rgba(255,255,255,0.4)"
-                                />
-                              </marker>
-                            </defs>
-                            {graphLayout.edges.map((e, i) => (
-                              <path
-                                key={i}
-                                d={pointsToSvgPath(e.points)}
-                                fill="none"
-                                stroke="rgba(255,255,255,0.2)"
-                                strokeWidth="1.5"
-                                markerEnd="url(#arrowhead)"
-                              />
-                            ))}
-                          </svg>
-
-                          {graphLayout.nodes.map((n) => (
-                            <CFGNode
-                              key={n.id}
-                              label={n.label || n.type || n.id}
-                              line={n.line}
-                              x={n.x}
-                              y={n.y}
-                              width={n.width}
-                              isDiamond={n.type === "condition"}
-                              active={
-                                n.type === "start" ||
-                                n.type === "return" ||
-                                n.type === "exit"
-                              }
+                            <polygon
+                              points="0 0, 10 3.5, 0 7"
+                              fill="var(--color-primary)"
                             />
-                          ))}
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </motion.div>
+                          </marker>
+                        </defs>
+                        {graphLayout.edges.map((e, i) => (
+                          <path
+                            key={i}
+                            d={pointsToSvgPath(e.points)}
+                            fill="none"
+                            stroke="var(--color-primary)"
+                            strokeOpacity="0.6"
+                            strokeWidth="2"
+                            markerEnd="url(#arrowhead)"
+                          />
+                        ))}
+                      </svg>
+
+                      {graphLayout.nodes.map((n) => (
+                        <CFGNode
+                          key={n.id}
+                          label={n.label || n.type || n.id}
+                          line={n.line}
+                          x={n.x}
+                          y={n.y}
+                          width={n.width}
+                          isDiamond={n.type === "condition"}
+                          active={
+                            n.type === "start" ||
+                            n.type === "return" ||
+                            n.type === "exit"
+                          }
+                          isSelected={selectedNodeId === n.id}
+                          onClick={() => handleNodeClick(n)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Floating Hint Pill */}
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-xs text-[var(--color-text-secondary)] bg-[var(--color-surface)]/90 backdrop-blur-sm px-4 py-2 rounded-full border border-[var(--color-border)] flex items-center gap-2 whitespace-nowrap shadow-sm pointer-events-none select-none z-20">
+                  <Sparkles size={14} className="text-[var(--color-primary)]" />
+                  {isCallGraph
+                    ? "Click a function node to analyze its CFG • Drag canvas to pan"
+                    : "Click any node to navigate to code • Drag canvas to pan • Scroll to zoom"}
+                </div>
               </div>
             </div>
 
@@ -1050,7 +1084,7 @@ export default function CFGCalculator({ project, onClose }) {
                 flexShrink: 0,
                 display: "flex",
                 flexDirection: "column",
-                padding: isMobile ? "20px" : "40px",
+                padding: isMobile ? "20px" : "32px",
                 overflowY: "auto",
                 background: "var(--color-surface)",
                 height: isMobile ? "30%" : "100%",
@@ -1079,144 +1113,113 @@ export default function CFGCalculator({ project, onClose }) {
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: -20 }}
                     transition={{ duration: 0.3 }}
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      height: "100%",
-                    }}
+                    className="flex flex-col h-full"
                   >
-                    <div
-                      style={{
-                        fontSize: "11px",
-                        letterSpacing: "0.2em",
-                        color: "var(--color-text-secondary)",
-                        textTransform: "uppercase",
-                        fontWeight: "bold",
-                        marginBottom: "32px",
-                      }}
-                    >
-                      File Summary Overview
+                    <div className="flex items-center gap-2 mb-5 pb-3 border-b border-[var(--color-border)]">
+                      <Layers
+                        size={15}
+                        className="text-[var(--color-primary)]"
+                      />
+                      <div className="text-xs font-mono tracking-wider text-[var(--color-text)] uppercase font-bold">
+                        File Architecture Overview
+                      </div>
                     </div>
 
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "1fr 1fr",
-                        gap: "20px",
-                        marginBottom: "40px",
-                      }}
-                    >
-                      <div
-                        style={{
-                          background: "var(--color-bg)",
-                          padding: "20px",
-                          borderRadius: "12px",
-                          border: "1px solid var(--color-border)",
-                          boxShadow: "none",
-                        }}
-                      >
-                        <div
-                          style={{
-                            color: "var(--color-text-secondary)",
-                            fontSize: "10px",
-                            fontWeight: "bold",
-                            letterSpacing: "0.1em",
-                            textTransform: "uppercase",
-                            marginBottom: "8px",
-                          }}
-                        >
-                          Functions
+                    <div className="grid grid-cols-2 gap-3 mb-4">
+                      <div className="bg-[var(--color-bg)] p-3.5 rounded-[var(--radius-md)] border border-[var(--color-border)]">
+                        <div className="text-[10px] font-mono font-semibold tracking-wider text-[var(--color-text-muted)] uppercase mb-1">
+                          Total Functions
                         </div>
-                        <div
-                          style={{
-                            fontSize: "32px",
-                            fontFamily: "monospace",
-                            color: "var(--color-text)",
-                          }}
-                        >
+                        <div className="text-2xl font-mono font-bold text-[var(--color-text)]">
                           {fileCfgs.length}
                         </div>
                       </div>
-                      <div
-                        style={{
-                          background: "var(--color-bg)",
-                          padding: "20px",
-                          borderRadius: "12px",
-                          border: "1px solid var(--color-border)",
-                          boxShadow: "none",
-                        }}
-                      >
-                        <div
-                          style={{
-                            color: "var(--color-text-secondary)",
-                            fontSize: "10px",
-                            fontWeight: "bold",
-                            letterSpacing: "0.1em",
-                            textTransform: "uppercase",
-                            marginBottom: "8px",
-                          }}
-                        >
-                          Max CC
+                      <div className="bg-[var(--color-bg)] p-3.5 rounded-[var(--radius-md)] border border-[var(--color-border)]">
+                        <div className="text-[10px] font-mono font-semibold tracking-wider text-[var(--color-text-muted)] uppercase mb-1">
+                          Max McCabe CC
                         </div>
                         <div
-                          style={{
-                            fontSize: "32px",
-                            fontFamily: "monospace",
-                            color: "#fbbf24",
-                          }}
+                          className={`text-2xl font-mono font-bold ${
+                            maxCc >= 10
+                              ? "text-[var(--color-danger)]"
+                              : maxCc >= 5
+                                ? "text-[var(--color-warning)]"
+                                : "text-[var(--color-success)]"
+                          }`}
                         >
                           {maxCc}
                         </div>
                       </div>
                     </div>
 
-                    <div
-                      style={{
-                        borderRadius: "12px",
-                        padding: "24px",
-                        border: "1px solid var(--color-border)",
-                        background: "var(--color-bg)",
-                        position: "relative",
-                        overflow: "hidden",
-                      }}
-                    >
-                      <div
-                        style={{
-                          position: "absolute",
-                          top: 0,
-                          right: 0,
-                          padding: "16px",
-                          opacity: 0.1,
-                        }}
-                      >
-                        <Info size={40} />
+                    {/* Complexity Distribution */}
+                    <div className="rounded-[var(--radius-md)] p-4 border border-[var(--color-border)] bg-[var(--color-bg)] mb-4">
+                      <div className="text-xs font-mono font-bold text-[var(--color-text)] mb-2.5 flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <Activity
+                            size={13}
+                            className="text-[var(--color-primary)]"
+                          />
+                          <span>Complexity Distribution</span>
+                        </div>
+                        <span className="text-[10px] text-[var(--color-text-muted)] font-normal">
+                          {fileCcs.length} analyzed
+                        </span>
                       </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "8px",
-                          marginBottom: "12px",
-                          color: "var(--color-primary)",
-                          fontWeight: "bold",
-                          fontSize: "14px",
-                          letterSpacing: "0.05em",
-                        }}
-                      >
-                        Call Graph Analysis
+                      <div className="flex gap-1 h-2 w-full rounded-full overflow-hidden bg-[var(--color-surface)] border border-[var(--color-border)] mb-2.5">
+                        <div
+                          style={{
+                            width: `${(fileCcs.filter((c) => c.value <= 4).length / (fileCcs.length || 1)) * 100}%`,
+                          }}
+                          className="bg-[var(--color-success)] transition-all"
+                          title="Low risk (<= 4)"
+                        />
+                        <div
+                          style={{
+                            width: `${(fileCcs.filter((c) => c.value > 4 && c.value <= 10).length / (fileCcs.length || 1)) * 100}%`,
+                          }}
+                          className="bg-[var(--color-warning)] transition-all"
+                          title="Moderate risk (5-10)"
+                        />
+                        <div
+                          style={{
+                            width: `${(fileCcs.filter((c) => c.value > 10).length / (fileCcs.length || 1)) * 100}%`,
+                          }}
+                          className="bg-[var(--color-danger)] transition-all"
+                          title="High risk (> 10)"
+                        />
                       </div>
-                      <p
-                        style={{
-                          color: "var(--color-text-secondary)",
-                          fontSize: "13px",
-                          lineHeight: "1.6",
-                          position: "relative",
-                          zIndex: 10,
-                          margin: 0,
-                        }}
-                      >
-                        Select a function on the left to inspect its internal
-                        logic complexity and Control Flow Graph.
+                      <div className="flex justify-between text-[10px] font-mono text-[var(--color-text-secondary)]">
+                        <span className="flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full bg-[var(--color-success)] inline-block" />
+                          Low ({fileCcs.filter((c) => c.value <= 4).length})
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full bg-[var(--color-warning)] inline-block" />
+                          Mod (
+                          {
+                            fileCcs.filter((c) => c.value > 4 && c.value <= 10)
+                              .length
+                          }
+                          )
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full bg-[var(--color-danger)] inline-block" />
+                          High ({fileCcs.filter((c) => c.value > 10).length})
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Navigation Help */}
+                    <div className="rounded-[var(--radius-md)] p-4 border border-[var(--color-border)] bg-[var(--color-bg)]">
+                      <div className="flex items-center gap-2 mb-2 text-[var(--color-primary)] font-bold text-xs font-mono uppercase tracking-wider">
+                        <Info size={14} />
+                        Call Graph Navigation
+                      </div>
+                      <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed m-0">
+                        Select a function node in the Call Graph to inspect its
+                        internal Control Flow Graph, McCabe complexity index,
+                        decision paths, and recommended test cases.
                       </p>
                     </div>
                   </motion.div>
@@ -1227,235 +1230,483 @@ export default function CFGCalculator({ project, onClose }) {
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: -20 }}
                     transition={{ duration: 0.3 }}
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      height: "100%",
-                    }}
+                    className="flex flex-col h-full"
                   >
-                    <div
-                      style={{
-                        fontSize: "11px",
-                        letterSpacing: "0.2em",
-                        color: "var(--color-text-secondary)",
-                        textTransform: "uppercase",
-                        fontWeight: "bold",
-                        marginBottom: "32px",
-                      }}
-                    >
-                      Function Complexity
+                    {/* Header */}
+                    <div className="flex items-center justify-between mb-4 pb-3 border-b border-[var(--color-border)]">
+                      <div className="flex items-center gap-2">
+                        <Activity
+                          size={15}
+                          className="text-[var(--color-primary)]"
+                        />
+                        <span className="text-xs font-mono font-bold uppercase tracking-wider text-[var(--color-text)]">
+                          Complexity Analysis
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] font-semibold truncate max-w-[140px]">
+                        {selectedFunc}()
+                      </span>
                     </div>
 
-                    <div
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        marginBottom: "40px",
-                        position: "relative",
-                      }}
-                    >
-                      <div
-                        style={{
-                          position: "relative",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          width: "160px",
-                          height: "160px",
-                        }}
-                      >
-                        <svg
-                          style={{
-                            width: "100%",
-                            height: "100%",
-                            transform: "rotate(-90deg)",
-                          }}
-                        >
-                          <circle
-                            cx="80"
-                            cy="80"
-                            r="70"
-                            stroke="var(--color-border)"
-                            strokeWidth="14"
-                            fill="none"
+                    {/* --- SELECTED NODE INSPECTOR --- */}
+                    {selectedNode ? (
+                      <div className="rounded-[var(--radius-md)] border-2 border-[var(--color-primary)]/40 bg-[var(--color-bg)] p-3.5 mb-4 shadow-sm">
+                        <div className="flex items-center justify-between mb-2.5 pb-2 border-b border-[var(--color-border)]">
+                          <div className="flex items-center gap-1.5 text-xs font-mono font-bold uppercase tracking-wider text-[var(--color-text)]">
+                            <GitBranch
+                              size={13}
+                              className="text-[var(--color-primary)]"
+                            />
+                            <span>Node Inspector</span>
+                          </div>
+                          <button
+                            onClick={() => {
+                              setSelectedNodeId(null);
+                              setHighlightedLine(null);
+                            }}
+                            title="Deselect Node"
+                            className="flex items-center gap-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors p-0.5 rounded-[var(--radius-sm)] hover:bg-[var(--color-surface-secondary)] cursor-pointer bg-transparent border-none text-[11px] font-mono"
+                          >
+                            <X size={12} />
+                            <span>Deselect</span>
+                          </button>
+                        </div>
+
+                        {/* Node Identity & Type */}
+                        <div className="flex items-center justify-between gap-2 mb-2.5 flex-wrap">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-sm font-bold text-[var(--color-text)]">
+                              {selectedNode.label ||
+                                selectedNode.type ||
+                                selectedNode.id}
+                            </span>
+                            {selectedNode.line && (
+                              <span className="text-[10px] font-mono font-bold text-[var(--color-primary)] bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/20 px-2 py-0.5 rounded-[var(--radius-sm)]">
+                                Line {selectedNode.line}
+                              </span>
+                            )}
+                          </div>
+
+                          <span
+                            className={`text-[10px] font-mono font-bold uppercase px-2.5 py-0.5 rounded-full border ${
+                              selectedNode.type === "condition"
+                                ? "bg-[var(--color-warning)]/15 text-[var(--color-warning)] border-[var(--color-warning)]/30"
+                                : selectedNode.type === "start"
+                                  ? "bg-[var(--color-primary)]/15 text-[var(--color-primary)] border-[var(--color-primary)]/30"
+                                  : selectedNode.type === "return" ||
+                                      selectedNode.type === "exit"
+                                    ? "bg-[var(--color-danger)]/15 text-[var(--color-danger)] border-[var(--color-danger)]/30"
+                                    : "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]"
+                            }`}
+                          >
+                            {selectedNode.type === "condition"
+                              ? "Decision (Branch)"
+                              : selectedNode.type === "start"
+                                ? "Function Entry"
+                                : selectedNode.type === "return"
+                                  ? "Return Exit"
+                                  : selectedNode.type === "exit"
+                                    ? "Virtual Exit"
+                                    : "Sequential Stmt"}
+                          </span>
+                        </div>
+
+                        {/* Code snippet preview */}
+                        {selectedNodeLineText && (
+                          <div className="mb-2.5 rounded-[var(--radius-sm)] bg-[var(--color-surface)] border border-[var(--color-border)] p-2 font-mono text-xs text-[var(--color-text)] leading-relaxed">
+                            <div className="text-[9px] uppercase tracking-wider text-[var(--color-text-muted)] font-semibold mb-1 flex items-center justify-between">
+                              <span>Source Line Preview</span>
+                              <span className="text-[var(--color-primary)] font-bold">
+                                L{selectedNode.line || activeCfg?.startLine}
+                              </span>
+                            </div>
+                            <div className="text-xs font-mono whitespace-pre-wrap break-all text-[var(--color-text)] bg-[var(--color-bg)]/80 p-2 rounded-[var(--radius-sm)] border border-[var(--color-border)]/50">
+                              {syntaxHighlight(selectedNodeLineText)}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Connectivity Grid */}
+                        <div className="grid grid-cols-3 gap-1.5 mb-2.5">
+                          <div className="p-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface)] border border-[var(--color-border)] text-center">
+                            <div className="text-[9px] font-mono uppercase text-[var(--color-text-muted)] tracking-wider">
+                              In-Degree
+                            </div>
+                            <div className="text-sm font-mono font-bold text-[var(--color-text)] mt-0.5">
+                              {selectedNodeInEdges.length}
+                            </div>
+                          </div>
+                          <div className="p-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface)] border border-[var(--color-border)] text-center">
+                            <div className="text-[9px] font-mono uppercase text-[var(--color-text-muted)] tracking-wider">
+                              Out-Degree
+                            </div>
+                            <div className="text-sm font-mono font-bold text-[var(--color-text)] mt-0.5">
+                              {selectedNodeOutEdges.length}
+                            </div>
+                          </div>
+                          <div className="p-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface)] border border-[var(--color-border)] text-center">
+                            <div className="text-[9px] font-mono uppercase text-[var(--color-text-muted)] tracking-wider">
+                              Complexity
+                            </div>
+                            <div
+                              className={`text-sm font-mono font-bold mt-0.5 ${
+                                selectedNode.type === "condition"
+                                  ? "text-[var(--color-warning)]"
+                                  : "text-[var(--color-text-secondary)]"
+                              }`}
+                            >
+                              {selectedNode.type === "condition"
+                                ? "+1 CC"
+                                : "+0"}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Node Flow Description */}
+                        <div className="text-[11px] text-[var(--color-text-secondary)] bg-[var(--color-surface)] p-2 rounded-[var(--radius-sm)] border border-[var(--color-border)] leading-relaxed">
+                          {selectedNode.type === "condition" && (
+                            <span className="flex items-start gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-warning)] mt-1 flex-shrink-0 inline-block" />
+                              <span>
+                                <strong className="text-[var(--color-text)]">
+                                  Branching Node:
+                                </strong>{" "}
+                                Evaluates predicate condition and creates 2
+                                alternative execution branches (+1 McCabe
+                                Complexity).
+                              </span>
+                            </span>
+                          )}
+                          {selectedNode.type === "start" && (
+                            <span className="flex items-start gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-primary)] mt-1 flex-shrink-0 inline-block" />
+                              <span>
+                                <strong className="text-[var(--color-text)]">
+                                  Entry Point:
+                                </strong>{" "}
+                                Function entry root node initializing call scope
+                                and parameter bindings.
+                              </span>
+                            </span>
+                          )}
+                          {selectedNode.type === "return" && (
+                            <span className="flex items-start gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-danger)] mt-1 flex-shrink-0 inline-block" />
+                              <span>
+                                <strong className="text-[var(--color-text)]">
+                                  Return Statement:
+                                </strong>{" "}
+                                Terminates execution along this branch and
+                                yields return value to caller.
+                              </span>
+                            </span>
+                          )}
+                          {selectedNode.type === "exit" && (
+                            <span className="flex items-start gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-danger)] mt-1 flex-shrink-0 inline-block" />
+                              <span>
+                                <strong className="text-[var(--color-text)]">
+                                  Terminal Sink:
+                                </strong>{" "}
+                                Virtual McCabe exit node absorbing all terminal
+                                return paths (P = 1).
+                              </span>
+                            </span>
+                          )}
+                          {selectedNode.type !== "condition" &&
+                            selectedNode.type !== "start" &&
+                            selectedNode.type !== "return" &&
+                            selectedNode.type !== "exit" && (
+                              <span className="flex items-start gap-1.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-text-muted)] mt-1 flex-shrink-0 inline-block" />
+                                <span>
+                                  <strong className="text-[var(--color-text)]">
+                                    Sequential Statement:
+                                  </strong>{" "}
+                                  Linear execution block without conditional
+                                  branching.
+                                </span>
+                              </span>
+                            )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="rounded-[var(--radius-md)] border border-dashed border-[var(--color-border)] p-3 mb-4 text-center bg-[var(--color-bg)]/40">
+                        <div className="flex items-center justify-center gap-1.5 text-xs text-[var(--color-text-secondary)] font-mono">
+                          <Sparkles
+                            size={13}
+                            className="text-[var(--color-primary)]"
                           />
-                          <circle
-                            cx="80"
-                            cy="80"
-                            r="70"
-                            stroke={
-                              activeCc?.value >= 10
-                                ? "#ef4444"
-                                : activeCc?.value >= 5
-                                  ? "#fbbf24"
-                                  : "#22c55e"
-                            }
-                            strokeWidth="14"
-                            fill="none"
-                            strokeDasharray="440"
-                            strokeDashoffset={
-                              440 -
-                              (440 * Math.min(activeCc?.value || 0, 20)) / 20
-                            }
-                            strokeLinecap="round"
-                          />
-                        </svg>
-                        <div
-                          style={{
-                            position: "absolute",
-                            display: "flex",
-                            flexDirection: "column",
-                            alignItems: "center",
-                          }}
-                        >
-                          <span
-                            style={{
-                              fontSize: "48px",
-                              fontWeight: "bold",
-                              fontFamily: "monospace",
-                              color: "var(--color-text)",
-                            }}
-                          >
-                            {activeCc?.value || 1}
-                          </span>
-                          <span
-                            style={{
-                              fontSize: "10px",
-                              color: "var(--color-text-secondary)",
-                              marginTop: "8px",
-                              fontWeight: "bold",
-                              letterSpacing: "0.1em",
-                              textTransform: "uppercase",
-                            }}
-                          >
-                            McCabe CC
+                          <span>
+                            Click any node in graph to inspect its parameters
                           </span>
                         </div>
                       </div>
+                    )}
 
-                      <div
-                        style={{
-                          marginTop: "32px",
-                          padding: "8px 20px",
-                          borderRadius: "9999px",
-                          fontSize: "13px",
-                          fontWeight: "bold",
-                          border: `1px solid ${activeCc?.value >= 10 ? "#ef4444" : activeCc?.value >= 5 ? "#fbbf24" : "#22c55e"}40`,
-                          background: `${activeCc?.value >= 10 ? "#ef4444" : activeCc?.value >= 5 ? "#fbbf24" : "#22c55e"}1a`,
-                          color:
-                            activeCc?.value >= 10
-                              ? "#ef4444"
-                              : activeCc?.value >= 5
-                                ? "#fbbf24"
-                                : "#22c55e",
-                        }}
-                      >
-                        Complexity:{" "}
-                        {activeCc?.value >= 10
-                          ? "High"
-                          : activeCc?.value >= 5
-                            ? "Moderate"
-                            : "Low"}
-                      </div>
-                    </div>
+                    {/* Radial Meter & Status Card */}
+                    {(() => {
+                      const ccVal = activeCc?.value || 1;
+                      const meta = getComplexityMeta(ccVal);
+                      const MetaIcon = meta.icon;
+                      const circumference = 364.4; // 2 * PI * 58
+                      const dashoffset =
+                        circumference -
+                        (circumference * Math.min(ccVal, 20)) / 20;
 
-                    <div
-                      style={{
-                        marginBottom: "32px",
-                        background: "var(--color-bg)",
-                        borderRadius: "12px",
-                        padding: "20px",
-                        border: "1px solid var(--color-border)",
-                      }}
-                    >
-                      <div
-                        style={{
-                          fontSize: "10px",
-                          letterSpacing: "0.15em",
-                          color: "var(--color-text-secondary)",
-                          textTransform: "uppercase",
-                          fontWeight: "bold",
-                          marginBottom: "16px",
-                        }}
-                      >
-                        Graph Metrics
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: "12px",
-                          fontFamily: "monospace",
-                          fontSize: "13px",
-                        }}
-                      >
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                          }}
-                        >
-                          <span
-                            style={{ color: "var(--color-text-secondary)" }}
-                          >
-                            Edges (E)
-                          </span>
-                          <span
-                            style={{
-                              color: "var(--color-info, #22D3EE)",
-                              fontWeight: "bold",
-                            }}
-                          >
-                            {graphLayout.edges.length}
-                          </span>
-                        </div>
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                          }}
-                        >
-                          <span
-                            style={{ color: "var(--color-text-secondary)" }}
-                          >
-                            Nodes (N)
-                          </span>
-                          <span
-                            style={{
-                              color: "var(--color-success, #4ADE80)",
-                              fontWeight: "bold",
-                            }}
-                          >
-                            {graphLayout.nodes.length}
-                          </span>
-                        </div>
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                          }}
-                        >
-                          <span
-                            style={{ color: "var(--color-text-secondary)" }}
-                          >
-                            Exits (P)
-                          </span>
-                          <span
-                            style={{
-                              color: "var(--color-text)",
-                              fontWeight: "bold",
-                            }}
-                          >
-                            1
-                          </span>
-                        </div>
-                      </div>
-                    </div>
+                      return (
+                        <>
+                          <div className="flex flex-col items-center justify-center p-5 mb-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg)]">
+                            <div className="relative flex items-center justify-center w-36 h-36">
+                              <svg className="w-full h-full -rotate-90">
+                                <circle
+                                  cx="72"
+                                  cy="72"
+                                  r="58"
+                                  stroke="var(--color-border)"
+                                  strokeWidth="10"
+                                  fill="none"
+                                  opacity="0.4"
+                                />
+                                <circle
+                                  cx="72"
+                                  cy="72"
+                                  r="58"
+                                  stroke={meta.color}
+                                  strokeWidth="10"
+                                  fill="none"
+                                  strokeDasharray={circumference}
+                                  strokeDashoffset={dashoffset}
+                                  strokeLinecap="round"
+                                  style={{
+                                    transition:
+                                      "stroke-dashoffset 0.6s cubic-bezier(0.4, 0, 0.2, 1)",
+                                  }}
+                                />
+                              </svg>
+                              <div className="absolute flex flex-col items-center">
+                                <span className="text-3xl font-extrabold font-mono text-[var(--color-text)] tracking-tight">
+                                  {ccVal}
+                                </span>
+                                <span className="text-[10px] font-mono font-bold tracking-wider text-[var(--color-text-secondary)] uppercase mt-0.5">
+                                  McCabe CC
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Status Pill */}
+                            <div className="mt-4 flex flex-col items-center gap-2.5 w-full">
+                              <div
+                                className={`inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-semibold border ${meta.badgeClass}`}
+                              >
+                                <MetaIcon size={13} />
+                                <span>
+                                  {meta.level} Complexity ({meta.riskText})
+                                </span>
+                              </div>
+
+                              {/* 4-Tier Interactive Scale Bar */}
+                              <div className="w-full px-2 mt-1">
+                                <div className="flex gap-1.5 h-1.5 w-full rounded-full overflow-hidden bg-[var(--color-border)]/50 p-0.5">
+                                  <div
+                                    className={`flex-1 rounded-full transition-all duration-300 ${
+                                      meta.tier === 1
+                                        ? "bg-[var(--color-success)] shadow-xs"
+                                        : "bg-[var(--color-border)] opacity-30"
+                                    }`}
+                                  />
+                                  <div
+                                    className={`flex-1 rounded-full transition-all duration-300 ${
+                                      meta.tier === 2
+                                        ? "bg-[var(--color-warning)] shadow-xs"
+                                        : "bg-[var(--color-border)] opacity-30"
+                                    }`}
+                                  />
+                                  <div
+                                    className={`flex-1 rounded-full transition-all duration-300 ${
+                                      meta.tier === 3
+                                        ? "bg-[var(--color-danger)] shadow-xs"
+                                        : "bg-[var(--color-border)] opacity-30"
+                                    }`}
+                                  />
+                                  <div
+                                    className={`flex-1 rounded-full transition-all duration-300 ${
+                                      meta.tier === 4
+                                        ? "bg-[var(--color-danger)] shadow-xs"
+                                        : "bg-[var(--color-border)] opacity-30"
+                                    }`}
+                                  />
+                                </div>
+                                <div className="flex justify-between text-[10px] font-mono text-[var(--color-text-muted)] mt-1.5 px-0.5">
+                                  <span
+                                    className={
+                                      meta.tier === 1
+                                        ? "text-[var(--color-success)] font-bold"
+                                        : ""
+                                    }
+                                  >
+                                    1-4 Low
+                                  </span>
+                                  <span
+                                    className={
+                                      meta.tier === 2
+                                        ? "text-[var(--color-warning)] font-bold"
+                                        : ""
+                                    }
+                                  >
+                                    5-10 Mod
+                                  </span>
+                                  <span
+                                    className={
+                                      meta.tier === 3
+                                        ? "text-[var(--color-danger)] font-bold"
+                                        : ""
+                                    }
+                                  >
+                                    11-20 High
+                                  </span>
+                                  <span
+                                    className={
+                                      meta.tier === 4
+                                        ? "text-[var(--color-danger)] font-bold"
+                                        : ""
+                                    }
+                                  >
+                                    20+ Crit
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Graph Formula Card */}
+                          <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg)] p-4 mb-4">
+                            <div className="flex items-center justify-between mb-3 pb-2.5 border-b border-[var(--color-border)]">
+                              <div className="flex items-center gap-1.5 text-xs font-mono font-bold uppercase tracking-wider text-[var(--color-text)]">
+                                <Calculator
+                                  size={13}
+                                  className="text-[var(--color-primary)]"
+                                />
+                                <span>Graph Formula</span>
+                              </div>
+                              <span className="text-[10px] font-mono font-bold text-[var(--color-primary)] bg-[var(--color-primary)]/10 px-2 py-0.5 rounded-[var(--radius-sm)] border border-[var(--color-primary)]/20">
+                                M = E - N + 2P
+                              </span>
+                            </div>
+
+                            {/* Equation calculation visualization */}
+                            <div className="bg-[var(--color-surface)] rounded-[var(--radius-sm)] py-2 px-3 mb-3 border border-[var(--color-border)] flex items-center justify-center gap-2 font-mono text-xs text-[var(--color-text)]">
+                              <span className="font-bold text-[var(--color-primary)] text-sm">
+                                {ccVal}
+                              </span>
+                              <span className="text-[var(--color-text-muted)]">
+                                =
+                              </span>
+                              <span className="font-semibold">
+                                {graphLayout.edges.length}
+                              </span>
+                              <span className="text-[var(--color-text-muted)] text-[10px]">
+                                (E)
+                              </span>
+                              <span className="text-[var(--color-text-muted)]">
+                                -
+                              </span>
+                              <span className="font-semibold">
+                                {graphLayout.nodes.length}
+                              </span>
+                              <span className="text-[var(--color-text-muted)] text-[10px]">
+                                (N)
+                              </span>
+                              <span className="text-[var(--color-text-muted)]">
+                                +
+                              </span>
+                              <span className="font-semibold">2</span>
+                              <span className="text-[var(--color-text-muted)] text-[10px]">
+                                (P)
+                              </span>
+                            </div>
+
+                            {/* 3 Metrics Mini Cards Grid */}
+                            <div className="grid grid-cols-3 gap-2">
+                              <div className="p-2.5 rounded-[var(--radius-sm)] bg-[var(--color-surface)] border border-[var(--color-border)] text-center transition-colors hover:border-[var(--color-primary)]/40">
+                                <div className="text-[10px] font-mono font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">
+                                  Edges (E)
+                                </div>
+                                <div className="text-base font-mono font-bold text-[var(--color-primary)] mt-0.5">
+                                  {graphLayout.edges.length}
+                                </div>
+                              </div>
+                              <div className="p-2.5 rounded-[var(--radius-sm)] bg-[var(--color-surface)] border border-[var(--color-border)] text-center transition-colors hover:border-[var(--color-primary)]/40">
+                                <div className="text-[10px] font-mono font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">
+                                  Nodes (N)
+                                </div>
+                                <div className="text-base font-mono font-bold text-[var(--color-success)] mt-0.5">
+                                  {graphLayout.nodes.length}
+                                </div>
+                              </div>
+                              <div className="p-2.5 rounded-[var(--radius-sm)] bg-[var(--color-surface)] border border-[var(--color-border)] text-center transition-colors hover:border-[var(--color-primary)]/40">
+                                <div className="text-[10px] font-mono font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">
+                                  Exits (P)
+                                </div>
+                                <div className="text-base font-mono font-bold text-[var(--color-text)] mt-0.5">
+                                  1
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* QA & Testing Insights Card */}
+                          <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+                            <div className="flex items-center gap-1.5 text-xs font-mono font-bold uppercase tracking-wider text-[var(--color-text)] mb-3 pb-2 border-b border-[var(--color-border)]">
+                              <ShieldCheck
+                                size={13}
+                                className="text-[var(--color-primary)]"
+                              />
+                              <span>QA & Testing Guidance</span>
+                            </div>
+
+                            <div className="space-y-2.5 text-xs">
+                              <div className="flex items-start gap-2.5 text-[var(--color-text-secondary)]">
+                                <div className="w-1.5 h-1.5 rounded-full bg-[var(--color-primary)] mt-1.5 flex-shrink-0" />
+                                <div className="leading-relaxed">
+                                  <strong className="text-[var(--color-text)]">
+                                    Basis Path Coverage:
+                                  </strong>{" "}
+                                  Requires at least{" "}
+                                  <span className="font-mono font-bold text-[var(--color-primary)]">
+                                    {ccVal} independent test cases
+                                  </span>{" "}
+                                  to achieve 100% path coverage.
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2.5 text-[var(--color-text-secondary)]">
+                                <div className="w-1.5 h-1.5 rounded-full bg-[var(--color-primary)] mt-1.5 flex-shrink-0" />
+                                <div className="leading-relaxed">
+                                  <strong className="text-[var(--color-text)]">
+                                    Decision Points:
+                                  </strong>{" "}
+                                  Detected{" "}
+                                  <span className="font-mono font-bold text-[var(--color-text)]">
+                                    {Math.max(0, ccVal - 1)} conditional
+                                    branches
+                                  </span>{" "}
+                                  (if, switch, loop, ternary).
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2.5 text-[var(--color-text-secondary)]">
+                                <div className="w-1.5 h-1.5 rounded-full bg-[var(--color-primary)] mt-1.5 flex-shrink-0" />
+                                <div className="leading-relaxed">
+                                  <strong className="text-[var(--color-text)]">
+                                    Recommendation:
+                                  </strong>{" "}
+                                  {meta.recommendation}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </motion.div>
                 )}
               </AnimatePresence>

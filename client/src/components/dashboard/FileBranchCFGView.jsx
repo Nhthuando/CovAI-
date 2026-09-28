@@ -51,53 +51,22 @@ export default function FileBranchCFGView({
   const activeFn = functionsWithCfg[selectedFnIndex] || functionsWithCfg[0];
 
   return (
-    <div
-      style={{
-        borderRadius: 8,
-        border: "1px solid var(--color-border)",
-        background: "var(--color-bg)",
-        overflow: "hidden",
-        boxShadow: "var(--shadow-md)",
-      }}
-    >
+    <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg)] overflow-hidden shadow-sm">
       {/* Header */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "10px 16px",
-          background: "rgba(251, 191, 36, 0.08)",
-          borderBottom: "1px solid var(--color-border)",
-          flexWrap: "wrap",
-          gap: 10,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <GitBranch size={15} style={{ color: "#fbbf24" }} />
-          <span
-            style={{
-              fontSize: 12,
-              fontWeight: 700,
-              color: "#e6edf3",
-              fontFamily: "var(--font-mono)",
-            }}
-          >
+      <div className="flex items-center justify-between px-4 py-2.5 bg-[var(--color-warning)]/10 border-b border-[var(--color-border)] flex-wrap gap-2.5">
+        <div className="flex items-center gap-2">
+          <GitBranch size={15} className="text-[var(--color-warning)]" />
+          <span className="text-xs font-bold text-[var(--color-text)] font-mono">
             Control Flow Graph (CFG) — {cleanDisplayPath(filePath)}
           </span>
         </div>
 
         {/* Function Selector Tabs */}
         {functionsWithCfg.length > 1 && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              flexWrap: "wrap",
-            }}
-          >
-            <span style={{ fontSize: 11, color: "#8b949e" }}>Hàm:</span>
+          <div className="flex items-center gap-1 flex-wrap">
+            <span className="text-[11px] text-[var(--color-text-secondary)]">
+              Hàm:
+            </span>
             {functionsWithCfg.map((fn, idx) => {
               const isSelected = idx === selectedFnIndex;
               const hasBranches = fn.branches.length > 0;
@@ -105,21 +74,11 @@ export default function FileBranchCFGView({
                 <button
                   key={idx}
                   onClick={() => setSelectedFnIndex(idx)}
-                  style={{
-                    fontSize: 11,
-                    fontFamily: "var(--font-mono)",
-                    fontWeight: isSelected ? 700 : 500,
-                    padding: "3px 8px",
-                    borderRadius: 4,
-                    background: isSelected
-                      ? "rgba(251, 191, 36, 0.2)"
-                      : "rgba(255, 255, 255, 0.04)",
-                    color: isSelected ? "#fbbf24" : "#8b949e",
-                    border: isSelected
-                      ? "1px solid rgba(251, 191, 36, 0.4)"
-                      : "1px solid rgba(255, 255, 255, 0.06)",
-                    cursor: "pointer",
-                  }}
+                  className={`text-[11px] font-mono px-2 py-0.5 rounded-[var(--radius-sm)] cursor-pointer transition-colors ${
+                    isSelected
+                      ? "bg-[var(--color-warning)]/20 text-[var(--color-warning)] font-bold border border-[var(--color-warning)]/40"
+                      : "bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]"
+                  }`}
                 >
                   {fn.name}(){" "}
                   {hasBranches ? `(${fn.branches.length} rẽ nhánh)` : ""}
@@ -131,52 +90,16 @@ export default function FileBranchCFGView({
       </div>
 
       {/* CFG Graph Canvas */}
-      <div
-        style={{
-          padding: "24px 20px",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          gap: 14,
-          background: "var(--color-bg)",
-        }}
-      >
+      <div className="p-6 flex flex-col items-center gap-3.5 bg-[var(--color-bg)]">
         {/* Function Entry Node */}
-        <div
-          style={{
-            padding: "8px 20px",
-            borderRadius: 8,
-            background: "rgba(56, 189, 248, 0.12)",
-            border: "1.5px solid #38bdf8",
-            color: "#38bdf8",
-            fontSize: 13,
-            fontWeight: 700,
-            fontFamily: "var(--font-mono)",
-            boxShadow: "0 2px 12px rgba(56, 189, 248, 0.15)",
-            textAlign: "center",
-            minWidth: 150,
-          }}
-        >
+        <div className="px-5 py-2 rounded-[var(--radius-md)] bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/40 text-[var(--color-primary)] text-xs font-bold font-mono text-center min-w-[150px] shadow-sm">
           {activeFn?.name || "function"}()
         </div>
 
         {/* Down Arrow */}
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            color: "#64748b",
-          }}
-        >
-          <div
-            style={{
-              width: 2,
-              height: 16,
-              background: "rgba(255,255,255,0.2)",
-            }}
-          />
-          <div style={{ fontSize: 10, marginTop: -4 }}>▼</div>
+        <div className="flex flex-col items-center text-[var(--color-text-muted)]">
+          <div className="w-[2px] h-4 bg-[var(--color-border)]" />
+          <div className="text-[10px] -mt-1">▼</div>
         </div>
 
         {/* If Function Has Branches */}
@@ -211,240 +134,125 @@ export default function FileBranchCFGView({
             return (
               <div
                 key={branch.id || bIdx}
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  width: "100%",
-                  maxWidth: 580,
-                }}
+                className="flex flex-col items-center w-full max-w-[580px]"
               >
                 {/* Decision Condition Node */}
-                <div
-                  style={{
-                    padding: "9px 22px",
-                    borderRadius: 8,
-                    background: "rgba(251, 191, 36, 0.12)",
-                    border: "1.5px solid #fbbf24",
-                    color: "#fde047",
-                    fontSize: 13,
-                    fontWeight: 700,
-                    fontFamily: "var(--font-mono)",
-                    boxShadow: "0 2px 14px rgba(251, 191, 36, 0.15)",
-                    textAlign: "center",
-                    minWidth: 160,
-                  }}
-                >
+                <div className="px-5 py-2 rounded-[var(--radius-md)] bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/40 text-[var(--color-warning)] text-xs font-bold font-mono text-center min-w-[160px] shadow-sm">
                   {condText}
                 </div>
 
                 {/* Split Paths Diagram */}
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    gap: 32,
-                    width: "100%",
-                    marginTop: 8,
-                  }}
-                >
+                <div className="grid grid-cols-2 gap-8 w-full mt-2">
                   {/* TRUE Path Column */}
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "center",
-                    }}
-                  >
+                  <div className="flex flex-col items-center">
                     <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 4,
-                        fontSize: 11,
-                        fontWeight: 700,
-                        color: isTrueCovered ? "#4ade80" : "#f87171",
-                        fontFamily: "var(--font-mono)",
-                        marginBottom: 4,
-                      }}
+                      className={`flex items-center gap-1 text-[11px] font-bold font-mono mb-1 ${
+                        isTrueCovered
+                          ? "text-[var(--color-success)]"
+                          : "text-[var(--color-danger)]"
+                      }`}
                     >
                       <span>TRUE</span>
-                      <span style={{ fontSize: 12 }}>
+                      <span className="text-xs">
                         {isTrueCovered ? "🟢" : "🔴"}
                       </span>
-                      <span style={{ fontSize: 10, color: "#8b949e" }}>
+                      <span className="text-[10px] text-[var(--color-text-muted)]">
                         ({truePath?.hits || 0} hits)
                       </span>
                     </div>
 
                     <div
-                      style={{
-                        width: 2,
-                        height: 16,
-                        background: isTrueCovered ? "#22c55e" : "#ef4444",
-                      }}
+                      className={`w-[2px] h-4 ${
+                        isTrueCovered
+                          ? "bg-[var(--color-success)]"
+                          : "bg-[var(--color-danger)]"
+                      }`}
                     />
                     <div
-                      style={{
-                        fontSize: 10,
-                        color: isTrueCovered ? "#22c55e" : "#ef4444",
-                        marginTop: -4,
-                      }}
+                      className={`text-[10px] -mt-1 ${
+                        isTrueCovered
+                          ? "text-[var(--color-success)]"
+                          : "text-[var(--color-danger)]"
+                      }`}
                     >
                       ▼
                     </div>
 
                     {/* True Block Box */}
                     <div
-                      style={{
-                        marginTop: 4,
-                        padding: "8px 16px",
-                        borderRadius: 6,
-                        background: isTrueCovered
-                          ? "rgba(34, 197, 94, 0.1)"
-                          : "rgba(239, 68, 68, 0.1)",
-                        border: isTrueCovered
-                          ? "1px solid rgba(34, 197, 94, 0.35)"
-                          : "1.5px dashed #f87171",
-                        color: isTrueCovered ? "#86efac" : "#fca5a5",
-                        fontFamily: "var(--font-mono)",
-                        fontSize: 12,
-                        fontWeight: 600,
-                        textAlign: "center",
-                        width: "85%",
-                        minHeight: 38,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                      }}
+                      className={`mt-1 px-4 py-2 rounded-[var(--radius-sm)] font-mono text-xs font-semibold text-center w-[85%] min-h-[38px] flex items-center justify-center ${
+                        isTrueCovered
+                          ? "bg-[var(--color-success)]/10 border border-[var(--color-success)]/30 text-[var(--color-success)]"
+                          : "bg-[var(--color-danger)]/10 border border-dashed border-[var(--color-danger)] text-[var(--color-danger)]"
+                      }`}
                     >
                       {trueCode}
                     </div>
 
                     {/* Connector line down to return */}
-                    <div
-                      style={{
-                        width: 2,
-                        height: 20,
-                        background: "rgba(255,255,255,0.15)",
-                        marginTop: 4,
-                      }}
-                    />
+                    <div className="w-[2px] h-5 bg-[var(--color-border)] mt-1" />
                   </div>
 
                   {/* FALSE Path Column */}
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "center",
-                    }}
-                  >
+                  <div className="flex flex-col items-center">
                     <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 4,
-                        fontSize: 11,
-                        fontWeight: 700,
-                        color: isFalseCovered ? "#4ade80" : "#f87171",
-                        fontFamily: "var(--font-mono)",
-                        marginBottom: 4,
-                      }}
+                      className={`flex items-center gap-1 text-[11px] font-bold font-mono mb-1 ${
+                        isFalseCovered
+                          ? "text-[var(--color-success)]"
+                          : "text-[var(--color-danger)]"
+                      }`}
                     >
                       <span>FALSE</span>
-                      <span style={{ fontSize: 12 }}>
+                      <span className="text-xs">
                         {isFalseCovered ? "🟢" : "🔴"}
                       </span>
-                      <span style={{ fontSize: 10, color: "#8b949e" }}>
+                      <span className="text-[10px] text-[var(--color-text-muted)]">
                         ({falsePath?.hits || 0} hits)
                       </span>
                     </div>
 
                     <div
-                      style={{
-                        width: 2,
-                        height: 16,
-                        background: isFalseCovered ? "#22c55e" : "#ef4444",
-                      }}
+                      className={`w-[2px] h-4 ${
+                        isFalseCovered
+                          ? "bg-[var(--color-success)]"
+                          : "bg-[var(--color-danger)]"
+                      }`}
                     />
                     <div
-                      style={{
-                        fontSize: 10,
-                        color: isFalseCovered ? "#22c55e" : "#ef4444",
-                        marginTop: -4,
-                      }}
+                      className={`text-[10px] -mt-1 ${
+                        isFalseCovered
+                          ? "text-[var(--color-success)]"
+                          : "text-[var(--color-danger)]"
+                      }`}
                     >
                       ▼
                     </div>
 
                     {/* False Block Box */}
                     <div
-                      style={{
-                        marginTop: 4,
-                        padding: "8px 16px",
-                        borderRadius: 6,
-                        background: isFalseCovered
-                          ? "rgba(56, 189, 248, 0.1)"
-                          : "rgba(239, 68, 68, 0.1)",
-                        border: isFalseCovered
-                          ? "1px solid rgba(56, 189, 248, 0.35)"
-                          : "1.5px dashed #f87171",
-                        color: isFalseCovered ? "#bae6fd" : "#fca5a5",
-                        fontFamily: "var(--font-mono)",
-                        fontSize: 12,
-                        fontWeight: 600,
-                        textAlign: "center",
-                        width: "85%",
-                        minHeight: 38,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                      }}
+                      className={`mt-1 px-4 py-2 rounded-[var(--radius-sm)] font-mono text-xs font-semibold text-center w-[85%] min-h-[38px] flex items-center justify-center ${
+                        isFalseCovered
+                          ? "bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/30 text-[var(--color-primary)]"
+                          : "bg-[var(--color-danger)]/10 border border-dashed border-[var(--color-danger)] text-[var(--color-danger)]"
+                      }`}
                     >
                       {falseCode}
                     </div>
 
                     {/* Connector line down to return */}
-                    <div
-                      style={{
-                        width: 2,
-                        height: 20,
-                        background: "rgba(255,255,255,0.15)",
-                        marginTop: 4,
-                      }}
-                    />
+                    <div className="w-[2px] h-5 bg-[var(--color-border)] mt-1" />
                   </div>
                 </div>
 
                 {/* Missing Branch Warning & Suggest Button */}
                 {(!isTrueCovered || !isFalseCovered) && onSuggestTestcase && (
-                  <div
-                    style={{
-                      marginTop: 10,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                    }}
-                  >
-                    <span style={{ fontSize: 11, color: "#f87171" }}>
+                  <div className="mt-2.5 flex items-center gap-2">
+                    <span className="text-xs text-[var(--color-danger)]">
                       ⚠️ Còn nhánh chưa được kiểm thử
                     </span>
                     <button
                       onClick={() => onSuggestTestcase(filePath)}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 3,
-                        padding: "3px 8px",
-                        borderRadius: 4,
-                        background: "rgba(168, 85, 247, 0.2)",
-                        border: "1px solid rgba(168, 85, 247, 0.4)",
-                        color: "#c084fc",
-                        fontSize: 11,
-                        cursor: "pointer",
-                        fontWeight: 600,
-                      }}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-[var(--radius-sm)] bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs cursor-pointer font-medium transition-colors border-none"
                     >
                       <Sparkles size={11} />
                       <span>Gợi ý testcase</span>
@@ -456,57 +264,19 @@ export default function FileBranchCFGView({
           })
         ) : (
           /* Function has no branches: straight pipeline */
-          <div
-            style={{
-              padding: "8px 18px",
-              borderRadius: 6,
-              background: "rgba(255,255,255,0.04)",
-              border: "1px solid rgba(255,255,255,0.1)",
-              color: "#c9d1d9",
-              fontSize: 12,
-              fontFamily: "var(--font-mono)",
-            }}
-          >
+          <div className="px-4 py-2 rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] text-xs font-mono">
             Thực thi tuần tự (Không có rẽ nhánh điều kiện)
           </div>
         )}
 
         {/* Merge Arrow to Return */}
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            color: "#64748b",
-            marginTop: -6,
-          }}
-        >
-          <div
-            style={{
-              width: 2,
-              height: 16,
-              background: "rgba(255,255,255,0.2)",
-            }}
-          />
-          <div style={{ fontSize: 10, marginTop: -4 }}>▼</div>
+        <div className="flex flex-col items-center text-[var(--color-text-muted)] -mt-1.5">
+          <div className="w-[2px] h-4 bg-[var(--color-border)]" />
+          <div className="text-[10px] -mt-1">▼</div>
         </div>
 
         {/* Exit / Return Node */}
-        <div
-          style={{
-            padding: "7px 24px",
-            borderRadius: 8,
-            background: "rgba(168, 85, 247, 0.12)",
-            border: "1.5px solid #a855f7",
-            color: "#c084fc",
-            fontSize: 12,
-            fontWeight: 700,
-            fontFamily: "var(--font-mono)",
-            boxShadow: "0 2px 12px rgba(168, 85, 247, 0.15)",
-            textAlign: "center",
-            minWidth: 120,
-          }}
-        >
+        <div className="px-6 py-1.5 rounded-[var(--radius-md)] bg-[var(--color-secondary)]/10 border border-[var(--color-secondary)]/40 text-[var(--color-secondary)] text-xs font-bold font-mono text-center min-w-[120px] shadow-sm">
           return
         </div>
       </div>

@@ -582,7 +582,7 @@ function LayoutInner() {
       className="ide-root"
       style={{ background: "var(--ide-bg)", color: "var(--text-primary)" }}
     >
-      <div className="flex items-center justify-between flex-shrink-0 h-11 px-3 sm:px-4 bg-[var(--color-surface)] border-b border-[var(--color-border)] text-[var(--color-text)] font-sans relative z-20 select-none">
+      <div className="flex items-center justify-between flex-shrink-0 h-11 px-3 sm:px-4 bg-[var(--color-surface)] border-b border-[var(--color-border)] text-[var(--color-text)] font-sans relative z-40 select-none">
         <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1 mr-2 overflow-hidden">
           {isMobile ? (
             <button
@@ -718,7 +718,10 @@ function LayoutInner() {
         style={{ gap: 1, position: "relative" }}
       >
         {!isMobile && (
-          <motion.div variants={panelVariants}>
+          <motion.div
+            variants={panelVariants}
+            className="h-full flex flex-col shrink-0"
+          >
             <ActivityBar
               active={showCFG ? "logic-analysis" : activeActivity}
               onSelect={handleSelectActivity}

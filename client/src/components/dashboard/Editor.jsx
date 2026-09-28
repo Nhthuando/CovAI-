@@ -36,6 +36,7 @@ import {
   updateFileContentApi,
 } from "../../services/project.service";
 import { getFileCoverage } from "../../services/coverage.service";
+import { EditorCodeSkeleton } from "../common/Skeleton";
 
 /* ── Smart File Icon Resolver ────────────────────────────── */
 function getFileIcon(fileName = "") {
@@ -1117,22 +1118,6 @@ export default function Editor({
             </div>
           )}
 
-          {snapshotId && !isCurrentTestFile && (
-            <button
-              type="button"
-              onClick={() => onSuggestTestcase?.(activeTabId)}
-              className="flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-semibold cursor-pointer transition-all"
-              style={{
-                background: "var(--color-bg)",
-                color: "var(--color-primary)",
-                border: "1px solid var(--color-border)",
-              }}
-              title="Yêu cầu AI Agent gợi ý testcase Jest/Vitest trong chat"
-            >
-              <Sparkles size={12} style={{ color: "var(--color-primary)" }} />
-              <span>Suggest testcase</span>
-            </button>
-          )}
           {saveError && (
             <span style={{ color: "var(--color-danger)", fontSize: 11 }}>
               {saveError}
@@ -1256,15 +1241,9 @@ export default function Editor({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="flex flex-col items-center justify-center h-full gap-3"
+              className="w-full h-full"
             >
-              <Loader2 size={28} className="animate-spin text-purple-400" />
-              <span
-                className="text-xs font-sans"
-                style={{ color: "var(--color-text-secondary)" }}
-              >
-                Reading file content...
-              </span>
+              <EditorCodeSkeleton lines={24} />
             </motion.div>
           ) : currentFile.error ? (
             <motion.div

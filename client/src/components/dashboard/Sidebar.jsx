@@ -25,6 +25,7 @@ import {
   ChevronsUpDown,
 } from "lucide-react";
 import ConfirmDialog from "../common/ConfirmDialog";
+import { FileTreeSkeleton } from "../common/Skeleton";
 
 /* ── Smart Icon Resolver ─────────────────────────────────── */
 function getFileIcon(fileName = "") {
@@ -734,16 +735,7 @@ export default function Sidebar({
         )}
 
         {isLoading ? (
-          <div
-            className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]"
-            style={{ padding: "18px 24px" }}
-          >
-            <Loader2
-              size={14}
-              className="animate-spin text-[var(--color-primary)]"
-            />
-            <span>Scanning project tree...</span>
-          </div>
+          <FileTreeSkeleton rows={10} />
         ) : fileTree.length === 0 ? (
           <div
             className="text-xs text-[var(--color-text-muted)] text-center"

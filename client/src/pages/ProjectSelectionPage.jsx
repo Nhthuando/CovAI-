@@ -26,6 +26,7 @@ import Badge from "../components/common/Badge";
 import Card from "../components/common/Card";
 import ThemeSelector from "../components/common/ThemeSelector";
 import ConfirmDialog from "../components/common/ConfirmDialog";
+import { ProjectGridSkeleton } from "../components/common/Skeleton";
 
 export default function ProjectSelectionPage() {
   const [projects, setProjects] = useState([]);
@@ -294,10 +295,7 @@ export default function ProjectSelectionPage() {
 
         {/* ── Projects Content Section ───────────────────────── */}
         {loading ? (
-          <div className="flex flex-col items-center justify-center py-24 text-[var(--color-text-muted)] gap-3">
-            <Loader2 className="w-7 h-7 animate-spin text-[var(--color-primary)]" />
-            <span className="text-xs">Loading projects...</span>
-          </div>
+          <ProjectGridSkeleton count={6} viewMode={viewMode} />
         ) : filteredProjects.length === 0 ? (
           <div className="py-16 border border-dashed border-[var(--color-border)] rounded-[var(--radius-lg)] text-center bg-[var(--color-surface)] flex flex-col items-center justify-center p-8">
             <div className="w-12 h-12 rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] flex items-center justify-center text-[var(--color-text-muted)] mb-3">
