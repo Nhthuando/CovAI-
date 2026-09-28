@@ -34,10 +34,13 @@ let isRedisConnected = false;
 const redisOptions = {
   maxRetriesPerRequest: null,
   retryStrategy(times) {
-    if (times > 2) return null;
-    return 500;
+    if (process.env.NODE_ENV === 'test') {
+      if (times > 2) return null;
+      return 500;
+    }
+    return Math.min(times * 500, 3000);
   },
-  enableOfflineQueue: false,
+  enableOfflineQueue: true,
 };
 
 const connection = new IORedis(
@@ -51,8 +54,19 @@ if (connection && typeof connection.on === 'function') {
     console.log('[Queue] Connected to Redis successfully.');
   });
 
+  connection.on('ready', () => {
+    isRedisConnected = true;
+  });
+
+  connection.on('close', () => {
+    isRedisConnected = false;
+  });
+
   connection.on('error', (err) => {
     isRedisConnected = false;
+    if (process.env.NODE_ENV !== 'test') {
+      console.warn(`[Queue] Redis connection error: ${err.message}`);
+    }
   });
 }
 
@@ -233,6 +247,12 @@ worker.on('failed', (job, err) => {
   console.error(
     `[Queue] BullMQ báo Job ${job?.data?.jobId} failed với lỗi: ${err.message}`,
   );
+});
+
+worker.on('error', (err) => {
+  if (process.env.NODE_ENV !== 'test') {
+    console.error(`[Queue Worker] Error: ${err.message}`);
+  }
 });
 
 export const addJobToQueue = async (type, jobId, customData = {}, jobOptions = {}) => {
