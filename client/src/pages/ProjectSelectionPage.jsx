@@ -2,6 +2,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { getProjectsApi, deleteProjectApi } from "../services/project.service";
+import { queryClient } from "../lib/queryClient";
 import ImportLayout from "../components/dashboard/import/ImportLayout";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -62,8 +63,15 @@ export default function ProjectSelectionPage() {
   const fetchProjects = async () => {
     try {
       setLoading(true);
-      const { projects } = await getProjectsApi();
-      setProjects(projects || []);
+      const data = await queryClient.fetchQuery({
+        queryKey: ["projects"],
+        queryFn: async () => {
+          const res = await getProjectsApi();
+          return res?.projects || [];
+        },
+        staleTime: 5 * 60 * 1000,
+      });
+      setProjects(data || []);
     } catch (err) {
       console.error("Failed to load projects", err);
     } finally {
@@ -91,6 +99,7 @@ export default function ProjectSelectionPage() {
     try {
       setIsDeleting(true);
       await deleteProjectApi(projectToDelete.id);
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
       setProjects((prev) => prev.filter((p) => p.id !== projectToDelete.id));
       setProjectToDelete(null);
     } catch (err) {
@@ -323,22 +332,20 @@ export default function ProjectSelectionPage() {
             <div className="flex items-center p-1 rounded-lg bg-neutral-900 border border-white/10">
               <button
                 onClick={() => setViewMode("grid")}
-                className={`p-1.5 rounded-md transition-colors cursor-pointer ${
-                  viewMode === "grid"
+                className={`p-1.5 rounded-md transition-colors cursor-pointer ${viewMode === "grid"
                     ? "bg-violet-600 text-white"
                     : "text-neutral-500 hover:text-white"
-                }`}
+                  }`}
                 title="Grid View"
               >
                 <Grid size={14} />
               </button>
               <button
                 onClick={() => setViewMode("list")}
-                className={`p-1.5 rounded-md transition-colors cursor-pointer ${
-                  viewMode === "list"
+                className={`p-1.5 rounded-md transition-colors cursor-pointer ${viewMode === "list"
                     ? "bg-violet-600 text-white"
                     : "text-neutral-500 hover:text-white"
-                }`}
+                  }`}
                 title="List View"
               >
                 <List size={14} />
@@ -421,11 +428,10 @@ export default function ProjectSelectionPage() {
                       <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
                         <button
                           onClick={(e) => toggleFavorite(e, project.id)}
-                          className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
-                            isFav
+                          className={`p-1.5 rounded-lg transition-colors cursor-pointer ${isFav
                               ? "text-amber-400 bg-amber-400/10"
                               : "text-neutral-500 hover:text-amber-400 hover:bg-white/5"
-                          }`}
+                            }`}
                           title={isFav ? "Remove favorite" : "Add to favorites"}
                         >
                           <Star

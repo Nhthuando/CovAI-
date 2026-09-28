@@ -12,9 +12,10 @@ export default {
     },
     moduleNameMapper: {
         '^(\\.{1,2}/.*)\\.js$': '$1',
+        '^../../../../dist/src/(.*)$': '<rootDir>/src/$1',
     },
     transformIgnorePatterns: [
-        "/node_modules/(?!(?:@prisma/client|@babel)/)",
+        "/node_modules/(?!(@prisma/client|@babel|.*))",
     ],
     testPathIgnorePatterns: [
         '/node_modules/',

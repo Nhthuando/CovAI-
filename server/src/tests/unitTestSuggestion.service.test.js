@@ -150,7 +150,7 @@ describe("unitTestSuggestion.service unit tests", () => {
 
             expect(result.explanation).toContain("VITEST");
             expect(result.fullUpdatedContent).toContain("import { describe, test, expect } from 'vitest';");
-            expect(result.fullUpdatedContent).toContain("import { add } from '../src/calculator.js';");
+            expect(result.fullUpdatedContent).toContain("import { add } from '../src/calculator';");
             expect(result.fullUpdatedContent).toContain("add should execute without error");
         });
     });

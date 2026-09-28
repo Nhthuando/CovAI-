@@ -249,6 +249,14 @@ export const getCoverageSummary = async (req, res) => {
                                     functions: raw.total.functions || null,
                                     lines: raw.total.lines || null,
                                 };
+                                if ((!coverage.statements && !coverage.lines) && raw.total.statements?.pct != null) {
+                                    coverage = {
+                                        statements: raw.total.statements.pct ?? 0,
+                                        branches: raw.total.branches.pct ?? 0,
+                                        functions: raw.total.functions.pct ?? 0,
+                                        lines: raw.total.lines.pct ?? 0,
+                                    };
+                                }
                             }
                         } else if (typeFilter === "integration") {
                             const apiFileEntries = Object.entries(raw).filter(([filePath]) => {

@@ -31,6 +31,11 @@ import {
   runCoverageByType,
   getFileCoverage
 } from "../../services/coverage.service.js";
+import {
+  useCoverageDashboard,
+  invalidateCoverageQueries,
+} from "../../hooks/useCoverageQuery.js";
+import { queryClient } from "../../lib/queryClient.js";
 import { getJobDetailApi, cancelJobApi } from "../../services/job.service.js";
 import { getProjectCfgApi } from "../../services/project.service.js";
 import FunctionExecutionFlow from "./FunctionExecutionFlow.jsx";
@@ -190,45 +195,8 @@ async function waitForJob(jobId, onProgress) {
   throw new Error("Coverage analysis timed out. The job was automatically paused/canceled to unblock the project.");
 }
 
-// Module-level persistent cache across tab switches
-const dashboardCache = new Map();
-const getDashboardCacheKey = (snapshotId, type) => `${snapshotId}_${type}`;
-
-const getCachedDashboardData = (snapshotId, type) => {
-  if (!snapshotId) return null;
-  const key = getDashboardCacheKey(snapshotId, type);
-  if (dashboardCache.has(key)) {
-    return dashboardCache.get(key);
-  }
-  try {
-    const raw = sessionStorage.getItem(`covai_cache_${key}`);
-    if (raw) {
-      const data = JSON.parse(raw);
-      dashboardCache.set(key, data);
-      return data;
-    }
-  } catch (_) {}
-  return null;
-};
-
-const setCachedDashboardData = (snapshotId, type, data) => {
-  if (!snapshotId) return;
-  const key = getDashboardCacheKey(snapshotId, type);
-  dashboardCache.set(key, data);
-  try {
-    sessionStorage.setItem(`covai_cache_${key}`, JSON.stringify(data));
-  } catch (_) {}
-};
-
 export const invalidateDashboardCache = (snapshotId) => {
-  for (const k of Array.from(dashboardCache.keys())) {
-    if (!snapshotId || k.startsWith(`${snapshotId}_`)) {
-      dashboardCache.delete(k);
-      try {
-        sessionStorage.removeItem(`covai_cache_${k}`);
-      } catch (_) {}
-    }
-  }
+  invalidateCoverageQueries(snapshotId);
 };
 
 export default function CoverageTypeDashboard({
@@ -240,20 +208,30 @@ export default function CoverageTypeDashboard({
   generating,
   onSuggestTestcase,
   onOpenCFG,
+  runTrigger,
 }) {
   const config = CONFIG[type];
 
-  // Retrieve cached data immediately so first render has data and loading = false
-  const cachedData = useMemo(
-    () => getCachedDashboardData(snapshotId, type),
-    [snapshotId, type]
-  );
+  // React Query cached dashboard data - instant render on tab switch without loading lag
+  const {
+    data: coverageData,
+    isLoading: isCoverageQueryLoading,
+    isFetching: isCoverageQueryFetching,
+    refetch: refetchCoverage,
+  } = useCoverageDashboard(snapshotId, type, projectId);
 
-  const [summary, setSummary] = useState(() => cachedData?.summary || null);
-  const [files, setFiles] = useState(() => cachedData?.files || []);
-  const [executions, setExecutions] = useState(() => cachedData?.executions || {});
-  const [frameworks, setFrameworks] = useState(() => cachedData?.frameworks || null);
-  const [loading, setLoading] = useState(() => !cachedData);
+  const summary = coverageData?.summary || null;
+  const files = coverageData?.files || [];
+  const executions = coverageData?.executions || {};
+  const frameworks = coverageData?.frameworks || null;
+  const functionsList = coverageData?.functionsList || [];
+  const testSuites = coverageData?.testSuites || [];
+
+  // Instant render: non-blocking loading only if cold fetch has zero cached data
+  const loading = !coverageData && isCoverageQueryLoading && Boolean(snapshotId);
+  const loadingFunctions = !coverageData?.functionsList?.length && isCoverageQueryLoading && type === "unit";
+  const loadingTestSuites = !coverageData?.testSuites?.length && isCoverageQueryLoading && type === "unit";
+
   const [running, setRunning] = useState(false);
   const [runProgress, setRunProgress] = useState(0);
   const [runStep, setRunStep] = useState("");
@@ -275,7 +253,7 @@ export default function CoverageTypeDashboard({
 
   // Accordion dropdown states for source file flow analysis
   const [expandedFile, setExpandedFile] = useState(null);
-  const [fileCoverageCache, setFileCoverageCache] = useState(() => cachedData?.fileCoverageCache || {});
+  const [fileCoverageCache, setFileCoverageCache] = useState({});
 
   const toggleExpandFile = useCallback(
     async (filePath) => {
@@ -292,18 +270,15 @@ export default function CoverageTypeDashboard({
           [filePath]: { loading: true },
         }));
         try {
-          const res = await getFileCoverage(snapshotId, filePath);
-          setFileCoverageCache((prev) => {
-            const next = {
-              ...prev,
-              [filePath]: { loading: false, data: res?.data },
-            };
-            const currentCache = getCachedDashboardData(snapshotId, type);
-            if (currentCache) {
-              setCachedDashboardData(snapshotId, type, { ...currentCache, fileCoverageCache: next });
-            }
-            return next;
+          const res = await queryClient.fetchQuery({
+            queryKey: ["fileCoverage", snapshotId, filePath],
+            queryFn: () => getFileCoverage(snapshotId, filePath),
+            staleTime: 15 * 60 * 1000,
           });
+          setFileCoverageCache((prev) => ({
+            ...prev,
+            [filePath]: { loading: false, data: res?.data || res },
+          }));
         } catch (err) {
           console.warn("Error fetching file coverage for", filePath, err);
           setFileCoverageCache((prev) => ({
@@ -313,18 +288,12 @@ export default function CoverageTypeDashboard({
         }
       }
     },
-    [expandedFile, fileCoverageCache, snapshotId, type],
+    [expandedFile, fileCoverageCache, snapshotId],
   );
 
-  // Test suites state (File Testcase of Jest & Vitest)
-  const [testSuites, setTestSuites] = useState(() => cachedData?.testSuites || []);
-  const [loadingTestSuites, setLoadingTestSuites] = useState(false);
+  // Test suites & functions search and filter state
   const [expandedSuite, setExpandedSuite] = useState(null);
   const [testSuiteSearch, setTestSuiteSearch] = useState("");
-
-  // Function coverage state
-  const [functionsList, setFunctionsList] = useState(() => cachedData?.functionsList || []);
-  const [loadingFunctions, setLoadingFunctions] = useState(false);
   const [functionSearch, setFunctionSearch] = useState("");
   const [functionStatusFilter, setFunctionStatusFilter] = useState("all");
 
@@ -333,8 +302,12 @@ export default function CoverageTypeDashboard({
       if (!snapshotId || !filePath) return;
       setLoadingFlow(true);
       try {
-        const res = await getFileCoverage(snapshotId, filePath);
-        setFlowData(res?.data || null);
+        const res = await queryClient.fetchQuery({
+          queryKey: ["fileCoverage", snapshotId, filePath],
+          queryFn: () => getFileCoverage(snapshotId, filePath),
+          staleTime: 15 * 60 * 1000,
+        });
+        setFlowData(res?.data || res || null);
       } catch (err) {
         console.warn("Could not load file coverage flow:", err);
         setFlowData(null);
@@ -344,141 +317,6 @@ export default function CoverageTypeDashboard({
     },
     [snapshotId],
   );
-
-  const loadTestSuites = useCallback(async () => {
-    if (!snapshotId) return;
-    setLoadingTestSuites(true);
-    try {
-      const res = await getCoverageTestSuites(snapshotId, type);
-      const suites = res?.data?.testSuites || [];
-      setTestSuites(suites);
-      const cur = getCachedDashboardData(snapshotId, type);
-      if (cur) setCachedDashboardData(snapshotId, type, { ...cur, testSuites: suites });
-    } catch (err) {
-      console.warn("Could not load test suites:", err);
-      setTestSuites([]);
-    } finally {
-      setLoadingTestSuites(false);
-    }
-  }, [snapshotId, type]);
-
-  const loadFunctions = useCallback(async () => {
-    if (!snapshotId) return;
-    setLoadingFunctions(true);
-    try {
-      const res = await getCoverageFunctions(snapshotId, {
-        limit: 500,
-        sortBy: "hit",
-        order: "asc",
-        type,
-      });
-      const funcs = res?.data?.functions || [];
-      setFunctionsList(funcs);
-      const cur = getCachedDashboardData(snapshotId, type);
-      if (cur) setCachedDashboardData(snapshotId, type, { ...cur, functionsList: funcs });
-    } catch (err) {
-      console.warn("Could not load coverage functions:", err);
-      setFunctionsList([]);
-    } finally {
-      setLoadingFunctions(false);
-    }
-  }, [snapshotId, type]);
-
-  const load = useCallback(async (options = {}) => {
-    const force = options?.force === true;
-    if (!snapshotId) {
-      setLoading(false);
-      return;
-    }
-
-    const currentCached = getCachedDashboardData(snapshotId, type);
-    // If not forced and we have cache, keep existing UI visible (no blocking spinner)
-    if (!force && currentCached) {
-      setLoading(false);
-    } else {
-      setLoading(true);
-    }
-
-    try {
-      // Parallelize all requests at once
-      const promises = [
-        getCoverageSummary(snapshotId).catch(() => ({ data: null })),
-        getCoverageFiles(snapshotId, { sortBy: "linesPct", order: "asc", limit: 200, type }).catch(() => ({ data: { files: [] } })),
-        getTestExecution(snapshotId).catch(() => ({ data: {} })),
-        getCoverageFrameworks(snapshotId).catch(() => ({ data: null })),
-      ];
-
-      if (type === "unit") {
-        promises.push(
-          getCoverageFunctions(snapshotId, { limit: 500, sortBy: "hit", order: "asc", type }).catch(() => ({ data: { functions: [] } })),
-          getCoverageTestSuites(snapshotId, type).catch(() => ({ data: { testSuites: [] } }))
-        );
-      }
-
-      const results = await Promise.all(promises);
-      const [summaryRes, filesRes, execRes, frameworksRes, funcsRes, suitesRes] = results;
-
-      let mergedFiles = filesRes.data?.files || [];
-      if (type === "integration" && projectId) {
-        try {
-          const cfgRes = await getProjectCfgApi(projectId, snapshotId);
-          const cfgs = cfgRes.data || [];
-          const uniquePaths = [...new Set(cfgs.map(c => c.filePath))];
-          const existingPaths = new Set(mergedFiles.map(f => f.filePath));
-          for (const filePath of uniquePaths) {
-            if (!existingPaths.has(filePath)) {
-              mergedFiles.push({ filePath, linesPct: 0, branchesPct: 0, funcsPct: 0, stmtsPct: 0 });
-            }
-          }
-        } catch (e) {
-          console.error("Failed to fetch CFG for source files", e);
-        }
-      }
-
-      const newSummary = summaryRes.data;
-      const newExecutions = execRes.data || {};
-      const newFrameworks = frameworksRes.data || null;
-      const newFuncs = funcsRes?.data?.functions || [];
-      const newSuites = suitesRes?.data?.testSuites || [];
-
-      setSummary(newSummary);
-      setFiles(mergedFiles);
-      setExecutions(newExecutions);
-      setFrameworks(newFrameworks);
-      setError("");
-
-      if (type === "unit") {
-        setFunctionsList(newFuncs);
-        setTestSuites(newSuites);
-      }
-
-      setCachedDashboardData(snapshotId, type, {
-        summary: newSummary,
-        files: mergedFiles,
-        executions: newExecutions,
-        frameworks: newFrameworks,
-        functionsList: newFuncs,
-        testSuites: newSuites,
-        timestamp: Date.now(),
-      });
-    } catch (loadError) {
-      setError(loadError.message || "Unable to load coverage analysis.");
-    } finally {
-      setLoading(false);
-      setLoadingFunctions(false);
-      setLoadingTestSuites(false);
-    }
-  }, [snapshotId, type, projectId]);
-
-  useEffect(() => {
-    const cached = getCachedDashboardData(snapshotId, type);
-    // If cached data exists and is fresh (< 5 mins), skip network reload completely
-    if (cached && cached.timestamp && Date.now() - cached.timestamp < 5 * 60 * 1000) {
-      setLoading(false);
-      return;
-    }
-    load();
-  }, [load, snapshotId, type]);
 
   const run = async () => {
     if (!snapshotId || running) return;
@@ -514,8 +352,8 @@ export default function CoverageTypeDashboard({
       }
       setRunProgress(100);
       setRunStep("Hoàn thành phân tích thành công!");
-      invalidateDashboardCache(snapshotId);
-      await load({ force: true });
+      invalidateCoverageQueries(snapshotId);
+      await refetchCoverage();
     } catch (runError) {
       setError(runError.message || "Quá trình phân tích thất bại.");
     } finally {
@@ -527,9 +365,35 @@ export default function CoverageTypeDashboard({
     }
   };
 
-  const cov = summary?.coverage || {};
+  useEffect(() => {
+    if (runTrigger > 0 && snapshotId && !running) {
+      run();
+    }
+  }, [runTrigger]);
 
+  const cov = summary?.coverage || {};
   const rawTotals = summary?.rawTotals || null;
+
+  const getPctVal = (covVal, rawMetric) => {
+    const parsedCov = covVal != null && covVal !== "" ? Number(covVal) : null;
+    if (parsedCov !== null && !isNaN(parsedCov) && parsedCov > 0) {
+      return parsedCov;
+    }
+    if (rawMetric) {
+      if (rawMetric.pct != null && !isNaN(Number(rawMetric.pct))) {
+        return Number(rawMetric.pct);
+      }
+      if (rawMetric.total && rawMetric.total > 0) {
+        return (Number(rawMetric.covered || 0) / Number(rawMetric.total)) * 100;
+      }
+    }
+    return parsedCov || 0;
+  };
+
+  const statPct = getPctVal(cov.statements, rawTotals?.statements);
+  const branchPct = getPctVal(cov.branches, rawTotals?.branches);
+  const funcPct = getPctVal(cov.functions, rawTotals?.functions);
+  const linePct = getPctVal(cov.lines, rawTotals?.lines);
 
   const selectedFiles = useMemo(() => {
     let nonTestFiles = files.filter((f) => !isTestFile(f.filePath));
@@ -731,10 +595,10 @@ export default function CoverageTypeDashboard({
       hasUncovered: needImprovementFiles.length > 0,
       uncoveredCount: needImprovementFiles.length,
       overallCoverage: {
-        statements: cov.statements,
-        branches: cov.branches,
-        functions: cov.functions,
-        lines: cov.lines,
+        statements: statPct,
+        branches: branchPct,
+        functions: funcPct,
+        lines: linePct,
       },
     });
   };
@@ -766,7 +630,7 @@ export default function CoverageTypeDashboard({
 
   const values =
     type === "unit"
-      ? [cov.statements, cov.branches, cov.functions, cov.lines]
+      ? [statPct, branchPct, funcPct, linePct]
       : type === "integration"
         ? [
           selectedFiles.length,
@@ -774,7 +638,7 @@ export default function CoverageTypeDashboard({
           pct(avg),
           selectedFiles.filter((f) => f.linesPct < 60).length,
         ]
-        : [totals.total, totals.passed, totals.failed, pct(cov.lines)];
+        : [totals.total, totals.passed, totals.failed, pct(linePct || cov.lines)];
 
   return (
     <div
@@ -856,7 +720,10 @@ export default function CoverageTypeDashboard({
             <span>Suggest test</span>
           </button>
           <button
-            onClick={() => load({ force: true })}
+            onClick={async () => {
+              invalidateCoverageQueries(snapshotId);
+              await refetchCoverage();
+            }}
             disabled={loading || running}
             style={buttonStyle("#8b949e")}
           >
@@ -969,7 +836,7 @@ export default function CoverageTypeDashboard({
                   key: "statements",
                   title: "Statement coverage",
                   description: "Percentage of statements executed by tests.",
-                  pctValue: cov.statements,
+                  pctValue: statPct,
                   raw: rawTotals?.statements,
                   icon: FileCode,
                   accentColor: "#a78bfa",
@@ -978,7 +845,7 @@ export default function CoverageTypeDashboard({
                   key: "branches",
                   title: "Branch coverage",
                   description: "Percentage of if/else/switch condition paths executed.",
-                  pctValue: cov.branches,
+                  pctValue: branchPct,
                   raw: rawTotals?.branches,
                   icon: GitBranch,
                   accentColor: "#fbbf24",
@@ -987,7 +854,7 @@ export default function CoverageTypeDashboard({
                   key: "functions",
                   title: "Function coverage",
                   description: "Percentage of functions or methods executed.",
-                  pctValue: cov.functions,
+                  pctValue: funcPct,
                   raw: rawTotals?.functions,
                   icon: Cpu,
                   accentColor: "#38bdf8",
@@ -1003,9 +870,6 @@ export default function CoverageTypeDashboard({
                     onClick={() => {
                       const next = isActive ? "testcases" : item.key;
                       setActiveMetricView(next);
-                      if (next === "functions" && functionsList.length === 0) {
-                        loadFunctions();
-                      }
                     }}
                     style={{
                       ...cardStyle,
@@ -1180,19 +1044,19 @@ export default function CoverageTypeDashboard({
                 },
                 {
                   id: "statements",
-                  label: `Statement coverage (${pct(cov.statements)})`,
+                  label: `Statement coverage (${pct(statPct)})`,
                   icon: FileCode,
                   accent: "#a78bfa",
                 },
                 {
                   id: "branches",
-                  label: `Branch coverage (${pct(cov.branches)})`,
+                  label: `Branch coverage (${pct(branchPct)})`,
                   icon: GitBranch,
                   accent: "#fbbf24",
                 },
                 {
                   id: "functions",
-                  label: `Function coverage (${pct(cov.functions)})`,
+                  label: `Function coverage (${pct(funcPct)})`,
                   icon: Cpu,
                   accent: "#38bdf8",
                 },
@@ -1204,15 +1068,6 @@ export default function CoverageTypeDashboard({
                     key={tab.id}
                     onClick={() => {
                       setActiveMetricView(tab.id);
-                      if (
-                        tab.id === "functions" &&
-                        functionsList.length === 0
-                      ) {
-                        loadFunctions();
-                      }
-                      if (tab.id === "testcases" && testSuites.length === 0) {
-                        loadTestSuites();
-                      }
                     }}
                     style={{
                       display: "flex",

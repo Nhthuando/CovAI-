@@ -2004,87 +2004,148 @@ export default function AIPanel({
       const effectiveProjectId = options.projectId || projectId;
       const fileChanges = [];
 
-      // Sequentially / concurrently collect suggestions for all files needing improvement
-      for (const item of needImprovement) {
-        try {
-          const targetPath = item.filePath || item.sourceFile;
-          const res = await suggestUnitTestcase(
-            effectiveSnapshotId,
-            targetPath,
-            effectiveProjectId,
-          );
-          const data = res?.data || res;
-          if (!data || data.isFullyCovered) continue;
+      // 1. Filter out files that are already 100% or have 0 uncovered lines
+      const candidateFiles = needImprovement.filter((item) => {
+        const bPct = item.branchesPct ?? 100;
+        const sPct = item.stmtsPct ?? 100;
+        const lPct = item.linesPct ?? 100;
+        const hasUncovered = item.uncoveredLines && item.uncoveredLines.length > 0;
+        return bPct < 100 || sPct < 100 || lPct < 100 || hasUncovered;
+      });
 
-          const suggestionsList =
-            Array.isArray(data.suggestions) && data.suggestions.length > 0
-              ? data.suggestions
-              : [data];
+      // 2. Sort files so that lowest coverage files (branches/stmts) are prioritized first
+      candidateFiles.sort((a, b) => {
+        const aMin = Math.min(a.branchesPct ?? 100, a.stmtsPct ?? 100, a.linesPct ?? 100);
+        const bMin = Math.min(b.branchesPct ?? 100, b.stmtsPct ?? 100, b.linesPct ?? 100);
+        return aMin - bMin;
+      });
 
-          const primary = suggestionsList[0];
-          const cleanSource = cleanFilePath(primary.sourceFile || targetPath);
-          const cleanTargetTest = cleanFilePath(
-            primary.targetTestFile || primary.filePath,
-          );
+      // 3. For fast response on large projects, cap bulk generation to top 10 most critical files
+      const targetFiles = candidateFiles.slice(0, 10);
+      let completedCount = 0;
+      const totalTargets = targetFiles.length;
 
-          let originalContent = primary.existingContent || "";
-          if (!originalContent && primary.isExisting) {
-            try {
-              const prevRes = await getFileContentApi(
-                effectiveProjectId,
-                cleanTargetTest,
+      const updateProgressUi = (recentFile) => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === loadingId
+              ? {
+                ...m,
+                content: `⚡ **Đang phân tích độ bao phủ toàn diện... (${completedCount}/${totalTargets} file hoàn tất)**\n\n` +
+                  (recentFile ? `↳ Vừa xử lý: \`${cleanFilePath(recentFile)}\`\n` : "") +
+                  `Hệ thống đang chạy song song để phát hiện các nhánh điều kiện còn thiếu và tổng hợp mã testcase...`,
+                ideChanges: fileChanges.length > 0 ? {
+                  totalFiles: fileChanges.length,
+                  totalAdded: fileChanges.reduce((sum, f) => sum + (f.linesAdded || 0), 0),
+                  totalDeleted: 0,
+                  files: [...fileChanges],
+                } : null,
+              }
+              : m
+          )
+        );
+      };
+
+      // 4. Concurrent worker pool with concurrency = 3
+      const CONCURRENCY = 3;
+      let currentIndex = 0;
+
+      const worker = async () => {
+        while (currentIndex < targetFiles.length) {
+          const item = targetFiles[currentIndex++];
+          try {
+            const targetPath = item.filePath || item.sourceFile;
+            const primaryFw = item.framework || item.matchingTests?.[0]?.framework || null;
+            const res = await suggestUnitTestcase(
+              effectiveSnapshotId,
+              targetPath,
+              effectiveProjectId,
+              primaryFw
+            );
+            const data = res?.data || res;
+            if (data && !data.isFullyCovered) {
+              const suggestionsList =
+                Array.isArray(data.suggestions) && data.suggestions.length > 0
+                  ? data.suggestions
+                  : [data];
+
+              const primary = suggestionsList[0];
+              const cleanSource = cleanFilePath(primary.sourceFile || targetPath);
+              const cleanTargetTest = cleanFilePath(
+                primary.targetTestFile || primary.filePath,
               );
-              originalContent = prevRes?.data?.content || "";
-            } catch (_) { }
+
+              let originalContent = primary.existingContent || "";
+              if (!originalContent && primary.isExisting) {
+                try {
+                  const prevRes = await getFileContentApi(
+                    effectiveProjectId,
+                    cleanTargetTest,
+                  );
+                  originalContent = prevRes?.data?.content || "";
+                } catch (_) { }
+              }
+
+              const fullUpdatedContent =
+                primary.fullUpdatedContent || primary.suggestedTestCode || "";
+              const origLines = (originalContent || "").split("\n").length;
+              const updatedLines = (fullUpdatedContent || "").split("\n").length;
+              const linesAdded =
+                Math.max(1, updatedLines - origLines) ||
+                (primary.suggestedTestCode || "").split("\n").length;
+
+              fileChanges.push({
+                id: `fc-${item.filePath || item.sourceFile}`,
+                sourceFile: cleanSource,
+                targetTestFile: cleanTargetTest,
+                fileName: getFileName(cleanTargetTest),
+                framework: primary.framework || "vitest",
+                isExisting: primary.isExisting ?? true,
+                originalContent,
+                fullUpdatedContent,
+                suggestedTestCode: primary.suggestedTestCode || fullUpdatedContent,
+                linesAdded,
+                linesDeleted: 0,
+                explanation:
+                  primary.explanation ||
+                  "Bổ sung test case cho các nhánh chưa cover.",
+                uncoveredLines: data.uncoveredLines || [],
+                failedLines: data.failedLines || [],
+                suggestions: suggestionsList.map((s, sIdx) => ({
+                  ...s,
+                  id: s.framework || `sug-${sIdx}`,
+                  sourceFile: cleanFilePath(s.sourceFile || cleanSource),
+                  targetTestFile: cleanFilePath(s.targetTestFile || cleanTargetTest),
+                  originalContent: s.existingContent || originalContent,
+                  fullUpdatedContent: s.fullUpdatedContent || s.suggestedTestCode,
+                  linesAdded,
+                  applied: false,
+                  isApplying: false,
+                  isUndoing: false,
+                })),
+                applied: false,
+                isApplying: false,
+                isUndoing: false,
+              });
+            }
+          } catch (itemErr) {
+            console.warn(
+              `[handleSuggestBulk] Error suggesting for ${item.filePath}:`,
+              itemErr,
+            );
+          } finally {
+            completedCount++;
+            updateProgressUi(item.filePath || item.sourceFile);
           }
-
-          const fullUpdatedContent =
-            primary.fullUpdatedContent || primary.suggestedTestCode || "";
-          const origLines = (originalContent || "").split("\n").length;
-          const updatedLines = (fullUpdatedContent || "").split("\n").length;
-          const linesAdded =
-            Math.max(1, updatedLines - origLines) ||
-            (primary.suggestedTestCode || "").split("\n").length;
-
-          fileChanges.push({
-            id: `fc-${item.filePath || item.sourceFile}`,
-            sourceFile: cleanSource,
-            targetTestFile: cleanTargetTest,
-            fileName: getFileName(cleanTargetTest),
-            framework: primary.framework || "vitest",
-            isExisting: primary.isExisting ?? true,
-            originalContent,
-            fullUpdatedContent,
-            suggestedTestCode: primary.suggestedTestCode || fullUpdatedContent,
-            linesAdded,
-            linesDeleted: 0,
-            explanation:
-              primary.explanation ||
-              "Bổ sung test case cho các nhánh chưa cover.",
-            uncoveredLines: data.uncoveredLines || [],
-            failedLines: data.failedLines || [],
-            suggestions: suggestionsList.map((s, sIdx) => ({
-              ...s,
-              id: s.framework || `sug-${sIdx}`,
-              sourceFile: cleanFilePath(s.sourceFile || cleanSource),
-              targetTestFile: cleanFilePath(s.targetTestFile || cleanTargetTest),
-              originalContent: s.existingContent || originalContent,
-              fullUpdatedContent: s.fullUpdatedContent || s.suggestedTestCode,
-              linesAdded,
-              applied: false,
-              isApplying: false,
-              isUndoing: false,
-            })),
-            applied: false,
-            isApplying: false,
-            isUndoing: false,
-          });
-        } catch (itemErr) {
-          console.warn(
-            `[handleSuggestBulk] Error suggesting for ${item.filePath}:`,
-            itemErr,
-          );
         }
+      };
+
+      if (targetFiles.length > 0) {
+        const workers = Array.from(
+          { length: Math.min(CONCURRENCY, targetFiles.length) },
+          () => worker()
+        );
+        await Promise.all(workers);
       }
 
       const totalAdded = fileChanges.reduce(

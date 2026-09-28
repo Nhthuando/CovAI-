@@ -23,14 +23,23 @@ export const ensureCoverageOutputDir = (rootDir) => {
  * @param {string} mimeType
  */
 const uploadBufferToFirebase = async (buffer, destPath, mimeType) => {
-    const blob = getBucket().file(destPath);
-    await new Promise((resolve, reject) => {
-        const stream = blob.createWriteStream({ metadata: { contentType: mimeType } });
-        stream.on("error", reject);
-        stream.on("finish", resolve);
-        stream.end(buffer);
-    });
-    return destPath;
+    try {
+        const uploadPromise = new Promise((resolve, reject) => {
+            const blob = getBucket().file(destPath);
+            const stream = blob.createWriteStream({ metadata: { contentType: mimeType } });
+            stream.on("error", reject);
+            stream.on("finish", resolve);
+            stream.end(buffer);
+        });
+        const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error(`Firebase upload timeout (10s) for ${destPath}`)), 10000)
+        );
+        await Promise.race([uploadPromise, timeoutPromise]);
+        return destPath;
+    } catch (err) {
+        console.warn(`[CoverageStorage] Cảnh báo upload Firebase cho ${destPath}: ${err.message}`);
+        return null;
+    }
 };
 
 /**

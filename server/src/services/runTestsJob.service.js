@@ -340,7 +340,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
     const shouldRunRoot = packageGroups.size === 0 || rootFiles.length > 0;
     let overallExitCode = 0;
 
-    let jestCmd = 'npx --yes jest --coverage --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=coverage/jest-results.json --forceExit --testTimeout=30000 --maxWorkers=2';
+    let jestCmd = 'npx --yes jest --coverage --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=coverage/jest-results.json --forceExit --testTimeout=30000 --maxWorkers=50% --cache';
 
     let tempConfigCreated = false;
     const tempConfigName = "covai-jest-runner.json";
@@ -400,12 +400,30 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             foundTypeScript = true;
         }
 
+        const tsJestSafeConfig = {
+            isolatedModules: true,
+            diagnostics: false,
+            tsconfig: {
+                isolatedModules: true,
+                allowJs: true,
+                esModuleInterop: true,
+                skipLibCheck: true,
+                module: "commonjs",
+                target: "es2020",
+                noImplicitAny: false,
+                strict: false
+            }
+        };
+
         const transform = {};
         if (foundTsJest || foundTypeScript) {
-            transform["^.+\\.tsx?$"] = "ts-jest";
+            transform["^.+\\.tsx?$"] = ["ts-jest", tsJestSafeConfig];
+            if (!foundBabelJest) {
+                transform["^.+\\.[cm]?jsx?$"] = ["ts-jest", tsJestSafeConfig];
+            }
         }
         if (foundBabelJest) {
-            transform["^.+\\.jsx?$"] = [
+            transform["^.+\\.[cm]?jsx?$"] = [
                 "babel-jest",
                 {
                     rootMode: "upward-optional",
@@ -440,6 +458,10 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
     } catch { }
 
     const defaultModuleNameMapper = {
+        "^(\\.{1,2}/.*)\\.js$": "$1",
+        "^(\\.{1,2}/.*)\\.jsx$": "$1",
+        "^(\\.{1,2}/.*)\\.mjs$": "$1",
+        "^(\\.{1,2}/.*)\\.cjs$": "$1",
         ...(rootPkgName ? {
             [`^${rootPkgName}$`]: "<rootDir>/dist/src",
             [`^${rootPkgName}/(.*)$`]: "<rootDir>/dist/src/$1",
@@ -463,12 +485,72 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
         "server\\.[cm]?[jt]s$"
     ];
 
+    const tsJestSafeConfig = {
+        isolatedModules: true,
+        diagnostics: false,
+        tsconfig: {
+            isolatedModules: true,
+            allowJs: true,
+            esModuleInterop: true,
+            skipLibCheck: true,
+            module: "commonjs",
+            target: "es2020",
+            noImplicitAny: false,
+            strict: false
+        }
+    };
+
+    const normalizeTransform = (t) => {
+        if (!t || typeof t !== "object") return {};
+        const result = {};
+        for (const [pattern, transformer] of Object.entries(t)) {
+            if (transformer === "ts-jest") {
+                result[pattern] = ["ts-jest", tsJestSafeConfig];
+            } else if (Array.isArray(transformer) && transformer[0] === "ts-jest") {
+                const existingOpts = transformer[1] || {};
+                result[pattern] = [
+                    "ts-jest",
+                    {
+                        ...existingOpts,
+                        isolatedModules: true,
+                        diagnostics: false,
+                        tsconfig: {
+                            ...(typeof existingOpts.tsconfig === "object" ? existingOpts.tsconfig : {}),
+                            isolatedModules: true,
+                            allowJs: true,
+                            esModuleInterop: true,
+                            skipLibCheck: true,
+                            module: "commonjs",
+                            target: "es2020",
+                            noImplicitAny: false,
+                            strict: false
+                        }
+                    }
+                ];
+            } else {
+                result[pattern] = transformer;
+            }
+        }
+        return result;
+    };
+
     const detectedTransform = detectTransforms(rootDir);
 
     const mergedTransform = {
         ...(detectedTransform || {}),
-        ...(projectJestConfig?.transform || {})
+        ...normalizeTransform(projectJestConfig?.transform)
     };
+
+    const hasJsTransform = Object.keys(mergedTransform).some(k => k.includes("js") || k.includes("jsx"));
+    const hasTsJest = Object.values(mergedTransform).some(v => (typeof v === "string" && v.includes("ts-jest")) || (Array.isArray(v) && v[0]?.includes("ts-jest")));
+    if (hasTsJest && !hasJsTransform) {
+        mergedTransform["^.+\\.[cm]?jsx?$"] = ["ts-jest", tsJestSafeConfig];
+    }
+
+    const resolvedModuleFileExtensions = Array.from(new Set([
+        ...(Array.isArray(projectJestConfig?.moduleFileExtensions) ? projectJestConfig.moduleFileExtensions : []),
+        "ts", "tsx", "js", "jsx", "mjs", "cjs", "json", "node"
+    ]));
 
     const tempSetupName = "covai-jest-setup.mjs";
     const tempSetupPath = path.join(rootDir, tempSetupName);
@@ -509,7 +591,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                     coveragePathIgnorePatterns,
                     moduleNameMapper: defaultModuleNameMapper,
                     ...(Object.keys(mergedTransform).length > 0 ? { transform: mergedTransform } : {}),
-                    moduleFileExtensions: projectJestConfig?.moduleFileExtensions || ["js", "ts", "tsx", "json"]
+                    moduleFileExtensions: resolvedModuleFileExtensions
                 };
                 fs.writeFileSync(tempConfigPath, JSON.stringify(tempConfig, null, 2), "utf8");
                 tempConfigCreated = true;
@@ -545,7 +627,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                     coveragePathIgnorePatterns,
                     moduleNameMapper: defaultModuleNameMapper,
                     ...(Object.keys(mergedTransform).length > 0 ? { transform: mergedTransform } : {}),
-                    moduleFileExtensions: projectJestConfig?.moduleFileExtensions || ["js", "ts", "tsx", "json"]
+                    moduleFileExtensions: resolvedModuleFileExtensions
                 };
                 fs.writeFileSync(tempConfigPath, JSON.stringify(tempConfig, null, 2), "utf8");
                 tempConfigCreated = true;
@@ -612,7 +694,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
         const subTimeout = Math.min(4 * 60 * 1000, Math.max(JEST_TIMEOUT_MS, relativeSubFiles.length * 4 * 1000));
         await addJobLog(jobId, "INFO", `[SCRUM-140] Đang chạy Jest cho subpackage ${pkgDir} (${relativeSubFiles.length} file)...`).catch(() => { });
 
-        const subJestCmd = `cd "${pkgDir}" && npx --yes jest ${fileArgs} --coverage --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile="${subResultsRel}" --forceExit --testTimeout=30000 --maxWorkers=2`;
+        const subJestCmd = `cd "${pkgDir}" && npx --yes jest ${fileArgs} --coverage --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile="${subResultsRel}" --forceExit --testTimeout=30000 --maxWorkers=50% --cache`;
 
         const subResult = await dockerRunner.run({
             snapshotPath: rootDir,

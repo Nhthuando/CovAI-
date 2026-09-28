@@ -68,7 +68,7 @@ export const addJobLog = async (jobId, level, message, client = prisma) => {
   return client.jobLog.create({ data: { jobId, level, message } });
 };
 
-export const STALE_JOB_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
+export const STALE_JOB_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes for large test suites
 
 export const cleanupStaleJobsForProject = async (projectId, client = prisma) => {
   const activeJobs = await client.job.findMany({

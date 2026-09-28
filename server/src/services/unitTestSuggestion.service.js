@@ -126,9 +126,9 @@ export const findExistingTestFile = (rootDir, sourceFilePath, framework = null) 
  */
 export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, baseName, uncoveredLines = [], existingContent = "", sourceCode = "" }) => {
     const isVitest = framework === "vitest";
-    const relSourcePath = sourceFile.startsWith("src/")
-        ? `../${sourceFile}`
-        : `./${path.relative("tests", sourceFile).replace(/\\/g, "/")}`;
+    let relSource = path.relative("tests", sourceFile).replace(/\\/g, "/");
+    if (!relSource.startsWith(".")) relSource = "./" + relSource;
+    const cleanImportPath = relSource.replace(/\.[cm]?[jt]sx?$/, "");
 
     // Extract function names from sourceCode if possible
     const exportedFunctions = [];
@@ -184,8 +184,8 @@ ${testCases.join("\n\n")}
             if (!updatedContent.includes("describe")) {
                 updatedContent = updatedContent.replace(/(import\s*\{)([^}]+)(\}\s*from\s*['"]vitest['"])/, "$1 describe,$2$3");
             }
-            if (importNames && !updatedContent.includes(relSourcePath)) {
-                updatedContent = `import { ${importNames} } from '${relSourcePath}';\n` + updatedContent;
+            if (importNames && !updatedContent.includes(cleanImportPath)) {
+                updatedContent = `import { ${importNames} } from '${cleanImportPath}';\n` + updatedContent;
             }
         }
 
@@ -199,8 +199,8 @@ ${testCases.join("\n\n")}
     }
 
     const fullCode = isVitest
-        ? `import { describe, test, expect } from 'vitest';\n${importNames ? `import { ${importNames} } from '${relSourcePath}';\n` : ""}${newTests}`
-        : `${importNames ? `import { ${importNames} } from '${relSourcePath}';\n` : `// Jest test suite for ${sourceFile}\n`}${newTests}`;
+        ? `import { describe, test, expect } from 'vitest';\n${importNames ? `import { ${importNames} } from '${cleanImportPath}';\n` : ""}${newTests}`
+        : `${importNames ? `import { ${importNames} } from '${cleanImportPath}';\n` : `// Jest test suite for ${sourceFile}\n`}${newTests}`;
 
     return {
         explanation: `Tạo file test mới ${framework.toUpperCase()} để kiểm thử các hàm và nhánh chưa được bao phủ trong ${sourceFile}.`,
@@ -298,6 +298,13 @@ const generateSuggestionForFramework = async ({
 
     const isVitest = framework === "vitest";
 
+    const targetTestDir = path.dirname(testFileInfo.relativePath);
+    let relToSource = path.relative(targetTestDir, sourceFileToInspect).replace(/\\/g, "/");
+    if (!relToSource.startsWith(".")) {
+        relToSource = "./" + relToSource;
+    }
+    const cleanImportPath = relToSource.replace(/\.[cm]?[jt]sx?$/, "");
+
     const prompt = isTest
         ? `You are an expert ${framework.toUpperCase()} unit testing engineer.
 We need to improve and add new unit test cases to the EXISTING test file: ${testFileInfo.relativePath}
@@ -307,6 +314,7 @@ PROJECT CONTEXT:
 - Testing Framework: ${framework.toUpperCase()} (${isVitest ? "Vitest syntax: import { describe, test, expect, vi } from 'vitest';" : "Jest syntax: if using jest.fn(), jest.spyOn(), or jest.mock(), always include: import { jest } from '@jest/globals';"})
 - Test File to update: ${testFileInfo.relativePath}
 - Tested Source File: ${sourceFileToInspect}
+- Source Module Import Path: "${cleanImportPath}" (e.g. import { ... } from '${cleanImportPath}';)
 - Current Coverage of Source: Lines ${coverageDetails.summary?.linesPct ?? 0}%, Branches ${coverageDetails.summary?.branchesPct ?? 0}%
 - Uncovered Lines in Source: ${uncoveredLinesStr}
 - Failed Assertions in Test Run:
@@ -327,8 +335,11 @@ REQUIREMENTS:
 1. Write unit tests targeting the uncovered branches, conditions, and fixing any failed assertions.
 2. Seamlessly merge the new test cases into ${testFileInfo.relativePath} without duplicating existing imports.
 3. ${isVitest ? "Use Vitest syntax: import { describe, test, expect, vi } from 'vitest';" : "Use standard Jest syntax. If using jest.fn() or jest.mock(), MUST include: import { jest } from '@jest/globals';"}
-4. Provide an explanation in Vietnamese summarizing the added test cases.
-5. Format your output strictly in JSON:
+4. If importing from the source file, use the EXACT relative path '${cleanImportPath}' (do not invent invalid paths).
+5. CRITICAL TypeScript rules: always provide ALL required interface fields in mock objects, use 'as any' or 'as unknown as T' for partial mocks, never use 'as T' alone when fields are missing.
+6. CRITICAL behavioral rules: read source code carefully before writing assertions. If a function internally calls Jest's describe()/test() (like createDefineFeature, createAutoBindSteps), do NOT call it inside a test block - only test its existence/type to avoid 'Cannot nest a describe inside a test' error.
+7. Provide an explanation in Vietnamese summarizing the added test cases.
+8. Format your output strictly in JSON:
 {
   "explanation": "Vietnamese explanation",
   "suggestedTestCode": "// only the new test code blocks",
@@ -341,6 +352,7 @@ PROJECT CONTEXT:
 - Testing Framework: ${framework.toUpperCase()} (${isVitest ? "Vitest ESM syntax: import { describe, test, expect, vi } from 'vitest';" : "Jest ESM syntax: if using jest.fn(), jest.spyOn(), or jest.mock(), always include: import { jest } from '@jest/globals';"})
 - Source File: ${sourceFileToInspect}
 - Target Test File: ${testFileInfo.relativePath} (Existing file: ${testFileInfo.found ? "YES" : "NO"})
+- Source Module Import Path: "${cleanImportPath}" (MUST import from: '${cleanImportPath}'; DO NOT guess other folders!)
 - Current Coverage: Lines ${coverageDetails.summary?.linesPct ?? 0}%, Branches ${coverageDetails.summary?.branchesPct ?? 0}%
 - Uncovered Lines: ${uncoveredLinesStr}
 - Failed Assertions in Test Run:
@@ -359,11 +371,14 @@ ${testFileInfo.content.slice(0, 3000)}
 
 REQUIREMENTS:
 1. Write unit tests targeting the uncovered branches, conditions, and fixing any failed assertions.
-2. ${isVitest ? "Use Vitest syntax: import { describe, test, expect, vi } from 'vitest'; and import source functions using relative path from target test file." : "Use Jest syntax: always include import { jest } from '@jest/globals'; if using jest.fn() or jest.mock(), and import source functions using relative path from target test file."}
-3. Provide an explanation in Vietnamese summarizing the added test cases.
-4. If this is an EXISTING test file, output the updated full file content with the new test cases seamlessly merged into the existing structure, preserving existing tests.
-5. If this is a NEW test file, output the complete test file including required imports and test blocks.
-6. Format your output strictly in JSON:
+2. ${isVitest ? "Use Vitest syntax: import { describe, test, expect, vi } from 'vitest'; and import source functions using relative path '" + cleanImportPath + "'." : "Use Jest syntax: always include import { jest } from '@jest/globals'; if using jest.fn() or jest.mock(), and import source functions using relative path '" + cleanImportPath + "'."}
+3. Always import from the source file using the EXACT module path '${cleanImportPath}'. Never invent paths like '../src/' if the source is located elsewhere.
+4. CRITICAL TypeScript rules: always provide ALL required interface fields in mock objects (check source for interface definitions), use 'as any' or 'as unknown as SomeType' for partial mocks - never use 'as SomeType' alone when fields are missing.
+5. CRITICAL behavioral rules: read the actual SOURCE CODE carefully before writing tests. Do not assume method names or behaviors. If a function internally calls Jest's describe()/test() (like createAutoBindSteps, createDefineFeature), NEVER call it inside a test block - it causes 'Cannot nest a describe inside a test' error. Test only its existence/type. Match assertions to actual code logic.
+6. Provide an explanation in Vietnamese summarizing the added test cases.
+7. If this is an EXISTING test file, output the updated full file content with the new test cases seamlessly merged into the existing structure, preserving existing tests.
+8. If this is a NEW test file, output the complete test file including required imports and test blocks.
+9. Format your output strictly in JSON:
 {
   "explanation": "Vietnamese explanation",
   "suggestedTestCode": "// only the new test code blocks",
@@ -571,11 +586,23 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
     } else {
         if (requestedFramework && requestedFramework !== "all") {
             frameworksToGenerate = [requestedFramework.toLowerCase()];
-        } else {
-            // Suggest both Jest and Vitest if supported or detected
+        } else if (requestedFramework === "all") {
             frameworksToGenerate = supportedFrameworks.length > 0 ? [...supportedFrameworks] : ["jest"];
-            if (!frameworksToGenerate.includes("vitest") && fs.existsSync(path.join(snapshot.rootDir, "tests", "vitest.test.js"))) {
-                frameworksToGenerate.push("vitest");
+        } else {
+            // Smart single framework detection: check existing test file first
+            const existingVitest = findExistingTestFile(snapshot.rootDir, sourceFileToInspect, "vitest");
+            const existingJest = findExistingTestFile(snapshot.rootDir, sourceFileToInspect, "jest");
+            if (existingVitest.found && !existingJest.found) {
+                frameworksToGenerate = ["vitest"];
+            } else if (existingJest.found && !existingVitest.found) {
+                frameworksToGenerate = ["jest"];
+            } else if (supportedFrameworks.includes("vitest") && !supportedFrameworks.includes("jest")) {
+                frameworksToGenerate = ["vitest"];
+            } else if (supportedFrameworks.includes("jest") && !supportedFrameworks.includes("vitest")) {
+                frameworksToGenerate = ["jest"];
+            } else {
+                // Pick the primary framework detected for unit tests
+                frameworksToGenerate = [supportedFrameworks[0] || "jest"];
             }
         }
     }

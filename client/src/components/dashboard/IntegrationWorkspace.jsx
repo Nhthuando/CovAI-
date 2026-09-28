@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState, useRef, useMemo } from "react"
 import { useNavigate } from "react-router-dom";
 import { getIntegrationWorkspace, runCoverageByType } from "../../services/coverage.service.js";
 import { runProjectStructureAnalysisApi } from "../../services/project.service.js";
+import { useIntegrationWorkspace } from "../../hooks/useCoverageQuery.js";
 
 import IntegrationTargetsPane from "./integration/IntegrationTargetsPane.jsx";
 import IntegrationScenariosPane from "./integration/IntegrationScenariosPane.jsx";
@@ -21,7 +22,7 @@ const getCachedWorkspace = (snapshotId) => {
             workspaceCache.set(snapshotId, data);
             return data;
         }
-    } catch (_) {}
+    } catch (_) { }
     return null;
 };
 const setCachedWorkspace = (snapshotId, data) => {
@@ -29,7 +30,7 @@ const setCachedWorkspace = (snapshotId, data) => {
     workspaceCache.set(snapshotId, data);
     try {
         sessionStorage.setItem(`covai_workspace_${snapshotId}`, JSON.stringify(data));
-    } catch (_) {}
+    } catch (_) { }
 };
 
 function getAuthHeaders() {
@@ -55,27 +56,27 @@ async function approveIntegrationTestsApi(snapshotId, approvedTestIds) {
     return handleResponse(res);
 }
 
-const buttonStyle = (color, isActive = false) => ({ 
-    background: isActive ? `${color}33` : `${color}18`, 
-    color, 
-    border: `1px solid ${color}55`, 
-    borderRadius: 6, 
-    padding: "6px 12px", 
+const buttonStyle = (color, isActive = false) => ({
+    background: isActive ? `${color}33` : `${color}18`,
+    color,
+    border: `1px solid ${color}55`,
+    borderRadius: 6,
+    padding: "6px 12px",
     fontSize: 13,
-    fontWeight: 600, 
-    cursor: "pointer", 
-    transition: "all 0.15s ease" 
+    fontWeight: 600,
+    cursor: "pointer",
+    transition: "all 0.15s ease"
 });
 
-const disabledButtonStyle = { 
-    background: "rgba(255,255,255,.05)", 
-    color: "rgba(255,255,255,.3)", 
-    border: "1px solid rgba(255,255,255,.1)", 
-    borderRadius: 6, 
-    padding: "6px 12px", 
+const disabledButtonStyle = {
+    background: "rgba(255,255,255,.05)",
+    color: "rgba(255,255,255,.3)",
+    border: "1px solid rgba(255,255,255,.1)",
+    borderRadius: 6,
+    padding: "6px 12px",
     fontSize: 13,
-    fontWeight: 600, 
-    cursor: "not-allowed" 
+    fontWeight: 600,
+    cursor: "not-allowed"
 };
 
 function useLiveJobLogs(jobId, onComplete, onError) {
@@ -149,11 +150,15 @@ function useLiveJobLogs(jobId, onComplete, onError) {
 
 export default function IntegrationWorkspace({ projectId, snapshotId, onGenerate, generating, onOpenFile }) {
     const navigate = useNavigate();
-    const cachedWorkspace = useMemo(() => getCachedWorkspace(snapshotId), [snapshotId]);
-    const [workspace, setWorkspace] = useState(() => cachedWorkspace?.data || null);
-    const [loading, setLoading] = useState(() => !cachedWorkspace);
+    const {
+        data: workspace,
+        isLoading: isWorkspaceLoading,
+        refetch: refetchWorkspace,
+    } = useIntegrationWorkspace(snapshotId);
+
+    const loading = !workspace && isWorkspaceLoading && Boolean(snapshotId);
     const [error, setError] = useState("");
-    
+
     // Active Jobs State
     const [activeJobId, setActiveJobId] = useState(null);
     const [activeJobType, setActiveJobType] = useState(null);
@@ -165,63 +170,40 @@ export default function IntegrationWorkspace({ projectId, snapshotId, onGenerate
     const [rightPaneTab, setRightPaneTab] = useState("LIVE"); // "LIVE" | "HISTORY" | "SUMMARY"
 
     const load = useCallback(async (options = {}) => {
-        const force = options?.force === true;
-        if (!snapshotId) return;
-        const currentCached = getCachedWorkspace(snapshotId);
-        if (!force && currentCached) {
-            setLoading(false);
-        } else {
-            setLoading(true);
-        }
-        try {
-            const res = await getIntegrationWorkspace(snapshotId);
-            setWorkspace(res.data);
-            setCachedWorkspace(snapshotId, { data: res.data, timestamp: Date.now() });
-            
-            if (!activeJobId) {
-                const fetchedJobs = res.data.jobs || {};
-                let runningJobId = null;
-                let runningJobType = null;
-                
-                if (fetchedJobs.analyze?.status === "RUNNING" || fetchedJobs.analyze?.status === "QUEUED") {
-                    runningJobId = fetchedJobs.analyze.id;
-                    runningJobType = "ANALYZE";
-                } else if (fetchedJobs.generate?.status === "RUNNING" || fetchedJobs.generate?.status === "QUEUED") {
-                    runningJobId = fetchedJobs.generate.id;
-                    runningJobType = "GENERATE";
-                } else if (fetchedJobs.execute?.status === "RUNNING" || fetchedJobs.execute?.status === "QUEUED") {
-                    runningJobId = fetchedJobs.execute.id;
-                    runningJobType = "EXECUTE";
-                }
-
-                if (runningJobId) {
-                    setActiveJobId(runningJobId);
-                    setActiveJobType(runningJobType);
-                    setActiveJobStatus("RUNNING");
-                    setRightPaneTab("LIVE");
-                }
-            }
-            
-            if (res.data?.aiTests && selectedTestIds.length === 0) {
-                const allIds = res.data.aiTests.flatMap(t => t.requests.map(r => `${t.id}::${r.testName}`));
-                setSelectedTestIds(allIds);
-            }
-            setError("");
-        } catch (err) {
-            setError(err.message || "Failed to load workspace.");
-        } finally {
-            setLoading(false);
-        }
-    }, [snapshotId, activeJobId, selectedTestIds.length]);
+        await refetchWorkspace();
+    }, [refetchWorkspace]);
 
     useEffect(() => {
-        const cached = getCachedWorkspace(snapshotId);
-        if (cached && cached.timestamp && Date.now() - cached.timestamp < 5 * 60 * 1000) {
-            setLoading(false);
-            return;
+        if (!workspace) return;
+        if (!activeJobId) {
+            const fetchedJobs = workspace.jobs || {};
+            let runningJobId = null;
+            let runningJobType = null;
+
+            if (fetchedJobs.analyze?.status === "RUNNING" || fetchedJobs.analyze?.status === "QUEUED") {
+                runningJobId = fetchedJobs.analyze.id;
+                runningJobType = "ANALYZE";
+            } else if (fetchedJobs.generate?.status === "RUNNING" || fetchedJobs.generate?.status === "QUEUED") {
+                runningJobId = fetchedJobs.generate.id;
+                runningJobType = "GENERATE";
+            } else if (fetchedJobs.execute?.status === "RUNNING" || fetchedJobs.execute?.status === "QUEUED") {
+                runningJobId = fetchedJobs.execute.id;
+                runningJobType = "EXECUTE";
+            }
+
+            if (runningJobId) {
+                setActiveJobId(runningJobId);
+                setActiveJobType(runningJobType);
+                setActiveJobStatus("RUNNING");
+                setRightPaneTab("LIVE");
+            }
         }
-        load();
-    }, [load, snapshotId]);
+
+        if (workspace?.aiTests && selectedTestIds.length === 0) {
+            const allIds = workspace.aiTests.flatMap(t => t.requests.map(r => `${t.id}::${r.testName}`));
+            setSelectedTestIds(allIds);
+        }
+    }, [workspace, activeJobId, selectedTestIds.length]);
 
     const { logs: activeLogs, logsEndRef } = useLiveJobLogs(activeJobId, () => {
         setActiveJobId(null);
@@ -373,11 +355,11 @@ export default function IntegrationWorkspace({ projectId, snapshotId, onGenerate
 
             {/* 3-PANE LAYOUT */}
             <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-                
+
                 {/* LEFT PANE: Targets */}
                 <div style={{ width: 280, minWidth: 240, borderRight: "1px solid rgba(255,255,255,.05)", background: "#161b22", display: "flex", flexDirection: "column" }}>
-                    <IntegrationTargetsPane 
-                        endpoints={endpoints} 
+                    <IntegrationTargetsPane
+                        endpoints={endpoints}
                         selectedEndpointIndex={selectedEndpointIndex}
                         onSelectEndpoint={setSelectedEndpointIndex}
                         hasAnalysis={hasAnalysis}
@@ -386,7 +368,7 @@ export default function IntegrationWorkspace({ projectId, snapshotId, onGenerate
 
                 {/* CENTER PANE: Scenarios */}
                 <div style={{ flex: 1, minWidth: 350, borderRight: "1px solid rgba(255,255,255,.05)", background: "#0d1117", display: "flex", flexDirection: "column" }}>
-                    <IntegrationScenariosPane 
+                    <IntegrationScenariosPane
                         aiTests={aiTests}
                         selectedEndpoint={selectedEndpoint}
                         hasGeneratedTests={hasGeneratedTests}
@@ -406,10 +388,10 @@ export default function IntegrationWorkspace({ projectId, snapshotId, onGenerate
                         <div onClick={() => setRightPaneTab("SUMMARY")} style={{ flex: 1, padding: "12px", textAlign: "center", fontSize: 12, fontWeight: 600, cursor: "pointer", color: rightPaneTab === "SUMMARY" ? "#3b82f6" : "#8b949e", borderBottom: rightPaneTab === "SUMMARY" ? "2px solid #3b82f6" : "2px solid transparent", transition: "all 0.15s" }}>SUMMARY</div>
                         <div onClick={() => setRightPaneTab("HISTORY")} style={{ flex: 1, padding: "12px", textAlign: "center", fontSize: 12, fontWeight: 600, cursor: "pointer", color: rightPaneTab === "HISTORY" ? "#e6edf3" : "#8b949e", borderBottom: rightPaneTab === "HISTORY" ? "2px solid #e6edf3" : "2px solid transparent", transition: "all 0.15s" }}>HISTORY</div>
                     </div>
-                    
+
                     <div style={{ flex: 1, overflow: "hidden" }}>
                         {rightPaneTab === "LIVE" && (
-                            <IntegrationLiveProgress 
+                            <IntegrationLiveProgress
                                 activeJobId={activeJobId}
                                 activeJobType={activeJobType}
                                 activeJobStatus={activeJobStatus}

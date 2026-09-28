@@ -57,6 +57,7 @@ import {
   deleteProjectEntryApi,
 } from "../../services/project.service";
 import { getProjectJobsApi } from "../../services/job.service";
+import { queryClient } from "../../lib/queryClient.js";
 
 const INITIAL_TABS = [];
 const DEFAULT_SIDEBAR_WIDTH = 260;
@@ -167,6 +168,13 @@ function LayoutInner() {
   const [latestRunJob, setLatestRunJob] = useState(null);
   const [isSubmittingAnalysis, setIsSubmittingAnalysis] = useState(false);
   const [editorRefreshTrigger, setEditorRefreshTrigger] = useState(0);
+  const [coverageRunTrigger, setCoverageRunTrigger] = useState(0);
+
+  const handleTriggerRunAnalysis = () => {
+    setActiveActivity("coverage");
+    setCoverageType("unit");
+    setCoverageRunTrigger((prev) => prev + 1);
+  };
 
   const handleGitSync = async () => {
     try {
@@ -230,9 +238,16 @@ function LayoutInner() {
     async (activeProjId = null, retries = 3, delay = 2000) => {
       setIsLoadingTree(true);
       try {
-        const { getProjectsApi } =
+        const { getProjectsApi, getProjectTreeApi } =
           await import("../../services/project.service");
-        const { projects: loadedProjects } = await getProjectsApi();
+        const loadedProjects = await queryClient.fetchQuery({
+          queryKey: ["projects"],
+          queryFn: async () => {
+            const res = await getProjectsApi();
+            return res?.projects || [];
+          },
+          staleTime: 5 * 60 * 1000,
+        });
         if (loadedProjects && loadedProjects.length > 0) {
           setProjects(loadedProjects);
           const targetProj = activeProjId
@@ -243,7 +258,14 @@ function LayoutInner() {
           let lastError = null;
           for (let attempt = 1; attempt <= retries; attempt++) {
             try {
-              const { data: tree } = await getProjectTreeApi(targetProj.id);
+              const tree = await queryClient.fetchQuery({
+                queryKey: ["projectTree", targetProj.id],
+                queryFn: async () => {
+                  const res = await getProjectTreeApi(targetProj.id);
+                  return res?.data || [];
+                },
+                staleTime: 5 * 60 * 1000,
+              });
               setFileTree(tree || []);
               if (tree && tree.length > 0) {
                 const fileExistsInTree = (nodes, path) => {
@@ -872,76 +894,78 @@ function LayoutInner() {
             <JobQueue projectId={project?.id} />
           ) : activeActivity === "architecture" ? (
             <ProjectArchitecturePanel projectId={project?.id} />
-          ) : activeActivity === "coverage" ? (
-            <div className="w-full h-full overflow-y-auto">
-              <div className={coverageType === "unit" ? "h-full" : "hidden"}>
-                <UnitTestDashboard
-                  snapshotId={
-                    project?.latestSnapshotId ||
-                    (project?.id
-                      ? localStorage.getItem(`latestSnapshot_${project.id}`)
-                      : null) ||
-                    testPromptSnapshotId
-                  }
-                  projectId={project?.id}
-                  onOpenFile={handleOpenFileByPath}
-                  onSuggestTestcase={handleSuggestTestcase}
-                  onOpenCFG={() => setShowCFG(true)}
-                />
-              </div>
-              <div className={coverageType === "integration" ? "h-full" : "hidden"}>
-                <IntegrationTestDashboard
-                  snapshotId={
-                    project?.latestSnapshotId ||
-                    (project?.id
-                      ? localStorage.getItem(`latestSnapshot_${project.id}`)
-                      : null) ||
-                    testPromptSnapshotId
-                  }
-                  projectId={project?.id}
-                  onOpenFile={handleOpenFileByPath}
-                />
-              </div>
-              <div className={coverageType === "system" ? "h-full" : "hidden"}>
-                <SystemTestDashboard
-                  snapshotId={
-                    project?.latestSnapshotId ||
-                    (project?.id
-                      ? localStorage.getItem(`latestSnapshot_${project.id}`)
-                      : null) ||
-                    testPromptSnapshotId
-                  }
-                  projectId={project?.id}
-                  onOpenFile={handleOpenFileByPath}
-                />
-              </div>
-            </div>
           ) : (
-            <Editor
-              tabs={tabs}
-              activeTabId={activeTabId}
-              onSelectTab={setActiveTabId}
-              onCloseTab={handleCloseTab}
-              onReorderTabs={setTabs}
-              fileTree={fileTree}
-              isLoadingTree={isLoadingTree}
-              projectId={project?.id}
-              snapshotId={
-                project?.latestSnapshotId ||
-                (project?.id
-                  ? localStorage.getItem(`latestSnapshot_${project.id}`)
-                  : null) ||
-                testPromptSnapshotId
-              }
-              coverageType={coverageType}
-              onOpenFile={handleOpenFileByPath}
-              onRunAnalysis={() => {
-                setActiveActivity("coverage");
-                setCoverageType("unit");
-              }}
-              onSuggestTestcase={handleSuggestTestcase}
-              refreshTrigger={editorRefreshTrigger}
-            />
+            <>
+              <div className={activeActivity === "coverage" ? "w-full h-full overflow-y-auto" : "hidden"}>
+                <div className={coverageType === "unit" ? "h-full" : "hidden"}>
+                  <UnitTestDashboard
+                    snapshotId={
+                      project?.latestSnapshotId ||
+                      (project?.id
+                        ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                        : null) ||
+                      testPromptSnapshotId
+                    }
+                    projectId={project?.id}
+                    onOpenFile={handleOpenFileByPath}
+                    onSuggestTestcase={handleSuggestTestcase}
+                    onOpenCFG={() => setShowCFG(true)}
+                    runTrigger={coverageRunTrigger}
+                  />
+                </div>
+                <div className={coverageType === "integration" ? "h-full" : "hidden"}>
+                  <IntegrationTestDashboard
+                    snapshotId={
+                      project?.latestSnapshotId ||
+                      (project?.id
+                        ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                        : null) ||
+                      testPromptSnapshotId
+                    }
+                    projectId={project?.id}
+                    onOpenFile={handleOpenFileByPath}
+                  />
+                </div>
+                <div className={coverageType === "system" ? "h-full" : "hidden"}>
+                  <SystemTestDashboard
+                    snapshotId={
+                      project?.latestSnapshotId ||
+                      (project?.id
+                        ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                        : null) ||
+                      testPromptSnapshotId
+                    }
+                    projectId={project?.id}
+                    onOpenFile={handleOpenFileByPath}
+                  />
+                </div>
+              </div>
+
+              <div className={activeActivity === "coverage" ? "hidden" : "w-full h-full"}>
+                <Editor
+                  tabs={tabs}
+                  activeTabId={activeTabId}
+                  onSelectTab={setActiveTabId}
+                  onCloseTab={handleCloseTab}
+                  onReorderTabs={setTabs}
+                  fileTree={fileTree}
+                  isLoadingTree={isLoadingTree}
+                  projectId={project?.id}
+                  snapshotId={
+                    project?.latestSnapshotId ||
+                    (project?.id
+                      ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                      : null) ||
+                    testPromptSnapshotId
+                  }
+                  coverageType={coverageType}
+                  onOpenFile={handleOpenFileByPath}
+                  onRunAnalysis={handleTriggerRunAnalysis}
+                  onSuggestTestcase={handleSuggestTestcase}
+                  refreshTrigger={editorRefreshTrigger}
+                />
+              </div>
+            </>
           )}
         </motion.div>
         <AnimatePresence initial={false}>
@@ -1000,10 +1024,7 @@ function LayoutInner() {
                   pendingAiSuggestion={pendingAiSuggestion}
                   onClearPendingSuggestion={() => setPendingAiSuggestion(null)}
                   onOpenFile={handleOpenFileByPath}
-                  onRunAnalysis={() => {
-                    setActiveActivity("coverage");
-                    setCoverageType("unit");
-                  }}
+                  onRunAnalysis={handleTriggerRunAnalysis}
                 />
               </motion.div>
             </>

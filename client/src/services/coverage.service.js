@@ -121,11 +121,11 @@ export async function getFileCoverage(snapshotId, filePath) {
     return handleResponse(res);
 }
 
-export async function suggestUnitTestcase(snapshotId, filePath, projectId) {
+export async function suggestUnitTestcase(snapshotId, filePath, projectId, framework = null) {
     const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/suggest-testcase`, {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify({ filePath, projectId }),
+        body: JSON.stringify({ filePath, projectId, ...(framework ? { framework } : {}) }),
     });
     return handleResponse(res);
 }
