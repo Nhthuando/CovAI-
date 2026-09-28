@@ -47,6 +47,7 @@ const readCoverageSummaryFile = (coverageDir) => {
 };
 
 const parsePct = (val) => {
+    if (val === 'Unknown') return 0;
     if (typeof val === "number" && !isNaN(val)) return val;
     if (typeof val === "string") {
         const parsed = parseFloat(val);

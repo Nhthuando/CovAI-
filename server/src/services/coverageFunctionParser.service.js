@@ -224,22 +224,18 @@ export const parseCoverageFunctionsForSnapshot = async ({
 
     const functionRows = getFunctionCoverageRecords(coverageReport, snapshotId, snapshot.rootDir);
 
-    if (functionRows.length === 0) {
-        return {
-            totalFunctions: 0,
-            functions: [],
-        };
-    }
 
     await prisma.$transaction(async (tx) => {
         await tx.coverageFunction.deleteMany({
             where: { snapshotId },
         });
 
-        await tx.coverageFunction.createMany({
-            data: functionRows,
-            skipDuplicates: true,
-        });
+        if (functionRows.length > 0) {
+            await tx.coverageFunction.createMany({
+                data: functionRows,
+                skipDuplicates: true,
+            });
+        }
     });
 
     return {

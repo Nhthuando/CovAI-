@@ -154,7 +154,7 @@ describe('queue.service supertest pipeline', () => {
                 where: { id: 'super-1' },
                 data: {
                     status: 'FAILED',
-                    errorMessage: 'Dependency installation failed; Supertest was not started.',
+                    errorMessage: 'Dependency installation failed; Supertest was not started. Reason: Unknown error',
                     finishedAt: expect.any(Date),
                 },
             }
@@ -251,7 +251,7 @@ describe('addSupertestCoveragePipeline - FlowProducer-based pipeline with correc
                 where: { id: 'super-1' },
                 data: expect.objectContaining({
                     status: 'FAILED',
-                    errorMessage: 'Dependency installation failed; Supertest was not started.',
+                    errorMessage: 'Dependency installation failed; Supertest was not started. Reason: Unknown error',
                 }),
             })
         );
@@ -277,7 +277,7 @@ describe('addSupertestCoveragePipeline - FlowProducer-based pipeline with correc
                 where: { id: 'super-1' },
                 data: expect.objectContaining({
                     status: 'FAILED',
-                    errorMessage: 'Dependency installation failed; Supertest was not started.',
+                    errorMessage: 'Dependency installation failed; Supertest was not started. Reason: Unknown error',
                 }),
             })
         );

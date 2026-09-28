@@ -69,6 +69,55 @@ export const executeJobDirectly = async (type, jobId, customData = {}) => {
       case 'SUPERTEST_COVERAGE':
         await processSupertestCoverageJob(jobId);
         break;
+      case 'SUPERTEST_COVERAGE_PIPELINE': {
+        const installJobId = customData.installJobId ?? jobId;
+        const supertestJobId = customData.supertestJobId;
+        console.log(`[Queue] SUPERTEST_COVERAGE_PIPELINE started: installJob=${installJobId}, supertestJob=${supertestJobId}`);
+
+        const installJob = await prisma.job.findUnique({ where: { id: installJobId }, select: { status: true, errorMessage: true } });
+        const installStatus = installJob?.status ?? 'UNKNOWN';
+        console.log(`[Queue] SUPERTEST_COVERAGE_PIPELINE reads INSTALL_DEPS status: installJob=${installJobId}, status=${installStatus}`);
+
+        if (['QUEUED', 'RUNNING'].includes(installStatus)) {
+          console.log(`[Queue] INSTALL_DEPS remains ${installStatus}; parent not released yet, so pipeline waits for child completion.`);
+          return;
+        }
+
+        if (['FAILED', 'CANCELED'].includes(installStatus)) {
+          const message = `Dependency installation failed; Supertest was not started. Reason: ${installJob?.errorMessage || 'Unknown error'}`;
+          console.error(`[Queue] Install deps failed => parent will not start Supertest. installJobStatus=${installStatus}, supertestJob=${supertestJobId}`);
+          if (supertestJobId) {
+            const supertestJob = await prisma.job.findUnique({
+              where: { id: supertestJobId },
+              select: { id: true, status: true }
+            });
+
+            if (supertestJob && ['QUEUED', 'RUNNING'].includes(supertestJob.status)) {
+              await prisma.job.update({
+                where: { id: supertestJobId },
+                data: {
+                  status: 'FAILED',
+                  errorMessage: message,
+                  finishedAt: new Date(),
+                },
+              });
+              console.log(`[Queue] Marked Supertest job ${supertestJobId} FAILED because dependency install failed.`);
+            }
+          }
+          return;
+        }
+
+        if (installStatus !== 'SUCCESS') {
+          console.warn(`[Queue] INSTALL_DEPS status is ${installStatus}; not eligible to run Supertest yet.`);
+          return;
+        }
+
+        console.log(`[Queue] SUPERTEST_COVERAGE_PIPELINE became runnable: installJob=${installJobId} reached SUCCESS; starting processSupertestCoverageJob(${supertestJobId})`);
+        if (supertestJobId) {
+          await processSupertestCoverageJob(supertestJobId);
+        }
+        break;
+      }
       case 'ANALYSIS':
         await processAnalysisJob(jobId);
         break;
@@ -101,6 +150,21 @@ export const executeJobDirectly = async (type, jobId, customData = {}) => {
       case 'COVERAGE':
         await processCoverageJob(jobId);
         break;
+      case 'COVERAGE_PIPELINE': {
+        await processInstallDepsJob(jobId);
+        const updatedInstallJob = await prisma.job.findUnique({ where: { id: jobId }, select: { status: true } });
+        if (updatedInstallJob?.status !== 'SUCCESS') {
+          console.error(`[Queue] INSTALL_DEPS thất bại, dừng COVERAGE_PIPELINE`);
+          return;
+        }
+        const runJob = await createRunTestsJob({
+          projectId: customData.projectId,
+          snapshotId: customData.snapshotId,
+          userId: customData.userId,
+        });
+        await processCoverageJob(runJob.id);
+        break;
+      }
       case 'CODE_HYGIENE':
         await processCodeHygieneJob(jobId);
         break;

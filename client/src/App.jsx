@@ -14,6 +14,7 @@ import DashboardPage from "./pages/DashboardPage";
 import ProjectSelectionPage from "./pages/ProjectSelectionPage";
 import GithubCallbackPage from "./pages/GithubCallbackPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
+import IntegrationReportPage from "./pages/IntegrationReportPage";
 import { NotificationProvider } from "./contexts/NotificationContext";
 import { useAuth } from "./hooks/useAuth";
 
@@ -112,6 +113,14 @@ function AppContent() {
           element={
             <ProtectedRoute>
               <DashboardPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/project/:projectId/reports/integration"
+          element={
+            <ProtectedRoute>
+              <IntegrationReportPage />
             </ProtectedRoute>
           }
         />

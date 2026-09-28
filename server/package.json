@@ -16,6 +16,7 @@
   "type": "module",
   "dependencies": {
     "@babel/core": "^7.29.7",
+    "@babel/generator": "^7.29.8",
     "@babel/parser": "^8.0.0",
     "@babel/traverse": "^8.0.0",
     "@google/generative-ai": "^0.24.1",

@@ -31,7 +31,7 @@ import {
   updateFileContentApi,
   createProjectFileApi,
 } from "../../services/project.service";
-import { suggestUnitTestcase } from "../../services/coverage.service";
+import { suggestUnitTestcase, getIntegrationWorkspace } from "../../services/coverage.service";
 import { getProjectJobsApi } from "../../services/job.service";
 import { useToast } from "./ToastContext";
 import DiffReviewModal from "./DiffReviewModal";
@@ -1609,6 +1609,7 @@ export default function AIPanel({
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
   const [reviewFiles, setReviewFiles] = useState([]);
   const [reviewIndex, setReviewIndex] = useState(0);
+  const [hasAnalysis, setHasAnalysis] = useState(false);
   const bottomRef = useRef(null);
   const messageIdRef = useRef(10);
   const getNextId = () => ++messageIdRef.current;
@@ -1619,6 +1620,15 @@ export default function AIPanel({
     setReviewIndex(initialIndex || 0);
     setReviewModalOpen(true);
   };
+
+  useEffect(() => {
+    if (!snapshotId) return;
+    getIntegrationWorkspace(snapshotId)
+      .then((res) => {
+        setHasAnalysis(!!res?.data?.generation?.hasAnalysis);
+      })
+      .catch((err) => console.error("Failed to check hasAnalysis for AIPanel:", err));
+  }, [snapshotId]);
 
   const handleNewChat = () => {
     setMessages(INITIAL_MESSAGES);
@@ -2625,6 +2635,8 @@ export default function AIPanel({
                 style={{
                   background: "rgba(255, 255, 255, 0.02)",
                   border: "1px solid rgba(255, 255, 255, 0.06)",
+                  opacity: hasAnalysis ? 1 : 0.5,
+                  pointerEvents: hasAnalysis ? "auto" : "none",
                 }}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.background = "rgba(124, 58, 237, 0.08)";
@@ -2689,6 +2701,8 @@ export default function AIPanel({
                   borderRadius: 12,
                   overflow: "hidden",
                   transition: "all 0.2s ease",
+                  opacity: hasAnalysis ? 1 : 0.5,
+                  pointerEvents: hasAnalysis ? "auto" : "none",
                 }}
               >
                 <div
@@ -2905,6 +2919,8 @@ export default function AIPanel({
                 style={{
                   background: "rgba(255, 255, 255, 0.02)",
                   border: "1px solid rgba(255, 255, 255, 0.06)",
+                  opacity: hasAnalysis ? 1 : 0.5,
+                  pointerEvents: hasAnalysis ? "auto" : "none",
                 }}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.background = "rgba(124, 58, 237, 0.08)";

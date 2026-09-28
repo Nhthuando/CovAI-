@@ -25,8 +25,9 @@ const calculatePct = (section) => {
     return null;
   }
 
-  if (section.pct !== undefined && typeof section.pct === "number") {
-    return section.pct;
+  if (section.pct !== undefined) {
+    if (typeof section.pct === "number") return section.pct;
+    if (section.pct === "Unknown") return 0;
   }
 
   const covered = normalizeCoverageValue(section.covered);
@@ -217,42 +218,6 @@ export const parseCoverageFilesForSnapshot = async ({
   }
 
   const coverageRows = getCoverageRecords(coverageReport);
-  const summaryRow = getTotalCoverageSummary(coverageReport);
-
-  const safeNum = (v) => {
-    if (typeof v === "number" && !isNaN(v)) return v;
-    if (typeof v === "string") {
-      const p = parseFloat(v);
-      if (!isNaN(p)) return p;
-    }
-    return 0;
-  };
-
-  if (coverageRows.length === 0) {
-    if (summaryRow) {
-      await prisma.coverageSummary.upsert({
-        where: { snapshotId },
-        update: {
-          linesPct: safeNum(summaryRow.linesPct),
-          branchesPct: safeNum(summaryRow.branchesPct),
-          funcsPct: safeNum(summaryRow.funcsPct),
-          stmtsPct: safeNum(summaryRow.stmtsPct),
-        },
-        create: {
-          snapshotId,
-          linesPct: safeNum(summaryRow.linesPct),
-          branchesPct: safeNum(summaryRow.branchesPct),
-          funcsPct: safeNum(summaryRow.funcsPct),
-          stmtsPct: safeNum(summaryRow.stmtsPct),
-        },
-      });
-    }
-    return {
-      totalFiles: 0,
-      summary: summaryRow,
-      files: [],
-    };
-  }
 
   const testType = coverageReport.testType || "UNIT"; // 'UNIT' or 'INTEGRATION'
 
@@ -265,35 +230,51 @@ export const parseCoverageFilesForSnapshot = async ({
     stmtsPct: row.stmtsPct,
   }));
 
+  const rawSummary = getTotalCoverageSummary(coverageReport);
+  const summaryRow = rawSummary || {
+    linesPct: 0,
+    branchesPct: 0,
+    funcsPct: 0,
+    stmtsPct: 0,
+  };
+
+  const safeNum = (v) => {
+    if (typeof v === "number" && !isNaN(v)) return v;
+    if (typeof v === "string") {
+      const p = parseFloat(v);
+      if (!isNaN(p)) return p;
+    }
+    return 0;
+  };
+
   await prisma.$transaction(async (tx) => {
     await tx.coverageFile.deleteMany({
       where: { snapshotId },
     });
 
-    await tx.coverageFile.createMany({
-      data: formattedRows,
-      skipDuplicates: true,
-    });
-
-    if (summaryRow) {
-
-      await tx.coverageSummary.upsert({
-        where: { snapshotId },
-        update: {
-          linesPct: safeNum(summaryRow.linesPct),
-          branchesPct: safeNum(summaryRow.branchesPct),
-          funcsPct: safeNum(summaryRow.funcsPct),
-          stmtsPct: safeNum(summaryRow.stmtsPct),
-        },
-        create: {
-          snapshotId,
-          linesPct: safeNum(summaryRow.linesPct),
-          branchesPct: safeNum(summaryRow.branchesPct),
-          funcsPct: safeNum(summaryRow.funcsPct),
-          stmtsPct: safeNum(summaryRow.stmtsPct),
-        },
+    if (formattedRows.length > 0) {
+      await tx.coverageFile.createMany({
+        data: formattedRows,
+        skipDuplicates: true,
       });
     }
+
+    await tx.coverageSummary.upsert({
+      where: { snapshotId },
+      update: {
+        linesPct: safeNum(summaryRow.linesPct),
+        branchesPct: safeNum(summaryRow.branchesPct),
+        funcsPct: safeNum(summaryRow.funcsPct),
+        stmtsPct: safeNum(summaryRow.stmtsPct),
+      },
+      create: {
+        snapshotId,
+        linesPct: safeNum(summaryRow.linesPct),
+        branchesPct: safeNum(summaryRow.branchesPct),
+        funcsPct: safeNum(summaryRow.funcsPct),
+        stmtsPct: safeNum(summaryRow.stmtsPct),
+      },
+    });
   });
 
   return {
