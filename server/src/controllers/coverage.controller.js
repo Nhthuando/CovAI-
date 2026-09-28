@@ -27,12 +27,33 @@ const findOwnedSnapshot = (snapshotId, userId) => prisma.projectSnapshot.findFir
     select: { id: true, projectId: true, rootDir: true },
 });
 
+const testSuitesCache = new Map();
+const frameworksCache = new Map();
+
+export const invalidateCoverageCache = (snapshotId) => {
+    for (const key of Array.from(testSuitesCache.keys())) {
+        if (!snapshotId || key.startsWith(snapshotId)) {
+            testSuitesCache.delete(key);
+        }
+    }
+    if (snapshotId) {
+        frameworksCache.delete(snapshotId);
+    } else {
+        frameworksCache.clear();
+    }
+};
+
 export const getCoverageFrameworks = async (req, res) => {
     try {
         const snapshot = await findOwnedSnapshot(req.params.snapshotId, req.user?.id);
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
         if (!snapshot.rootDir) return res.status(409).json({ success: false, message: "Snapshot is not ready for analysis." });
-        return res.json({ success: true, data: detectCoverageFrameworks(snapshot.rootDir) });
+        if (frameworksCache.has(snapshot.id)) {
+            return res.json({ success: true, data: frameworksCache.get(snapshot.id) });
+        }
+        const data = detectCoverageFrameworks(snapshot.rootDir);
+        frameworksCache.set(snapshot.id, data);
+        return res.json({ success: true, data });
     } catch (error) {
         return res.status(error.statusCode || 500).json({ success: false, message: error.message });
     }
@@ -41,6 +62,7 @@ export const getCoverageFrameworks = async (req, res) => {
 export const runCoverageByType = async (req, res) => {
     try {
         const { snapshotId, coverageType } = req.params;
+        invalidateCoverageCache(snapshotId);
         const requestedFramework = req.body?.framework || req.query?.framework || null;
         const userId = req.user?.id;
         const snapshot = await findOwnedSnapshot(snapshotId, userId);
@@ -804,6 +826,12 @@ export const getCoverageTestSuites = async (req, res) => {
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
         if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
 
+        const cacheKey = `${snapshotId}:${requestedType}`;
+        const cached = testSuitesCache.get(cacheKey);
+        if (cached && (Date.now() - cached.timestamp < 5 * 60 * 1000)) {
+            return res.status(200).json({ success: true, data: cached.data });
+        }
+
         if (!snapshot.rootDir || !fs.existsSync(snapshot.rootDir)) {
             return res.status(200).json({ success: true, data: { testSuites: [] } });
         }
@@ -1036,14 +1064,17 @@ export const getCoverageTestSuites = async (req, res) => {
             });
         }
 
+        const responseData = {
+            snapshotId,
+            type: requestedType,
+            totalSuites: suites.length,
+            testSuites: suites
+        };
+        testSuitesCache.set(cacheKey, { data: responseData, timestamp: Date.now() });
+
         return res.status(200).json({
             success: true,
-            data: {
-                snapshotId,
-                type: requestedType,
-                totalSuites: suites.length,
-                testSuites: suites
-            }
+            data: responseData
         });
     } catch (error) {
         console.error("[getCoverageTestSuites] Error:", error);
@@ -1247,10 +1278,10 @@ export const approveIntegrationTests = async (req, res) => {
         for (const idStr of approvedTestIds) {
             const separatorIndex = idStr.indexOf("::");
             if (separatorIndex === -1) continue;
-            
+
             const testId = idStr.substring(0, separatorIndex);
             const scenarioName = idStr.substring(separatorIndex + 2);
-            
+
             if (!approvedScenariosByTestId[testId]) approvedScenariosByTestId[testId] = [];
             if (scenarioName) approvedScenariosByTestId[testId].push(scenarioName);
         }
@@ -1264,10 +1295,10 @@ export const approveIntegrationTests = async (req, res) => {
                     if (meta.framework === "SUPERTEST") {
                         const approvedScenarios = approvedScenariosByTestId[t.id] || [];
                         const isApproved = approvedScenarios.length > 0;
-                        
+
                         meta.status = isApproved ? "APPROVED" : "DRAFT";
                         meta.approvedScenarios = approvedScenarios;
-                        
+
                         await prisma.aiTest.update({
                             where: { id: t.id },
                             data: { metaJson: JSON.stringify(meta) }
@@ -1346,12 +1377,12 @@ export const getIntegrationHistory = async (req, res) => {
 };
 
 
-import { 
-    updateScenarioService, 
-    addScenarioService, 
-    deleteScenarioService, 
-    toggleScenarioService, 
-    regenerateScenarioService 
+import {
+    updateScenarioService,
+    addScenarioService,
+    deleteScenarioService,
+    toggleScenarioService,
+    regenerateScenarioService
 } from "../services/scenarioManager.service.js";
 
 export const updateScenario = async (req, res) => {

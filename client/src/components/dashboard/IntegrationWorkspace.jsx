@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState, useRef } from "react";
+import React, { useCallback, useEffect, useState, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { getIntegrationWorkspace, runCoverageByType } from "../../services/coverage.service.js";
 import { runProjectStructureAnalysisApi } from "../../services/project.service.js";
@@ -9,6 +9,28 @@ import IntegrationLiveProgress from "./integration/IntegrationLiveProgress.jsx";
 import IntegrationHistoryPane from "./integration/IntegrationHistoryPane.jsx";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+
+const workspaceCache = new Map();
+const getCachedWorkspace = (snapshotId) => {
+    if (!snapshotId) return null;
+    if (workspaceCache.has(snapshotId)) return workspaceCache.get(snapshotId);
+    try {
+        const raw = sessionStorage.getItem(`covai_workspace_${snapshotId}`);
+        if (raw) {
+            const data = JSON.parse(raw);
+            workspaceCache.set(snapshotId, data);
+            return data;
+        }
+    } catch (_) {}
+    return null;
+};
+const setCachedWorkspace = (snapshotId, data) => {
+    if (!snapshotId) return;
+    workspaceCache.set(snapshotId, data);
+    try {
+        sessionStorage.setItem(`covai_workspace_${snapshotId}`, JSON.stringify(data));
+    } catch (_) {}
+};
 
 function getAuthHeaders() {
     const token = localStorage.getItem("token");
@@ -127,8 +149,9 @@ function useLiveJobLogs(jobId, onComplete, onError) {
 
 export default function IntegrationWorkspace({ projectId, snapshotId, onGenerate, generating, onOpenFile }) {
     const navigate = useNavigate();
-    const [workspace, setWorkspace] = useState(null);
-    const [loading, setLoading] = useState(true);
+    const cachedWorkspace = useMemo(() => getCachedWorkspace(snapshotId), [snapshotId]);
+    const [workspace, setWorkspace] = useState(() => cachedWorkspace?.data || null);
+    const [loading, setLoading] = useState(() => !cachedWorkspace);
     const [error, setError] = useState("");
     
     // Active Jobs State
@@ -141,11 +164,19 @@ export default function IntegrationWorkspace({ projectId, snapshotId, onGenerate
     const [selectedEndpointIndex, setSelectedEndpointIndex] = useState(null);
     const [rightPaneTab, setRightPaneTab] = useState("LIVE"); // "LIVE" | "HISTORY" | "SUMMARY"
 
-    const load = useCallback(async () => {
+    const load = useCallback(async (options = {}) => {
+        const force = options?.force === true;
         if (!snapshotId) return;
+        const currentCached = getCachedWorkspace(snapshotId);
+        if (!force && currentCached) {
+            setLoading(false);
+        } else {
+            setLoading(true);
+        }
         try {
             const res = await getIntegrationWorkspace(snapshotId);
             setWorkspace(res.data);
+            setCachedWorkspace(snapshotId, { data: res.data, timestamp: Date.now() });
             
             if (!activeJobId) {
                 const fetchedJobs = res.data.jobs || {};
@@ -181,9 +212,16 @@ export default function IntegrationWorkspace({ projectId, snapshotId, onGenerate
         } finally {
             setLoading(false);
         }
-    }, [snapshotId, activeJobId]);
+    }, [snapshotId, activeJobId, selectedTestIds.length]);
 
-    useEffect(() => { load(); }, [load]);
+    useEffect(() => {
+        const cached = getCachedWorkspace(snapshotId);
+        if (cached && cached.timestamp && Date.now() - cached.timestamp < 5 * 60 * 1000) {
+            setLoading(false);
+            return;
+        }
+        load();
+    }, [load, snapshotId]);
 
     const { logs: activeLogs, logsEndRef } = useLiveJobLogs(activeJobId, () => {
         setActiveJobId(null);

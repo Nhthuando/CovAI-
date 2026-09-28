@@ -874,7 +874,7 @@ function LayoutInner() {
             <ProjectArchitecturePanel projectId={project?.id} />
           ) : activeActivity === "coverage" ? (
             <div className="w-full h-full overflow-y-auto">
-              {coverageType === "unit" ? (
+              <div className={coverageType === "unit" ? "h-full" : "hidden"}>
                 <UnitTestDashboard
                   snapshotId={
                     project?.latestSnapshotId ||
@@ -888,7 +888,8 @@ function LayoutInner() {
                   onSuggestTestcase={handleSuggestTestcase}
                   onOpenCFG={() => setShowCFG(true)}
                 />
-              ) : coverageType === "integration" ? (
+              </div>
+              <div className={coverageType === "integration" ? "h-full" : "hidden"}>
                 <IntegrationTestDashboard
                   snapshotId={
                     project?.latestSnapshotId ||
@@ -900,7 +901,8 @@ function LayoutInner() {
                   projectId={project?.id}
                   onOpenFile={handleOpenFileByPath}
                 />
-              ) : (
+              </div>
+              <div className={coverageType === "system" ? "h-full" : "hidden"}>
                 <SystemTestDashboard
                   snapshotId={
                     project?.latestSnapshotId ||
@@ -912,7 +914,7 @@ function LayoutInner() {
                   projectId={project?.id}
                   onOpenFile={handleOpenFileByPath}
                 />
-              )}
+              </div>
             </div>
           ) : (
             <Editor
