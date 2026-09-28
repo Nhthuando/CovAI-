@@ -1,45 +1,39 @@
 import { motion } from "framer-motion";
-import {
-  CheckCircle2,
-  XCircle,
-  AlertTriangle,
-  Info,
-  X,
-} from "lucide-react";
+import { CheckCircle2, XCircle, AlertTriangle, Info, X } from "lucide-react";
 
 /* ── Toast type config ─────────────────────────────────────── */
 const TOAST_CONFIG = {
   success: {
     icon: CheckCircle2,
-    accent: "#3fb950",
-    bg: "rgba(63, 185, 80, 0.08)",
-    border: "rgba(63, 185, 80, 0.25)",
-    glow: "0 0 24px rgba(63, 185, 80, 0.15)",
-    iconBg: "rgba(63, 185, 80, 0.15)",
+    accent: "var(--color-success)",
+    bg: "var(--color-surface)",
+    border: "var(--color-border)",
+    iconBg: "var(--color-success-light, rgba(34, 197, 94, 0.12))",
+    iconColor: "var(--color-success)",
   },
   error: {
     icon: XCircle,
-    accent: "#f85149",
-    bg: "rgba(248, 81, 73, 0.08)",
-    border: "rgba(248, 81, 73, 0.25)",
-    glow: "0 0 24px rgba(248, 81, 73, 0.15)",
-    iconBg: "rgba(248, 81, 73, 0.15)",
+    accent: "var(--color-danger)",
+    bg: "var(--color-surface)",
+    border: "var(--color-border)",
+    iconBg: "var(--color-danger-light, rgba(239, 68, 68, 0.12))",
+    iconColor: "var(--color-danger)",
   },
   warning: {
     icon: AlertTriangle,
-    accent: "#d29922",
-    bg: "rgba(210, 153, 34, 0.08)",
-    border: "rgba(210, 153, 34, 0.25)",
-    glow: "0 0 24px rgba(210, 153, 34, 0.15)",
-    iconBg: "rgba(210, 153, 34, 0.15)",
+    accent: "var(--color-warning)",
+    bg: "var(--color-surface)",
+    border: "var(--color-border)",
+    iconBg: "var(--color-warning-light, rgba(245, 158, 11, 0.12))",
+    iconColor: "var(--color-warning)",
   },
   info: {
     icon: Info,
-    accent: "#a78bfa",
-    bg: "rgba(124, 58, 237, 0.06)",
-    border: "rgba(124, 58, 237, 0.25)",
-    glow: "0 0 24px rgba(124, 58, 237, 0.12)",
-    iconBg: "rgba(124, 58, 237, 0.15)",
+    accent: "var(--color-primary)",
+    bg: "var(--color-surface)",
+    border: "var(--color-border)",
+    iconBg: "var(--color-primary-light, rgba(79, 70, 229, 0.12))",
+    iconColor: "var(--color-primary)",
   },
 };
 
@@ -50,49 +44,35 @@ export default function Toast({ toast, onClose }) {
   return (
     <motion.div
       layout
-      initial={{ opacity: 0, x: 80, scale: 0.9 }}
+      initial={{ opacity: 0, x: 40, scale: 0.95 }}
       animate={{ opacity: 1, x: 0, scale: 1 }}
-      exit={{ opacity: 0, x: 80, scale: 0.85 }}
-      transition={{ type: "spring", stiffness: 400, damping: 30 }}
+      exit={{ opacity: 0, x: 40, scale: 0.95 }}
+      transition={{ duration: 0.2, ease: "easeOut" }}
       style={{
         pointerEvents: "auto",
         display: "flex",
         alignItems: "flex-start",
-        gap: 14,
-        padding: "16px 20px",
-        borderRadius: 14,
-        background: "#161b22",
-        border: `1px solid ${cfg.border}`,
-        boxShadow: `${cfg.glow}, 0 8px 32px rgba(0, 0, 0, 0.5)`,
-        backdropFilter: "blur(20px)",
-        WebkitBackdropFilter: "blur(20px)",
-        maxWidth: 420,
+        gap: 12,
+        padding: "14px 16px",
+        borderRadius: "var(--radius-lg, 8px)",
+        background: "var(--color-surface)",
+        border: "1px solid var(--color-border)",
+        borderLeft: `3px solid ${cfg.accent}`,
+        boxShadow: "var(--shadow-lg, 0 10px 15px -3px rgba(0,0,0,0.1))",
+        maxWidth: 400,
         width: "100%",
         cursor: "default",
         overflow: "hidden",
         position: "relative",
       }}
     >
-      {/* Accent gradient bar (top) */}
-      <div
-        style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          right: 0,
-          height: 2,
-          background: `linear-gradient(90deg, ${cfg.accent}, transparent 80%)`,
-          opacity: 0.8,
-        }}
-      />
-
       {/* Icon */}
       <div
         style={{
           flexShrink: 0,
-          width: 32,
-          height: 32,
-          borderRadius: 10,
+          width: 28,
+          height: 28,
+          borderRadius: "var(--radius-md, 6px)",
           background: cfg.iconBg,
           display: "flex",
           alignItems: "center",
@@ -100,7 +80,7 @@ export default function Toast({ toast, onClose }) {
           marginTop: 1,
         }}
       >
-        <Icon size={16} style={{ color: cfg.accent }} strokeWidth={2.5} />
+        <Icon size={16} style={{ color: cfg.iconColor }} strokeWidth={2} />
       </div>
 
       {/* Content */}
@@ -110,7 +90,7 @@ export default function Toast({ toast, onClose }) {
             style={{
               fontSize: 13,
               fontWeight: 600,
-              color: "#e6edf3",
+              color: "var(--color-text)",
               fontFamily: "var(--font-sans)",
               lineHeight: 1.3,
               marginBottom: 3,
@@ -121,10 +101,10 @@ export default function Toast({ toast, onClose }) {
         )}
         <div
           style={{
-            fontSize: 12.5,
-            color: "#8b949e",
+            fontSize: 12,
+            color: "var(--color-text-secondary)",
             fontFamily: "var(--font-sans)",
-            lineHeight: 1.5,
+            lineHeight: 1.45,
             wordBreak: "break-word",
           }}
         >
@@ -133,47 +113,56 @@ export default function Toast({ toast, onClose }) {
       </div>
 
       {/* Close button */}
-      <motion.button
-        whileHover={{ scale: 1.15 }}
-        whileTap={{ scale: 0.9 }}
+      <button
+        type="button"
         onClick={onClose}
         style={{
           flexShrink: 0,
-          background: "rgba(255, 255, 255, 0.05)",
+          background: "transparent",
           border: "none",
-          borderRadius: 6,
+          borderRadius: "var(--radius-sm, 4px)",
           width: 22,
           height: 22,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          color: "#484f58",
+          color: "var(--color-text-muted)",
           cursor: "pointer",
           marginTop: 1,
-          transition: "color 0.15s ease",
+          transition: "background-color 0.15s, color 0.15s",
         }}
-        onMouseEnter={(e) => (e.currentTarget.style.color = "#8b949e")}
-        onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.color = "var(--color-text)";
+          e.currentTarget.style.backgroundColor =
+            "var(--color-surface-secondary)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.color = "var(--color-text-muted)";
+          e.currentTarget.style.backgroundColor = "transparent";
+        }}
+        aria-label="Dismiss notification"
       >
-        <X size={12} />
-      </motion.button>
+        <X size={13} />
+      </button>
 
       {/* Auto-dismiss progress bar */}
-      <motion.div
-        initial={{ scaleX: 1 }}
-        animate={{ scaleX: 0 }}
-        transition={{ duration: toast.duration / 1000, ease: "linear" }}
-        style={{
-          position: "absolute",
-          bottom: 0,
-          left: 0,
-          right: 0,
-          height: 2,
-          background: cfg.accent,
-          opacity: 0.4,
-          transformOrigin: "left center",
-        }}
-      />
+      {toast.duration > 0 && (
+        <motion.div
+          initial={{ scaleX: 1 }}
+          animate={{ scaleX: 0 }}
+          transition={{ duration: toast.duration / 1000, ease: "linear" }}
+          style={{
+            position: "absolute",
+            bottom: 0,
+            left: 0,
+            right: 0,
+            height: 2,
+            background: cfg.accent,
+            opacity: 0.35,
+            transformOrigin: "left center",
+          }}
+        />
+      )}
     </motion.div>
   );
 }

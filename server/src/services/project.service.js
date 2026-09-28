@@ -426,6 +426,66 @@ export const detectCypressConfig = async (projectId) => {
   return detectCypressMetadata(projectId);
 };
 
+function copyDirRecursive(
+  src,
+  dest,
+  ignoreDirs = [
+    "node_modules",
+    ".git",
+    ".coverage",
+    "dist",
+    "build",
+    "coverage",
+    ".nyc_output",
+  ],
+) {
+  if (!fs.existsSync(src)) return { fileCount: 0, sizeBytes: 0 };
+  fs.mkdirSync(dest, { recursive: true });
+
+  let fileCount = 0;
+  let sizeBytes = 0;
+
+  const entries = fs.readdirSync(src, { withFileTypes: true });
+  for (const entry of entries) {
+    if (ignoreDirs.includes(entry.name)) continue;
+
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+
+    if (entry.isDirectory()) {
+      const sub = copyDirRecursive(srcPath, destPath, ignoreDirs);
+      fileCount += sub.fileCount;
+      sizeBytes += sub.sizeBytes;
+    } else if (entry.isFile()) {
+      fs.copyFileSync(srcPath, destPath);
+      try {
+        const stat = fs.statSync(destPath);
+        fileCount += 1;
+        sizeBytes += stat.size;
+      } catch (_) {}
+    }
+  }
+
+  return { fileCount, sizeBytes };
+}
+
+function cleanWorkingDir(dir, preserve = [".git", "node_modules"]) {
+  if (!fs.existsSync(dir)) return;
+  const entries = fs.readdirSync(dir);
+  for (const entry of entries) {
+    if (preserve.includes(entry)) continue;
+    const entryPath = path.join(dir, entry);
+    try {
+      fs.rmSync(entryPath, { recursive: true, force: true });
+    } catch (err) {
+      console.warn(
+        `[cleanWorkingDir] Failed to remove ${entryPath}:`,
+        err.message,
+      );
+    }
+  }
+}
+
 export const listProjectSnapshots = async ({ projectId, userId }) => {
   const project = await prisma.project.findFirst({
     where: { id: projectId, ownerId: userId },
@@ -437,12 +497,273 @@ export const listProjectSnapshots = async ({ projectId, userId }) => {
     orderBy: { createdAt: "desc" },
     include: { ProjectStructureAnalysis: { select: { schemaVersion: true } } },
   });
-  return snapshots.map((snapshot) =>
-    snapshotResponse({
-      ...snapshot,
-      structureAnalysis: snapshot.ProjectStructureAnalysis ?? null,
-    }),
+
+  return snapshots.map((snapshot, idx) => {
+    let meta = null;
+    if (snapshot.rootDir && fs.existsSync(snapshot.rootDir)) {
+      const metaPath = path.join(snapshot.rootDir, ".covai-checkpoint.json");
+      if (fs.existsSync(metaPath)) {
+        try {
+          meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+        } catch (_) {}
+      }
+    }
+
+    const defaultLabel = snapshot.commitSha
+      ? `Git: ${snapshot.commitSha.slice(0, 7)}`
+      : idx === snapshots.length - 1
+        ? "Initial Ingest"
+        : `Checkpoint #${snapshots.length - idx}`;
+
+    const defaultMessage =
+      snapshot.source === "GITHUB"
+        ? "Imported from GitHub repository"
+        : "Uploaded from compressed archive";
+
+    return {
+      ...snapshotResponse({
+        ...snapshot,
+        structureAnalysis: snapshot.ProjectStructureAnalysis ?? null,
+      }),
+      label: meta?.label || defaultLabel,
+      message: meta?.message || defaultMessage,
+      fileCount: meta?.fileCount ?? null,
+      sizeBytes: meta?.sizeBytes ?? null,
+      isCurrent: idx === 0,
+    };
+  });
+};
+
+export const createProjectCheckpoint = async ({
+  projectId,
+  userId,
+  label,
+  message,
+}) => {
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, ownerId: userId },
+  });
+  if (!project)
+    throw new ServiceError("Project not found or unauthorized", 404);
+
+  const activeSnapshot = await prisma.projectSnapshot.findFirst({
+    where: { projectId },
+    orderBy: { createdAt: "desc" },
+  });
+  if (
+    !activeSnapshot ||
+    !activeSnapshot.rootDir ||
+    !fs.existsSync(activeSnapshot.rootDir)
+  ) {
+    throw new ServiceError(
+      "Current project source code is not available to snapshot",
+      400,
+    );
+  }
+
+  const newSnapshotId = `snap_${Date.now()}_${randomUUID().slice(0, 8)}`;
+  const baseStorage = path.resolve(
+    "storage/projects",
+    projectId,
+    "snapshots",
+    newSnapshotId,
   );
+  fs.mkdirSync(baseStorage, { recursive: true });
+
+  const { fileCount, sizeBytes } = copyDirRecursive(
+    activeSnapshot.rootDir,
+    baseStorage,
+  );
+
+  const checkpointMeta = {
+    id: newSnapshotId,
+    label:
+      label?.trim() ||
+      `Checkpoint ${new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}`,
+    message: message?.trim() || "Manual snapshot checkpoint",
+    createdAt: new Date().toISOString(),
+    source: activeSnapshot.source,
+    fileCount,
+    sizeBytes,
+  };
+
+  const metaPath = path.join(baseStorage, ".covai-checkpoint.json");
+  fs.writeFileSync(metaPath, JSON.stringify(checkpointMeta, null, 2), "utf8");
+
+  let detection = {
+    hasJest: activeSnapshot.hasJest,
+    configPath: activeSnapshot.jestConfigPath,
+    jestCommand: activeSnapshot.jestCommand,
+  };
+  try {
+    detection = detectJest(baseStorage);
+  } catch (_) {}
+
+  const checksum = `cp_${Date.now()}_${randomUUID().slice(0, 8)}`;
+
+  const newSnapshot = await prisma.projectSnapshot.create({
+    data: {
+      projectId,
+      source: activeSnapshot.source,
+      checksum,
+      commitSha: null,
+      storagePath: baseStorage,
+      rootDir: baseStorage,
+      hasJest: detection.hasJest,
+      jestConfigPath: detection.configPath,
+      jestCommand: detection.jestCommand,
+      hasVitest: activeSnapshot.hasVitest,
+      vitestCommand: activeSnapshot.vitestCommand,
+      vitestConfigPath: activeSnapshot.vitestConfigPath,
+      hasPlaywright: activeSnapshot.hasPlaywright,
+      playwrightBrowsers: activeSnapshot.playwrightBrowsers,
+      playwrightCommand: activeSnapshot.playwrightCommand,
+      playwrightConfigPath: activeSnapshot.playwrightConfigPath,
+      playwrightTestDir: activeSnapshot.playwrightTestDir,
+      testingFrameworksJson: activeSnapshot.testingFrameworksJson,
+      frameworkRecommendationJson: activeSnapshot.frameworkRecommendationJson,
+      selectedTestingFramework: activeSnapshot.selectedTestingFramework,
+    },
+  });
+
+  return {
+    ...snapshotResponse(newSnapshot),
+    label: checkpointMeta.label,
+    message: checkpointMeta.message,
+    fileCount,
+    sizeBytes,
+    isCurrent: true,
+  };
+};
+
+export const restoreProjectCheckpoint = async ({
+  projectId,
+  snapshotId,
+  userId,
+}) => {
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, ownerId: userId },
+  });
+  if (!project)
+    throw new ServiceError("Project not found or unauthorized", 404);
+
+  const targetSnapshot = await prisma.projectSnapshot.findFirst({
+    where: { id: snapshotId, projectId },
+  });
+  if (
+    !targetSnapshot ||
+    !targetSnapshot.rootDir ||
+    !fs.existsSync(targetSnapshot.rootDir)
+  ) {
+    throw new ServiceError(
+      "Target snapshot not found or snapshot files missing on disk",
+      404,
+    );
+  }
+
+  const activeSnapshot = await prisma.projectSnapshot.findFirst({
+    where: { projectId },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!activeSnapshot || !activeSnapshot.rootDir) {
+    throw new ServiceError("Current project working directory not found", 400);
+  }
+
+  const workingDir = activeSnapshot.rootDir;
+
+  // Clean working directory (preserve git and dependencies)
+  cleanWorkingDir(workingDir, [".git", "node_modules"]);
+
+  // Copy target files to working directory
+  const { fileCount, sizeBytes } = copyDirRecursive(
+    targetSnapshot.rootDir,
+    workingDir,
+    [".git", "node_modules"],
+  );
+
+  let targetLabel = targetSnapshot.id.slice(0, 8);
+  const targetMetaPath = path.join(
+    targetSnapshot.rootDir,
+    ".covai-checkpoint.json",
+  );
+  if (fs.existsSync(targetMetaPath)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(targetMetaPath, "utf8"));
+      if (parsed.label) targetLabel = parsed.label;
+    } catch (_) {}
+  } else if (targetSnapshot.commitSha) {
+    targetLabel = `Git: ${targetSnapshot.commitSha.slice(0, 7)}`;
+  }
+
+  // Record a new checkpoint for this rollback
+  const restoreCheckpointId = `snap_${Date.now()}_${randomUUID().slice(0, 8)}`;
+  const restoreStorage = path.resolve(
+    "storage/projects",
+    projectId,
+    "snapshots",
+    restoreCheckpointId,
+  );
+  fs.mkdirSync(restoreStorage, { recursive: true });
+  copyDirRecursive(workingDir, restoreStorage, [".git", "node_modules"]);
+
+  const restoreMeta = {
+    id: restoreCheckpointId,
+    label: `Restored: ${targetLabel}`,
+    message: `Rolled back to snapshot from ${new Date(targetSnapshot.createdAt).toLocaleString("vi-VN")}`,
+    createdAt: new Date().toISOString(),
+    source: targetSnapshot.source,
+    fileCount,
+    sizeBytes,
+  };
+  fs.writeFileSync(
+    path.join(restoreStorage, ".covai-checkpoint.json"),
+    JSON.stringify(restoreMeta, null, 2),
+    "utf8",
+  );
+
+  const checksum = `cp_${Date.now()}_${randomUUID().slice(0, 8)}`;
+
+  const newSnapshot = await prisma.projectSnapshot.create({
+    data: {
+      projectId,
+      source: targetSnapshot.source,
+      checksum,
+      commitSha: null,
+      storagePath: restoreStorage,
+      rootDir: workingDir,
+      hasJest: targetSnapshot.hasJest,
+      jestConfigPath: targetSnapshot.jestConfigPath,
+      jestCommand: targetSnapshot.jestCommand,
+      hasVitest: targetSnapshot.hasVitest,
+      vitestCommand: targetSnapshot.vitestCommand,
+      vitestConfigPath: targetSnapshot.vitestConfigPath,
+      hasPlaywright: targetSnapshot.hasPlaywright,
+      playwrightBrowsers: targetSnapshot.playwrightBrowsers,
+      playwrightCommand: targetSnapshot.playwrightCommand,
+      playwrightConfigPath: targetSnapshot.playwrightConfigPath,
+      playwrightTestDir: targetSnapshot.playwrightTestDir,
+      testingFrameworksJson: targetSnapshot.testingFrameworksJson,
+      frameworkRecommendationJson: targetSnapshot.frameworkRecommendationJson,
+      selectedTestingFramework: targetSnapshot.selectedTestingFramework,
+    },
+  });
+
+  return {
+    success: true,
+    message: `Restored project code to snapshot '${targetLabel}' successfully.`,
+    restoredSnapshot: {
+      ...snapshotResponse(targetSnapshot),
+      label: targetLabel,
+    },
+    newSnapshot: {
+      ...snapshotResponse(newSnapshot),
+      label: restoreMeta.label,
+      message: restoreMeta.message,
+      fileCount,
+      sizeBytes,
+      isCurrent: true,
+    },
+  };
 };
 
 const resolveAnalysisSnapshot = async ({ projectId, snapshotId, userId }) => {

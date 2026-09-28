@@ -2,9 +2,23 @@ import React, { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import dagre from "dagre";
 import {
-  X, Sparkles, Info, ZoomIn, ZoomOut, GitBranch, ArrowLeft, TerminalSquare, Network, RefreshCw
+  X,
+  Sparkles,
+  Info,
+  ZoomIn,
+  ZoomOut,
+  GitBranch,
+  ArrowLeft,
+  TerminalSquare,
+  Network,
+  RefreshCw,
 } from "lucide-react";
-import { getProjectCfgApi, getProjectCcApi, getFileContentApi, buildCfgApi } from "../../services/project.service.js";
+import {
+  getProjectCfgApi,
+  getProjectCcApi,
+  getFileContentApi,
+  buildCfgApi,
+} from "../../services/project.service.js";
 import { useBreakpoints } from "../../hooks/useMediaQuery";
 
 /* --- ANIMATION VARIANTS --- */
@@ -16,46 +30,74 @@ const containerVariants = {
 
 function syntaxHighlight(text) {
   return text
-    .split(/(\bfunction\b|\bif\b|\belse\b|\breturn\b|\bconst\b|\blet\b|\bvar\b|"[^"]*"|\b\d+\b)/g)
+    .split(
+      /(\bfunction\b|\bif\b|\belse\b|\breturn\b|\bconst\b|\blet\b|\bvar\b|"[^"]*"|\b\d+\b)/g,
+    )
     .map((part, i) => {
-      if (["function", "if", "else", "return", "const", "let", "var"].includes(part))
-        return <span key={i} style={{ color: "#c084fc" }}>{part}</span>;
+      if (
+        ["function", "if", "else", "return", "const", "let", "var"].includes(
+          part,
+        )
+      )
+        return (
+          <span key={i} style={{ color: "#c084fc" }}>
+            {part}
+          </span>
+        );
       if (part.startsWith('"') || part.startsWith("'"))
-        return <span key={i} style={{ color: "#86efac" }}>{part}</span>;
+        return (
+          <span key={i} style={{ color: "#86efac" }}>
+            {part}
+          </span>
+        );
       if (/^\d+$/.test(part))
-        return <span key={i} style={{ color: "#fca5a5" }}>{part}</span>;
-      return <span key={i} style={{ color: "#e2e8f0" }}>{part}</span>;
+        return (
+          <span key={i} style={{ color: "#fca5a5" }}>
+            {part}
+          </span>
+        );
+      return (
+        <span key={i} style={{ color: "#e2e8f0" }}>
+          {part}
+        </span>
+      );
     });
 }
 
 function computeLayout(nodes, edges) {
   if (!nodes || nodes.length === 0) return { nodes: [], edges: [] };
   const g = new dagre.graphlib.Graph();
-  g.setGraph({ rankdir: 'TB', marginx: 40, marginy: 40, nodesep: 60, ranksep: 80 });
+  g.setGraph({
+    rankdir: "TB",
+    marginx: 40,
+    marginy: 40,
+    nodesep: 60,
+    ranksep: 80,
+  });
   g.setDefaultEdgeLabel(() => ({}));
 
-  nodes.forEach(n => {
+  nodes.forEach((n) => {
     // Label length heuristic for width
     const label = n.label || n.type || n.id;
     const width = Math.max(120, label.length * 8 + 40);
     g.setNode(n.id, { width, height: 40 });
   });
 
-  edges.forEach(e => {
+  edges.forEach((e) => {
     g.setEdge(e.from, e.to);
   });
 
   dagre.layout(g);
 
   return {
-    nodes: nodes.map(n => {
+    nodes: nodes.map((n) => {
       const pos = g.node(n.id);
       return { ...n, x: pos.x, y: pos.y, width: pos.width };
     }),
-    edges: edges.map(e => {
+    edges: edges.map((e) => {
       const edgePos = g.edge(e.from, e.to);
       return { ...e, points: edgePos.points };
-    })
+    }),
   };
 }
 
@@ -75,13 +117,26 @@ function FuncNode({ label, x, y, onClick }) {
       onClick={onClick}
       className="flex items-center justify-center font-mono select-none cursor-pointer"
       initial={{ x: "-50%", y: "-50%", scale: 1 }}
-      whileHover={{ scale: 1.05, x: "-50%", y: "-50%", boxShadow: "0 0 20px rgba(34, 211, 238, 0.3)" }}
+      whileHover={{
+        scale: 1.05,
+        x: "-50%",
+        y: "-50%",
+        boxShadow: "0 0 20px rgba(34, 211, 238, 0.3)",
+      }}
       whileTap={{ scale: 0.95, x: "-50%", y: "-50%" }}
       style={{
-        position: "absolute", left: x, top: y, zIndex: 10,
-        fontSize: "13px", padding: "12px 28px", borderRadius: "8px",
-        background: "rgba(34, 211, 238, 0.08)", border: "1px solid rgba(34, 211, 238, 0.4)",
-        color: "#67e8f9", backdropFilter: "blur(4px)", whiteSpace: "nowrap"
+        position: "absolute",
+        left: x,
+        top: y,
+        zIndex: 10,
+        fontSize: "13px",
+        padding: "12px 28px",
+        borderRadius: "8px",
+        background: "rgba(34, 211, 238, 0.08)",
+        border: "1px solid rgba(34, 211, 238, 0.4)",
+        color: "#67e8f9",
+        backdropFilter: "blur(4px)",
+        whiteSpace: "nowrap",
       }}
     >
       <Network size={15} style={{ marginRight: "8px", opacity: 0.8 }} />
@@ -90,7 +145,15 @@ function FuncNode({ label, x, y, onClick }) {
   );
 }
 
-function CFGNode({ label, line, x, y, active = false, isDiamond = false, width = 120 }) {
+function CFGNode({
+  label,
+  line,
+  x,
+  y,
+  active = false,
+  isDiamond = false,
+  width = 120,
+}) {
   return (
     <motion.div
       initial={{ x: "-50%", y: "-50%", scale: 0.8, opacity: 0 }}
@@ -101,22 +164,51 @@ function CFGNode({ label, line, x, y, active = false, isDiamond = false, width =
       }
       transition={{
         scale: active ? { repeat: Infinity, duration: 2 } : { duration: 0.3 },
-        default: { duration: 0.3 }
+        default: { duration: 0.3 },
       }}
       className="flex items-center justify-center font-mono select-none text-center"
       style={{
-        position: "absolute", left: x, top: y, zIndex: 10,
-        fontSize: "13px", padding: isDiamond ? "10px 24px" : "10px 24px",
-        borderRadius: isDiamond ? "8px" : "9999px", minWidth: `${width}px`,
-        background: active ? "rgba(124, 58, 237, 0.15)" : "#161B22",
-        border: active ? "1px solid #7C3AED" : "1px solid rgba(255,255,255,0.1)",
-        color: active ? "#c4b5fd" : "#c9d1d9",
-        boxShadow: active ? "0 0 25px rgba(124,58,237,0.25)" : "0 4px 12px rgba(0,0,0,0.4)",
+        position: "absolute",
+        left: x,
+        top: y,
+        zIndex: 10,
+        fontSize: "13px",
+        padding: isDiamond ? "10px 24px" : "10px 24px",
+        borderRadius: isDiamond ? "8px" : "9999px",
+        minWidth: `${width}px`,
+        background: active
+          ? "var(--color-primary-light)"
+          : "var(--color-surface)",
+        border: active
+          ? "1px solid var(--color-primary)"
+          : "1px solid var(--color-border)",
+        color: active ? "var(--color-primary)" : "var(--color-text)",
+        boxShadow: active ? "var(--shadow-md)" : "var(--shadow-sm)",
       }}
     >
-      {active && <span className="absolute animate-ping" style={{ left: "-8px", width: "12px", height: "12px", borderRadius: "50%", background: "#7C3AED" }} />}
-      {isDiamond && <GitBranch size={14} style={{ marginRight: "8px", opacity: 0.7 }} />}
-      {label} {line ? <span style={{ opacity: 0.5, fontSize: "11px", marginLeft: "6px" }}>(L{line})</span> : ""}
+      {active && (
+        <span
+          className="absolute animate-ping"
+          style={{
+            left: "-8px",
+            width: "12px",
+            height: "12px",
+            borderRadius: "50%",
+            background: "#7C3AED",
+          }}
+        />
+      )}
+      {isDiamond && (
+        <GitBranch size={14} style={{ marginRight: "8px", opacity: 0.7 }} />
+      )}
+      {label}{" "}
+      {line ? (
+        <span style={{ opacity: 0.5, fontSize: "11px", marginLeft: "6px" }}>
+          (L{line})
+        </span>
+      ) : (
+        ""
+      )}
     </motion.div>
   );
 }
@@ -147,7 +239,9 @@ export default function CFGCalculator({ project, onClose }) {
       if (isResizingLeft) {
         setLeftWidth(Math.max(200, Math.min(800, e.clientX)));
       } else if (isResizingRight) {
-        setRightWidth(Math.max(200, Math.min(800, window.innerWidth - e.clientX)));
+        setRightWidth(
+          Math.max(200, Math.min(800, window.innerWidth - e.clientX)),
+        );
       } else if (isResizingTop) {
         const containerHeight = window.innerHeight;
         const newHeight = (e.clientY / containerHeight) * 100;
@@ -158,16 +252,16 @@ export default function CFGCalculator({ project, onClose }) {
       setIsResizingLeft(false);
       setIsResizingRight(false);
       setIsResizingTop(false);
-      document.body.style.cursor = 'default';
+      document.body.style.cursor = "default";
     };
     if (isResizingLeft || isResizingRight || isResizingTop) {
-      window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseup', handleMouseUp);
-      document.body.style.cursor = isResizingTop ? 'row-resize' : 'col-resize';
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp);
+      document.body.style.cursor = isResizingTop ? "row-resize" : "col-resize";
     }
     return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
     };
   }, [isResizingLeft, isResizingRight, isResizingTop]);
 
@@ -177,15 +271,15 @@ export default function CFGCalculator({ project, onClose }) {
       setError(null);
       await buildCfgApi(project.id, "");
       // Wait a moment for the job to process, then refetch
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise((r) => setTimeout(r, 3000));
       const [cfgRes, ccRes] = await Promise.all([
         getProjectCfgApi(project.id, ""),
-        getProjectCcApi(project.id, "")
+        getProjectCcApi(project.id, ""),
       ]);
       setCfgs(cfgRes.data);
       setCcs(ccRes.data);
       if (cfgRes.data.length > 0) {
-        const firstFile = [...new Set(cfgRes.data.map(c => c.filePath))][0];
+        const firstFile = [...new Set(cfgRes.data.map((c) => c.filePath))][0];
         setSelectedFile(firstFile);
       }
     } catch (err) {
@@ -202,13 +296,13 @@ export default function CFGCalculator({ project, onClose }) {
         // Using snapshotId empty to default to latest snapshot
         const [cfgRes, ccRes] = await Promise.all([
           getProjectCfgApi(project.id, ""),
-          getProjectCcApi(project.id, "")
+          getProjectCcApi(project.id, ""),
         ]);
         setCfgs(cfgRes.data);
         setCcs(ccRes.data);
 
         if (cfgRes.data.length > 0) {
-          const firstFile = [...new Set(cfgRes.data.map(c => c.filePath))][0];
+          const firstFile = [...new Set(cfgRes.data.map((c) => c.filePath))][0];
           setSelectedFile(firstFile);
         }
       } catch (err) {
@@ -235,45 +329,49 @@ export default function CFGCalculator({ project, onClose }) {
   }, [selectedFile, project]);
 
   const uniqueFiles = useMemo(() => {
-    return [...new Set(cfgs.map(c => c.filePath))];
+    return [...new Set(cfgs.map((c) => c.filePath))];
   }, [cfgs]);
 
   const fileCfgs = useMemo(() => {
-    return cfgs.filter(c => c.filePath === selectedFile);
+    return cfgs.filter((c) => c.filePath === selectedFile);
   }, [cfgs, selectedFile]);
 
   const fileCcs = useMemo(() => {
-    return ccs.filter(c => c.filePath === selectedFile);
+    return ccs.filter((c) => c.filePath === selectedFile);
   }, [ccs, selectedFile]);
 
   const activeCfg = useMemo(() => {
-    return fileCfgs.find(c => c.functionName === selectedFunc);
+    return fileCfgs.find((c) => c.functionName === selectedFunc);
   }, [fileCfgs, selectedFunc]);
 
   const activeCc = useMemo(() => {
-    return fileCcs.find(c => c.functionName === selectedFunc);
+    return fileCcs.find((c) => c.functionName === selectedFunc);
   }, [fileCcs, selectedFunc]);
 
   const maxCc = useMemo(() => {
     if (fileCcs.length === 0) return 0;
-    return Math.max(...fileCcs.map(c => c.value));
+    return Math.max(...fileCcs.map((c) => c.value));
   }, [fileCcs]);
 
   const isCallGraph = selectedFunc === null;
 
   // Process source code lines
   const sourceLines = useMemo(() => {
-    return sourceCode.split('\n').map((text, i) => ({ num: i + 1, text }));
+    return sourceCode.split("\n").map((text, i) => ({ num: i + 1, text }));
   }, [sourceCode]);
 
   // DAGRE Layouts
   const graphLayout = useMemo(() => {
     if (isCallGraph) {
       // Just layout the functions side by side or vertically
-      const nodes = fileCfgs.map((c, i) => ({ id: c.functionName, label: c.functionName }));
+      const nodes = fileCfgs.map((c, i) => ({
+        id: c.functionName,
+        label: c.functionName,
+      }));
       const edges = [];
       // Create a dummy chain so dagre lays them out nicely vertically
-      for (let i = 0; i < nodes.length - 1; i++) edges.push({ from: nodes[i].id, to: nodes[i + 1].id });
+      for (let i = 0; i < nodes.length - 1; i++)
+        edges.push({ from: nodes[i].id, to: nodes[i + 1].id });
       return computeLayout(nodes, edges);
     } else {
       if (!activeCfg || !activeCfg.graphJson) return { nodes: [], edges: [] };
@@ -284,13 +382,16 @@ export default function CFGCalculator({ project, onClose }) {
 
         // Add virtual exit node to conform to standard McCabe CFG calculation
         if (nodes.length > 0) {
-          const fromNodeIds = new Set(edges.map(e => e.from));
-          const leafNodes = nodes.filter(n => !fromNodeIds.has(n.id));
+          const fromNodeIds = new Set(edges.map((e) => e.from));
+          const leafNodes = nodes.filter((n) => !fromNodeIds.has(n.id));
 
           if (leafNodes.length > 0) {
             const exitNodeId = "virtual_exit_node";
-            nodes = [...nodes, { id: exitNodeId, type: "exit", label: "Virtual Exit" }];
-            leafNodes.forEach(leaf => {
+            nodes = [
+              ...nodes,
+              { id: exitNodeId, type: "exit", label: "Virtual Exit" },
+            ];
+            leafNodes.forEach((leaf) => {
               edges = [...edges, { from: leaf.id, to: exitNodeId }];
             });
           }
@@ -310,50 +411,84 @@ export default function CFGCalculator({ project, onClose }) {
       animate="visible"
       exit="exit"
       className="fixed inset-0 z-50 flex flex-col"
-      style={{ background: "#0D1117", fontFamily: "var(--font-sans)", color: "#F0F6FC" }}
+      style={{
+        background: "var(--color-bg)",
+        fontFamily: "var(--font-sans)",
+        color: "var(--color-text)",
+      }}
     >
       {/* --- HEADER --- */}
       <div
         className="flex items-center justify-between flex-shrink-0"
-        style={{ padding: "0 24px", height: "56px", background: "#161B22", borderBottom: "1px solid rgba(255,255,255,0.08)" }}
+        style={{
+          padding: "0 24px",
+          height: "56px",
+          background: "var(--color-surface)",
+          borderBottom: "1px solid var(--color-border)",
+        }}
       >
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            {["#ff5f57", "#febc2e", "#28c840"].map((color, i) => (
-              <div key={i} onClick={i === 0 ? onClose : undefined} className="cursor-pointer hover:scale-110 transition-transform" style={{ width: "14px", height: "14px", borderRadius: "50%", background: color, boxShadow: `0 0 4px ${color}60` }} />
-            ))}
-          </div>
-          <div style={{ width: "1px", height: "20px", background: "rgba(255,255,255,0.1)" }} />
+          <button
+            onClick={onClose}
+            className="flex items-center justify-center p-1.5 rounded-lg hover:bg-[var(--color-bg)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer border border-[var(--color-border)]"
+            title="Close CFG Viewer"
+          >
+            <X size={15} />
+          </button>
+          <div
+            style={{
+              width: "1px",
+              height: "20px",
+              background: "var(--color-border)",
+            }}
+          />
           <div className="flex items-center gap-4">
             <select
               value={selectedFile || ""}
-              onChange={(e) => { setSelectedFile(e.target.value); setSelectedFunc(null); }}
+              onChange={(e) => {
+                setSelectedFile(e.target.value);
+                setSelectedFunc(null);
+              }}
               style={{
-                background: "rgba(255,255,255,0.08)",
-                color: "#c9d1d9",
-                border: "1px solid rgba(255,255,255,0.12)",
+                background: "var(--color-bg)",
+                color: "var(--color-text)",
+                border: "1px solid var(--color-border)",
                 borderRadius: "6px",
                 padding: "6px 12px",
                 fontSize: "13px",
                 outline: "none",
                 cursor: "pointer",
-                boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
-                fontFamily: "monospace"
+                boxShadow: "none",
+                fontFamily: "monospace",
               }}
-              onMouseOver={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.12)"}
-              onMouseOut={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.08)"}
             >
-              {uniqueFiles.map(f => (
-                <option key={f} value={f} style={{ background: "#0D1117", color: "#c9d1d9", padding: "8px" }}>
+              {uniqueFiles.map((f) => (
+                <option
+                  key={f}
+                  value={f}
+                  style={{
+                    background: "var(--color-surface)",
+                    color: "var(--color-text)",
+                    padding: "8px",
+                  }}
+                >
                   {f}
                 </option>
               ))}
             </select>
-            <div className="flex items-center gap-2 text-sm text-[#8B949E]">
+            <div className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
               {!isCallGraph && (
                 <>
-                  <span style={{ color: "rgba(255,255,255,0.3)" }}>/</span>
-                  <span style={{ color: "#A78BFA", fontFamily: "monospace", fontWeight: "bold" }}>{selectedFunc}()</span>
+                  <span style={{ color: "var(--color-text-muted)" }}>/</span>
+                  <span
+                    style={{
+                      color: "var(--color-primary)",
+                      fontFamily: "monospace",
+                      fontWeight: "bold",
+                    }}
+                  >
+                    {selectedFunc}()
+                  </span>
                 </>
               )}
             </div>
@@ -362,85 +497,236 @@ export default function CFGCalculator({ project, onClose }) {
         <button
           className="transition-colors cursor-pointer"
           onClick={onClose}
-          style={{ padding: "6px", color: "#8B949E", background: "transparent", border: "none", borderRadius: "6px" }}
-          onMouseOver={(e) => { e.currentTarget.style.color = "#ff5f57"; e.currentTarget.style.background = "rgba(255,255,255,0.05)"; }}
-          onMouseOut={(e) => { e.currentTarget.style.color = "#8B949E"; e.currentTarget.style.background = "transparent"; }}
+          style={{
+            padding: "6px",
+            color: "#8B949E",
+            background: "transparent",
+            border: "none",
+            borderRadius: "6px",
+          }}
+          onMouseOver={(e) => {
+            e.currentTarget.style.color = "#ff5f57";
+            e.currentTarget.style.background = "rgba(255,255,255,0.05)";
+          }}
+          onMouseOut={(e) => {
+            e.currentTarget.style.color = "#8B949E";
+            e.currentTarget.style.background = "transparent";
+          }}
         >
           <X size={20} />
         </button>
       </div>
 
       {loading || rebuilding ? (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px' }}>
-          <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}>
-            <RefreshCw size={28} style={{ color: '#22D3EE' }} />
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "16px",
+          }}
+        >
+          <motion.div
+            animate={{ rotate: 360 }}
+            transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+          >
+            <RefreshCw size={28} style={{ color: "#22D3EE" }} />
           </motion.div>
-          <span style={{ color: '#8B949E', fontSize: '14px' }}>{rebuilding ? 'Đang rebuild CFG...' : 'Loading analysis data...'}</span>
+          <span style={{ color: "#8B949E", fontSize: "14px" }}>
+            {rebuilding ? "Đang rebuild CFG..." : "Loading analysis data..."}
+          </span>
         </div>
       ) : error ? (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', color: '#ef4444' }}>
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "16px",
+            color: "#ef4444",
+          }}
+        >
           <span>{error}</span>
           <button
             onClick={handleRebuild}
             style={{
-              padding: '10px 24px', borderRadius: '8px', border: '1px solid rgba(34,211,238,0.4)',
-              background: 'rgba(34,211,238,0.1)', color: '#22D3EE', cursor: 'pointer',
-              fontSize: '13px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px'
+              padding: "10px 24px",
+              borderRadius: "8px",
+              border: "1px solid rgba(34,211,238,0.4)",
+              background: "rgba(34,211,238,0.1)",
+              color: "#22D3EE",
+              cursor: "pointer",
+              fontSize: "13px",
+              fontWeight: "bold",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
             }}
           >
             <RefreshCw size={16} /> Rebuild CFG
           </button>
         </div>
       ) : cfgs.length === 0 ? (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '24px' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
-            <Network size={48} style={{ color: '#8B949E', opacity: 0.5 }} />
-            <span style={{ color: '#c9d1d9', fontSize: '18px', fontWeight: 'bold' }}>Chưa có dữ liệu CFG</span>
-            <span style={{ color: '#8B949E', fontSize: '13px', textAlign: 'center', maxWidth: '400px', lineHeight: '1.6' }}>
-              Dữ liệu Control Flow Graph và Cyclomatic Complexity chưa được tạo cho snapshot hiện tại. Nhấn nút bên dưới để build.
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "24px",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: "12px",
+            }}
+          >
+            <Network size={48} style={{ color: "#8B949E", opacity: 0.5 }} />
+            <span
+              style={{ color: "#c9d1d9", fontSize: "18px", fontWeight: "bold" }}
+            >
+              Chưa có dữ liệu CFG
+            </span>
+            <span
+              style={{
+                color: "#8B949E",
+                fontSize: "13px",
+                textAlign: "center",
+                maxWidth: "400px",
+                lineHeight: "1.6",
+              }}
+            >
+              Dữ liệu Control Flow Graph và Cyclomatic Complexity chưa được tạo
+              cho snapshot hiện tại. Nhấn nút bên dưới để build.
             </span>
           </div>
           <button
             onClick={handleRebuild}
             style={{
-              padding: '12px 28px', borderRadius: '8px', border: '1px solid rgba(34,211,238,0.4)',
-              background: 'rgba(34,211,238,0.1)', color: '#22D3EE', cursor: 'pointer',
-              fontSize: '14px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px',
-              transition: 'all 0.2s'
+              padding: "12px 28px",
+              borderRadius: "8px",
+              border: "1px solid rgba(34,211,238,0.4)",
+              background: "rgba(34,211,238,0.1)",
+              color: "#22D3EE",
+              cursor: "pointer",
+              fontSize: "14px",
+              fontWeight: "bold",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              transition: "all 0.2s",
             }}
-            onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(34,211,238,0.2)'; e.currentTarget.style.boxShadow = '0 0 20px rgba(34,211,238,0.2)'; }}
-            onMouseOut={(e) => { e.currentTarget.style.background = 'rgba(34,211,238,0.1)'; e.currentTarget.style.boxShadow = 'none'; }}
+            onMouseOver={(e) => {
+              e.currentTarget.style.background = "rgba(34,211,238,0.2)";
+              e.currentTarget.style.boxShadow = "0 0 20px rgba(34,211,238,0.2)";
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.background = "rgba(34,211,238,0.1)";
+              e.currentTarget.style.boxShadow = "none";
+            }}
           >
             <RefreshCw size={18} /> Build CFG & CC
           </button>
         </div>
       ) : (
         /* --- MAIN CONTENT --- */
-        <div style={{ flex: 1, display: "flex", overflowX: isMobile ? "hidden" : "auto", overflowY: "hidden", background: "#0D1117", width: "100%" }}>
-          <div style={{ display: "flex", height: "100%", width: "100%", flexDirection: isMobile ? "column" : "row" }}>
-
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            overflowX: isMobile ? "hidden" : "auto",
+            overflowY: "hidden",
+            background: "var(--color-bg)",
+            width: "100%",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              height: "100%",
+              width: "100%",
+              flexDirection: isMobile ? "column" : "row",
+            }}
+          >
             {/* LEFT COLUMN: Source Code */}
-            <div style={{ width: isMobile ? "100%" : `${leftWidth}px`, flexShrink: 0, display: "flex", flexDirection: "column", borderRight: "1px solid rgba(255,255,255,0.05)", background: "#0D1117", height: isMobile ? `${topHeight}%` : "100%", position: 'relative' }}>
+            <div
+              style={{
+                width: isMobile ? "100%" : `${leftWidth}px`,
+                flexShrink: 0,
+                display: "flex",
+                flexDirection: "column",
+                borderRight: "1px solid var(--color-border)",
+                background: "var(--color-surface)",
+                height: isMobile ? `${topHeight}%` : "100%",
+                position: "relative",
+              }}
+            >
               <div
-                onMouseDown={() => isMobile ? setIsResizingTop(true) : setIsResizingLeft(true)}
+                onMouseDown={() =>
+                  isMobile ? setIsResizingTop(true) : setIsResizingLeft(true)
+                }
                 style={{
-                  position: 'absolute',
-                  [isMobile ? 'bottom' : 'right']: -3,
-                  top: isMobile ? 'auto' : 0,
+                  position: "absolute",
+                  [isMobile ? "bottom" : "right"]: -3,
+                  top: isMobile ? "auto" : 0,
                   bottom: isMobile ? -3 : 0,
-                  width: isMobile ? '100%' : 6,
-                  height: isMobile ? 6 : '100%',
-                  cursor: isMobile ? 'row-resize' : 'col-resize',
-                  zIndex: 100
+                  width: isMobile ? "100%" : 6,
+                  height: isMobile ? 6 : "100%",
+                  cursor: isMobile ? "row-resize" : "col-resize",
+                  zIndex: 100,
                 }}
               />
-              <div style={{ padding: "20px 32px", fontSize: "11px", letterSpacing: "0.2em", color: "#8B949E", textTransform: "uppercase", fontWeight: "bold", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid rgba(255,255,255,0.05)", background: "rgba(22,27,34,0.5)" }}>
+              <div
+                style={{
+                  padding: "20px 32px",
+                  fontSize: "11px",
+                  letterSpacing: "0.2em",
+                  color: "var(--color-text-secondary)",
+                  textTransform: "uppercase",
+                  fontWeight: "bold",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  borderBottom: "1px solid var(--color-border)",
+                  background: "var(--color-bg)",
+                }}
+              >
                 <span>Source Code</span>
-                <span style={{ background: "rgba(255,255,255,0.1)", padding: "4px 10px", borderRadius: "6px", fontSize: "10px", color: "#fff" }}>JS/TS</span>
+                <span
+                  style={{
+                    background: "rgba(109,93,251,0.15)",
+                    padding: "4px 10px",
+                    borderRadius: "6px",
+                    fontSize: "10px",
+                    color: "var(--color-primary)",
+                  }}
+                >
+                  JS/TS
+                </span>
               </div>
-              <div style={{ flex: 1, overflowY: "auto", padding: "24px 0", fontFamily: "monospace", fontSize: "14px", lineHeight: "1.8" }}>
+              <div
+                style={{
+                  flex: 1,
+                  overflowY: "auto",
+                  padding: "24px 0",
+                  fontFamily: "monospace",
+                  fontSize: "14px",
+                  lineHeight: "1.8",
+                }}
+              >
                 {sourceLines.map((line) => {
-                  const isActiveScope = activeCfg && line.num >= activeCfg.startLine && line.num <= activeCfg.endLine;
+                  const isActiveScope =
+                    activeCfg &&
+                    line.num >= activeCfg.startLine &&
+                    line.num <= activeCfg.endLine;
                   const isDimmed = !isCallGraph && !isActiveScope;
 
                   return (
@@ -450,16 +736,35 @@ export default function CFGCalculator({ project, onClose }) {
                         display: "flex",
                         alignItems: "flex-start",
                         padding: "4px 32px",
-                        background: isActiveScope ? "rgba(124, 58, 237, 0.08)" : "transparent",
-                        borderLeft: isActiveScope ? "3px solid #7C3AED" : "3px solid transparent",
+                        background: isActiveScope
+                          ? "rgba(124, 58, 237, 0.08)"
+                          : "transparent",
+                        borderLeft: isActiveScope
+                          ? "3px solid #7C3AED"
+                          : "3px solid transparent",
                         opacity: isDimmed ? 0.3 : 1,
-                        transition: "background-color 0.3s, opacity 0.3s"
+                        transition: "background-color 0.3s, opacity 0.3s",
                       }}
                     >
-                      <span style={{ width: "40px", flexShrink: 0, textAlign: "right", paddingRight: "24px", userSelect: "none", color: isActiveScope ? "#A78BFA" : "#484F58" }}>
+                      <span
+                        style={{
+                          width: "40px",
+                          flexShrink: 0,
+                          textAlign: "right",
+                          paddingRight: "24px",
+                          userSelect: "none",
+                          color: isActiveScope ? "#A78BFA" : "#484F58",
+                        }}
+                      >
                         {line.num}
                       </span>
-                      <span style={{ whiteSpace: "pre-wrap", wordBreak: 'break-word', flex: 1 }}>
+                      <span
+                        style={{
+                          whiteSpace: "pre-wrap",
+                          wordBreak: "break-word",
+                          flex: 1,
+                        }}
+                      >
                         {syntaxHighlight(line.text)}
                       </span>
                     </div>
@@ -469,38 +774,112 @@ export default function CFGCalculator({ project, onClose }) {
             </div>
 
             {/* MIDDLE COLUMN: Graph Area */}
-            <div style={{ flex: 1, minWidth: isMobile ? "100%" : "550px", display: "flex", flexDirection: "column", borderRight: "1px solid rgba(255,255,255,0.05)", background: "#0D1117", position: "relative", height: isMobile ? "40%" : "100%" }}>
-              <div style={{ padding: "20px 32px", fontSize: "11px", letterSpacing: "0.2em", color: "#8B949E", textTransform: "uppercase", fontWeight: "bold", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid rgba(255,255,255,0.05)", zIndex: 20, background: "rgba(22,27,34,0.5)" }}>
+            <div
+              style={{
+                flex: 1,
+                minWidth: isMobile ? "100%" : "550px",
+                display: "flex",
+                flexDirection: "column",
+                borderRight: "1px solid var(--color-border)",
+                background: "var(--color-bg)",
+                position: "relative",
+                height: isMobile ? "40%" : "100%",
+              }}
+            >
+              <div
+                style={{
+                  padding: "20px 32px",
+                  fontSize: "11px",
+                  letterSpacing: "0.2em",
+                  color: "var(--color-text-secondary)",
+                  textTransform: "uppercase",
+                  fontWeight: "bold",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  borderBottom: "1px solid var(--color-border)",
+                  zIndex: 20,
+                  background: "var(--color-surface)",
+                }}
+              >
                 <div className="flex items-center gap-3">
                   {!isCallGraph && (
                     <motion.button
                       whileHover={{ x: -3 }}
                       onClick={() => setSelectedFunc(null)}
                       className="cursor-pointer"
-                      style={{ display: "flex", alignItems: "center", gap: "6px", color: "#C4B5FD", background: "transparent", border: "none", fontWeight: "bold" }}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        color: "var(--color-primary)",
+                        background: "transparent",
+                        border: "none",
+                        fontWeight: "bold",
+                      }}
                     >
                       <ArrowLeft size={16} /> Back
                     </motion.button>
                   )}
-                  <span style={{ color: "rgba(255,255,255,0.8)" }}>{isCallGraph ? "Functions in File" : "Control Flow Graph"}</span>
+                  <span style={{ color: "var(--color-text)" }}>
+                    {isCallGraph ? "Functions in File" : "Control Flow Graph"}
+                  </span>
                 </div>
                 <div className="flex items-center gap-3">
-                  <ZoomOut size={16} onClick={() => setZoom(z => Math.max(z - 0.2, 0.2))} style={{ cursor: "pointer", color: "#8B949E" }} />
-                  <span style={{ fontSize: "11px", color: "#8B949E", width: "36px", textAlign: "center", fontFamily: "monospace", fontWeight: "bold" }}>{Math.round(zoom * 100)}%</span>
-                  <ZoomIn size={16} onClick={() => setZoom(z => Math.min(z + 0.2, 3))} style={{ cursor: "pointer", color: "#8B949E" }} />
+                  <ZoomOut
+                    size={16}
+                    onClick={() => setZoom((z) => Math.max(z - 0.2, 0.2))}
+                    style={{
+                      cursor: "pointer",
+                      color: "var(--color-text-secondary)",
+                    }}
+                  />
+                  <span
+                    style={{
+                      fontSize: "11px",
+                      color: "var(--color-text-secondary)",
+                      width: "36px",
+                      textAlign: "center",
+                      fontFamily: "monospace",
+                      fontWeight: "bold",
+                    }}
+                  >
+                    {Math.round(zoom * 100)}%
+                  </span>
+                  <ZoomIn
+                    size={16}
+                    onClick={() => setZoom((z) => Math.min(z + 0.2, 3))}
+                    style={{
+                      cursor: "pointer",
+                      color: "var(--color-text-secondary)",
+                    }}
+                  />
                 </div>
               </div>
 
               <div
-                style={{ flex: 1, position: "relative", overflow: "hidden", background: "radial-gradient(ellipse at center, rgba(255,255,255,0.03) 0%, transparent 100%)", display: "flex", alignItems: "center", justifyContent: "center" }}
+                style={{
+                  flex: 1,
+                  position: "relative",
+                  overflow: "hidden",
+                  background: "var(--color-bg)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
                 onWheel={(e) => {
                   const delta = e.deltaY > 0 ? -0.05 : 0.05;
-                  setZoom(z => Math.min(Math.max(z + delta, 0.2), 3));
+                  setZoom((z) => Math.min(Math.max(z + delta, 0.2), 3));
                 }}
               >
                 <motion.div
                   drag
-                  dragConstraints={{ left: -1000, right: 1000, top: -1000, bottom: 1000 }}
+                  dragConstraints={{
+                    left: -1000,
+                    right: 1000,
+                    top: -1000,
+                    bottom: 1000,
+                  }}
                   dragElastic={0.1}
                   style={{
                     scale: zoom,
@@ -512,7 +891,7 @@ export default function CFGCalculator({ project, onClose }) {
                     height: "200%",
                     display: "flex",
                     alignItems: "center",
-                    justifyContent: "center"
+                    justifyContent: "center",
                   }}
                   whileTap={{ cursor: "grabbing" }}
                 >
@@ -525,17 +904,57 @@ export default function CFGCalculator({ project, onClose }) {
                         animate={{ opacity: 1, scale: 1 }}
                         exit={{ opacity: 0, scale: 1.05 }}
                         transition={{ duration: 0.3 }}
-                        style={{ position: "relative", width: "100%", height: "100%" }}
+                        style={{
+                          position: "relative",
+                          width: "100%",
+                          height: "100%",
+                        }}
                       >
                         {/* We center the nodes generated by dagre */}
-                        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 800, height: 800 }}>
-                          {graphLayout.nodes.map(n => (
-                            <FuncNode key={n.id} label={n.id} x={n.x} y={n.y} onClick={() => setSelectedFunc(n.id)} />
+                        <div
+                          style={{
+                            position: "absolute",
+                            top: "50%",
+                            left: "50%",
+                            transform: "translate(-50%, -50%)",
+                            width: 800,
+                            height: 800,
+                          }}
+                        >
+                          {graphLayout.nodes.map((n) => (
+                            <FuncNode
+                              key={n.id}
+                              label={n.id}
+                              x={n.x}
+                              y={n.y}
+                              onClick={() => setSelectedFunc(n.id)}
+                            />
                           ))}
                         </div>
 
-                        <div style={{ position: "absolute", bottom: "20%", left: "50%", transform: "translateX(-50%)", fontSize: "13px", color: "#8B949E", background: "#161B22", padding: "12px 24px", borderRadius: "9999px", border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 10px 25px rgba(0,0,0,0.5)", display: "flex", alignItems: "center", gap: "8px", whiteSpace: "nowrap" }}>
-                          <Sparkles size={16} color="#22D3EE" />
+                        <div
+                          style={{
+                            position: "absolute",
+                            bottom: "20%",
+                            left: "50%",
+                            transform: "translateX(-50%)",
+                            fontSize: "13px",
+                            color: "var(--color-text)",
+                            background: "var(--color-surface)",
+                            padding: "12px 24px",
+                            borderRadius: "9999px",
+                            border: "1px solid var(--color-border)",
+                            boxShadow: "none",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "8px",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          <Sparkles
+                            size={16}
+                            style={{ color: "var(--color-primary)" }}
+                          />
                           Click a function node to analyze its CFG
                         </div>
                       </motion.div>
@@ -547,22 +966,74 @@ export default function CFGCalculator({ project, onClose }) {
                         animate={{ opacity: 1, scale: 1 }}
                         exit={{ opacity: 0, scale: 1.05 }}
                         transition={{ duration: 0.3 }}
-                        style={{ position: "relative", width: "100%", height: "100%" }}
+                        style={{
+                          position: "relative",
+                          width: "100%",
+                          height: "100%",
+                        }}
                       >
-                        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 800, height: 800 }}>
-                          <svg width="100%" height="100%" style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "visible" }}>
+                        <div
+                          style={{
+                            position: "absolute",
+                            top: "50%",
+                            left: "50%",
+                            transform: "translate(-50%, -50%)",
+                            width: 800,
+                            height: 800,
+                          }}
+                        >
+                          <svg
+                            width="100%"
+                            height="100%"
+                            style={{
+                              position: "absolute",
+                              inset: 0,
+                              pointerEvents: "none",
+                              overflow: "visible",
+                            }}
+                          >
                             <defs>
-                              <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-                                <polygon points="0 0, 10 3.5, 0 7" fill="rgba(255,255,255,0.4)" />
+                              <marker
+                                id="arrowhead"
+                                markerWidth="10"
+                                markerHeight="7"
+                                refX="9"
+                                refY="3.5"
+                                orient="auto"
+                              >
+                                <polygon
+                                  points="0 0, 10 3.5, 0 7"
+                                  fill="rgba(255,255,255,0.4)"
+                                />
                               </marker>
                             </defs>
                             {graphLayout.edges.map((e, i) => (
-                              <path key={i} d={pointsToSvgPath(e.points)} fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="1.5" markerEnd="url(#arrowhead)" />
+                              <path
+                                key={i}
+                                d={pointsToSvgPath(e.points)}
+                                fill="none"
+                                stroke="rgba(255,255,255,0.2)"
+                                strokeWidth="1.5"
+                                markerEnd="url(#arrowhead)"
+                              />
                             ))}
                           </svg>
 
-                          {graphLayout.nodes.map(n => (
-                            <CFGNode key={n.id} label={n.label || n.type || n.id} line={n.line} x={n.x} y={n.y} width={n.width} isDiamond={n.type === 'condition'} active={n.type === 'start' || n.type === 'return' || n.type === 'exit'} />
+                          {graphLayout.nodes.map((n) => (
+                            <CFGNode
+                              key={n.id}
+                              label={n.label || n.type || n.id}
+                              line={n.line}
+                              x={n.x}
+                              y={n.y}
+                              width={n.width}
+                              isDiamond={n.type === "condition"}
+                              active={
+                                n.type === "start" ||
+                                n.type === "return" ||
+                                n.type === "exit"
+                              }
+                            />
                           ))}
                         </div>
                       </motion.div>
@@ -573,11 +1044,31 @@ export default function CFGCalculator({ project, onClose }) {
             </div>
 
             {/* RIGHT COLUMN: Metrics */}
-            <div style={{ width: isMobile ? "100%" : `${rightWidth}px`, flexShrink: 0, display: "flex", flexDirection: "column", padding: isMobile ? "20px" : "40px", overflowY: "auto", background: "#161B22", height: isMobile ? "30%" : "100%", position: 'relative' }}>
+            <div
+              style={{
+                width: isMobile ? "100%" : `${rightWidth}px`,
+                flexShrink: 0,
+                display: "flex",
+                flexDirection: "column",
+                padding: isMobile ? "20px" : "40px",
+                overflowY: "auto",
+                background: "var(--color-surface)",
+                height: isMobile ? "30%" : "100%",
+                position: "relative",
+              }}
+            >
               {!isMobile && (
                 <div
                   onMouseDown={() => setIsResizingRight(true)}
-                  style={{ position: 'absolute', left: -3, top: 0, bottom: 0, width: 6, cursor: 'col-resize', zIndex: 100 }}
+                  style={{
+                    position: "absolute",
+                    left: -3,
+                    top: 0,
+                    bottom: 0,
+                    width: 6,
+                    cursor: "col-resize",
+                    zIndex: 100,
+                  }}
                 />
               )}
               <AnimatePresence mode="wait">
@@ -588,30 +1079,144 @@ export default function CFGCalculator({ project, onClose }) {
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: -20 }}
                     transition={{ duration: 0.3 }}
-                    style={{ display: "flex", flexDirection: "column", height: "100%" }}
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      height: "100%",
+                    }}
                   >
-                    <div style={{ fontSize: "11px", letterSpacing: "0.2em", color: "#8B949E", textTransform: "uppercase", fontWeight: "bold", marginBottom: "32px" }}>
+                    <div
+                      style={{
+                        fontSize: "11px",
+                        letterSpacing: "0.2em",
+                        color: "var(--color-text-secondary)",
+                        textTransform: "uppercase",
+                        fontWeight: "bold",
+                        marginBottom: "32px",
+                      }}
+                    >
                       File Summary Overview
                     </div>
 
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", marginBottom: "40px" }}>
-                      <div style={{ background: "#0D1117", padding: "20px", borderRadius: "12px", border: "1px solid rgba(255,255,255,0.05)", boxShadow: "0 4px 6px rgba(0,0,0,0.1)" }}>
-                        <div style={{ color: "#8B949E", fontSize: "10px", fontWeight: "bold", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: "8px" }}>Functions</div>
-                        <div style={{ fontSize: "32px", fontFamily: "monospace", color: "#fff" }}>{fileCfgs.length}</div>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1fr",
+                        gap: "20px",
+                        marginBottom: "40px",
+                      }}
+                    >
+                      <div
+                        style={{
+                          background: "var(--color-bg)",
+                          padding: "20px",
+                          borderRadius: "12px",
+                          border: "1px solid var(--color-border)",
+                          boxShadow: "none",
+                        }}
+                      >
+                        <div
+                          style={{
+                            color: "var(--color-text-secondary)",
+                            fontSize: "10px",
+                            fontWeight: "bold",
+                            letterSpacing: "0.1em",
+                            textTransform: "uppercase",
+                            marginBottom: "8px",
+                          }}
+                        >
+                          Functions
+                        </div>
+                        <div
+                          style={{
+                            fontSize: "32px",
+                            fontFamily: "monospace",
+                            color: "var(--color-text)",
+                          }}
+                        >
+                          {fileCfgs.length}
+                        </div>
                       </div>
-                      <div style={{ background: "#0D1117", padding: "20px", borderRadius: "12px", border: "1px solid rgba(255,255,255,0.05)", boxShadow: "0 4px 6px rgba(0,0,0,0.1)" }}>
-                        <div style={{ color: "#8B949E", fontSize: "10px", fontWeight: "bold", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: "8px" }}>Max CC</div>
-                        <div style={{ fontSize: "32px", fontFamily: "monospace", color: "#fbbf24" }}>{maxCc}</div>
+                      <div
+                        style={{
+                          background: "var(--color-bg)",
+                          padding: "20px",
+                          borderRadius: "12px",
+                          border: "1px solid var(--color-border)",
+                          boxShadow: "none",
+                        }}
+                      >
+                        <div
+                          style={{
+                            color: "var(--color-text-secondary)",
+                            fontSize: "10px",
+                            fontWeight: "bold",
+                            letterSpacing: "0.1em",
+                            textTransform: "uppercase",
+                            marginBottom: "8px",
+                          }}
+                        >
+                          Max CC
+                        </div>
+                        <div
+                          style={{
+                            fontSize: "32px",
+                            fontFamily: "monospace",
+                            color: "#fbbf24",
+                          }}
+                        >
+                          {maxCc}
+                        </div>
                       </div>
                     </div>
 
-                    <div style={{ borderRadius: "12px", padding: "24px", border: "1px solid rgba(34,211,238,0.2)", background: "rgba(34,211,238,0.05)", position: "relative", overflow: "hidden" }}>
-                      <div style={{ position: "absolute", top: 0, right: 0, padding: "16px", opacity: 0.1 }}><Info size={40} /></div>
-                      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px", color: "#22D3EE", fontWeight: "bold", fontSize: "14px", letterSpacing: "0.05em" }}>
+                    <div
+                      style={{
+                        borderRadius: "12px",
+                        padding: "24px",
+                        border: "1px solid var(--color-border)",
+                        background: "var(--color-bg)",
+                        position: "relative",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: 0,
+                          right: 0,
+                          padding: "16px",
+                          opacity: 0.1,
+                        }}
+                      >
+                        <Info size={40} />
+                      </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "8px",
+                          marginBottom: "12px",
+                          color: "var(--color-primary)",
+                          fontWeight: "bold",
+                          fontSize: "14px",
+                          letterSpacing: "0.05em",
+                        }}
+                      >
                         Call Graph Analysis
                       </div>
-                      <p style={{ color: "#8B949E", fontSize: "13px", lineHeight: "1.6", position: "relative", zIndex: 10, margin: 0 }}>
-                        Select a function on the left to inspect its internal logic complexity and Control Flow Graph.
+                      <p
+                        style={{
+                          color: "var(--color-text-secondary)",
+                          fontSize: "13px",
+                          lineHeight: "1.6",
+                          position: "relative",
+                          zIndex: 10,
+                          margin: 0,
+                        }}
+                      >
+                        Select a function on the left to inspect its internal
+                        logic complexity and Control Flow Graph.
                       </p>
                     </div>
                   </motion.div>
@@ -622,49 +1227,232 @@ export default function CFGCalculator({ project, onClose }) {
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: -20 }}
                     transition={{ duration: 0.3 }}
-                    style={{ display: "flex", flexDirection: "column", height: "100%" }}
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      height: "100%",
+                    }}
                   >
-                    <div style={{ fontSize: "11px", letterSpacing: "0.2em", color: "#8B949E", textTransform: "uppercase", fontWeight: "bold", marginBottom: "32px" }}>
+                    <div
+                      style={{
+                        fontSize: "11px",
+                        letterSpacing: "0.2em",
+                        color: "var(--color-text-secondary)",
+                        textTransform: "uppercase",
+                        fontWeight: "bold",
+                        marginBottom: "32px",
+                      }}
+                    >
                       Function Complexity
                     </div>
 
-                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", marginBottom: "40px", position: "relative" }}>
-                      <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center", width: "160px", height: "160px" }}>
-                        <svg style={{ width: "100%", height: "100%", transform: "rotate(-90deg)" }}>
-                          <circle cx="80" cy="80" r="70" stroke="rgba(255,255,255,0.05)" strokeWidth="14" fill="none" />
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        marginBottom: "40px",
+                        position: "relative",
+                      }}
+                    >
+                      <div
+                        style={{
+                          position: "relative",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          width: "160px",
+                          height: "160px",
+                        }}
+                      >
+                        <svg
+                          style={{
+                            width: "100%",
+                            height: "100%",
+                            transform: "rotate(-90deg)",
+                          }}
+                        >
                           <circle
-                            cx="80" cy="80" r="70" stroke={activeCc?.value >= 10 ? "#ef4444" : activeCc?.value >= 5 ? "#fbbf24" : "#22c55e"}
-                            strokeWidth="14" fill="none" strokeDasharray="440" strokeDashoffset={440 - (440 * Math.min(activeCc?.value || 0, 20) / 20)}
-                            strokeLinecap="round" style={{ filter: `drop-shadow(0 0 10px ${activeCc?.value >= 10 ? 'rgba(239,68,68,0.5)' : activeCc?.value >= 5 ? 'rgba(251,191,36,0.5)' : 'rgba(34,197,94,0.5)'})` }}
+                            cx="80"
+                            cy="80"
+                            r="70"
+                            stroke="var(--color-border)"
+                            strokeWidth="14"
+                            fill="none"
+                          />
+                          <circle
+                            cx="80"
+                            cy="80"
+                            r="70"
+                            stroke={
+                              activeCc?.value >= 10
+                                ? "#ef4444"
+                                : activeCc?.value >= 5
+                                  ? "#fbbf24"
+                                  : "#22c55e"
+                            }
+                            strokeWidth="14"
+                            fill="none"
+                            strokeDasharray="440"
+                            strokeDashoffset={
+                              440 -
+                              (440 * Math.min(activeCc?.value || 0, 20)) / 20
+                            }
+                            strokeLinecap="round"
                           />
                         </svg>
-                        <div style={{ position: "absolute", display: "flex", flexDirection: "column", alignItems: "center" }}>
-                          <span style={{ fontSize: "48px", fontWeight: "bold", fontFamily: "monospace", color: "#F0F6FC" }}>{activeCc?.value || 1}</span>
-                          <span style={{ fontSize: "10px", color: "#8B949E", marginTop: "8px", fontWeight: "bold", letterSpacing: "0.1em", textTransform: "uppercase" }}>McCabe CC</span>
+                        <div
+                          style={{
+                            position: "absolute",
+                            display: "flex",
+                            flexDirection: "column",
+                            alignItems: "center",
+                          }}
+                        >
+                          <span
+                            style={{
+                              fontSize: "48px",
+                              fontWeight: "bold",
+                              fontFamily: "monospace",
+                              color: "var(--color-text)",
+                            }}
+                          >
+                            {activeCc?.value || 1}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: "10px",
+                              color: "var(--color-text-secondary)",
+                              marginTop: "8px",
+                              fontWeight: "bold",
+                              letterSpacing: "0.1em",
+                              textTransform: "uppercase",
+                            }}
+                          >
+                            McCabe CC
+                          </span>
                         </div>
                       </div>
 
-                      <div style={{ marginTop: "32px", padding: "8px 20px", borderRadius: "9999px", fontSize: "13px", fontWeight: "bold", border: `1px solid ${activeCc?.value >= 10 ? '#ef4444' : activeCc?.value >= 5 ? '#fbbf24' : '#22c55e'}40`, background: `${activeCc?.value >= 10 ? '#ef4444' : activeCc?.value >= 5 ? '#fbbf24' : '#22c55e'}1a`, color: activeCc?.value >= 10 ? '#ef4444' : activeCc?.value >= 5 ? '#fbbf24' : '#22c55e' }}>
-                        Complexity: {activeCc?.value >= 10 ? "High" : activeCc?.value >= 5 ? "Moderate" : "Low"}
+                      <div
+                        style={{
+                          marginTop: "32px",
+                          padding: "8px 20px",
+                          borderRadius: "9999px",
+                          fontSize: "13px",
+                          fontWeight: "bold",
+                          border: `1px solid ${activeCc?.value >= 10 ? "#ef4444" : activeCc?.value >= 5 ? "#fbbf24" : "#22c55e"}40`,
+                          background: `${activeCc?.value >= 10 ? "#ef4444" : activeCc?.value >= 5 ? "#fbbf24" : "#22c55e"}1a`,
+                          color:
+                            activeCc?.value >= 10
+                              ? "#ef4444"
+                              : activeCc?.value >= 5
+                                ? "#fbbf24"
+                                : "#22c55e",
+                        }}
+                      >
+                        Complexity:{" "}
+                        {activeCc?.value >= 10
+                          ? "High"
+                          : activeCc?.value >= 5
+                            ? "Moderate"
+                            : "Low"}
                       </div>
                     </div>
 
-                    <div style={{ marginBottom: "32px", background: "#0D1117", borderRadius: "12px", padding: "20px", border: "1px solid rgba(255,255,255,0.05)" }}>
-                      <div style={{ fontSize: "10px", letterSpacing: "0.15em", color: "#8B949E", textTransform: "uppercase", fontWeight: "bold", marginBottom: "16px" }}>
+                    <div
+                      style={{
+                        marginBottom: "32px",
+                        background: "var(--color-bg)",
+                        borderRadius: "12px",
+                        padding: "20px",
+                        border: "1px solid var(--color-border)",
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: "10px",
+                          letterSpacing: "0.15em",
+                          color: "var(--color-text-secondary)",
+                          textTransform: "uppercase",
+                          fontWeight: "bold",
+                          marginBottom: "16px",
+                        }}
+                      >
                         Graph Metrics
                       </div>
-                      <div style={{ display: "flex", flexDirection: "column", gap: "12px", fontFamily: "monospace", fontSize: "13px" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                          <span style={{ color: "#8B949E" }}>Edges (E)</span>
-                          <span style={{ color: "#22D3EE", fontWeight: "bold" }}>{graphLayout.edges.length}</span>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: "12px",
+                          fontFamily: "monospace",
+                          fontSize: "13px",
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                          }}
+                        >
+                          <span
+                            style={{ color: "var(--color-text-secondary)" }}
+                          >
+                            Edges (E)
+                          </span>
+                          <span
+                            style={{
+                              color: "var(--color-info, #22D3EE)",
+                              fontWeight: "bold",
+                            }}
+                          >
+                            {graphLayout.edges.length}
+                          </span>
                         </div>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                          <span style={{ color: "#8B949E" }}>Nodes (N)</span>
-                          <span style={{ color: "#4ADE80", fontWeight: "bold" }}>{graphLayout.nodes.length}</span>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                          }}
+                        >
+                          <span
+                            style={{ color: "var(--color-text-secondary)" }}
+                          >
+                            Nodes (N)
+                          </span>
+                          <span
+                            style={{
+                              color: "var(--color-success, #4ADE80)",
+                              fontWeight: "bold",
+                            }}
+                          >
+                            {graphLayout.nodes.length}
+                          </span>
                         </div>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                          <span style={{ color: "#8B949E" }}>Exits (P)</span>
-                          <span style={{ color: "#fff", fontWeight: "bold" }}>1</span>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                          }}
+                        >
+                          <span
+                            style={{ color: "var(--color-text-secondary)" }}
+                          >
+                            Exits (P)
+                          </span>
+                          <span
+                            style={{
+                              color: "var(--color-text)",
+                              fontWeight: "bold",
+                            }}
+                          >
+                            1
+                          </span>
                         </div>
                       </div>
                     </div>

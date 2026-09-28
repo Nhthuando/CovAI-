@@ -1,9 +1,10 @@
-/* eslint-disable no-unused-vars */
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
+import { Terminal, Menu, X, ArrowRight, ShieldCheck } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import { NotificationCenter } from "./NotificationCenter";
+import { ThemeSelector } from "./common/ThemeSelector";
+import Button from "./common/Button";
 
 export default function Navbar() {
   const { user } = useAuth();
@@ -11,197 +12,179 @@ export default function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
-    const handleScroll = () => setScrolled(window.scrollY > 20);
-    window.addEventListener("scroll", handleScroll);
+    const handleScroll = () => {
+      setScrolled(window.scrollY > 12);
+    };
+    window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
   const navLinks = [
     { label: "Features", href: "#features" },
-    { label: "How It Works", href: "#workflow" },
+    { label: "IDE & Coverage", href: "#ide-preview" },
+    { label: "Pipeline", href: "#workflow" },
     { label: "Pricing", href: "#pricing" },
-    { label: "About", href: "#about" },
   ];
 
   return (
-    <motion.nav
-      initial={{ y: -80, opacity: 0 }}
-      animate={{ y: 0, opacity: 1 }}
-      transition={{ duration: 0.6, ease: "easeOut" }}
-      style={{
-        position: "fixed",
-        top: 0,
-        left: 0,
-        right: 0,
-        zIndex: 50,
-        padding: "0 1.5rem",
-        transition: "all 0.4s ease",
-        background: scrolled
-          ? "rgba(13, 17, 23, 0.85)"
-          : "rgba(13, 17, 23, 0.2)",
-        backdropFilter: scrolled ? "blur(16px)" : "blur(4px)",
-        WebkitBackdropFilter: scrolled ? "blur(16px)" : "blur(4px)",
-        borderBottom: scrolled
-          ? "1px solid rgba(255,255,255,0.06)"
-          : "1px solid transparent",
-      }}
+    <nav
+      className={`fixed top-0 left-0 right-0 z-50 transition-colors duration-200 border-b ${
+        scrolled
+          ? "bg-[var(--color-bg)]/95 border-[var(--color-border)] backdrop-blur-sm"
+          : "bg-[var(--color-bg)]/80 border-transparent"
+      }`}
     >
-      <div
-        style={{
-          maxWidth: "1280px",
-          margin: "0 auto",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          height: "64px",
-        }}
-      >
-        {/* Logo */}
+      <div className="max-w-[1280px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+        {/* Brand Logo */}
         <a
           href="/"
           id="nav-logo"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "0.5rem",
-            textDecoration: "none",
-          }}
+          className="flex items-center gap-2.5 text-decoration-none group focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] rounded-[var(--radius-sm)]"
         >
-          <div
-            style={{
-              width: "32px",
-              height: "32px",
-              borderRadius: "8px",
-              background: "linear-gradient(135deg, #7C3AED 0%, #22d3ee 100%)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: "14px",
-              fontWeight: "700",
-              color: "white",
-              boxShadow: "0 0 16px rgba(124,58,237,0.5)",
-            }}
-          >
-            T
+          <div className="w-8 h-8 rounded-[var(--radius-md)] bg-[var(--color-primary)] text-white flex items-center justify-center font-bold text-sm select-none shrink-0">
+            <Terminal className="w-4 h-4 stroke-[2.5]" />
           </div>
-          <span
-            style={{
-              fontSize: "1.1rem",
-              fontWeight: "700",
-              color: "#f0f6fc",
-              letterSpacing: "-0.02em",
-            }}
-          >
-            TestCov
-            <span
-              style={{
-                background: "linear-gradient(90deg, #7C3AED, #22d3ee)",
-                WebkitBackgroundClip: "text",
-                WebkitTextFillColor: "transparent",
-                backgroundClip: "text",
-              }}
-            >
-              AI
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-base tracking-tight text-[var(--color-text)]">
+              CovAI
             </span>
-          </span>
+            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
+              v2.4
+            </span>
+          </div>
         </a>
 
         {/* Desktop Nav Links */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "2rem",
-          }}
-          className="hidden md:flex"
-        >
+        <div className="hidden md:flex items-center gap-6">
           {navLinks.map((link) => (
             <a
               key={link.label}
               href={link.href}
-              id={`nav-${link.label.toLowerCase().replace(/\s/g, "-")}`}
-              style={{
-                color: "#8b949e",
-                textDecoration: "none",
-                fontSize: "0.875rem",
-                fontWeight: "500",
-                transition: "color 0.2s ease",
-              }}
-              onMouseEnter={(e) => (e.target.style.color = "#f0f6fc")}
-              onMouseLeave={(e) => (e.target.style.color = "#8b949e")}
+              id={`nav-${link.label.toLowerCase().replace(/[^a-z0-9]/g, "-")}`}
+              className="text-sm font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] rounded-[var(--radius-sm)] py-1"
             >
               {link.label}
             </a>
           ))}
         </div>
 
-        {/* Auth Buttons */}
-        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+        {/* Desktop Right Utilities (Theme Selector & Auth) */}
+        <div className="hidden md:flex items-center gap-3">
+          <ThemeSelector compact />
+
           {user ? (
-            <>
+            <div className="flex items-center gap-2">
               <NotificationCenter userId={user.id} />
-              <Link
-                to="/dashboard"
+              <Button
+                as={Link}
+                to="/projects"
+                variant="secondary"
+                size="sm"
                 id="nav-dashboard"
-                style={{
-                  color: "#8b949e",
-                  textDecoration: "none",
-                  fontSize: "0.875rem",
-                  fontWeight: "500",
-                  padding: "0.375rem 0.75rem",
-                  transition: "color 0.2s ease",
-                }}
-                onMouseEnter={(e) => (e.target.style.color = "#f0f6fc")}
-                onMouseLeave={(e) => (e.target.style.color = "#8b949e")}
               >
-                Dashboard
-              </Link>
-            </>
+                Projects
+              </Button>
+            </div>
           ) : (
-            <>
-              <Link
+            <div className="flex items-center gap-2">
+              <Button
+                as={Link}
                 to="/login"
+                variant="ghost"
+                size="sm"
                 id="nav-login"
-                style={{
-                  color: "#8b949e",
-                  textDecoration: "none",
-                  fontSize: "0.875rem",
-                  fontWeight: "500",
-                  padding: "0.375rem 0.75rem",
-                  transition: "color 0.2s ease",
-                }}
-                onMouseEnter={(e) => (e.target.style.color = "#f0f6fc")}
-                onMouseLeave={(e) => (e.target.style.color = "#8b949e")}
               >
                 Log in
-              </Link>
-              <motion.div
-                whileHover={{ scale: 1.04 }}
-                whileTap={{ scale: 0.97 }}
+              </Button>
+              <Button
+                as={Link}
+                to="/register"
+                variant="primary"
+                size="sm"
+                id="nav-signup"
+                icon={ArrowRight}
+                iconPosition="right"
               >
-                <Link
-                  to="/register"
-                  id="nav-signup"
-                  style={{
-                    background:
-                      "linear-gradient(135deg, #7C3AED 0%, #9d5cf5 100%)",
-                    color: "white",
-                    textDecoration: "none",
-                    fontSize: "0.875rem",
-                    fontWeight: "600",
-                    padding: "0.5rem 1.25rem",
-                    borderRadius: "8px",
-                    boxShadow: "0 0 16px rgba(124,58,237,0.35)",
-                    display: "inline-block",
-                  }}
-                >
-                  Sign up free
-                </Link>
-              </motion.div>
-            </>
+                Get Started
+              </Button>
+            </div>
           )}
         </div>
+
+        {/* Mobile Menu Button */}
+        <div className="flex items-center gap-2 md:hidden">
+          <ThemeSelector compact />
+          <button
+            type="button"
+            onClick={() => setMobileOpen(!mobileOpen)}
+            aria-label="Toggle navigation menu"
+            aria-expanded={mobileOpen}
+            className="w-9 h-9 rounded-[var(--radius-md)] flex items-center justify-center border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] cursor-pointer"
+          >
+            {mobileOpen ? (
+              <X className="w-5 h-5" />
+            ) : (
+              <Menu className="w-5 h-5" />
+            )}
+          </button>
+        </div>
       </div>
-    </motion.nav>
+
+      {/* Mobile Drawer */}
+      {mobileOpen && (
+        <div className="md:hidden border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-4 space-y-3">
+          <div className="flex flex-col space-y-2">
+            {navLinks.map((link) => (
+              <a
+                key={link.label}
+                href={link.href}
+                onClick={() => setMobileOpen(false)}
+                className="px-3 py-2 text-sm font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] rounded-[var(--radius-sm)] transition-colors"
+              >
+                {link.label}
+              </a>
+            ))}
+          </div>
+
+          <div className="pt-3 border-t border-[var(--color-border)] flex flex-col gap-2">
+            {user ? (
+              <Button
+                as={Link}
+                to="/projects"
+                variant="primary"
+                size="md"
+                className="w-full"
+                onClick={() => setMobileOpen(false)}
+              >
+                Go to Projects
+              </Button>
+            ) : (
+              <>
+                <Button
+                  as={Link}
+                  to="/login"
+                  variant="secondary"
+                  size="md"
+                  className="w-full"
+                  onClick={() => setMobileOpen(false)}
+                >
+                  Log in
+                </Button>
+                <Button
+                  as={Link}
+                  to="/register"
+                  variant="primary"
+                  size="md"
+                  className="w-full"
+                  onClick={() => setMobileOpen(false)}
+                >
+                  Get Started Free
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </nav>
   );
 }

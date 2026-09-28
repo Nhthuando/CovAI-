@@ -405,23 +405,23 @@ export const GitPanel = ({ projectId, onSync }) => {
     (statusData?.untracked?.length || 0);
 
   return (
-    <div className="flex flex-col h-full bg-[#0d1117] text-neutral-200 text-xs select-none border-r border-white/5 relative overflow-hidden font-sans">
+    <div className="flex flex-col h-full bg-[var(--color-surface)] text-[var(--color-text)] text-xs select-none border-r border-[var(--color-border)] relative overflow-hidden font-sans">
       {/* ── Top Header ─────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-white/5 bg-[#090d13]/60 flex-shrink-0">
+      <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-bg)] flex-shrink-0">
         <div className="flex items-center gap-2">
-          <span className="font-bold text-[11px] uppercase tracking-wider text-neutral-400 flex items-center gap-1.5">
-            <FolderGit2 size={13} className="text-violet-400" />
+          <span className="font-bold text-[11px] uppercase tracking-wider text-[var(--color-text-secondary)] flex items-center gap-1.5">
+            <FolderGit2 size={13} className="text-[var(--color-primary)]" />
             Source Control
           </span>
           {totalChanges > 0 && (
-            <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold font-mono bg-violet-500/20 text-violet-300 border border-violet-500/30">
+            <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold font-mono bg-[var(--color-primary)]/15 text-[var(--color-primary)] border border-[var(--color-primary)]/30">
               {totalChanges}
             </span>
           )}
         </div>
 
         {/* Toolbar Icons */}
-        <div className="flex items-center gap-1 text-neutral-400">
+        <div className="flex items-center gap-1 text-[var(--color-text-secondary)]">
           <button
             onClick={() =>
               setActiveTab(activeTab === "changes" ? "history" : "changes")
@@ -501,14 +501,17 @@ export const GitPanel = ({ projectId, onSync }) => {
 
       {/* ── Connected Remote Repository Bar ─────────────────────── */}
       {statusData?.repoUrl && (
-        <div className="flex items-center justify-between px-3 py-1.5 bg-[#090d13]/80 border-b border-white/5 text-[11px] flex-shrink-0">
+        <div className="flex items-center justify-between px-3 py-1.5 bg-[var(--color-bg)] border-b border-[var(--color-border)] text-[11px] flex-shrink-0">
           <div className="flex items-center gap-1.5 min-w-0">
-            <GithubIcon size={13} className="text-white/70 flex-shrink-0" />
+            <GithubIcon
+              size={13}
+              className="text-[var(--color-text-secondary)] flex-shrink-0"
+            />
             <a
               href={statusData.repoUrl}
               target="_blank"
               rel="noreferrer"
-              className="text-violet-400 hover:text-violet-300 hover:underline truncate font-mono text-[11px] flex items-center gap-1"
+              className="text-[var(--color-primary)] hover:underline truncate font-mono text-[11px] flex items-center gap-1"
               title={statusData.repoUrl}
             >
               <span className="truncate">
@@ -633,7 +636,7 @@ export const GitPanel = ({ projectId, onSync }) => {
             <button
               onClick={handleInitRepo}
               disabled={initializing}
-              className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 shadow-md shadow-violet-500/20 border border-white/10 transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-[var(--color-primary)] hover:opacity-90 shadow-none border-none transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
             >
               {initializing ? (
                 <Loader2 size={14} className="animate-spin" />
@@ -776,9 +779,9 @@ export const GitPanel = ({ projectId, onSync }) => {
                     initial={{ opacity: 0, y: 5 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: 5 }}
-                    className="absolute top-full left-0 right-0 mt-1 z-30 bg-[#161b22] border border-white/10 rounded-xl shadow-2xl p-2 flex flex-col gap-2"
+                    className="absolute top-full left-0 right-0 mt-1 z-30 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-xl p-2 flex flex-col gap-2"
                   >
-                    <div className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider px-1">
+                    <div className="text-[10px] font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-1">
                       Switch or Create Branch
                     </div>
 
@@ -789,13 +792,13 @@ export const GitPanel = ({ projectId, onSync }) => {
                         placeholder="Search or new branch..."
                         value={branchSearch}
                         onChange={(e) => setBranchSearch(e.target.value)}
-                        className="flex-1 bg-neutral-900/80 border border-white/10 rounded-lg px-2 py-1 text-xs text-white outline-none focus:border-violet-500/40 font-mono"
+                        className="flex-1 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg px-2 py-1 text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] font-mono"
                       />
                       {branchSearch &&
                         !branches.local.includes(branchSearch) && (
                           <button
                             onClick={() => handleCheckout(branchSearch, true)}
-                            className="px-2 py-1 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-[11px] font-medium flex items-center gap-1 flex-shrink-0"
+                            className="px-2 py-1 rounded-lg bg-[var(--color-primary)] hover:opacity-90 text-white text-[11px] font-medium flex items-center gap-1 flex-shrink-0"
                             title="Create and checkout"
                           >
                             <Plus size={11} /> Create
@@ -878,7 +881,7 @@ export const GitPanel = ({ projectId, onSync }) => {
                       handleCommit(e);
                     }
                   }}
-                  className="w-full rounded-xl bg-neutral-900/80 border border-white/10 focus:border-violet-500/50 p-2.5 text-xs text-neutral-100 placeholder:text-neutral-500 outline-none transition-all resize-none font-sans"
+                  className="w-full rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] focus:border-[var(--color-primary)] p-2.5 text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] outline-none transition-all resize-none font-sans"
                 />
               </div>
 
@@ -887,7 +890,7 @@ export const GitPanel = ({ projectId, onSync }) => {
                 disabled={
                   committing || (!commitMessage.trim() && totalChanges === 0)
                 }
-                className="w-full h-8 rounded-xl flex items-center justify-center gap-2 font-semibold text-xs text-white bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 shadow-md shadow-violet-500/20 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                className="w-full h-8 rounded-lg flex items-center justify-center gap-2 font-semibold text-xs text-white bg-[var(--color-primary)] hover:opacity-90 shadow-none border-none transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {committing ? (
                   <>
@@ -1143,10 +1146,10 @@ export const GitPanel = ({ projectId, onSync }) => {
             initial={{ height: 0 }}
             animate={{ height: 160 }}
             exit={{ height: 0 }}
-            className="border-t border-white/10 bg-[#090d13] flex flex-col flex-shrink-0 overflow-hidden font-mono text-[10px]"
+            className="border-t border-[var(--color-border)] bg-[var(--color-bg)] flex flex-col flex-shrink-0 overflow-hidden font-mono text-[10px]"
           >
-            <div className="flex items-center justify-between px-3 py-1 bg-white/[0.03] border-b border-white/5 text-neutral-400">
-              <span className="flex items-center gap-1.5 font-bold uppercase">
+            <div className="flex items-center justify-between px-3 py-1 bg-[var(--color-surface)] border-b border-[var(--color-border)] text-[var(--color-text-secondary)]">
+              <span className="flex items-center gap-1.5 font-bold uppercase text-[var(--color-primary)]">
                 <Terminal size={11} /> Git Output Console
               </span>
               <div className="flex items-center gap-2">
@@ -1200,19 +1203,19 @@ export const GitPanel = ({ projectId, onSync }) => {
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="w-full max-w-2xl max-h-[80vh] rounded-2xl bg-[#0d1117] border border-white/10 shadow-2xl flex flex-col overflow-hidden"
+              className="w-full max-w-2xl max-h-[80vh] rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl flex flex-col overflow-hidden"
             >
               {/* Diff Header */}
-              <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-[#161b22]">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-bg)]">
                 <div className="flex items-center gap-2 min-w-0">
                   <FileText
                     size={15}
-                    className="text-violet-400 flex-shrink-0"
+                    className="text-[var(--color-primary)] flex-shrink-0"
                   />
-                  <span className="font-mono text-xs font-semibold text-white truncate">
+                  <span className="font-mono text-xs font-semibold text-[var(--color-text)] truncate">
                     {diffModal.file}
                   </span>
-                  <span className="text-[10px] px-1.5 py-0.2 rounded font-mono bg-white/5 text-neutral-400 border border-white/10">
+                  <span className="text-[10px] px-1.5 py-0.2 rounded font-mono bg-[var(--color-surface)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
                     {diffModal.staged ? "Staged" : "Working Tree"}
                   </span>
                 </div>
@@ -1225,14 +1228,14 @@ export const GitPanel = ({ projectId, onSync }) => {
                       content: "",
                     })
                   }
-                  className="p-1 rounded hover:bg-white/10 text-neutral-400 hover:text-white"
+                  className="p-1 rounded hover:bg-[var(--color-bg)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer"
                 >
                   <X size={15} />
                 </button>
               </div>
 
               {/* Diff Content */}
-              <div className="flex-1 p-4 overflow-y-auto font-mono text-xs select-text bg-[#090d13]">
+              <div className="flex-1 p-4 overflow-y-auto font-mono text-xs select-text bg-[var(--color-bg)] text-[var(--color-text)]">
                 {loadingDiff ? (
                   <div className="flex justify-center py-12">
                     <Loader2

@@ -1,23 +1,19 @@
 import { createPortal } from "react-dom";
 import { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
 import {
-  ArrowLeft,
   X,
-  Zap,
-  ChevronRight,
   CheckCircle2,
-  Lock,
   FolderGit2,
   Shield,
   HelpCircle,
-  Code2,
-  GitBranch,
+  Zap,
 } from "lucide-react";
 import LocalUpload from "./LocalUpload";
 import GitHubImport from "./GitHubImport";
 import { ToastProvider } from "../ToastContext";
 import { getUserProfileApi } from "../../../services/project.service";
+import Button from "../../common/Button";
+import Badge from "../../common/Badge";
 
 /* ── GitHub SVG Icon ──────────────────────────────────────── */
 function GithubIcon({ size = 16, className = "" }) {
@@ -33,24 +29,6 @@ function GithubIcon({ size = 16, className = "" }) {
     </svg>
   );
 }
-
-/* ── Animation variants ───────────────────────────────────── */
-const overlayVariants = {
-  hidden: { opacity: 0 },
-  visible: { opacity: 1, transition: { duration: 0.25, ease: "easeOut" } },
-  exit: { opacity: 0, transition: { duration: 0.2, ease: "easeIn" } },
-};
-
-const cardVariants = {
-  hidden: { opacity: 0, y: 16, scale: 0.98 },
-  visible: {
-    opacity: 1,
-    y: 0,
-    scale: 1,
-    transition: { duration: 0.3, ease: "easeOut" },
-  },
-  exit: { opacity: 0, y: 10, scale: 0.98, transition: { duration: 0.2 } },
-};
 
 export default function ImportLayout({ onClose, onSuccess }) {
   const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
@@ -88,222 +66,190 @@ export default function ImportLayout({ onClose, onSuccess }) {
 
   return createPortal(
     <ToastProvider>
-      <motion.div
-        className="fixed inset-0 z-50 flex flex-col bg-[#090d13] text-neutral-100 selection:bg-violet-500/30 font-sans overflow-hidden"
-        variants={overlayVariants}
-        initial="hidden"
-        animate="visible"
-        exit="exit"
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="import-modal-title"
+        className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-xs"
+        onClick={onClose}
       >
-        {/* ── Ambient gradient glow ────────────────────────────── */}
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-7xl h-96 bg-gradient-to-b from-violet-600/10 via-indigo-600/5 to-transparent blur-3xl pointer-events-none" />
-        <div className="absolute bottom-0 right-0 w-96 h-96 bg-cyan-600/5 blur-3xl pointer-events-none" />
-
-        {/* ── Top Bar ──────────────────────────────────────────── */}
-        <header className="h-14 px-6 border-b border-white/5 bg-[#090d13]/80 backdrop-blur-xl flex items-center justify-between flex-shrink-0 z-20">
-          {/* Left: Brand */}
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-violet-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-violet-500/20 ring-1 ring-white/20">
-              <Shield size={16} className="text-white" />
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="w-full max-w-5xl max-h-[90vh] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-xl)] shadow-xl flex flex-col overflow-hidden text-[var(--color-text)] font-sans relative"
+        >
+          {/* ── Modal Header ────────────────────────────────────────── */}
+          <div className="h-14 px-6 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between shrink-0">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-[var(--radius-md)] bg-[var(--color-primary)] text-white flex items-center justify-center shrink-0">
+                <FolderGit2 size={16} />
+              </div>
+              <div className="flex items-center gap-2">
+                <h2
+                  id="import-modal-title"
+                  className="font-bold text-sm tracking-tight text-[var(--color-text)]"
+                >
+                  Import Project
+                </h2>
+                <Badge variant="primary" size="sm">
+                  Hub
+                </Badge>
+              </div>
             </div>
+
             <div className="flex items-center gap-2">
-              <span className="font-bold tracking-tight text-white text-base">
-                CovAI
-              </span>
-              <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 border border-violet-500/20 font-semibold">
-                Import Hub
-              </span>
-            </div>
-          </div>
-
-          {/* Right: Close action */}
-          <div className="flex items-center gap-3">
-            <button
-              onClick={onClose}
-              className="px-3 py-1.5 rounded-lg text-xs font-medium text-neutral-400 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 transition-all flex items-center gap-2 cursor-pointer"
-              id="import-cancel-btn"
-            >
-              <span>Close</span>
-              <span className="text-[10px] font-mono px-1 py-0.2 rounded bg-white/10 text-neutral-400">
+              <span className="hidden sm:inline-block text-[11px] font-mono text-[var(--color-text-muted)] border border-[var(--color-border)] rounded-[var(--radius-sm)] px-1.5 py-0.5">
                 Esc
               </span>
-            </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="p-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer"
+                title="Close"
+                aria-label="Close"
+                id="import-cancel-btn"
+              >
+                <X size={16} />
+              </button>
+            </div>
           </div>
-        </header>
 
-        {/* ── Main Scrollable Area ──────────────────────────────── */}
-        <div className="flex-1 overflow-y-auto z-10 flex flex-col items-center py-8 px-4 sm:px-8">
-          <motion.div
-            className="w-full max-w-6xl flex flex-col gap-6"
-            variants={cardVariants}
-            initial="hidden"
-            animate="visible"
-            exit="exit"
-          >
-            {/* Breadcrumb row */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-xs">
-                <button
-                  onClick={onClose}
-                  className="flex items-center gap-1 text-violet-400 hover:text-violet-300 transition-colors font-medium cursor-pointer"
-                  id="import-back-btn"
-                >
-                  <ArrowLeft size={14} />
-                  <span>Back to Workspaces</span>
-                </button>
-                <ChevronRight size={12} className="text-neutral-600" />
-                <span className="text-neutral-400 font-medium">
-                  New Project
+          {/* ── Modal Body: 2 Column Layout ─────────────────────────── */}
+          <div className="flex-1 overflow-y-auto grid grid-cols-1 lg:grid-cols-12 min-h-[500px]">
+            {/* Left Column: Local Archive Upload (5 cols) */}
+            <div className="lg:col-span-5 p-6 border-b lg:border-b-0 lg:border-r border-[var(--color-border)] flex flex-col justify-between bg-[var(--color-surface)]">
+              <div className="flex flex-col gap-4">
+                <div>
+                  <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--color-primary)] uppercase tracking-wider mb-2">
+                    <Zap size={13} />
+                    Local Ingest
+                  </div>
+                  <h3 className="text-base font-bold text-[var(--color-text)] tracking-tight">
+                    Upload Codebase Archive
+                  </h3>
+                  <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">
+                    Upload a compressed archive (
+                    <code className="text-[var(--color-text)] font-mono">
+                      .zip
+                    </code>{" "}
+                    or{" "}
+                    <code className="text-[var(--color-text)] font-mono">
+                      .rar
+                    </code>
+                    ). AST and cyclomatic complexity graphs are synthesized
+                    automatically.
+                  </p>
+                </div>
+
+                {/* Local Upload Component */}
+                <LocalUpload
+                  onClose={onClose}
+                  onSuccess={handleImportSuccess}
+                />
+              </div>
+
+              {/* Left footer note */}
+              <div className="pt-4 mt-4 border-t border-[var(--color-border)] flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
+                <Shield
+                  size={13}
+                  className="text-[var(--color-success)] shrink-0"
+                />
+                <span>
+                  Safe upload: archives are scanned and cleaned of secrets
+                  locally.
                 </span>
               </div>
-
-              <div className="flex items-center gap-2 text-[11px] text-neutral-500 font-mono">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span>Parser Engine Ready</span>
-              </div>
             </div>
 
-            {/* ── Split Layout Card ───────────────────────────────── */}
-            <div className="rounded-2xl border border-white/10 bg-[#0d1117]/90 backdrop-blur-xl shadow-2xl overflow-hidden grid grid-cols-1 lg:grid-cols-12 min-h-[580px]">
-              {/* Left Panel: Local Archive Upload (5 cols) */}
-              <div className="lg:col-span-5 p-7 border-b lg:border-b-0 lg:border-r border-white/5 flex flex-col justify-between bg-gradient-to-b from-white/[0.015] to-transparent">
-                <div className="flex flex-col gap-5">
-                  <div>
-                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-violet-500/10 border border-violet-500/20 text-violet-300 text-[11px] font-semibold uppercase tracking-wider mb-3">
-                      <Zap size={12} />
-                      Local Ingest
+            {/* Right Column: GitHub Integration (7 cols) */}
+            <div className="lg:col-span-7 p-6 flex flex-col relative bg-[var(--color-surface)]">
+              {/* When GitHub is not linked */}
+              {hasGithub === false && (
+                <div className="absolute inset-0 z-20 flex flex-col items-center justify-center p-8 bg-[var(--color-surface)]/95 backdrop-blur-xs">
+                  <div className="flex flex-col items-center text-center max-w-sm gap-3.5">
+                    <div className="w-12 h-12 rounded-[var(--radius-lg)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] flex items-center justify-center text-[var(--color-text)]">
+                      <GithubIcon size={24} />
                     </div>
-                    <h2 className="text-lg font-bold text-white tracking-tight">
-                      Upload Project Package
-                    </h2>
-                    <p className="text-xs text-neutral-400 mt-1 leading-relaxed">
-                      Upload a compressed codebase (
-                      <code className="text-neutral-300 font-mono">.zip</code>{" "}
-                      or{" "}
-                      <code className="text-neutral-300 font-mono">.rar</code>).
-                      We extract and initialize AST & CFG models automatically.
-                    </p>
-                  </div>
-
-                  {/* Local Upload Component */}
-                  <LocalUpload
-                    onClose={onClose}
-                    onSuccess={handleImportSuccess}
-                  />
-                </div>
-
-                {/* Left footer note */}
-                <div className="pt-4 border-t border-white/5 flex items-center gap-2 text-[11px] text-neutral-500">
-                  <Shield
-                    size={13}
-                    className="text-emerald-400 flex-shrink-0"
-                  />
-                  <span>
-                    Safe upload: archives are scanned & cleaned from sensitive
-                    files.
-                  </span>
-                </div>
-              </div>
-
-              {/* Right Panel: GitHub Integration (7 cols) */}
-              <div className="lg:col-span-7 p-7 flex flex-col relative bg-gradient-to-b from-white/[0.005] to-transparent">
-                {/* When GitHub is not linked */}
-                {hasGithub === false && (
-                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center p-8 bg-[#0d1117]/95 backdrop-blur-md">
-                    <div className="flex flex-col items-center text-center max-w-sm gap-4">
-                      <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center shadow-xl">
-                        <GithubIcon size={28} className="text-neutral-300" />
-                      </div>
-                      <div>
-                        <h3 className="text-base font-bold text-white tracking-tight">
-                          Connect GitHub Account
-                        </h3>
-                        <p className="text-xs text-neutral-400 mt-1.5 leading-relaxed">
-                          Link your GitHub profile to import any public or
-                          private repository with 1 click, track commits, and
-                          automate test coverage suites.
-                        </p>
-                      </div>
-
-                      <a
-                        href={`https://github.com/login/oauth/authorize?client_id=${
-                          import.meta.env.VITE_GITHUB_CLIENT_ID || ""
-                        }&scope=repo,user:email`}
-                        className="mt-2 px-5 py-2.5 rounded-xl text-xs font-semibold text-white bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 shadow-lg shadow-violet-500/25 border border-white/20 transition-all flex items-center gap-2 cursor-pointer"
-                        id="connect-github-btn"
-                      >
-                        <GithubIcon size={16} />
-                        <span>Connect with GitHub</span>
-                      </a>
-
-                      <p className="text-[11px] text-neutral-500 mt-2">
-                        You can still upload local archives on the left without
-                        connecting GitHub.
+                    <div>
+                      <h4 className="text-sm font-bold text-[var(--color-text)] tracking-tight">
+                        Connect GitHub Account
+                      </h4>
+                      <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">
+                        Link your GitHub account to import public or private
+                        repositories with one click and track test branch
+                        coverage.
                       </p>
                     </div>
-                  </div>
-                )}
 
-                {/* When connected */}
-                <div
-                  className={`flex-1 flex flex-col ${
-                    hasGithub === false
-                      ? "opacity-10 pointer-events-none filter blur-[1px]"
-                      : ""
-                  }`}
-                >
-                  <GitHubImport
-                    onClose={onClose}
-                    onSuccess={handleImportSuccess}
-                  />
+                    <a
+                      href={`https://github.com/login/oauth/authorize?client_id=${
+                        import.meta.env.VITE_GITHUB_CLIENT_ID || ""
+                      }&scope=repo,user:email`}
+                      className="mt-2 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-[var(--radius-md)] text-xs font-semibold text-white bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] transition-colors cursor-pointer shadow-xs"
+                      id="connect-github-btn"
+                    >
+                      <GithubIcon size={14} />
+                      <span>Connect with GitHub</span>
+                    </a>
+
+                    <p className="text-[11px] text-[var(--color-text-muted)] mt-1">
+                      You can still upload local archives on the left without
+                      connecting GitHub.
+                    </p>
+                  </div>
                 </div>
+              )}
+
+              {/* When connected */}
+              <div
+                className={`flex-1 flex flex-col ${
+                  hasGithub === false
+                    ? "opacity-10 pointer-events-none filter blur-[1px]"
+                    : ""
+                }`}
+              >
+                <GitHubImport
+                  onClose={onClose}
+                  onSuccess={handleImportSuccess}
+                />
               </div>
             </div>
+          </div>
 
-            {/* Bottom Help */}
-            <div className="flex items-center justify-center gap-2 text-xs text-neutral-500 pt-2">
-              <HelpCircle size={13} className="text-neutral-600" />
-              <span>Need help importing?</span>
-              <a
-                href="#"
-                className="text-violet-400 hover:text-violet-300 underline underline-offset-2 transition-colors"
-              >
-                View docs
-              </a>
-              <span>or contact support.</span>
+          {/* ── Modal Footer ────────────────────────────────────────── */}
+          <div className="h-11 px-6 border-t border-[var(--color-border)] bg-[var(--color-surface-secondary)] flex items-center justify-between text-xs text-[var(--color-text-muted)] shrink-0">
+            <div className="flex items-center gap-1.5">
+              <HelpCircle size={13} />
+              <span>Need help? Check our workspace import guide.</span>
             </div>
-          </motion.div>
-        </div>
-
-        {/* ── Success Overlay ─────────────────────────────────── */}
-        <AnimatePresence>
-          {showSuccessOverlay && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="absolute inset-0 z-50 flex items-center justify-center bg-[#090d13]/80 backdrop-blur-md"
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={onClose}
             >
-              <motion.div
-                initial={{ scale: 0.9, opacity: 0, y: 15 }}
-                animate={{ scale: 1, opacity: 1, y: 0 }}
-                className="flex flex-col items-center justify-center rounded-2xl p-8 bg-[#111827] border border-emerald-500/30 shadow-2xl max-w-sm text-center"
-              >
-                <div className="w-16 h-16 rounded-full bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center mb-4 text-emerald-400">
-                  <CheckCircle2 size={32} strokeWidth={2.5} />
+              Cancel
+            </Button>
+          </div>
+
+          {/* ── Success Overlay ─────────────────────────────────────── */}
+          {showSuccessOverlay && (
+            <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+              <div className="flex flex-col items-center justify-center rounded-[var(--radius-xl)] p-6 bg-[var(--color-surface)] border border-[var(--color-border)] shadow-xl max-w-sm text-center">
+                <div className="w-12 h-12 rounded-[var(--radius-md)] bg-[var(--color-success)]/10 border border-[var(--color-success)]/25 flex items-center justify-center mb-3 text-[var(--color-success)]">
+                  <CheckCircle2 size={24} strokeWidth={2.5} />
                 </div>
-                <h3 className="text-lg font-bold text-white tracking-tight">
+                <h3 className="text-base font-bold text-[var(--color-text)] tracking-tight">
                   Import Initialized!
                 </h3>
-                <p className="text-xs text-neutral-400 mt-1 leading-relaxed">
+                <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">
                   Your project package has been queued. Redirecting to
                   workspace...
                 </p>
-              </motion.div>
-            </motion.div>
+              </div>
+            </div>
           )}
-        </AnimatePresence>
-      </motion.div>
+        </div>
+      </div>
     </ToastProvider>,
     document.body,
   );

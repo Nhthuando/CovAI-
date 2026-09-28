@@ -37,6 +37,8 @@ import {
   createProjectFolder,
   renameProjectEntry,
   deleteProjectEntry,
+  createProjectCheckpoint,
+  restoreProjectCheckpoint,
 } from "../services/project.service.js";
 import { createBuildCfgJob } from "../services/job.service.js";
 import { addJobToQueue } from "../services/queue.service.js";
@@ -242,6 +244,59 @@ class ProjectController {
       return res
         .status(500)
         .json({ success: false, message: "Failed to get snapshots" });
+    }
+  }
+
+  /**
+   * POST /projects/:id/snapshots
+   */
+  async createSnapshot(req, res) {
+    try {
+      const { label, message } = req.body || {};
+      const data = await createProjectCheckpoint({
+        projectId: req.params.id,
+        userId: req.user.id,
+        label,
+        message,
+      });
+      return res.status(201).json({ success: true, data });
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+      console.error("[createSnapshot] Error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to create snapshot checkpoint",
+      });
+    }
+  }
+
+  /**
+   * POST /projects/:id/snapshots/:snapshotId/restore
+   */
+  async restoreSnapshot(req, res) {
+    try {
+      const { snapshotId } = req.params;
+      const data = await restoreProjectCheckpoint({
+        projectId: req.params.id,
+        snapshotId,
+        userId: req.user.id,
+      });
+      return res.status(200).json(data);
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+      console.error("[restoreSnapshot] Error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to restore snapshot checkpoint",
+      });
     }
   }
 

@@ -1,259 +1,110 @@
-import { useRef } from "react";
-import { motion, useInView } from "framer-motion";
+import { Link } from "react-router-dom";
+import {
+  FolderGit2,
+  Network,
+  FileCode,
+  CheckCircle2,
+  ArrowRight,
+} from "lucide-react";
+import Badge from "./common/Badge";
+import Button from "./common/Button";
+import Card from "./common/Card";
 
 const STEPS = [
   {
     num: "01",
-    icon: "📁",
-    title: "Upload Code",
-    desc: "Zip your JavaScript project or connect directly via GitHub URL. We support monorepos and complex project structures.",
-    color: "#7C3AED",
-    glowColor: "rgba(124,58,237,0.25)",
+    icon: FolderGit2,
+    title: "Repository Ingestion",
+    desc: "Import code directly from GitHub or upload a local archive. CovAI parses project ASTs, configs, and dependencies.",
   },
   {
     num: "02",
-    icon: "🔬",
-    title: "AI Analysis",
-    desc: "Our AI engine builds the Control Flow Graph, calculates Cyclomatic Complexity, and identifies uncovered branches.",
-    color: "#22d3ee",
-    glowColor: "rgba(34,211,238,0.2)",
+    icon: Network,
+    title: "Control Flow Analysis",
+    desc: "Constructs Control Flow Graphs (CFG) per function to discover uncovered branch predicates and evaluate cyclomatic complexity.",
   },
   {
     num: "03",
-    icon: "🧪",
-    title: "Generate Tests",
-    desc: "Receive auto-generated Jest test skeletons tailored to your uncovered paths. Ready to run, no configuration needed.",
-    color: "#fb923c",
-    glowColor: "rgba(251,146,60,0.2)",
+    icon: FileCode,
+    title: "Test Suite Synthesis",
+    desc: "Targeted Jest and Vitest suites are synthesized with accurate mocks and assertions designed specifically for uncovered paths.",
   },
   {
     num: "04",
-    icon: "🚀",
-    title: "Improve Quality",
-    desc: "Track coverage improvements over time, compare snapshots, and watch your quality score climb toward 100%.",
-    color: "#4ade80",
-    glowColor: "rgba(74,222,128,0.2)",
+    icon: CheckCircle2,
+    title: "Sandbox Verification",
+    desc: "Executes the synthesized tests in an isolated Node.js test runner to ensure tests pass and measurably boost coverage.",
   },
 ];
 
 export default function Workflow() {
-  const ref = useRef(null);
-  const isInView = useInView(ref, { once: true, margin: "-80px" });
-
   return (
     <section
       id="workflow"
-      ref={ref}
-      style={{
-        padding: "7rem 1.5rem",
-        background: "var(--surface-main)",
-        position: "relative",
-        overflow: "hidden",
-      }}
+      className="py-20 md:py-28 bg-[var(--color-surface)] border-b border-[var(--color-border)]"
     >
-      {/* Background radial */}
-      <div style={{
-        position: "absolute",
-        bottom: "-200px",
-        right: "-200px",
-        width: "600px",
-        height: "600px",
-        borderRadius: "50%",
-        background: "radial-gradient(ellipse, rgba(34,211,238,0.04) 0%, transparent 70%)",
-        pointerEvents: "none",
-      }} />
-
-      <div style={{ maxWidth: "1100px", margin: "0 auto" }}>
-        {/* Header */}
-        <motion.div
-          initial={{ opacity: 0, y: 24 }}
-          animate={isInView ? { opacity: 1, y: 0 } : {}}
-          transition={{ duration: 0.6 }}
-          style={{ textAlign: "center", marginBottom: "5rem" }}
-        >
-          <span className="glass-pill" style={{
-            padding: "0.375rem 1rem",
-            fontSize: "0.7rem",
-            fontWeight: "700",
-            letterSpacing: "0.14em",
-            color: "#fb923c",
-            textTransform: "uppercase",
-          }}>
-            HOW IT WORKS
-          </span>
-          <h2 style={{
-            marginTop: "1.25rem",
-            fontSize: "clamp(1.8rem, 4vw, 2.8rem)",
-            fontWeight: "700",
-            color: "#f0f6fc",
-            letterSpacing: "-0.025em",
-          }}>
-            From upload to{" "}
-            <span className="text-gradient-violet">100% coverage</span>
-            <br />
-            in four steps
+      <div className="max-w-[1200px] mx-auto px-4 sm:px-6">
+        {/* Section Header */}
+        <div className="text-center max-w-2xl mx-auto mb-14">
+          <Badge variant="primary" size="md" className="mb-3" pill>
+            EXECUTION PIPELINE
+          </Badge>
+          <h2 className="text-2xl sm:text-3xl font-bold text-[var(--color-text)] tracking-tight mb-3">
+            How CovAI Analyzes and Tests Code
           </h2>
-        </motion.div>
-
-        {/* Steps */}
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-          gap: "0",
-          position: "relative",
-        }}>
-          {/* Connector line (desktop) */}
-          <div style={{
-            position: "absolute",
-            top: "52px",
-            left: "12.5%",
-            right: "12.5%",
-            height: "1px",
-            background: "linear-gradient(90deg, rgba(124,58,237,0.4), rgba(34,211,238,0.3), rgba(251,146,60,0.3), rgba(74,222,128,0.4))",
-            zIndex: 0,
-            display: "none",
-          }} className="step-connector" />
-
-          {STEPS.map((step, i) => (
-            <motion.div
-              key={step.num}
-              id={`workflow-step-${i + 1}`}
-              initial={{ opacity: 0, y: 32 }}
-              animate={isInView ? { opacity: 1, y: 0 } : {}}
-              transition={{ duration: 0.6, delay: i * 0.15, ease: "easeOut" }}
-              style={{
-                position: "relative",
-                padding: "0 1.5rem",
-                textAlign: "center",
-                zIndex: 1,
-              }}
-            >
-              {/* Connector dot + line */}
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "1.75rem", position: "relative" }}>
-                {/* Left dash line */}
-                {i > 0 && (
-                  <motion.div
-                    initial={{ scaleX: 0 }}
-                    animate={isInView ? { scaleX: 1 } : {}}
-                    transition={{ duration: 0.6, delay: i * 0.15 + 0.3 }}
-                    style={{
-                      position: "absolute",
-                      right: "50%",
-                      top: "50%",
-                      width: "50%",
-                      height: "1px",
-                      background: `linear-gradient(90deg, transparent, ${step.color}50)`,
-                      transformOrigin: "left",
-                    }}
-                  />
-                )}
-                {/* Right dash line */}
-                {i < STEPS.length - 1 && (
-                  <motion.div
-                    initial={{ scaleX: 0 }}
-                    animate={isInView ? { scaleX: 1 } : {}}
-                    transition={{ duration: 0.6, delay: i * 0.15 + 0.3 }}
-                    style={{
-                      position: "absolute",
-                      left: "50%",
-                      top: "50%",
-                      width: "50%",
-                      height: "1px",
-                      background: `linear-gradient(90deg, ${step.color}50, transparent)`,
-                      transformOrigin: "right",
-                    }}
-                  />
-                )}
-
-                {/* Step icon circle */}
-                <motion.div
-                  whileHover={{ scale: 1.1, boxShadow: `0 0 30px ${step.glowColor}` }}
-                  style={{
-                    width: "72px",
-                    height: "72px",
-                    borderRadius: "50%",
-                    background: `radial-gradient(circle, ${step.color}20, ${step.color}08)`,
-                    border: `2px solid ${step.color}50`,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: "1.75rem",
-                    boxShadow: `0 0 20px ${step.glowColor}`,
-                    cursor: "default",
-                    position: "relative",
-                    zIndex: 2,
-                    background: "var(--surface-main)",
-                    transition: "box-shadow 0.3s ease",
-                  }}
-                >
-                  {step.icon}
-                </motion.div>
-              </div>
-
-              {/* Step number */}
-              <div style={{
-                fontSize: "0.65rem",
-                fontWeight: "700",
-                letterSpacing: "0.15em",
-                color: step.color,
-                marginBottom: "0.5rem",
-              }}>
-                STEP {step.num}
-              </div>
-
-              {/* Title */}
-              <h3 style={{
-                fontSize: "1.1rem",
-                fontWeight: "700",
-                color: "#f0f6fc",
-                marginBottom: "0.75rem",
-                letterSpacing: "-0.01em",
-              }}>
-                {step.title}
-              </h3>
-
-              {/* Desc */}
-              <p style={{
-                color: "#8b949e",
-                fontSize: "0.875rem",
-                lineHeight: "1.7",
-              }}>
-                {step.desc}
-              </p>
-            </motion.div>
-          ))}
+          <p className="text-sm sm:text-base text-[var(--color-text-secondary)]">
+            A deterministic four-stage engineering pipeline designed for
+            accuracy, repeatability, and immediate developer adoption.
+          </p>
         </div>
 
-        {/* CTA */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={isInView ? { opacity: 1, y: 0 } : {}}
-          transition={{ duration: 0.6, delay: 0.8 }}
-          style={{ textAlign: "center", marginTop: "4rem" }}
-        >
-          <motion.a
-            href="#pricing"
+        {/* Steps Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+          {STEPS.map((step) => {
+            const Icon = step.icon;
+            return (
+              <Card
+                key={step.num}
+                id={`workflow-step-${step.num}`}
+                className="p-5 flex flex-col justify-between bg-[var(--color-bg)] border-[var(--color-border)]"
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <span className="font-mono text-xs font-bold text-[var(--color-primary)] px-2 py-0.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)]">
+                      STAGE {step.num}
+                    </span>
+                    <div className="w-8 h-8 rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] flex items-center justify-center text-[var(--color-text)] border border-[var(--color-border)]">
+                      <Icon className="w-4 h-4" />
+                    </div>
+                  </div>
+
+                  <h3 className="text-sm font-semibold text-[var(--color-text)] mb-2">
+                    {step.title}
+                  </h3>
+
+                  <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+                    {step.desc}
+                  </p>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+
+        {/* Bottom Action */}
+        <div className="mt-12 text-center">
+          <Button
+            as={Link}
+            to="/register"
             id="workflow-cta"
-            whileHover={{ scale: 1.04 }}
-            whileTap={{ scale: 0.97 }}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "0.5rem",
-              padding: "0.875rem 2rem",
-              borderRadius: "10px",
-              background: "rgba(124,58,237,0.1)",
-              border: "1px solid rgba(124,58,237,0.3)",
-              color: "#9d5cf5",
-              textDecoration: "none",
-              fontSize: "0.95rem",
-              fontWeight: "600",
-              transition: "all 0.2s ease",
-            }}
+            variant="secondary"
+            size="md"
+            icon={ArrowRight}
+            iconPosition="right"
           >
-            See pricing plans →
-          </motion.a>
-        </motion.div>
+            Deploy Pipeline to Your Repository
+          </Button>
+        </div>
       </div>
     </section>
   );

@@ -49,27 +49,10 @@ export default function GithubCallbackPage() {
   }, [searchParams, navigate]);
 
   return (
-    <div
-      style={{
-        height: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "#0D1117",
-        color: "#f0f6fc",
-        flexDirection: "column",
-        gap: "16px",
-      }}
-    >
-      <Loader2 size={32} className="animate-spin" color="#7c3aed" />
-      <span
-        style={{
-          fontFamily: "var(--font-sans)",
-          fontSize: "16px",
-          fontWeight: "500",
-        }}
-      >
-        Logging in...
+    <div className="h-screen flex items-center justify-center flex-col gap-4 bg-[var(--color-bg)] text-[var(--color-text)] font-sans">
+      <Loader2 size={32} className="animate-spin text-[var(--color-primary)]" />
+      <span className="text-sm font-medium text-[var(--color-text-secondary)]">
+        Authenticating with GitHub...
       </span>
     </div>
   );

@@ -1,5 +1,11 @@
 import React from "react";
-import { Cpu, FlaskConical, CheckCircle2, AlertCircle, ArrowDown } from "lucide-react";
+import {
+  Cpu,
+  FlaskConical,
+  CheckCircle2,
+  AlertCircle,
+  ArrowDown,
+} from "lucide-react";
 import { cleanDisplayPath } from "./CoverageTypeDashboard.jsx";
 
 export default function FileFunctionCallGraphView({
@@ -14,10 +20,13 @@ export default function FileFunctionCallGraphView({
   const coveredFuncs = functions.filter((fn) => (fn.hits || 0) > 0).length;
 
   // Find relevant test suite if available
-  const baseName = filePath.replace(/^(src|app|lib)\//, "").replace(/\.[^.]+$/, "");
-  const matchedSuite = testSuites.find(
-    (s) => s.filePath?.includes(baseName) || s.fileName?.includes(baseName),
-  ) || testSuites[0];
+  const baseName = filePath
+    .replace(/^(src|app|lib)\//, "")
+    .replace(/\.[^.]+$/, "");
+  const matchedSuite =
+    testSuites.find(
+      (s) => s.filePath?.includes(baseName) || s.fileName?.includes(baseName),
+    ) || testSuites[0];
 
   const testTitle = matchedSuite
     ? `${matchedSuite.fileName} (${matchedSuite.framework || "Unit Test"})`
@@ -27,10 +36,10 @@ export default function FileFunctionCallGraphView({
     <div
       style={{
         borderRadius: 8,
-        border: "1px solid rgba(255, 255, 255, 0.08)",
-        background: "#090d13",
+        border: "1px solid var(--color-border)",
+        background: "var(--color-bg)",
         overflow: "hidden",
-        boxShadow: "0 4px 20px rgba(0, 0, 0, 0.4)",
+        boxShadow: "var(--shadow-md)",
       }}
     >
       {/* Header */}
@@ -41,28 +50,40 @@ export default function FileFunctionCallGraphView({
           justifyContent: "space-between",
           padding: "10px 16px",
           background: "rgba(56, 189, 248, 0.08)",
-          borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
+          borderBottom: "1px solid var(--color-border)",
           flexWrap: "wrap",
           gap: 10,
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <Cpu size={15} style={{ color: "#38bdf8" }} />
-          <span style={{ fontSize: 12, fontWeight: 700, color: "#e6edf3", fontFamily: "var(--font-mono)" }}>
+          <span
+            style={{
+              fontSize: 12,
+              fontWeight: 700,
+              color: "var(--color-text)",
+              fontFamily: "var(--font-mono)",
+            }}
+          >
             Function Call Graph & Execution Flow — {cleanDisplayPath(filePath)}
           </span>
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 11, color: "#8b949e" }}>
+          <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
             Hàm được gọi:{" "}
             <b style={{ color: "#38bdf8" }}>
-              {coveredFuncs}/{functions.length} ({functions.length > 0 ? Math.round((coveredFuncs / functions.length) * 100) : 100}%)
+              {coveredFuncs}/{functions.length} (
+              {functions.length > 0
+                ? Math.round((coveredFuncs / functions.length) * 100)
+                : 100}
+              %)
             </b>
           </span>
 
-          <span style={{ fontSize: 11, color: "#8b949e" }}>
-            Tổng lượt gọi: <b style={{ color: "#22c55e" }}>{totalCalls} calls</b>
+          <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+            Tổng lượt gọi:{" "}
+            <b style={{ color: "#22c55e" }}>{totalCalls} calls</b>
           </span>
         </div>
       </div>
@@ -75,7 +96,7 @@ export default function FileFunctionCallGraphView({
           flexDirection: "column",
           alignItems: "center",
           gap: 0,
-          background: "radial-gradient(ellipse at top, rgba(56, 189, 248, 0.03) 0%, transparent 70%)",
+          background: "var(--color-bg)",
         }}
       >
         {/* Top Node: Test Case / Suite */}
@@ -92,10 +113,25 @@ export default function FileFunctionCallGraphView({
             maxWidth: 320,
           }}
         >
-          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: "#c084fc", letterSpacing: 0.5 }}>
+          <div
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              textTransform: "uppercase",
+              color: "#c084fc",
+              letterSpacing: 0.5,
+            }}
+          >
             🧪 Test Case Runner
           </div>
-          <div style={{ fontSize: 12, fontWeight: 700, fontFamily: "var(--font-mono)", marginTop: 2 }}>
+          <div
+            style={{
+              fontSize: 12,
+              fontWeight: 700,
+              fontFamily: "var(--font-mono)",
+              marginTop: 2,
+            }}
+          >
             {testTitle}
           </div>
           {matchedSuite?.passedTests !== undefined && (
@@ -106,14 +142,35 @@ export default function FileFunctionCallGraphView({
         </div>
 
         {/* Down Arrow from Test to First Function */}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", color: "#64748b", margin: "2px 0" }}>
-          <div style={{ width: 2, height: 20, background: "rgba(255,255,255,0.2)" }} />
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            color: "#64748b",
+            margin: "2px 0",
+          }}
+        >
+          <div
+            style={{
+              width: 2,
+              height: 20,
+              background: "rgba(255,255,255,0.2)",
+            }}
+          />
           <div style={{ fontSize: 10, marginTop: -4 }}>▼</div>
         </div>
 
         {/* Function Nodes Chain */}
         {functions.length === 0 ? (
-          <div style={{ padding: 24, textAlign: "center", color: "#6e7681", fontSize: 12 }}>
+          <div
+            style={{
+              padding: 24,
+              textAlign: "center",
+              color: "#6e7681",
+              fontSize: 12,
+            }}
+          >
             Không tìm thấy định nghĩa hàm nào trong file này.
           </div>
         ) : (
@@ -130,9 +187,15 @@ export default function FileFunctionCallGraphView({
                   style={{
                     padding: "10px 22px",
                     borderRadius: 8,
-                    background: isCalled ? "rgba(56, 189, 248, 0.08)" : "rgba(239, 68, 68, 0.08)",
-                    border: isCalled ? "1.5px solid rgba(56, 189, 248, 0.4)" : "1.5px dashed #f87171",
-                    boxShadow: isCalled ? "0 2px 12px rgba(56, 189, 248, 0.08)" : "0 2px 14px rgba(239, 68, 68, 0.12)",
+                    background: isCalled
+                      ? "rgba(56, 189, 248, 0.08)"
+                      : "rgba(239, 68, 68, 0.08)",
+                    border: isCalled
+                      ? "1.5px solid rgba(56, 189, 248, 0.4)"
+                      : "1.5px dashed #f87171",
+                    boxShadow: isCalled
+                      ? "0 2px 12px rgba(56, 189, 248, 0.08)"
+                      : "0 2px 14px rgba(239, 68, 68, 0.12)",
                     textAlign: "center",
                     minWidth: 190,
                     maxWidth: 320,
@@ -166,15 +229,25 @@ export default function FileFunctionCallGraphView({
                         fontWeight: 700,
                         padding: "1px 7px",
                         borderRadius: 10,
-                        background: isCalled ? "rgba(34, 197, 94, 0.15)" : "rgba(239, 68, 68, 0.15)",
+                        background: isCalled
+                          ? "rgba(34, 197, 94, 0.15)"
+                          : "rgba(239, 68, 68, 0.15)",
                         color: isCalled ? "#4ade80" : "#f87171",
                         fontFamily: "var(--font-mono)",
                       }}
                     >
-                      {isCalled ? `✓ ${calls} call${calls > 1 ? "s" : ""}` : "⚑ 0 calls (Chưa gọi)"}
+                      {isCalled
+                        ? `✓ ${calls} call${calls > 1 ? "s" : ""}`
+                        : "⚑ 0 calls (Chưa gọi)"}
                     </span>
 
-                    <span style={{ fontSize: 10, color: "#6e7681", fontFamily: "var(--font-mono)" }}>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        color: "#6e7681",
+                        fontFamily: "var(--font-mono)",
+                      }}
+                    >
                       (Dòng {fn.line})
                     </span>
                   </div>
@@ -182,8 +255,22 @@ export default function FileFunctionCallGraphView({
 
                 {/* Connecting Line to Next Function */}
                 {!isLast && (
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", color: "#64748b", margin: "2px 0" }}>
-                    <div style={{ width: 2, height: 20, background: "rgba(255,255,255,0.2)" }} />
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      color: "#64748b",
+                      margin: "2px 0",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 2,
+                        height: 20,
+                        background: "rgba(255,255,255,0.2)",
+                      }}
+                    />
                     <div style={{ fontSize: 10, marginTop: -4 }}>▼</div>
                   </div>
                 )}
@@ -195,4 +282,3 @@ export default function FileFunctionCallGraphView({
     </div>
   );
 }
-

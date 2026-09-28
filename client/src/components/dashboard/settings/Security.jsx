@@ -1,15 +1,12 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import {
-  Shield,
   KeyRound,
   Smartphone,
   Laptop,
   AlertTriangle,
   Eye,
   EyeOff,
-  Check,
-  CheckCircle2,
   Lock,
 } from "lucide-react";
 import { useToast } from "../ToastContext";
@@ -42,12 +39,12 @@ export default function Security() {
   const strength = calculateStrength(pwForm.newPassword);
   const strengthColor =
     strength <= 25
-      ? "#ef4444"
+      ? "var(--color-danger)"
       : strength <= 50
-        ? "#f59e0b"
+        ? "var(--color-warning)"
         : strength <= 75
-          ? "#38bdf8"
-          : "#22c55e";
+          ? "var(--color-info)"
+          : "var(--color-success)";
   const strengthLabel =
     strength <= 25
       ? "Weak"
@@ -114,85 +111,30 @@ export default function Security() {
   };
 
   return (
-    <div
-      style={{
-        maxWidth: "920px",
-        padding: "32px 28px 64px",
-        fontFamily: "var(--font-sans)",
-        color: "#e6edf3",
-      }}
-    >
+    <div className="max-w-[920px] p-6 sm:p-8 font-sans text-[var(--color-text)]">
       {/* Header */}
-      <div style={{ marginBottom: "28px" }}>
-        <h1
-          style={{
-            fontSize: "22px",
-            fontWeight: 700,
-            color: "#e6edf3",
-            marginBottom: "6px",
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-          }}
-        >
-          <KeyRound size={22} style={{ color: "#a78bfa" }} />
+      <div className="mb-7">
+        <h1 className="text-lg font-bold text-[var(--color-text)] mb-1.5 flex items-center gap-2.5">
+          <KeyRound size={20} className="text-[var(--color-primary)]" />
           Security & Authentication
         </h1>
-        <p style={{ color: "#8b949e", fontSize: "13px", margin: 0 }}>
+        <p className="text-xs text-[var(--color-text-secondary)]">
           Manage your password, login sessions, and account protection settings.
         </p>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+      <div className="flex flex-col gap-6">
         {/* Change Password Card */}
-        <div
-          style={{
-            background: "rgba(255, 255, 255, 0.025)",
-            border: "1px solid rgba(255, 255, 255, 0.08)",
-            borderRadius: "14px",
-            padding: "24px",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "10px",
-              marginBottom: "18px",
-            }}
-          >
-            <div
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 8,
-                background: "rgba(124, 58, 237, 0.12)",
-                border: "1px solid rgba(124, 58, 237, 0.25)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <Lock size={16} style={{ color: "#a78bfa" }} />
+        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-lg)] p-6">
+          <div className="flex items-center gap-2.5 mb-4">
+            <div className="w-8 h-8 rounded-[var(--radius-md)] bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/25 flex items-center justify-center text-[var(--color-primary)] shrink-0">
+              <Lock size={15} />
             </div>
             <div>
-              <h3
-                style={{
-                  fontSize: "15px",
-                  fontWeight: 600,
-                  color: "#e6edf3",
-                  margin: 0,
-                }}
-              >
+              <h3 className="text-sm font-semibold text-[var(--color-text)]">
                 Change Password
               </h3>
-              <p
-                style={{
-                  fontSize: "12px",
-                  color: "#8b949e",
-                  margin: "2px 0 0",
-                }}
-              >
+              <p className="text-xs text-[var(--color-text-secondary)]">
                 Ensure your account is using a long, random password to stay
                 secure.
               </p>
@@ -200,28 +142,13 @@ export default function Security() {
           </div>
 
           <form onSubmit={handleUpdatePassword}>
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: "16px",
-                maxWidth: "480px",
-              }}
-            >
+            <div className="flex flex-col gap-4 max-w-md">
               {/* Current Password */}
               <div>
-                <label
-                  style={{
-                    display: "block",
-                    fontSize: "12px",
-                    fontWeight: 500,
-                    color: "#8b949e",
-                    marginBottom: "6px",
-                  }}
-                >
+                <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
                   Current Password
                 </label>
-                <div style={{ position: "relative" }}>
+                <div className="relative">
                   <input
                     type={showCurrentPw ? "text" : "password"}
                     value={pwForm.currentPassword}
@@ -229,31 +156,16 @@ export default function Security() {
                       setPwForm({ ...pwForm, currentPassword: e.target.value })
                     }
                     placeholder="Enter current password"
-                    style={{
-                      width: "100%",
-                      padding: "9px 36px 9px 12px",
-                      background: "rgba(0, 0, 0, 0.35)",
-                      border: "1px solid rgba(255, 255, 255, 0.12)",
-                      borderRadius: "8px",
-                      color: "#e6edf3",
-                      fontSize: "13px",
-                      outline: "none",
-                    }}
+                    className="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded-[var(--radius-md)] pl-3 pr-9 py-2 text-xs text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)] transition-all font-sans"
                   />
                   <button
                     type="button"
                     onClick={() => setShowCurrentPw(!showCurrentPw)}
-                    style={{
-                      position: "absolute",
-                      right: "10px",
-                      top: "50%",
-                      transform: "translateY(-50%)",
-                      background: "transparent",
-                      border: "none",
-                      color: "#6e7681",
-                      cursor: "pointer",
-                      padding: 2,
-                    }}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors p-1 cursor-pointer"
+                    title={showCurrentPw ? "Hide password" : "Show password"}
+                    aria-label={
+                      showCurrentPw ? "Hide password" : "Show password"
+                    }
                   >
                     {showCurrentPw ? <EyeOff size={14} /> : <Eye size={14} />}
                   </button>
@@ -262,18 +174,10 @@ export default function Security() {
 
               {/* New Password */}
               <div>
-                <label
-                  style={{
-                    display: "block",
-                    fontSize: "12px",
-                    fontWeight: 500,
-                    color: "#8b949e",
-                    marginBottom: "6px",
-                  }}
-                >
+                <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
                   New Password
                 </label>
-                <div style={{ position: "relative" }}>
+                <div className="relative">
                   <input
                     type={showNewPw ? "text" : "password"}
                     value={pwForm.newPassword}
@@ -281,31 +185,14 @@ export default function Security() {
                       setPwForm({ ...pwForm, newPassword: e.target.value })
                     }
                     placeholder="At least 8 characters"
-                    style={{
-                      width: "100%",
-                      padding: "9px 36px 9px 12px",
-                      background: "rgba(0, 0, 0, 0.35)",
-                      border: "1px solid rgba(255, 255, 255, 0.12)",
-                      borderRadius: "8px",
-                      color: "#e6edf3",
-                      fontSize: "13px",
-                      outline: "none",
-                    }}
+                    className="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded-[var(--radius-md)] pl-3 pr-9 py-2 text-xs text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)] transition-all font-sans"
                   />
                   <button
                     type="button"
                     onClick={() => setShowNewPw(!showNewPw)}
-                    style={{
-                      position: "absolute",
-                      right: "10px",
-                      top: "50%",
-                      transform: "translateY(-50%)",
-                      background: "transparent",
-                      border: "none",
-                      color: "#6e7681",
-                      cursor: "pointer",
-                      padding: 2,
-                    }}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors p-1 cursor-pointer"
+                    title={showNewPw ? "Hide password" : "Show password"}
+                    aria-label={showNewPw ? "Hide password" : "Show password"}
                   >
                     {showNewPw ? <EyeOff size={14} /> : <Eye size={14} />}
                   </button>
@@ -313,36 +200,22 @@ export default function Security() {
 
                 {/* Strength Meter */}
                 {pwForm.newPassword && (
-                  <div style={{ marginTop: "8px" }}>
-                    <div
-                      style={{
-                        height: "4px",
-                        width: "100%",
-                        background: "rgba(255, 255, 255, 0.08)",
-                        borderRadius: "2px",
-                        overflow: "hidden",
-                      }}
-                    >
+                  <div className="mt-2">
+                    <div className="h-1.5 w-full bg-[var(--color-surface-secondary)] rounded-full overflow-hidden">
                       <div
+                        className="h-full transition-all duration-300 rounded-full"
                         style={{
-                          height: "100%",
                           width: `${strength}%`,
-                          background: strengthColor,
-                          transition: "width 0.3s ease, background 0.3s ease",
+                          backgroundColor: strengthColor,
                         }}
                       />
                     </div>
                     <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        fontSize: "11px",
-                        color: strengthColor,
-                        marginTop: "4px",
-                      }}
+                      className="flex justify-between items-center text-[11px] mt-1 font-medium"
+                      style={{ color: strengthColor }}
                     >
                       <span>Strength: {strengthLabel}</span>
-                      <span style={{ color: "#6e7681" }}>
+                      <span className="text-[var(--color-text-muted)] font-normal">
                         8+ chars with letters & numbers
                       </span>
                     </div>
@@ -352,18 +225,10 @@ export default function Security() {
 
               {/* Confirm Password */}
               <div>
-                <label
-                  style={{
-                    display: "block",
-                    fontSize: "12px",
-                    fontWeight: 500,
-                    color: "#8b949e",
-                    marginBottom: "6px",
-                  }}
-                >
+                <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
                   Confirm New Password
                 </label>
-                <div style={{ position: "relative" }}>
+                <div className="relative">
                   <input
                     type={showConfirmPw ? "text" : "password"}
                     value={pwForm.confirmPassword}
@@ -371,56 +236,28 @@ export default function Security() {
                       setPwForm({ ...pwForm, confirmPassword: e.target.value })
                     }
                     placeholder="Repeat new password"
-                    style={{
-                      width: "100%",
-                      padding: "9px 36px 9px 12px",
-                      background: "rgba(0, 0, 0, 0.35)",
-                      border: "1px solid rgba(255, 255, 255, 0.12)",
-                      borderRadius: "8px",
-                      color: "#e6edf3",
-                      fontSize: "13px",
-                      outline: "none",
-                    }}
+                    className="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded-[var(--radius-md)] pl-3 pr-9 py-2 text-xs text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)] transition-all font-sans"
                   />
                   <button
                     type="button"
                     onClick={() => setShowConfirmPw(!showConfirmPw)}
-                    style={{
-                      position: "absolute",
-                      right: "10px",
-                      top: "50%",
-                      transform: "translateY(-50%)",
-                      background: "transparent",
-                      border: "none",
-                      color: "#6e7681",
-                      cursor: "pointer",
-                      padding: 2,
-                    }}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors p-1 cursor-pointer"
+                    title={showConfirmPw ? "Hide password" : "Show password"}
+                    aria-label={
+                      showConfirmPw ? "Hide password" : "Show password"
+                    }
                   >
                     {showConfirmPw ? <EyeOff size={14} /> : <Eye size={14} />}
                   </button>
                 </div>
               </div>
 
-              <div>
+              <div className="pt-2">
                 <motion.button
-                  whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
                   type="submit"
                   disabled={isSavingPw}
-                  style={{
-                    padding: "9px 20px",
-                    borderRadius: "8px",
-                    background:
-                      "linear-gradient(135deg, #7c3aed 0%, #6366f1 100%)",
-                    border: "none",
-                    color: "#fff",
-                    fontSize: "13px",
-                    fontWeight: 600,
-                    cursor: isSavingPw ? "not-allowed" : "pointer",
-                    boxShadow: "0 2px 10px rgba(124, 58, 237, 0.35)",
-                    opacity: isSavingPw ? 0.7 : 1,
-                  }}
+                  className="px-4 py-2 rounded-[var(--radius-md)] bg-[var(--color-primary)] text-white text-xs font-semibold hover:bg-[var(--color-primary-hover)] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-xs"
                 >
                   {isSavingPw ? "Updating..." : "Update Password"}
                 </motion.button>
@@ -430,84 +267,34 @@ export default function Security() {
         </div>
 
         {/* Two-Factor Authentication Card */}
-        <div
-          style={{
-            background: "rgba(255, 255, 255, 0.025)",
-            border: "1px solid rgba(255, 255, 255, 0.08)",
-            borderRadius: "14px",
-            padding: "24px",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              flexWrap: "wrap",
-              gap: "16px",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-lg)] p-6">
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div className="flex items-center gap-3">
               <div
-                style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 10,
-                  background: twoFactorEnabled
-                    ? "rgba(34, 197, 94, 0.15)"
-                    : "rgba(255, 255, 255, 0.05)",
-                  border: `1px solid ${twoFactorEnabled ? "rgba(34, 197, 94, 0.3)" : "rgba(255, 255, 255, 0.1)"}`,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
+                className={`w-9 h-9 rounded-[var(--radius-md)] flex items-center justify-center shrink-0 border ${
+                  twoFactorEnabled
+                    ? "bg-[var(--color-success)]/10 border-[var(--color-success)]/25 text-[var(--color-success)]"
+                    : "bg-[var(--color-surface-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)]"
+                }`}
               >
-                <Smartphone
-                  size={18}
-                  style={{ color: twoFactorEnabled ? "#4ade80" : "#8b949e" }}
-                />
+                <Smartphone size={18} />
               </div>
               <div>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "8px",
-                  }}
-                >
-                  <h3
-                    style={{
-                      fontSize: "15px",
-                      fontWeight: 600,
-                      color: "#e6edf3",
-                      margin: 0,
-                    }}
-                  >
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-semibold text-[var(--color-text)]">
                     Two-Factor Authentication (2FA)
                   </h3>
                   <span
-                    style={{
-                      fontSize: "11px",
-                      fontWeight: 600,
-                      padding: "2px 8px",
-                      borderRadius: "999px",
-                      background: twoFactorEnabled
-                        ? "rgba(34, 197, 94, 0.15)"
-                        : "rgba(255, 255, 255, 0.06)",
-                      color: twoFactorEnabled ? "#4ade80" : "#8b949e",
-                      border: `1px solid ${twoFactorEnabled ? "rgba(34, 197, 94, 0.25)" : "rgba(255, 255, 255, 0.1)"}`,
-                    }}
+                    className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+                      twoFactorEnabled
+                        ? "bg-[var(--color-success)]/10 text-[var(--color-success)] border-[var(--color-success)]/25"
+                        : "bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] border-[var(--color-border)]"
+                    }`}
                   >
                     {twoFactorEnabled ? "Enabled" : "Disabled"}
                   </span>
                 </div>
-                <p
-                  style={{
-                    fontSize: "12px",
-                    color: "#8b949e",
-                    margin: "4px 0 0",
-                  }}
-                >
+                <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
                   Require an authenticator code (Google Authenticator, Authy)
                   when logging in.
                 </p>
@@ -515,21 +302,13 @@ export default function Security() {
             </div>
 
             <motion.button
-              whileHover={{ scale: 1.03 }}
               whileTap={{ scale: 0.97 }}
               onClick={handleToggle2FA}
-              style={{
-                padding: "8px 18px",
-                borderRadius: "8px",
-                background: twoFactorEnabled
-                  ? "rgba(239, 68, 68, 0.1)"
-                  : "rgba(124, 58, 237, 0.15)",
-                border: `1px solid ${twoFactorEnabled ? "rgba(239, 68, 68, 0.3)" : "rgba(124, 58, 237, 0.3)"}`,
-                color: twoFactorEnabled ? "#f87171" : "#c4b5fd",
-                fontSize: "13px",
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
+              className={`px-3.5 py-1.5 rounded-[var(--radius-md)] text-xs font-semibold cursor-pointer border transition-colors ${
+                twoFactorEnabled
+                  ? "bg-[var(--color-danger)]/10 border-[var(--color-danger)]/25 text-[var(--color-danger)] hover:bg-[var(--color-danger)]/20"
+                  : "bg-[var(--color-surface-secondary)] border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface)]"
+              }`}
             >
               {twoFactorEnabled ? "Disable 2FA" : "Set Up 2FA"}
             </motion.button>
@@ -537,154 +316,58 @@ export default function Security() {
         </div>
 
         {/* Active Sessions Card */}
-        <div
-          style={{
-            background: "rgba(255, 255, 255, 0.025)",
-            border: "1px solid rgba(255, 255, 255, 0.08)",
-            borderRadius: "14px",
-            padding: "24px",
-          }}
-        >
-          <div style={{ marginBottom: "16px" }}>
-            <h3
-              style={{
-                fontSize: "15px",
-                fontWeight: 600,
-                color: "#e6edf3",
-                margin: 0,
-              }}
-            >
+        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-lg)] p-6">
+          <div className="mb-4">
+            <h3 className="text-sm font-semibold text-[var(--color-text)]">
               Active Sessions
             </h3>
-            <p
-              style={{
-                fontSize: "12px",
-                color: "#8b949e",
-                margin: "2px 0 0",
-              }}
-            >
+            <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
               Devices and browsers currently logged into your TestCovAI account.
             </p>
           </div>
 
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "14px 16px",
-              background: "rgba(0, 0, 0, 0.3)",
-              border: "1px solid rgba(255, 255, 255, 0.06)",
-              borderRadius: "10px",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-              <Laptop size={20} style={{ color: "#22d3ee" }} />
+          <div className="flex items-center justify-between p-3.5 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-[var(--radius-md)]">
+            <div className="flex items-center gap-3">
+              <Laptop
+                size={18}
+                className="text-[var(--color-primary)] shrink-0"
+              />
               <div>
-                <div
-                  style={{
-                    fontSize: "13px",
-                    fontWeight: 600,
-                    color: "#e6edf3",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "8px",
-                  }}
-                >
+                <div className="text-xs font-semibold text-[var(--color-text)] flex items-center gap-2">
                   Windows PC · Chrome Browser
-                  <span
-                    style={{
-                      fontSize: "10px",
-                      color: "#4ade80",
-                      background: "rgba(34, 197, 94, 0.15)",
-                      padding: "1px 6px",
-                      borderRadius: "4px",
-                    }}
-                  >
+                  <span className="text-[10px] text-[var(--color-success)] bg-[var(--color-success)]/10 px-1.5 py-0.5 rounded-[var(--radius-sm)] border border-[var(--color-success)]/20 font-medium">
                     Current Session
                   </span>
                 </div>
-                <div
-                  style={{
-                    fontSize: "11px",
-                    color: "#6e7681",
-                    marginTop: "2px",
-                  }}
-                >
+                <div className="text-[11px] text-[var(--color-text-muted)] font-mono mt-0.5">
                   IP: 118.69.182.10 · Ho Chi Minh City, Vietnam
                 </div>
               </div>
             </div>
 
-            <div
-              style={{
-                fontSize: "11px",
-                color: "#4ade80",
-                display: "flex",
-                alignItems: "center",
-                gap: "4px",
-              }}
-            >
-              <div
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: "50%",
-                  background: "#4ade80",
-                  boxShadow: "0 0 6px #4ade80",
-                }}
-              />
+            <div className="text-[11px] text-[var(--color-success)] flex items-center gap-1.5 font-medium">
+              <span className="w-2 h-2 rounded-full bg-[var(--color-success)] shrink-0 inline-block" />
               Active now
             </div>
           </div>
         </div>
 
         {/* Danger Zone */}
-        <div
-          style={{
-            background: "rgba(239, 68, 68, 0.03)",
-            border: "1px solid rgba(239, 68, 68, 0.2)",
-            borderRadius: "14px",
-            padding: "24px",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              flexWrap: "wrap",
-              gap: "16px",
-            }}
-          >
+        <div className="bg-[var(--color-danger)]/5 border border-[var(--color-danger)]/20 rounded-[var(--radius-lg)] p-6">
+          <div className="flex items-center justify-between flex-wrap gap-4">
             <div>
-              <h3
-                style={{
-                  fontSize: "15px",
-                  fontWeight: 600,
-                  color: "#f87171",
-                  margin: 0,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "6px",
-                }}
-              >
-                <AlertTriangle size={16} />
+              <h3 className="text-sm font-semibold text-[var(--color-danger)] flex items-center gap-1.5">
+                <AlertTriangle size={15} />
                 Delete Account
               </h3>
-              <p
-                style={{
-                  fontSize: "12px",
-                  color: "#8b949e",
-                  margin: "4px 0 0",
-                }}
-              >
+              <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
                 Permanently delete your TestCovAI account, workspaces, and test
                 suites.
               </p>
             </div>
 
             <button
+              type="button"
               onClick={() => {
                 showToast({
                   type: "warning",
@@ -693,17 +376,7 @@ export default function Security() {
                     "Please contact support@testcovai.com to request account deletion.",
                 });
               }}
-              style={{
-                padding: "8px 16px",
-                borderRadius: "8px",
-                background: "transparent",
-                border: "1px solid rgba(239, 68, 68, 0.4)",
-                color: "#f87171",
-                fontSize: "12px",
-                fontWeight: 600,
-                cursor: "pointer",
-                transition: "all 0.2s ease",
-              }}
+              className="px-3.5 py-1.5 rounded-[var(--radius-md)] bg-transparent border border-[var(--color-danger)]/30 text-[var(--color-danger)] text-xs font-semibold hover:bg-[var(--color-danger)]/10 transition-colors cursor-pointer"
             >
               Delete Account
             </button>

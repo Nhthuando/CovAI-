@@ -1,5 +1,12 @@
 import React, { useState, useMemo } from "react";
-import { GitBranch, CheckCircle2, AlertCircle, Sparkles, ArrowDown, Network } from "lucide-react";
+import {
+  GitBranch,
+  CheckCircle2,
+  AlertCircle,
+  Sparkles,
+  ArrowDown,
+  Network,
+} from "lucide-react";
 import { cleanDisplayPath } from "./CoverageTypeDashboard.jsx";
 
 export default function FileBranchCFGView({
@@ -47,10 +54,10 @@ export default function FileBranchCFGView({
     <div
       style={{
         borderRadius: 8,
-        border: "1px solid rgba(255, 255, 255, 0.08)",
-        background: "#090d13",
+        border: "1px solid var(--color-border)",
+        background: "var(--color-bg)",
         overflow: "hidden",
-        boxShadow: "0 4px 20px rgba(0, 0, 0, 0.4)",
+        boxShadow: "var(--shadow-md)",
       }}
     >
       {/* Header */}
@@ -61,21 +68,35 @@ export default function FileBranchCFGView({
           justifyContent: "space-between",
           padding: "10px 16px",
           background: "rgba(251, 191, 36, 0.08)",
-          borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
+          borderBottom: "1px solid var(--color-border)",
           flexWrap: "wrap",
           gap: 10,
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <GitBranch size={15} style={{ color: "#fbbf24" }} />
-          <span style={{ fontSize: 12, fontWeight: 700, color: "#e6edf3", fontFamily: "var(--font-mono)" }}>
+          <span
+            style={{
+              fontSize: 12,
+              fontWeight: 700,
+              color: "#e6edf3",
+              fontFamily: "var(--font-mono)",
+            }}
+          >
             Control Flow Graph (CFG) — {cleanDisplayPath(filePath)}
           </span>
         </div>
 
         {/* Function Selector Tabs */}
         {functionsWithCfg.length > 1 && (
-          <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              flexWrap: "wrap",
+            }}
+          >
             <span style={{ fontSize: 11, color: "#8b949e" }}>Hàm:</span>
             {functionsWithCfg.map((fn, idx) => {
               const isSelected = idx === selectedFnIndex;
@@ -90,13 +111,18 @@ export default function FileBranchCFGView({
                     fontWeight: isSelected ? 700 : 500,
                     padding: "3px 8px",
                     borderRadius: 4,
-                    background: isSelected ? "rgba(251, 191, 36, 0.2)" : "rgba(255, 255, 255, 0.04)",
+                    background: isSelected
+                      ? "rgba(251, 191, 36, 0.2)"
+                      : "rgba(255, 255, 255, 0.04)",
                     color: isSelected ? "#fbbf24" : "#8b949e",
-                    border: isSelected ? "1px solid rgba(251, 191, 36, 0.4)" : "1px solid rgba(255, 255, 255, 0.06)",
+                    border: isSelected
+                      ? "1px solid rgba(251, 191, 36, 0.4)"
+                      : "1px solid rgba(255, 255, 255, 0.06)",
                     cursor: "pointer",
                   }}
                 >
-                  {fn.name}() {hasBranches ? `(${fn.branches.length} rẽ nhánh)` : ""}
+                  {fn.name}(){" "}
+                  {hasBranches ? `(${fn.branches.length} rẽ nhánh)` : ""}
                 </button>
               );
             })}
@@ -112,7 +138,7 @@ export default function FileBranchCFGView({
           flexDirection: "column",
           alignItems: "center",
           gap: 14,
-          background: "radial-gradient(ellipse at top, rgba(251, 191, 36, 0.03) 0%, transparent 70%)",
+          background: "var(--color-bg)",
         }}
       >
         {/* Function Entry Node */}
@@ -135,33 +161,52 @@ export default function FileBranchCFGView({
         </div>
 
         {/* Down Arrow */}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", color: "#64748b" }}>
-          <div style={{ width: 2, height: 16, background: "rgba(255,255,255,0.2)" }} />
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            color: "#64748b",
+          }}
+        >
+          <div
+            style={{
+              width: 2,
+              height: 16,
+              background: "rgba(255,255,255,0.2)",
+            }}
+          />
           <div style={{ fontSize: 10, marginTop: -4 }}>▼</div>
         </div>
 
         {/* If Function Has Branches */}
         {activeFn?.branches && activeFn.branches.length > 0 ? (
           activeFn.branches.map((branch, bIdx) => {
-            const truePath = branch.paths?.find((p) => p.type === "True") || branch.paths?.[0];
-            const falsePath = branch.paths?.find((p) => p.type === "False") || branch.paths?.[1];
+            const truePath =
+              branch.paths?.find((p) => p.type === "True") || branch.paths?.[0];
+            const falsePath =
+              branch.paths?.find((p) => p.type === "False") ||
+              branch.paths?.[1];
 
             const isTrueCovered = (truePath?.hits || 0) > 0;
             const isFalseCovered = (falsePath?.hits || 0) > 0;
 
             // Clean condition snippet
-            let condText = branch.condition || branch.fullConditionText || "condition";
+            let condText =
+              branch.condition || branch.fullConditionText || "condition";
             if (!condText.endsWith("?")) condText += " ?";
 
             // Clean true snippet
-            const trueCode = truePath?.codeSnippet
-              ?.replace(/return\s+/, "")
-              ?.replace(/;$/, "") || "true";
+            const trueCode =
+              truePath?.codeSnippet
+                ?.replace(/return\s+/, "")
+                ?.replace(/;$/, "") || "true";
 
             // Clean false snippet
-            const falseCode = falsePath?.codeSnippet
-              ?.replace(/return\s+/, "")
-              ?.replace(/;$/, "") || "false";
+            const falseCode =
+              falsePath?.codeSnippet
+                ?.replace(/return\s+/, "")
+                ?.replace(/;$/, "") || "false";
 
             return (
               <div
@@ -204,7 +249,13 @@ export default function FileBranchCFGView({
                   }}
                 >
                   {/* TRUE Path Column */}
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                    }}
+                  >
                     <div
                       style={{
                         display: "flex",
@@ -218,14 +269,30 @@ export default function FileBranchCFGView({
                       }}
                     >
                       <span>TRUE</span>
-                      <span style={{ fontSize: 12 }}>{isTrueCovered ? "🟢" : "🔴"}</span>
+                      <span style={{ fontSize: 12 }}>
+                        {isTrueCovered ? "🟢" : "🔴"}
+                      </span>
                       <span style={{ fontSize: 10, color: "#8b949e" }}>
                         ({truePath?.hits || 0} hits)
                       </span>
                     </div>
 
-                    <div style={{ width: 2, height: 16, background: isTrueCovered ? "#22c55e" : "#ef4444" }} />
-                    <div style={{ fontSize: 10, color: isTrueCovered ? "#22c55e" : "#ef4444", marginTop: -4 }}>▼</div>
+                    <div
+                      style={{
+                        width: 2,
+                        height: 16,
+                        background: isTrueCovered ? "#22c55e" : "#ef4444",
+                      }}
+                    />
+                    <div
+                      style={{
+                        fontSize: 10,
+                        color: isTrueCovered ? "#22c55e" : "#ef4444",
+                        marginTop: -4,
+                      }}
+                    >
+                      ▼
+                    </div>
 
                     {/* True Block Box */}
                     <div
@@ -233,8 +300,12 @@ export default function FileBranchCFGView({
                         marginTop: 4,
                         padding: "8px 16px",
                         borderRadius: 6,
-                        background: isTrueCovered ? "rgba(34, 197, 94, 0.1)" : "rgba(239, 68, 68, 0.1)",
-                        border: isTrueCovered ? "1px solid rgba(34, 197, 94, 0.35)" : "1.5px dashed #f87171",
+                        background: isTrueCovered
+                          ? "rgba(34, 197, 94, 0.1)"
+                          : "rgba(239, 68, 68, 0.1)",
+                        border: isTrueCovered
+                          ? "1px solid rgba(34, 197, 94, 0.35)"
+                          : "1.5px dashed #f87171",
                         color: isTrueCovered ? "#86efac" : "#fca5a5",
                         fontFamily: "var(--font-mono)",
                         fontSize: 12,
@@ -251,11 +322,24 @@ export default function FileBranchCFGView({
                     </div>
 
                     {/* Connector line down to return */}
-                    <div style={{ width: 2, height: 20, background: "rgba(255,255,255,0.15)", marginTop: 4 }} />
+                    <div
+                      style={{
+                        width: 2,
+                        height: 20,
+                        background: "rgba(255,255,255,0.15)",
+                        marginTop: 4,
+                      }}
+                    />
                   </div>
 
                   {/* FALSE Path Column */}
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                    }}
+                  >
                     <div
                       style={{
                         display: "flex",
@@ -269,14 +353,30 @@ export default function FileBranchCFGView({
                       }}
                     >
                       <span>FALSE</span>
-                      <span style={{ fontSize: 12 }}>{isFalseCovered ? "🟢" : "🔴"}</span>
+                      <span style={{ fontSize: 12 }}>
+                        {isFalseCovered ? "🟢" : "🔴"}
+                      </span>
                       <span style={{ fontSize: 10, color: "#8b949e" }}>
                         ({falsePath?.hits || 0} hits)
                       </span>
                     </div>
 
-                    <div style={{ width: 2, height: 16, background: isFalseCovered ? "#22c55e" : "#ef4444" }} />
-                    <div style={{ fontSize: 10, color: isFalseCovered ? "#22c55e" : "#ef4444", marginTop: -4 }}>▼</div>
+                    <div
+                      style={{
+                        width: 2,
+                        height: 16,
+                        background: isFalseCovered ? "#22c55e" : "#ef4444",
+                      }}
+                    />
+                    <div
+                      style={{
+                        fontSize: 10,
+                        color: isFalseCovered ? "#22c55e" : "#ef4444",
+                        marginTop: -4,
+                      }}
+                    >
+                      ▼
+                    </div>
 
                     {/* False Block Box */}
                     <div
@@ -284,8 +384,12 @@ export default function FileBranchCFGView({
                         marginTop: 4,
                         padding: "8px 16px",
                         borderRadius: 6,
-                        background: isFalseCovered ? "rgba(56, 189, 248, 0.1)" : "rgba(239, 68, 68, 0.1)",
-                        border: isFalseCovered ? "1px solid rgba(56, 189, 248, 0.35)" : "1.5px dashed #f87171",
+                        background: isFalseCovered
+                          ? "rgba(56, 189, 248, 0.1)"
+                          : "rgba(239, 68, 68, 0.1)",
+                        border: isFalseCovered
+                          ? "1px solid rgba(56, 189, 248, 0.35)"
+                          : "1.5px dashed #f87171",
                         color: isFalseCovered ? "#bae6fd" : "#fca5a5",
                         fontFamily: "var(--font-mono)",
                         fontSize: 12,
@@ -302,13 +406,27 @@ export default function FileBranchCFGView({
                     </div>
 
                     {/* Connector line down to return */}
-                    <div style={{ width: 2, height: 20, background: "rgba(255,255,255,0.15)", marginTop: 4 }} />
+                    <div
+                      style={{
+                        width: 2,
+                        height: 20,
+                        background: "rgba(255,255,255,0.15)",
+                        marginTop: 4,
+                      }}
+                    />
                   </div>
                 </div>
 
                 {/* Missing Branch Warning & Suggest Button */}
                 {(!isTrueCovered || !isFalseCovered) && onSuggestTestcase && (
-                  <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8 }}>
+                  <div
+                    style={{
+                      marginTop: 10,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                  >
                     <span style={{ fontSize: 11, color: "#f87171" }}>
                       ⚠️ Còn nhánh chưa được kiểm thử
                     </span>
@@ -354,8 +472,22 @@ export default function FileBranchCFGView({
         )}
 
         {/* Merge Arrow to Return */}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", color: "#64748b", marginTop: -6 }}>
-          <div style={{ width: 2, height: 16, background: "rgba(255,255,255,0.2)" }} />
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            color: "#64748b",
+            marginTop: -6,
+          }}
+        >
+          <div
+            style={{
+              width: 2,
+              height: 16,
+              background: "rgba(255,255,255,0.2)",
+            }}
+          />
           <div style={{ fontSize: 10, marginTop: -4 }}>▼</div>
         </div>
 
@@ -381,4 +513,3 @@ export default function FileBranchCFGView({
     </div>
   );
 }
-

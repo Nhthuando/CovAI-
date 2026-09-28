@@ -269,15 +269,15 @@ export async function generateSkeletonApi(
   return handleResponse(res);
 }
 
-export async function generateIntegrationTestApi(
-  projectId,
-  snapshotId,
-) {
-  const res = await fetch(`${BASE_URL}/projects/${projectId}/ai/generate-integration-test`, {
-    method: "POST",
-    headers: getAuthHeaders(),
-    body: JSON.stringify({ snapshotId, framework: "SUPERTEST" }),
-  });
+export async function generateIntegrationTestApi(projectId, snapshotId) {
+  const res = await fetch(
+    `${BASE_URL}/projects/${projectId}/ai/generate-integration-test`,
+    {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ snapshotId, framework: "SUPERTEST" }),
+    },
+  );
   return handleResponse(res);
 }
 
@@ -305,6 +305,26 @@ export async function selectTestingFrameworkApi(
       method: "PUT",
       headers: getAuthHeaders(),
       body: JSON.stringify({ snapshotId, framework }),
+    },
+  );
+  return handleResponse(res);
+}
+
+export async function createProjectSnapshotApi(projectId, { label, message }) {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/snapshots`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ label, message }),
+  });
+  return handleResponse(res);
+}
+
+export async function restoreProjectSnapshotApi(projectId, snapshotId) {
+  const res = await fetch(
+    `${BASE_URL}/projects/${projectId}/snapshots/${snapshotId}/restore`,
+    {
+      method: "POST",
+      headers: getAuthHeaders(),
     },
   );
   return handleResponse(res);

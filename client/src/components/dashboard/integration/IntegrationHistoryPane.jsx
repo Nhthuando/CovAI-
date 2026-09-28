@@ -1,114 +1,176 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import {
+  Clock,
+  History,
+  AlertCircle,
+  CheckCircle2,
+  XCircle,
+} from "lucide-react";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 function getAuthHeaders() {
-    const token = localStorage.getItem("token");
-    return {
-        "Content-Type": "application/json",
-        ...(token && { Authorization: `Bearer ${token}` }),
-    };
+  const token = localStorage.getItem("token");
+  return {
+    "Content-Type": "application/json",
+    ...(token && { Authorization: `Bearer ${token}` }),
+  };
 }
 
 export default function IntegrationHistoryPane({ snapshotId }) {
-    const [history, setHistory] = useState({ jobs: [], testRuns: [] });
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
+  const [history, setHistory] = useState({ jobs: [], testRuns: [] });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-    useEffect(() => {
-        if (!snapshotId) return;
-        setLoading(true);
-        fetch(`${BASE_URL}/coverage/${snapshotId}/integration/history`, { headers: getAuthHeaders() })
-            .then(res => res.json())
-            .then(data => {
-                if (data.success) {
-                    setHistory(data.data);
-                } else {
-                    setError(data.message || "Failed to load history.");
-                }
-            })
-            .catch(err => setError(err.message))
-            .finally(() => setLoading(false));
-    }, [snapshotId]);
+  useEffect(() => {
+    if (!snapshotId) return;
+    setLoading(true);
+    fetch(`${BASE_URL}/coverage/${snapshotId}/integration/history`, {
+      headers: getAuthHeaders(),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success) {
+          setHistory(data.data);
+        } else {
+          setError(data.message || "Failed to load history.");
+        }
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }, [snapshotId]);
 
-    if (loading) {
-        return <div style={{ padding: 24, color: "#8b949e", textAlign: "center" }}>Loading history...</div>;
-    }
-
-    if (error) {
-        return <div style={{ padding: 24, color: "#f87171", textAlign: "center" }}>{error}</div>;
-    }
-
-    const { jobs, testRuns } = history;
-    const hasData = jobs.length > 0 || testRuns.length > 0;
-
-    if (!hasData) {
-        return (
-            <div style={{ padding: 48, color: "#8b949e", textAlign: "center", display: "flex", flexDirection: "column", gap: 16 }}>
-                <div style={{ fontSize: 32 }}>🕰️</div>
-                <div style={{ fontSize: 14 }}>
-                    <p>No historical data found for this snapshot.</p>
-                </div>
-            </div>
-        );
-    }
-
+  if (loading) {
     return (
-        <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-            <div style={{ padding: "16px 24px", borderBottom: "1px solid rgba(255,255,255,.05)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <h3 style={{ margin: 0, fontSize: 16, color: "#e6edf3" }}>Integration History</h3>
-            </div>
-            
-            <div style={{ flex: 1, overflowY: "auto", padding: 24, display: "flex", flexDirection: "column", gap: 24 }}>
-                {testRuns.length > 0 && (
-                    <div>
-                        <h4 style={{ color: "#8b949e", fontSize: 12, textTransform: "uppercase", marginBottom: 12 }}>Recent Executions</h4>
-                        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                            {testRuns.map((tr, i) => (
-                                <div key={i} style={{ background: "rgba(255,255,255,.02)", border: "1px solid rgba(255,255,255,.05)", borderRadius: 8, padding: 16 }}>
-                                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                                        <span style={{ color: "#e6edf3", fontWeight: 600 }}>Test Run</span>
-                                        <span style={{ color: tr.status === "PASSED" ? "#22c55e" : "#f87171", fontSize: 13, fontWeight: 600 }}>
-                                            {tr.status}
-                                        </span>
-                                    </div>
-                                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#8b949e" }}>
-                                        <span>{new Date(tr.createdAt).toLocaleString()}</span>
-                                        <span>{tr.totalTests} tests ({tr.passedTests} passed)</span>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                {jobs.length > 0 && (
-                    <div>
-                        <h4 style={{ color: "#8b949e", fontSize: 12, textTransform: "uppercase", marginBottom: 12 }}>Pipeline Jobs</h4>
-                        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                            {jobs.map((job, i) => (
-                                <div key={i} style={{ background: "rgba(255,255,255,.02)", border: "1px solid rgba(255,255,255,.05)", borderRadius: 8, padding: 16 }}>
-                                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                                        <span style={{ color: "#e6edf3", fontWeight: 600 }}>{job.type}</span>
-                                        <span style={{ color: job.status === "SUCCESS" ? "#22c55e" : job.status === "FAILED" ? "#f87171" : "#fbbf24", fontSize: 13, fontWeight: 600 }}>
-                                            {job.status}
-                                        </span>
-                                    </div>
-                                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#8b949e" }}>
-                                        <span>{new Date(job.createdAt).toLocaleString()}</span>
-                                        {job.computeTimeMs && <span>{Math.round(job.computeTimeMs / 1000)}s</span>}
-                                    </div>
-                                    {job.errorMessage && (
-                                        <div style={{ marginTop: 8, color: "#fca5a5", fontSize: 12, background: "rgba(248,113,113,.1)", padding: 8, borderRadius: 4 }}>
-                                            {job.errorMessage}
-                                        </div>
-                                    )}
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-            </div>
-        </div>
+      <div className="p-8 text-center text-xs text-[var(--color-text-secondary)] font-sans">
+        Loading history...
+      </div>
     );
+  }
+
+  if (error) {
+    <div className="p-8 text-center text-xs text-[var(--color-danger)] font-sans">
+      {error}
+    </div>;
+  }
+
+  const { jobs, testRuns } = history;
+  const hasData = jobs.length > 0 || testRuns.length > 0;
+
+  if (!hasData) {
+    return (
+      <div className="p-12 text-center flex flex-col items-center justify-center gap-3 text-[var(--color-text-secondary)] font-sans">
+        <History
+          size={32}
+          className="text-[var(--color-text-muted)] opacity-60"
+        />
+        <div className="text-xs">
+          <p className="font-semibold text-[var(--color-text)] mb-1">
+            No historical data found.
+          </p>
+          <p>Execution snapshots and test runs will appear here.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col h-full font-sans text-[var(--color-text)]">
+      {/* Header */}
+      <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between shrink-0">
+        <h3 className="text-sm font-bold text-[var(--color-text)]">
+          Integration History
+        </h3>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6">
+        {testRuns.length > 0 && (
+          <div>
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)] mb-3">
+              Recent Executions
+            </h4>
+            <div className="flex flex-col gap-2.5">
+              {testRuns.map((tr, i) => (
+                <div
+                  key={i}
+                  className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-3.5"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-semibold text-xs text-[var(--color-text)]">
+                      Test Run
+                    </span>
+                    <span
+                      className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${
+                        tr.status === "PASSED"
+                          ? "bg-[var(--color-success)]/10 text-[var(--color-success)] border-[var(--color-success)]/25"
+                          : "bg-[var(--color-danger)]/10 text-[var(--color-danger)] border-[var(--color-danger)]/25"
+                      }`}
+                    >
+                      {tr.status}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-[var(--color-text-secondary)]">
+                    <span className="font-mono text-[11px] text-[var(--color-text-muted)]">
+                      {new Date(tr.createdAt).toLocaleString()}
+                    </span>
+                    <span>
+                      {tr.totalTests} tests ({tr.passedTests} passed)
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {jobs.length > 0 && (
+          <div>
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)] mb-3">
+              Pipeline Jobs
+            </h4>
+            <div className="flex flex-col gap-2.5">
+              {jobs.map((job, i) => (
+                <div
+                  key={i}
+                  className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-3.5"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-semibold text-xs text-[var(--color-text)]">
+                      {job.type}
+                    </span>
+                    <span
+                      className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${
+                        job.status === "SUCCESS"
+                          ? "bg-[var(--color-success)]/10 text-[var(--color-success)] border-[var(--color-success)]/25"
+                          : job.status === "FAILED"
+                            ? "bg-[var(--color-danger)]/10 text-[var(--color-danger)] border-[var(--color-danger)]/25"
+                            : "bg-[var(--color-warning)]/10 text-[var(--color-warning)] border-[var(--color-warning)]/25"
+                      }`}
+                    >
+                      {job.status}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-[var(--color-text-secondary)]">
+                    <span className="font-mono text-[11px] text-[var(--color-text-muted)]">
+                      {new Date(job.createdAt).toLocaleString()}
+                    </span>
+                    {job.computeTimeMs && (
+                      <span className="font-mono text-[11px]">
+                        {Math.round(job.computeTimeMs / 1000)}s
+                      </span>
+                    )}
+                  </div>
+                  {job.errorMessage && (
+                    <div className="mt-2 text-xs text-[var(--color-danger)] bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/20 p-2.5 rounded-[var(--radius-sm)] font-mono">
+                      {job.errorMessage}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
