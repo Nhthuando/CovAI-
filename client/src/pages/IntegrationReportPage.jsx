@@ -2,7 +2,24 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { fetchIntegrationReport } from '../services/report.service';
 import { ArrowLeft, Database, BarChart2, AlertCircle, FileText, Activity } from 'lucide-react';
-import { format } from 'date-fns';
+
+const formatDate = (val) => {
+  if (!val) return '';
+  try {
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return String(val);
+    return d.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    });
+  } catch {
+    return String(val);
+  }
+};
 
 export default function IntegrationReportPage() {
   const { projectId } = useParams();
@@ -209,7 +226,7 @@ export default function IntegrationReportPage() {
                   <div className="bg-green-500 h-full" style={{ width: `${report.projectCodeCoverage.stmtsPct}%` }}></div>
                 </div>
                 <div className="text-xs text-[var(--text-secondary)] text-right">
-                  Recorded: {format(new Date(report.projectCodeCoverage.timestamp), 'MMM d, HH:mm:ss')}
+                  Recorded: {formatDate(report.projectCodeCoverage.timestamp)}
                 </div>
               </div>
             )}
@@ -240,7 +257,7 @@ export default function IntegrationReportPage() {
                   <tbody>
                     {report.history.executions.slice().reverse().map((run) => (
                       <tr key={run.testRunId} className="border-b border-[var(--border-main)] hover:bg-[var(--surface-hover)]">
-                        <td className="px-4 py-3 font-mono text-xs">{format(new Date(run.timestamp), 'MMM d, HH:mm:ss')}</td>
+                        <td className="px-4 py-3 font-mono text-xs">{formatDate(run.timestamp)}</td>
                         <td className="px-4 py-3 font-mono text-xs">{run.snapshotId.substring(0,8)}</td>
                         <td className="px-4 py-3">
                           <span className={`px-2 py-1 rounded text-xs font-medium ${run.status === 'SUCCESS' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
@@ -277,7 +294,7 @@ export default function IntegrationReportPage() {
                   <tbody>
                     {report.history.coverage.slice().reverse().map((cov, idx) => (
                       <tr key={idx} className="border-b border-[var(--border-main)] hover:bg-[var(--surface-hover)]">
-                        <td className="px-4 py-3 font-mono text-xs">{format(new Date(cov.timestamp), 'MMM d, HH:mm:ss')}</td>
+                        <td className="px-4 py-3 font-mono text-xs">{formatDate(cov.timestamp)}</td>
                         <td className="px-4 py-3 font-mono text-xs">{cov.snapshotId.substring(0,8)}</td>
                         <td className="px-4 py-3 font-mono">
                           <div className="flex items-center">
@@ -314,7 +331,7 @@ export default function IntegrationReportPage() {
                   <tbody>
                     {report.history.generations.slice().reverse().map((gen) => (
                       <tr key={gen.jobId} className="border-b border-[var(--border-main)] hover:bg-[var(--surface-hover)]">
-                        <td className="px-4 py-3 font-mono text-xs">{format(new Date(gen.timestamp), 'MMM d, HH:mm:ss')}</td>
+                        <td className="px-4 py-3 font-mono text-xs">{formatDate(gen.timestamp)}</td>
                         <td className="px-4 py-3 font-mono text-xs">{gen.snapshotId.substring(0,8)}</td>
                         <td className="px-4 py-3">
                           <span className={`px-2 py-1 rounded text-xs font-medium ${
