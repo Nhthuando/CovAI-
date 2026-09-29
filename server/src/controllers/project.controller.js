@@ -37,6 +37,8 @@ import {
   createProjectFolder,
   renameProjectEntry,
   deleteProjectEntry,
+  createProjectCheckpoint,
+  restoreProjectCheckpoint,
 } from "../services/project.service.js";
 import { createBuildCfgJob } from "../services/job.service.js";
 import { addJobToQueue } from "../services/queue.service.js";
@@ -246,6 +248,59 @@ class ProjectController {
   }
 
   /**
+   * POST /projects/:id/snapshots
+   */
+  async createSnapshot(req, res) {
+    try {
+      const { label, message } = req.body || {};
+      const data = await createProjectCheckpoint({
+        projectId: req.params.id,
+        userId: req.user.id,
+        label,
+        message,
+      });
+      return res.status(201).json({ success: true, data });
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+      console.error("[createSnapshot] Error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to create snapshot checkpoint",
+      });
+    }
+  }
+
+  /**
+   * POST /projects/:id/snapshots/:snapshotId/restore
+   */
+  async restoreSnapshot(req, res) {
+    try {
+      const { snapshotId } = req.params;
+      const data = await restoreProjectCheckpoint({
+        projectId: req.params.id,
+        snapshotId,
+        userId: req.user.id,
+      });
+      return res.status(200).json(data);
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+      console.error("[restoreSnapshot] Error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to restore snapshot checkpoint",
+      });
+    }
+  }
+
+  /**
    * GET /projects/:id/structure-analysis?snapshotId=...
    */
   async getStructureAnalysis(req, res) {
@@ -445,6 +500,54 @@ class ProjectController {
       return res
         .status(500)
         .json({ success: false, message: "Failed to delete entry" });
+    }
+  }
+
+  /**
+   * POST /projects/validate-archive
+   * Immediate pre-flight validation of uploaded archive language
+   */
+  async validateArchive(req, res) {
+    const file = req.file;
+    if (!file) {
+      return res
+        .status(400)
+        .json({ success: false, message: "No file uploaded" });
+    }
+
+    const filePath = file.path;
+    const fileSource = filePath || file.buffer;
+
+    try {
+      const { scanArchiveBomb } =
+        await import("../middlewares/upload.middleware.js");
+      const { validateArchiveLanguage } =
+        await import("../utils/languageDetector.js");
+
+      await scanArchiveBomb(fileSource, file.originalname);
+      const result = await validateArchiveLanguage(
+        fileSource,
+        file.originalname,
+      );
+
+      return res.status(200).json({
+        success: true,
+        isSupported: result.isSupported,
+        primaryLanguage: result.primaryLanguage,
+        reason: result.reason,
+        stats: result.stats,
+      });
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    } finally {
+      if (filePath && fs.existsSync(filePath)) {
+        try {
+          fs.unlinkSync(filePath);
+        } catch (_) {}
+      }
     }
   }
 

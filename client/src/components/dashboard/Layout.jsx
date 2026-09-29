@@ -26,6 +26,7 @@ import Billing from "./settings/Billing";
 import { ToastProvider, useToast } from "./ToastContext";
 import MissingTestFilesModal from "./MissingTestFilesModal";
 import PanelResizer from "./PanelResizer";
+import ConfirmDialog from "../common/ConfirmDialog";
 import {
   PanelLeftClose,
   PanelLeftOpen,
@@ -40,6 +41,8 @@ import {
   Menu,
   X,
   MoreHorizontal,
+  Terminal,
+  LogOut,
 } from "lucide-react";
 
 import { useAuth } from "../../hooks/useAuth";
@@ -82,7 +85,7 @@ function LayoutInner() {
   const { showToast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const searchParams = new URLSearchParams(location.search);
   const initialProjectId = searchParams.get("projectId");
   const initialTab = searchParams.get("tab") || "explorer";
@@ -91,13 +94,18 @@ function LayoutInner() {
 
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [showCFG, setShowCFG] = useState(false);
 
-  const { logout } = useAuth();
+  const handleLogout = () => {
+    setShowLogoutConfirm(false);
+    logout();
+    navigate("/", { replace: true });
+  };
 
   const handleSelectActivity = (id) => {
     if (id === "logout") {
-      logout();
-      navigate("/");
+      setShowLogoutConfirm(true);
       return;
     }
     if (id === "logic-analysis") {
@@ -133,9 +141,8 @@ function LayoutInner() {
   const [activeFileId, setActiveFileId] = useState(null);
   const [coverageType, setCoverageType] = useState("unit");
   const [showImport, setShowImport] = useState(false);
-  const [showCFG, setShowCFG] = useState(false);
-  const [cfgInitialContext, setCfgInitialContext] = useState(null);
   const [showQualityDashboard, setShowQualityDashboard] = useState(false);
+  const [cfgInitialContext, setCfgInitialContext] = useState(null);
 
   const handleOpenCFG = (filePath = null, functionName = null) => {
     if (filePath) {
@@ -269,7 +276,9 @@ function LayoutInner() {
                     setActiveTabId((currActive) => {
                       if (remaining.some((t) => t.id === currActive))
                         return currActive;
-                      return remaining[0]?.id || null;
+                      const nextId = remaining[0]?.id || null;
+                      setActiveFileId(nextId);
+                      return nextId;
                     });
                   }
                   return remaining;
@@ -450,8 +459,15 @@ function LayoutInner() {
     const idx = tabs.findIndex((t) => t.id === tabId);
     const next = tabs.filter((t) => t.id !== tabId);
     setTabs(next);
-    if (activeTabId === tabId && next.length > 0) {
-      setActiveTabId(next[Math.max(0, idx - 1)].id);
+    if (activeTabId === tabId) {
+      if (next.length > 0) {
+        const nextActiveId = next[Math.max(0, idx - 1)].id;
+        setActiveTabId(nextActiveId);
+        setActiveFileId(nextActiveId);
+      } else {
+        setActiveTabId(null);
+        setActiveFileId(null);
+      }
     }
   };
 
@@ -556,89 +572,85 @@ function LayoutInner() {
           ? "Queued..."
           : "Run Tests";
 
+  const rawActivePath = activeTabId || activeFileId;
+  const activeFilePath = rawActivePath
+    ? String(rawActivePath)
+        .replace(/\\/g, "/")
+        .replace(/^\.?\//, "")
+    : null;
+  const cleanFilePath =
+    activeFilePath &&
+    project?.name &&
+    activeFilePath.startsWith(project.name + "/")
+      ? activeFilePath.slice(project.name.length + 1)
+      : activeFilePath;
+  const filePathSegments = cleanFilePath
+    ? cleanFilePath.split("/").filter(Boolean)
+    : [];
+
   return (
     <div
       className="ide-root"
       style={{ background: "var(--ide-bg)", color: "var(--text-primary)" }}
     >
-      <div
-        className="flex items-center justify-between flex-shrink-0"
-        style={{
-          height: 42,
-          paddingLeft: isMobile ? 8 : 16,
-          paddingRight: isMobile ? 8 : 16,
-          background: "#0d1117",
-          borderBottom: "1px solid var(--ide-border)",
-          zIndex: 20,
-          position: "relative",
-        }}
-      >
-        <div className="flex items-center gap-4" style={{ minWidth: 0 }}>
-          {!isMobile && (
-            <div className="flex items-center gap-2">
-              {[
-                { color: "#ff5f57" },
-                { color: "#febc2e" },
-                { color: "#28c840" },
-              ].map((dot, i) => (
-                <motion.div
-                  key={i}
-                  whileHover={{ scale: 1.15 }}
-                  style={{
-                    width: 12,
-                    height: 12,
-                    borderRadius: "50%",
-                    background: dot.color,
-                    cursor: "pointer",
-                  }}
-                />
-              ))}
-            </div>
-          )}
+      <div className="flex items-center justify-between flex-shrink-0 h-11 px-3 sm:px-4 bg-[var(--color-surface)] border-b border-[var(--color-border)] text-[var(--color-text)] font-sans relative z-40 select-none">
+        <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1 mr-2 overflow-hidden">
           {isMobile ? (
-            <motion.button
-              whileTap={{ scale: 0.9 }}
+            <button
+              type="button"
               onClick={() => setMobileNavOpen((o) => !o)}
-              style={{
-                color: "#8b949e",
-                background: "transparent",
-                border: "none",
-                cursor: "pointer",
-                padding: 4,
-                display: "flex",
-                alignItems: "center",
-              }}
+              className="text-[var(--color-text-secondary)] hover:text-[var(--color-text)] p-1 bg-transparent border-0 cursor-pointer flex-shrink-0"
+              aria-label="Toggle mobile menu"
             >
               {mobileNavOpen ? <X size={18} /> : <Menu size={18} />}
-            </motion.button>
+            </button>
           ) : (
-            <div
-              style={{
-                width: 1,
-                height: 16,
-                background: "rgba(255,255,255,0.07)",
-                flexShrink: 0,
-              }}
-            />
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <div className="w-6 h-6 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-white flex items-center justify-center font-bold text-xs shrink-0">
+                <Terminal size={13} strokeWidth={2.5} />
+              </div>
+              <span className="font-bold text-xs tracking-tight text-[var(--color-text)]">
+                CovAI
+              </span>
+              <span className="text-[10px] text-[var(--color-text-muted)] font-mono">
+                Studio
+              </span>
+            </div>
           )}
-          <div
-            className="flex items-center gap-2"
-            style={{ fontSize: 12, minWidth: 0 }}
-          >
-            <span
-              style={{
-                color: "#a78bfa",
-                fontWeight: 700,
-                fontSize: 13,
-                fontFamily: "var(--font-sans)",
-                letterSpacing: "-0.02em",
-                whiteSpace: "nowrap",
-              }}
-            >
-              TestCovAI
-            </span>
-          </div>
+          {project?.name && (
+            <div className="hidden sm:flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] font-mono min-w-0 overflow-hidden">
+              <span className="flex-shrink-0 select-none">/</span>
+              <span
+                className="text-[var(--color-text-secondary)] font-medium truncate max-w-[120px] md:max-w-[180px]"
+                title={project.name}
+              >
+                {project.name}
+              </span>
+              {filePathSegments.map((segment, idx) => {
+                const isLast = idx === filePathSegments.length - 1;
+                return (
+                  <span
+                    key={`${segment}-${idx}`}
+                    className="flex items-center gap-1.5 min-w-0"
+                  >
+                    <span className="flex-shrink-0 select-none">/</span>
+                    <span
+                      className={`truncate max-w-[100px] md:max-w-[180px] ${
+                        isLast
+                          ? "text-[var(--color-text)] font-semibold"
+                          : "text-[var(--color-text-secondary)] font-medium"
+                      }`}
+                      title={cleanFilePath}
+                    >
+                      {segment}
+                    </span>
+                  </span>
+                );
+              })}
+            </div>
+          )}
         </div>
+
         <div
           className="flex items-center gap-2"
           style={{ position: "relative" }}
@@ -649,107 +661,63 @@ function LayoutInner() {
             projectName={currentProjectName}
             onGenerate={handleGenerateTests}
           />
-          {!isCompact && (
-            <div
-              className="flex items-center gap-2 rounded-md"
-              style={{
-                background: "rgba(255,255,255,0.04)",
-                border: "1px solid rgba(255,255,255,0.07)",
-                color: "#484f58",
-                fontSize: 12,
-                fontFamily: "var(--font-sans)",
-                width: 160,
-                padding: "5px 12px",
-              }}
-            >
-              <svg
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-              >
-                <circle cx="11" cy="11" r="8" />
-                <path d="m21 21-4.35-4.35" />
-              </svg>
-              <span>Search files...</span>
-            </div>
-          )}
-
-          {/* Removed "Run Tests" button */}
 
           {!isMobile && (
-            <motion.button
-              whileHover={{ scale: 1.03 }}
-              whileTap={{ scale: 0.97 }}
+            <button
+              type="button"
               onClick={() => navigate("/projects")}
-              className="flex items-center gap-1.5 rounded-lg text-xs font-medium"
-              style={{
-                background: "rgba(255,255,255,0.04)",
-                color: "#8b949e",
-                border: "1px solid rgba(255,255,255,0.07)",
-                cursor: "pointer",
-                fontFamily: "var(--font-sans)",
-                padding: "6px 14px",
-                whiteSpace: "nowrap",
-              }}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-[var(--radius-md)] text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-border)] border border-[var(--color-border)] transition-colors cursor-pointer"
+              title="Return to Projects Workspace"
             >
-              <FolderPlus size={11} />
-              {!isTablet && "Projects"}
-            </motion.button>
+              <FolderPlus size={12} />
+              {!isTablet && <span>Projects</span>}
+            </button>
           )}
-          <div
-            className="flex items-center"
-            style={{
-              background: "rgba(255,255,255,0.03)",
-              border: "1px solid rgba(255,255,255,0.07)",
-              borderRadius: 8,
-              padding: "2px 4px",
-              gap: 2,
-            }}
-          >
-            <motion.button
-              whileTap={{ scale: 0.9 }}
+
+          <div className="flex items-center rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] p-0.5 gap-0.5">
+            <button
+              type="button"
               onClick={() => setSidebarOpen((o) => !o)}
-              style={{
-                color: sidebarOpen ? "#6e7681" : "#484f58",
-                background: "transparent",
-                border: "none",
-                cursor: "pointer",
-                padding: "4px 6px",
-                borderRadius: 6,
-                display: "flex",
-                alignItems: "center",
-              }}
+              className={`p-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${
+                sidebarOpen
+                  ? "text-[var(--color-primary)]"
+                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              }`}
+              title={
+                sidebarOpen
+                  ? "Collapse Explorer (Left)"
+                  : "Expand Explorer (Left)"
+              }
             >
               {sidebarOpen ? (
                 <PanelLeftClose size={14} />
               ) : (
                 <PanelLeftOpen size={14} />
               )}
-            </motion.button>
-            <motion.button
-              whileTap={{ scale: 0.9 }}
+            </button>
+
+            <button
+              type="button"
               onClick={() => setAiPanelOpen((o) => !o)}
-              style={{
-                color: aiPanelOpen ? "#6e7681" : "#484f58",
-                background: "transparent",
-                border: "none",
-                cursor: "pointer",
-                padding: "4px 6px",
-                borderRadius: 6,
-                display: "flex",
-                alignItems: "center",
-              }}
+              className={`p-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${
+                aiPanelOpen
+                  ? "text-[var(--color-primary)]"
+                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              }`}
+              title={
+                aiPanelOpen
+                  ? "Collapse Assistant (Right)"
+                  : "Expand Assistant (Right)"
+              }
             >
               {aiPanelOpen ? (
                 <PanelRightClose size={14} />
               ) : (
                 <PanelRightOpen size={14} />
               )}
-            </motion.button>
-            <NotificationCenter userId={user?.id} size={14} theme="dark" />
+            </button>
+
+            <NotificationCenter userId={user?.id} size={14} />
           </div>
         </div>
       </div>
@@ -761,7 +729,10 @@ function LayoutInner() {
         style={{ gap: 1, position: "relative" }}
       >
         {!isMobile && (
-          <motion.div variants={panelVariants}>
+          <motion.div
+            variants={panelVariants}
+            className="h-full flex flex-col shrink-0"
+          >
             <ActivityBar
               active={showCFG ? "logic-analysis" : activeActivity}
               onSelect={handleSelectActivity}
@@ -876,7 +847,7 @@ function LayoutInner() {
               {activeSetting === "billing" && <Billing />}
             </div>
           ) : activeActivity === "jobs" ? (
-            <JobQueue projectId={project?.id} />
+            <JobQueue projectId={project?.id} onSync={handleGitSync} />
           ) : activeActivity === "architecture" ? (
             <ProjectArchitecturePanel projectId={project?.id} />
           ) : activeActivity === "coverage" ? (
@@ -893,7 +864,7 @@ function LayoutInner() {
                   projectId={project?.id}
                   onOpenFile={handleOpenFileByPath}
                   onSuggestTestcase={handleSuggestTestcase}
-                  onOpenCFG={handleOpenCFG}
+                  onOpenCFG={() => setShowCFG(true)}
                 />
               ) : coverageType === "integration" ? (
                 <IntegrationTestDashboard
@@ -906,6 +877,8 @@ function LayoutInner() {
                   }
                   projectId={project?.id}
                   onOpenFile={handleOpenFileByPath}
+                  onOpenCFG={handleOpenCFG}
+                  onSuggestTestcase={handleSuggestTestcase}
                 />
               ) : (
                 <SystemTestDashboard
@@ -925,7 +898,10 @@ function LayoutInner() {
             <Editor
               tabs={tabs}
               activeTabId={activeTabId}
-              onSelectTab={setActiveTabId}
+              onSelectTab={(tabId) => {
+                setActiveTabId(tabId);
+                setActiveFileId(tabId);
+              }}
               onCloseTab={handleCloseTab}
               onReorderTabs={setTabs}
               fileTree={fileTree}
@@ -1015,68 +991,33 @@ function LayoutInner() {
           )}
         </AnimatePresence>
       </motion.div>
-      <div
-        className="flex items-center justify-between flex-shrink-0"
-        style={{
-          minHeight: 26,
-          paddingLeft: isMobile ? 8 : 16,
-          paddingRight: isMobile ? 8 : 16,
-          background: "#7c3aed",
-          fontSize: 11,
-          color: "rgba(255,255,255,0.85)",
-          fontFamily: "var(--font-sans)",
-          flexWrap: "nowrap",
-          overflowX: "auto",
-          overflowY: "hidden",
-          whiteSpace: "nowrap",
-        }}
-      >
-        <div
-          className="flex items-center gap-4"
-          style={{ flexWrap: "nowrap", flexShrink: 0 }}
-        >
-          <div className="flex items-center gap-1.5">
-            <GitBranch size={11} />
+      <div className="flex items-center justify-between flex-shrink-0 h-6 px-3 sm:px-4 bg-[var(--color-surface)] border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] font-mono whitespace-nowrap overflow-x-auto select-none">
+        <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-1.5 text-[var(--color-text-secondary)]">
+            <GitBranch size={11} className="text-[var(--color-primary)]" />
             {!isMobile && <span>main</span>}
           </div>
           {!isMobile && (
             <>
-              <div
-                style={{
-                  width: 1,
-                  height: 12,
-                  background: "rgba(255,255,255,0.2)",
-                }}
-              />
-              <div className="flex items-center gap-1.5">
-                <CheckCircle2 size={11} style={{ color: "#86efac" }} />
-                <span>0 errors</span>
+              <div className="w-px h-3 bg-[var(--color-border)]" />
+              <div className="flex items-center gap-1.5 text-[var(--color-success)]">
+                <CheckCircle2 size={11} />
+                <span>Engine Ready</span>
               </div>
-              <div className="flex items-center gap-1.5">
-                <Zap size={11} style={{ color: "#fde68a" }} />
-                <span>TypeScript</span>
+              <div className="flex items-center gap-1.5 text-[var(--color-text-muted)] font-sans">
+                <span>{project?.name || "Workspace"}</span>
               </div>
             </>
           )}
         </div>
-        <div
-          className="flex items-center gap-4"
-          style={{ flexWrap: "nowrap", flexShrink: 0 }}
-        >
-          <div className="flex items-center gap-1.5">
-            <BarChart3 size={11} />
-            <span>{isMobile ? "84%" : "Coverage: 84%"}</span>
+        <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-1.5 text-[var(--color-text-secondary)]">
+            <BarChart3 size={11} className="text-[var(--color-primary)]" />
+            <span>Target: 80%+</span>
           </div>
           {!isMobile && (
             <>
-              <div
-                style={{
-                  width: 1,
-                  height: 12,
-                  background: "rgba(255,255,255,0.2)",
-                }}
-              />
-              <span>Ln 29, Col 1</span>
+              <div className="w-px h-3 bg-[var(--color-border)]" />
               <span>UTF-8</span>
             </>
           )}
@@ -1096,12 +1037,7 @@ function LayoutInner() {
       </AnimatePresence>
       <AnimatePresence>
         {showCFG && (
-          <CFGCalculator 
-            project={project} 
-            onClose={handleCloseCFG} 
-            initialFile={cfgInitialContext?.initialFile}
-            initialFunc={cfgInitialContext?.initialFunc}
-          />
+          <CFGCalculator project={project} onClose={handleCloseCFG} initialFile={cfgInitialContext?.initialFile} initialFunc={cfgInitialContext?.initialFunc} />
         )}
       </AnimatePresence>
       <AnimatePresence>
@@ -1112,6 +1048,18 @@ function LayoutInner() {
           />
         )}
       </AnimatePresence>
+
+      <ConfirmDialog
+        isOpen={showLogoutConfirm}
+        onClose={() => setShowLogoutConfirm(false)}
+        onConfirm={handleLogout}
+        title="Sign Out"
+        message="Are you sure you want to sign out of your workspace session? You will be redirected to the home landing page."
+        confirmText="Sign Out"
+        cancelText="Cancel"
+        variant="danger"
+        icon={LogOut}
+      />
     </div>
   );
 }

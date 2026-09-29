@@ -29,12 +29,14 @@ import {
   Terminal,
 } from "lucide-react";
 import MonacoEditor from "@monaco-editor/react";
+import { useTheme } from "../../contexts/ThemeContext";
 import { GitPanel } from "./GitPanel";
 import {
   getFileContentApi,
   updateFileContentApi,
 } from "../../services/project.service";
 import { getFileCoverage } from "../../services/coverage.service";
+import { EditorCodeSkeleton } from "../common/Skeleton";
 
 /* ── Smart File Icon Resolver ────────────────────────────── */
 function getFileIcon(fileName = "") {
@@ -170,10 +172,9 @@ function ReorderableTab({ tab, isActive, onSelect, onClose }) {
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: -6, width: 0 }}
       whileDrag={{
-        scale: 1.04,
+        scale: 1.02,
         zIndex: 50,
-        boxShadow:
-          "0 8px 24px rgba(0, 0, 0, 0.7), 0 0 12px rgba(124, 58, 237, 0.5)",
+        boxShadow: "0 4px 12px rgba(0, 0, 0, 0.25)",
         cursor: "grabbing",
       }}
       onMouseEnter={() => setHovered(true)}
@@ -184,9 +185,9 @@ function ReorderableTab({ tab, isActive, onSelect, onClose }) {
         minWidth: 120,
         maxWidth: 200,
         padding: "0 12px",
-        background: isActive ? "#0d1117" : "transparent",
-        color: isActive ? "#f0f6fc" : "#8b949e",
-        borderRight: "1px solid rgba(255, 255, 255, 0.06)",
+        background: isActive ? "var(--color-bg)" : "transparent",
+        color: isActive ? "var(--color-text)" : "var(--color-text-secondary)",
+        borderRight: "1px solid var(--color-border)",
         fontFamily: "var(--font-sans)",
         fontSize: 12,
         fontWeight: isActive ? 500 : 400,
@@ -200,8 +201,7 @@ function ReorderableTab({ tab, isActive, onSelect, onClose }) {
           className="absolute top-0 left-0 right-0"
           style={{
             height: 2,
-            background: "linear-gradient(90deg, #7c3aed 0%, #22d3ee 100%)",
-            boxShadow: "0 0 10px rgba(124, 58, 237, 0.7)",
+            background: "var(--color-primary)",
           }}
         />
       )}
@@ -223,8 +223,7 @@ function ReorderableTab({ tab, isActive, onSelect, onClose }) {
               width: 7,
               height: 7,
               borderRadius: "50%",
-              background: "#a78bfa",
-              boxShadow: "0 0 6px #a78bfa",
+              background: "var(--color-primary)",
               display: "inline-block",
             }}
           />
@@ -287,17 +286,17 @@ function MarkdownPreview({ content }) {
               key={`code-${idx}`}
               className="my-3 rounded-lg overflow-hidden"
               style={{
-                background: "#090d13",
-                border: "1px solid rgba(255, 255, 255, 0.08)",
+                background: "var(--color-surface)",
+                border: "1px solid var(--color-border)",
               }}
             >
               <div
                 className="flex items-center justify-between px-3 py-1.5"
                 style={{
-                  background: "rgba(255, 255, 255, 0.02)",
-                  borderBottom: "1px solid rgba(255, 255, 255, 0.06)",
+                  background: "var(--color-bg)",
+                  borderBottom: "1px solid var(--color-border)",
                   fontSize: 11,
-                  color: "#8b949e",
+                  color: "var(--color-text-secondary)",
                 }}
               >
                 <span>{codeLang || "text"}</span>
@@ -306,7 +305,7 @@ function MarkdownPreview({ content }) {
                 className="p-3 text-xs overflow-x-auto m-0"
                 style={{
                   fontFamily: "var(--font-mono)",
-                  color: "#e6edf3",
+                  color: "var(--color-text)",
                   lineHeight: 1.6,
                 }}
               >
@@ -335,8 +334,8 @@ function MarkdownPreview({ content }) {
             key={idx}
             className="text-xl font-bold pb-2 mb-3 mt-4"
             style={{
-              color: "#f0f6fc",
-              borderBottom: "1px solid rgba(255, 255, 255, 0.1)",
+              color: "var(--color-text)",
+              borderBottom: "1px solid var(--color-border)",
             }}
           >
             {trimmed.slice(2)}
@@ -351,8 +350,8 @@ function MarkdownPreview({ content }) {
             key={idx}
             className="text-base font-semibold pb-1 mb-2 mt-4"
             style={{
-              color: "#e6edf3",
-              borderBottom: "1px solid rgba(255, 255, 255, 0.06)",
+              color: "var(--color-text)",
+              borderBottom: "1px solid var(--color-border)",
             }}
           >
             {trimmed.slice(3)}
@@ -366,7 +365,7 @@ function MarkdownPreview({ content }) {
           <h3
             key={idx}
             className="text-sm font-semibold mb-1 mt-3"
-            style={{ color: "#c4b5fd" }}
+            style={{ color: "var(--color-primary)" }}
           >
             {trimmed.slice(4)}
           </h3>,
@@ -378,14 +377,15 @@ function MarkdownPreview({ content }) {
         elements.push(
           <div
             key={idx}
-            className="flex items-start gap-2 text-sm text-[#c9d1d9] pl-2 py-0.5"
+            className="flex items-start gap-2 text-sm pl-2 py-0.5"
+            style={{ color: "var(--color-text)" }}
           >
             <span
               style={{
                 width: 4,
                 height: 4,
                 borderRadius: "50%",
-                background: "#a78bfa",
+                background: "var(--color-primary)",
                 marginTop: 8,
                 flexShrink: 0,
               }}
@@ -399,7 +399,8 @@ function MarkdownPreview({ content }) {
       elements.push(
         <p
           key={idx}
-          className="text-sm text-[#c9d1d9] leading-relaxed m-0 py-0.5"
+          className="text-sm leading-relaxed m-0 py-0.5"
+          style={{ color: "var(--color-text)" }}
         >
           {line}
         </p>,
@@ -413,22 +414,34 @@ function MarkdownPreview({ content }) {
     <div
       className="flex-1 overflow-y-auto p-8 custom-scrollbar"
       style={{
-        background: "#0d1117",
+        background: "var(--color-bg)",
         maxWidth: 900,
         margin: "0 auto",
         width: "100%",
+        color: "var(--color-text)",
       }}
     >
-      <div className="flex items-center justify-between pb-4 mb-4 border-b border-white/5">
+      <div
+        className="flex items-center justify-between pb-4 mb-4"
+        style={{ borderBottom: "1px solid var(--color-border)" }}
+      >
         <div className="flex items-center gap-2">
-          <FileText size={16} className="text-cyan-400" />
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+          <FileText size={16} style={{ color: "var(--color-primary)" }} />
+          <span
+            className="text-xs font-semibold uppercase tracking-wider"
+            style={{ color: "var(--color-text-secondary)" }}
+          >
             Markdown Preview
           </span>
         </div>
         <button
           onClick={handleCopy}
-          className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 transition-colors"
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs transition-colors cursor-pointer"
+          style={{
+            color: "var(--color-text-secondary)",
+            background: "var(--color-surface)",
+            border: "1px solid var(--color-border)",
+          }}
         >
           {copied ? (
             <Check size={12} className="text-green-400" />
@@ -461,6 +474,7 @@ export default function Editor({
   onSuggestTestcase,
   refreshTrigger,
 }) {
+  const { resolvedTheme } = useTheme();
   const [fileContents, setFileContents] = useState({});
   const fetchedRef = useRef(new Set());
   const saveHandlerRef = useRef(null);
@@ -730,6 +744,38 @@ export default function Editor({
         "editor.inactiveSelectionBackground": "#7c3aed20",
       },
     });
+
+    monaco.editor.defineTheme("covai-light", {
+      base: "vs",
+      inherit: true,
+      rules: [
+        { token: "comment", foreground: "6a737d", fontStyle: "italic" },
+        { token: "keyword", foreground: "7c3aed", fontStyle: "bold" },
+        { token: "identifier", foreground: "24292e" },
+        { token: "string", foreground: "032f62" },
+        { token: "number", foreground: "005cc5" },
+        { token: "type", foreground: "0891b2" },
+        { token: "function", foreground: "2563eb" },
+        { token: "delimiter", foreground: "586069" },
+      ],
+      colors: {
+        "editor.background": "#ffffff",
+        "editor.foreground": "#24292e",
+        "editor.lineHighlightBackground": "#f6f8fa",
+        "editor.lineHighlightBorder": "#00000000",
+        "editorCursor.foreground": "#7c3aed",
+        "editorWhitespace.foreground": "#e1e4e8",
+        "editorIndentGuide.background": "#e1e4e8",
+        "editorIndentGuide.activeBackground": "#7c3aed40",
+        "editorLineNumber.foreground": "#959da5",
+        "editorLineNumber.activeForeground": "#7c3aed",
+        "scrollbarSlider.background": "#00000015",
+        "scrollbarSlider.hoverBackground": "#00000030",
+        "scrollbarSlider.activeBackground": "#00000045",
+        "editor.selectionBackground": "#7c3aed25",
+        "editor.inactiveSelectionBackground": "#7c3aed15",
+      },
+    });
   };
 
   const handleEditorDidMount = (editor, monaco) => {
@@ -757,24 +803,25 @@ export default function Editor({
         className="flex flex-col flex-1 h-full min-w-0 items-center justify-center p-6 text-center"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        style={{ background: "#0d1117" }}
+        style={{ background: "var(--color-bg)" }}
       >
         <div
           className="flex items-center justify-center w-14 h-14 rounded-2xl mb-4"
           style={{
-            background: "rgba(124, 58, 237, 0.1)",
-            border: "1px solid rgba(124, 58, 237, 0.25)",
-            boxShadow: "0 0 20px rgba(124, 58, 237, 0.2)",
+            background: "var(--color-surface)",
+            border: "1px solid var(--color-border)",
           }}
         >
-          <Code2 size={26} className="text-purple-400" />
+          <Code2 size={26} style={{ color: "var(--color-primary)" }} />
         </div>
-        <div style={{ color: "#f0f6fc", fontSize: 18, fontWeight: 600 }}>
+        <div
+          style={{ color: "var(--color-text)", fontSize: 18, fontWeight: 600 }}
+        >
           No workspace files detected
         </div>
         <div
           style={{
-            color: "#8b949e",
+            color: "var(--color-text-secondary)",
             fontSize: 13,
             marginTop: 6,
             maxWidth: 360,
@@ -794,26 +841,26 @@ export default function Editor({
         className="flex flex-col flex-1 h-full min-w-0 items-center justify-center p-6 text-center select-none"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        style={{ background: "#0d1117" }}
+        style={{ background: "var(--color-bg)" }}
       >
         <div
-          className="flex items-center justify-center w-16 h-16 rounded-2xl mb-4"
+          className="flex items-center justify-center w-14 h-14 rounded-xl mb-4"
           style={{
-            background:
-              "linear-gradient(135deg, rgba(124, 58, 237, 0.15), rgba(34, 211, 238, 0.1))",
-            border: "1px solid rgba(124, 58, 237, 0.3)",
-            boxShadow: "0 0 24px rgba(124, 58, 237, 0.25)",
+            background: "var(--color-surface)",
+            border: "1px solid var(--color-border)",
           }}
         >
-          <Sparkles size={28} style={{ color: "#a78bfa" }} />
+          <Sparkles size={24} style={{ color: "var(--color-primary)" }} />
         </div>
 
-        <div style={{ color: "#f0f6fc", fontSize: 18, fontWeight: 600 }}>
+        <div
+          style={{ color: "var(--color-text)", fontSize: 18, fontWeight: 600 }}
+        >
           Welcome to TestCovAI Editor
         </div>
         <div
           style={{
-            color: "#8b949e",
+            color: "var(--color-text-secondary)",
             fontSize: 13,
             marginTop: 6,
             maxWidth: 380,
@@ -825,15 +872,44 @@ export default function Editor({
         </div>
 
         {/* Shortcut Hints */}
-        <div className="flex items-center gap-4 mt-6 text-xs text-slate-400">
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10">
-            <kbd className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-[11px] text-purple-300">
+        <div
+          className="flex items-center gap-4 mt-6 text-xs"
+          style={{ color: "var(--color-text-secondary)" }}
+        >
+          <div
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border"
+            style={{
+              background: "var(--color-surface)",
+              borderColor: "var(--color-border)",
+            }}
+          >
+            <kbd
+              className="px-1.5 py-0.5 rounded font-mono text-[11px]"
+              style={{
+                background: "var(--color-bg)",
+                border: "1px solid var(--color-border)",
+                color: "var(--color-primary)",
+              }}
+            >
               Ctrl + S
             </kbd>
             <span>Save file</span>
           </div>
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10">
-            <kbd className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-[11px] text-cyan-300">
+          <div
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border"
+            style={{
+              background: "var(--color-surface)",
+              borderColor: "var(--color-border)",
+            }}
+          >
+            <kbd
+              className="px-1.5 py-0.5 rounded font-mono text-[11px]"
+              style={{
+                background: "var(--color-bg)",
+                border: "1px solid var(--color-border)",
+                color: "var(--color-primary)",
+              }}
+            >
               Alt + Z
             </kbd>
             <span>Toggle wrap</span>
@@ -852,15 +928,15 @@ export default function Editor({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.2 }}
-      style={{ background: "#0d1117" }}
+      style={{ background: "var(--color-bg)" }}
     >
       {/* ── Tab Bar ──────────────────────────────────────── */}
       <div
         className="flex items-center justify-between flex-shrink-0"
         style={{
           height: 38,
-          background: "#161b22",
-          borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
+          background: "var(--color-surface)",
+          borderBottom: "1px solid var(--color-border)",
         }}
       >
         {/* Left: Drag & Drop Reorderable Tabs */}
@@ -897,12 +973,14 @@ export default function Editor({
               onClick={() => setPreviewMode(!previewMode)}
               className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs transition-colors cursor-pointer"
               style={{
-                color: previewMode ? "#67e8f9" : "#8b949e",
+                color: previewMode
+                  ? "var(--color-primary)"
+                  : "var(--color-text-secondary)",
                 background: previewMode
-                  ? "rgba(34, 211, 238, 0.15)"
+                  ? "var(--color-surface)"
                   : "transparent",
                 border: previewMode
-                  ? "1px solid rgba(34, 211, 238, 0.3)"
+                  ? "1px solid var(--color-border)"
                   : "1px solid transparent",
               }}
               title={
@@ -922,10 +1000,13 @@ export default function Editor({
               onClick={() => setWordWrap(!wordWrap)}
               className="flex items-center gap-1 p-1.5 rounded text-xs transition-colors cursor-pointer"
               style={{
-                color: wordWrap ? "#a78bfa" : "#8b949e",
-                background: wordWrap
-                  ? "rgba(124, 58, 237, 0.12)"
-                  : "transparent",
+                color: wordWrap
+                  ? "var(--color-primary)"
+                  : "var(--color-text-secondary)",
+                background: wordWrap ? "var(--color-surface)" : "transparent",
+                border: wordWrap
+                  ? "1px solid var(--color-border)"
+                  : "1px solid transparent",
               }}
               title={`Word Wrap: ${wordWrap ? "ON" : "OFF"} (Alt+Z)`}
             >
@@ -936,11 +1017,16 @@ export default function Editor({
           {/* Copy Code */}
           <button
             onClick={handleCopyCurrentCode}
-            className="flex items-center gap-1 p-1.5 rounded text-xs text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+            className="flex items-center gap-1 p-1.5 rounded text-xs transition-colors cursor-pointer"
+            style={{
+              color: "var(--color-text-secondary)",
+              background: "transparent",
+              border: "none",
+            }}
             title="Copy all code"
           >
             {copiedCode ? (
-              <Check size={14} className="text-green-400" />
+              <Check size={14} style={{ color: "var(--color-success)" }} />
             ) : (
               <Copy size={14} />
             )}
@@ -954,8 +1040,8 @@ export default function Editor({
         style={{
           minHeight: 32,
           padding: "4px 16px",
-          borderBottom: "1px solid rgba(255, 255, 255, 0.06)",
-          background: "rgba(13, 17, 23, 0.6)",
+          borderBottom: "1px solid var(--color-border)",
+          background: "var(--color-surface)",
           fontSize: 12,
           fontFamily: "var(--font-sans)",
         }}
@@ -968,12 +1054,18 @@ export default function Editor({
               {i > 0 && (
                 <ChevronRight
                   size={11}
-                  style={{ margin: "0 2px", color: "#484f58" }}
+                  style={{
+                    margin: "0 2px",
+                    color: "var(--color-text-secondary)",
+                  }}
                 />
               )}
               <span
                 style={{
-                  color: i === breadcrumb.length - 1 ? "#f0f6fc" : "#8b949e",
+                  color:
+                    i === breadcrumb.length - 1
+                      ? "var(--color-text)"
+                      : "var(--color-text-secondary)",
                   fontWeight: i === breadcrumb.length - 1 ? 500 : 400,
                 }}
               >
@@ -993,9 +1085,9 @@ export default function Editor({
               <span
                 className="px-2 py-0.5 rounded"
                 style={{
-                  background: "rgba(255,255,255,0.05)",
+                  background: "var(--color-bg)",
                   color: covPctColor(fileCoverage.summary.linesPct),
-                  border: "1px solid rgba(255,255,255,0.08)",
+                  border: "1px solid var(--color-border)",
                 }}
                 title="Line Coverage"
               >
@@ -1004,9 +1096,9 @@ export default function Editor({
               <span
                 className="px-2 py-0.5 rounded"
                 style={{
-                  background: "rgba(255,255,255,0.05)",
+                  background: "var(--color-bg)",
                   color: covPctColor(fileCoverage.summary.branchesPct),
-                  border: "1px solid rgba(255,255,255,0.08)",
+                  border: "1px solid var(--color-border)",
                 }}
                 title="Branch Coverage"
               >
@@ -1015,9 +1107,9 @@ export default function Editor({
               <span
                 className="px-2 py-0.5 rounded"
                 style={{
-                  background: "rgba(255,255,255,0.05)",
+                  background: "var(--color-bg)",
                   color: covPctColor(fileCoverage.summary.stmtsPct),
-                  border: "1px solid rgba(255,255,255,0.08)",
+                  border: "1px solid var(--color-border)",
                 }}
                 title="Statement Coverage"
               >
@@ -1026,26 +1118,10 @@ export default function Editor({
             </div>
           )}
 
-          {snapshotId && !isCurrentTestFile && (
-            <button
-              type="button"
-              onClick={() => onSuggestTestcase?.(activeTabId)}
-              className="flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-semibold"
-              style={{
-                background: "rgba(168, 85, 247, 0.15)",
-                color: "#c084fc",
-                border: "1px solid rgba(168, 85, 247, 0.35)",
-                cursor: "pointer",
-                transition: "all 0.15s ease",
-              }}
-              title="Yêu cầu AI Agent gợi ý testcase Jest/Vitest trong chat"
-            >
-              <Sparkles size={12} style={{ color: "#c084fc" }} />
-              <span>Suggest testcase</span>
-            </button>
-          )}
           {saveError && (
-            <span style={{ color: "#f85149", fontSize: 11 }}>{saveError}</span>
+            <span style={{ color: "var(--color-danger)", fontSize: 11 }}>
+              {saveError}
+            </span>
           )}
 
           <button
@@ -1054,26 +1130,24 @@ export default function Editor({
             disabled={!hasUnsavedChanges || saving}
             className="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-all"
             style={{
-              color: hasUnsavedChanges ? "#fff" : "#8b949e",
+              color: hasUnsavedChanges ? "#fff" : "var(--color-text-secondary)",
               background: hasUnsavedChanges
-                ? "linear-gradient(135deg, #7c3aed 0%, #6366f1 100%)"
-                : "rgba(255, 255, 255, 0.04)",
+                ? "var(--color-primary)"
+                : "transparent",
               border: hasUnsavedChanges
-                ? "none"
-                : "1px solid rgba(255, 255, 255, 0.06)",
-              boxShadow: hasUnsavedChanges
-                ? "0 0 10px rgba(124, 58, 237, 0.4)"
-                : "none",
+                ? "1px solid transparent"
+                : "1px solid var(--color-border)",
+              boxShadow: "none",
               cursor: hasUnsavedChanges && !saving ? "pointer" : "default",
             }}
             title="Save changes (Ctrl/Cmd + S)"
           >
             {saving ? (
-              <Loader2 size={12} className="animate-spin text-purple-300" />
+              <Loader2 size={12} className="animate-spin text-white" />
             ) : hasUnsavedChanges ? (
               <Save size={12} />
             ) : (
-              <Check size={12} style={{ color: "#4ade80" }} />
+              <Check size={12} style={{ color: "var(--color-success)" }} />
             )}
             <span>
               {saving ? "Saving..." : hasUnsavedChanges ? "Save" : "Saved"}
@@ -1087,23 +1161,21 @@ export default function Editor({
         <div
           className="flex items-center justify-between px-4 py-2 text-xs flex-shrink-0"
           style={{
-            background: "rgba(124, 58, 237, 0.15)",
-            borderBottom: "1px solid rgba(124, 58, 237, 0.3)",
-            color: "#e9d5ff",
+            background: "var(--color-surface)",
+            borderBottom: "1px solid var(--color-border)",
+            color: "var(--color-text)",
           }}
         >
           <div className="flex items-center gap-2">
             <CheckCircle2
               size={15}
-              style={{ color: "#34d399", flexShrink: 0 }}
+              style={{ color: "var(--color-success)", flexShrink: 0 }}
             />
             <span>
               Đã áp dụng testcase vào file{" "}
-              <strong style={{ color: "#ffffff" }}>
-                {appliedNotification.targetTestFile}
-              </strong>
-              . Hãy xem lại mã dự thảo và bấm <strong>Run Analysis</strong> để
-              xác nhận test vượt qua và độ bao phủ tăng.
+              <strong>{appliedNotification.targetTestFile}</strong>. Hãy xem lại
+              mã dự thảo và bấm <strong>Run Analysis</strong> để xác nhận test
+              vượt qua và độ bao phủ tăng.
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -1114,12 +1186,11 @@ export default function Editor({
                   setAppliedNotification(null);
                   onRunAnalysis();
                 }}
-                className="px-3 py-1 rounded font-semibold text-xs transition-colors"
+                className="px-3 py-1 rounded font-semibold text-xs transition-colors cursor-pointer"
                 style={{
-                  background: "#7c3aed",
+                  background: "var(--color-primary)",
                   color: "#ffffff",
                   border: "none",
-                  cursor: "pointer",
                 }}
               >
                 Run Analysis
@@ -1128,12 +1199,11 @@ export default function Editor({
             <button
               type="button"
               onClick={() => setAppliedNotification(null)}
-              className="p-1 rounded hover:bg-white/10"
+              className="p-1 rounded cursor-pointer"
               style={{
-                color: "#a78bfa",
+                color: "var(--color-text-secondary)",
                 background: "transparent",
                 border: "none",
-                cursor: "pointer",
               }}
             >
               <X size={13} />
@@ -1145,7 +1215,7 @@ export default function Editor({
       {/* ── Code Editor Body ──────────────────────────────── */}
       <div
         className="flex-1 overflow-hidden relative"
-        style={{ background: "#0d1117" }}
+        style={{ background: "var(--color-bg)" }}
       >
         {showGitPanel && (
           <motion.div
@@ -1171,12 +1241,9 @@ export default function Editor({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="flex flex-col items-center justify-center h-full gap-3"
+              className="w-full h-full"
             >
-              <Loader2 size={28} className="animate-spin text-purple-400" />
-              <span className="text-xs text-[#8b949e] font-sans">
-                Reading file content...
-              </span>
+              <EditorCodeSkeleton lines={24} />
             </motion.div>
           ) : currentFile.error ? (
             <motion.div
@@ -1186,8 +1253,11 @@ export default function Editor({
               exit={{ opacity: 0 }}
               className="flex flex-col items-center justify-center h-full gap-3"
             >
-              <AlertCircle size={28} className="text-red-400" />
-              <span className="text-xs text-red-400 font-sans">
+              <AlertCircle size={28} style={{ color: "var(--color-danger)" }} />
+              <span
+                className="text-xs font-sans"
+                style={{ color: "var(--color-danger)" }}
+              >
                 {currentFile.error}
               </span>
             </motion.div>
@@ -1195,10 +1265,10 @@ export default function Editor({
             <MarkdownPreview key="md-preview" content={codeContent} />
           ) : (
             <MonacoEditor
-              key={activeTabId}
+              key={`${activeTabId}-${resolvedTheme}`}
               height="100%"
               language={lang}
-              theme="covai-dark"
+              theme={resolvedTheme === "light" ? "covai-light" : "covai-dark"}
               value={codeContent}
               onChange={handleChange}
               beforeMount={handleEditorWillMount}
@@ -1244,15 +1314,18 @@ export default function Editor({
         style={{
           height: 24,
           padding: "0 14px",
-          borderTop: "1px solid rgba(255, 255, 255, 0.06)",
-          background: "#090d13",
+          borderTop: "1px solid var(--color-border)",
+          background: "var(--color-surface)",
           fontFamily: "var(--font-mono)",
           fontSize: 11,
-          color: "#8b949e",
+          color: "var(--color-text-secondary)",
         }}
       >
         <div className="flex items-center gap-4">
-          <span className="flex items-center gap-1 text-[#c4b5fd]">
+          <span
+            className="flex items-center gap-1"
+            style={{ color: "var(--color-primary)" }}
+          >
             <Code2 size={11} />
             <span>{lang.charAt(0).toUpperCase() + lang.slice(1)}</span>
           </span>
@@ -1262,7 +1335,7 @@ export default function Editor({
           </span>
         </div>
         {!isCurrentTestFile && fileCoverage?.summary && (
-          <span style={{ color: "#8b949e", fontSize: 11 }}>
+          <span style={{ color: "var(--color-text-secondary)", fontSize: 11 }}>
             Coverage: {fileCoverage.summary.linesPct}% (
             {fileCoverage.coveredLines?.length || 0} covered,{" "}
             {fileCoverage.uncoveredLines?.length || 0} uncovered

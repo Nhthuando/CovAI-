@@ -59,15 +59,15 @@ export default function WebhookSettings({ projectId }) {
         showToast({
           type: "info",
           title: "Secret Copied",
-          message:
-            "Webhook secret has been copied to clipboard. Use this in GitHub webhook setup.",
+          message: "Webhook secret has been copied to clipboard.",
         });
       }
     } catch (error) {
+      console.error("[WebhookSettings] Error enabling webhook:", error);
       showToast({
         type: "error",
-        title: "Failed to Enable Webhook",
-        message: error.message || "An error occurred while enabling webhook.",
+        title: "Enable Failed",
+        message: error.message || "Failed to enable webhook",
       });
     } finally {
       setEnabling(false);
@@ -75,9 +75,6 @@ export default function WebhookSettings({ projectId }) {
   };
 
   const handleDisableWebhook = async () => {
-    if (!window.confirm("Are you sure you want to disable the webhook?"))
-      return;
-
     try {
       setDisabling(true);
       await disableWebhookApi(projectId);
@@ -85,7 +82,7 @@ export default function WebhookSettings({ projectId }) {
       showToast({
         type: "success",
         title: "Webhook Disabled",
-        message: "GitHub webhook has been disabled.",
+        message: "GitHub webhook has been deactivated.",
       });
 
       setConfig({
@@ -93,130 +90,97 @@ export default function WebhookSettings({ projectId }) {
         webhookEnabled: false,
       });
     } catch (error) {
+      console.error("[WebhookSettings] Error disabling webhook:", error);
       showToast({
         type: "error",
-        title: "Failed to Disable Webhook",
-        message: error.message || "An error occurred while disabling webhook.",
+        title: "Disable Failed",
+        message: error.message || "Failed to disable webhook",
       });
     } finally {
       setDisabling(false);
     }
   };
 
-  const handleBranchUpdate = async (newBranch) => {
+  const handleBranchUpdate = async (branch) => {
     try {
-      setSelectedBranch(newBranch);
-      await updateWebhookBranchApi(projectId, newBranch);
+      await updateWebhookBranchApi(projectId, branch);
+      setSelectedBranch(branch);
 
       showToast({
         type: "success",
         title: "Branch Updated",
-        message: `Webhook is now tracking the '${newBranch}' branch.`,
+        message: `Now tracking '${branch}' branch for automatic analysis.`,
       });
 
       setConfig({
         ...config,
-        webhookBranch: newBranch,
+        webhookBranch: branch,
       });
     } catch (error) {
+      console.error("[WebhookSettings] Error updating branch:", error);
       showToast({
         type: "error",
-        title: "Failed to Update Branch",
-        message: error.message || "An error occurred while updating branch.",
+        title: "Update Failed",
+        message: error.message || "Failed to update tracked branch",
       });
-      setSelectedBranch(config?.webhookBranch || "main");
     }
   };
 
   const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text);
     setCopySuccess(true);
+    showToast({
+      type: "info",
+      title: "Copied",
+      message: "Webhook URL copied to clipboard",
+    });
     setTimeout(() => setCopySuccess(false), 2000);
   };
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-8">
-        <Loader2 className="animate-spin text-gray-400" size={24} />
+      <div className="flex items-center justify-center p-12 text-[var(--color-text-secondary)] font-sans">
+        <Loader2
+          size={20}
+          className="animate-spin text-[var(--color-primary)] mr-2"
+        />
+        <span className="text-xs">Loading webhook configuration...</span>
       </div>
     );
   }
 
   return (
-    <div style={{ maxWidth: "896px", padding: "24px" }}>
-      <div style={{ marginBottom: "24px" }}>
-        <h1
-          style={{
-            fontSize: "24px",
-            fontWeight: 600,
-            color: "#e6edf3",
-            marginBottom: "8px",
-          }}
-        >
+    <div className="max-w-[920px] p-6 sm:p-8 font-sans text-[var(--color-text)]">
+      {/* Header */}
+      <div className="mb-6">
+        <h1 className="text-lg font-bold text-[var(--color-text)] mb-1.5 flex items-center gap-2.5">
+          <Webhook size={20} className="text-[var(--color-primary)]" />
           GitHub Webhook Integration
         </h1>
-        <p style={{ color: "#8b949e", marginBottom: "0" }}>
-          Automatically trigger analysis when code is pushed to GitHub.
+        <p className="text-xs text-[var(--color-text-secondary)]">
+          Automatically trigger analysis and coverage calculations when code is
+          pushed to GitHub.
         </p>
       </div>
 
       {/* Main Settings Card */}
       <motion.div
-        initial={{ opacity: 0, y: 10 }}
+        initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3 }}
-        style={{
-          background: "rgba(255,255,255,0.03)",
-          border: "1px solid rgba(255,255,255,0.07)",
-          borderRadius: "12px",
-          padding: "24px",
-          marginBottom: "24px",
-        }}
+        transition={{ duration: 0.2 }}
+        className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-lg)] p-6 mb-6"
       >
         {/* Webhook Status */}
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: "24px",
-            paddingBottom: "24px",
-            borderBottom: "1px solid rgba(255,255,255,0.05)",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-            <div
-              style={{
-                width: "48px",
-                height: "48px",
-                borderRadius: "8px",
-                background: "rgba(124,58,237,0.1)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                border: "1px solid rgba(124,58,237,0.3)",
-              }}
-            >
-              <Webhook size={24} style={{ color: "#a78bfa" }} />
+        <div className="flex justify-between items-center pb-6 border-b border-[var(--color-border)] mb-6 flex-wrap gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-[var(--radius-md)] bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/25 flex items-center justify-center text-[var(--color-primary)] shrink-0">
+              <Webhook size={20} />
             </div>
             <div>
-              <h3
-                style={{
-                  fontSize: "16px",
-                  fontWeight: 600,
-                  color: "#e6edf3",
-                  margin: "0 0 4px 0",
-                }}
-              >
+              <h3 className="text-sm font-semibold text-[var(--color-text)]">
                 Automatic Analysis on Push
               </h3>
-              <p
-                style={{
-                  fontSize: "13px",
-                  color: "#8b949e",
-                  margin: 0,
-                }}
-              >
+              <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
                 {config?.webhookEnabled
                   ? `Enabled on branch: ${config?.webhookBranch || "main"}`
                   : "Not enabled"}
@@ -225,44 +189,23 @@ export default function WebhookSettings({ projectId }) {
           </div>
 
           <button
+            type="button"
             onClick={
               config?.webhookEnabled
                 ? handleDisableWebhook
                 : handleEnableWebhook
             }
             disabled={enabling || disabling}
-            style={{
-              padding: "10px 20px",
-              borderRadius: "8px",
-              border: "1px solid rgba(255,255,255,0.1)",
-              background: config?.webhookEnabled
-                ? "rgba(239, 68, 68, 0.1)"
-                : "rgba(124,58,237,0.1)",
-              color: config?.webhookEnabled ? "#ef4444" : "#a78bfa",
-              fontSize: "13px",
-              fontWeight: 500,
-              cursor: enabling || disabling ? "not-allowed" : "pointer",
-              transition: "all 0.2s ease",
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-              opacity: enabling || disabling ? 0.6 : 1,
-            }}
-            onMouseEnter={(e) => {
-              if (!enabling && !disabling) {
-                e.target.style.background = config?.webhookEnabled
-                  ? "rgba(239, 68, 68, 0.2)"
-                  : "rgba(124,58,237,0.2)";
-              }
-            }}
-            onMouseLeave={(e) => {
-              e.target.style.background = config?.webhookEnabled
-                ? "rgba(239, 68, 68, 0.1)"
-                : "rgba(124,58,237,0.1)";
-            }}
+            className={`px-4 py-2 rounded-[var(--radius-md)] text-xs font-semibold cursor-pointer border transition-colors flex items-center gap-2 ${
+              enabling || disabling ? "opacity-60 cursor-not-allowed" : ""
+            } ${
+              config?.webhookEnabled
+                ? "bg-[var(--color-danger)]/10 border-[var(--color-danger)]/25 text-[var(--color-danger)] hover:bg-[var(--color-danger)]/20"
+                : "bg-[var(--color-primary)] border-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)] shadow-xs"
+            }`}
           >
             {enabling || disabling ? (
-              <Loader2 size={14} className="animate-spin" />
+              <Loader2 size={13} className="animate-spin" />
             ) : null}
             {enabling
               ? "Enabling..."
@@ -280,101 +223,46 @@ export default function WebhookSettings({ projectId }) {
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.3 }}
-            style={{ display: "flex", flexDirection: "column", gap: "20px" }}
+            transition={{ duration: 0.2 }}
+            className="flex flex-col gap-4"
           >
             {/* Webhook URL */}
             <div>
-              <label
-                style={{
-                  display: "block",
-                  fontSize: "12px",
-                  fontWeight: 600,
-                  color: "#8b949e",
-                  marginBottom: "8px",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.05em",
-                }}
-              >
+              <label className="block text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-2">
                 Webhook URL
               </label>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                }}
-              >
+              <div className="flex items-center gap-2">
                 <input
                   type="text"
                   readOnly
                   value={config?.webhookUrl || ""}
-                  style={{
-                    flex: 1,
-                    padding: "10px 12px",
-                    borderRadius: "8px",
-                    border: "1px solid rgba(255,255,255,0.08)",
-                    background: "rgba(255,255,255,0.02)",
-                    color: "#8b949e",
-                    fontSize: "12px",
-                    fontFamily: "monospace",
-                  }}
+                  className="flex-1 px-3 py-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text)] text-xs font-mono select-all focus:outline-none focus:border-[var(--color-primary)]"
                 />
                 <button
+                  type="button"
                   onClick={() => copyToClipboard(config?.webhookUrl || "")}
-                  style={{
-                    padding: "10px 12px",
-                    borderRadius: "8px",
-                    border: "1px solid rgba(255,255,255,0.08)",
-                    background: "rgba(255,255,255,0.02)",
-                    color: copySuccess ? "#3fb950" : "#8b949e",
-                    cursor: "pointer",
-                    transition: "all 0.2s ease",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "6px",
-                  }}
-                  onMouseEnter={(e) => {
-                    e.target.style.background = "rgba(255,255,255,0.04)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.target.style.background = "rgba(255,255,255,0.02)";
-                  }}
+                  title="Copy URL"
+                  aria-label="Copy URL"
+                  className="p-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-secondary)] text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors cursor-pointer flex items-center justify-center"
                 >
-                  {copySuccess ? <Check size={14} /> : <Copy size={14} />}
+                  {copySuccess ? (
+                    <Check size={14} className="text-[var(--color-success)]" />
+                  ) : (
+                    <Copy size={14} />
+                  )}
                 </button>
               </div>
             </div>
 
             {/* Branch Selection */}
             <div>
-              <label
-                style={{
-                  display: "block",
-                  fontSize: "12px",
-                  fontWeight: 600,
-                  color: "#8b949e",
-                  marginBottom: "8px",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.05em",
-                }}
-              >
+              <label className="block text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-2">
                 Tracked Branch
               </label>
               <select
                 value={selectedBranch}
                 onChange={(e) => handleBranchUpdate(e.target.value)}
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  borderRadius: "8px",
-                  border: "1px solid rgba(255,255,255,0.08)",
-                  background: "rgba(255,255,255,0.02)",
-                  color: "#e6edf3",
-                  fontSize: "13px",
-                  cursor: "pointer",
-                  transition: "all 0.2s ease",
-                }}
+                className="w-full px-3 py-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text)] text-xs cursor-pointer focus:outline-none focus:border-[var(--color-primary)] font-mono"
               >
                 <option value="main">main</option>
                 <option value="master">master</option>
@@ -386,61 +274,22 @@ export default function WebhookSettings({ projectId }) {
             {/* Last Analyzed Commit */}
             {config?.lastAnalyzedCommit && (
               <div>
-                <label
-                  style={{
-                    display: "block",
-                    fontSize: "12px",
-                    fontWeight: 600,
-                    color: "#8b949e",
-                    marginBottom: "8px",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
-                  }}
-                >
+                <label className="block text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-2">
                   Last Analyzed Commit
                 </label>
-                <div
-                  style={{
-                    padding: "10px 12px",
-                    borderRadius: "8px",
-                    background: "rgba(255,255,255,0.02)",
-                    border: "1px solid rgba(255,255,255,0.08)",
-                    color: "#8b949e",
-                    fontSize: "12px",
-                    fontFamily: "monospace",
-                  }}
-                >
+                <div className="px-3 py-2 rounded-[var(--radius-md)] bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text-secondary)] text-xs font-mono">
                   {config.lastAnalyzedCommit.substring(0, 12)}
                 </div>
               </div>
             )}
 
             {/* Info Box */}
-            <div
-              style={{
-                display: "flex",
-                gap: "12px",
-                padding: "12px 16px",
-                borderRadius: "8px",
-                background: "rgba(59, 130, 246, 0.05)",
-                border: "1px solid rgba(59, 130, 246, 0.2)",
-              }}
-            >
-              <AlertCircle
-                size={16}
-                style={{ color: "#3b82f6", flexShrink: 0, marginTop: "2px" }}
-              />
-              <p
-                style={{
-                  fontSize: "12px",
-                  color: "#6b7280",
-                  margin: 0,
-                  lineHeight: 1.5,
-                }}
-              >
+            <div className="flex gap-2.5 p-3.5 rounded-[var(--radius-md)] bg-[var(--color-info)]/10 border border-[var(--color-info)]/20 text-[var(--color-info)] text-xs">
+              <AlertCircle size={15} className="shrink-0 mt-0.5" />
+              <p className="leading-relaxed opacity-90 m-0">
                 When enabled, every push to the selected branch will
                 automatically trigger code analysis. Analysis results and
-                coverage reports will be updated in real-time.
+                coverage reports will update in real time.
               </p>
             </div>
           </motion.div>
@@ -448,44 +297,16 @@ export default function WebhookSettings({ projectId }) {
 
         {/* Setup Instructions */}
         {!config?.webhookEnabled && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.3 }}
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: "12px",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                gap: "12px",
-                padding: "12px 16px",
-                borderRadius: "8px",
-                background: "rgba(107, 114, 128, 0.05)",
-                border: "1px solid rgba(107, 114, 128, 0.2)",
-              }}
-            >
-              <AlertCircle
-                size={16}
-                style={{ color: "#6b7280", flexShrink: 0, marginTop: "2px" }}
-              />
-              <p
-                style={{
-                  fontSize: "12px",
-                  color: "#6b7280",
-                  margin: 0,
-                  lineHeight: 1.5,
-                }}
-              >
-                Enable webhook to automatically analyze your code whenever you
-                push to GitHub. Click the enable button above to get started.
-              </p>
-            </div>
-          </motion.div>
+          <div className="flex gap-2.5 p-3.5 rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-xs text-[var(--color-text-secondary)]">
+            <AlertCircle
+              size={15}
+              className="shrink-0 mt-0.5 text-[var(--color-text-muted)]"
+            />
+            <p className="leading-relaxed m-0">
+              Enable webhook to automatically analyze your code whenever you
+              push to GitHub. Click the enable button above to get started.
+            </p>
+          </div>
         )}
       </motion.div>
     </div>

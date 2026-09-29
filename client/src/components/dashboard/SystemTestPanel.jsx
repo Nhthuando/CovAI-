@@ -28,17 +28,13 @@ export default function SystemTestPanel({ projectId, snapshotId }) {
 
   if (loading) {
     return (
-      <div
-        style={{
-          padding: "16px",
-          borderRadius: "8px",
-          backgroundColor: "#0d1117",
-          border: "1px solid #30363d",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <Loader2 size={14} className="animate-spin" />
-          <span style={{ color: "#8b949e", fontSize: 12 }}>
+      <div className="p-4 rounded-[var(--radius-md)] bg-[var(--color-surface)] border border-[var(--color-border)] font-sans">
+        <div className="flex items-center gap-2">
+          <Loader2
+            size={14}
+            className="animate-spin text-[var(--color-primary)]"
+          />
+          <span className="text-xs text-[var(--color-text-secondary)]">
             Detecting system test frameworks...
           </span>
         </div>
@@ -48,17 +44,10 @@ export default function SystemTestPanel({ projectId, snapshotId }) {
 
   if (error) {
     return (
-      <div
-        style={{
-          padding: "16px",
-          borderRadius: "8px",
-          backgroundColor: "#0d1117",
-          border: "1px solid #da3633",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <AlertCircle size={14} style={{ color: "#da3633" }} />
-          <span style={{ color: "#da3633", fontSize: 12 }}>{error}</span>
+      <div className="p-4 rounded-[var(--radius-md)] bg-[var(--color-surface)] border border-[var(--color-danger)] font-sans">
+        <div className="flex items-center gap-2 text-[var(--color-danger)] text-xs">
+          <AlertCircle size={14} className="shrink-0" />
+          <span>{error}</span>
         </div>
       </div>
     );
@@ -71,20 +60,13 @@ export default function SystemTestPanel({ projectId, snapshotId }) {
     !data.hasSystemTests
   ) {
     return (
-      <div
-        style={{
-          padding: "16px",
-          borderRadius: "8px",
-          backgroundColor: "#0d1117",
-          border: "1px solid #30363d",
-        }}
-      >
-        <div style={{ marginBottom: "8px" }}>
-          <span style={{ color: "#e6edf3", fontSize: 12, fontWeight: 600 }}>
+      <div className="p-4 rounded-[var(--radius-md)] bg-[var(--color-surface)] border border-[var(--color-border)] font-sans">
+        <div className="mb-2">
+          <span className="text-xs font-semibold text-[var(--color-text)]">
             System Tests
           </span>
         </div>
-        <p style={{ color: "#8b949e", fontSize: 11, lineHeight: 1.5 }}>
+        <p className="text-[11px] text-[var(--color-text-secondary)] leading-relaxed m-0">
           No supported System Test framework detected.
         </p>
       </div>
@@ -92,82 +74,58 @@ export default function SystemTestPanel({ projectId, snapshotId }) {
   }
 
   return (
-    <div
-      style={{
-        padding: "16px",
-        borderRadius: "8px",
-        backgroundColor: "#0d1117",
-        border: "1px solid #30363d",
-      }}
-    >
-      <div style={{ marginBottom: "12px" }}>
-        <span style={{ color: "#e6edf3", fontSize: 12, fontWeight: 600 }}>
+    <div className="p-4 rounded-[var(--radius-md)] bg-[var(--color-surface)] border border-[var(--color-border)] font-sans text-[var(--color-text)]">
+      <div className="mb-3">
+        <span className="text-xs font-semibold text-[var(--color-text)]">
           System Tests
         </span>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+      <div className="flex flex-col gap-3">
         {data.frameworks.map((framework) => (
           <div key={framework.name}>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                marginBottom: "6px",
-              }}
-            >
-              <CheckCircle2 size={12} style={{ color: "#3fb950" }} />
-              <span
-                style={{
-                  color: "#e6edf3",
-                  fontSize: 12,
-                  fontWeight: 500,
-                  textTransform: "capitalize",
-                }}
-              >
+            <div className="flex items-center gap-2 mb-1.5">
+              <CheckCircle2
+                size={13}
+                className="text-[var(--color-success)] shrink-0"
+              />
+              <span className="text-xs font-semibold capitalize text-[var(--color-text)]">
                 {framework.name.toLowerCase()}
               </span>
             </div>
 
             {framework.configPath && (
-              <div style={{ marginLeft: "20px", marginBottom: "4px" }}>
-                <span style={{ color: "#8b949e", fontSize: 11 }}>
-                  Config:{" "}
-                  <span style={{ color: "#79c0ff", fontFamily: "monospace" }}>
-                    {framework.configPath}
-                  </span>
+              <div className="ml-5 mb-1 text-[11px] text-[var(--color-text-secondary)]">
+                Config:{" "}
+                <span className="text-[var(--color-primary)] font-mono">
+                  {framework.configPath}
                 </span>
               </div>
             )}
 
             {framework.testDirectory && (
-              <div style={{ marginLeft: "20px", marginBottom: "4px" }}>
-                <span style={{ color: "#8b949e", fontSize: 11 }}>
-                  Test Dir:{" "}
-                  <span style={{ color: "#79c0ff", fontFamily: "monospace" }}>
-                    {framework.testDirectory}
-                  </span>
+              <div className="ml-5 mb-1 text-[11px] text-[var(--color-text-secondary)]">
+                Test Dir:{" "}
+                <span className="text-[var(--color-primary)] font-mono">
+                  {framework.testDirectory}
                 </span>
               </div>
             )}
 
             {framework.testFileCount && framework.testFileCount > 0 && (
-              <div style={{ marginLeft: "20px", marginBottom: "4px" }}>
-                <span style={{ color: "#8b949e", fontSize: 11 }}>
-                  Tests:{" "}
-                  <span style={{ color: "#79c0ff" }}>
-                    {framework.testFileCount}
-                  </span>
+              <div className="ml-5 mb-1 text-[11px] text-[var(--color-text-secondary)]">
+                Tests:{" "}
+                <span className="text-[var(--color-primary)] font-mono">
+                  {framework.testFileCount}
                 </span>
               </div>
             )}
 
             {framework.browsers && (
-              <div style={{ marginLeft: "20px" }}>
-                <span style={{ color: "#8b949e", fontSize: 11 }}>
-                  Browsers:{" "}
-                  <span style={{ color: "#79c0ff" }}>{framework.browsers}</span>
+              <div className="ml-5 text-[11px] text-[var(--color-text-secondary)]">
+                Browsers:{" "}
+                <span className="text-[var(--color-primary)] font-mono">
+                  {framework.browsers}
                 </span>
               </div>
             )}
@@ -176,14 +134,8 @@ export default function SystemTestPanel({ projectId, snapshotId }) {
       </div>
 
       {data.errors && data.errors.length > 0 && (
-        <div
-          style={{
-            marginTop: "12px",
-            paddingTop: "12px",
-            borderTop: "1px solid #30363d",
-          }}
-        >
-          <div style={{ color: "#f0883e", fontSize: 10, lineHeight: 1.4 }}>
+        <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
+          <div className="text-[10px] text-[var(--color-warning)] leading-relaxed flex flex-col gap-0.5">
             {data.errors.map((err, i) => (
               <div key={i}>• {err}</div>
             ))}

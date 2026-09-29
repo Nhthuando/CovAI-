@@ -1,179 +1,126 @@
-import { motion } from "framer-motion";
+import { Terminal } from "lucide-react";
 
 const FOOTER_COLS = [
   {
     heading: "Product",
     links: [
       { label: "Features", href: "#features" },
+      { label: "IDE & Coverage", href: "#ide-preview" },
+      { label: "Pipeline", href: "#workflow" },
       { label: "Pricing", href: "#pricing" },
-      { label: "Changelog", href: "#" },
-      { label: "Roadmap", href: "#" },
-      { label: "API Docs", href: "#" },
     ],
   },
   {
-    heading: "Company",
+    heading: "Platform",
     links: [
-      { label: "About", href: "#about" },
-      { label: "Blog", href: "#" },
-      { label: "Careers", href: "#" },
-      { label: "Contact", href: "#contact" },
-      { label: "Press Kit", href: "#" },
+      { label: "Jest Integration", href: "#" },
+      { label: "Vitest Engine", href: "#" },
+      { label: "CFG Analyzer", href: "#" },
+      { label: "Istanbul Metrics", href: "#" },
+      { label: "API Reference", href: "#" },
     ],
   },
   {
-    heading: "Legal",
+    heading: "Security & Legal",
     links: [
       { label: "Privacy Policy", href: "#" },
       { label: "Terms of Service", href: "#" },
-      { label: "Cookie Policy", href: "#" },
-      { label: "Security", href: "#" },
+      { label: "Sandbox Security", href: "#" },
+      { label: "Data Telemetry", href: "#" },
     ],
   },
 ];
 
-const SOCIAL = [
-  { id: "twitter", icon: "𝕏", label: "Twitter", href: "#" },
-  { id: "github",  icon: "⌥", label: "GitHub",  href: "#" },
-  { id: "discord", icon: "◉", label: "Discord", href: "#" },
-  { id: "linkedin",icon: "in", label: "LinkedIn",href: "#" },
-];
+function GithubIcon(props) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="currentColor"
+      {...props}
+    >
+      <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" />
+    </svg>
+  );
+}
+
+function TwitterIcon(props) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="currentColor"
+      {...props}
+    >
+      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+    </svg>
+  );
+}
+
+function LinkedinIcon(props) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="currentColor"
+      {...props}
+    >
+      <path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.28 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.75M6.88 8.56a1.68 1.68 0 0 0 1.68-1.68c0-.93-.75-1.69-1.68-1.69a1.69 1.69 0 0 0-1.69 1.69c0 .93.76 1.68 1.69 1.68m1.39 9.94v-8.37H5.5v8.37h2.77z" />
+    </svg>
+  );
+}
 
 export default function Footer() {
   return (
     <footer
       id="footer"
-      style={{
-        background: "#080c11",
-        borderTop: "1px solid rgba(255,255,255,0.05)",
-        padding: "4rem 1.5rem 2rem",
-        position: "relative",
-        overflow: "hidden",
-      }}
+      className="bg-[var(--color-surface)] border-t border-[var(--color-border)] pt-16 pb-12 text-[var(--color-text-secondary)] text-xs"
     >
-      {/* Top gradient line */}
-      <div style={{
-        position: "absolute",
-        top: 0,
-        left: 0,
-        right: 0,
-        height: "1px",
-        background: "linear-gradient(90deg, transparent, rgba(124,58,237,0.4), transparent)",
-      }} />
-
-      <div style={{ maxWidth: "1200px", margin: "0 auto" }}>
-        {/* Main grid */}
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "2fr 1fr 1fr 1fr",
-          gap: "2.5rem",
-          marginBottom: "3.5rem",
-        }}>
-          {/* Brand column */}
-          <div>
+      <div className="max-w-[1200px] mx-auto px-4 sm:px-6">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-8 mb-12">
+          {/* Brand info (2 cols on md) */}
+          <div className="md:col-span-2 space-y-4">
             <a
               href="/"
               id="footer-logo"
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "0.5rem",
-                textDecoration: "none",
-                marginBottom: "1rem",
-              }}
+              className="inline-flex items-center gap-2 text-decoration-none group"
             >
-              <div style={{
-                width: "30px",
-                height: "30px",
-                borderRadius: "7px",
-                background: "linear-gradient(135deg, #7C3AED 0%, #22d3ee 100%)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: "12px",
-                fontWeight: "700",
-                color: "white",
-              }}>T</div>
-              <span style={{
-                fontSize: "1rem",
-                fontWeight: "700",
-                color: "#f0f6fc",
-              }}>
-                TestCov<span style={{
-                  background: "linear-gradient(90deg, #7C3AED, #22d3ee)",
-                  WebkitBackgroundClip: "text",
-                  WebkitTextFillColor: "transparent",
-                  backgroundClip: "text",
-                }}>AI</span>
+              <div className="w-7 h-7 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-white flex items-center justify-center font-bold text-xs select-none shrink-0">
+                <Terminal className="w-3.5 h-3.5 stroke-[2.5]" />
+              </div>
+              <span className="font-bold text-sm tracking-tight text-[var(--color-text)]">
+                CovAI Platform
               </span>
             </a>
-            <p style={{
-              color: "#484f58",
-              fontSize: "0.875rem",
-              lineHeight: "1.75",
-              maxWidth: "280px",
-              marginBottom: "1.5rem",
-            }}>
-              AI-powered test coverage analysis and Jest test generation for
-              modern JavaScript development teams.
+
+            <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed max-w-sm">
+              Deterministic test generation, Control Flow Graph analysis, and
+              multi-vector coverage diagnostics for modern software engineering
+              teams.
             </p>
-            {/* Social icons */}
-            <div style={{ display: "flex", gap: "0.75rem" }}>
-              {SOCIAL.map((s) => (
-                <motion.a
-                  key={s.id}
-                  href={s.href}
-                  id={`footer-social-${s.id}`}
-                  aria-label={s.label}
-                  whileHover={{ scale: 1.1, color: "#f0f6fc" }}
-                  style={{
-                    width: "36px",
-                    height: "36px",
-                    borderRadius: "8px",
-                    background: "rgba(255,255,255,0.04)",
-                    border: "1px solid rgba(255,255,255,0.06)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "#484f58",
-                    fontSize: "0.8rem",
-                    fontWeight: "700",
-                    textDecoration: "none",
-                    transition: "all 0.2s ease",
-                  }}
-                >
-                  {s.icon}
-                </motion.a>
-              ))}
+
+            {/* Operational status badge */}
+            <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[11px] font-mono text-[var(--color-text-muted)]">
+              <span className="w-2 h-2 rounded-full bg-[var(--color-success)]" />
+              <span>Sandbox Engine: Operational</span>
             </div>
           </div>
 
-          {/* Link columns */}
+          {/* Nav columns */}
           {FOOTER_COLS.map((col) => (
-            <div key={col.heading}>
-              <h4 style={{
-                fontSize: "0.75rem",
-                fontWeight: "700",
-                letterSpacing: "0.1em",
-                color: "#8b949e",
-                textTransform: "uppercase",
-                marginBottom: "1.25rem",
-              }}>
+            <div key={col.heading} className="space-y-3">
+              <h4 className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text)]">
                 {col.heading}
               </h4>
-              <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+              <ul className="space-y-2 list-none p-0 m-0">
                 {col.links.map((link) => (
                   <li key={link.label}>
                     <a
                       href={link.href}
-                      style={{
-                        color: "#484f58",
-                        textDecoration: "none",
-                        fontSize: "0.875rem",
-                        transition: "color 0.2s ease",
-                      }}
-                      onMouseEnter={(e) => (e.target.style.color = "#8b949e")}
-                      onMouseLeave={(e) => (e.target.style.color = "#484f58")}
+                      className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors text-decoration-none"
                     >
                       {link.label}
                     </a>
@@ -185,35 +132,38 @@ export default function Footer() {
         </div>
 
         {/* Bottom bar */}
-        <div style={{
-          paddingTop: "2rem",
-          borderTop: "1px solid rgba(255,255,255,0.04)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          flexWrap: "wrap",
-          gap: "1rem",
-        }}>
-          <p style={{ color: "#30363d", fontSize: "0.8rem" }}>
-            © {new Date().getFullYear()} TestCovAI. All rights reserved.
-          </p>
-          <div style={{ display: "flex", gap: "1.5rem" }}>
-            {["Privacy", "Terms", "Cookies"].map((item) => (
-              <a
-                key={item}
-                href="#"
-                style={{
-                  color: "#30363d",
-                  textDecoration: "none",
-                  fontSize: "0.8rem",
-                  transition: "color 0.2s ease",
-                }}
-                onMouseEnter={(e) => (e.target.style.color = "#484f58")}
-                onMouseLeave={(e) => (e.target.style.color = "#30363d")}
-              >
-                {item}
-              </a>
-            ))}
+        <div className="pt-8 border-t border-[var(--color-border)] flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[var(--color-text-muted)]">
+          <div>© {new Date().getFullYear()} CovAI. All rights reserved.</div>
+
+          {/* Social Links */}
+          <div className="flex items-center gap-3">
+            <a
+              href="https://github.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="GitHub repository"
+              className="p-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors"
+            >
+              <GithubIcon className="w-4 h-4" />
+            </a>
+            <a
+              href="https://twitter.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Twitter account"
+              className="p-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors"
+            >
+              <TwitterIcon className="w-4 h-4" />
+            </a>
+            <a
+              href="https://linkedin.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="LinkedIn account"
+              className="p-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors"
+            >
+              <LinkedinIcon className="w-4 h-4" />
+            </a>
           </div>
         </div>
       </div>

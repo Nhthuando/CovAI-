@@ -15,18 +15,17 @@ import {
   Pencil,
   Trash2,
   Loader2,
-  AlertTriangle,
   Check,
-  X,
   Box,
   Lock,
   Sliders,
   File,
   FolderGit2,
   ChevronsDownUp,
-  ChevronDown,
-  Sparkles,
+  ChevronsUpDown,
 } from "lucide-react";
+import ConfirmDialog from "../common/ConfirmDialog";
+import { FileTreeSkeleton } from "../common/Skeleton";
 
 /* ── Smart Icon Resolver ─────────────────────────────────── */
 function getFileIcon(fileName = "") {
@@ -206,15 +205,14 @@ function InlineCreationRow({ type, indent, onSubmit, onCancel }) {
         placeholder={type === "folder" ? "folder-name" : "file-name.js"}
         style={{
           flex: 1,
-          background: "#0d1117",
-          border: "1px solid #7c3aed",
+          background: "var(--color-bg)",
+          border: "1px solid var(--color-primary)",
           borderRadius: "4px",
-          color: "#e6edf3",
+          color: "var(--color-text)",
           fontSize: "12px",
           padding: "2px 6px",
           outline: "none",
           fontFamily: "var(--font-sans)",
-          boxShadow: "0 0 8px rgba(124, 58, 237, 0.4)",
         }}
       />
     </div>
@@ -231,9 +229,11 @@ function TreeNode({
   onStartAction,
   onCancelAction,
   onSubmitAction,
-  allCollapsed,
+  treeToggleTrigger,
 }) {
-  const [open, setOpen] = useState(depth < 1);
+  const [open, setOpen] = useState(
+    treeToggleTrigger ? !treeToggleTrigger.collapsed : depth < 1,
+  );
   const [hovered, setHovered] = useState(false);
   const [renameVal, setRenameVal] = useState(node.name);
   const renameInputRef = useRef(null);
@@ -248,10 +248,10 @@ function TreeNode({
     action?.parentPath === node.id;
 
   useEffect(() => {
-    if (allCollapsed) {
-      setOpen(false);
+    if (treeToggleTrigger) {
+      setOpen(!treeToggleTrigger.collapsed);
     }
-  }, [allCollapsed]);
+  }, [treeToggleTrigger]);
 
   useEffect(() => {
     if (isRenaming) {
@@ -310,12 +310,18 @@ function TreeNode({
           paddingTop: 5,
           paddingBottom: 5,
           background: isActive
-            ? "rgba(124, 58, 237, 0.14)"
+            ? "var(--color-primary-light)"
             : hovered
-              ? "rgba(255, 255, 255, 0.04)"
+              ? "var(--color-surface-secondary)"
               : "transparent",
-          borderLeft: isActive ? "2px solid #a78bfa" : "2px solid transparent",
-          color: isActive ? "#c4b5fd" : hovered ? "#e6edf3" : "#8b949e",
+          borderLeft: isActive
+            ? "2px solid var(--color-primary)"
+            : "2px solid transparent",
+          color: isActive
+            ? "var(--color-primary)"
+            : hovered
+              ? "var(--color-text)"
+              : "var(--color-text-secondary)",
           fontSize: 13,
           fontFamily: "var(--font-sans)",
           transition: "background 0.1s ease, color 0.1s ease",
@@ -365,15 +371,14 @@ function TreeNode({
               }}
               style={{
                 width: "100%",
-                background: "#0d1117",
-                border: "1px solid #7c3aed",
+                background: "var(--color-bg)",
+                border: "1px solid var(--color-primary)",
                 borderRadius: "4px",
-                color: "#e6edf3",
+                color: "var(--color-text)",
                 fontSize: "12px",
                 padding: "1px 6px",
                 outline: "none",
                 fontFamily: "var(--font-sans)",
-                boxShadow: "0 0 8px rgba(124, 58, 237, 0.3)",
               }}
             />
           </form>
@@ -381,8 +386,8 @@ function TreeNode({
           <span
             className="truncate leading-none"
             style={{
-              fontWeight: isActive ? 500 : 400,
-              color: isActive ? "#f0f6fc" : undefined,
+              fontWeight: isActive ? 600 : 400,
+              color: isActive ? "var(--color-primary)" : undefined,
             }}
           >
             {node.name}
@@ -395,12 +400,11 @@ function TreeNode({
             className="ml-auto flex items-center gap-0.5"
             onClick={(e) => e.stopPropagation()}
             style={{
-              background: "rgba(22, 27, 34, 0.92)",
-              border: "1px solid rgba(255, 255, 255, 0.1)",
+              background: "var(--color-surface)",
+              border: "1px solid var(--color-border)",
               borderRadius: "6px",
               padding: "2px 3px",
-              boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
-              backdropFilter: "blur(6px)",
+              boxShadow: "var(--shadow-sm)",
             }}
           >
             {isFolder && (
@@ -411,25 +415,7 @@ function TreeNode({
                   onClick={() =>
                     onStartAction({ type: "file", parentPath: node.id })
                   }
-                  style={{
-                    background: "transparent",
-                    border: "none",
-                    color: "#8b949e",
-                    cursor: "pointer",
-                    padding: "3px",
-                    borderRadius: "4px",
-                    display: "flex",
-                    alignItems: "center",
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background =
-                      "rgba(255, 255, 255, 0.1)";
-                    e.currentTarget.style.color = "#c4b5fd";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "transparent";
-                    e.currentTarget.style.color = "#8b949e";
-                  }}
+                  className="p-1 rounded-[var(--radius-sm)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer border-0 bg-transparent flex items-center"
                 >
                   <Plus size={12} />
                 </button>
@@ -439,25 +425,7 @@ function TreeNode({
                   onClick={() =>
                     onStartAction({ type: "folder", parentPath: node.id })
                   }
-                  style={{
-                    background: "transparent",
-                    border: "none",
-                    color: "#8b949e",
-                    cursor: "pointer",
-                    padding: "3px",
-                    borderRadius: "4px",
-                    display: "flex",
-                    alignItems: "center",
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background =
-                      "rgba(255, 255, 255, 0.1)";
-                    e.currentTarget.style.color = "#fde047";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "transparent";
-                    e.currentTarget.style.color = "#8b949e";
-                  }}
+                  className="p-1 rounded-[var(--radius-sm)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer border-0 bg-transparent flex items-center"
                 >
                   <FolderPlus size={12} />
                 </button>
@@ -467,24 +435,7 @@ function TreeNode({
               type="button"
               title="Rename"
               onClick={() => onStartAction({ type: "rename", node })}
-              style={{
-                background: "transparent",
-                border: "none",
-                color: "#8b949e",
-                cursor: "pointer",
-                padding: "3px",
-                borderRadius: "4px",
-                display: "flex",
-                alignItems: "center",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)";
-                e.currentTarget.style.color = "#38bdf8";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = "transparent";
-                e.currentTarget.style.color = "#8b949e";
-              }}
+              className="p-1 rounded-[var(--radius-sm)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer border-0 bg-transparent flex items-center"
             >
               <Pencil size={11} />
             </button>
@@ -492,24 +443,7 @@ function TreeNode({
               type="button"
               title="Delete"
               onClick={() => onStartAction({ type: "delete", node })}
-              style={{
-                background: "transparent",
-                border: "none",
-                color: "#8b949e",
-                cursor: "pointer",
-                padding: "3px",
-                borderRadius: "4px",
-                display: "flex",
-                alignItems: "center",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = "rgba(239, 68, 68, 0.15)";
-                e.currentTarget.style.color = "#f87171";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = "transparent";
-                e.currentTarget.style.color = "#8b949e";
-              }}
+              className="p-1 rounded-[var(--radius-sm)] text-[var(--color-danger)] hover:bg-[var(--color-danger)]/15 transition-colors cursor-pointer border-0 bg-transparent flex items-center"
             >
               <Trash2 size={11} />
             </button>
@@ -546,7 +480,7 @@ function TreeNode({
               onStartAction={onStartAction}
               onCancelAction={onCancelAction}
               onSubmitAction={onSubmitAction}
-              allCollapsed={allCollapsed}
+              treeToggleTrigger={treeToggleTrigger}
             />
           ))}
         </div>
@@ -576,8 +510,8 @@ export default function Sidebar({
   const [itemToDelete, setItemToDelete] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [action, setAction] = useState(null);
-  const [showProjectSelect, setShowProjectSelect] = useState(false);
-  const [allCollapsed, setAllCollapsed] = useState(false);
+  const [treeCollapsed, setTreeCollapsed] = useState(false);
+  const [treeToggleTrigger, setTreeToggleTrigger] = useState(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const handleStartAction = (act) => {
@@ -627,9 +561,10 @@ export default function Sidebar({
     setTimeout(() => setIsRefreshing(false), 500);
   };
 
-  const handleCollapseAll = () => {
-    setAllCollapsed(true);
-    setTimeout(() => setAllCollapsed(false), 100);
+  const handleToggleCollapse = () => {
+    const nextCollapsed = !treeCollapsed;
+    setTreeCollapsed(nextCollapsed);
+    setTreeToggleTrigger({ collapsed: nextCollapsed, id: Date.now() });
   };
 
   return (
@@ -642,24 +577,24 @@ export default function Sidebar({
         width: { duration: 0.18, ease: [0.4, 0, 0.2, 1] },
       }}
       style={{
-        background: "#0d1117",
-        borderRight: "1px solid var(--ide-border)",
+        background: "var(--color-surface)",
+        borderRight: "1px solid var(--color-border)",
         position: "relative",
       }}
     >
-      {/* ── Explorer Header & Tools ──────────────────────── */}
+      {/* ── Explorer Header ─────────────────────────────── */}
       <div
         className="flex items-center justify-between flex-shrink-0"
         style={{
           height: 44,
           paddingLeft: 18,
           paddingRight: 12,
-          borderBottom: "1px solid rgba(255, 255, 255, 0.06)",
+          borderBottom: "1px solid var(--color-border)",
         }}
       >
         <span
           style={{
-            color: "#8b949e",
+            color: "var(--color-text-secondary)",
             fontSize: 11,
             fontWeight: 700,
             letterSpacing: "0.08em",
@@ -676,30 +611,20 @@ export default function Sidebar({
         {/* Toolbar buttons */}
         <div className="flex items-center gap-1">
           <motion.button
-            whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.9 }}
-            className="p-1 rounded cursor-pointer"
-            style={{
-              color: "#8b949e",
-              background: "transparent",
-              border: "none",
-            }}
+            className="p-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer border-0 bg-transparent"
             title="New File at root"
+            aria-label="New File at root"
             onClick={() => handleStartAction({ type: "file", parentPath: "" })}
           >
             <Plus size={14} />
           </motion.button>
 
           <motion.button
-            whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.9 }}
-            className="p-1 rounded cursor-pointer"
-            style={{
-              color: "#8b949e",
-              background: "transparent",
-              border: "none",
-            }}
+            className="p-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer border-0 bg-transparent"
             title="New Folder at root"
+            aria-label="New Folder at root"
             onClick={() =>
               handleStartAction({ type: "folder", parentPath: "" })
             }
@@ -708,161 +633,81 @@ export default function Sidebar({
           </motion.button>
 
           <motion.button
-            whileHover={{ rotate: 180 }}
             whileTap={{ scale: 0.9 }}
-            transition={{ duration: 0.35 }}
             onClick={handleTriggerRefresh}
-            className="p-1 rounded cursor-pointer"
-            style={{
-              color: "#8b949e",
-              background: "transparent",
-              border: "none",
-            }}
+            className="p-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer border-0 bg-transparent"
             title="Refresh Files"
+            aria-label="Refresh Files"
           >
             <RefreshCw
               size={13}
-              className={isRefreshing ? "animate-spin" : ""}
+              className={
+                isRefreshing ? "animate-spin text-[var(--color-primary)]" : ""
+              }
             />
           </motion.button>
 
           <motion.button
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.9 }}
-            onClick={handleCollapseAll}
-            className="p-1 rounded cursor-pointer"
-            style={{
-              color: "#8b949e",
-              background: "transparent",
-              border: "none",
-            }}
-            title="Collapse All Folders"
+            whileHover={{ scale: 1.08 }}
+            whileTap={{ scale: 0.92 }}
+            transition={{ type: "spring", stiffness: 400, damping: 25 }}
+            onClick={handleToggleCollapse}
+            className="p-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer border-0 bg-transparent flex items-center justify-center relative"
+            title={
+              treeCollapsed ? "Expand All Folders" : "Collapse All Folders"
+            }
+            aria-label={
+              treeCollapsed ? "Expand All Folders" : "Collapse All Folders"
+            }
           >
-            <ChevronsDownUp size={13} />
+            <motion.div
+              key={treeCollapsed ? "expand" : "collapse"}
+              initial={{
+                scale: 0.7,
+                opacity: 0,
+                rotate: treeCollapsed ? -45 : 45,
+              }}
+              animate={{ scale: 1, opacity: 1, rotate: 0 }}
+              exit={{ scale: 0.7, opacity: 0 }}
+              transition={{ duration: 0.15, ease: "easeOut" }}
+              className="flex items-center justify-center"
+            >
+              {treeCollapsed ? (
+                <ChevronsUpDown size={14} />
+              ) : (
+                <ChevronsDownUp size={14} />
+              )}
+            </motion.div>
           </motion.button>
         </div>
       </div>
 
-      {/* ── Project Switcher Bar ─────────────────────────── */}
+      {/* ── Current Project Header ───────────────────────── */}
       <div
+        className="flex items-center gap-2 flex-shrink-0"
         style={{
-          position: "relative",
-          borderBottom: "1px solid rgba(255, 255, 255, 0.04)",
+          padding: "9px 18px",
+          background: "var(--color-surface-secondary)",
+          borderBottom: "1px solid var(--color-border)",
+          fontSize: "12px",
+          fontFamily: "var(--font-sans)",
         }}
       >
         <div
-          onClick={() =>
-            projects.length > 1 && setShowProjectSelect(!showProjectSelect)
-          }
-          className="flex items-center justify-between flex-shrink-0 cursor-pointer"
           style={{
-            padding: "9px 18px",
-            background: "rgba(255, 255, 255, 0.015)",
-            fontSize: "12px",
-            fontWeight: 600,
-            color: "#c9d1d9",
-            fontFamily: "var(--font-sans)",
-            transition: "background 0.15s ease",
+            width: 6,
+            height: 6,
+            borderRadius: "50%",
+            background: "var(--color-success)",
+            flexShrink: 0,
           }}
-          onMouseEnter={(e) => {
-            if (projects.length > 1) {
-              e.currentTarget.style.background = "rgba(255, 255, 255, 0.04)";
-            }
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "rgba(255, 255, 255, 0.015)";
-          }}
+        />
+        <span
+          className="truncate font-mono text-[11px] text-[var(--color-text)] font-semibold"
+          title={project?.name || "No Project"}
         >
-          <div className="flex items-center gap-2 min-w-0">
-            <div
-              style={{
-                width: 6,
-                height: 6,
-                borderRadius: "50%",
-                background: "#3fb950",
-                boxShadow: "0 0 6px #3fb950",
-                flexShrink: 0,
-              }}
-            />
-            <span className="truncate font-mono text-[11px] text-[#e6edf3]">
-              {project?.name || "No Project"}
-            </span>
-          </div>
-
-          {projects.length > 1 && (
-            <ChevronDown
-              size={12}
-              style={{
-                color: "#6e7681",
-                transform: showProjectSelect ? "rotate(180deg)" : "none",
-                transition: "transform 0.2s ease",
-              }}
-            />
-          )}
-        </div>
-
-        {/* Project Dropdown */}
-        <AnimatePresence>
-          {showProjectSelect && (
-            <motion.div
-              initial={{ opacity: 0, y: -4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              style={{
-                position: "absolute",
-                top: "100%",
-                left: 6,
-                right: 6,
-                background: "#161b22",
-                border: "1px solid rgba(255, 255, 255, 0.12)",
-                borderRadius: "8px",
-                zIndex: 40,
-                boxShadow: "0 8px 24px rgba(0,0,0,0.6)",
-                padding: "4px",
-                maxHeight: 200,
-                overflowY: "auto",
-              }}
-            >
-              {projects.map((p) => {
-                const isCur = p.id === project?.id;
-                return (
-                  <div
-                    key={p.id}
-                    onClick={() => {
-                      onChangeProject(p.id);
-                      setShowProjectSelect(false);
-                    }}
-                    style={{
-                      padding: "7px 10px",
-                      borderRadius: "6px",
-                      fontSize: "12px",
-                      color: isCur ? "#c4b5fd" : "#c9d1d9",
-                      background: isCur
-                        ? "rgba(124, 58, 237, 0.15)"
-                        : "transparent",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!isCur)
-                        e.currentTarget.style.background =
-                          "rgba(255, 255, 255, 0.05)";
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!isCur)
-                        e.currentTarget.style.background = "transparent";
-                    }}
-                  >
-                    <span className="truncate">{p.name}</span>
-                    {isCur && <Check size={12} />}
-                  </div>
-                );
-              })}
-            </motion.div>
-          )}
-        </AnimatePresence>
+          {project?.name || "No Project"}
+        </span>
       </div>
 
       {/* ── File Tree Area ───────────────────────────────── */}
@@ -890,16 +735,10 @@ export default function Sidebar({
         )}
 
         {isLoading ? (
-          <div
-            className="flex items-center gap-2 text-xs text-[#8b949e]"
-            style={{ padding: "18px 24px" }}
-          >
-            <Loader2 size={14} className="animate-spin" />
-            <span>Scanning project tree...</span>
-          </div>
+          <FileTreeSkeleton rows={10} />
         ) : fileTree.length === 0 ? (
           <div
-            className="text-xs text-[#6e7681] text-center"
+            className="text-xs text-[var(--color-text-muted)] text-center"
             style={{ padding: "32px 16px" }}
           >
             No files found in workspace
@@ -916,7 +755,7 @@ export default function Sidebar({
               onStartAction={handleStartAction}
               onCancelAction={handleCancelAction}
               onSubmitAction={handleSubmitAction}
-              allCollapsed={allCollapsed}
+              treeToggleTrigger={treeToggleTrigger}
             />
           ))
         )}
@@ -926,12 +765,12 @@ export default function Sidebar({
       <div
         className="flex items-center gap-2 flex-shrink-0"
         style={{
-          borderTop: "1px solid rgba(255, 255, 255, 0.06)",
+          borderTop: "1px solid var(--color-border)",
           fontSize: 11,
-          color: "#6e7681",
+          color: "var(--color-text-secondary)",
           fontFamily: "var(--font-mono)",
           padding: "10px 18px",
-          background: "rgba(0, 0, 0, 0.2)",
+          background: "var(--color-surface)",
         }}
       >
         <span
@@ -939,266 +778,63 @@ export default function Sidebar({
             width: 6,
             height: 6,
             borderRadius: "50%",
-            background: "#3fb950",
+            background: "var(--color-success)",
             display: "inline-block",
             flexShrink: 0,
-            boxShadow: "0 0 6px rgba(63, 185, 80, 0.5)",
           }}
         />
-        <span style={{ color: "#8b949e" }}>main</span>
-        <span style={{ color: "#3fb950", marginLeft: "auto" }}>
+        <span style={{ color: "var(--color-text-secondary)" }}>main</span>
+        <span style={{ color: "var(--color-success)", marginLeft: "auto" }}>
           ↑ 2 commits
         </span>
       </div>
 
-      {/* ── Sleek Item Delete Modal (File or Folder) ─────── */}
-      <AnimatePresence>
+      {/* ── Item Delete Modal (File or Folder) ─────── */}
+      <ConfirmDialog
+        isOpen={Boolean(itemToDelete)}
+        onClose={() => setItemToDelete(null)}
+        onConfirm={handleConfirmDeleteItem}
+        title={`Delete ${itemToDelete?.type === "folder" ? "Folder" : "File"}?`}
+        message="This action cannot be undone."
+        confirmText="Delete"
+        variant="danger"
+        loading={isDeleting}
+      >
         {itemToDelete && (
           <div
-            className="fixed inset-0 z-50 flex items-center justify-center"
             style={{
-              background: "rgba(0,0,0,0.65)",
-              backdropFilter: "blur(6px)",
+              background: "var(--color-bg)",
+              border: "1px solid var(--color-border)",
+              borderRadius: 8,
+              padding: "10px 12px",
+              fontSize: 12,
+              fontFamily: "var(--font-mono)",
+              color: "var(--color-danger)",
+              wordBreak: "break-all",
+              marginTop: 12,
             }}
-            onClick={() => setItemToDelete(null)}
           >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                width: 380,
-                background: "#161b22",
-                border: "1px solid rgba(239, 68, 68, 0.3)",
-                borderRadius: 14,
-                boxShadow:
-                  "0 0 30px rgba(239, 68, 68, 0.15), 0 12px 36px rgba(0,0,0,0.6)",
-                padding: "22px",
-                color: "#e6edf3",
-                fontFamily: "var(--font-sans)",
-              }}
-            >
-              <div className="flex items-center gap-3 mb-3">
-                <div
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 10,
-                    background: "rgba(239, 68, 68, 0.12)",
-                    border: "1px solid rgba(239, 68, 68, 0.25)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "#f87171",
-                  }}
-                >
-                  <Trash2 size={18} />
-                </div>
-                <div>
-                  <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>
-                    Delete {itemToDelete.type === "folder" ? "Folder" : "File"}?
-                  </h3>
-                  <p
-                    style={{
-                      margin: "2px 0 0",
-                      fontSize: 12,
-                      color: "#8b949e",
-                    }}
-                  >
-                    This action cannot be undone.
-                  </p>
-                </div>
-              </div>
-
-              <div
-                style={{
-                  background: "rgba(0, 0, 0, 0.3)",
-                  border: "1px solid rgba(255, 255, 255, 0.06)",
-                  borderRadius: 8,
-                  padding: "10px 12px",
-                  fontSize: 12,
-                  fontFamily: "var(--font-mono)",
-                  color: "#f87171",
-                  wordBreak: "break-all",
-                  marginBottom: 20,
-                }}
-              >
-                {itemToDelete.id || itemToDelete.name}
-              </div>
-
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setItemToDelete(null)}
-                  disabled={isDeleting}
-                  style={{
-                    padding: "7px 16px",
-                    borderRadius: 8,
-                    background: "rgba(255, 255, 255, 0.05)",
-                    border: "1px solid rgba(255, 255, 255, 0.1)",
-                    color: "#c9d1d9",
-                    fontSize: 12,
-                    fontWeight: 500,
-                    cursor: "pointer",
-                  }}
-                >
-                  Cancel
-                </button>
-                <motion.button
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  type="button"
-                  onClick={handleConfirmDeleteItem}
-                  disabled={isDeleting}
-                  style={{
-                    padding: "7px 16px",
-                    borderRadius: 8,
-                    background: "#da3633",
-                    border: "1px solid rgba(248, 81, 73, 0.5)",
-                    color: "#fff",
-                    fontSize: 12,
-                    fontWeight: 600,
-                    cursor: isDeleting ? "not-allowed" : "pointer",
-                    boxShadow: "0 2px 10px rgba(218, 54, 51, 0.4)",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                  }}
-                >
-                  {isDeleting && <Loader2 size={13} className="animate-spin" />}
-                  {isDeleting ? "Deleting..." : "Delete"}
-                </motion.button>
-              </div>
-            </motion.div>
+            {itemToDelete.id || itemToDelete.name}
           </div>
         )}
-      </AnimatePresence>
+      </ConfirmDialog>
 
       {/* ── Project Delete Modal ─────────────────────────── */}
-      <AnimatePresence>
-        {projectToDelete && (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center"
-            style={{
-              background: "rgba(0,0,0,0.65)",
-              backdropFilter: "blur(6px)",
-            }}
-            onClick={() => setProjectToDelete(null)}
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                width: 400,
-                background: "#161b22",
-                border: "1px solid rgba(248, 81, 73, 0.4)",
-                borderRadius: 16,
-                boxShadow:
-                  "0 0 40px rgba(248, 81, 73, 0.15), 0 8px 32px rgba(0,0,0,0.5)",
-                padding: "24px",
-                color: "#e6edf3",
-                fontFamily: "var(--font-sans)",
-              }}
-            >
-              <div className="flex items-center gap-3 mb-4">
-                <div
-                  style={{
-                    width: 40,
-                    height: 40,
-                    borderRadius: 10,
-                    background: "rgba(248, 81, 73, 0.1)",
-                    color: "#f87171",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <AlertTriangle size={20} />
-                </div>
-                <div>
-                  <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>
-                    Delete Project
-                  </h3>
-                  <p
-                    style={{
-                      margin: "2px 0 0",
-                      fontSize: 12,
-                      color: "#8b949e",
-                    }}
-                  >
-                    This action cannot be undone.
-                  </p>
-                </div>
-              </div>
-
-              <p
-                style={{
-                  fontSize: 13,
-                  color: "#c9d1d9",
-                  lineHeight: 1.5,
-                  marginBottom: 24,
-                }}
-              >
-                Are you sure you want to permanently delete{" "}
-                <strong style={{ color: "#fff" }}>
-                  {projectToDelete.name}
-                </strong>
-                ? All associated files, test suites, and job history will be
-                removed.
-              </p>
-
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setProjectToDelete(null)}
-                  disabled={isDeleting}
-                  style={{
-                    padding: "8px 16px",
-                    borderRadius: 8,
-                    background: "transparent",
-                    border: "1px solid rgba(255, 255, 255, 0.1)",
-                    color: "#c9d1d9",
-                    fontSize: 13,
-                    cursor: "pointer",
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    setIsDeleting(true);
-                    await onDeleteProject(projectToDelete.id);
-                    setIsDeleting(false);
-                    setProjectToDelete(null);
-                  }}
-                  disabled={isDeleting}
-                  style={{
-                    padding: "8px 16px",
-                    borderRadius: 8,
-                    background: "#da3633",
-                    border: "1px solid rgba(248, 81, 73, 0.5)",
-                    color: "#fff",
-                    fontSize: 13,
-                    fontWeight: 600,
-                    cursor: isDeleting ? "not-allowed" : "pointer",
-                    boxShadow: "0 2px 12px rgba(248, 81, 73, 0.4)",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                  }}
-                >
-                  {isDeleting && <Loader2 size={14} className="animate-spin" />}
-                  {isDeleting ? "Deleting..." : "Delete Project"}
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+      <ConfirmDialog
+        isOpen={Boolean(projectToDelete)}
+        onClose={() => setProjectToDelete(null)}
+        onConfirm={async () => {
+          setIsDeleting(true);
+          await onDeleteProject(projectToDelete.id);
+          setIsDeleting(false);
+          setProjectToDelete(null);
+        }}
+        title="Delete Project?"
+        message={`Are you sure you want to permanently delete "${projectToDelete?.name}"? All associated files, snapshots, and tests will be lost.`}
+        confirmText="Delete Project"
+        variant="danger"
+        loading={isDeleting}
+      />
     </motion.div>
   );
 }

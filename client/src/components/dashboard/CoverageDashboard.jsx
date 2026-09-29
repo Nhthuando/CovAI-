@@ -71,10 +71,10 @@ const getCoverageColor = (pct) => {
 };
 
 const getCoverageGradient = (pct) => {
-  if (pct == null) return "rgba(110,118,129,0.3)";
-  if (pct >= 90) return "linear-gradient(90deg, #22c55e, #4ade80)";
-  if (pct >= 70) return "linear-gradient(90deg, #f59e0b, #fbbf24)";
-  return "linear-gradient(90deg, #ef4444, #f87171)";
+  if (pct == null) return "var(--color-border)";
+  if (pct >= 90) return "var(--color-success, #22c55e)";
+  if (pct >= 70) return "var(--color-warning, #f59e0b)";
+  return "var(--color-danger, #ef4444)";
 };
 
 const fmt = (v) => (v == null ? "—" : `${Number(v).toFixed(1)}%`);
@@ -894,8 +894,8 @@ const CoverageDashboard = ({ snapshotId, projectId, onOpenFile }) => {
         display: "flex",
         flexDirection: "column",
         width: "100%",
-        background: "var(--ide-bg, #0d1117)",
-        color: "var(--text-primary, #f0f6fc)",
+        background: "var(--color-bg)",
+        color: "var(--color-text)",
         fontFamily: "var(--font-sans, -apple-system, sans-serif)",
         padding: "28px 36px",
         boxSizing: "border-box",
@@ -1068,9 +1068,8 @@ const CoverageDashboard = ({ snapshotId, projectId, onOpenFile }) => {
             display: "flex",
             alignItems: "center",
             gap: 24,
-            background:
-              "linear-gradient(145deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)",
-            border: "1px solid rgba(255,255,255,0.07)",
+            background: "var(--color-surface)",
+            border: "1px solid var(--color-border)",
             borderRadius: 18,
             padding: "22px 28px",
             flex: "1 1 300px",

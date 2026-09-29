@@ -1,357 +1,188 @@
-import { useRef } from "react";
-import { motion, useInView } from "framer-motion";
+import { Link } from "react-router-dom";
+import { Check, Minus } from "lucide-react";
+import Badge from "./common/Badge";
+import Button from "./common/Button";
+import Card from "./common/Card";
 
 const PLANS = [
   {
-    id: "free",
-    name: "Free",
+    id: "community",
+    name: "Community",
     price: "$0",
-    period: "/month",
-    desc: "Perfect for solo developers exploring AI test coverage.",
-    cta: "Get started free",
-    ctaHref: "#signup",
+    period: "forever",
+    desc: "Essential automated coverage analysis for open source developers and solo engineers.",
+    cta: "Start Free",
+    ctaTo: "/register",
+    ctaVariant: "outline",
     featured: false,
     features: [
-      "Up to 3 projects",
-      "1 GitHub repo import",
-      "Basic CFG visualization",
-      "50 AI test generations/mo",
-      "Coverage reports (7-day history)",
-      "Community support",
+      "Up to 3 active repositories",
+      "GitHub repo integration & zip upload",
+      "Control Flow Graph (CFG) visualizer",
+      "50 AI test suite generations / month",
+      "Statement & branch coverage diagnostics",
+      "Community forum support",
     ],
-    notIncluded: ["Team collaboration", "Priority AI queue", "Custom integrations"],
+    excluded: [
+      "Continuous CI/CD PR regression checks",
+      "Private on-premise execution sandbox",
+      "Custom LLM test model fine-tuning",
+    ],
   },
   {
     id: "pro",
-    name: "Pro Team",
-    price: "$29",
-    period: "/month per seat",
-    desc: "Everything your engineering team needs to ship with confidence.",
-    cta: "Start 14-day trial",
-    ctaHref: "#signup-pro",
+    name: "Developer Pro",
+    price: "$24",
+    period: "/mo per seat",
+    desc: "Complete test automation and coverage verification for professional engineering teams.",
+    cta: "Start 14-Day Trial",
+    ctaTo: "/register",
+    ctaVariant: "primary",
     featured: true,
-    badge: "Most Popular",
+    badge: "Recommended",
     features: [
-      "Unlimited projects",
-      "Unlimited GitHub imports",
-      "Advanced CFG + Complexity graphs",
-      "Unlimited AI test generations",
-      "90-day coverage history",
-      "Team dashboard & PR integration",
-      "Priority AI queue",
-      "Slack & Jira integration",
-      "Email support (24h SLA)",
+      "Unlimited repositories",
+      "Advanced CFG branch path solver",
+      "Unlimited Jest & Vitest generations",
+      "Deterministic sandbox test execution",
+      "GitHub Pull Request coverage gate",
+      "Mock & fixture automatic synthesis",
+      "Email & Slack engineering support",
     ],
-    notIncluded: [],
+    excluded: [
+      "Private on-premise execution sandbox",
+      "Custom LLM test model fine-tuning",
+    ],
   },
   {
     id: "enterprise",
     name: "Enterprise",
     price: "Custom",
-    period: "",
-    desc: "Tailored for large engineering orgs with compliance needs.",
-    cta: "Contact sales",
-    ctaHref: "#contact",
+    period: "annual",
+    desc: "High-security coverage orchestration and sandbox runners for large engineering organizations.",
+    cta: "Contact Sales",
+    ctaTo: "/login",
+    ctaVariant: "secondary",
     featured: false,
     features: [
-      "Everything in Pro Team",
-      "SSO / SAML authentication",
-      "On-premise deployment option",
-      "Custom AI model fine-tuning",
-      "Unlimited history & audit logs",
-      "SLA guarantee (99.9% uptime)",
-      "Dedicated account manager",
-      "Custom integrations & API",
+      "Everything in Developer Pro",
+      "Self-hosted / on-premise test runner",
+      "Monorepo & multi-package orchestration",
+      "Custom LLM fine-tuning on internal APIs",
+      "SSO / SAML 2.0 authentication",
+      "SOC2 compliance documentation & audit logs",
+      "Dedicated Technical Account Manager & SLA",
     ],
-    notIncluded: [],
+    excluded: [],
   },
 ];
 
 export default function Pricing() {
-  const ref = useRef(null);
-  const isInView = useInView(ref, { once: true, margin: "-60px" });
-
   return (
     <section
       id="pricing"
-      ref={ref}
-      style={{
-        padding: "7rem 1.5rem",
-        background: "var(--surface-container)",
-        position: "relative",
-        overflow: "hidden",
-      }}
+      className="py-20 md:py-28 bg-[var(--color-bg)] border-b border-[var(--color-border)]"
     >
-      {/* Decorative top line */}
-      <div style={{
-        position: "absolute",
-        top: 0,
-        left: 0,
-        right: 0,
-        height: "1px",
-        background: "linear-gradient(90deg, transparent, rgba(34,211,238,0.4), rgba(124,58,237,0.4), transparent)",
-      }} />
-
-      {/* Background glow */}
-      <div style={{
-        position: "absolute",
-        top: "30%",
-        left: "50%",
-        transform: "translateX(-50%)",
-        width: "700px",
-        height: "400px",
-        borderRadius: "50%",
-        background: "radial-gradient(ellipse, rgba(124,58,237,0.07) 0%, transparent 70%)",
-        pointerEvents: "none",
-      }} />
-
-      <div style={{ maxWidth: "1100px", margin: "0 auto" }}>
-        {/* Header */}
-        <motion.div
-          initial={{ opacity: 0, y: 24 }}
-          animate={isInView ? { opacity: 1, y: 0 } : {}}
-          transition={{ duration: 0.6 }}
-          style={{ textAlign: "center", marginBottom: "4rem" }}
-        >
-          <span className="glass-pill" style={{
-            padding: "0.375rem 1rem",
-            fontSize: "0.7rem",
-            fontWeight: "700",
-            letterSpacing: "0.14em",
-            color: "#7C3AED",
-            textTransform: "uppercase",
-          }}>
-            PRICING
-          </span>
-          <h2 style={{
-            marginTop: "1.25rem",
-            fontSize: "clamp(1.8rem, 4vw, 2.8rem)",
-            fontWeight: "700",
-            color: "#f0f6fc",
-            letterSpacing: "-0.025em",
-          }}>
-            Simple, transparent pricing
+      <div className="max-w-[1200px] mx-auto px-4 sm:px-6">
+        {/* Section Header */}
+        <div className="text-center max-w-2xl mx-auto mb-14">
+          <Badge variant="primary" size="md" className="mb-3" pill>
+            TRANSPARENT PRICING
+          </Badge>
+          <h2 className="text-2xl sm:text-3xl font-bold text-[var(--color-text)] tracking-tight mb-3">
+            Predictable Plans for Engineering Teams
           </h2>
-          <p style={{
-            marginTop: "1rem",
-            color: "#8b949e",
-            fontSize: "1.05rem",
-            maxWidth: "460px",
-            margin: "1rem auto 0",
-          }}>
-            Start free, scale as you grow. No hidden fees.
+          <p className="text-sm sm:text-base text-[var(--color-text-secondary)]">
+            Free forever for open source developers. Scale as your test suite
+            and team velocity increase.
           </p>
-        </motion.div>
+        </div>
 
         {/* Pricing Cards */}
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
-          gap: "1.5rem",
-          alignItems: "center",
-        }}>
-          {PLANS.map((plan, i) => (
-            <motion.div
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch">
+          {PLANS.map((plan) => (
+            <Card
               key={plan.id}
               id={`pricing-${plan.id}`}
-              initial={{ opacity: 0, y: 32 }}
-              animate={isInView ? { opacity: 1, y: 0 } : {}}
-              transition={{ duration: 0.6, delay: i * 0.15, ease: "easeOut" }}
-              style={{
-                position: "relative",
-                borderRadius: "20px",
-                padding: plan.featured ? "2.25rem 2rem" : "2rem",
-                background: plan.featured
-                  ? "linear-gradient(160deg, rgba(124,58,237,0.12) 0%, rgba(13,17,23,0.95) 60%)"
-                  : "var(--surface-main)",
-                transform: plan.featured ? "scale(1.03)" : "scale(1)",
-                zIndex: plan.featured ? 1 : 0,
-              }}
+              className={`p-6 sm:p-7 flex flex-col justify-between relative ${
+                plan.featured
+                  ? "border-2 border-[var(--color-primary)] bg-[var(--color-surface)] shadow-sm"
+                  : "border border-[var(--color-border)] bg-[var(--color-surface)]"
+              }`}
             >
-              {/* Gradient border for featured */}
-              {plan.featured && (
-                <div style={{
-                  position: "absolute",
-                  inset: 0,
-                  borderRadius: "20px",
-                  padding: "1.5px",
-                  background: "linear-gradient(135deg, #7C3AED 0%, #22d3ee 50%, #7C3AED 100%)",
-                  WebkitMask: "linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)",
-                  WebkitMaskComposite: "xor",
-                  maskComposite: "exclude",
-                  zIndex: 0,
-                  pointerEvents: "none",
-                  animation: "pulse-glow 3s ease-in-out infinite",
-                }} />
-              )}
-
-              {!plan.featured && (
-                <div style={{
-                  position: "absolute",
-                  inset: 0,
-                  borderRadius: "20px",
-                  border: "1px solid rgba(255,255,255,0.07)",
-                  pointerEvents: "none",
-                }} />
-              )}
-
-              <div style={{ position: "relative", zIndex: 1 }}>
-                {/* Badge */}
-                {plan.badge && (
-                  <div style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "0.35rem",
-                    padding: "0.3rem 0.875rem",
-                    borderRadius: "20px",
-                    background: "linear-gradient(135deg, #7C3AED, #22d3ee)",
-                    fontSize: "0.7rem",
-                    fontWeight: "700",
-                    color: "white",
-                    letterSpacing: "0.05em",
-                    marginBottom: "1.25rem",
-                  }}>
-                    ✦ {plan.badge}
-                  </div>
-                )}
-
-                {/* Plan name */}
-                <h3 style={{
-                  fontSize: "1.1rem",
-                  fontWeight: "700",
-                  color: plan.featured ? "#f0f6fc" : "#8b949e",
-                  marginBottom: "0.5rem",
-                  letterSpacing: "-0.01em",
-                }}>
-                  {plan.name}
-                </h3>
-
-                {/* Price */}
-                <div style={{
-                  display: "flex",
-                  alignItems: "baseline",
-                  gap: "0.25rem",
-                  marginBottom: "0.75rem",
-                }}>
-                  <span style={{
-                    fontSize: plan.price === "Custom" ? "2rem" : "2.8rem",
-                    fontWeight: "800",
-                    color: "#f0f6fc",
-                    letterSpacing: "-0.03em",
-                    lineHeight: 1,
-                  }}>
-                    {plan.price}
-                  </span>
-                  {plan.period && (
-                    <span style={{ color: "#484f58", fontSize: "0.85rem" }}>
-                      {plan.period}
-                    </span>
+              <div>
+                {/* Header info */}
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-base font-bold text-[var(--color-text)]">
+                    {plan.name}
+                  </h3>
+                  {plan.badge && (
+                    <Badge variant="primary" size="sm">
+                      {plan.badge}
+                    </Badge>
                   )}
                 </div>
 
-                {/* Desc */}
-                <p style={{
-                  color: "#8b949e",
-                  fontSize: "0.875rem",
-                  lineHeight: "1.6",
-                  marginBottom: "1.75rem",
-                  paddingBottom: "1.75rem",
-                  borderBottom: "1px solid rgba(255,255,255,0.06)",
-                }}>
+                {/* Price block */}
+                <div className="flex items-baseline gap-1.5 mb-3">
+                  <span className="text-3xl sm:text-4xl font-extrabold tracking-tight text-[var(--color-text)] font-mono">
+                    {plan.price}
+                  </span>
+                  <span className="text-xs text-[var(--color-text-muted)] font-mono">
+                    {plan.period}
+                  </span>
+                </div>
+
+                <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed mb-6 min-h-[36px]">
                   {plan.desc}
                 </p>
 
-                {/* CTA */}
-                <motion.a
-                  href={plan.ctaHref}
+                {/* CTA Button */}
+                <Button
+                  as={Link}
+                  to={plan.ctaTo}
                   id={`pricing-cta-${plan.id}`}
-                  whileHover={{ scale: 1.03 }}
-                  whileTap={{ scale: 0.97 }}
-                  style={{
-                    display: "block",
-                    textAlign: "center",
-                    padding: "0.875rem",
-                    borderRadius: "10px",
-                    textDecoration: "none",
-                    fontSize: "0.95rem",
-                    fontWeight: "600",
-                    marginBottom: "1.75rem",
-                    transition: "all 0.2s ease",
-                    ...(plan.featured
-                      ? {
-                          background: "linear-gradient(135deg, #7C3AED, #9d5cf5)",
-                          color: "white",
-                          boxShadow: "0 0 24px rgba(124,58,237,0.4)",
-                        }
-                      : {
-                          background: "rgba(255,255,255,0.04)",
-                          color: "#f0f6fc",
-                          border: "1px solid rgba(255,255,255,0.1)",
-                        }),
-                  }}
+                  variant={plan.ctaVariant}
+                  size="md"
+                  className="w-full mb-6 font-semibold"
                 >
                   {plan.cta}
-                </motion.a>
+                </Button>
 
-                {/* Features */}
-                <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: "0.65rem" }}>
+                {/* Features divider */}
+                <div className="border-t border-[var(--color-border)] pt-5 space-y-2.5">
+                  <div className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">
+                    Included capabilities
+                  </div>
                   {plan.features.map((feat) => (
-                    <li
+                    <div
                       key={feat}
-                      style={{
-                        display: "flex",
-                        alignItems: "flex-start",
-                        gap: "0.625rem",
-                        fontSize: "0.875rem",
-                        color: "#c9d1d9",
-                        lineHeight: "1.5",
-                      }}
+                      className="flex items-start gap-2 text-xs text-[var(--color-text)]"
                     >
-                      <span style={{
-                        color: plan.featured ? "#22d3ee" : "#7C3AED",
-                        flexShrink: 0,
-                        fontSize: "0.8rem",
-                        marginTop: "2px",
-                      }}>✓</span>
-                      {feat}
-                    </li>
+                      <Check className="w-3.5 h-3.5 text-[var(--color-success)] shrink-0 mt-0.5" />
+                      <span>{feat}</span>
+                    </div>
                   ))}
-                  {plan.notIncluded.map((feat) => (
-                    <li
+                  {plan.excluded.map((feat) => (
+                    <div
                       key={feat}
-                      style={{
-                        display: "flex",
-                        alignItems: "flex-start",
-                        gap: "0.625rem",
-                        fontSize: "0.875rem",
-                        color: "#484f58",
-                        lineHeight: "1.5",
-                      }}
+                      className="flex items-start gap-2 text-xs text-[var(--color-text-muted)]"
                     >
-                      <span style={{ flexShrink: 0, fontSize: "0.8rem", marginTop: "2px" }}>✕</span>
-                      {feat}
-                    </li>
+                      <Minus className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0 mt-0.5" />
+                      <span>{feat}</span>
+                    </div>
                   ))}
-                </ul>
+                </div>
               </div>
-            </motion.div>
+            </Card>
           ))}
         </div>
 
-        {/* Bottom note */}
-        <motion.p
-          initial={{ opacity: 0 }}
-          animate={isInView ? { opacity: 1 } : {}}
-          transition={{ duration: 0.6, delay: 0.6 }}
-          style={{
-            textAlign: "center",
-            color: "#484f58",
-            fontSize: "0.8rem",
-            marginTop: "2.5rem",
-          }}
-        >
-          All plans include a 14-day free trial. No credit card required to start.
-        </motion.p>
+        {/* Footnote */}
+        <p className="text-center text-xs text-[var(--color-text-muted)] mt-10">
+          All paid plans include a 14-day free trial. No credit card required to
+          get started.
+        </p>
       </div>
     </section>
   );

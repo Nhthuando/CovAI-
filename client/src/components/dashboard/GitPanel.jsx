@@ -49,28 +49,33 @@ function getStatusBadge(status) {
     case "M":
       return {
         label: "M",
-        color: "text-amber-400 bg-amber-400/10 border-amber-400/30",
+        color:
+          "text-[var(--color-warning)] bg-[var(--color-warning)]/10 border-[var(--color-warning)]/30",
       };
     case "A":
       return {
         label: "A",
-        color: "text-emerald-400 bg-emerald-400/10 border-emerald-400/30",
+        color:
+          "text-[var(--color-success)] bg-[var(--color-success)]/10 border-[var(--color-success)]/30",
       };
     case "D":
       return {
         label: "D",
-        color: "text-red-400 bg-red-400/10 border-red-400/30",
+        color:
+          "text-[var(--color-danger)] bg-[var(--color-danger)]/10 border-[var(--color-danger)]/30",
       };
     case "R":
       return {
         label: "R",
-        color: "text-cyan-400 bg-cyan-400/10 border-cyan-400/30",
+        color:
+          "text-[var(--color-secondary)] bg-[var(--color-secondary)]/10 border-[var(--color-secondary)]/30",
       };
     case "U":
     default:
       return {
         label: "U",
-        color: "text-emerald-400 bg-emerald-400/10 border-emerald-400/30",
+        color:
+          "text-[var(--color-success)] bg-[var(--color-success)]/10 border-[var(--color-success)]/30",
       };
   }
 }
@@ -405,32 +410,32 @@ export const GitPanel = ({ projectId, onSync }) => {
     (statusData?.untracked?.length || 0);
 
   return (
-    <div className="flex flex-col h-full bg-[#0d1117] text-neutral-200 text-xs select-none border-r border-white/5 relative overflow-hidden font-sans">
+    <div className="flex flex-col h-full bg-[var(--color-surface)] text-[var(--color-text)] text-xs select-none border-r border-[var(--color-border)] relative overflow-hidden font-sans">
       {/* ── Top Header ─────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-white/5 bg-[#090d13]/60 flex-shrink-0">
+      <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-bg)] flex-shrink-0">
         <div className="flex items-center gap-2">
-          <span className="font-bold text-[11px] uppercase tracking-wider text-neutral-400 flex items-center gap-1.5">
-            <FolderGit2 size={13} className="text-violet-400" />
+          <span className="font-bold text-[11px] uppercase tracking-wider text-[var(--color-text-secondary)] flex items-center gap-1.5">
+            <FolderGit2 size={13} className="text-[var(--color-primary)]" />
             Source Control
           </span>
           {totalChanges > 0 && (
-            <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold font-mono bg-violet-500/20 text-violet-300 border border-violet-500/30">
+            <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold font-mono bg-[var(--color-primary)]/15 text-[var(--color-primary)] border border-[var(--color-primary)]/30">
               {totalChanges}
             </span>
           )}
         </div>
 
         {/* Toolbar Icons */}
-        <div className="flex items-center gap-1 text-neutral-400">
+        <div className="flex items-center gap-1 text-[var(--color-text-secondary)]">
           <button
             onClick={() =>
               setActiveTab(activeTab === "changes" ? "history" : "changes")
             }
             disabled={statusData?.isGitHubProject === false}
-            className={`p-1 rounded hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+            className={`p-1.5 rounded-[var(--radius-sm)] hover:bg-[var(--color-surface-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed ${
               activeTab === "history"
-                ? "text-violet-400 bg-white/5"
-                : "hover:text-white"
+                ? "text-[var(--color-primary)] bg-[var(--color-surface-secondary)]"
+                : ""
             }`}
             title={activeTab === "history" ? "View Changes" : "Commit History"}
           >
@@ -439,12 +444,14 @@ export const GitPanel = ({ projectId, onSync }) => {
           <button
             onClick={fetchStatus}
             disabled={loading}
-            className="p-1 rounded hover:bg-white/10 hover:text-white transition-colors disabled:opacity-50"
+            className="p-1.5 rounded-[var(--radius-sm)] hover:bg-[var(--color-surface-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer disabled:opacity-50"
             title="Refresh Status"
           >
             <RefreshCw
               size={14}
-              className={loading ? "animate-spin text-violet-400" : ""}
+              className={
+                loading ? "animate-spin text-[var(--color-primary)]" : ""
+              }
             />
           </button>
           <button
@@ -454,15 +461,17 @@ export const GitPanel = ({ projectId, onSync }) => {
               !statusData?.hasGit ||
               statusData?.isGitHubProject === false
             }
-            className="p-1 rounded hover:bg-white/10 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed relative"
+            className="p-1.5 rounded-[var(--radius-sm)] hover:bg-[var(--color-surface-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed relative"
             title="Pull from Remote"
           >
             <ArrowDown
               size={14}
-              className={pulling ? "animate-bounce text-cyan-400" : ""}
+              className={
+                pulling ? "animate-bounce text-[var(--color-secondary)]" : ""
+              }
             />
             {statusData?.behind > 0 && (
-              <span className="absolute -top-1 -right-1 px-1 min-w-[14px] h-[14px] rounded-full bg-amber-500 text-[9px] font-mono font-bold text-black flex items-center justify-center leading-none">
+              <span className="absolute -top-1 -right-1 px-1 min-w-[14px] h-[14px] rounded-full bg-[var(--color-warning)] text-[9px] font-mono font-bold text-white flex items-center justify-center leading-none">
                 {statusData.behind}
               </span>
             )}
@@ -474,23 +483,27 @@ export const GitPanel = ({ projectId, onSync }) => {
               !statusData?.hasGit ||
               statusData?.isGitHubProject === false
             }
-            className="p-1 rounded hover:bg-white/10 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed relative"
+            className="p-1.5 rounded-[var(--radius-sm)] hover:bg-[var(--color-surface-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed relative"
             title="Push to Remote"
           >
             <ArrowUp
               size={14}
-              className={pushing ? "animate-bounce text-violet-400" : ""}
+              className={
+                pushing ? "animate-bounce text-[var(--color-primary)]" : ""
+              }
             />
             {statusData?.ahead > 0 && (
-              <span className="absolute -top-1 -right-1 px-1 min-w-[14px] h-[14px] rounded-full bg-emerald-500 text-[9px] font-mono font-bold text-black flex items-center justify-center leading-none">
+              <span className="absolute -top-1 -right-1 px-1 min-w-[14px] h-[14px] rounded-full bg-[var(--color-success)] text-[9px] font-mono font-bold text-white flex items-center justify-center leading-none">
                 {statusData.ahead}
               </span>
             )}
           </button>
           <button
             onClick={() => setShowTerminal(!showTerminal)}
-            className={`p-1 rounded hover:bg-white/10 transition-colors ${
-              showTerminal ? "text-violet-400 bg-white/5" : "hover:text-white"
+            className={`p-1.5 rounded-[var(--radius-sm)] hover:bg-[var(--color-surface-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer ${
+              showTerminal
+                ? "text-[var(--color-primary)] bg-[var(--color-surface-secondary)]"
+                : ""
             }`}
             title="Toggle Git Console Output"
           >
@@ -501,14 +514,17 @@ export const GitPanel = ({ projectId, onSync }) => {
 
       {/* ── Connected Remote Repository Bar ─────────────────────── */}
       {statusData?.repoUrl && (
-        <div className="flex items-center justify-between px-3 py-1.5 bg-[#090d13]/80 border-b border-white/5 text-[11px] flex-shrink-0">
+        <div className="flex items-center justify-between px-3 py-1.5 bg-[var(--color-bg)] border-b border-[var(--color-border)] text-[11px] flex-shrink-0">
           <div className="flex items-center gap-1.5 min-w-0">
-            <GithubIcon size={13} className="text-white/70 flex-shrink-0" />
+            <GithubIcon
+              size={13}
+              className="text-[var(--color-text-secondary)] flex-shrink-0"
+            />
             <a
               href={statusData.repoUrl}
               target="_blank"
               rel="noreferrer"
-              className="text-violet-400 hover:text-violet-300 hover:underline truncate font-mono text-[11px] flex items-center gap-1"
+              className="text-[var(--color-primary)] hover:underline truncate font-mono text-[11px] flex items-center gap-1"
               title={statusData.repoUrl}
             >
               <span className="truncate">
@@ -520,7 +536,7 @@ export const GitPanel = ({ projectId, onSync }) => {
           <div className="flex items-center gap-1.5 flex-shrink-0">
             {statusData.ahead > 0 && (
               <span
-                className="px-1.5 py-0.2 rounded text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-0.5"
+                className="px-1.5 py-0.2 rounded-[var(--radius-sm)] text-[10px] font-mono font-bold bg-[var(--color-success)]/10 text-[var(--color-success)] border border-[var(--color-success)]/30 flex items-center gap-0.5"
                 title={`${statusData.ahead} commit(s) ahead of remote`}
               >
                 <ArrowUp size={10} />
@@ -529,7 +545,7 @@ export const GitPanel = ({ projectId, onSync }) => {
             )}
             {statusData.behind > 0 && (
               <span
-                className="px-1.5 py-0.2 rounded text-[10px] font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center gap-0.5"
+                className="px-1.5 py-0.2 rounded-[var(--radius-sm)] text-[10px] font-mono font-bold bg-[var(--color-warning)]/10 text-[var(--color-warning)] border border-[var(--color-warning)]/30 flex items-center gap-0.5"
                 title={`${statusData.behind} commit(s) behind remote`}
               >
                 <ArrowDown size={10} />
@@ -547,16 +563,16 @@ export const GitPanel = ({ projectId, onSync }) => {
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            className="bg-red-500/10 border-b border-red-500/20 px-3 py-2 text-[11px] text-red-300 flex items-start gap-2 flex-shrink-0"
+            className="bg-[var(--color-danger)]/10 border-b border-[var(--color-danger)]/20 px-3 py-2 text-[11px] text-[var(--color-danger)] flex items-start gap-2 flex-shrink-0"
           >
             <AlertCircle
               size={13}
-              className="text-red-400 flex-shrink-0 mt-0.5"
+              className="text-[var(--color-danger)] flex-shrink-0 mt-0.5"
             />
             <div className="flex-1 leading-snug">{errorMsg}</div>
             <button
               onClick={() => setErrorMsg("")}
-              className="text-red-400 hover:text-white"
+              className="text-[var(--color-danger)] hover:opacity-80 cursor-pointer"
             >
               <X size={12} />
             </button>
@@ -567,11 +583,11 @@ export const GitPanel = ({ projectId, onSync }) => {
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            className="bg-emerald-500/10 border-b border-emerald-500/20 px-3 py-1.5 text-[11px] text-emerald-300 flex items-center gap-2 flex-shrink-0"
+            className="bg-[var(--color-success)]/10 border-b border-[var(--color-success)]/20 px-3 py-1.5 text-[11px] text-[var(--color-success)] flex items-center gap-2 flex-shrink-0"
           >
             <CheckCircle2
               size={13}
-              className="text-emerald-400 flex-shrink-0"
+              className="text-[var(--color-success)] flex-shrink-0"
             />
             <span className="flex-1">{infoMsg}</span>
           </motion.div>
@@ -579,27 +595,33 @@ export const GitPanel = ({ projectId, onSync }) => {
       </AnimatePresence>
 
       {/* ── Main Content Area ─────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto min-h-0 flex flex-col scrollbar-thin scrollbar-thumb-white/10">
+      <div className="flex-1 overflow-y-auto min-h-0 flex flex-col scrollbar-thin scrollbar-thumb-[var(--color-border)]">
         {loading && !statusData ? (
-          <div className="flex flex-col items-center justify-center py-16 gap-2 text-neutral-500">
-            <Loader2 size={20} className="animate-spin text-violet-400" />
+          <div className="flex flex-col items-center justify-center py-16 gap-2 text-[var(--color-text-muted)]">
+            <Loader2
+              size={20}
+              className="animate-spin text-[var(--color-primary)]"
+            />
             <span className="text-xs">Inspecting Git status...</span>
           </div>
         ) : statusData?.isGitHubProject === false ? (
           /* ── Non-GitHub Project State ── */
           <div className="p-6 flex flex-col items-center justify-center text-center my-auto gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-neutral-500 shadow-lg">
-              <FolderGit2 size={24} className="text-neutral-500" />
+            <div className="w-12 h-12 rounded-[var(--radius-lg)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] flex items-center justify-center text-[var(--color-text-muted)] shadow-sm">
+              <FolderGit2
+                size={24}
+                className="text-[var(--color-text-muted)]"
+              />
             </div>
             <div>
-              <h3 className="font-semibold text-white text-xs">
+              <h3 className="font-semibold text-[var(--color-text)] text-xs">
                 GitHub Source Control Unavailable
               </h3>
-              <p className="text-[11px] text-neutral-400 mt-2 leading-relaxed max-w-[240px]">
+              <p className="text-[11px] text-[var(--color-text-secondary)] mt-2 leading-relaxed max-w-[240px]">
                 Git operations (push, pull, checkout, commit) are only enabled
                 for repositories imported directly from GitHub.
               </p>
-              <p className="text-[10px] text-neutral-500 mt-1.5 leading-relaxed max-w-[240px]">
+              <p className="text-[10px] text-[var(--color-text-muted)] mt-1.5 leading-relaxed max-w-[240px]">
                 This project was uploaded from a compressed archive (ZIP/RAR).
               </p>
             </div>
@@ -607,20 +629,20 @@ export const GitPanel = ({ projectId, onSync }) => {
         ) : !statusData?.hasGit ? (
           /* ── Uninitialized Repo State ── */
           <div className="p-5 flex flex-col items-center justify-center text-center my-auto gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-neutral-400 shadow-lg">
-              <FolderGit2 size={24} className="text-violet-400" />
+            <div className="w-12 h-12 rounded-[var(--radius-lg)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] flex items-center justify-center text-[var(--color-primary)] shadow-sm">
+              <FolderGit2 size={24} className="text-[var(--color-primary)]" />
             </div>
             <div>
-              <h3 className="font-semibold text-white text-xs">
+              <h3 className="font-semibold text-[var(--color-text)] text-xs">
                 {statusData?.repoUrl
                   ? "Repository Not Initialized"
                   : "No Git Repository"}
               </h3>
-              <p className="text-[11px] text-neutral-400 mt-1 leading-relaxed max-w-[240px]">
+              <p className="text-[11px] text-[var(--color-text-secondary)] mt-1 leading-relaxed max-w-[240px]">
                 {statusData?.repoUrl ? (
                   <span>
                     Linked to{" "}
-                    <span className="text-violet-400 font-mono font-medium">
+                    <span className="text-[var(--color-primary)] font-mono font-medium">
                       {statusData.repoUrl.replace("https://github.com/", "")}
                     </span>
                     . Initialize to track changes and sync with GitHub.
@@ -633,7 +655,7 @@ export const GitPanel = ({ projectId, onSync }) => {
             <button
               onClick={handleInitRepo}
               disabled={initializing}
-              className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 shadow-md shadow-violet-500/20 border border-white/10 transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              className="px-4 py-2 rounded-[var(--radius-md)] text-xs font-semibold text-white bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] shadow-none border-none transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
             >
               {initializing ? (
                 <Loader2 size={14} className="animate-spin" />
@@ -649,18 +671,18 @@ export const GitPanel = ({ projectId, onSync }) => {
 
             {/* Link Remote Section */}
             {!statusData?.repoUrl && (
-              <div className="w-full max-w-[240px] pt-2 border-t border-white/5 flex flex-col gap-2">
+              <div className="w-full max-w-[240px] pt-2 border-t border-[var(--color-border)] flex flex-col gap-2">
                 {!showLinkRemote ? (
                   <button
                     onClick={() => setShowLinkRemote(true)}
-                    className="text-[11px] text-neutral-400 hover:text-violet-300 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                    className="text-[11px] text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                   >
                     <Link2 size={12} />
                     <span>Link GitHub repository</span>
                   </button>
                 ) : (
                   <div className="flex flex-col gap-1.5 text-left">
-                    <label className="text-[10px] text-neutral-400 font-semibold uppercase tracking-wider">
+                    <label className="text-[10px] text-[var(--color-text-muted)] font-semibold uppercase tracking-wider font-mono">
                       GitHub Repository URL
                     </label>
                     <input
@@ -668,13 +690,13 @@ export const GitPanel = ({ projectId, onSync }) => {
                       placeholder="https://github.com/owner/repo"
                       value={remoteInput}
                       onChange={(e) => setRemoteInput(e.target.value)}
-                      className="w-full bg-neutral-900 border border-white/10 focus:border-violet-500/50 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none font-mono"
+                      className="w-full bg-[var(--color-bg)] border border-[var(--color-border)] focus:border-[var(--color-primary)] rounded-[var(--radius-md)] px-2.5 py-1.5 text-xs text-[var(--color-text)] outline-none font-mono"
                     />
                     <div className="flex items-center gap-1.5 mt-1">
                       <button
                         onClick={handleSetRemote}
                         disabled={savingRemote || !remoteInput.trim()}
-                        className="flex-1 py-1 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-medium flex items-center justify-center gap-1 disabled:opacity-50 cursor-pointer"
+                        className="flex-1 py-1 rounded-[var(--radius-md)] bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-medium flex items-center justify-center gap-1 disabled:opacity-50 cursor-pointer"
                       >
                         {savingRemote ? (
                           <Loader2 size={12} className="animate-spin" />
@@ -687,7 +709,7 @@ export const GitPanel = ({ projectId, onSync }) => {
                           setShowLinkRemote(false);
                           setRemoteInput("");
                         }}
-                        className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-neutral-400 text-xs cursor-pointer"
+                        className="px-2.5 py-1 rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] text-xs cursor-pointer"
                       >
                         Cancel
                       </button>
@@ -700,7 +722,7 @@ export const GitPanel = ({ projectId, onSync }) => {
         ) : activeTab === "history" ? (
           /* ── Commit History View ── */
           <div className="flex flex-col p-2 gap-1.5">
-            <div className="flex items-center justify-between px-2 py-1 text-[11px] text-neutral-400 font-semibold uppercase tracking-wider">
+            <div className="flex items-center justify-between px-2 py-1 text-[11px] text-[var(--color-text-muted)] font-semibold uppercase tracking-wider font-mono">
               <span>Recent Commits</span>
               <span className="font-mono text-[10px]">
                 ({commitLog.length})
@@ -709,27 +731,30 @@ export const GitPanel = ({ projectId, onSync }) => {
 
             {loadingLog ? (
               <div className="flex justify-center py-10">
-                <Loader2 size={18} className="animate-spin text-violet-400" />
+                <Loader2
+                  size={18}
+                  className="animate-spin text-[var(--color-primary)]"
+                />
               </div>
             ) : commitLog.length === 0 ? (
-              <div className="text-center py-8 text-neutral-500 text-xs">
+              <div className="text-center py-8 text-[var(--color-text-muted)] text-xs">
                 No commits recorded yet
               </div>
             ) : (
               commitLog.map((c) => (
                 <div
                   key={c.hash}
-                  className="p-2 rounded-lg bg-white/[0.02] hover:bg-white/[0.05] border border-white/5 transition-colors flex flex-col gap-1"
+                  className="p-2 rounded-[var(--radius-md)] bg-[var(--color-bg)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] transition-colors flex flex-col gap-1"
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <span className="font-medium text-white leading-snug line-clamp-2">
+                    <span className="font-medium text-[var(--color-text)] leading-snug line-clamp-2">
                       {c.message}
                     </span>
-                    <span className="font-mono text-[10px] text-violet-400 bg-violet-500/10 px-1 py-0.2 rounded border border-violet-500/20 flex-shrink-0">
+                    <span className="font-mono text-[10px] text-[var(--color-primary)] bg-[var(--color-primary)]/10 px-1.5 py-0.5 rounded-[var(--radius-sm)] border border-[var(--color-primary)]/20 flex-shrink-0">
                       {c.shortHash}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between text-[10px] text-neutral-500 mt-0.5">
+                  <div className="flex items-center justify-between text-[10px] text-[var(--color-text-muted)] mt-0.5">
                     <span>{c.author}</span>
                     <span>{c.date}</span>
                   </div>
@@ -744,18 +769,18 @@ export const GitPanel = ({ projectId, onSync }) => {
             <div className="relative" ref={branchMenuRef}>
               <div
                 onClick={() => setShowBranchMenu(!showBranchMenu)}
-                className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-neutral-900/80 hover:bg-neutral-800/80 border border-white/10 hover:border-violet-500/30 transition-all cursor-pointer text-xs"
+                className="flex items-center justify-between px-2.5 py-1.5 rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-border)] border border-[var(--color-border)] hover:border-[var(--color-primary)]/40 transition-all cursor-pointer text-xs"
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <GitBranch
                     size={13}
-                    className="text-violet-400 flex-shrink-0"
+                    className="text-[var(--color-primary)] flex-shrink-0"
                   />
-                  <span className="font-mono font-semibold text-neutral-200 truncate">
+                  <span className="font-mono font-semibold text-[var(--color-text)] truncate">
                     {statusData.branch || "main"}
                   </span>
                   {(statusData.ahead > 0 || statusData.behind > 0) && (
-                    <span className="flex items-center gap-1 text-[10px] font-mono text-neutral-400 bg-white/5 px-1.5 py-0.2 rounded">
+                    <span className="flex items-center gap-1 text-[10px] font-mono text-[var(--color-text-secondary)] bg-[var(--color-bg)] px-1.5 py-0.2 rounded-[var(--radius-sm)] border border-[var(--color-border)]">
                       {statusData.ahead > 0 && <span>↑{statusData.ahead}</span>}
                       {statusData.behind > 0 && (
                         <span>↓{statusData.behind}</span>
@@ -765,7 +790,7 @@ export const GitPanel = ({ projectId, onSync }) => {
                 </div>
                 <ChevronDown
                   size={13}
-                  className="text-neutral-500 flex-shrink-0"
+                  className="text-[var(--color-text-muted)] flex-shrink-0"
                 />
               </div>
 
@@ -776,9 +801,9 @@ export const GitPanel = ({ projectId, onSync }) => {
                     initial={{ opacity: 0, y: 5 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: 5 }}
-                    className="absolute top-full left-0 right-0 mt-1 z-30 bg-[#161b22] border border-white/10 rounded-xl shadow-2xl p-2 flex flex-col gap-2"
+                    className="absolute top-full left-0 right-0 mt-1 z-30 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-lg)] shadow-xl p-2.5 flex flex-col gap-2"
                   >
-                    <div className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider px-1">
+                    <div className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider px-1 font-mono">
                       Switch or Create Branch
                     </div>
 
@@ -789,13 +814,13 @@ export const GitPanel = ({ projectId, onSync }) => {
                         placeholder="Search or new branch..."
                         value={branchSearch}
                         onChange={(e) => setBranchSearch(e.target.value)}
-                        className="flex-1 bg-neutral-900/80 border border-white/10 rounded-lg px-2 py-1 text-xs text-white outline-none focus:border-violet-500/40 font-mono"
+                        className="flex-1 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-[var(--radius-md)] px-2 py-1 text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] font-mono"
                       />
                       {branchSearch &&
                         !branches.local.includes(branchSearch) && (
                           <button
                             onClick={() => handleCheckout(branchSearch, true)}
-                            className="px-2 py-1 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-[11px] font-medium flex items-center gap-1 flex-shrink-0"
+                            className="px-2 py-1 rounded-[var(--radius-md)] bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-[11px] font-medium flex items-center gap-1 flex-shrink-0 cursor-pointer"
                             title="Create and checkout"
                           >
                             <Plus size={11} /> Create
@@ -804,7 +829,7 @@ export const GitPanel = ({ projectId, onSync }) => {
                     </div>
 
                     {/* Local branches */}
-                    <div className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider px-1 mt-1">
+                    <div className="text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wider px-1 mt-1 font-mono">
                       Local Branches
                     </div>
                     <div className="flex flex-col max-h-32 overflow-y-auto gap-0.5 pr-0.5">
@@ -816,10 +841,10 @@ export const GitPanel = ({ projectId, onSync }) => {
                           <button
                             key={b}
                             onClick={() => handleCheckout(b, false)}
-                            className={`w-full text-left px-2 py-1.5 rounded-lg flex items-center justify-between text-xs transition-colors ${
+                            className={`w-full text-left px-2 py-1.5 rounded-[var(--radius-sm)] flex items-center justify-between text-xs transition-colors cursor-pointer ${
                               b === statusData.branch
-                                ? "bg-violet-600/20 text-violet-300 font-semibold"
-                                : "hover:bg-white/5 text-neutral-300"
+                                ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] font-semibold border border-[var(--color-primary)]/30"
+                                : "hover:bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-transparent"
                             }`}
                           >
                             <span className="font-mono truncate">{b}</span>
@@ -832,7 +857,7 @@ export const GitPanel = ({ projectId, onSync }) => {
                     {branches.remote?.filter((r) => !branches.local.includes(r))
                       .length > 0 && (
                       <>
-                        <div className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider px-1 mt-1.5 pt-1.5 border-t border-white/5">
+                        <div className="text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wider px-1 mt-1.5 pt-1.5 border-t border-[var(--color-border)] font-mono">
                           Remote Branches (origin)
                         </div>
                         <div className="flex flex-col max-h-32 overflow-y-auto gap-0.5 pr-0.5">
@@ -848,7 +873,7 @@ export const GitPanel = ({ projectId, onSync }) => {
                               <button
                                 key={b}
                                 onClick={() => handleCheckout(b, false)}
-                                className="w-full text-left px-2 py-1.5 rounded-lg flex items-center justify-between text-xs hover:bg-white/5 text-neutral-400 hover:text-white transition-colors"
+                                className="w-full text-left px-2 py-1.5 rounded-[var(--radius-sm)] flex items-center justify-between text-xs hover:bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
                                 title={`Checkout and track remote branch ${b}`}
                               >
                                 <span className="font-mono truncate text-[11px]">
@@ -878,7 +903,7 @@ export const GitPanel = ({ projectId, onSync }) => {
                       handleCommit(e);
                     }
                   }}
-                  className="w-full rounded-xl bg-neutral-900/80 border border-white/10 focus:border-violet-500/50 p-2.5 text-xs text-neutral-100 placeholder:text-neutral-500 outline-none transition-all resize-none font-sans"
+                  className="w-full rounded-[var(--radius-md)] bg-[var(--color-bg)] border border-[var(--color-border)] focus:border-[var(--color-primary)] p-2.5 text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] outline-none transition-all resize-none font-sans"
                 />
               </div>
 
@@ -887,7 +912,7 @@ export const GitPanel = ({ projectId, onSync }) => {
                 disabled={
                   committing || (!commitMessage.trim() && totalChanges === 0)
                 }
-                className="w-full h-8 rounded-xl flex items-center justify-center gap-2 font-semibold text-xs text-white bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 shadow-md shadow-violet-500/20 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                className="w-full h-8 rounded-[var(--radius-md)] flex items-center justify-center gap-2 font-semibold text-xs text-white bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] shadow-none border-none transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {committing ? (
                   <>
@@ -905,12 +930,15 @@ export const GitPanel = ({ projectId, onSync }) => {
 
             {/* Clean State */}
             {statusData.clean && totalChanges === 0 && (
-              <div className="flex flex-col items-center justify-center py-8 text-center text-neutral-500 gap-2">
-                <CheckCircle2 size={24} className="text-emerald-500/60" />
-                <span className="text-xs text-neutral-400">
+              <div className="flex flex-col items-center justify-center py-8 text-center text-[var(--color-text-muted)] gap-2">
+                <CheckCircle2
+                  size={24}
+                  className="text-[var(--color-success)] opacity-80"
+                />
+                <span className="text-xs text-[var(--color-text-secondary)]">
                   Working tree clean
                 </span>
-                <span className="text-[11px] text-neutral-600">
+                <span className="text-[11px] text-[var(--color-text-muted)]">
                   No modifications detected
                 </span>
               </div>
@@ -919,10 +947,10 @@ export const GitPanel = ({ projectId, onSync }) => {
             {/* ── Staged Changes Section ── */}
             {statusData.staged.length > 0 && (
               <div className="flex flex-col gap-1">
-                <div className="flex items-center justify-between text-neutral-400 px-1">
+                <div className="flex items-center justify-between text-[var(--color-text-secondary)] px-1">
                   <button
                     onClick={() => setStagedOpen(!stagedOpen)}
-                    className="flex items-center gap-1.5 font-semibold text-[10px] uppercase tracking-wider hover:text-white"
+                    className="flex items-center gap-1.5 font-semibold text-[10px] uppercase tracking-wider hover:text-[var(--color-text)] font-mono cursor-pointer"
                   >
                     {stagedOpen ? (
                       <ChevronDown size={11} />
@@ -934,7 +962,7 @@ export const GitPanel = ({ projectId, onSync }) => {
                   <button
                     onClick={() => handleUnstage("all")}
                     disabled={actionLoading}
-                    className="p-1 rounded hover:bg-white/10 hover:text-white transition-colors"
+                    className="p-1 rounded-[var(--radius-sm)] hover:bg-[var(--color-surface-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
                     title="Unstage All Changes"
                   >
                     <Minus size={12} />
@@ -948,16 +976,16 @@ export const GitPanel = ({ projectId, onSync }) => {
                       return (
                         <div
                           key={`staged-${f.path}`}
-                          className="group flex items-center justify-between px-2 py-1 rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
+                          className="group flex items-center justify-between px-2 py-1 rounded-[var(--radius-sm)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer"
                           onClick={() => openDiff(f.path, true)}
                         >
                           <div className="flex items-center gap-2 min-w-0">
                             <span
-                              className={`text-[10px] font-bold font-mono px-1 rounded border ${badge.color}`}
+                              className={`text-[10px] font-bold font-mono px-1 rounded-[var(--radius-sm)] border ${badge.color}`}
                             >
                               {badge.label}
                             </span>
-                            <span className="font-mono text-neutral-300 group-hover:text-white truncate text-[11px]">
+                            <span className="font-mono text-[var(--color-text)] truncate text-[11px]">
                               {f.path}
                             </span>
                           </div>
@@ -968,7 +996,7 @@ export const GitPanel = ({ projectId, onSync }) => {
                                 e.stopPropagation();
                                 openDiff(f.path, true);
                               }}
-                              className="p-1 rounded hover:bg-white/10 text-neutral-400 hover:text-white"
+                              className="p-1 rounded-[var(--radius-sm)] hover:bg-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer"
                               title="Open Diff"
                             >
                               <FileText size={11} />
@@ -978,7 +1006,7 @@ export const GitPanel = ({ projectId, onSync }) => {
                                 e.stopPropagation();
                                 handleUnstage([f.path]);
                               }}
-                              className="p-1 rounded hover:bg-white/10 text-neutral-400 hover:text-white"
+                              className="p-1 rounded-[var(--radius-sm)] hover:bg-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer"
                               title="Unstage File"
                             >
                               <Minus size={11} />
@@ -996,10 +1024,10 @@ export const GitPanel = ({ projectId, onSync }) => {
             {(statusData.unstaged.length > 0 ||
               statusData.untracked.length > 0) && (
               <div className="flex flex-col gap-1">
-                <div className="flex items-center justify-between text-neutral-400 px-1">
+                <div className="flex items-center justify-between text-[var(--color-text-secondary)] px-1">
                   <button
                     onClick={() => setChangesOpen(!changesOpen)}
-                    className="flex items-center gap-1.5 font-semibold text-[10px] uppercase tracking-wider hover:text-white"
+                    className="flex items-center gap-1.5 font-semibold text-[10px] uppercase tracking-wider hover:text-[var(--color-text)] font-mono cursor-pointer"
                   >
                     {changesOpen ? (
                       <ChevronDown size={11} />
@@ -1017,7 +1045,7 @@ export const GitPanel = ({ projectId, onSync }) => {
                     <button
                       onClick={() => handleStage("all")}
                       disabled={actionLoading}
-                      className="p-1 rounded hover:bg-white/10 hover:text-white transition-colors"
+                      className="p-1 rounded-[var(--radius-sm)] hover:bg-[var(--color-surface-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
                       title="Stage All Changes"
                     >
                       <Plus size={12} />
@@ -1033,16 +1061,16 @@ export const GitPanel = ({ projectId, onSync }) => {
                       return (
                         <div
                           key={`unstaged-${f.path}`}
-                          className="group flex items-center justify-between px-2 py-1 rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
+                          className="group flex items-center justify-between px-2 py-1 rounded-[var(--radius-sm)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer"
                           onClick={() => openDiff(f.path, false)}
                         >
                           <div className="flex items-center gap-2 min-w-0">
                             <span
-                              className={`text-[10px] font-bold font-mono px-1 rounded border ${badge.color}`}
+                              className={`text-[10px] font-bold font-mono px-1 rounded-[var(--radius-sm)] border ${badge.color}`}
                             >
                               {badge.label}
                             </span>
-                            <span className="font-mono text-neutral-300 group-hover:text-white truncate text-[11px]">
+                            <span className="font-mono text-[var(--color-text)] truncate text-[11px]">
                               {f.path}
                             </span>
                           </div>
@@ -1053,7 +1081,7 @@ export const GitPanel = ({ projectId, onSync }) => {
                                 e.stopPropagation();
                                 openDiff(f.path, false);
                               }}
-                              className="p-1 rounded hover:bg-white/10 text-neutral-400 hover:text-white"
+                              className="p-1 rounded-[var(--radius-sm)] hover:bg-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer"
                               title="Open Diff"
                             >
                               <FileText size={11} />
@@ -1063,7 +1091,7 @@ export const GitPanel = ({ projectId, onSync }) => {
                                 e.stopPropagation();
                                 handleDiscard(f.path, false);
                               }}
-                              className="p-1 rounded hover:bg-white/10 text-neutral-400 hover:text-amber-400"
+                              className="p-1 rounded-[var(--radius-sm)] hover:bg-[var(--color-warning)]/15 text-[var(--color-text-secondary)] hover:text-[var(--color-warning)] cursor-pointer"
                               title="Discard Changes"
                             >
                               <RotateCcw size={11} />
@@ -1073,7 +1101,7 @@ export const GitPanel = ({ projectId, onSync }) => {
                                 e.stopPropagation();
                                 handleStage([f.path]);
                               }}
-                              className="p-1 rounded hover:bg-white/10 text-neutral-400 hover:text-emerald-400"
+                              className="p-1 rounded-[var(--radius-sm)] hover:bg-[var(--color-success)]/15 text-[var(--color-text-secondary)] hover:text-[var(--color-success)] cursor-pointer"
                               title="Stage File"
                             >
                               <Plus size={11} />
@@ -1089,16 +1117,16 @@ export const GitPanel = ({ projectId, onSync }) => {
                       return (
                         <div
                           key={`untracked-${f.path}`}
-                          className="group flex items-center justify-between px-2 py-1 rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
+                          className="group flex items-center justify-between px-2 py-1 rounded-[var(--radius-sm)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer"
                           onClick={() => handleStage([f.path])}
                         >
                           <div className="flex items-center gap-2 min-w-0">
                             <span
-                              className={`text-[10px] font-bold font-mono px-1 rounded border ${badge.color}`}
+                              className={`text-[10px] font-bold font-mono px-1 rounded-[var(--radius-sm)] border ${badge.color}`}
                             >
                               {badge.label}
                             </span>
-                            <span className="font-mono text-neutral-300 group-hover:text-white truncate text-[11px]">
+                            <span className="font-mono text-[var(--color-text)] truncate text-[11px]">
                               {f.path}
                             </span>
                           </div>
@@ -1109,7 +1137,7 @@ export const GitPanel = ({ projectId, onSync }) => {
                                 e.stopPropagation();
                                 handleDiscard(f.path, true);
                               }}
-                              className="p-1 rounded hover:bg-white/10 text-neutral-400 hover:text-red-400"
+                              className="p-1 rounded-[var(--radius-sm)] hover:bg-[var(--color-danger)]/15 text-[var(--color-text-secondary)] hover:text-[var(--color-danger)] cursor-pointer"
                               title="Delete Untracked File"
                             >
                               <RotateCcw size={11} />
@@ -1119,7 +1147,7 @@ export const GitPanel = ({ projectId, onSync }) => {
                                 e.stopPropagation();
                                 handleStage([f.path]);
                               }}
-                              className="p-1 rounded hover:bg-white/10 text-neutral-400 hover:text-emerald-400"
+                              className="p-1 rounded-[var(--radius-sm)] hover:bg-[var(--color-success)]/15 text-[var(--color-text-secondary)] hover:text-[var(--color-success)] cursor-pointer"
                               title="Track / Stage File"
                             >
                               <Plus size={11} />
@@ -1143,43 +1171,47 @@ export const GitPanel = ({ projectId, onSync }) => {
             initial={{ height: 0 }}
             animate={{ height: 160 }}
             exit={{ height: 0 }}
-            className="border-t border-white/10 bg-[#090d13] flex flex-col flex-shrink-0 overflow-hidden font-mono text-[10px]"
+            className="border-t border-[var(--color-border)] bg-[var(--color-bg)] flex flex-col flex-shrink-0 overflow-hidden font-mono text-[10px]"
           >
-            <div className="flex items-center justify-between px-3 py-1 bg-white/[0.03] border-b border-white/5 text-neutral-400">
-              <span className="flex items-center gap-1.5 font-bold uppercase">
+            <div className="flex items-center justify-between px-3 py-1 bg-[var(--color-surface)] border-b border-[var(--color-border)] text-[var(--color-text-secondary)]">
+              <span className="flex items-center gap-1.5 font-bold uppercase text-[var(--color-primary)]">
                 <Terminal size={11} /> Git Output Console
               </span>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setTerminalLogs([])}
-                  className="hover:text-white text-[10px]"
+                  className="text-[var(--color-text-secondary)] hover:text-[var(--color-text)] text-[10px] cursor-pointer"
                 >
                   Clear
                 </button>
                 <button
                   onClick={() => setShowTerminal(false)}
-                  className="hover:text-white"
+                  className="text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer"
                 >
                   <X size={11} />
                 </button>
               </div>
             </div>
 
-            <div className="flex-1 p-2 overflow-y-auto space-y-1 text-neutral-300 select-text">
+            <div className="flex-1 p-2 overflow-y-auto space-y-1 text-[var(--color-text)] select-text">
               {terminalLogs.length === 0 ? (
-                <div className="text-neutral-600">
+                <div className="text-[var(--color-text-muted)]">
                   // No Git operations logged yet
                 </div>
               ) : (
                 terminalLogs.map((log, i) => (
                   <div key={i} className="leading-relaxed">
-                    <span className="text-neutral-600">[{log.time}]</span>{" "}
-                    <span className="text-violet-400">$ {log.cmd}</span>
+                    <span className="text-[var(--color-text-muted)]">
+                      [{log.time}]
+                    </span>{" "}
+                    <span className="text-[var(--color-primary)] font-semibold">
+                      $ {log.cmd}
+                    </span>
                     <pre
                       className={`whitespace-pre-wrap mt-0.5 pl-3 border-l ${
                         log.isErr
-                          ? "border-red-500/40 text-red-300"
-                          : "border-white/10 text-neutral-400"
+                          ? "border-[var(--color-danger)]/40 text-[var(--color-danger)]"
+                          : "border-[var(--color-border)] text-[var(--color-text-secondary)]"
                       }`}
                     >
                       {log.text}
@@ -1200,19 +1232,19 @@ export const GitPanel = ({ projectId, onSync }) => {
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="w-full max-w-2xl max-h-[80vh] rounded-2xl bg-[#0d1117] border border-white/10 shadow-2xl flex flex-col overflow-hidden"
+              className="w-full max-w-2xl max-h-[80vh] rounded-[var(--radius-xl)] bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl flex flex-col overflow-hidden"
             >
               {/* Diff Header */}
-              <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-[#161b22]">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
                 <div className="flex items-center gap-2 min-w-0">
                   <FileText
                     size={15}
-                    className="text-violet-400 flex-shrink-0"
+                    className="text-[var(--color-primary)] flex-shrink-0"
                   />
-                  <span className="font-mono text-xs font-semibold text-white truncate">
+                  <span className="font-mono text-xs font-semibold text-[var(--color-text)] truncate">
                     {diffModal.file}
                   </span>
-                  <span className="text-[10px] px-1.5 py-0.2 rounded font-mono bg-white/5 text-neutral-400 border border-white/10">
+                  <span className="text-[10px] px-1.5 py-0.2 rounded-[var(--radius-sm)] font-mono bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
                     {diffModal.staged ? "Staged" : "Working Tree"}
                   </span>
                 </div>
@@ -1225,41 +1257,41 @@ export const GitPanel = ({ projectId, onSync }) => {
                       content: "",
                     })
                   }
-                  className="p-1 rounded hover:bg-white/10 text-neutral-400 hover:text-white"
+                  className="p-1 rounded-[var(--radius-sm)] hover:bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer"
                 >
                   <X size={15} />
                 </button>
               </div>
 
               {/* Diff Content */}
-              <div className="flex-1 p-4 overflow-y-auto font-mono text-xs select-text bg-[#090d13]">
+              <div className="flex-1 p-4 overflow-y-auto font-mono text-xs select-text bg-[var(--color-bg)] text-[var(--color-text)]">
                 {loadingDiff ? (
                   <div className="flex justify-center py-12">
                     <Loader2
                       size={20}
-                      className="animate-spin text-violet-400"
+                      className="animate-spin text-[var(--color-primary)]"
                     />
                   </div>
                 ) : (
                   <pre className="whitespace-pre-wrap leading-relaxed">
                     {diffModal.content.split("\n").map((line, idx) => {
-                      let color = "text-neutral-400";
+                      let color = "text-[var(--color-text-secondary)]";
                       let bg = "transparent";
                       if (line.startsWith("+")) {
-                        color = "text-emerald-300";
-                        bg = "rgba(16, 185, 129, 0.1)";
+                        color = "text-[var(--color-success)]";
+                        bg = "rgba(16, 185, 129, 0.12)";
                       } else if (line.startsWith("-")) {
-                        color = "text-red-300";
-                        bg = "rgba(239, 68, 68, 0.1)";
+                        color = "text-[var(--color-danger)]";
+                        bg = "rgba(239, 68, 68, 0.12)";
                       } else if (line.startsWith("@@")) {
-                        color = "text-cyan-400 font-bold";
-                        bg = "rgba(6, 182, 212, 0.05)";
+                        color = "text-[var(--color-secondary)] font-bold";
+                        bg = "rgba(59, 130, 246, 0.1)";
                       }
                       return (
                         <div
                           key={idx}
                           style={{ backgroundColor: bg }}
-                          className={`${color} px-1.5 py-0.2 rounded-sm`}
+                          className={`${color} px-1.5 py-0.2 rounded-[var(--radius-sm)]`}
                         >
                           {line || " "}
                         </div>

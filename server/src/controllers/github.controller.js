@@ -1,7 +1,9 @@
+import fs from "fs";
 import { GitHubCloneService } from "../services/githubClone.service.js";
 import prisma from "../config/prisma.js";
 import { detectJest } from "../utils/jestDetector.js";
 import { buildCfgForSnapshot } from "../services/buildCfg.service.js";
+import { detectLanguageFromDirectory } from "../utils/languageDetector.js";
 
 export const cloneGitHubRepositoryByUrl = async (req, res) => {
   try {
@@ -30,6 +32,21 @@ export const cloneGitHubRepositoryByUrl = async (req, res) => {
       repo,
       false,
     );
+
+    // Validate project language (must be JavaScript or TypeScript)
+    const langCheck = detectLanguageFromDirectory(cloneResult.localPath);
+    if (!langCheck.isSupported) {
+      console.warn(
+        `[GitHub Import URL] Rejected non-JS/TS repo: ${langCheck.reason}`,
+      );
+      try {
+        fs.rmSync(cloneResult.localPath, { recursive: true, force: true });
+      } catch (_) {}
+      return res.status(400).json({
+        message: langCheck.reason,
+        detectedLanguage: langCheck.primaryLanguage,
+      });
+    }
 
     const detection = detectJest(cloneResult.localPath);
 
@@ -104,6 +121,21 @@ export const importGitHubRepository = async (req, res) => {
       repo,
       true,
     );
+
+    // Validate project language (must be JavaScript or TypeScript)
+    const langCheck = detectLanguageFromDirectory(cloneResult.localPath);
+    if (!langCheck.isSupported) {
+      console.warn(
+        `[GitHub Import Repo] Rejected non-JS/TS repo: ${langCheck.reason}`,
+      );
+      try {
+        fs.rmSync(cloneResult.localPath, { recursive: true, force: true });
+      } catch (_) {}
+      return res.status(400).json({
+        message: langCheck.reason,
+        detectedLanguage: langCheck.primaryLanguage,
+      });
+    }
 
     const detection = detectJest(cloneResult.localPath);
 

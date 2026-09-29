@@ -1,23 +1,21 @@
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Files,
-  LayoutDashboard,
-  Cpu,
-  Network,
   Settings,
-  Zap,
   BarChart3,
   GitGraph,
   GitBranch,
+  Layers,
+  Network,
+  Terminal,
 } from "lucide-react";
 import { useState } from "react";
 
 const TOP_ITEMS = [
   { id: "explorer", icon: Files, label: "Explorer" },
   { id: "git", icon: GitGraph, label: "Git Control" },
-
   { id: "coverage", icon: BarChart3, label: "Coverage" },
-  { id: "jobs", icon: Cpu, label: "Job Queue" },
+  { id: "jobs", icon: Layers, label: "Snapshots & Jobs" },
   { id: "architecture", icon: Network, label: "Architecture" },
   { id: "logic-analysis", icon: GitBranch, label: "Logic Analysis" },
 ];
@@ -31,86 +29,62 @@ function ActivityItem({ item, isActive, onClick, delay = 0 }) {
   return (
     <motion.div
       className="relative"
-      initial={{ opacity: 0, x: -12 }}
+      initial={{ opacity: 0, x: -8 }}
       animate={{ opacity: 1, x: 0 }}
-      transition={{ delay, duration: 0.3, ease: "easeOut" }}
+      transition={{ delay, duration: 0.2, ease: "easeOut" }}
     >
-      {/* Active vertical bar */}
+      {/* Active vertical bar (solid accent, no gradient, no glow) */}
       <AnimatePresence>
         {isActive && (
           <motion.div
             layoutId="activity-indicator"
-            className="absolute left-0 top-1/2 -translate-y-1/2 rounded-r-full"
+            className="absolute left-0 top-1/2 -translate-y-1/2 rounded-r-[var(--radius-sm)]"
             style={{
-              width: 2.5,
-              height: 28,
-              background: "linear-gradient(180deg, #a78bfa 0%, #7c3aed 100%)",
-              boxShadow:
-                "2px 0 12px rgba(124, 58, 237, 0.8), 0 0 6px rgba(124, 58, 237, 0.5)",
+              width: 3,
+              height: 24,
+              backgroundColor: "var(--color-primary)",
             }}
             initial={{ scaleY: 0, opacity: 0 }}
             animate={{ scaleY: 1, opacity: 1 }}
             exit={{ scaleY: 0, opacity: 0 }}
-            transition={{ type: "spring", stiffness: 500, damping: 30 }}
+            transition={{ duration: 0.15 }}
           />
         )}
       </AnimatePresence>
 
       {/* Icon Button */}
-      <motion.button
+      <button
+        type="button"
         onClick={() => onClick(item.id)}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
-        whileHover={{ scale: 1.08 }}
-        whileTap={{ scale: 0.92 }}
-        className="relative flex items-center justify-center cursor-pointer select-none"
-        style={{
-          width: 52,
-          height: 52,
-          background: isActive
-            ? "rgba(124, 58, 237, 0.1)"
+        className={`relative flex items-center justify-center cursor-pointer select-none rounded-[var(--radius-md)] transition-colors my-1 mx-2 ${
+          isActive
+            ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
             : hovered
-              ? "rgba(255, 255, 255, 0.04)"
-              : "transparent",
-          borderRadius: 8,
-          margin: "0 10px",
-          transition: "background 0.15s ease",
+              ? "bg-[var(--color-surface)] text-[var(--color-text)]"
+              : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+        }`}
+        style={{
+          width: 44,
+          height: 44,
         }}
         id={`activity-${item.id}`}
         title={item.label}
+        aria-label={item.label}
       >
-        <Icon
-          size={20}
-          strokeWidth={isActive ? 2 : 1.6}
-          style={{
-            color: isActive ? "#a78bfa" : hovered ? "#8b949e" : "#484f58",
-            filter: isActive
-              ? "drop-shadow(0 0 6px rgba(167, 139, 250, 0.5))"
-              : "none",
-            transition: "all 0.2s ease",
-          }}
-        />
-      </motion.button>
+        <Icon size={19} strokeWidth={isActive ? 2 : 1.75} />
+      </button>
 
       {/* Tooltip */}
       <AnimatePresence>
         {hovered && (
           <motion.div
-            initial={{ opacity: 0, x: -4, scale: 0.9 }}
+            initial={{ opacity: 0, x: -4, scale: 0.95 }}
             animate={{ opacity: 1, x: 0, scale: 1 }}
-            exit={{ opacity: 0, x: -4, scale: 0.9 }}
-            transition={{ duration: 0.15 }}
-            className="pointer-events-none absolute left-16 top-1/2 -translate-y-1/2 z-50 whitespace-nowrap"
-            style={{
-              background: "#21262d",
-              border: "1px solid rgba(255,255,255,0.1)",
-              borderRadius: 6,
-              padding: "4px 10px",
-              fontSize: 12,
-              color: "#e6edf3",
-              fontFamily: "var(--font-sans)",
-              boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
-            }}
+            exit={{ opacity: 0, x: -4, scale: 0.95 }}
+            transition={{ duration: 0.12 }}
+            className="absolute left-full top-1/2 -translate-y-1/2 ml-2 px-2.5 py-1 rounded-[var(--radius-md)] bg-[var(--color-surface)] border border-[var(--color-border)] shadow-md text-xs font-medium text-[var(--color-text)] whitespace-nowrap z-50 pointer-events-none"
           >
             {item.label}
           </motion.div>
@@ -123,42 +97,20 @@ function ActivityItem({ item, isActive, onClick, delay = 0 }) {
 export default function ActivityBar({ active, onSelect }) {
   return (
     <div
-      className="flex flex-col items-center justify-between py-2 select-none flex-shrink-0"
-      style={{
-        width: 72,
-        background: "var(--ide-activitybar)",
-        borderRight: "1px solid var(--ide-border)",
-      }}
+      className="h-full flex flex-col items-center justify-between py-2.5 select-none shrink-0 bg-[var(--color-surface-secondary)] border-r border-[var(--color-border)] font-sans"
+      style={{ width: 60 }}
     >
-      {/* Logo / Brand */}
-      <div className="flex flex-col items-center gap-1">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.6 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.4, ease: "easeOut" }}
-          className="flex items-center justify-center mb-3"
-          style={{
-            width: 36,
-            height: 36,
-            borderRadius: 10,
-            background: "linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%)",
-            boxShadow:
-              "0 0 16px rgba(124, 58, 237, 0.5), 0 2px 8px rgba(0,0,0,0.4)",
-            marginTop: 4,
-          }}
+      {/* Brand Icon & Top nav items */}
+      <div className="flex flex-col items-center gap-1 w-full">
+        <div
+          className="w-8 h-8 rounded-[var(--radius-md)] bg-[var(--color-primary)] text-white flex items-center justify-center mb-2.5 shrink-0"
+          title="CovAI Platform"
         >
-          <Zap size={16} style={{ color: "#fff" }} strokeWidth={2.5} />
-        </motion.div>
+          <Terminal size={16} strokeWidth={2.5} />
+        </div>
 
         {/* Divider */}
-        <div
-          style={{
-            width: 24,
-            height: 1,
-            background: "rgba(255,255,255,0.06)",
-            marginBottom: 8,
-          }}
-        />
+        <div className="w-6 h-px bg-[var(--color-border)] mb-1" />
 
         {/* Top nav icons */}
         {TOP_ITEMS.map((item, i) => (
@@ -167,20 +119,21 @@ export default function ActivityBar({ active, onSelect }) {
             item={item}
             isActive={active === item.id}
             onClick={onSelect}
-            delay={0.05 + i * 0.05}
+            delay={0.02 + i * 0.03}
           />
         ))}
       </div>
 
-      {/* Bottom icons */}
-      <div className="flex flex-col items-center gap-0.5 pb-2">
+      {/* Bottom icons (Settings pinned at bottom with separate divider) */}
+      <div className="flex flex-col items-center gap-1 pb-1 w-full mt-auto shrink-0">
+        <div className="w-6 h-px bg-[var(--color-border)] mb-1" />
         {BOTTOM_ITEMS.map((item, i) => (
           <ActivityItem
             key={item.id}
             item={item}
             isActive={active === item.id}
             onClick={onSelect}
-            delay={0.3 + i * 0.05}
+            delay={0.2 + i * 0.03}
           />
         ))}
       </div>
