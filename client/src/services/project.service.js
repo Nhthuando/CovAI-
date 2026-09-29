@@ -54,6 +54,24 @@ export async function getProjectTreeApi(projectId) {
   return handleResponse(res);
 }
 
+export async function validateArchiveApi(file) {
+  const token = localStorage.getItem("token");
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const headers = {};
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const res = await fetch(`${BASE_URL}/projects/validate-archive`, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+  return handleResponse(res);
+}
+
 export async function uploadZipApi(projectId, file) {
   const token = localStorage.getItem("token");
   const formData = new FormData();

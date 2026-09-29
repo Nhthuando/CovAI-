@@ -27,6 +27,7 @@ import {
   validateNodeProject,
   validateArchiveContainsPackageJson,
 } from "../utils/nodeProjectValidator.js";
+import { validateArchiveLanguage } from "../utils/languageDetector.js";
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 
 export { ServiceError };
@@ -233,6 +234,7 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
 
   try {
     await scanArchiveBomb(fileSource, file.originalname);
+    await validateArchiveLanguage(fileSource, file.originalname);
   } catch (scanError) {
     if (filePath && fs.existsSync(filePath)) {
       try {

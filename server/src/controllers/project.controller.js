@@ -504,6 +504,54 @@ class ProjectController {
   }
 
   /**
+   * POST /projects/validate-archive
+   * Immediate pre-flight validation of uploaded archive language
+   */
+  async validateArchive(req, res) {
+    const file = req.file;
+    if (!file) {
+      return res
+        .status(400)
+        .json({ success: false, message: "No file uploaded" });
+    }
+
+    const filePath = file.path;
+    const fileSource = filePath || file.buffer;
+
+    try {
+      const { scanArchiveBomb } =
+        await import("../middlewares/upload.middleware.js");
+      const { validateArchiveLanguage } =
+        await import("../utils/languageDetector.js");
+
+      await scanArchiveBomb(fileSource, file.originalname);
+      const result = await validateArchiveLanguage(
+        fileSource,
+        file.originalname,
+      );
+
+      return res.status(200).json({
+        success: true,
+        isSupported: result.isSupported,
+        primaryLanguage: result.primaryLanguage,
+        reason: result.reason,
+        stats: result.stats,
+      });
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    } finally {
+      if (filePath && fs.existsSync(filePath)) {
+        try {
+          fs.unlinkSync(filePath);
+        } catch (_) {}
+      }
+    }
+  }
+
+  /**
    * POST /projects/:id/upload-zip
    */
   async uploadZip(req, res) {

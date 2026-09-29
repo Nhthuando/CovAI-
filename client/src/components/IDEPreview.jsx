@@ -6,16 +6,22 @@ import {
   ChevronRight,
   AlertTriangle,
   CheckCircle2,
+  GitBranch,
   Sparkles,
   Copy,
   Check,
   Play,
+  Terminal,
 } from "lucide-react";
 import Badge from "./common/Badge";
 import Button from "./common/Button";
 
 const CODE_LINES = [
-  { num: 1, text: "import { processPayment } from './payment';", cov: "covered" },
+  {
+    num: 1,
+    text: "import { processPayment } from './payment';",
+    cov: "covered",
+  },
   { num: 2, text: "import { sendEmail } from './mailer';", cov: "covered" },
   { num: 3, text: "", cov: null },
   { num: 4, text: "export function checkout(cart, user) {", cov: "covered" },
@@ -28,7 +34,11 @@ const CODE_LINES = [
   { num: 11, text: "  );", cov: "covered" },
   { num: 12, text: "", cov: null },
   { num: 13, text: "  if (user.balance < total) {", cov: "partial" },
-  { num: 14, text: "    throw new Error('Insufficient funds');", cov: "uncovered" },
+  {
+    num: 14,
+    text: "    throw new Error('Insufficient funds');",
+    cov: "uncovered",
+  },
   { num: 15, text: "  }", cov: "partial" },
   { num: 16, text: "", cov: null },
   { num: 17, text: "  const receipt = processPayment(total);", cov: "covered" },
@@ -122,8 +132,12 @@ export default function IDEPreview() {
                 <div className="w-2.5 h-2.5 rounded-full bg-[var(--color-warning)]/80" />
                 <div className="w-2.5 h-2.5 rounded-full bg-[var(--color-success)]/80" />
               </div>
-              <span className="text-[var(--color-text-muted)] font-mono">src / services /</span>
-              <span className="font-mono font-medium text-[var(--color-text)]">checkout.js</span>
+              <span className="text-[var(--color-text-muted)] font-mono">
+                src / services /
+              </span>
+              <span className="font-mono font-medium text-[var(--color-text)]">
+                checkout.js
+              </span>
             </div>
 
             <div className="flex items-center gap-2">
@@ -211,7 +225,7 @@ export default function IDEPreview() {
                   <div
                     key={line.num}
                     className={`flex items-center group py-0.5 px-1 rounded-sm ${getLineBg(
-                      line.cov
+                      line.cov,
                     )}`}
                   >
                     {/* Coverage Gutter Glyph */}
@@ -304,8 +318,8 @@ export default function IDEPreview() {
                               m.status === "success"
                                 ? "bg-[var(--color-success)]"
                                 : m.status === "warning"
-                                ? "bg-[var(--color-warning)]"
-                                : "bg-[var(--color-danger)]"
+                                  ? "bg-[var(--color-warning)]"
+                                  : "bg-[var(--color-danger)]"
                             }`}
                             style={{ width: `${m.val}%` }}
                           />

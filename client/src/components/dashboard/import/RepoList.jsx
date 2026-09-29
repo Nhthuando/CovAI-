@@ -13,6 +13,7 @@ import {
   createProjectApi,
   importGithubRepoApi,
   getProjectsApi,
+  deleteProjectApi,
 } from "../../../services/project.service";
 import { useToast } from "../ToastContext";
 import Button from "../../common/Button";
@@ -37,27 +38,28 @@ function getLangColor(lang) {
 /* ── Single Repo Row ─────────────────────────────────────── */
 function RepoItem({ repo, onClose, onSuccess, showToast }) {
   const [importing, setImporting] = useState(false);
+  const isSupported =
+    !repo.language ||
+    repo.language === "JavaScript" ||
+    repo.language === "TypeScript";
 
   const handleImport = async () => {
     if (importing) return;
 
-    if (
-      repo.language &&
-      repo.language !== "JavaScript" &&
-      repo.language !== "TypeScript"
-    ) {
+    if (!isSupported) {
       showToast({
-        type: "warning",
-        title: "Language not fully supported",
-        message:
-          "This project currently focuses on JavaScript/TypeScript. Parsing will continue, but coverage generation may vary.",
+        type: "error",
+        title: "Ngôn ngữ không được hỗ trợ",
+        message: `CovAI chỉ hỗ trợ dự án có ngôn ngữ chính là JavaScript hoặc TypeScript. Repository này có ngôn ngữ là: ${repo.language}.`,
       });
+      return;
     }
 
     setImporting(true);
-    try {
-      let projectId;
+    let projectId = null;
+    let createdNewProject = false;
 
+    try {
       try {
         const repoUrl = `https://github.com/${repo.owner}/${repo.name}`;
         const projRes = await createProjectApi({
@@ -65,6 +67,7 @@ function RepoItem({ repo, onClose, onSuccess, showToast }) {
           repoUrl,
         });
         projectId = projRes.data.id;
+        createdNewProject = true;
       } catch (createErr) {
         if (
           createErr.message?.includes("already exists") ||
@@ -84,9 +87,7 @@ function RepoItem({ repo, onClose, onSuccess, showToast }) {
         }
       }
 
-      importGithubRepoApi(projectId, repo.owner, repo.name).catch((err) => {
-        console.error("[RepoList] Background import failed:", err);
-      });
+      await importGithubRepoApi(projectId, repo.owner, repo.name);
 
       showToast({
         type: "info",
@@ -97,6 +98,9 @@ function RepoItem({ repo, onClose, onSuccess, showToast }) {
       if (onSuccess) onSuccess();
       else if (onClose) onClose();
     } catch (err) {
+      if (createdNewProject && projectId) {
+        deleteProjectApi(projectId).catch(() => {});
+      }
       showToast({
         type: "error",
         title: "Import failed",
@@ -144,6 +148,11 @@ function RepoItem({ repo, onClose, onSuccess, showToast }) {
                   style={{ backgroundColor: repo.langColor }}
                 />
                 {repo.language}
+                {!isSupported && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-[var(--radius-sm)] bg-[var(--color-danger)]/10 text-[var(--color-danger)] font-medium">
+                    Unsupported
+                  </span>
+                )}
               </span>
             )}
             <span>•</span>
@@ -155,14 +164,19 @@ function RepoItem({ repo, onClose, onSuccess, showToast }) {
       {/* Right action */}
       <Button
         type="button"
-        variant="secondary"
+        variant={!isSupported ? "ghost" : "secondary"}
         size="sm"
         onClick={handleImport}
-        disabled={importing}
+        disabled={importing || !isSupported}
         loading={importing}
+        title={
+          !isSupported
+            ? `Chỉ hỗ trợ JavaScript/TypeScript (Ngôn ngữ: ${repo.language})`
+            : "Import repository"
+        }
         id={`repo-import-${repo.id}`}
       >
-        Import
+        {!isSupported ? "Not Supported" : "Import"}
       </Button>
     </div>
   );

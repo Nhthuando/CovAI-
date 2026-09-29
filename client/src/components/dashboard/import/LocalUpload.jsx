@@ -8,11 +8,14 @@ import {
   FolderArchive,
   ArrowUpRight,
   HardDrive,
+  Loader2,
 } from "lucide-react";
 import {
   createProjectApi,
   uploadZipApi,
   getProjectsApi,
+  deleteProjectApi,
+  validateArchiveApi,
 } from "../../../services/project.service";
 import { useToast } from "../ToastContext";
 import Button from "../../common/Button";
@@ -39,8 +42,39 @@ export default function LocalUpload({ onClose, onSuccess }) {
   const [fileName, setFileName] = useState(null);
   const [fileObj, setFileObj] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [validating, setValidating] = useState(false);
+  const [validationInfo, setValidationInfo] = useState(null);
   const [errorMsg, setErrorMsg] = useState("");
   const { showToast } = useToast();
+
+  const checkArchive = async (file) => {
+    setValidating(true);
+    setErrorMsg("");
+    setValidationInfo(null);
+    try {
+      const res = await validateArchiveApi(file);
+      setValidationInfo({
+        isSupported: true,
+        language: res.primaryLanguage,
+        reason: res.reason,
+      });
+    } catch (err) {
+      const msg =
+        err.message || "Invalid archive file or unsupported project language.";
+      setValidationInfo({
+        isSupported: false,
+        reason: msg,
+      });
+      setErrorMsg(msg);
+      showToast({
+        type: "error",
+        title: "Unsupported Language",
+        message: msg,
+      });
+    } finally {
+      setValidating(false);
+    }
+  };
 
   const handleDragOver = useCallback((e) => {
     e.preventDefault();
@@ -63,6 +97,7 @@ export default function LocalUpload({ onClose, onSuccess }) {
       setFileName(file.name);
       setDragState(DRAG_STATES.dropped);
       setErrorMsg("");
+      checkArchive(file);
     }
   }, []);
 
@@ -77,6 +112,7 @@ export default function LocalUpload({ onClose, onSuccess }) {
         setFileName(file.name);
         setDragState(DRAG_STATES.dropped);
         setErrorMsg("");
+        checkArchive(file);
       }
     };
     input.click();
@@ -87,19 +123,29 @@ export default function LocalUpload({ onClose, onSuccess }) {
     setFileName(null);
     setDragState(DRAG_STATES.idle);
     setErrorMsg("");
+    setValidationInfo(null);
+    setValidating(false);
   }, []);
 
   const handleUpload = async () => {
-    if (!fileObj) return;
+    if (
+      !fileObj ||
+      validating ||
+      (validationInfo && !validationInfo.isSupported)
+    )
+      return;
     setUploading(true);
     setErrorMsg("");
+    let projectId = null;
+    let createdNewProject = false;
+
     try {
       const projectName = fileName.replace(/\.[^/.]+$/, "");
-      let projectId;
 
       try {
         const projRes = await createProjectApi({ name: projectName });
         projectId = projRes.data.id;
+        createdNewProject = true;
       } catch (createErr) {
         if (
           createErr.message?.includes("already exists") ||
@@ -130,6 +176,9 @@ export default function LocalUpload({ onClose, onSuccess }) {
       if (onSuccess) onSuccess();
       else if (onClose) onClose();
     } catch (error) {
+      if (createdNewProject && projectId) {
+        deleteProjectApi(projectId).catch(() => {});
+      }
       const msg =
         error.message === "Failed to fetch"
           ? "Network error or server unreachable. Please verify the backend service is active."
@@ -157,9 +206,11 @@ export default function LocalUpload({ onClose, onSuccess }) {
         onDrop={handleDrop}
         className={`relative flex flex-col items-center justify-center flex-1 rounded-[var(--radius-lg)] border-2 border-dashed p-6 transition-colors min-h-[300px] ${
           isOver
-            ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]"
+            ? "border-[var(--color-primary)] bg-[var(--color-primary)]/5"
             : isDropped
-              ? "border-[var(--color-success)] bg-[var(--color-success-light)]"
+              ? validationInfo && !validationInfo.isSupported
+                ? "border-[var(--color-danger)] bg-[var(--color-danger)]/5"
+                : "border-[var(--color-success)] bg-[var(--color-success)]/5"
               : "border-[var(--color-border)] bg-[var(--color-bg)] hover:border-[var(--color-border-subtle)] cursor-pointer"
         }`}
         onClick={!isDropped ? handleFileSelect : undefined}
@@ -169,22 +220,48 @@ export default function LocalUpload({ onClose, onSuccess }) {
           /* ── File Dropped State ── */
           <div className="flex flex-col items-center w-full max-w-sm relative z-10 gap-4">
             {/* Status icon */}
-            <div className="relative">
-              <div className="w-14 h-14 rounded-[var(--radius-lg)] flex items-center justify-center border border-[var(--color-border)] bg-[var(--color-surface)]">
-                <FolderArchive
-                  size={26}
-                  className={
-                    isRar ? "text-amber-500" : "text-[var(--color-primary)]"
-                  }
-                />
+            {validating ? (
+              <div className="relative">
+                <div className="w-14 h-14 rounded-[var(--radius-lg)] flex items-center justify-center border border-[var(--color-border)] bg-[var(--color-surface)]">
+                  <FolderArchive
+                    size={26}
+                    className="text-[var(--color-primary)]"
+                  />
+                </div>
+                <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-[var(--color-primary)] text-white flex items-center justify-center shadow-xs">
+                  <Loader2 size={12} className="animate-spin" strokeWidth={3} />
+                </div>
               </div>
-              <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-[var(--color-success)] text-white flex items-center justify-center shadow-xs">
-                <CheckCircle2 size={12} strokeWidth={3} />
+            ) : validationInfo && !validationInfo.isSupported ? (
+              <div className="relative">
+                <div className="w-14 h-14 rounded-[var(--radius-lg)] flex items-center justify-center border border-[var(--color-danger)] bg-[var(--color-surface)]">
+                  <FolderArchive
+                    size={26}
+                    className="text-[var(--color-danger)]"
+                  />
+                </div>
+                <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-[var(--color-danger)] text-white flex items-center justify-center shadow-xs">
+                  <AlertCircle size={12} strokeWidth={3} />
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="relative">
+                <div className="w-14 h-14 rounded-[var(--radius-lg)] flex items-center justify-center border border-[var(--color-border)] bg-[var(--color-surface)]">
+                  <FolderArchive
+                    size={26}
+                    className={
+                      isRar ? "text-amber-500" : "text-[var(--color-primary)]"
+                    }
+                  />
+                </div>
+                <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-[var(--color-success)] text-white flex items-center justify-center shadow-xs">
+                  <CheckCircle2 size={12} strokeWidth={3} />
+                </div>
+              </div>
+            )}
 
             {/* File details card */}
-            <div className="w-full rounded-[var(--radius-md)] bg-[var(--color-surface)] border border-[var(--color-border)] p-3 flex flex-col gap-2">
+            <div className="w-full rounded-[var(--radius-md)] bg-[var(--color-surface)] border border-[var(--color-border)] p-3 flex flex-col gap-2.5">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-2.5 min-w-0">
                   <FileArchive
@@ -221,35 +298,86 @@ export default function LocalUpload({ onClose, onSuccess }) {
                   <X size={14} />
                 </button>
               </div>
+
+              {/* Language validation status indicator */}
+              {validating && (
+                <div className="flex items-center gap-2 pt-2 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-secondary)]">
+                  <Loader2
+                    size={13}
+                    className="animate-spin text-[var(--color-primary)] shrink-0"
+                  />
+                  <span>Checking language & project structure...</span>
+                </div>
+              )}
+
+              {validationInfo?.isSupported && (
+                <div className="flex items-center justify-between pt-2 border-t border-[var(--color-border)] text-[11px]">
+                  <span className="text-[var(--color-text-secondary)]">
+                    Language:
+                  </span>
+                  <Badge variant="success" size="sm">
+                    {validationInfo.language}
+                  </Badge>
+                </div>
+              )}
+
+              {validationInfo && !validationInfo.isSupported && (
+                <div className="flex items-center justify-between pt-2 border-t border-[var(--color-border)] text-[11px]">
+                  <span className="text-[var(--color-danger)] font-medium">
+                    Language:
+                  </span>
+                  <Badge variant="danger" size="sm">
+                    Unsupported
+                  </Badge>
+                </div>
+              )}
             </div>
+
+            {/* Error message card */}
+            {(errorMsg || (validationInfo && !validationInfo.isSupported)) && (
+              <div className="w-full rounded-[var(--radius-md)] bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/25 p-3 flex items-start gap-2.5 text-[var(--color-danger)] text-xs">
+                <AlertCircle size={15} className="shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold">
+                    {validationInfo && !validationInfo.isSupported
+                      ? "Unsupported Project Language"
+                      : "Import Failed"}
+                  </p>
+                  <p className="mt-0.5 text-[11px] leading-relaxed opacity-90">
+                    {errorMsg || validationInfo?.reason}
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* Import button */}
             <Button
               type="button"
-              variant="primary"
+              variant={
+                validationInfo && !validationInfo.isSupported
+                  ? "secondary"
+                  : "primary"
+              }
               size="md"
               onClick={handleUpload}
-              disabled={uploading}
+              disabled={
+                uploading ||
+                validating ||
+                (validationInfo && !validationInfo.isSupported)
+              }
               loading={uploading}
               icon={ArrowUpRight}
               className="w-full"
               id="upload-import-btn"
             >
-              {uploading ? "Extracting & Ingesting..." : "Import Project"}
+              {uploading
+                ? "Extracting & Ingesting..."
+                : validating
+                  ? "Checking Language..."
+                  : validationInfo && !validationInfo.isSupported
+                    ? "Unsupported Project"
+                    : "Import Project"}
             </Button>
-
-            {/* Error message card */}
-            {errorMsg && (
-              <div className="w-full rounded-[var(--radius-md)] bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/25 p-3 flex items-start gap-2.5 text-[var(--color-danger)] text-xs">
-                <AlertCircle size={15} className="shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold">Import Failed</p>
-                  <p className="mt-0.5 text-[11px] leading-relaxed opacity-90">
-                    {errorMsg}
-                  </p>
-                </div>
-              </div>
-            )}
           </div>
         ) : (
           /* ── Idle / Drag-over State ── */

@@ -5,6 +5,7 @@ import {
   createProjectApi,
   importGithubUrlApi,
   getProjectsApi,
+  deleteProjectApi,
 } from "../../../services/project.service";
 import { useToast } from "../ToastContext";
 import Button from "../../common/Button";
@@ -22,12 +23,13 @@ export default function GitHubImport({ onClose, onSuccess }) {
     if (!isValidUrl || uploading) return;
     setUploading(true);
     setErrorMsg("");
+    let projectId = null;
+    let createdNewProject = false;
+
     try {
       const match = urlValue.match(/github\.com\/([^/]+)\/([^/]+)/);
       if (!match) throw new Error("Invalid GitHub repository URL.");
       const repoName = match[2].replace(".git", "");
-
-      let projectId;
 
       try {
         const projRes = await createProjectApi({
@@ -35,6 +37,7 @@ export default function GitHubImport({ onClose, onSuccess }) {
           repoUrl: urlValue,
         });
         projectId = projRes.data.id;
+        createdNewProject = true;
       } catch (createErr) {
         if (
           createErr.message?.includes("already exists") ||
@@ -54,9 +57,7 @@ export default function GitHubImport({ onClose, onSuccess }) {
         }
       }
 
-      importGithubUrlApi(projectId, urlValue).catch((err) => {
-        console.error("[GitHubImport] Background import failed:", err);
-      });
+      await importGithubUrlApi(projectId, urlValue);
 
       showToast({
         type: "info",
@@ -67,6 +68,9 @@ export default function GitHubImport({ onClose, onSuccess }) {
       if (onSuccess) onSuccess();
       else if (onClose) onClose();
     } catch (err) {
+      if (createdNewProject && projectId) {
+        deleteProjectApi(projectId).catch(() => {});
+      }
       setErrorMsg(err.message || "An unexpected error occurred during import.");
       showToast({
         type: "error",

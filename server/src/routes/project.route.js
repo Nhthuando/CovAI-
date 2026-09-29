@@ -13,6 +13,11 @@ router.use(authMiddleware);
 
 router.post("/", projectController.createProject);
 router.get("/", projectController.listProjects);
+router.post(
+  "/validate-archive",
+  uploadSingleArchive,
+  projectController.validateArchive,
+);
 router.get("/:id", projectController.getProjectById);
 router.get("/:id/snapshots", projectController.listSnapshots);
 router.post("/:id/snapshots", projectController.createSnapshot);
