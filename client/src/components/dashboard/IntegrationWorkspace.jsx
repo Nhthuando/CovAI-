@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import {
   getIntegrationWorkspace,
   runCoverageByType,
@@ -144,6 +144,7 @@ export default function IntegrationWorkspace({
   onOpenArchitecture
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [workspace, setWorkspace] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -214,6 +215,13 @@ export default function IntegrationWorkspace({
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("subtab") === "history") {
+      setRightPaneTab("HISTORY");
+    }
+  }, [location.search]);
 
   const { logs: activeLogs, logsEndRef } = useLiveJobLogs(
     activeJobId,

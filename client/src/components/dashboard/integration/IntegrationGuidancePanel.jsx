@@ -32,9 +32,12 @@ function GuidanceRule({ rule, projectId }) {
     if (rule.actionType === 'VIEW_REPORT') {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } else {
-      // For OPEN_GENERATE_MODAL, EXECUTE_TESTS, REVIEW_SCENARIOS, VIEW_HISTORY
-      // We route back to the integration workbench which handles these features
-      navigate(`/main-editor?projectId=${projectId}&tab=integration-tests`);
+      if (rule.actionType === 'VIEW_HISTORY') {
+        navigate(`/main-editor?projectId=${projectId}&tab=integration-tests&subtab=history`);
+      } else {
+        // For OPEN_GENERATE_MODAL, EXECUTE_TESTS, REVIEW_SCENARIOS
+        navigate(`/main-editor?projectId=${projectId}&tab=integration-tests`);
+      }
     }
   };
 
