@@ -40,6 +40,7 @@ export default function IntegrationScenariosPane({
   snapshotId,
   endpoints,
   onOpenCFG,
+  onSuggestTestcase,
   onScenarioChange,
   onError,
 }) {
@@ -270,6 +271,17 @@ export default function IntegrationScenariosPane({
                       if (hasSourceMap) {
                         return (
                           <>
+                            {onSuggestTestcase && (
+                              <button
+                                type="button"
+                                onClick={() => onSuggestTestcase(matchedEndpoint.source.sourceFile)}
+                                className="flex items-center gap-1 px-2.5 py-1 rounded-[var(--radius-md)] bg-[var(--color-warning)]/10 text-[var(--color-warning)] border border-[var(--color-warning)]/25 text-xs font-semibold hover:bg-[var(--color-warning)]/20 transition-colors cursor-pointer"
+                                title="Suggest Unit Tests for this logic"
+                              >
+                                <Sparkles size={12} />
+                                Suggest Unit Tests
+                              </button>
+                            )}
                             {onOpenCFG && matchedEndpoint.source.controllerMethod && (
                               <button
                                 type="button"

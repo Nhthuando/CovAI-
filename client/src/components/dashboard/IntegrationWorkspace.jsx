@@ -139,7 +139,8 @@ export default function IntegrationWorkspace({
   onGenerate,
   generating,
   onOpenFile,
-  onOpenCFG
+  onOpenCFG,
+  onSuggestTestcase
 }) {
   const navigate = useNavigate();
   const [workspace, setWorkspace] = useState(null);
@@ -625,6 +626,7 @@ export default function IntegrationWorkspace({
           <IntegrationScenariosPane
             endpoints={workspace?.endpoints || []}
             onOpenCFG={onOpenCFG}
+            onSuggestTestcase={onSuggestTestcase}
             aiTests={aiTests}
             selectedEndpoint={selectedEndpoint}
             hasGeneratedTests={hasGeneratedTests}
