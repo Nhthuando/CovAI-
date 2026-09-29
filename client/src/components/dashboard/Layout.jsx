@@ -143,6 +143,15 @@ function LayoutInner() {
   const [showImport, setShowImport] = useState(false);
   const [showQualityDashboard, setShowQualityDashboard] = useState(false);
   const [cfgInitialContext, setCfgInitialContext] = useState(null);
+  const [archInitialContext, setArchInitialContext] = useState(null);
+
+  const handleOpenArchitecture = (filePath) => {
+    setArchInitialContext({ initialFile: filePath });
+    setActiveActivity("architecture");
+    const params = new URLSearchParams(location.search);
+    params.set("tab", "architecture");
+    navigate(`${location.pathname}?${params.toString()}`);
+  };
 
   const handleOpenCFG = (filePath = null, functionName = null) => {
     if (filePath) {
@@ -849,7 +858,10 @@ function LayoutInner() {
           ) : activeActivity === "jobs" ? (
             <JobQueue projectId={project?.id} onSync={handleGitSync} />
           ) : activeActivity === "architecture" ? (
-            <ProjectArchitecturePanel projectId={project?.id} />
+            <ProjectArchitecturePanel 
+              projectId={project?.id} 
+              initialFile={archInitialContext?.initialFile}
+            />
           ) : activeActivity === "coverage" ? (
             <div className="w-full h-full overflow-y-auto">
               {coverageType === "unit" ? (
@@ -879,6 +891,7 @@ function LayoutInner() {
                   onOpenFile={handleOpenFileByPath}
                   onOpenCFG={handleOpenCFG}
                   onSuggestTestcase={handleSuggestTestcase}
+                  onOpenArchitecture={handleOpenArchitecture}
                 />
               ) : (
                 <SystemTestDashboard

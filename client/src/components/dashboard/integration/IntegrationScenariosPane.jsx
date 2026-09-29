@@ -9,6 +9,7 @@ import {
   Power,
   CheckCircle2,
   Clock,
+  Network,
 } from "lucide-react";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
@@ -41,6 +42,7 @@ export default function IntegrationScenariosPane({
   endpoints,
   onOpenCFG,
   onSuggestTestcase,
+  onOpenArchitecture,
   onScenarioChange,
   onError,
 }) {
@@ -280,6 +282,17 @@ export default function IntegrationScenariosPane({
                               >
                                 <Sparkles size={12} />
                                 Suggest Unit Tests
+                              </button>
+                            )}
+                            {onOpenArchitecture && (
+                              <button
+                                type="button"
+                                onClick={() => onOpenArchitecture(matchedEndpoint.source.sourceFile)}
+                                className="flex items-center gap-1 px-2.5 py-1 rounded-[var(--radius-md)] bg-[#8b5cf6]/10 text-[#8b5cf6] border border-[#8b5cf6]/25 text-xs font-semibold hover:bg-[#8b5cf6]/20 transition-colors cursor-pointer"
+                                title="Inspect Module Architecture"
+                              >
+                                <Network size={12} />
+                                View Architecture
                               </button>
                             )}
                             {onOpenCFG && matchedEndpoint.source.controllerMethod && (
