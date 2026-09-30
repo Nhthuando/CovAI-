@@ -27,3 +27,10 @@ export const fetchIntegrationReport = async (projectId) => {
   });
   return handleResponse(res);
 };
+
+export const fetchIntegrationGuidance = async (projectId) => {
+  const res = await fetch(`${BASE_URL}/reports/project/${projectId}/integration/guidance`, {
+    headers: getAuthHeaders(),
+  });
+  return handleResponse(res);
+};

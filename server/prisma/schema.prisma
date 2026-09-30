@@ -163,7 +163,7 @@ model Job {
   logs          JobLog[]
   output        JobOutput?
 
-  @@unique([projectId, snapshotId, type], map: "Job_active_analysis_per_snapshot_key", where: raw("((type = 'ANALYSIS'::\"JobType\") AND (\"snapshotId\" IS NOT NULL) AND (status = ANY (ARRAY['QUEUED'::\"JobStatus\", 'RUNNING'::\"JobStatus\"])))"))
+  @@unique([projectId, snapshotId, type], map: "Job_active_singleton_per_snapshot_key", where: raw("((type IN ('ANALYSIS'::\"JobType\", 'SUPERTEST_COVERAGE'::\"JobType\")) AND (\"snapshotId\" IS NOT NULL) AND (status = ANY (ARRAY['QUEUED'::\"JobStatus\", 'RUNNING'::\"JobStatus\"])))"))
   @@index([projectId])
   @@index([snapshotId])
   @@index([status, type])

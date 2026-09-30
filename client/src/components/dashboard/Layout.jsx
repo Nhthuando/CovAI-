@@ -142,9 +142,35 @@ function LayoutInner() {
   const [coverageType, setCoverageType] = useState("unit");
   const [showImport, setShowImport] = useState(false);
   const [showQualityDashboard, setShowQualityDashboard] = useState(false);
+  const [cfgInitialContext, setCfgInitialContext] = useState(null);
+  const [archInitialContext, setArchInitialContext] = useState(null);
+
+  useEffect(() => {
+    if (activeActivity !== "architecture") {
+      setArchInitialContext(null);
+    }
+  }, [activeActivity]);
+
+  const handleOpenArchitecture = (filePath) => {
+    setArchInitialContext({ initialFile: filePath });
+    setActiveActivity("architecture");
+    const params = new URLSearchParams(location.search);
+    params.set("tab", "architecture");
+    navigate(`${location.pathname}?${params.toString()}`);
+  };
+
+  const handleOpenCFG = (filePath = null, functionName = null) => {
+    if (filePath) {
+      setCfgInitialContext({ initialFile: filePath, initialFunc: functionName });
+    } else {
+      setCfgInitialContext(null);
+    }
+    setShowCFG(true);
+  };
 
   const handleCloseCFG = () => {
     setShowCFG(false);
+    setCfgInitialContext(null);
     if (activeActivity === "logic-analysis") {
       const params = new URLSearchParams(location.search);
       params.set("tab", "explorer");
@@ -838,7 +864,10 @@ function LayoutInner() {
           ) : activeActivity === "jobs" ? (
             <JobQueue projectId={project?.id} onSync={handleGitSync} />
           ) : activeActivity === "architecture" ? (
-            <ProjectArchitecturePanel projectId={project?.id} />
+            <ProjectArchitecturePanel 
+              projectId={project?.id} 
+              initialFile={archInitialContext?.initialFile}
+            />
           ) : activeActivity === "coverage" ? (
             <div className="w-full h-full overflow-y-auto">
               {coverageType === "unit" ? (
@@ -866,6 +895,9 @@ function LayoutInner() {
                   }
                   projectId={project?.id}
                   onOpenFile={handleOpenFileByPath}
+                  onOpenCFG={handleOpenCFG}
+                  onSuggestTestcase={handleSuggestTestcase}
+                  onOpenArchitecture={handleOpenArchitecture}
                 />
               ) : (
                 <SystemTestDashboard
@@ -1025,7 +1057,7 @@ function LayoutInner() {
       </AnimatePresence>
       <AnimatePresence>
         {showCFG && (
-          <CFGCalculator project={project} onClose={handleCloseCFG} />
+          <CFGCalculator project={project} onClose={handleCloseCFG} initialFile={cfgInitialContext?.initialFile} initialFunc={cfgInitialContext?.initialFunc} />
         )}
       </AnimatePresence>
       <AnimatePresence>

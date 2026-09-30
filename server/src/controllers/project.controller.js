@@ -1958,7 +1958,7 @@ The user is working on project: ${project.name}.
   async generateIntegrationTest(req, res) {
     try {
       const { id: projectId } = req.params;
-      const { snapshotId, framework } = req.body;
+      const { snapshotId, framework, force } = req.body;
 
       if (!framework) {
         return res
@@ -1973,6 +1973,7 @@ The user is working on project: ${project.name}.
         projectId,
         snapshotId,
         userId: req.user.id,
+        force,
       });
 
       return res.status(202).json({
