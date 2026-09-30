@@ -31,7 +31,10 @@ import {
   updateFileContentApi,
   createProjectFileApi,
 } from "../../services/project.service";
-import { suggestUnitTestcase, getIntegrationWorkspace } from "../../services/coverage.service";
+import {
+  suggestUnitTestcase,
+  getIntegrationWorkspace,
+} from "../../services/coverage.service";
 import { getProjectJobsApi } from "../../services/job.service";
 import { useToast } from "./ToastContext";
 import DiffReviewModal from "./DiffReviewModal";
@@ -118,55 +121,26 @@ function CodeBlock({ code, language = "javascript" }) {
     <div
       className="relative my-3 rounded-xl overflow-hidden group/code select-text"
       style={{
-        background: "#090d13",
-        border: "1px solid rgba(255, 255, 255, 0.09)",
-        boxShadow: "0 4px 20px rgba(0,0,0,0.5)",
+        background: "var(--color-bg)",
+        border: "1px solid var(--color-border)",
+        boxShadow: "none",
       }}
     >
       {/* Code Header Bar */}
       <div
         className="flex items-center justify-between px-3.5 py-2"
         style={{
-          background: "rgba(255, 255, 255, 0.03)",
-          borderBottom: "1px solid rgba(255, 255, 255, 0.06)",
+          background: "var(--color-surface)",
+          borderBottom: "1px solid var(--color-border)",
         }}
       >
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5">
-            <span
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: "50%",
-                background: "#ff5f56",
-                display: "inline-block",
-              }}
-            />
-            <span
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: "50%",
-                background: "#ffbd2e",
-                display: "inline-block",
-              }}
-            />
-            <span
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: "50%",
-                background: "#27c93f",
-                display: "inline-block",
-              }}
-            />
-          </div>
+        <div className="flex items-center gap-1.5">
+          <FileCode size={13} style={{ color: "var(--color-primary)" }} />
           <span
             style={{
-              color: "#8b949e",
+              color: "var(--color-text-secondary)",
               fontFamily: "var(--font-mono)",
               fontSize: 11,
-              marginLeft: 6,
               fontWeight: 500,
               textTransform: "lowercase",
             }}
@@ -181,13 +155,11 @@ function CodeBlock({ code, language = "javascript" }) {
           onClick={handleCopy}
           className="flex items-center gap-1 px-2 py-1 rounded-md text-xs cursor-pointer"
           style={{
-            color: copied ? "#4ade80" : "#8b949e",
-            background: copied
-              ? "rgba(34, 197, 94, 0.1)"
-              : "rgba(255, 255, 255, 0.04)",
-            border: copied
-              ? "1px solid rgba(34, 197, 94, 0.3)"
-              : "1px solid rgba(255, 255, 255, 0.08)",
+            color: copied
+              ? "var(--color-success)"
+              : "var(--color-text-secondary)",
+            background: "var(--color-bg)",
+            border: "1px solid var(--color-border)",
             fontSize: 11,
             fontFamily: "var(--font-sans)",
             transition: "all 0.15s ease",
@@ -203,7 +175,7 @@ function CodeBlock({ code, language = "javascript" }) {
         style={{
           fontFamily: "var(--font-mono)",
           lineHeight: 1.7,
-          color: "#e6edf3",
+          color: "var(--color-text)",
         }}
       >
         <code>{code}</code>
@@ -226,9 +198,7 @@ function TestSuggestionCard({
       ? [msg.testSuggestion]
       : [];
 
-  const [activeFw, setActiveFw] = useState(
-    suggestions[0]?.framework || "jest"
-  );
+  const [activeFw, setActiveFw] = useState(suggestions[0]?.framework || "jest");
 
   if (suggestions.length === 0) return null;
 
@@ -242,8 +212,8 @@ function TestSuggestionCard({
     <div
       className="mt-3 rounded-xl overflow-hidden"
       style={{
-        border: "1px solid rgba(168, 85, 247, 0.3)",
-        background: "rgba(168, 85, 247, 0.05)",
+        border: "1px solid var(--color-border)",
+        background: "var(--color-surface)",
       }}
     >
       {/* Framework Tabs if multi-framework (Jest & Vitest) */}
@@ -251,11 +221,14 @@ function TestSuggestionCard({
         <div
           className="flex items-center gap-1.5 px-3 py-2 flex-wrap"
           style={{
-            background: "rgba(0,0,0,0.35)",
-            borderBottom: "1px solid rgba(255,255,255,0.08)",
+            background: "var(--color-bg)",
+            borderBottom: "1px solid var(--color-border)",
           }}
         >
-          <span className="text-[11px] font-semibold text-slate-400 mr-1">
+          <span
+            className="text-[11px] font-semibold mr-1"
+            style={{ color: "var(--color-text-secondary)" }}
+          >
             Framework:
           </span>
           {suggestions.map((sug) => {
@@ -269,26 +242,18 @@ function TestSuggestionCard({
                 className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold cursor-pointer transition-all"
                 style={{
                   background: isSelected
-                    ? isVitest
-                      ? "rgba(245, 158, 11, 0.25)"
-                      : "rgba(124, 58, 237, 0.3)"
-                    : "rgba(255, 255, 255, 0.05)",
+                    ? "var(--color-surface)"
+                    : "transparent",
                   color: isSelected
-                    ? isVitest
-                      ? "#fcd34d"
-                      : "#c084fc"
-                    : "#94a3b8",
+                    ? "var(--color-primary)"
+                    : "var(--color-text-secondary)",
                   border: isSelected
-                    ? isVitest
-                      ? "1px solid rgba(245, 158, 11, 0.5)"
-                      : "1px solid rgba(124, 58, 237, 0.6)"
+                    ? "1px solid var(--color-primary)"
                     : "1px solid transparent",
                 }}
               >
-                <span>{isVitest ? "⚡ Vitest" : "🃏 Jest"}</span>
-                {sug.applied && (
-                  <Check size={11} className="text-green-400" />
-                )}
+                <span>{isVitest ? "Vitest" : "Jest"}</span>
+                {sug.applied && <Check size={11} className="text-green-500" />}
               </button>
             );
           })}
@@ -301,14 +266,14 @@ function TestSuggestionCard({
               onClick={() => onApplyAllSuggestions?.(msg.id, suggestions)}
               className="ml-auto flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors cursor-pointer"
               style={{
-                background: "rgba(34, 197, 94, 0.15)",
-                color: "#86efac",
-                border: "1px solid rgba(34, 197, 94, 0.35)",
+                background: "var(--color-surface)",
+                color: "var(--color-success)",
+                border: "1px solid var(--color-border)",
               }}
               title="Tự động áp dụng test case cho cả Jest và Vitest"
             >
               <Sparkles size={11} />
-              <span>Apply cả 2</span>
+              <span>Apply all</span>
             </button>
           )}
         </div>
@@ -318,24 +283,21 @@ function TestSuggestionCard({
       <div
         className="flex items-center justify-between px-3 py-2 text-xs"
         style={{
-          background:
-            current.framework === "vitest"
-              ? "rgba(245, 158, 11, 0.12)"
-              : "rgba(168, 85, 247, 0.12)",
-          borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
+          background: "var(--color-bg)",
+          borderBottom: "1px solid var(--color-border)",
         }}
       >
         <div className="flex items-center gap-1.5 overflow-hidden">
           <FileCode
             size={13}
             style={{
-              color: current.framework === "vitest" ? "#fbbf24" : "#c084fc",
+              color: "var(--color-primary)",
               flexShrink: 0,
             }}
           />
           <span
             style={{
-              color: current.framework === "vitest" ? "#fbbf24" : "#c084fc",
+              color: "var(--color-primary)",
               fontWeight: 600,
             }}
           >
@@ -343,7 +305,7 @@ function TestSuggestionCard({
           </span>
           <span
             className="truncate font-mono"
-            style={{ color: "#e6edf3", fontSize: 11 }}
+            style={{ color: "var(--color-text)", fontSize: 11 }}
           >
             {current.targetTestFile}
           </span>
@@ -351,10 +313,11 @@ function TestSuggestionCard({
         <span
           className="px-1.5 py-0.5 rounded text-[10px] font-medium"
           style={{
-            background: current.isExisting
-              ? "rgba(59, 130, 246, 0.2)"
-              : "rgba(34, 197, 94, 0.2)",
-            color: current.isExisting ? "#93c5fd" : "#86efac",
+            background: "var(--color-surface)",
+            color: current.isExisting
+              ? "var(--color-info)"
+              : "var(--color-success)",
+            border: "1px solid var(--color-border)",
           }}
         >
           {current.isExisting ? "File có sẵn" : "File mới"}
@@ -362,17 +325,14 @@ function TestSuggestionCard({
       </div>
 
       {/* Code block */}
-      <CodeBlock
-        code={current.suggestedTestCode}
-        language="javascript"
-      />
+      <CodeBlock code={current.suggestedTestCode} language="javascript" />
 
       {/* Actions footer */}
       <div
         className="p-3 flex items-center gap-2 flex-wrap"
         style={{
-          background: "rgba(0,0,0,0.25)",
-          borderTop: "1px solid rgba(255,255,255,0.06)",
+          background: "var(--color-surface)",
+          borderTop: "1px solid var(--color-border)",
         }}
       >
         {!current.applied ? (
@@ -384,15 +344,10 @@ function TestSuggestionCard({
             onClick={() => onApplySuggestion?.(msg.id, current)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold"
             style={{
-              background:
-                current.framework === "vitest" ? "#d97706" : "#7c3aed",
+              background: "var(--color-primary)",
               color: "#ffffff",
               border: "none",
               cursor: current.isApplying ? "wait" : "pointer",
-              boxShadow:
-                current.framework === "vitest"
-                  ? "0 0 12px rgba(217, 119, 6, 0.35)"
-                  : "0 0 12px rgba(124, 58, 237, 0.35)",
             }}
             title={`Ghi test case ${current.framework?.toUpperCase()} vào ${current.targetTestFile}`}
           >
@@ -408,9 +363,9 @@ function TestSuggestionCard({
             <div
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold"
               style={{
-                background: "rgba(34, 197, 94, 0.15)",
-                color: "#4ade80",
-                border: "1px solid rgba(34, 197, 94, 0.3)",
+                background: "var(--color-surface)",
+                color: "var(--color-success)",
+                border: "1px solid var(--color-border)",
               }}
             >
               <Check size={13} />
@@ -425,9 +380,9 @@ function TestSuggestionCard({
               onClick={() => onUndoSuggestion?.(msg.id, current)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium"
               style={{
-                background: "rgba(255, 255, 255, 0.05)",
-                color: "#e6edf3",
-                border: "1px solid rgba(255, 255, 255, 0.15)",
+                background: "var(--color-surface)",
+                color: "var(--color-text)",
+                border: "1px solid var(--color-border)",
                 cursor: current.isUndoing ? "wait" : "pointer",
               }}
               title="Hoàn tác file test về trạng thái trước khi Apply"
@@ -448,9 +403,9 @@ function TestSuggestionCard({
                 onClick={onRunAnalysis}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold ml-auto"
                 style={{
-                  background: "rgba(124, 58, 237, 0.2)",
-                  color: "#c4b5fd",
-                  border: "1px solid rgba(124, 58, 237, 0.4)",
+                  background: "var(--color-surface)",
+                  color: "var(--color-primary)",
+                  border: "1px solid var(--color-border)",
                   cursor: "pointer",
                 }}
                 title="Chạy lại Unit Test Coverage để xác nhận độ bao phủ tăng"
@@ -775,7 +730,10 @@ function FormattedMessage({ content }) {
     return tokens.map((token, idx) => {
       if (token.startsWith("**") && token.endsWith("**")) {
         return (
-          <strong key={idx} style={{ color: "#f0f6fc", fontWeight: 600 }}>
+          <strong
+            key={idx}
+            style={{ color: "var(--color-text)", fontWeight: 600 }}
+          >
             {token.slice(2, -2)}
           </strong>
         );
@@ -786,12 +744,12 @@ function FormattedMessage({ content }) {
             key={idx}
             style={{
               fontFamily: "var(--font-mono)",
-              background: "rgba(124, 58, 237, 0.15)",
-              color: "#c4b5fd",
+              background: "var(--color-bg)",
+              color: "var(--color-primary)",
               padding: "2px 6px",
               borderRadius: 4,
               fontSize: "0.9em",
-              border: "1px solid rgba(124, 58, 237, 0.25)",
+              border: "1px solid var(--color-border)",
             }}
           >
             {token.slice(1, -1)}
@@ -831,9 +789,10 @@ function FormattedMessage({ content }) {
                 return (
                   <h4
                     key={lIdx}
-                    className="font-semibold text-white pt-1 text-sm flex items-center gap-1.5"
+                    className="font-semibold pt-1 text-sm flex items-center gap-1.5"
+                    style={{ color: "var(--color-text)" }}
                   >
-                    <span className="text-purple-400">#</span>
+                    <span style={{ color: "var(--color-primary)" }}>#</span>
                     {renderInline(trimmed.slice(4))}
                   </h4>
                 );
@@ -843,7 +802,8 @@ function FormattedMessage({ content }) {
                 return (
                   <h3
                     key={lIdx}
-                    className="font-bold text-white pt-2 text-base"
+                    className="font-bold pt-2 text-base"
+                    style={{ color: "var(--color-text)" }}
                   >
                     {renderInline(trimmed.slice(3))}
                   </h3>
@@ -854,14 +814,15 @@ function FormattedMessage({ content }) {
                 return (
                   <div
                     key={lIdx}
-                    className="flex items-start gap-2 pl-1 text-[#c9d1d9]"
+                    className="flex items-start gap-2 pl-1"
+                    style={{ color: "var(--color-text)" }}
                   >
                     <span
                       style={{
                         width: 4,
                         height: 4,
                         borderRadius: "50%",
-                        background: "#a78bfa",
+                        background: "var(--color-primary)",
                         marginTop: 8,
                         flexShrink: 0,
                       }}
@@ -876,11 +837,12 @@ function FormattedMessage({ content }) {
                 return (
                   <div
                     key={lIdx}
-                    className="flex items-start gap-2 pl-1 text-[#c9d1d9]"
+                    className="flex items-start gap-2 pl-1"
+                    style={{ color: "var(--color-text)" }}
                   >
                     <span
                       style={{
-                        color: "#a78bfa",
+                        color: "var(--color-primary)",
                         fontFamily: "var(--font-mono)",
                         fontSize: 11,
                         fontWeight: 600,
@@ -898,8 +860,9 @@ function FormattedMessage({ content }) {
               return (
                 <p
                   key={lIdx}
-                  className="m-0 text-[#c9d1d9]"
+                  className="m-0"
                   style={{
+                    color: "var(--color-text)",
                     wordBreak: "break-word",
                     overflowWrap: "anywhere",
                     wordWrap: "break-word",
@@ -965,25 +928,25 @@ function ChatMessage({
             width: 22,
             height: 22,
             background: isUser
-              ? "rgba(124, 58, 237, 0.25)"
-              : "linear-gradient(135deg, rgba(124,58,237,0.4), rgba(34,211,238,0.2))",
+              ? "rgba(109, 93, 251, 0.15)"
+              : "var(--color-surface)",
             border: isUser
-              ? "1px solid rgba(124, 58, 237, 0.4)"
-              : "1px solid rgba(124, 58, 237, 0.5)",
-            boxShadow: isUser ? "none" : "0 0 10px rgba(124, 58, 237, 0.25)",
+              ? "1px solid var(--color-primary)"
+              : "1px solid var(--color-border)",
+            boxShadow: "none",
           }}
         >
           {isUser ? (
-            <User size={11} style={{ color: "#c4b5fd" }} />
+            <User size={11} style={{ color: "var(--color-primary)" }} />
           ) : (
-            <Bot size={11} style={{ color: "#67e8f9" }} />
+            <Bot size={11} style={{ color: "var(--color-primary)" }} />
           )}
         </div>
 
         <span
           style={{
             fontWeight: 600,
-            color: isUser ? "#c4b5fd" : "#e6edf3",
+            color: isUser ? "var(--color-primary)" : "var(--color-text)",
             fontFamily: "var(--font-sans)",
             fontSize: 12,
           }}
@@ -998,8 +961,8 @@ function ChatMessage({
               fontWeight: 700,
               padding: "1px 5px",
               borderRadius: 4,
-              background: "rgba(124, 58, 237, 0.2)",
-              color: "#a78bfa",
+              background: "rgba(109, 93, 251, 0.15)",
+              color: "var(--color-primary)",
               letterSpacing: "0.04em",
             }}
           >
@@ -1009,7 +972,7 @@ function ChatMessage({
 
         <span
           style={{
-            color: "#6e7681",
+            color: "var(--color-text-muted)",
             fontFamily: "var(--font-mono)",
             fontSize: 10,
           }}
@@ -1024,21 +987,20 @@ function ChatMessage({
           className="relative rounded-xl overflow-hidden"
           style={{
             maxWidth: "100%",
-            background: "rgba(248,113,113,0.04)",
-            border: "1px solid rgba(248,113,113,0.2)",
-            backdropFilter: "blur(12px)",
+            background: "rgba(239, 68, 68, 0.05)",
+            border: "1px solid var(--color-danger)",
           }}
         >
           <div
             style={{
               height: 3,
-              background: "linear-gradient(90deg, #f87171, #fb923c)",
+              background: "var(--color-danger)",
             }}
           />
           <div style={{ padding: "16px 20px" }}>
             <h4
               style={{
-                color: "#f87171",
+                color: "var(--color-danger)",
                 fontSize: 14,
                 fontWeight: 600,
                 marginBottom: 6,
@@ -1049,13 +1011,19 @@ function ChatMessage({
             >
               <span style={{ fontSize: 16 }}>🛑</span> Daily Limit Reached
             </h4>
-            <p style={{ color: "#e6edf3", fontSize: 13, lineHeight: 1.6 }}>
+            <p
+              style={{
+                color: "var(--color-text)",
+                fontSize: 13,
+                lineHeight: 1.6,
+              }}
+            >
               Bạn đã vượt quá giới hạn lượt chat miễn phí hôm nay để đảm bảo
               chất lượng máy chủ.
             </p>
             <p
               style={{
-                color: "#8b949e",
+                color: "var(--color-text-secondary)",
                 fontSize: 12,
                 marginTop: 10,
                 fontStyle: "italic",
@@ -1072,16 +1040,13 @@ function ChatMessage({
             maxWidth: isUser ? "85%" : "100%",
             padding: isUser ? "10px 15px" : "14px 18px",
             background: isUser
-              ? "rgba(124, 58, 237, 0.16)"
-              : "rgba(22, 27, 34, 0.7)",
+              ? "rgba(109, 93, 251, 0.08)"
+              : "var(--color-surface)",
             border: isUser
-              ? "1px solid rgba(124, 58, 237, 0.35)"
-              : "1px solid rgba(255, 255, 255, 0.08)",
+              ? "1px solid var(--color-primary)"
+              : "1px solid var(--color-border)",
             borderRadius: isUser ? "16px 4px 16px 16px" : "4px 16px 16px 16px",
-            boxShadow: isUser
-              ? "0 2px 10px rgba(124, 58, 237, 0.1)"
-              : "0 4px 16px rgba(0, 0, 0, 0.3)",
-            backdropFilter: "blur(10px)",
+            boxShadow: "none",
             wordBreak: "break-word",
             overflowWrap: "anywhere",
             wordWrap: "break-word",
@@ -1099,21 +1064,18 @@ function ChatMessage({
                   className="flex items-center gap-1.5 rounded-lg text-xs font-medium cursor-pointer"
                   style={{
                     padding: "7px 12px",
-                    background: "rgba(124, 58, 237, 0.12)",
-                    border: "1px solid rgba(124, 58, 237, 0.35)",
-                    color: "#c4b5fd",
+                    background: "var(--color-bg)",
+                    border: "1px solid var(--color-border)",
+                    color: "var(--color-primary)",
                     transition: "all 0.15s ease",
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.background =
-                      "rgba(124, 58, 237, 0.25)";
-                    e.currentTarget.style.borderColor = "#a78bfa";
+                    e.currentTarget.style.background = "var(--color-surface)";
+                    e.currentTarget.style.borderColor = "var(--color-primary)";
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.background =
-                      "rgba(124, 58, 237, 0.12)";
-                    e.currentTarget.style.borderColor =
-                      "rgba(124, 58, 237, 0.35)";
+                    e.currentTarget.style.background = "var(--color-bg)";
+                    e.currentTarget.style.borderColor = "var(--color-border)";
                   }}
                 >
                   <Sparkles size={11} />
@@ -1157,9 +1119,9 @@ function ChatMessage({
             <div
               className="absolute -bottom-3 right-3 flex items-center gap-1 px-1.5 py-0.5 rounded-md"
               style={{
-                background: "#161b22",
-                border: "1px solid rgba(255, 255, 255, 0.12)",
-                boxShadow: "0 2px 8px rgba(0,0,0,0.5)",
+                background: "var(--color-surface)",
+                border: "1px solid var(--color-border)",
+                boxShadow: "var(--shadow-sm)",
                 zIndex: 10,
               }}
             >
@@ -1169,7 +1131,9 @@ function ChatMessage({
                 style={{
                   background: "transparent",
                   border: "none",
-                  color: copied ? "#4ade80" : "#8b949e",
+                  color: copied
+                    ? "var(--color-success)"
+                    : "var(--color-text-secondary)",
                   cursor: "pointer",
                   padding: "3px",
                   display: "flex",
@@ -1185,7 +1149,7 @@ function ChatMessage({
                   style={{
                     background: "transparent",
                     border: "none",
-                    color: "#8b949e",
+                    color: "var(--color-text-secondary)",
                     cursor: "pointer",
                     padding: "3px",
                     display: "flex",
@@ -1221,24 +1185,27 @@ function TypingIndicator() {
           style={{
             width: 22,
             height: 22,
-            background:
-              "linear-gradient(135deg, rgba(124,58,237,0.4), rgba(34,211,238,0.2))",
-            border: "1px solid rgba(124, 58, 237, 0.5)",
+            background: "var(--color-surface)",
+            border: "1px solid var(--color-border)",
           }}
         >
-          <Bot size={11} style={{ color: "#67e8f9" }} />
+          <Bot size={11} style={{ color: "var(--color-primary)" }} />
         </div>
-        <span style={{ fontWeight: 600, color: "#e6edf3", fontSize: 12 }}>
+        <span
+          style={{ fontWeight: 600, color: "var(--color-text)", fontSize: 12 }}
+        >
           COV
         </span>
-        <span style={{ color: "#8b949e", fontSize: 11 }}>thinking…</span>
+        <span style={{ color: "var(--color-text-secondary)", fontSize: 11 }}>
+          thinking…
+        </span>
       </div>
 
       <div
         className="flex items-center gap-1.5 px-4 py-3 rounded-2xl"
         style={{
-          background: "rgba(22, 27, 34, 0.7)",
-          border: "1px solid rgba(255, 255, 255, 0.08)",
+          background: "var(--color-surface)",
+          border: "1px solid var(--color-border)",
           borderRadius: "4px 16px 16px 16px",
         }}
       >
@@ -1256,7 +1223,7 @@ function TypingIndicator() {
               width: 5,
               height: 5,
               borderRadius: "50%",
-              background: "#a78bfa",
+              background: "var(--color-primary)",
             }}
           />
         ))}
@@ -1374,19 +1341,30 @@ function ChatInput({ onSend, isTyping, selectedModel, setSelectedModel }) {
               bottom: "calc(100% - 2px)",
               left: 14,
               width: 270,
-              background: "#161b22",
-              border: "1px solid rgba(124, 58, 237, 0.35)",
+              background: "var(--color-surface)",
+              border: "1px solid var(--color-border)",
               borderRadius: 12,
-              boxShadow:
-                "0 12px 32px rgba(0, 0, 0, 0.7), 0 0 16px rgba(124, 58, 237, 0.2)",
+              boxShadow: "var(--shadow-lg)",
               padding: "6px",
               zIndex: 50,
-              backdropFilter: "blur(12px)",
             }}
           >
-            <div className="px-2.5 py-1.5 text-[10px] font-semibold tracking-wider text-[#8b949e] uppercase border-b border-white/5 flex items-center justify-between">
+            <div
+              className="px-2.5 py-1.5 text-[10px] font-semibold tracking-wider uppercase flex items-center justify-between"
+              style={{
+                color: "var(--color-text-secondary)",
+                borderBottom: "1px solid var(--color-border)",
+              }}
+            >
               <span>Select AI Model</span>
-              <span className="text-purple-400 font-mono">COV Multi-LLM</span>
+              <span
+                style={{
+                  color: "var(--color-primary)",
+                  fontFamily: "var(--font-mono)",
+                }}
+              >
+                COV Multi-LLM
+              </span>
             </div>
 
             <div className="flex flex-col gap-1 mt-1">
@@ -1402,16 +1380,15 @@ function ChatInput({ onSend, isTyping, selectedModel, setSelectedModel }) {
                     className="flex items-start gap-2.5 p-2 rounded-lg text-left transition-colors cursor-pointer"
                     style={{
                       background: isSelected
-                        ? "rgba(124, 58, 237, 0.18)"
+                        ? "rgba(109, 93, 251, 0.12)"
                         : "transparent",
                       border: isSelected
-                        ? "1px solid rgba(124, 58, 237, 0.35)"
+                        ? "1px solid var(--color-primary)"
                         : "1px solid transparent",
                     }}
                     onMouseEnter={(e) => {
                       if (!isSelected)
-                        e.currentTarget.style.background =
-                          "rgba(255, 255, 255, 0.04)";
+                        e.currentTarget.style.background = "var(--color-bg)";
                     }}
                     onMouseLeave={(e) => {
                       if (!isSelected)
@@ -1424,7 +1401,7 @@ function ChatInput({ onSend, isTyping, selectedModel, setSelectedModel }) {
                           style={{
                             fontSize: 12,
                             fontWeight: 600,
-                            color: "#e6edf3",
+                            color: "var(--color-text)",
                           }}
                         >
                           {model.name}
@@ -1446,7 +1423,7 @@ function ChatInput({ onSend, isTyping, selectedModel, setSelectedModel }) {
                       <div
                         style={{
                           fontSize: 10.5,
-                          color: "#8b949e",
+                          color: "var(--color-text-secondary)",
                           marginTop: 2,
                           lineHeight: 1.3,
                         }}
@@ -1457,7 +1434,8 @@ function ChatInput({ onSend, isTyping, selectedModel, setSelectedModel }) {
                     {isSelected && (
                       <Check
                         size={14}
-                        className="text-purple-400 flex-shrink-0 mt-0.5"
+                        style={{ color: "var(--color-primary)" }}
+                        className="flex-shrink-0 mt-0.5"
                       />
                     )}
                   </button>
@@ -1472,13 +1450,11 @@ function ChatInput({ onSend, isTyping, selectedModel, setSelectedModel }) {
       <div
         className="relative rounded-2xl transition-all duration-200"
         style={{
-          background: "rgba(18, 22, 29, 0.95)",
+          background: "var(--color-surface)",
           border: focused
-            ? "1.5px solid #7c3aed"
-            : "1px solid rgba(255, 255, 255, 0.1)",
-          boxShadow: focused
-            ? "0 0 0 3px rgba(124, 58, 237, 0.15), 0 8px 24px rgba(0, 0, 0, 0.5)"
-            : "0 4px 16px rgba(0, 0, 0, 0.3)",
+            ? "1.5px solid var(--color-primary)"
+            : "1px solid var(--color-border)",
+          boxShadow: focused ? "0 0 0 2px rgba(124, 58, 237, 0.2)" : "none",
           padding: "8px 12px 6px",
         }}
       >
@@ -1495,12 +1471,12 @@ function ChatInput({ onSend, isTyping, selectedModel, setSelectedModel }) {
           style={{
             padding: "2px 4px 4px",
             fontFamily: "var(--font-sans)",
-            color: "#e6edf3",
+            color: "var(--color-text)",
             fontSize: 13,
             lineHeight: "20px",
             height: "24px",
             maxHeight: 160,
-            caretColor: "#a78bfa",
+            caretColor: "var(--color-primary)",
           }}
         />
 
@@ -1515,19 +1491,21 @@ function ChatInput({ onSend, isTyping, selectedModel, setSelectedModel }) {
             className="flex items-center gap-1.5 px-2 py-1 rounded-lg cursor-pointer transition-all"
             style={{
               background: modelMenuOpen
-                ? "rgba(124, 58, 237, 0.2)"
-                : "rgba(255, 255, 255, 0.05)",
+                ? "var(--color-surface)"
+                : "var(--color-bg)",
               border: modelMenuOpen
-                ? "1px solid rgba(124, 58, 237, 0.4)"
-                : "1px solid rgba(255, 255, 255, 0.08)",
+                ? "1px solid var(--color-primary)"
+                : "1px solid var(--color-border)",
               fontSize: 11,
-              color: "#e6edf3",
+              color: "var(--color-text)",
             }}
             title="Switch AI Model"
           >
             <Sparkles
               size={11}
-              style={{ color: selectedModel?.badgeColor || "#a78bfa" }}
+              style={{
+                color: selectedModel?.badgeColor || "var(--color-primary)",
+              }}
             />
             <span style={{ fontWeight: 500 }}>
               {selectedModel?.name || "Gemini 1.5 Pro"}
@@ -1535,7 +1513,7 @@ function ChatInput({ onSend, isTyping, selectedModel, setSelectedModel }) {
             <ChevronDown
               size={12}
               style={{
-                color: "#8b949e",
+                color: "var(--color-text-secondary)",
                 transform: modelMenuOpen ? "rotate(180deg)" : "rotate(0deg)",
                 transition: "transform 0.2s ease",
               }}
@@ -1552,12 +1530,10 @@ function ChatInput({ onSend, isTyping, selectedModel, setSelectedModel }) {
             style={{
               width: 28,
               height: 28,
-              background: canSend
-                ? "linear-gradient(135deg, #7c3aed 0%, #6366f1 100%)"
-                : "rgba(255, 255, 255, 0.05)",
-              color: canSend ? "#fff" : "#484f58",
-              border: canSend ? "none" : "1px solid rgba(255, 255, 255, 0.06)",
-              boxShadow: canSend ? "0 0 14px rgba(124, 58, 237, 0.5)" : "none",
+              background: canSend ? "var(--color-primary)" : "var(--color-bg)",
+              color: canSend ? "#fff" : "var(--color-text-secondary)",
+              border: canSend ? "none" : "1px solid var(--color-border)",
+              boxShadow: "none",
               transition: "all 0.2s ease",
             }}
           >
@@ -1573,7 +1549,7 @@ function ChatInput({ onSend, isTyping, selectedModel, setSelectedModel }) {
       <div
         className="mt-1 text-center select-none"
         style={{
-          color: "#484f58",
+          color: "var(--color-text-muted)",
           fontSize: 10,
           fontFamily: "var(--font-sans)",
         }}
@@ -1627,7 +1603,9 @@ export default function AIPanel({
       .then((res) => {
         setHasAnalysis(!!res?.data?.generation?.hasAnalysis);
       })
-      .catch((err) => console.error("Failed to check hasAnalysis for AIPanel:", err));
+      .catch((err) =>
+        console.error("Failed to check hasAnalysis for AIPanel:", err),
+      );
   }, [snapshotId]);
 
   const handleNewChat = () => {
@@ -1700,28 +1678,28 @@ export default function AIPanel({
       const suggestionsList =
         Array.isArray(data.suggestions) && data.suggestions.length > 0
           ? data.suggestions.map((s, idx) => ({
-            ...s,
-            id: s.framework || `sug-${idx}`,
-            applied: false,
-            previousContent: null,
-            isApplying: false,
-            isUndoing: false,
-          }))
-          : [
-            {
-              sourceFile: data.sourceFile,
-              targetTestFile: data.targetTestFile,
-              isExisting: data.isExisting,
-              framework: data.framework || "jest",
-              explanation: data.explanation,
-              suggestedTestCode: data.suggestedTestCode,
-              fullUpdatedContent: data.fullUpdatedContent,
+              ...s,
+              id: s.framework || `sug-${idx}`,
               applied: false,
               previousContent: null,
               isApplying: false,
               isUndoing: false,
-            },
-          ];
+            }))
+          : [
+              {
+                sourceFile: data.sourceFile,
+                targetTestFile: data.targetTestFile,
+                isExisting: data.isExisting,
+                framework: data.framework || "jest",
+                explanation: data.explanation,
+                suggestedTestCode: data.suggestedTestCode,
+                fullUpdatedContent: data.fullUpdatedContent,
+                applied: false,
+                previousContent: null,
+                isApplying: false,
+                isUndoing: false,
+              },
+            ];
 
       const hasMultiple = suggestionsList.length > 1;
       let summaryText = "";
@@ -1741,18 +1719,18 @@ export default function AIPanel({
         const single = suggestionsList[0];
         summaryText = isTest
           ? `Tôi đã phân tích và đề xuất bổ sung test case cho file test **\`${single.targetTestFile}\`** (${single.framework?.toUpperCase()}):\n\n` +
-          (single.sourceFile && single.sourceFile !== single.targetTestFile
-            ? `- **File mã nguồn tương ứng**: \`${single.sourceFile}\`\n`
-            : "") +
-          `- **Dòng chưa cover trong mã nguồn**: ${data.uncoveredLines?.length ? data.uncoveredLines.join(", ") : "100% dòng đã được kiểm thử"}\n` +
-          `- **Lỗi assertion**: ${data.failedLines?.length ? data.failedLines.join(", ") : "0 lỗi"}\n` +
-          `- **File test**: \`${single.targetTestFile}\` (${single.isExisting ? "Đã có sẵn - sẽ cập nhật test case" : "File mới"})\n\n` +
-          `${single.explanation}`
+            (single.sourceFile && single.sourceFile !== single.targetTestFile
+              ? `- **File mã nguồn tương ứng**: \`${single.sourceFile}\`\n`
+              : "") +
+            `- **Dòng chưa cover trong mã nguồn**: ${data.uncoveredLines?.length ? data.uncoveredLines.join(", ") : "100% dòng đã được kiểm thử"}\n` +
+            `- **Lỗi assertion**: ${data.failedLines?.length ? data.failedLines.join(", ") : "0 lỗi"}\n` +
+            `- **File test**: \`${single.targetTestFile}\` (${single.isExisting ? "Đã có sẵn - sẽ cập nhật test case" : "File mới"})\n\n` +
+            `${single.explanation}`
           : `Tôi đã phân tích file **\`${single.sourceFile}\`** (${single.framework?.toUpperCase()}):\n\n` +
-          `- **Dòng chưa cover**: ${data.uncoveredLines?.length ? data.uncoveredLines.join(", ") : "100% dòng đã được kiểm thử"}\n` +
-          `- **Lỗi assertion**: ${data.failedLines?.length ? data.failedLines.join(", ") : "0 lỗi"}\n` +
-          `- **File test đích**: \`${single.targetTestFile}\` (${single.isExisting ? "Đã có sẵn - sẽ nối thêm" : "File mới"})\n\n` +
-          `${single.explanation}`;
+            `- **Dòng chưa cover**: ${data.uncoveredLines?.length ? data.uncoveredLines.join(", ") : "100% dòng đã được kiểm thử"}\n` +
+            `- **Lỗi assertion**: ${data.failedLines?.length ? data.failedLines.join(", ") : "0 lỗi"}\n` +
+            `- **File test đích**: \`${single.targetTestFile}\` (${single.isExisting ? "Đã có sẵn - sẽ nối thêm" : "File mới"})\n\n` +
+            `${single.explanation}`;
       }
 
       const assistantMsg = {
@@ -2310,11 +2288,11 @@ export default function AIPanel({
             testSuggestion:
               m.testSuggestion?.framework === suggestion.framework
                 ? {
-                  ...m.testSuggestion,
-                  applied: true,
-                  previousContent,
-                  isApplying: false,
-                }
+                    ...m.testSuggestion,
+                    applied: true,
+                    previousContent,
+                    isApplying: false,
+                  }
                 : m.testSuggestion,
           };
         }),
@@ -2540,8 +2518,8 @@ export default function AIPanel({
       animate={{ opacity: 1, x: 0 }}
       transition={{ duration: 0.3, ease: "easeOut" }}
       style={{
-        background: "var(--ide-sidebar)",
-        borderLeft: "1px solid var(--ide-border)",
+        background: "var(--color-surface)",
+        borderLeft: "1px solid var(--color-border)",
         fontFamily: "var(--font-sans)",
       }}
     >
@@ -2551,9 +2529,8 @@ export default function AIPanel({
         style={{
           height: 48,
           padding: "0 18px",
-          borderBottom: "1px solid rgba(255, 255, 255, 0.06)",
-          background: "rgba(13, 17, 23, 0.8)",
-          backdropFilter: "blur(8px)",
+          borderBottom: "1px solid var(--color-border)",
+          background: "var(--color-surface)",
         }}
       >
         <div className="flex items-center gap-2.5">
@@ -2562,13 +2539,11 @@ export default function AIPanel({
             style={{
               width: 26,
               height: 26,
-              background:
-                "linear-gradient(135deg, rgba(124,58,237,0.4), rgba(34,211,238,0.2))",
-              border: "1px solid rgba(124,58,237,0.5)",
-              boxShadow: "0 0 10px rgba(124,58,237,0.3)",
+              background: "var(--color-primary)",
+              color: "#ffffff",
             }}
           >
-            <Bot size={14} style={{ color: "#67e8f9" }} />
+            <Bot size={14} style={{ color: "#ffffff" }} />
           </div>
           <div>
             <div className="flex items-center gap-1.5">
@@ -2576,7 +2551,7 @@ export default function AIPanel({
                 style={{
                   fontSize: 13,
                   fontWeight: 700,
-                  color: "#e6edf3",
+                  color: "var(--color-text)",
                   fontFamily: "var(--font-sans)",
                   letterSpacing: "-0.01em",
                 }}
@@ -2589,9 +2564,9 @@ export default function AIPanel({
                   fontWeight: 600,
                   padding: "1px 5px",
                   borderRadius: 4,
-                  background: "rgba(124, 58, 237, 0.15)",
-                  color: "#c4b5fd",
-                  border: "1px solid rgba(124, 58, 237, 0.3)",
+                  background: "var(--color-surface)",
+                  color: "var(--color-primary)",
+                  border: "1px solid var(--color-border)",
                 }}
               >
                 AI Agent
@@ -2608,15 +2583,14 @@ export default function AIPanel({
                 width: 6,
                 height: 6,
                 borderRadius: "50%",
-                background: "#3fb950",
-                boxShadow: "0 0 6px #3fb950",
+                background: "var(--color-success)",
                 display: "inline-block",
               }}
             />
             <span
               style={{
                 fontSize: 10,
-                color: "#4ade80",
+                color: "var(--color-success)",
                 fontFamily: "var(--font-mono)",
                 fontWeight: 600,
               }}
@@ -2631,10 +2605,10 @@ export default function AIPanel({
             onClick={handleNewChat}
             className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer"
             style={{
-              color: "#8b949e",
+              color: "var(--color-text-secondary)",
               fontSize: 11,
-              background: "rgba(255, 255, 255, 0.04)",
-              border: "1px solid rgba(255, 255, 255, 0.08)",
+              background: "var(--color-surface)",
+              border: "1px solid var(--color-border)",
             }}
             title="Start a new chat session"
           >
@@ -2660,20 +2634,29 @@ export default function AIPanel({
             <div
               className="p-3.5 rounded-xl mb-3"
               style={{
-                background:
-                  "linear-gradient(180deg, rgba(124, 58, 237, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%)",
-                border: "1px solid rgba(124, 58, 237, 0.2)",
+                background: "var(--color-surface)",
+                border: "1px solid var(--color-border)",
               }}
             >
               <div className="flex items-center gap-2 mb-1">
-                <Sparkles size={14} style={{ color: "#a78bfa" }} />
+                <Sparkles size={14} style={{ color: "var(--color-primary)" }} />
                 <span
-                  style={{ fontSize: 12, fontWeight: 600, color: "#f0f6fc" }}
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: "var(--color-text)",
+                  }}
                 >
                   Quick Capabilities
                 </span>
               </div>
-              <p style={{ fontSize: 11, color: "#8b949e", margin: 0 }}>
+              <p
+                style={{
+                  fontSize: 11,
+                  color: "var(--color-text-secondary)",
+                  margin: 0,
+                }}
+              >
                 Select an AI action below to analyze or generate tests for your
                 project.
               </p>
@@ -2691,20 +2674,18 @@ export default function AIPanel({
                 }
                 className="flex items-center gap-2.5 p-2.5 rounded-xl text-left cursor-pointer transition-all"
                 style={{
-                  background: "rgba(255, 255, 255, 0.02)",
-                  border: "1px solid rgba(255, 255, 255, 0.06)",
+                  background: "var(--color-surface)",
+                  border: "1px solid var(--color-border)",
                   opacity: hasAnalysis ? 1 : 0.5,
                   pointerEvents: hasAnalysis ? "auto" : "none",
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "rgba(124, 58, 237, 0.08)";
-                  e.currentTarget.style.borderColor = "rgba(124, 58, 237, 0.3)";
+                  e.currentTarget.style.background = "var(--color-bg)";
+                  e.currentTarget.style.borderColor = "var(--color-primary)";
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.background =
-                    "rgba(255, 255, 255, 0.02)";
-                  e.currentTarget.style.borderColor =
-                    "rgba(255, 255, 255, 0.06)";
+                  e.currentTarget.style.background = "var(--color-surface)";
+                  e.currentTarget.style.borderColor = "var(--color-border)";
                 }}
               >
                 <div
@@ -2720,14 +2701,14 @@ export default function AIPanel({
                     flexShrink: 0,
                   }}
                 >
-                  <Shield size={13} style={{ color: "#38bdf8" }} />
+                  <Shield size={13} style={{ color: "var(--color-primary)" }} />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div
                     style={{
                       fontSize: 12,
                       fontWeight: 600,
-                      color: "#e6edf3",
+                      color: "var(--color-text)",
                     }}
                   >
                     Find edge cases
@@ -2735,7 +2716,7 @@ export default function AIPanel({
                   <div
                     style={{
                       fontSize: 11,
-                      color: "#8b949e",
+                      color: "var(--color-text-secondary)",
                       whiteSpace: "nowrap",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
@@ -2744,18 +2725,19 @@ export default function AIPanel({
                     Identify boundary conditions & potential failure points
                   </div>
                 </div>
-                <ChevronRight size={13} style={{ color: "#6e7681" }} />
+                <ChevronRight
+                  size={13}
+                  style={{ color: "var(--color-text-muted)" }}
+                />
               </motion.button>
 
               {/* 2. Generate tests (Expandable into Unit, Integration, System) */}
               <div
                 style={{
-                  background: generateExpanded
-                    ? "rgba(124, 58, 237, 0.06)"
-                    : "rgba(255, 255, 255, 0.02)",
+                  background: "var(--color-surface)",
                   border: generateExpanded
-                    ? "1px solid rgba(124, 58, 237, 0.35)"
-                    : "1px solid rgba(255, 255, 255, 0.06)",
+                    ? "1px solid var(--color-primary)"
+                    : "1px solid var(--color-border)",
                   borderRadius: 12,
                   overflow: "hidden",
                   transition: "all 0.2s ease",
@@ -2771,8 +2753,7 @@ export default function AIPanel({
                   }}
                   onMouseEnter={(e) => {
                     if (!generateExpanded) {
-                      e.currentTarget.style.background =
-                        "rgba(124, 58, 237, 0.08)";
+                      e.currentTarget.style.background = "var(--color-bg)";
                     }
                   }}
                   onMouseLeave={(e) => {
@@ -2794,7 +2775,10 @@ export default function AIPanel({
                       flexShrink: 0,
                     }}
                   >
-                    <Wand2 size={13} style={{ color: "#34d399" }} />
+                    <Wand2
+                      size={13}
+                      style={{ color: "var(--color-success)" }}
+                    />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
@@ -2802,7 +2786,7 @@ export default function AIPanel({
                         style={{
                           fontSize: 12,
                           fontWeight: 600,
-                          color: "#e6edf3",
+                          color: "var(--color-text)",
                         }}
                       >
                         Generate tests
@@ -2814,7 +2798,7 @@ export default function AIPanel({
                           padding: "1px 5px",
                           borderRadius: 4,
                           background: "rgba(52, 211, 153, 0.15)",
-                          color: "#6ee7b7",
+                          color: "var(--color-success)",
                           border: "1px solid rgba(52, 211, 153, 0.3)",
                         }}
                       >
@@ -2824,7 +2808,7 @@ export default function AIPanel({
                     <div
                       style={{
                         fontSize: 11,
-                        color: "#8b949e",
+                        color: "var(--color-text-secondary)",
                         whiteSpace: "nowrap",
                         overflow: "hidden",
                         textOverflow: "ellipsis",
@@ -2836,7 +2820,7 @@ export default function AIPanel({
                   <ChevronDown
                     size={14}
                     style={{
-                      color: "#8b949e",
+                      color: "var(--color-text-secondary)",
                       transform: generateExpanded
                         ? "rotate(180deg)"
                         : "rotate(0deg)",
@@ -2854,8 +2838,8 @@ export default function AIPanel({
                       exit={{ height: 0, opacity: 0 }}
                       transition={{ duration: 0.2, ease: "easeOut" }}
                       style={{
-                        borderTop: "1px solid rgba(124, 58, 237, 0.2)",
-                        background: "rgba(0, 0, 0, 0.25)",
+                        borderTop: "1px solid var(--color-border)",
+                        background: "var(--color-bg)",
                         padding: "6px 8px 8px",
                         display: "flex",
                         flexDirection: "column",
@@ -2868,7 +2852,7 @@ export default function AIPanel({
                           title: "Unit Tests",
                           desc: "Test individual functions & component methods",
                           icon: TestTube2,
-                          color: "#a78bfa",
+                          color: "var(--color-primary)",
                           prompt:
                             "Generate comprehensive unit tests for the core functions and classes in this project.",
                         },
@@ -2877,7 +2861,7 @@ export default function AIPanel({
                           title: "Integration Tests",
                           desc: "Test API endpoints & module interactions",
                           icon: Layers,
-                          color: "#38bdf8",
+                          color: "var(--color-info, #38bdf8)",
                           prompt:
                             "Generate integration tests verifying API endpoints and module interactions in this project.",
                         },
@@ -2886,7 +2870,7 @@ export default function AIPanel({
                           title: "System Tests",
                           desc: "End-to-end user workflows & scenarios",
                           icon: Workflow,
-                          color: "#34d399",
+                          color: "var(--color-success)",
                           prompt:
                             "Generate end-to-end system tests verifying user workflows and full application behavior.",
                         },
@@ -2900,20 +2884,20 @@ export default function AIPanel({
                             onClick={() => handleSend(sub.prompt)}
                             className="flex items-center gap-2.5 p-2 rounded-lg text-left cursor-pointer transition-all"
                             style={{
-                              background: "rgba(255, 255, 255, 0.02)",
-                              border: "1px solid rgba(255, 255, 255, 0.05)",
+                              background: "var(--color-surface)",
+                              border: "1px solid var(--color-border)",
                             }}
                             onMouseEnter={(e) => {
                               e.currentTarget.style.background =
-                                "rgba(124, 58, 237, 0.12)";
+                                "var(--color-bg)";
                               e.currentTarget.style.borderColor =
-                                "rgba(124, 58, 237, 0.35)";
+                                "var(--color-primary)";
                             }}
                             onMouseLeave={(e) => {
                               e.currentTarget.style.background =
-                                "rgba(255, 255, 255, 0.02)";
+                                "var(--color-surface)";
                               e.currentTarget.style.borderColor =
-                                "rgba(255, 255, 255, 0.05)";
+                                "var(--color-border)";
                             }}
                           >
                             <div
@@ -2921,7 +2905,8 @@ export default function AIPanel({
                                 width: 22,
                                 height: 22,
                                 borderRadius: 5,
-                                background: "rgba(255, 255, 255, 0.04)",
+                                background: "var(--color-bg)",
+                                border: "1px solid var(--color-border)",
                                 display: "flex",
                                 alignItems: "center",
                                 justifyContent: "center",
@@ -2935,7 +2920,7 @@ export default function AIPanel({
                                 style={{
                                   fontSize: 11,
                                   fontWeight: 600,
-                                  color: "#e6edf3",
+                                  color: "var(--color-text)",
                                 }}
                               >
                                 {sub.title}
@@ -2943,10 +2928,11 @@ export default function AIPanel({
                               <div
                                 style={{
                                   fontSize: 10,
-                                  color: "#8b949e",
+                                  color: "var(--color-text-secondary)",
                                   whiteSpace: "nowrap",
                                   overflow: "hidden",
                                   textOverflow: "ellipsis",
+                                  lineHeight: 1.3,
                                 }}
                               >
                                 {sub.desc}
@@ -2954,7 +2940,7 @@ export default function AIPanel({
                             </div>
                             <ChevronRight
                               size={12}
-                              style={{ color: "#6e7681" }}
+                              style={{ color: "var(--color-text-muted)" }}
                             />
                           </motion.button>
                         );
@@ -2975,20 +2961,18 @@ export default function AIPanel({
                 }
                 className="flex items-center gap-2.5 p-2.5 rounded-xl text-left cursor-pointer transition-all"
                 style={{
-                  background: "rgba(255, 255, 255, 0.02)",
-                  border: "1px solid rgba(255, 255, 255, 0.06)",
+                  background: "var(--color-surface)",
+                  border: "1px solid var(--color-border)",
                   opacity: hasAnalysis ? 1 : 0.5,
                   pointerEvents: hasAnalysis ? "auto" : "none",
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "rgba(124, 58, 237, 0.08)";
-                  e.currentTarget.style.borderColor = "rgba(124, 58, 237, 0.3)";
+                  e.currentTarget.style.background = "var(--color-bg)";
+                  e.currentTarget.style.borderColor = "var(--color-primary)";
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.background =
-                    "rgba(255, 255, 255, 0.02)";
-                  e.currentTarget.style.borderColor =
-                    "rgba(255, 255, 255, 0.06)";
+                  e.currentTarget.style.background = "var(--color-surface)";
+                  e.currentTarget.style.borderColor = "var(--color-border)";
                 }}
               >
                 <div
@@ -3004,14 +2988,17 @@ export default function AIPanel({
                     flexShrink: 0,
                   }}
                 >
-                  <Zap size={13} style={{ color: "#fbbf24" }} />
+                  <Zap
+                    size={13}
+                    style={{ color: "var(--color-warning, #fbbf24)" }}
+                  />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div
                     style={{
                       fontSize: 12,
                       fontWeight: 600,
-                      color: "#e6edf3",
+                      color: "var(--color-text)",
                     }}
                   >
                     Explain coverage gaps
@@ -3019,7 +3006,7 @@ export default function AIPanel({
                   <div
                     style={{
                       fontSize: 11,
-                      color: "#8b949e",
+                      color: "var(--color-text-secondary)",
                       whiteSpace: "nowrap",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
@@ -3028,7 +3015,10 @@ export default function AIPanel({
                     Analyze untested logic branches and risk areas
                   </div>
                 </div>
-                <ChevronRight size={13} style={{ color: "#6e7681" }} />
+                <ChevronRight
+                  size={13}
+                  style={{ color: "var(--color-text-muted)" }}
+                />
               </motion.button>
             </div>
           </div>
@@ -3054,17 +3044,17 @@ export default function AIPanel({
               onRetry={
                 index === messages.length - 1 && msg.role === "assistant"
                   ? () => {
-                    let userMsg = null;
-                    for (let i = index - 1; i >= 0; i--) {
-                      if (messages[i].role === "user") {
-                        userMsg = messages[i];
-                        break;
+                      let userMsg = null;
+                      for (let i = index - 1; i >= 0; i--) {
+                        if (messages[i].role === "user") {
+                          userMsg = messages[i];
+                          break;
+                        }
+                      }
+                      if (userMsg) {
+                        handleSend(userMsg.content);
                       }
                     }
-                    if (userMsg) {
-                      handleSend(userMsg.content);
-                    }
-                  }
                   : null
               }
             />

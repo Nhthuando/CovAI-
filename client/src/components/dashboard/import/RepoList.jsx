@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { motion } from "framer-motion";
 import {
   Search,
   FolderGit2,
@@ -8,16 +7,17 @@ import {
   Loader2,
   ChevronLeft,
   ChevronRight,
-  Sparkles,
-  ExternalLink,
 } from "lucide-react";
 import {
   getGithubRepositoriesApi,
   createProjectApi,
   importGithubRepoApi,
   getProjectsApi,
+  deleteProjectApi,
 } from "../../../services/project.service";
 import { useToast } from "../ToastContext";
+import Button from "../../common/Button";
+import Badge from "../../common/Badge";
 
 /* ── Helper ─────────────────────────────────── */
 function getLangColor(lang) {
@@ -36,29 +36,30 @@ function getLangColor(lang) {
 }
 
 /* ── Single Repo Row ─────────────────────────────────────── */
-function RepoItem({ repo, index, onClose, onSuccess, showToast }) {
+function RepoItem({ repo, onClose, onSuccess, showToast }) {
   const [importing, setImporting] = useState(false);
+  const isSupported =
+    !repo.language ||
+    repo.language === "JavaScript" ||
+    repo.language === "TypeScript";
 
   const handleImport = async () => {
     if (importing) return;
 
-    if (
-      repo.language &&
-      repo.language !== "JavaScript" &&
-      repo.language !== "TypeScript"
-    ) {
+    if (!isSupported) {
       showToast({
-        type: "warning",
-        title: "Language not fully supported",
-        message:
-          "This project currently focuses on JavaScript/TypeScript. We will attempt parsing, but coverage generation may vary.",
+        type: "error",
+        title: "Ngôn ngữ không được hỗ trợ",
+        message: `CovAI chỉ hỗ trợ dự án có ngôn ngữ chính là JavaScript hoặc TypeScript. Repository này có ngôn ngữ là: ${repo.language}.`,
       });
+      return;
     }
 
     setImporting(true);
-    try {
-      let projectId;
+    let projectId = null;
+    let createdNewProject = false;
 
+    try {
       try {
         const repoUrl = `https://github.com/${repo.owner}/${repo.name}`;
         const projRes = await createProjectApi({
@@ -66,6 +67,7 @@ function RepoItem({ repo, index, onClose, onSuccess, showToast }) {
           repoUrl,
         });
         projectId = projRes.data.id;
+        createdNewProject = true;
       } catch (createErr) {
         if (
           createErr.message?.includes("already exists") ||
@@ -76,16 +78,16 @@ function RepoItem({ repo, index, onClose, onSuccess, showToast }) {
           if (existing) {
             projectId = existing.id;
           } else {
-            throw new Error("Project already exists but could not be found.");
+            throw new Error("Project already exists but could not be found.", {
+              cause: createErr,
+            });
           }
         } else {
           throw createErr;
         }
       }
 
-      importGithubRepoApi(projectId, repo.owner, repo.name).catch((err) => {
-        console.error("[RepoList] Background import failed:", err);
-      });
+      await importGithubRepoApi(projectId, repo.owner, repo.name);
 
       showToast({
         type: "info",
@@ -96,6 +98,9 @@ function RepoItem({ repo, index, onClose, onSuccess, showToast }) {
       if (onSuccess) onSuccess();
       else if (onClose) onClose();
     } catch (err) {
+      if (createdNewProject && projectId) {
+        deleteProjectApi(projectId).catch(() => {});
+      }
       showToast({
         type: "error",
         title: "Import failed",
@@ -106,76 +111,74 @@ function RepoItem({ repo, index, onClose, onSuccess, showToast }) {
   };
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.04 * Math.min(index, 10), duration: 0.2 }}
-      className="group flex items-center justify-between p-3 rounded-xl bg-neutral-900/40 hover:bg-neutral-800/60 border border-white/5 hover:border-violet-500/30 transition-all cursor-pointer"
+    <div
+      className="group flex items-center justify-between p-3 rounded-[var(--radius-md)] bg-[var(--color-bg)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] hover:border-[var(--color-border-subtle)] transition-colors"
       id={`repo-item-${repo.id}`}
     >
       {/* Left info */}
-      <div className="flex items-center gap-3 min-w-0">
-        <div className="w-8 h-8 rounded-lg bg-neutral-800/80 border border-white/5 group-hover:border-violet-500/20 flex items-center justify-center flex-shrink-0">
+      <div className="flex items-center gap-3 min-w-0 pr-3">
+        <div className="w-8 h-8 rounded-[var(--radius-md)] bg-[var(--color-surface)] border border-[var(--color-border)] flex items-center justify-center shrink-0">
           {repo.isPrivate ? (
-            <Lock size={14} className="text-amber-400/80" />
+            <Lock size={14} className="text-amber-500" />
           ) : (
             <FolderGit2
-              size={15}
-              className="text-neutral-400 group-hover:text-violet-300 transition-colors"
+              size={14}
+              className="text-[var(--color-text-secondary)] group-hover:text-[var(--color-primary)] transition-colors"
             />
           )}
         </div>
 
         <div className="flex flex-col min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors truncate font-sans">
+            <span className="text-xs font-semibold text-[var(--color-text)] truncate font-sans">
               {repo.name}
             </span>
             {repo.isPrivate && (
-              <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">
+              <Badge variant="warning" size="sm">
                 Private
-              </span>
+              </Badge>
             )}
           </div>
 
-          <div className="flex items-center gap-2.5 mt-0.5 text-[11px] text-neutral-400">
+          <div className="flex items-center gap-2.5 mt-0.5 text-[11px] text-[var(--color-text-muted)] font-mono">
             {repo.language && (
-              <span className="flex items-center gap-1.5">
+              <span className="flex items-center gap-1.5 font-sans">
                 <span
-                  className="w-2 h-2 rounded-full inline-block shadow-sm"
+                  className="w-2 h-2 rounded-full inline-block"
                   style={{ backgroundColor: repo.langColor }}
                 />
                 {repo.language}
+                {!isSupported && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-[var(--radius-sm)] bg-[var(--color-danger)]/10 text-[var(--color-danger)] font-medium">
+                    Unsupported
+                  </span>
+                )}
               </span>
             )}
-            <span className="text-neutral-600">•</span>
+            <span>•</span>
             <span>Updated {repo.updatedAt}</span>
           </div>
         </div>
       </div>
 
       {/* Right action */}
-      <motion.button
-        whileHover={!importing ? { scale: 1.04 } : {}}
-        whileTap={!importing ? { scale: 0.96 } : {}}
-        onClick={(e) => {
-          e.stopPropagation();
-          handleImport();
-        }}
-        disabled={importing}
-        className="px-3.5 py-1.5 rounded-lg text-xs font-medium text-neutral-300 group-hover:text-white bg-white/5 group-hover:bg-violet-600 hover:!bg-violet-500 border border-white/10 group-hover:border-violet-400/40 transition-all flex items-center gap-1.5 flex-shrink-0 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+      <Button
+        type="button"
+        variant={!isSupported ? "ghost" : "secondary"}
+        size="sm"
+        onClick={handleImport}
+        disabled={importing || !isSupported}
+        loading={importing}
+        title={
+          !isSupported
+            ? `Chỉ hỗ trợ JavaScript/TypeScript (Ngôn ngữ: ${repo.language})`
+            : "Import repository"
+        }
         id={`repo-import-${repo.id}`}
       >
-        {importing ? (
-          <>
-            <Loader2 size={12} className="animate-spin" />
-            <span>Importing...</span>
-          </>
-        ) : (
-          <span>Import</span>
-        )}
-      </motion.button>
-    </motion.div>
+        {!isSupported ? "Not Supported" : "Import"}
+      </Button>
+    </div>
   );
 }
 
@@ -186,7 +189,7 @@ export default function RepoList({ onClose, onSuccess }) {
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
-  const reposPerPage = 6;
+  const reposPerPage = 5;
   const { showToast } = useToast();
 
   useEffect(() => {
@@ -223,10 +226,6 @@ export default function RepoList({ onClose, onSuccess }) {
     currentPage * reposPerPage,
   );
 
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [searchQuery]);
-
   const ownerName = repos[0]?.owner || "Connected Account";
 
   return (
@@ -234,87 +233,96 @@ export default function RepoList({ onClose, onSuccess }) {
       {/* Search and account header */}
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded-full bg-neutral-800 border border-white/10 flex items-center justify-center">
-            <User size={12} className="text-neutral-400" />
+          <div className="w-6 h-6 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] flex items-center justify-center shrink-0">
+            <User size={12} className="text-[var(--color-text-secondary)]" />
           </div>
-          <span className="text-xs font-semibold text-neutral-200 font-mono">
+          <span className="text-xs font-semibold text-[var(--color-text)] font-mono">
             {ownerName}
           </span>
-          <span className="text-[10px] text-neutral-500 font-mono">
+          <span className="text-[10px] text-[var(--color-text-muted)] font-mono">
             ({filteredRepos.length} repos)
           </span>
         </div>
 
         {/* Filter input */}
-        <div className="relative w-48">
+        <div className="relative w-44 sm:w-48">
           <Search
             size={13}
-            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-500"
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] pointer-events-none"
           />
           <input
             type="text"
             placeholder="Search repos..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg bg-neutral-900/80 border border-white/10 focus:border-violet-500/40 outline-none text-neutral-200 placeholder:text-neutral-600 transition-all font-sans"
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setCurrentPage(1);
+            }}
+            className="w-full pl-8 pr-2.5 py-1.5 text-xs rounded-[var(--radius-md)] bg-[var(--color-bg)] border border-[var(--color-border)] focus:border-[var(--color-primary)] outline-none text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] transition-colors font-sans"
             id="repo-search-input"
           />
         </div>
       </div>
 
       {/* Repo list container */}
-      <div className="flex flex-col gap-2 overflow-y-auto max-h-[290px] pr-1 scrollbar-thin scrollbar-thumb-white/10">
+      <div className="flex flex-col gap-2 overflow-y-auto max-h-[280px] pr-1">
         {loading ? (
-          <div className="flex flex-col items-center justify-center py-12 gap-2 text-neutral-500">
-            <Loader2 className="animate-spin text-violet-400" size={22} />
+          <div className="flex flex-col items-center justify-center py-10 gap-2 text-[var(--color-text-muted)]">
+            <Loader2
+              className="animate-spin text-[var(--color-primary)]"
+              size={20}
+            />
             <span className="text-xs">Loading repositories...</span>
           </div>
         ) : errorMsg ? (
-          <div className="flex flex-col items-center justify-center py-8 text-red-400 text-xs text-center">
+          <div className="flex flex-col items-center justify-center py-8 text-[var(--color-danger)] text-xs text-center">
             <p className="font-semibold">Unable to fetch repositories</p>
-            <p className="text-neutral-500 mt-1">{errorMsg}</p>
+            <p className="text-[var(--color-text-muted)] mt-1">{errorMsg}</p>
           </div>
         ) : displayedRepos.length > 0 ? (
-          displayedRepos.map((repo, i) => (
+          displayedRepos.map((repo) => (
             <RepoItem
               key={repo.id}
               repo={repo}
-              index={i}
               onClose={onClose}
               onSuccess={onSuccess}
               showToast={showToast}
             />
           ))
         ) : (
-          <div className="flex flex-col items-center justify-center py-10 gap-2 text-neutral-500">
-            <Search size={22} className="text-neutral-600" />
-            <span className="text-xs">No repositories match your filter</span>
+          <div className="flex flex-col items-center justify-center py-8 gap-2 text-[var(--color-text-muted)]">
+            <Search size={20} className="text-[var(--color-text-muted)]" />
+            <span className="text-xs">No repositories match your query</span>
           </div>
         )}
       </div>
 
       {/* Pagination controls */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-between pt-2 border-t border-white/5 text-xs text-neutral-400">
-          <span className="text-[11px] font-mono text-neutral-500">
+        <div className="flex items-center justify-between pt-2 border-t border-[var(--color-border)] text-xs text-[var(--color-text-secondary)]">
+          <span className="text-[11px] font-mono text-[var(--color-text-muted)]">
             Page {currentPage} of {totalPages}
           </span>
           <div className="flex items-center gap-1">
             <button
+              type="button"
               disabled={currentPage === 1}
               onClick={() => setCurrentPage((curr) => Math.max(curr - 1, 1))}
-              className="p-1 rounded-md hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-neutral-300"
+              className="p-1 rounded-[var(--radius-sm)] hover:bg-[var(--color-surface-secondary)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-[var(--color-text)] cursor-pointer"
               title="Previous page"
+              aria-label="Previous page"
             >
               <ChevronLeft size={14} />
             </button>
             <button
+              type="button"
               disabled={currentPage === totalPages}
               onClick={() =>
                 setCurrentPage((curr) => Math.min(curr + 1, totalPages))
               }
-              className="p-1 rounded-md hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-neutral-300"
+              className="p-1 rounded-[var(--radius-sm)] hover:bg-[var(--color-surface-secondary)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-[var(--color-text)] cursor-pointer"
               title="Next page"
+              aria-label="Next page"
             >
               <ChevronRight size={14} />
             </button>

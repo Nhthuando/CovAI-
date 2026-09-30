@@ -2,53 +2,117 @@
 @import "tailwindcss";
 
 /* ============================================================
-   CSS CUSTOM PROPERTIES — DESIGN TOKENS
+   COVAI DESIGN SYSTEM — DESIGN TOKENS
+   Standard Design Tokens per COVAI_FRONTEND_AGENT_RULES.md
    ============================================================ */
+
 :root {
-  /* Surface */
-  --surface-main: #0d1117;
-  --surface-variant: #181c22;
-  --surface-elevated: #1c2128;
-  --surface-overlay: #21262d;
+  /* Brand */
+  --color-primary: #6d5dfb;
+  --color-primary-hover: #5b4be7;
+  --color-primary-active: #4c3fd0;
 
-  /* Primary */
-  --primary: #7c3aed;
-  --primary-light: #a78bfa;
-  --primary-glow: rgba(124, 58, 237, 0.4);
-  --primary-subtle: rgba(124, 58, 237, 0.08);
+  /* Secondary */
+  --color-secondary: #2563eb;
+  --color-secondary-hover: #1d4ed8;
 
-  /* Accent Cyan (AI) */
-  --accent-cyan: #22d3ee;
-  --accent-cyan-light: #67e8f9;
-  --accent-cyan-glow: rgba(34, 211, 238, 0.25);
-  --accent-cyan-subtle: rgba(34, 211, 238, 0.06);
+  /* Semantic */
+  --color-success: #16a34a;
+  --color-warning: #d97706;
+  --color-danger: #dc2626;
+  --color-info: #0284c7;
 
-  /* Status Colors */
-  --green: #3fb950;
-  --yellow: #d29922;
-  --red: #f85149;
+  /* Light theme */
+  --color-bg: #ffffff;
+  --color-surface: #f8fafc;
+  --color-surface-secondary: #f1f5f9;
+  --color-border: #e2e8f0;
 
-  /* Text */
-  --text-primary: #ffffff;
-  --text-secondary: #8b949e;
-  --text-muted: #484f58;
+  --color-text: #0f172a;
+  --color-text-secondary: #475569;
+  --color-text-muted: #64748b;
 
-  /* Borders */
-  --ide-border: rgba(255, 255, 255, 0.08);
-  --border-glow: rgba(124, 58, 237, 0.3);
+  /* Interactive */
+  --color-focus: #6d5dfb;
+
+  /* Radii */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
 
   /* Font families */
-  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
-  --font-mono: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+  --font-sans:
+    "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
 
-  /* IDE specific surfaces */
-  --ide-bg: #0d1117;
-  --ide-sidebar: #181c22;
-  --ide-activitybar: #0d1117;
-  --ide-tabbar: #181c22;
-  --ide-active-tab: #0d1117;
-  --ide-line-num: #3b4048;
-  --ide-gutter: #181c22;
+  /* Legacy/IDE Compatibility Aliases */
+  --surface-main: var(--color-bg);
+  --surface-container: var(--color-surface);
+  --surface-variant: var(--color-surface-secondary);
+  --surface-elevated: var(--color-surface);
+  --surface-overlay: var(--color-surface-secondary);
+  --primary: var(--color-primary);
+  --primary-light: var(--color-primary-hover);
+  --accent-cyan: var(--color-secondary);
+  --text-primary: var(--color-text);
+  --text-secondary: var(--color-text-secondary);
+  --text-muted: var(--color-text-muted);
+  --ide-border: var(--color-border);
+  --ide-bg: var(--color-bg);
+  --ide-sidebar: var(--color-surface);
+  --ide-activitybar: var(--color-surface-secondary);
+  --ide-tabbar: var(--color-surface-secondary);
+  --ide-active-tab: var(--color-bg);
+  --ide-line-num: var(--color-text-muted);
+  --ide-gutter: var(--color-surface);
+}
+
+[data-theme="dark"] {
+  --color-bg: #0b0f14;
+  --color-surface: #11161d;
+  --color-surface-secondary: #171d25;
+  --color-border: #29313d;
+
+  --color-text: #f8fafc;
+  --color-text-secondary: #cbd5e1;
+  --color-text-muted: #94a3b8;
+
+  --color-primary: #8b7cfd;
+  --color-primary-hover: #9d91fe;
+  --color-primary-active: #7567ea;
+
+  --color-secondary: #60a5fa;
+  --color-secondary-hover: #93c5fd;
+
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-info: #38bdf8;
+
+  --color-focus: #8b7cfd;
+
+  /* Legacy/IDE Compatibility Aliases */
+  --surface-main: var(--color-bg);
+  --surface-container: var(--color-surface);
+  --surface-variant: var(--color-surface-secondary);
+  --surface-elevated: var(--color-surface);
+  --surface-overlay: var(--color-surface-secondary);
+  --primary: var(--color-primary);
+  --primary-light: var(--color-primary-hover);
+  --accent-cyan: var(--color-secondary);
+  --text-primary: var(--color-text);
+  --text-secondary: var(--color-text-secondary);
+  --text-muted: var(--color-text-muted);
+  --ide-border: var(--color-border);
+  --ide-bg: var(--color-bg);
+  --ide-sidebar: var(--color-surface);
+  --ide-activitybar: var(--color-surface-secondary);
+  --ide-tabbar: var(--color-surface-secondary);
+  --ide-active-tab: var(--color-bg);
+  --ide-line-num: var(--color-text-muted);
+  --ide-gutter: var(--color-surface);
 }
 
 /* ============================================================
@@ -60,9 +124,37 @@
   box-sizing: border-box;
 }
 
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-sans);
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  min-height: 100vh;
+  overflow-x: hidden;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease;
+}
+
+/* Developer layout container */
+.ide-root {
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--color-bg);
+}
+
 /* ============================================================
-   BROWSER AUTOFILL RESET & OVERRIDES
-   Keeps background transparent and text crisp white on dark theme
+   BROWSER AUTOFILL OVERRIDES
    ============================================================ */
 input:-webkit-autofill,
 input:-webkit-autofill:hover,
@@ -74,333 +166,81 @@ textarea:-webkit-autofill:focus,
 select:-webkit-autofill,
 select:-webkit-autofill:hover,
 select:-webkit-autofill:focus {
-  -webkit-text-fill-color: #f0f6fc !important;
-  caret-color: #f0f6fc !important;
-  -webkit-box-shadow: 0 0 0 1000px transparent inset !important;
-  box-shadow: 0 0 0 1000px transparent inset !important;
-  transition:
-    background-color 600000s ease-in-out 0s,
-    color 600000s ease-in-out 0s !important;
-  background-color: transparent !important;
-  background-clip: content-box !important;
-}
-
-body {
-  margin: 0;
-  padding: 0;
-}
-
-html {
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-rendering: optimizeLegibility;
-}
-
-body {
-  font-family: var(--font-sans);
-  background-color: var(--surface-main);
-  color: var(--text-primary);
-  min-height: 100vh;
-  overflow-x: hidden;
-}
-
-html,
-body {
-  width: 100%;
-  height: 100vh;
-  box-sizing: border-box;
-}
-
-/* IDE layout — no page scroll */
-.ide-root {
-  overflow: hidden;
-  height: 100vh;
-  width: 100vw;
-  display: flex;
-  flex-direction: column;
-}
-
-.page-wrapper {
-  padding: 2rem 4rem !important;
+  -webkit-text-fill-color: var(--color-text) !important;
+  caret-color: var(--color-text) !important;
+  -webkit-box-shadow: 0 0 0 1000px var(--color-surface) inset !important;
+  box-shadow: 0 0 0 1000px var(--color-surface) inset !important;
+  transition: background-color 600000s ease-in-out 0s !important;
 }
 
 /* ============================================================
-   CUSTOM SCROLLBARS
+   SUBTLE SCROLLBARS (CLEAN & NON-GLOWING)
    ============================================================ */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-button {
   display: none !important;
-  width: 0 !important;
-  height: 0 !important;
 }
-
 ::-webkit-scrollbar-track {
   background: transparent;
 }
-
 ::-webkit-scrollbar-thumb {
-  background: rgba(124, 58, 237, 0.35);
-  border-radius: 9999px;
-  transition: background 0.2s ease;
+  background: var(--color-border);
+  border-radius: var(--radius-sm);
+  transition: background 0.15s ease;
 }
-
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(167, 139, 250, 0.7);
+  background: var(--color-text-muted);
 }
 
 .custom-scrollbar {
   scrollbar-width: thin;
-  scrollbar-color: rgba(124, 58, 237, 0.35) transparent;
+  scrollbar-color: var(--color-border) transparent;
 }
 
 /* ============================================================
-   GLASSMORPHISM
-   ============================================================ */
-.glass {
-  background: rgba(255, 255, 255, 0.02);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.glass-violet {
-  background: rgba(124, 58, 237, 0.05);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(124, 58, 237, 0.15);
-}
-
-.glass-pill {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 9999px;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-}
-
-/* ============================================================
-   GLOW UTILITIES
-   ============================================================ */
-.glow-violet {
-  box-shadow:
-    0 0 20px rgba(124, 58, 237, 0.35),
-    0 0 60px rgba(124, 58, 237, 0.12);
-}
-
-.glow-cyan {
-  box-shadow:
-    0 0 20px rgba(34, 211, 238, 0.25),
-    0 0 60px rgba(34, 211, 238, 0.08);
-}
-
-.text-gradient-violet {
-  background: linear-gradient(135deg,
-      var(--primary-light) 0%,
-      var(--accent-cyan) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-/* ============================================================
-   SYNTAX HIGHLIGHTING TOKENS
+   SYNTAX HIGHLIGHTING (TECHNICAL DEVELOPER TOKENS)
    ============================================================ */
 .token-keyword {
   color: #c084fc;
 }
-
 .token-type {
-  color: #67e8f9;
+  color: #38bdf8;
 }
-
 .token-fn {
-  color: #93c5fd;
+  color: #60a5fa;
 }
-
 .token-string {
-  color: #86efac;
+  color: #4ade80;
 }
-
 .token-number {
-  color: #fca5a5;
+  color: #fb923c;
 }
-
 .token-comment {
-  color: #4b5563;
+  color: #64748b;
   font-style: italic;
 }
-
-.token-tag {
-  color: #f9a8d4;
-}
-
-.token-attr {
-  color: #fde68a;
-}
-
 .token-plain {
-  color: #e2e8f0;
-}
-
-/* ============================================================
-   ANIMATION KEYFRAMES
-   ============================================================ */
-@keyframes float {
-
-  0%,
-  100% {
-    transform: translateY(0px);
-  }
-
-  50% {
-    transform: translateY(-8px);
-  }
-}
-
-@keyframes pulse-glow {
-
-  0%,
-  100% {
-    opacity: 0.5;
-  }
-
-  50% {
-    opacity: 1;
-  }
-}
-
-@keyframes gradient-shift {
-  0% {
-    background-position: 0% 50%;
-  }
-
-  50% {
-    background-position: 100% 50%;
-  }
-
-  100% {
-    background-position: 0% 50%;
-  }
-}
-
-@keyframes typing-cursor {
-
-  0%,
-  100% {
-    opacity: 1;
-  }
-
-  50% {
-    opacity: 0;
-  }
-}
-
-@keyframes scan-line {
-  0% {
-    transform: translateY(-100%);
-  }
-
-  100% {
-    transform: translateY(100vh);
-  }
-}
-
-@keyframes neon-pulse {
-
-  0%,
-  100% {
-    box-shadow:
-      0 0 5px rgba(124, 58, 237, 0.3),
-      0 0 20px rgba(124, 58, 237, 0.1);
-  }
-
-  50% {
-    box-shadow:
-      0 0 15px rgba(124, 58, 237, 0.6),
-      0 0 40px rgba(124, 58, 237, 0.25);
-  }
-}
-
-.animate-float {
-  animation: float 4s ease-in-out infinite;
-}
-
-.animate-pulse-glow {
-  animation: pulse-glow 2s ease-in-out infinite;
-}
-
-.animate-gradient {
-  animation: gradient-shift 6s ease infinite;
-  background-size: 200% 200%;
-}
-
-.animate-neon-pulse {
-  animation: neon-pulse 2s ease-in-out infinite;
-}
-
-/* ============================================================
-   BACKGROUND PATTERNS
-   ============================================================ */
-.bg-grid {
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
-  background-size: 40px 40px;
-}
-
-/* ============================================================
-   AUTOFILL OVERRIDE
-   ============================================================ */
-input:-webkit-autofill,
-input:-webkit-autofill:hover,
-input:-webkit-autofill:focus {
-  -webkit-box-shadow: 0 0 0 1000px #0d1117 inset !important;
-  box-shadow: 0 0 0 1000px #0d1117 inset !important;
-  -webkit-text-fill-color: #f0f6fc !important;
-  caret-color: #f0f6fc;
-  transition: background-color 9999s ease-in-out 0s;
-}
-
-/* ============================================================
-   IDE-SPECIFIC COMPONENTS
-   ============================================================ */
-
-/* Tab hover with indicator */
-.tab-item {
-  position: relative;
-  transition:
-    background 0.15s ease,
-    color 0.15s ease;
-}
-
-/* Activity bar icon active glow */
-.activity-icon-active {
-  color: var(--text-primary) !important;
-  filter: drop-shadow(0 0 6px rgba(124, 58, 237, 0.6));
+  color: var(--color-text);
 }
 
 /* Code gutter highlight lines */
 .line-covered {
-  background: rgba(63, 185, 80, 0.06);
+  background: rgba(34, 197, 94, 0.08);
 }
-
 .line-uncovered {
-  background: rgba(248, 81, 73, 0.06);
+  background: rgba(239, 68, 68, 0.08);
 }
-
 .line-partial {
-  background: rgba(210, 153, 34, 0.06);
+  background: rgba(245, 158, 11, 0.08);
 }
 
-/* ============================================================
-   MONACO COVERAGE GUTTER GLYPHS & LINE HIGHLIGHTS
-   ============================================================ */
+/* Monaco Coverage Gutter Glyphs */
 .coverage-glyph-passed {
-  color: #22c55e !important;
+  color: var(--color-success) !important;
   font-weight: 700;
   font-size: 13px;
   display: flex !important;
@@ -409,13 +249,12 @@ input:-webkit-autofill:focus {
   text-align: center;
   line-height: 1;
 }
-
 .coverage-glyph-passed::before {
   content: "✓";
 }
 
 .coverage-glyph-uncovered {
-  color: #eab308 !important;
+  color: var(--color-warning) !important;
   font-weight: 700;
   font-size: 13px;
   display: flex !important;
@@ -424,13 +263,12 @@ input:-webkit-autofill:focus {
   text-align: center;
   line-height: 1;
 }
-
 .coverage-glyph-uncovered::before {
   content: "⚑";
 }
 
 .coverage-glyph-failed {
-  color: #ef4444 !important;
+  color: var(--color-danger) !important;
   font-weight: 700;
   font-size: 15px;
   display: flex !important;
@@ -439,15 +277,13 @@ input:-webkit-autofill:focus {
   text-align: center;
   line-height: 1;
 }
-
 .coverage-glyph-failed::before {
   content: "×";
 }
 
 .coverage-line-failed {
-  background: rgba(239, 68, 68, 0.15) !important;
+  background: rgba(239, 68, 68, 0.12) !important;
 }
-
 .coverage-line-uncovered {
-  background: rgba(234, 179, 8, 0.05) !important;
+  background: rgba(245, 158, 11, 0.08) !important;
 }

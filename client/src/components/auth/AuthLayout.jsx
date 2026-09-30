@@ -1,334 +1,139 @@
 import { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Terminal, ArrowLeft, GitBranch, Cpu, ShieldCheck } from "lucide-react";
 import AuthForm from "./AuthForm";
 import ForgotPasswordForm from "./ForgotPasswordForm";
 import ResetPasswordForm from "./ResetPasswordForm";
 import CodePreview from "./CodePreview";
+import ThemeSelector from "../common/ThemeSelector";
 
-const STATS = [
-  { value: "94%", label: "Avg. coverage boost" },
-  { value: "10×", label: "Faster test writing" },
-  { value: "200+", label: "Teams onboarded" },
+const ARCHITECTURE_PILLARS = [
+  {
+    icon: GitBranch,
+    title: "Control Flow",
+    desc: "AST branch graph",
+  },
+  {
+    icon: Cpu,
+    title: "Test Synthesis",
+    desc: "Targeted Jest suites",
+  },
+  {
+    icon: ShieldCheck,
+    title: "Sandbox Runner",
+    desc: "Isolated execution",
+  },
 ];
 
 export default function AuthLayout({ initialMode = "login" }) {
   const [mode, setMode] = useState(initialMode);
 
-  const toggleMode = () => setMode((m) => (m === "login" ? "register" : "login"));
+  const toggleMode = () =>
+    setMode((m) => (m === "login" ? "register" : "login"));
 
   return (
-    <div
-      style={{
-        display: "flex",
-        minHeight: "100vh",
-        background: "#0D1117",
-        fontFamily: "Inter, sans-serif",
-        position: "relative",
-        overflow: "hidden",
-      }}
-    >
-      {/* ── Background ambient glows ───────────────────────── */}
-      <div
-        style={{
-          position: "fixed",
-          inset: 0,
-          pointerEvents: "none",
-          zIndex: 0,
-        }}
-      >
-        <div
-          style={{
-            position: "absolute",
-            top: "-20%",
-            left: "-10%",
-            width: "600px",
-            height: "600px",
-            borderRadius: "50%",
-            background:
-              "radial-gradient(circle, rgba(124,58,237,0.12) 0%, transparent 70%)",
-          }}
-        />
-        <div
-          style={{
-            position: "absolute",
-            bottom: "-20%",
-            right: "-10%",
-            width: "500px",
-            height: "500px",
-            borderRadius: "50%",
-            background:
-              "radial-gradient(circle, rgba(6,182,212,0.08) 0%, transparent 70%)",
-          }}
-        />
-        {/* Grid */}
-        <div
-          className="bg-grid"
-          style={{ position: "absolute", inset: 0, opacity: 0.3 }}
-        />
-      </div>
-
+    <div className="min-h-screen grid grid-cols-1 lg:grid-cols-2 bg-[var(--color-bg)] text-[var(--color-text)] transition-colors duration-150">
       {/* ══════════════════════════════════════════════════════
-          LEFT SIDE — Visual Experience (60%)
+          LEFT PANEL — Technical Showcase (Desktop only)
           ══════════════════════════════════════════════════════ */}
-      <div
-        style={{
-          flex: "0 0 60%",
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "space-between",
-          padding: "2.5rem",
-          position: "relative",
-          zIndex: 1,
-          // Hide on mobile (handled below via media query via inline style trick)
-        }}
-        className="auth-left-panel"
-      >
-        {/* Logo */}
-        <div>
-          <a
-            href="/"
+      <div className="hidden lg:flex flex-col justify-between p-8 lg:p-12 xl:p-16 bg-[var(--color-surface)] border-r border-[var(--color-border)]">
+        {/* Brand Header */}
+        <div className="flex items-center justify-between">
+          <Link
+            to="/"
             id="auth-logo"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "0.5rem",
-              textDecoration: "none",
-              marginBottom: "3rem",
-            }}
+            className="inline-flex items-center gap-2.5 text-decoration-none focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] rounded-[var(--radius-sm)]"
           >
-            <div
-              style={{
-                width: "32px",
-                height: "32px",
-                borderRadius: "8px",
-                background: "linear-gradient(135deg, #7C3AED 0%, #06B6D4 100%)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: "14px",
-                fontWeight: "700",
-                color: "white",
-                boxShadow: "0 0 16px rgba(124,58,237,0.5)",
-              }}
-            >
-              T
+            <div className="w-8 h-8 rounded-[var(--radius-md)] bg-[var(--color-primary)] text-white flex items-center justify-center font-bold text-sm shrink-0">
+              <Terminal className="w-4 h-4 stroke-[2.5]" />
             </div>
-            <span
-              style={{
-                fontSize: "1.05rem",
-                fontWeight: "700",
-                color: "#f0f6fc",
-              }}
-            >
-              TestCov
-              <span
-                style={{
-                  background: "linear-gradient(90deg, #7C3AED, #06B6D4)",
-                  WebkitBackgroundClip: "text",
-                  WebkitTextFillColor: "transparent",
-                  backgroundClip: "text",
-                }}
-              >
-                AI
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-base tracking-tight text-[var(--color-text)]">
+                CovAI
               </span>
-            </span>
-          </a>
-
-          {/* Headline */}
-          <motion.div
-            initial={{ opacity: 0, y: 24 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.7, ease: "easeOut" }}
-          >
-            <h2
-              style={{
-                fontSize: "clamp(1.75rem, 3vw, 2.6rem)",
-                fontWeight: "800",
-                color: "#f0f6fc",
-                letterSpacing: "-0.03em",
-                lineHeight: "1.15",
-                marginBottom: "1rem",
-                maxWidth: "520px",
-              }}
-            >
-              Empower your testing{" "}
-              <span
-                style={{
-                  background:
-                    "linear-gradient(135deg, #7C3AED 0%, #06B6D4 100%)",
-                  WebkitBackgroundClip: "text",
-                  WebkitTextFillColor: "transparent",
-                  backgroundClip: "text",
-                }}
-              >
-                with AI.
+              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
+                v2.4
               </span>
-            </h2>
-            <p
-              style={{
-                color: "#8b949e",
-                fontSize: "clamp(0.875rem, 1.4vw, 1rem)",
-                lineHeight: "1.75",
-                maxWidth: "460px",
-              }}
-            >
-              Automatically generate intelligent edge cases, analyze coverage
-              gaps across your microservices, and ship reliable code faster.
-            </p>
-          </motion.div>
+            </div>
+          </Link>
         </div>
 
-        <motion.div
-          key="stats"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          style={{ flex: 1, display: "flex", flexDirection: "column" }}
-        >
-          {/* Code Preview */}
-          <motion.div
-            initial={{ opacity: 0, y: 40 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8, delay: 0.2, ease: "easeOut" }}
-            style={{
-              display: "flex",
-              justifyContent: "center",
-              flex: 1,
-              alignItems: "center",
-              padding: "2rem 0",
-            }}
-          >
-            <CodePreview />
-          </motion.div>
+        {/* Center Technical Showcase */}
+        <div className="max-w-[500px] w-full mx-auto my-auto py-6 space-y-6">
+          <div>
+            <h2 className="text-2xl xl:text-3xl font-bold tracking-tight text-[var(--color-text)] leading-snug mb-2.5">
+              Automated Test Coverage & Deterministic Branch Verification
+            </h2>
+            <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed">
+              CovAI synthesizes targeted unit test suites, detects missing logic
+              paths in your Control Flow Graphs, and executes tests in a secure
+              sandbox.
+            </p>
+          </div>
 
-          {/* Stats */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.6, delay: 0.5 }}
-            style={{
-              display: "flex",
-              gap: "2.5rem",
-              paddingTop: "1.5rem",
-              borderTop: "1px solid rgba(255,255,255,0.06)",
-            }}
-          >
-            {STATS.map((s) => (
-              <div key={s.label}>
-                <div
-                  style={{
-                    fontSize: "1.5rem",
-                    fontWeight: "800",
-                    background: "linear-gradient(135deg, #7C3AED, #06B6D4)",
-                    WebkitBackgroundClip: "text",
-                    WebkitTextFillColor: "transparent",
-                    backgroundClip: "text",
-                    letterSpacing: "-0.03em",
-                  }}
-                >
-                  {s.value}
+          {/* Interactive Monaco-style Code Preview */}
+          <CodePreview />
+        </div>
+
+        {/* Bottom Platform Pillars */}
+        <div className="grid grid-cols-3 gap-3 pt-6 border-t border-[var(--color-border)] max-w-[500px] w-full mx-auto">
+          {ARCHITECTURE_PILLARS.map((pillar, i) => {
+            const Icon = pillar.icon;
+            return (
+              <div
+                key={i}
+                className="p-3 rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)]"
+              >
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--color-text)] mb-0.5">
+                  <Icon className="w-3.5 h-3.5 text-[var(--color-primary)] shrink-0" />
+                  <span className="truncate">{pillar.title}</span>
                 </div>
-                <div style={{ color: "#484f58", fontSize: "0.75rem", marginTop: "2px" }}>
-                  {s.label}
-                </div>
+                <p className="text-[11px] text-[var(--color-text-secondary)] truncate">
+                  {pillar.desc}
+                </p>
               </div>
-            ))}
-          </motion.div>
-        </motion.div>
+            );
+          })}
+        </div>
       </div>
 
       {/* ══════════════════════════════════════════════════════
-          RIGHT SIDE — Auth Form (40%)
+          RIGHT PANEL — Form Container
           ══════════════════════════════════════════════════════ */}
-      <div
-        style={{
-          flex: "0 0 40%",
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "center",
-          position: "relative",
-          zIndex: 1,
-          borderLeft: "1px solid rgba(255,255,255,0.05)",
-          background:
-            "linear-gradient(160deg, rgba(17,24,39,0.98) 0%, rgba(13,17,23,1) 100%)",
-          backdropFilter: "blur(20px)",
-          padding: "2rem 0",
-          minHeight: "100vh",
-        }}
-        className="auth-right-panel"
-      >
-        {/* Back to home */}
-        <div style={{ padding: "0 1.5rem", marginBottom: "2rem" }}>
-          <a
-            href="/"
+      <div className="flex flex-col justify-between p-6 sm:p-10 lg:p-12 xl:p-16">
+        {/* Top bar: Back to home + Theme Selector */}
+        <div className="flex items-center justify-between w-full h-8">
+          <Link
+            to="/"
             id="auth-back-home"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "0.4rem",
-              color: "#484f58",
-              textDecoration: "none",
-              fontSize: "0.8rem",
-              transition: "color 0.2s",
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = "#8b949e")}
-            onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-focus)] rounded-[var(--radius-sm)] py-1"
           >
-            <ArrowLeft size={13} />
-            Back to home
-          </a>
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Back to home</span>
+          </Link>
+
+          <ThemeSelector compact />
         </div>
 
-        {/* Form wrapper with AnimatePresence */}
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={mode}
-            initial={{ opacity: 0, x: 30 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -30 }}
-            transition={{ duration: 0.35, ease: "easeInOut" }}
-            style={{ width: "100%" }}
-          >
-            {mode === "forgot_password" ? (
-              <ForgotPasswordForm setMode={setMode} />
-            ) : mode === "reset_password" ? (
-              <ResetPasswordForm />
-            ) : (
-              <AuthForm mode={mode} onToggleMode={toggleMode} setMode={setMode} />
-            )}
-          </motion.div>
-        </AnimatePresence>
+        {/* Center: Auth Form */}
+        <div className="my-auto py-8">
+          {mode === "forgot_password" ? (
+            <ForgotPasswordForm setMode={setMode} />
+          ) : mode === "reset_password" ? (
+            <ResetPasswordForm />
+          ) : (
+            <AuthForm mode={mode} onToggleMode={toggleMode} setMode={setMode} />
+          )}
+        </div>
 
-        {/* Footer note */}
-        <motion.p
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.7 }}
-          style={{
-            textAlign: "center",
-            color: "#30363d",
-            fontSize: "0.7rem",
-            marginTop: "2.5rem",
-            padding: "0 1.5rem",
-          }}
-        >
-          Protected by enterprise-grade encryption. Your code never leaves your machine.
-        </motion.p>
+        {/* Bottom footer note */}
+        <div className="pt-6 border-t border-[var(--color-border)] text-center text-xs text-[var(--color-text-muted)]">
+          <span>
+            © {new Date().getFullYear()} CovAI Platform. Protected by isolated
+            test sandbox.
+          </span>
+        </div>
       </div>
-
-      {/* Mobile: hide left panel (via CSS in index.css) */}
-      <style>{`
-        @media (max-width: 768px) {
-          .auth-left-panel { display: none !important; }
-          .auth-right-panel {
-            flex: 1 !important;
-            border-left: none !important;
-            min-height: 100vh !important;
-            justify-content: center !important;
-          }
-        }
-      `}</style>
     </div>
   );
 }

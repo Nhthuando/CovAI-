@@ -379,14 +379,14 @@ export default function FileCodeExecutionView({
           {viewMode === "coverage" ? (
             <>
               {/* Statement & Line summary */}
-              <span style={{ fontSize: 11, color: "#8b949e" }}>
-                Statement coverage:{" "}
+              <span style={{ fontSize: 11, color: "var(--color-text-secondary, #8b949e)" }}>
+                Bao phủ câu lệnh:{" "}
                 <b style={{ color: stmtsPct >= 80 ? "#4ade80" : stmtsPct >= 60 ? "#fbbf24" : "#f87171" }}>
                   {totalStatements > 0 ? `${coveredStatements}/${totalStatements}` : `${coveredLines}/${executableLines}`} ({stmtsPct}%)
                 </b>
                 {executableLines > 0 && (
-                  <span style={{ marginLeft: 6, color: "#6e7681" }}>
-                    ({coveredLines}/{executableLines} lines)
+                  <span style={{ marginLeft: 6, color: "var(--color-text-muted, #6e7681)" }}>
+                    ({coveredLines}/{executableLines} dòng)
                   </span>
                 )}
               </span>
@@ -403,7 +403,7 @@ export default function FileCodeExecutionView({
                     border: "1px solid rgba(239, 68, 68, 0.3)",
                   }}
                 >
-                  ⚑ {missedLines} unexecuted lines
+                  ⚑ {missedLines} dòng chưa chạy
                 </span>
               ) : executableLines > 0 ? (
                 <span
@@ -417,7 +417,7 @@ export default function FileCodeExecutionView({
                     border: "1px solid rgba(34, 197, 94, 0.3)",
                   }}
                 >
-                  ✓ 100% Coverage
+                  ✓ 100% Bao phủ
                 </span>
               ) : null}
 
@@ -446,7 +446,7 @@ export default function FileCodeExecutionView({
                     fontWeight: filterMode === "all" ? 700 : 500,
                   }}
                 >
-                  All ({codeLines.length})
+                  Tất cả ({codeLines.length})
                 </button>
                 <button
                   onClick={() => setFilterMode("covered")}
@@ -461,7 +461,7 @@ export default function FileCodeExecutionView({
                     fontWeight: filterMode === "covered" ? 700 : 500,
                   }}
                 >
-                  Executed ({coveredLines})
+                  Đã chạy ({coveredLines})
                 </button>
                 {missedLines > 0 && (
                   <button
@@ -477,7 +477,7 @@ export default function FileCodeExecutionView({
                       fontWeight: filterMode === "missed" ? 700 : 500,
                     }}
                   >
-                    Unexecuted ({missedLines})
+                    Chưa chạy ({missedLines})
                   </button>
                 )}
               </div>
@@ -716,8 +716,8 @@ export default function FileCodeExecutionView({
           {visibleLineEntries.length === 0 ? (
             <div style={{ padding: 24, textAlign: "center", color: "#6e7681" }}>
               {codeLines.length === 0
-                ? "No source code content available for this file."
-                : "No lines match the selected filter."}
+                ? "Chưa có nội dung mã nguồn của file này."
+                : "Không có dòng nào phù hợp với bộ lọc đã chọn."}
             </div>
           ) : (
             visibleLineEntries.map(({ lineNum, codeText, isExecutable, isCovered, isMissed, isFailed, hits, error, reason }) => {
@@ -749,7 +749,15 @@ export default function FileCodeExecutionView({
                     transition: "background 0.1s ease",
                   }}
                   className="hover:bg-white/[0.04]"
-                  title={error ? `Error: ${error}` : reason ? reason : isCovered ? `Executed ${hits} time${hits > 1 ? "s" : ""}` : ""}
+                  title={
+                    error
+                      ? `Lỗi: ${error}`
+                      : reason
+                        ? reason
+                        : isCovered
+                          ? `Đã thực thi ${hits} lần`
+                          : ""
+                  }
                 >
                   {/* Line number */}
                   <span
@@ -828,6 +836,28 @@ export default function FileCodeExecutionView({
                             ? `✓ ${hits} hit${hits > 1 ? "s" : ""}`
                             : "⚑ 0 hits"}
                       </span>
+
+                      {isMissed && onSuggestTestcase && (
+                        <button
+                          onClick={() => onSuggestTestcase(filePath)}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 3,
+                            padding: "1px 6px",
+                            borderRadius: 4,
+                            background: "rgba(168, 85, 247, 0.15)",
+                            border: "1px solid rgba(168, 85, 247, 0.35)",
+                            color: "#c084fc",
+                            fontSize: 10,
+                            cursor: "pointer",
+                          }}
+                          title="AI gợi ý test case bao phủ dòng này"
+                        >
+                          <Sparkles size={10} />
+                          <span>Suggest</span>
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>

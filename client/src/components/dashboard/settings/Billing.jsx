@@ -1,16 +1,6 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import {
-  CreditCard,
-  Zap,
-  Check,
-  Sparkles,
-  ArrowUpRight,
-  Download,
-  ShieldCheck,
-  Clock,
-  ChevronRight,
-} from "lucide-react";
+import { CreditCard, Zap, Check, Download } from "lucide-react";
 import { useToast } from "../ToastContext";
 
 export default function Billing() {
@@ -101,262 +91,98 @@ export default function Billing() {
   };
 
   return (
-    <div
-      style={{
-        maxWidth: "920px",
-        padding: "32px 28px 64px",
-        fontFamily: "var(--font-sans)",
-        color: "#e6edf3",
-      }}
-    >
+    <div className="max-w-[920px] p-6 sm:p-8 font-sans text-[var(--color-text)]">
       {/* Header */}
-      <div style={{ marginBottom: "28px" }}>
-        <h1
-          style={{
-            fontSize: "22px",
-            fontWeight: 700,
-            color: "#e6edf3",
-            marginBottom: "6px",
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-          }}
-        >
-          <CreditCard size={22} style={{ color: "#a78bfa" }} />
-          Billing & Plans
+      <div className="mb-7">
+        <h1 className="text-lg font-bold text-[var(--color-text)] mb-1.5 flex items-center gap-2.5">
+          <CreditCard size={20} className="text-[var(--color-primary)]" />
+          Subscription & Billing
         </h1>
-        <p style={{ color: "#8b949e", fontSize: "13px", margin: 0 }}>
-          Manage your subscription tier, AI quota consumption, and invoices.
+        <p className="text-xs text-[var(--color-text-secondary)]">
+          Manage your plan subscription, compute usage, and review past
+          invoices.
         </p>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-        {/* Current Plan & Quota Card */}
-        <div
-          style={{
-            background:
-              "linear-gradient(180deg, rgba(124, 58, 237, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%)",
-            border: "1px solid rgba(124, 58, 237, 0.3)",
-            borderRadius: "14px",
-            padding: "24px",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "flex-start",
-              flexWrap: "wrap",
-              gap: "16px",
-              marginBottom: "24px",
-            }}
-          >
-            <div>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  marginBottom: "4px",
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: "11px",
-                    fontWeight: 700,
-                    letterSpacing: "0.06em",
-                    textTransform: "uppercase",
-                    padding: "2px 8px",
-                    borderRadius: "999px",
-                    background: "rgba(124, 58, 237, 0.2)",
-                    color: "#c4b5fd",
-                    border: "1px solid rgba(124, 58, 237, 0.4)",
-                  }}
-                >
-                  Active Subscription
-                </span>
-                <span
-                  style={{
-                    fontSize: "11px",
-                    color: "#4ade80",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "4px",
-                  }}
-                >
-                  <span
-                    style={{
-                      width: 6,
-                      height: 6,
-                      borderRadius: "50%",
-                      background: "#4ade80",
-                    }}
-                  />
-                  Auto-renews Oct 20, 2026
-                </span>
+      <div className="flex flex-col gap-6">
+        {/* Usage & Quota Card */}
+        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-lg)] p-6">
+          <div className="flex items-center justify-between flex-wrap gap-4 mb-5 pb-4 border-b border-[var(--color-border)]">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-[var(--radius-md)] bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/25 flex items-center justify-center text-[var(--color-primary)] shrink-0">
+                <CreditCard size={18} />
               </div>
-              <h2
-                style={{
-                  fontSize: "20px",
-                  fontWeight: 700,
-                  color: "#e6edf3",
-                  margin: 0,
-                }}
-              >
-                Pro Developer Tier
-              </h2>
-              <p
-                style={{
-                  color: "#8b949e",
-                  fontSize: "13px",
-                  margin: "4px 0 0",
-                }}
-              >
-                $19.00 billed monthly to Visa ending in 4242.
-              </p>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-semibold text-[var(--color-text)]">
+                    Current Plan: Pro Developer
+                  </h3>
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/25">
+                    Active
+                  </span>
+                </div>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                  $19/month · Renews on October 20, 2026
+                </p>
+              </div>
             </div>
 
             <button
+              type="button"
               onClick={() => {
                 showToast({
                   type: "info",
                   title: "Billing Portal",
-                  message: "Stripe customer billing portal opened.",
+                  message: "Redirecting to Stripe Customer Portal...",
                 });
               }}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "6px",
-                padding: "8px 16px",
-                borderRadius: "8px",
-                background: "rgba(255, 255, 255, 0.05)",
-                border: "1px solid rgba(255, 255, 255, 0.12)",
-                color: "#e6edf3",
-                fontSize: "13px",
-                fontWeight: 500,
-                cursor: "pointer",
-              }}
+              className="px-3.5 py-1.5 rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-xs font-semibold hover:bg-[var(--color-surface)] transition-colors cursor-pointer"
             >
-              Manage in Stripe
-              <ArrowUpRight size={14} />
+              Manage Payment
             </button>
           </div>
 
-          {/* Usage Meters */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-              gap: "16px",
-              paddingTop: "20px",
-              borderTop: "1px solid rgba(255, 255, 255, 0.08)",
-            }}
-          >
-            {/* Meter 1: AI Requests */}
-            <div
-              style={{
-                background: "rgba(0, 0, 0, 0.25)",
-                padding: "16px",
-                borderRadius: "10px",
-                border: "1px solid rgba(255, 255, 255, 0.05)",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  fontSize: "12px",
-                  color: "#8b949e",
-                  marginBottom: "8px",
-                }}
-              >
-                <span
-                  style={{ display: "flex", alignItems: "center", gap: "6px" }}
-                >
-                  <Sparkles size={13} style={{ color: "#a78bfa" }} />
-                  AI Test Generation
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* AI Requests Usage */}
+            <div className="p-4 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-[var(--radius-md)]">
+              <div className="flex justify-between items-center text-xs text-[var(--color-text-secondary)] mb-2">
+                <span className="flex items-center gap-1.5 font-medium">
+                  <Zap size={13} className="text-[var(--color-primary)]" />
+                  AI Test Quota
                 </span>
-                <span style={{ color: "#e6edf3", fontWeight: 600 }}>42%</span>
+                <span className="text-[var(--color-text)] font-semibold font-mono">
+                  64%
+                </span>
               </div>
-              <div
-                style={{
-                  height: "6px",
-                  background: "rgba(255, 255, 255, 0.08)",
-                  borderRadius: "3px",
-                  overflow: "hidden",
-                }}
-              >
+              <div className="h-1.5 w-full bg-[var(--color-surface-secondary)] rounded-full overflow-hidden">
                 <div
-                  style={{
-                    width: "42%",
-                    height: "100%",
-                    background: "linear-gradient(90deg, #7c3aed, #a78bfa)",
-                  }}
+                  className="h-full bg-[var(--color-primary)] rounded-full transition-all duration-300"
+                  style={{ width: "64%" }}
                 />
               </div>
-              <div
-                style={{
-                  fontSize: "11px",
-                  color: "#6e7681",
-                  marginTop: "6px",
-                  textAlign: "right",
-                }}
-              >
-                420 / 1,000 requests used
+              <div className="text-[11px] text-[var(--color-text-muted)] mt-1.5 text-right font-mono">
+                642 / 1,000 requests used
               </div>
             </div>
 
-            {/* Meter 2: Runner minutes */}
-            <div
-              style={{
-                background: "rgba(0, 0, 0, 0.25)",
-                padding: "16px",
-                borderRadius: "10px",
-                border: "1px solid rgba(255, 255, 255, 0.05)",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  fontSize: "12px",
-                  color: "#8b949e",
-                  marginBottom: "8px",
-                }}
-              >
-                <span
-                  style={{ display: "flex", alignItems: "center", gap: "6px" }}
-                >
-                  <Zap size={13} style={{ color: "#22d3ee" }} />
+            {/* Runner Minutes Usage */}
+            <div className="p-4 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-[var(--radius-md)]">
+              <div className="flex justify-between items-center text-xs text-[var(--color-text-secondary)] mb-2">
+                <span className="flex items-center gap-1.5 font-medium">
+                  <Zap size={13} className="text-[var(--color-info)]" />
                   Test Runner Minutes
                 </span>
-                <span style={{ color: "#e6edf3", fontWeight: 600 }}>34%</span>
+                <span className="text-[var(--color-text)] font-semibold font-mono">
+                  34%
+                </span>
               </div>
-              <div
-                style={{
-                  height: "6px",
-                  background: "rgba(255, 255, 255, 0.08)",
-                  borderRadius: "3px",
-                  overflow: "hidden",
-                }}
-              >
+              <div className="h-1.5 w-full bg-[var(--color-surface-secondary)] rounded-full overflow-hidden">
                 <div
-                  style={{
-                    width: "34%",
-                    height: "100%",
-                    background: "linear-gradient(90deg, #0284c7, #22d3ee)",
-                  }}
+                  className="h-full bg-[var(--color-info)] rounded-full transition-all duration-300"
+                  style={{ width: "34%" }}
                 />
               </div>
-              <div
-                style={{
-                  fontSize: "11px",
-                  color: "#6e7681",
-                  marginTop: "6px",
-                  textAlign: "right",
-                }}
-              >
+              <div className="text-[11px] text-[var(--color-text-muted)] mt-1.5 text-right font-mono">
                 68 / 200 minutes used
               </div>
             </div>
@@ -365,126 +191,54 @@ export default function Billing() {
 
         {/* Plan Selection Cards */}
         <div>
-          <h3
-            style={{
-              fontSize: "15px",
-              fontWeight: 600,
-              color: "#e6edf3",
-              marginBottom: "14px",
-            }}
-          >
+          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">
             Available Plans
           </h3>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-              gap: "16px",
-            }}
-          >
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {plans.map((p) => (
               <div
                 key={p.id}
-                style={{
-                  background: p.isCurrent
-                    ? "rgba(124, 58, 237, 0.06)"
-                    : "rgba(255, 255, 255, 0.02)",
-                  border: p.isCurrent
-                    ? "1.5px solid rgba(124, 58, 237, 0.5)"
-                    : "1px solid rgba(255, 255, 255, 0.08)",
-                  borderRadius: "12px",
-                  padding: "20px",
-                  display: "flex",
-                  flexDirection: "column",
-                  justifyContent: "space-between",
-                  position: "relative",
-                }}
+                className={`p-5 rounded-[var(--radius-lg)] flex flex-col justify-between transition-all ${
+                  p.isCurrent
+                    ? "bg-[var(--color-surface)] border-2 border-[var(--color-primary)]"
+                    : "bg-[var(--color-surface)] border border-[var(--color-border)] hover:border-[var(--color-border-subtle)]"
+                }`}
               >
-                {p.badge && (
-                  <span
-                    style={{
-                      position: "absolute",
-                      top: "-10px",
-                      right: "16px",
-                      fontSize: "10px",
-                      fontWeight: 700,
-                      background: "#7c3aed",
-                      color: "#fff",
-                      padding: "2px 8px",
-                      borderRadius: "999px",
-                      letterSpacing: "0.05em",
-                    }}
-                  >
-                    {p.badge}
-                  </span>
-                )}
-
                 <div>
-                  <h4
-                    style={{
-                      fontSize: "15px",
-                      fontWeight: 600,
-                      color: "#e6edf3",
-                      margin: 0,
-                    }}
-                  >
-                    {p.name}
-                  </h4>
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "baseline",
-                      gap: "4px",
-                      marginTop: "8px",
-                      marginBottom: "6px",
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontSize: "24px",
-                        fontWeight: 700,
-                        color: "#fff",
-                      }}
-                    >
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-sm font-bold text-[var(--color-text)]">
+                      {p.name}
+                    </h4>
+                    {p.badge && (
+                      <span className="text-[9px] font-bold tracking-wider px-1.5 py-0.5 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-white">
+                        {p.badge}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-baseline gap-1 mb-2">
+                    <span className="text-2xl font-bold text-[var(--color-text)] font-mono">
                       {p.price}
                     </span>
-                    <span style={{ fontSize: "12px", color: "#8b949e" }}>
+                    <span className="text-xs text-[var(--color-text-muted)]">
                       /{p.period}
                     </span>
                   </div>
-                  <p
-                    style={{
-                      fontSize: "12px",
-                      color: "#8b949e",
-                      lineHeight: 1.5,
-                      marginBottom: "16px",
-                    }}
-                  >
+
+                  <p className="text-xs text-[var(--color-text-secondary)] mb-4 leading-relaxed">
                     {p.desc}
                   </p>
 
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "8px",
-                      marginBottom: "20px",
-                    }}
-                  >
+                  <div className="flex flex-col gap-2 pt-3 border-t border-[var(--color-border)] mb-5">
                     {p.features.map((feat, idx) => (
                       <div
                         key={idx}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "8px",
-                          fontSize: "12px",
-                          color: "#c9d1d9",
-                        }}
+                        className="flex items-center gap-2 text-xs text-[var(--color-text)]"
                       >
                         <Check
                           size={13}
-                          style={{ color: "#a78bfa", flexShrink: 0 }}
+                          className="text-[var(--color-primary)] shrink-0"
                         />
                         <span>{feat}</span>
                       </div>
@@ -493,25 +247,14 @@ export default function Billing() {
                 </div>
 
                 <motion.button
-                  whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
                   onClick={() => handleSelectPlan(p.id)}
                   disabled={p.isCurrent}
-                  style={{
-                    width: "100%",
-                    padding: "9px",
-                    borderRadius: "8px",
-                    background: p.isCurrent
-                      ? "rgba(255, 255, 255, 0.05)"
-                      : "linear-gradient(135deg, #7c3aed, #6366f1)",
-                    border: p.isCurrent
-                      ? "1px solid rgba(255, 255, 255, 0.1)"
-                      : "none",
-                    color: p.isCurrent ? "#8b949e" : "#fff",
-                    fontSize: "12px",
-                    fontWeight: 600,
-                    cursor: p.isCurrent ? "default" : "pointer",
-                  }}
+                  className={`w-full py-2 px-3 rounded-[var(--radius-md)] text-xs font-semibold transition-colors ${
+                    p.isCurrent
+                      ? "bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] cursor-default border border-[var(--color-border)]"
+                      : "bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white cursor-pointer shadow-xs"
+                  }`}
                 >
                   {p.isCurrent ? "Current Plan" : `Switch to ${p.name}`}
                 </motion.button>
@@ -521,94 +264,40 @@ export default function Billing() {
         </div>
 
         {/* Invoices Card */}
-        <div
-          style={{
-            background: "rgba(255, 255, 255, 0.025)",
-            border: "1px solid rgba(255, 255, 255, 0.08)",
-            borderRadius: "14px",
-            padding: "24px",
-          }}
-        >
-          <div style={{ marginBottom: "16px" }}>
-            <h3
-              style={{
-                fontSize: "15px",
-                fontWeight: 600,
-                color: "#e6edf3",
-                margin: 0,
-              }}
-            >
+        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-lg)] p-6">
+          <div className="mb-4">
+            <h3 className="text-sm font-semibold text-[var(--color-text)]">
               Billing History & Invoices
             </h3>
-            <p
-              style={{ fontSize: "12px", color: "#8b949e", margin: "2px 0 0" }}
-            >
+            <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
               Download PDF receipts for your accounting and tax records.
             </p>
           </div>
 
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: "8px",
-            }}
-          >
+          <div className="flex flex-col gap-2">
             {invoices.map((inv) => (
               <div
                 key={inv.id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: "12px 16px",
-                  background: "rgba(0, 0, 0, 0.2)",
-                  border: "1px solid rgba(255, 255, 255, 0.05)",
-                  borderRadius: "8px",
-                }}
+                className="flex items-center justify-between p-3.5 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-[var(--radius-md)]"
               >
                 <div>
-                  <div
-                    style={{
-                      fontSize: "13px",
-                      fontWeight: 600,
-                      color: "#e6edf3",
-                    }}
-                  >
+                  <div className="text-xs font-semibold text-[var(--color-text)]">
                     {inv.plan}
                   </div>
-                  <div
-                    style={{
-                      fontSize: "11px",
-                      color: "#6e7681",
-                      marginTop: "2px",
-                    }}
-                  >
+                  <div className="text-[11px] text-[var(--color-text-muted)] font-mono mt-0.5">
                     {inv.id} · {inv.date}
                   </div>
                 </div>
 
-                <div
-                  style={{ display: "flex", alignItems: "center", gap: "16px" }}
-                >
-                  <span
-                    style={{ fontSize: "13px", fontWeight: 600, color: "#fff" }}
-                  >
+                <div className="flex items-center gap-3.5">
+                  <span className="text-xs font-semibold text-[var(--color-text)] font-mono">
                     {inv.amount}
                   </span>
-                  <span
-                    style={{
-                      fontSize: "11px",
-                      color: "#4ade80",
-                      background: "rgba(34, 197, 94, 0.12)",
-                      padding: "2px 8px",
-                      borderRadius: "999px",
-                      border: "1px solid rgba(34, 197, 94, 0.25)",
-                    }}
-                  >
+                  <span className="text-[10px] text-[var(--color-success)] bg-[var(--color-success)]/10 border border-[var(--color-success)]/25 px-2 py-0.5 rounded-full font-medium">
                     {inv.status}
                   </span>
                   <button
+                    type="button"
                     onClick={() => {
                       showToast({
                         type: "info",
@@ -617,13 +306,8 @@ export default function Billing() {
                       });
                     }}
                     title="Download Invoice"
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: "#8b949e",
-                      cursor: "pointer",
-                      padding: 4,
-                    }}
+                    aria-label="Download Invoice"
+                    className="p-1 rounded-[var(--radius-sm)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer"
                   >
                     <Download size={14} />
                   </button>

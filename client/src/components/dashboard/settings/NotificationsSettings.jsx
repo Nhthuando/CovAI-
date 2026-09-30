@@ -7,9 +7,6 @@ import {
   Sliders,
   Mail,
   Volume2,
-  AlertCircle,
-  Sparkles,
-  ShieldAlert,
   Clock,
 } from "lucide-react";
 import { notificationService } from "../../../services/notification.service";
@@ -108,109 +105,47 @@ export default function NotificationsSettings() {
   };
 
   return (
-    <div
-      style={{
-        maxWidth: "920px",
-        padding: "32px 28px 64px",
-        fontFamily: "var(--font-sans)",
-        color: "#e6edf3",
-      }}
-    >
+    <div className="max-w-[920px] p-6 sm:p-8 font-sans text-[var(--color-text)]">
       {/* Header */}
-      <div style={{ marginBottom: "24px" }}>
-        <h1
-          style={{
-            fontSize: "22px",
-            fontWeight: 700,
-            color: "#e6edf3",
-            marginBottom: "6px",
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-          }}
-        >
-          <Bell size={22} style={{ color: "#a78bfa" }} />
+      <div className="mb-6">
+        <h1 className="text-lg font-bold text-[var(--color-text)] mb-1.5 flex items-center gap-2.5">
+          <Bell size={20} className="text-[var(--color-primary)]" />
           Notifications & Alerts
         </h1>
-        <p style={{ color: "#8b949e", fontSize: "13px", margin: 0 }}>
+        <p className="text-xs text-[var(--color-text-secondary)]">
           Manage your notification preferences, alert channels, and view recent
           history.
         </p>
       </div>
 
       {/* Tabs */}
-      <div
-        style={{
-          display: "flex",
-          gap: "8px",
-          marginBottom: "24px",
-          borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
-          paddingBottom: "12px",
-        }}
-      >
+      <div className="flex gap-2 mb-6 border-b border-[var(--color-border)] pb-3">
         <button
           type="button"
           onClick={() => setActiveTab("preferences")}
-          style={{
-            padding: "8px 16px",
-            borderRadius: "8px",
-            background:
-              activeTab === "preferences"
-                ? "rgba(124, 58, 237, 0.15)"
-                : "transparent",
-            color: activeTab === "preferences" ? "#c4b5fd" : "#8b949e",
-            border:
-              activeTab === "preferences"
-                ? "1px solid rgba(124, 58, 237, 0.3)"
-                : "1px solid transparent",
-            fontSize: "13px",
-            fontWeight: 600,
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            gap: "6px",
-          }}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-md)] text-xs font-medium cursor-pointer border transition-colors ${
+            activeTab === "preferences"
+              ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] border-[var(--color-primary)]/30 font-semibold"
+              : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:text-[var(--color-text)]"
+          }`}
         >
-          <Sliders size={14} />
+          <Sliders size={13} />
           Notification Preferences
         </button>
 
         <button
           type="button"
           onClick={() => setActiveTab("history")}
-          style={{
-            padding: "8px 16px",
-            borderRadius: "8px",
-            background:
-              activeTab === "history"
-                ? "rgba(124, 58, 237, 0.15)"
-                : "transparent",
-            color: activeTab === "history" ? "#c4b5fd" : "#8b949e",
-            border:
-              activeTab === "history"
-                ? "1px solid rgba(124, 58, 237, 0.3)"
-                : "1px solid transparent",
-            fontSize: "13px",
-            fontWeight: 600,
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            gap: "6px",
-          }}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-md)] text-xs font-medium cursor-pointer border transition-colors ${
+            activeTab === "history"
+              ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] border-[var(--color-primary)]/30 font-semibold"
+              : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:text-[var(--color-text)]"
+          }`}
         >
-          <Clock size={14} />
+          <Clock size={13} />
           Recent History
           {unreadCount > 0 && (
-            <span
-              style={{
-                fontSize: "10px",
-                background: "#7c3aed",
-                color: "#fff",
-                padding: "1px 6px",
-                borderRadius: "999px",
-                fontWeight: 700,
-              }}
-            >
+            <span className="text-[10px] bg-[var(--color-primary)] text-white px-1.5 py-0.2 rounded-full font-bold">
               {unreadCount}
             </span>
           )}
@@ -219,83 +154,31 @@ export default function NotificationsSettings() {
 
       {activeTab === "preferences" ? (
         /* Preferences Tab */
-        <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+        <div className="flex flex-col gap-6">
           {/* Email Notifications */}
-          <div
-            style={{
-              background: "rgba(255, 255, 255, 0.025)",
-              border: "1px solid rgba(255, 255, 255, 0.08)",
-              borderRadius: "14px",
-              padding: "24px",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "10px",
-                marginBottom: "16px",
-              }}
-            >
-              <div
-                style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: 8,
-                  background: "rgba(124, 58, 237, 0.12)",
-                  border: "1px solid rgba(124, 58, 237, 0.25)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Mail size={16} style={{ color: "#a78bfa" }} />
+          <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-lg)] p-6">
+            <div className="flex items-center gap-2.5 mb-4">
+              <div className="w-8 h-8 rounded-[var(--radius-md)] bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/25 flex items-center justify-center text-[var(--color-primary)] shrink-0">
+                <Mail size={15} />
               </div>
               <div>
-                <h3
-                  style={{
-                    fontSize: "15px",
-                    fontWeight: 600,
-                    color: "#e6edf3",
-                    margin: 0,
-                  }}
-                >
+                <h3 className="text-sm font-semibold text-[var(--color-text)]">
                   Email Alerts
                 </h3>
-                <p
-                  style={{
-                    fontSize: "12px",
-                    color: "#8b949e",
-                    margin: "2px 0 0",
-                  }}
-                >
+                <p className="text-xs text-[var(--color-text-secondary)]">
                   Configure automated email dispatch for critical project
                   events.
                 </p>
               </div>
             </div>
 
-            <div
-              style={{ display: "flex", flexDirection: "column", gap: "14px" }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                }}
-              >
+            <div className="flex flex-col gap-3.5">
+              <div className="flex items-center justify-between p-3 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-[var(--radius-md)]">
                 <div>
-                  <div
-                    style={{
-                      fontSize: "13px",
-                      fontWeight: 500,
-                      color: "#e6edf3",
-                    }}
-                  >
+                  <div className="text-xs font-semibold text-[var(--color-text)]">
                     Test Execution Failures
                   </div>
-                  <div style={{ fontSize: "12px", color: "#8b949e" }}>
+                  <div className="text-[11px] text-[var(--color-text-secondary)] mt-0.5">
                     Send email whenever a test run fails on a monitored snapshot
                   </div>
                 </div>
@@ -305,33 +188,16 @@ export default function NotificationsSettings() {
                   onChange={(e) =>
                     setPrefs({ ...prefs, emailFailures: e.target.checked })
                   }
-                  style={{
-                    width: "18px",
-                    height: "18px",
-                    accentColor: "#7c3aed",
-                    cursor: "pointer",
-                  }}
+                  className="w-4 h-4 rounded cursor-pointer accent-[var(--color-primary)]"
                 />
               </div>
 
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                }}
-              >
+              <div className="flex items-center justify-between p-3 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-[var(--radius-md)]">
                 <div>
-                  <div
-                    style={{
-                      fontSize: "13px",
-                      fontWeight: 500,
-                      color: "#e6edf3",
-                    }}
-                  >
+                  <div className="text-xs font-semibold text-[var(--color-text)]">
                     Weekly Summary Digest
                   </div>
-                  <div style={{ fontSize: "12px", color: "#8b949e" }}>
+                  <div className="text-[11px] text-[var(--color-text-secondary)] mt-0.5">
                     Receive a weekly report on project coverage gains and AI
                     tests generated
                   </div>
@@ -342,93 +208,36 @@ export default function NotificationsSettings() {
                   onChange={(e) =>
                     setPrefs({ ...prefs, emailWeekly: e.target.checked })
                   }
-                  style={{
-                    width: "18px",
-                    height: "18px",
-                    accentColor: "#7c3aed",
-                    cursor: "pointer",
-                  }}
+                  className="w-4 h-4 rounded cursor-pointer accent-[var(--color-primary)]"
                 />
               </div>
             </div>
           </div>
 
           {/* In-App Notifications */}
-          <div
-            style={{
-              background: "rgba(255, 255, 255, 0.025)",
-              border: "1px solid rgba(255, 255, 255, 0.08)",
-              borderRadius: "14px",
-              padding: "24px",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "10px",
-                marginBottom: "16px",
-              }}
-            >
-              <div
-                style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: 8,
-                  background: "rgba(34, 211, 238, 0.12)",
-                  border: "1px solid rgba(34, 211, 238, 0.25)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Bell size={16} style={{ color: "#22d3ee" }} />
+          <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-lg)] p-6">
+            <div className="flex items-center gap-2.5 mb-4">
+              <div className="w-8 h-8 rounded-[var(--radius-md)] bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/25 flex items-center justify-center text-[var(--color-primary)] shrink-0">
+                <Bell size={15} />
               </div>
               <div>
-                <h3
-                  style={{
-                    fontSize: "15px",
-                    fontWeight: 600,
-                    color: "#e6edf3",
-                    margin: 0,
-                  }}
-                >
+                <h3 className="text-sm font-semibold text-[var(--color-text)]">
                   In-App Notification Triggers
                 </h3>
-                <p
-                  style={{
-                    fontSize: "12px",
-                    color: "#8b949e",
-                    margin: "2px 0 0",
-                  }}
-                >
+                <p className="text-xs text-[var(--color-text-secondary)]">
                   Select which events create in-app notifications in the
                   notification center.
                 </p>
               </div>
             </div>
 
-            <div
-              style={{ display: "flex", flexDirection: "column", gap: "14px" }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                }}
-              >
+            <div className="flex flex-col gap-3.5">
+              <div className="flex items-center justify-between p-3 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-[var(--radius-md)]">
                 <div>
-                  <div
-                    style={{
-                      fontSize: "13px",
-                      fontWeight: 500,
-                      color: "#e6edf3",
-                    }}
-                  >
+                  <div className="text-xs font-semibold text-[var(--color-text)]">
                     AI Test Generation Ready
                   </div>
-                  <div style={{ fontSize: "12px", color: "#8b949e" }}>
+                  <div className="text-[11px] text-[var(--color-text-secondary)] mt-0.5">
                     Notify when Gemini AI finishes generating skeleton or full
                     test suites
                   </div>
@@ -439,33 +248,16 @@ export default function NotificationsSettings() {
                   onChange={(e) =>
                     setPrefs({ ...prefs, inAppAiDone: e.target.checked })
                   }
-                  style={{
-                    width: "18px",
-                    height: "18px",
-                    accentColor: "#7c3aed",
-                    cursor: "pointer",
-                  }}
+                  className="w-4 h-4 rounded cursor-pointer accent-[var(--color-primary)]"
                 />
               </div>
 
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                }}
-              >
+              <div className="flex items-center justify-between p-3 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-[var(--radius-md)]">
                 <div>
-                  <div
-                    style={{
-                      fontSize: "13px",
-                      fontWeight: 500,
-                      color: "#e6edf3",
-                    }}
-                  >
+                  <div className="text-xs font-semibold text-[var(--color-text)]">
                     Coverage Drop Alert
                   </div>
-                  <div style={{ fontSize: "12px", color: "#8b949e" }}>
+                  <div className="text-[11px] text-[var(--color-text-secondary)] mt-0.5">
                     Trigger alert if statement or branch coverage decreases
                     below 80%
                   </div>
@@ -476,33 +268,16 @@ export default function NotificationsSettings() {
                   onChange={(e) =>
                     setPrefs({ ...prefs, inAppCoverageDrop: e.target.checked })
                   }
-                  style={{
-                    width: "18px",
-                    height: "18px",
-                    accentColor: "#7c3aed",
-                    cursor: "pointer",
-                  }}
+                  className="w-4 h-4 rounded cursor-pointer accent-[var(--color-primary)]"
                 />
               </div>
 
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                }}
-              >
+              <div className="flex items-center justify-between p-3 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-[var(--radius-md)]">
                 <div>
-                  <div
-                    style={{
-                      fontSize: "13px",
-                      fontWeight: 500,
-                      color: "#e6edf3",
-                    }}
-                  >
+                  <div className="text-xs font-semibold text-[var(--color-text)]">
                     Job Queue Status Updates
                   </div>
-                  <div style={{ fontSize: "12px", color: "#8b949e" }}>
+                  <div className="text-[11px] text-[var(--color-text-secondary)] mt-0.5">
                     Notify on completion or cancellation of background worker
                     jobs
                   </div>
@@ -513,40 +288,55 @@ export default function NotificationsSettings() {
                   onChange={(e) =>
                     setPrefs({ ...prefs, inAppJobUpdates: e.target.checked })
                   }
-                  style={{
-                    width: "18px",
-                    height: "18px",
-                    accentColor: "#7c3aed",
-                    cursor: "pointer",
-                  }}
+                  className="w-4 h-4 rounded cursor-pointer accent-[var(--color-primary)]"
                 />
               </div>
             </div>
           </div>
 
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "flex-end",
-              paddingTop: "12px",
-            }}
-          >
+          {/* Sound & Feedback */}
+          <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-lg)] p-6">
+            <div className="flex items-center gap-2.5 mb-4">
+              <div className="w-8 h-8 rounded-[var(--radius-md)] bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/25 flex items-center justify-center text-[var(--color-primary)] shrink-0">
+                <Volume2 size={15} />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-[var(--color-text)]">
+                  Audio & Feedback
+                </h3>
+                <p className="text-xs text-[var(--color-text-secondary)]">
+                  Sound chime on test completion or task error.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between p-3 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-[var(--radius-md)]">
+              <div>
+                <div className="text-xs font-semibold text-[var(--color-text)]">
+                  Play Notification Chimes
+                </div>
+                <div className="text-[11px] text-[var(--color-text-secondary)] mt-0.5">
+                  Play an auditory cue when background long-running tasks
+                  terminate
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                checked={prefs.soundAlerts}
+                onChange={(e) =>
+                  setPrefs({ ...prefs, soundAlerts: e.target.checked })
+                }
+                className="w-4 h-4 rounded cursor-pointer accent-[var(--color-primary)]"
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end pt-2">
             <motion.button
-              whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               type="button"
               onClick={handleSavePreferences}
-              style={{
-                padding: "9px 22px",
-                borderRadius: "8px",
-                background: "linear-gradient(135deg, #7c3aed 0%, #6366f1 100%)",
-                border: "none",
-                fontSize: "13px",
-                color: "#fff",
-                fontWeight: 600,
-                cursor: "pointer",
-                boxShadow: "0 2px 10px rgba(124, 58, 237, 0.35)",
-              }}
+              className="px-4 py-2 rounded-[var(--radius-md)] bg-[var(--color-primary)] text-white text-xs font-semibold hover:bg-[var(--color-primary-hover)] transition-colors cursor-pointer shadow-xs"
             >
               Save Preferences
             </motion.button>
@@ -554,23 +344,9 @@ export default function NotificationsSettings() {
         </div>
       ) : (
         /* History Tab */
-        <div
-          style={{
-            background: "rgba(255, 255, 255, 0.025)",
-            border: "1px solid rgba(255, 255, 255, 0.08)",
-            borderRadius: "14px",
-            padding: "24px",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              marginBottom: "18px",
-            }}
-          >
-            <div style={{ fontSize: "14px", color: "#8b949e" }}>
+        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-lg)] p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="text-xs text-[var(--color-text-secondary)] font-medium">
               {unreadCount > 0
                 ? `${unreadCount} unread`
                 : "You're all caught up"}
@@ -578,20 +354,9 @@ export default function NotificationsSettings() {
 
             {unreadCount > 0 && (
               <button
+                type="button"
                 onClick={handleMarkAllAsRead}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "6px",
-                  background: "rgba(124, 58, 237, 0.12)",
-                  color: "#c4b5fd",
-                  border: "1px solid rgba(124, 58, 237, 0.25)",
-                  borderRadius: "8px",
-                  padding: "6px 12px",
-                  fontSize: "12px",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-md)] bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/25 text-xs font-semibold hover:bg-[var(--color-primary)]/20 transition-colors cursor-pointer"
               >
                 <CheckCheck size={13} />
                 Mark all as read
@@ -600,72 +365,37 @@ export default function NotificationsSettings() {
           </div>
 
           {error && (
-            <div
-              style={{
-                padding: "16px",
-                color: "#f85149",
-                fontSize: "13px",
-                textAlign: "center",
-              }}
-            >
+            <div className="p-3 text-center text-xs text-[var(--color-danger)] bg-[var(--color-danger)]/10 rounded-[var(--radius-md)] mb-3">
               {error}
             </div>
           )}
 
           {!error && notifications.length === 0 && !loading && (
-            <div
-              style={{
-                padding: "60px 0",
-                textAlign: "center",
-                color: "#6e7681",
-                border: "1px dashed rgba(255, 255, 255, 0.1)",
-                borderRadius: "12px",
-              }}
-            >
-              <Bell size={28} style={{ margin: "0 auto 10px", opacity: 0.5 }} />
-              <div style={{ fontSize: "13px" }}>No notifications yet</div>
+            <div className="py-12 text-center text-[var(--color-text-muted)] border border-dashed border-[var(--color-border)] rounded-[var(--radius-md)]">
+              <Bell
+                size={24}
+                className="mx-auto mb-2 opacity-40 text-[var(--color-text-secondary)]"
+              />
+              <div className="text-xs">No notifications yet</div>
             </div>
           )}
 
-          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          <div className="flex flex-col gap-2">
             {notifications.map((n) => (
               <div
                 key={n.id}
                 onClick={() => !n.readAt && handleMarkAsRead(n.id)}
-                style={{
-                  padding: "14px 16px",
-                  borderRadius: "10px",
-                  border: "1px solid rgba(255, 255, 255, 0.06)",
-                  background: n.readAt
-                    ? "rgba(0, 0, 0, 0.2)"
-                    : "rgba(124, 58, 237, 0.08)",
-                  cursor: n.readAt ? "default" : "pointer",
-                  transition: "background-color 0.2s",
-                }}
+                className={`p-3.5 rounded-[var(--radius-md)] border transition-colors ${
+                  !n.readAt
+                    ? "bg-[var(--color-primary-light)]/40 hover:bg-[var(--color-primary-light)]/70 border-[var(--color-primary)]/25 cursor-pointer"
+                    : "bg-[var(--color-bg)] border-[var(--color-border)] cursor-default"
+                }`}
               >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    gap: "12px",
-                  }}
-                >
-                  <span
-                    style={{
-                      fontWeight: 600,
-                      fontSize: "13px",
-                      color: n.readAt ? "#c9d1d9" : "#fff",
-                    }}
-                  >
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-semibold text-xs text-[var(--color-text)] truncate">
                     {n.title}
                   </span>
-                  <span
-                    style={{
-                      fontSize: "11px",
-                      color: "#6e7681",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
+                  <span className="text-[10px] text-[var(--color-text-muted)] font-mono shrink-0">
                     {new Date(n.createdAt).toLocaleString([], {
                       month: "short",
                       day: "numeric",
@@ -674,24 +404,11 @@ export default function NotificationsSettings() {
                     })}
                   </span>
                 </div>
-                <p
-                  style={{
-                    margin: "6px 0 0",
-                    fontSize: "12px",
-                    color: "#8b949e",
-                    lineHeight: 1.5,
-                  }}
-                >
+                <p className="mt-1 text-xs text-[var(--color-text-secondary)] leading-relaxed">
                   {n.message}
                 </p>
                 {n.project?.name && (
-                  <div
-                    style={{
-                      marginTop: "6px",
-                      fontSize: "11px",
-                      color: "#a78bfa",
-                    }}
-                  >
+                  <div className="mt-1.5 text-[10px] text-[var(--color-text-muted)] font-mono">
                     Project: {n.project.name}
                   </div>
                 )}
@@ -700,32 +417,19 @@ export default function NotificationsSettings() {
           </div>
 
           {loading && (
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "center",
-                padding: "20px",
-                color: "#8b949e",
-              }}
-            >
-              <Loader2 size={16} className="animate-spin" />
+            <div className="flex justify-center p-4 text-[var(--color-text-secondary)]">
+              <Loader2
+                size={16}
+                className="animate-spin text-[var(--color-primary)]"
+              />
             </div>
           )}
 
           {!loading && hasMore && notifications.length > 0 && (
             <button
+              type="button"
               onClick={handleLoadMore}
-              style={{
-                width: "100%",
-                marginTop: "16px",
-                padding: "10px",
-                background: "rgba(255, 255, 255, 0.04)",
-                border: "1px solid rgba(255, 255, 255, 0.08)",
-                borderRadius: "8px",
-                color: "#c9d1d9",
-                fontSize: "13px",
-                cursor: "pointer",
-              }}
+              className="w-full mt-4 py-2 px-3 rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-xs text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors cursor-pointer"
             >
               Load more
             </button>

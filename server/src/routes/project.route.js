@@ -13,8 +13,18 @@ router.use(authMiddleware);
 
 router.post("/", projectController.createProject);
 router.get("/", projectController.listProjects);
+router.post(
+  "/validate-archive",
+  uploadSingleArchive,
+  projectController.validateArchive,
+);
 router.get("/:id", projectController.getProjectById);
 router.get("/:id/snapshots", projectController.listSnapshots);
+router.post("/:id/snapshots", projectController.createSnapshot);
+router.post(
+  "/:id/snapshots/:snapshotId/restore",
+  projectController.restoreSnapshot,
+);
 router.get("/:id/structure-analysis", projectController.getStructureAnalysis);
 router.get("/:id/tree", projectController.getProjectTree);
 router.get("/:id/file-content", projectController.getFileContent);

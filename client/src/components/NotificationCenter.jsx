@@ -1,332 +1,302 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { motion } from 'framer-motion';
-import { Bell } from 'lucide-react';
-import { notificationService } from '../services/notification.service';
-import { useSocket } from '../hooks/useSocket';
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Bell } from "lucide-react";
+import { notificationService } from "../services/notification.service";
+import { useSocket } from "../hooks/useSocket";
 
 /**
  * Notification Center component with dropdown, infinite scroll, and real-time updates
  */
-export const
-    NotificationCenter = ({ userId, theme = "dark", size = 14 }) => {
-        const [notifications, setNotifications] = useState([]);
-        const [unreadCount, setUnreadCount] = useState(0);
-        const [loading, setLoading] = useState(false);
-        const [page, setPage] = useState(1);
-        const [hasMore, setHasMore] = useState(true);
-        const [error, setError] = useState(null);
-        const [dropdownOpen, setDropdownOpen] = useState(false);
-        const dropdownRef = useRef(null);
-        const LIMIT = 20;
+export const NotificationCenter = ({ userId, theme = "dark", size = 14 }) => {
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [error, setError] = useState(null);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef = useRef(null);
+  const LIMIT = 20;
 
+  // Handle new notification from Socket.IO
+  const handleNewNotification = useCallback(
+    (notification) => {
+      setNotifications((prev) => [notification, ...prev]);
+      setUnreadCount((prev) => prev + 1);
+      const toastEvent = new CustomEvent("showToast", {
+        detail: {
+          title: notification.title,
+          message: notification.message,
+          type:
+            notification.type === "SYSTEM"
+              ? "info"
+              : notification.type === "AI_READY"
+                ? "success"
+                : notification.type === "JOB_FINISHED"
+                  ? "success"
+                  : "info",
+          duration: 4500,
+        },
+      });
+      window.dispatchEvent(toastEvent);
+    },
+    [setNotifications, setUnreadCount],
+  );
 
-        // Handle new notification from Socket.IO
-        const handleNewNotification = useCallback((notification) => {
-            setNotifications(prev => [notification, ...prev]);
-            setUnreadCount(prev => prev + 1);
-            const toastEvent = new CustomEvent('showToast', {
-                detail: {
-                    title: notification.title,
-                    message: notification.message,
-                    type: notification.type === 'SYSTEM' ? 'info' :
-                        notification.type === 'AI_READY' ? 'success' :
-                            notification.type === 'JOB_FINISHED' ? 'success' : 'info',
-                    duration: 4500
-                }
-            });
-            window.dispatchEvent(toastEvent);
-        }, [setNotifications, setUnreadCount]);
+  // Use Socket.IO hook
+  useSocket(userId, handleNewNotification);
 
-        // Use Socket.IO hook
-        useSocket(userId, handleNewNotification);
+  // Fetch notifications
+  const isFetchingRef = useRef(false);
 
-        // Fetch notifications
-        const isFetchingRef = useRef(false);
+  const fetchNotifications = async (pageNum = 1, reset = false) => {
+    if (!userId || !localStorage.getItem("token")) {
+      setNotifications([]);
+      setUnreadCount(0);
+      return;
+    }
 
-        const fetchNotifications = async (pageNum = 1, reset = false) => {
-            if (!userId || !localStorage.getItem('token')) {
-                setNotifications([]);
-                setUnreadCount(0);
-                return;
-            }
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+    setLoading(true);
+    setError(null);
 
-            if (isFetchingRef.current) return;
-            isFetchingRef.current = true;
-            setLoading(true);
-            setError(null);
+    try {
+      const result = await notificationService.getNotifications(pageNum, LIMIT);
+      if (reset) {
+        setNotifications(result.data || []);
+      } else {
+        setNotifications((prev) => [...prev, ...(result.data || [])]);
+      }
+      setUnreadCount(result.meta?.unreadCount ?? 0);
+      setHasMore(pageNum < (result.meta?.pagination?.totalPages ?? 0));
+    } catch (err) {
+      setError(err.response?.data?.message || "Failed to load notifications");
+    } finally {
+      setLoading(false);
+      isFetchingRef.current = false;
+    }
+  };
 
-            try {
-                const result = await notificationService.getNotifications(pageNum, LIMIT);
-                if (reset) {
-                    setNotifications(result.data || []);
-                } else {
-                    setNotifications(prev => [...prev, ...(result.data || [])]);
-                }
-                setUnreadCount(result.meta?.unreadCount ?? 0);
-                setHasMore(pageNum < (result.meta?.pagination?.totalPages ?? 0));
-            } catch (err) {
-                setError(err.response?.data?.message || 'Failed to load notifications');
-            } finally {
-                setLoading(false);
-                isFetchingRef.current = false;
-            }
-        };
+  // Fetch unread count (polling fallback)
+  const fetchUnreadCount = async () => {
+    if (!userId || !localStorage.getItem("token")) {
+      setUnreadCount(0);
+      return;
+    }
 
-        // Fetch unread count (polling fallback)
-        const fetchUnreadCount = async () => {
-            if (!userId || !localStorage.getItem('token')) {
-                setUnreadCount(0);
-                return;
-            }
+    try {
+      const count = await notificationService.getUnreadCount();
+      setUnreadCount(count ?? 0);
+    } catch {
+      setUnreadCount(0);
+    }
+  };
 
-            try {
-                const count = await notificationService.getUnreadCount();
-                setUnreadCount(count ?? 0);
-            } catch {
-                setUnreadCount(0);
-            }
-        };
+  // Mark notification as read
+  const handleMarkAsRead = async (notificationId) => {
+    try {
+      await notificationService.markAsRead(notificationId);
 
-        // Mark notification as read
-        const handleMarkAsRead = async (notificationId) => {
-            try {
-                await notificationService.markAsRead(notificationId);
+      setNotifications((prev) =>
+        prev.map((notif) =>
+          notif.id === notificationId
+            ? { ...notif, readAt: new Date().toISOString() }
+            : notif,
+        ),
+      );
 
-                setNotifications(prev =>
-                    prev.map(notif =>
-                        notif.id === notificationId ? { ...notif, readAt: new Date().toISOString() } : notif
-                    )
-                );
+      setUnreadCount((prev) => Math.max(0, prev - 1));
+    } catch (err) {
+      console.error("Error marking notification as read:", err);
+      setError("Failed to mark notification as read");
+    }
+  };
 
-                setUnreadCount(prev => Math.max(0, prev - 1));
-            } catch (err) {
-                console.error('Error marking notification as read:', err);
-                setError('Failed to mark notification as read');
-            }
-        };
+  // Mark all as read
+  const handleMarkAllAsRead = useCallback(async () => {
+    try {
+      await notificationService.markAllAsRead();
 
-        // Mark all as read
-        const handleMarkAllAsRead = useCallback(async () => {
-            try {
-                await notificationService.markAllAsRead();
+      setNotifications((prev) =>
+        prev.map((notif) => ({ ...notif, readAt: new Date().toISOString() })),
+      );
 
-                setNotifications(prev =>
-                    prev.map(notif => ({ ...notif, readAt: new Date().toISOString() }))
-                );
+      setUnreadCount(0);
+    } catch (err) {
+      console.error("Error marking all notifications as read:", err);
+      setError("Failed to mark all notifications as read");
+    }
+  }, []);
 
-                setUnreadCount(0);
-            } catch (err) {
-                console.error('Error marking all notifications as read:', err);
-                setError('Failed to mark all notifications as read');
-            }
-        }, []);
+  // Load more notifications
+  const handleLoadMore = () => {
+    if (!loading && hasMore) {
+      const nextPage = page + 1;
+      setPage(nextPage);
+      fetchNotifications(nextPage, false);
+    }
+  };
 
-        // Load more notifications
-        const handleLoadMore = () => {
-            if (!loading && hasMore) {
-                const nextPage = page + 1;
-                setPage(nextPage);
-                fetchNotifications(nextPage, false);
-            }
-        };
+  // Initialize and handle clicks outside dropdown
+  useEffect(() => {
+    if (userId) {
+      fetchNotifications(1, true);
 
-        // Initialize and handle clicks outside dropdown
-        useEffect(() => {
-            if (userId) {
-                fetchNotifications(1, true);
+      // Polling fallback every 20 seconds
+      const pollInterval = setInterval(fetchUnreadCount, 20000);
+      return () => clearInterval(pollInterval);
+    }
+  }, [userId]);
 
-                // Polling fallback every 20 seconds
-                const pollInterval = setInterval(fetchUnreadCount, 20000);
-                return () => clearInterval(pollInterval);
-            }
-        }, [userId]);
+  // Mark all notifications as read when dropdown opens
+  useEffect(() => {
+    if (dropdownOpen && unreadCount > 0) {
+      handleMarkAllAsRead();
+    }
+  }, [dropdownOpen]);
 
-        // Mark all notifications as read when dropdown opens
-        useEffect(() => {
-            if (dropdownOpen && unreadCount > 0) {
-                handleMarkAllAsRead();
-            }
-        }, [dropdownOpen]);
-
-        useEffect(() => {
-            const handleClickOutside = (event) => {
-                if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-                    setDropdownOpen(false);
-                }
-            };
-
-            document.addEventListener('mousedown', handleClickOutside);
-            return () => document.removeEventListener('mousedown', handleClickOutside);
-        }, []);
-
-        if (!userId) {
-            return null;
-        }
-
-        const isDark = theme === "dark";
-        const dropdownBg = isDark ? "#161b22" : "white";
-        const dropdownBorder = isDark ? "#30363d" : "#e5e7eb";
-        const textPrimary = isDark ? "#e6edf3" : "#111827";
-        const textSecondary = isDark ? "#8b949e" : "#6b7280";
-        const rowBorder = isDark ? "#21262d" : "#f3f4f6";
-        const unreadBg = isDark ? "rgba(124,58,237,0.08)" : "#f0f9ff";
-
-        if (!userId) return null;
-
-        return (
-            <div style={{ position: 'relative' }} ref={dropdownRef}>
-                <motion.button
-                    whileTap={{ scale: 0.9 }}
-                    onClick={() => setDropdownOpen(!dropdownOpen)}
-                    style={{
-                        color: "#484f58",
-                        background: "transparent",
-                        border: "none",
-                        cursor: "pointer",
-                        padding: "4px 6px",
-                        borderRadius: 6,
-                        display: "flex",
-                        alignItems: "center",
-                        position: "relative"
-                    }}
-                >
-                    <Bell size={size} />
-                    {unreadCount > 0 && (
-                        <span
-                            style={{
-                                position: 'absolute',
-                                top: '0px',
-                                right: '0px',
-                                background: '#ef4444',
-                                color: 'white',
-                                borderRadius: '50%',
-                                width: '14px',
-                                height: '14px',
-                                fontSize: '9px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                fontWeight: 'bold'
-                            }}
-                        >
-                            {unreadCount > 9 ? '9+' : unreadCount}
-                        </span>
-                    )}
-                </motion.button>
-
-                {dropdownOpen && (
-                    <div
-                        style={{
-                            position: 'absolute',
-                            top: '100%',
-                            right: 0,
-                            marginTop: 8,
-                            background: dropdownBg,
-                            border: `1px solid ${dropdownBorder}`,
-                            borderRadius: '8px',
-                            boxShadow: isDark
-                                ? '0 8px 24px rgba(0,0,0,0.5)'
-                                : '0 4px 6px -1px rgb(0 0 0 / 0.1)',
-                            width: '380px',
-                            maxHeight: '480px',
-                            overflow: 'auto',
-                            zIndex: 1000
-                        }}
-                    >
-                        <div style={{ padding: '14px 16px', borderBottom: `1px solid ${dropdownBorder}` }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <span style={{ fontWeight: 700, fontSize: '14px', color: textPrimary }}>Notifications</span>
-                                <button
-                                    onClick={handleMarkAllAsRead}
-                                    style={{
-                                        background: isDark ? 'rgba(124,58,237,0.15)' : '#3b82f6',
-                                        color: isDark ? '#c4b5fd' : 'white',
-                                        border: isDark ? '1px solid rgba(124,58,237,0.3)' : 'none',
-                                        padding: '4px 8px',
-                                        borderRadius: '4px',
-                                        fontSize: '11px',
-                                        cursor: 'pointer',
-                                        opacity: unreadCount > 0 ? 1 : 0.5,
-                                        pointerEvents: unreadCount > 0 ? 'auto' : 'none'
-                                    }}
-                                >
-                                    Mark all as read
-                                </button>
-                            </div>
-                        </div>
-
-                        <div style={{ maxHeight: '360px', overflow: 'auto' }}>
-                            {error ? (
-                                <div style={{ padding: '16px', color: '#ef4444', textAlign: 'center', fontSize: 13 }}>
-                                    {error}
-                                </div>
-                            ) : notifications.length === 0 ? (
-                                <div style={{ padding: '32px', textAlign: 'center', color: textSecondary, fontSize: 13 }}>
-                                    No notifications
-                                </div>
-                            ) : (
-                                <div>
-                                    {notifications.map(notification => (
-                                        <div
-                                            key={notification.id}
-                                            onClick={() => handleMarkAsRead(notification.id)}
-                                            style={{
-                                                padding: '12px 16px',
-                                                borderBottom: `1px solid ${rowBorder}`,
-                                                cursor: 'pointer',
-                                                backgroundColor: !notification.readAt ? unreadBg : 'transparent',
-                                                transition: 'background-color 0.2s'
-                                            }}
-                                        >
-                                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                                <span style={{ fontWeight: 600, fontSize: '13px', color: textPrimary }}>
-                                                    {notification.title}
-                                                </span>
-                                                <span style={{ fontSize: '11px', color: textSecondary }}>
-                                                    {new Date(notification.createdAt).toLocaleTimeString([], {
-                                                        hour: '2-digit',
-                                                        minute: '2-digit'
-                                                    })}
-                                                </span>
-                                            </div>
-                                            <p style={{ margin: '4px 0 0', fontSize: '12px', color: textSecondary }}>
-                                                {notification.message}
-                                            </p>
-                                            {notification.project?.name && (
-                                                <div style={{ marginTop: '4px', fontSize: '10px', color: isDark ? '#6e7681' : '#9ca3af' }}>
-                                                    Project: {notification.project.name}
-                                                </div>
-                                            )}
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-
-                            {loading && (
-                                <div style={{ padding: '16px', textAlign: 'center', color: textSecondary, fontSize: 12 }}>
-                                    Loading...
-                                </div>
-                            )}
-                            {!loading && hasMore && notifications.length > 0 && (
-                                <button
-                                    onClick={handleLoadMore}
-                                    style={{
-                                        width: '100%',
-                                        padding: '10px',
-                                        background: 'none',
-                                        border: 'none',
-                                        borderTop: `1px solid ${dropdownBorder}`,
-                                        color: isDark ? '#a78bfa' : '#3b82f6',
-                                        cursor: 'pointer',
-                                        fontSize: 12
-                                    }}
-                                >
-                                    Load more
-                                </button>
-                            )}
-                        </div>
-                    </div>
-                )}
-            </div>
-        );
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setDropdownOpen(false);
+      }
     };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  if (!userId) {
+    return null;
+  }
+
+  return (
+    <div className="relative" ref={dropdownRef}>
+      <motion.button
+        whileTap={{ scale: 0.92 }}
+        onClick={() => setDropdownOpen(!dropdownOpen)}
+        className="relative p-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer flex items-center justify-center border-0 bg-transparent"
+        title="Notifications"
+        aria-label="Notifications"
+      >
+        <Bell size={size} />
+        {unreadCount > 0 && (
+          <span className="absolute -top-1 -right-1 bg-[var(--color-danger)] text-white rounded-full min-w-[15px] h-[15px] px-0.5 text-[9px] font-bold flex items-center justify-center pointer-events-none">
+            {unreadCount > 9 ? "9+" : unreadCount}
+          </span>
+        )}
+      </motion.button>
+
+      <AnimatePresence>
+        {dropdownOpen && (
+          <motion.div
+            initial={{ opacity: 0, y: -6, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -6, scale: 0.98 }}
+            transition={{ duration: 0.15, ease: "easeOut" }}
+            className="absolute top-full right-0 mt-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-md)] shadow-2xl w-[360px] sm:w-[380px] max-h-[480px] flex flex-col overflow-hidden z-[1000] text-[var(--color-text)]"
+            style={{
+              backgroundColor: "var(--color-surface)",
+              boxShadow:
+                "0 14px 28px rgba(0, 0, 0, 0.22), 0 10px 10px rgba(0, 0, 0, 0.15)",
+            }}
+          >
+            <div
+              className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between shrink-0"
+              style={{ backgroundColor: "var(--color-surface)" }}
+            >
+              <span className="font-semibold text-xs text-[var(--color-text)] tracking-tight">
+                Notifications
+              </span>
+              <button
+                type="button"
+                onClick={handleMarkAllAsRead}
+                disabled={unreadCount === 0}
+                className="text-[11px] font-medium text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] disabled:opacity-40 disabled:pointer-events-none transition-colors cursor-pointer bg-transparent border-0 p-0"
+              >
+                Mark all as read
+              </button>
+            </div>
+
+            <div
+              className="max-h-[360px] overflow-y-auto divide-y divide-[var(--color-border)] custom-scrollbar"
+              style={{ backgroundColor: "var(--color-surface)" }}
+            >
+              {error ? (
+                <div className="p-4 text-center text-xs text-[var(--color-danger)]">
+                  {error}
+                </div>
+              ) : notifications.length === 0 ? (
+                <div className="py-8 text-center text-xs text-[var(--color-text-secondary)]">
+                  No notifications
+                </div>
+              ) : (
+                <div style={{ backgroundColor: "var(--color-surface)" }}>
+                  {notifications.map((notification) => (
+                    <div
+                      key={notification.id}
+                      onClick={() => handleMarkAsRead(notification.id)}
+                      className={`p-3.5 cursor-pointer transition-colors ${
+                        !notification.readAt
+                          ? "hover:bg-[var(--color-surface-secondary)]"
+                          : "hover:bg-[var(--color-surface-secondary)]"
+                      }`}
+                      style={{
+                        backgroundColor: !notification.readAt
+                          ? "rgba(109, 93, 251, 0.08)"
+                          : "var(--color-surface)",
+                      }}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold text-xs text-[var(--color-text)] truncate flex items-center gap-1.5">
+                          {!notification.readAt && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-primary)] shrink-0" />
+                          )}
+                          {notification.title}
+                        </span>
+                        <span className="text-[10px] text-[var(--color-text-muted)] font-mono shrink-0">
+                          {new Date(notification.createdAt).toLocaleTimeString(
+                            [],
+                            {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            },
+                          )}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-[var(--color-text-secondary)] leading-relaxed">
+                        {notification.message}
+                      </p>
+                      {notification.project?.name && (
+                        <div className="mt-1.5 text-[10px] text-[var(--color-text-muted)] font-mono">
+                          Project: {notification.project.name}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {loading && (
+                <div className="p-4 text-center text-xs text-[var(--color-text-secondary)]">
+                  Loading...
+                </div>
+              )}
+              {!loading && hasMore && notifications.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleLoadMore}
+                  className="w-full py-2.5 text-center text-xs font-medium text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] hover:bg-[var(--color-surface-secondary)] border-t border-[var(--color-border)] transition-colors cursor-pointer"
+                  style={{ backgroundColor: "var(--color-surface)" }}
+                >
+                  Load more
+                </button>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};

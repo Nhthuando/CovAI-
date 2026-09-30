@@ -48,6 +48,7 @@ import FileFunctionCallGraphView from "./FileFunctionCallGraphView.jsx";
 import CFGCalculator from "./CFGCalculator.jsx";
 import WaveProgressBar from "./WaveProgressBar.jsx";
 import InlineTestSuggestions from "./InlineTestSuggestions.jsx";
+import { CoverageDashboardSkeleton } from "../common/Skeleton.jsx";
 
 const CONFIG = {
   unit: {
@@ -64,14 +65,26 @@ const CONFIG = {
   },
   integration: {
     title: "Integration Test Coverage",
-    subtitle: "Testing APIs and data exchange between frontend, backend, and services.",
+    subtitle:
+      "Kiểm tra API và trao đổi dữ liệu giữa frontend, backend và dịch vụ.",
     supported: "Playwright · Supertest",
     accent: "#fbbf24",
-    focus: ["API files", "Covered API files", "Average coverage", "Critical APIs"],
+    focus: [
+      "API files",
+      "Covered API files",
+      "Average coverage",
+      "Critical APIs",
+    ],
     explanation: [
-      ["API contracts", "Requests, responses, status codes, and returned payload."],
-      ["Frontend ↔ Backend", "API calls from interface to route/controller."],
-      ["Service integration", "Controller, service, and database/dependency flow."],
+      ["API contracts", "Request, response, status code và dữ liệu trả về."],
+      [
+        "Frontend ↔ Backend",
+        "Các lời gọi API từ giao diện đến route/controller.",
+      ],
+      [
+        "Service integration",
+        "Luồng controller, service và database/dependency.",
+      ],
     ],
   },
   system: {
@@ -81,9 +94,15 @@ const CONFIG = {
     accent: "#ec4899",
     focus: ["E2E tests", "Passed", "Failed", "Feature coverage"],
     explanation: [
-      ["User journeys", "Login, operation, and task completion user flows."],
-      ["Browser behavior", "Interface, navigation, and browser interactions."],
-      ["Full system", "Frontend, backend, and data operating together."],
+      [
+        "User journeys",
+        "Các luồng đăng nhập, thao tác và hoàn thành nghiệp vụ.",
+      ],
+      [
+        "Browser behavior",
+        "Giao diện, điều hướng và tương tác trên trình duyệt.",
+      ],
+      ["Full system", "Frontend, backend và dữ liệu hoạt động cùng nhau."],
     ],
   },
 };
@@ -132,7 +151,11 @@ export const cleanDisplayPath = (fullPath = "") => {
 };
 
 export const resolveFunctionName = (fn, flowFunctions = []) => {
-  if (fn?.realName && !fn.realName.startsWith("(") && !fn.realName.startsWith("anonymous")) {
+  if (
+    fn?.realName &&
+    !fn.realName.startsWith("(") &&
+    !fn.realName.startsWith("anonymous")
+  ) {
     return fn.realName;
   }
   const raw = fn?.functionName || "";
@@ -141,9 +164,13 @@ export const resolveFunctionName = (fn, flowFunctions = []) => {
   }
   if (Array.isArray(flowFunctions)) {
     const matched = flowFunctions.find(
-      (f) => f.startLine === fn.startLine || f.line === fn.startLine
+      (f) => f.startLine === fn.startLine || f.line === fn.startLine,
     );
-    if (matched?.realName && !matched.realName.startsWith("(") && !matched.realName.startsWith("anonymous")) {
+    if (
+      matched?.realName &&
+      !matched.realName.startsWith("(") &&
+      !matched.realName.startsWith("anonymous")
+    ) {
       return matched.realName;
     }
   }
@@ -188,8 +215,8 @@ async function waitForJob(jobId, onProgress) {
     if (["FAILED", "CANCELED"].includes(job?.status))
       throw new Error(
         job?.errorMessage ||
-        job?.error ||
-        `${job.status}: coverage analysis failed.`,
+          job?.error ||
+          `${job.status}: coverage analysis failed.`,
       );
     await new Promise((resolve) => setTimeout(resolve, 1500));
   }
@@ -881,7 +908,7 @@ export default function CoverageTypeDashboard({
 
   const avg = selectedFiles.length
     ? selectedFiles.reduce((sum, file) => sum + (file.linesPct || 0), 0) /
-    selectedFiles.length
+      selectedFiles.length
     : 0;
 
   const isLatestRunFailed = summary?.latestRunStatus === "failed" || coverageData?.latestRunStatus === "failed";
@@ -905,11 +932,11 @@ export default function CoverageTypeDashboard({
       ? [statPct, branchPct, funcPct, linePct]
       : type === "integration"
         ? [
-          selectedFiles.length,
-          selectedFiles.filter((f) => f.linesPct > 0).length,
-          pct(avg),
-          selectedFiles.filter((f) => f.linesPct < 60).length,
-        ]
+            selectedFiles.length,
+            selectedFiles.filter((f) => f.linesPct > 0).length,
+            pct(avg),
+            selectedFiles.filter((f) => f.linesPct < 60).length,
+          ]
         : [totals.total, totals.passed, totals.failed, pct(linePct || cov.lines)];
 
   return (
@@ -917,8 +944,8 @@ export default function CoverageTypeDashboard({
       style={{
         minHeight: "100%",
         padding: "28px 34px",
-        color: "#e6edf3",
-        background: "#0d1117",
+        color: "var(--color-text)",
+        background: "var(--color-bg)",
         boxSizing: "border-box",
       }}
     >
@@ -963,8 +990,11 @@ export default function CoverageTypeDashboard({
             <button
               onClick={async () => {
                 setGenerateError("");
-                try { await onGenerate(type); }
-                catch (err) { setGenerateError(err.message || "Generation failed."); }
+                try {
+                  await onGenerate(type);
+                } catch (err) {
+                  setGenerateError(err.message || "Generation failed.");
+                }
               }}
               disabled={loading || running || generating}
               style={buttonStyle("#67e8f9")}
@@ -1196,9 +1226,7 @@ export default function CoverageTypeDashboard({
       )}
 
       {loading ? (
-        <div style={{ color: "#8b949e", padding: 40, textAlign: "center" }}>
-          Loading coverage analysis...
-        </div>
+        <CoverageDashboardSkeleton />
       ) : (
         <>
           {/* Focus Metrics Cards */}
@@ -1252,192 +1280,191 @@ export default function CoverageTypeDashboard({
               marginTop: 18,
             }}
           >
-            {type === "unit" ? (
-              [
-                {
-                  key: "statements",
-                  title: "Statement coverage",
-                  description: "Percentage of statements executed by tests.",
-                  pctValue: statPct,
-                  raw: rawTotals?.statements,
-                  icon: FileCode,
-                  accentColor: "#a78bfa",
-                },
-                {
-                  key: "branches",
-                  title: "Branch coverage",
-                  description: "Percentage of if/else/switch condition paths executed.",
-                  pctValue: branchPct,
-                  raw: rawTotals?.branches,
-                  icon: GitBranch,
-                  accentColor: "#fbbf24",
-                },
-                {
-                  key: "functions",
-                  title: "Function coverage",
-                  description: "Percentage of functions or methods executed.",
-                  pctValue: funcPct,
-                  raw: rawTotals?.functions,
-                  icon: Cpu,
-                  accentColor: "#38bdf8",
-                },
-              ].map((item) => {
-                const isActive = activeMetricView === item.key;
-                const Icon = item.icon;
-                const pctNum = Number(item.pctValue || 0);
+            {type === "unit"
+              ? [
+                  {
+                    key: "statements",
+                    title: "Statement coverage",
+                    description: "Bao nhiêu câu lệnh đã được test thực thi.",
+                    pctValue: statPct,
+                    raw: rawTotals?.statements,
+                    icon: FileCode,
+                    accentColor: "#a78bfa",
+                  },
+                  {
+                    key: "branches",
+                    title: "Branch coverage",
+                    description:
+                      "Bao nhiêu nhánh if/else/switch đã được đi qua.",
+                    pctValue: branchPct,
+                    raw: rawTotals?.branches,
+                    icon: GitBranch,
+                    accentColor: "#fbbf24",
+                  },
+                  {
+                    key: "functions",
+                    title: "Function coverage",
+                    description: "Bao nhiêu hàm hoặc method đã được gọi.",
+                    pctValue: funcPct,
+                    raw: rawTotals?.functions,
+                    icon: Cpu,
+                    accentColor: "#38bdf8",
+                  },
+                ].map((item) => {
+                  const isActive = activeMetricView === item.key;
+                  const Icon = item.icon;
+                  const pctNum = Number(item.pctValue || 0);
 
-                return (
-                  <div
-                    key={item.key}
-                    onClick={() => {
-                      const next = isActive ? "testcases" : item.key;
-                      setActiveMetricView(next);
-                    }}
-                    style={{
-                      ...cardStyle,
-                      cursor: "pointer",
-                      borderColor: isActive
-                        ? item.accentColor
-                        : "rgba(255,255,255,0.08)",
-                      background: isActive
-                        ? `${item.accentColor}12`
-                        : "rgba(255,255,255,0.025)",
-                      boxShadow: isActive
-                        ? `0 0 16px ${item.accentColor}25`
-                        : "none",
-                      transition: "all 0.2s ease",
-                    }}
-                    className="hover:border-white/20 transition-all"
-                    title={`Click to view details for ${item.title}`}
-                  >
+                  return (
                     <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        marginBottom: 6,
+                      key={item.key}
+                      onClick={() => {
+                        const next = isActive ? "testcases" : item.key;
+                        setActiveMetricView(next);
                       }}
+                      style={{
+                        ...cardStyle,
+                        cursor: "pointer",
+                        borderColor: isActive
+                          ? item.accentColor
+                          : "rgba(255,255,255,0.08)",
+                        background: isActive
+                          ? `${item.accentColor}12`
+                          : "rgba(255,255,255,0.025)",
+                        boxShadow: isActive
+                          ? `0 0 16px ${item.accentColor}25`
+                          : "none",
+                        transition: "all 0.2s ease",
+                      }}
+                      className="hover:border-white/20 transition-all"
+                      title={`Nhấn để xem chi tiết ${item.title}`}
                     >
                       <div
                         style={{
                           display: "flex",
                           alignItems: "center",
-                          gap: 7,
-                          color: item.accentColor,
-                          fontWeight: 650,
-                          fontSize: 14,
+                          justifyContent: "space-between",
+                          marginBottom: 6,
                         }}
                       >
-                        <Icon size={16} />
-                        <span>{item.title}</span>
-                      </div>
-                      <span
-                        style={{
-                          fontSize: 11,
-                          fontWeight: 600,
-                          padding: "2px 8px",
-                          borderRadius: 12,
-                          background: isActive
-                            ? `${item.accentColor}30`
-                            : "rgba(255,255,255,0.06)",
-                          color: isActive ? item.accentColor : "#8b949e",
-                        }}
-                      >
-                        {isActive ? "Selected" : "Details →"}
-                      </span>
-                    </div>
-
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "baseline",
-                        gap: 8,
-                        marginTop: 6,
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: 24,
-                          fontWeight: 750,
-                          color: coverageColor(pctNum),
-                          fontFamily: "var(--font-mono)",
-                        }}
-                      >
-                        {pct(pctNum)}
-                      </span>
-                      {item.raw?.total ? (
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 7,
+                            color: item.accentColor,
+                            fontWeight: 650,
+                            fontSize: 14,
+                          }}
+                        >
+                          <Icon size={16} />
+                          <span>{item.title}</span>
+                        </div>
                         <span
                           style={{
                             fontSize: 11,
-                            color: "#8b949e",
+                            fontWeight: 600,
+                            padding: "2px 8px",
+                            borderRadius: 12,
+                            background: isActive
+                              ? `${item.accentColor}30`
+                              : "rgba(255,255,255,0.06)",
+                            color: isActive ? item.accentColor : "#8b949e",
+                          }}
+                        >
+                          {isActive ? "Đang chọn" : "Chi tiết →"}
+                        </span>
+                      </div>
+
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "baseline",
+                          gap: 8,
+                          marginTop: 6,
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontSize: 24,
+                            fontWeight: 750,
+                            color: coverageColor(pctNum),
                             fontFamily: "var(--font-mono)",
                           }}
                         >
-                          ({item.raw.covered}/{item.raw.total})
+                          {pct(pctNum)}
                         </span>
-                      ) : null}
-                    </div>
+                        {item.raw?.total ? (
+                          <span
+                            style={{
+                              fontSize: 11,
+                              color: "#8b949e",
+                              fontFamily: "var(--font-mono)",
+                            }}
+                          >
+                            ({item.raw.covered}/{item.raw.total})
+                          </span>
+                        ) : null}
+                      </div>
 
-                    {/* Progress Bar */}
-                    <div
-                      style={{
-                        width: "100%",
-                        height: 4,
-                        background: "rgba(255,255,255,0.08)",
-                        borderRadius: 2,
-                        marginTop: 8,
-                        overflow: "hidden",
-                      }}
-                    >
+                      {/* Progress Bar */}
                       <div
                         style={{
-                          width: `${Math.min(100, Math.max(0, pctNum))}%`,
-                          height: "100%",
-                          background: coverageColor(pctNum),
+                          width: "100%",
+                          height: 4,
+                          background: "rgba(255,255,255,0.08)",
                           borderRadius: 2,
-                          transition: "width 0.4s ease",
+                          marginTop: 8,
+                          overflow: "hidden",
                         }}
-                      />
-                    </div>
+                      >
+                        <div
+                          style={{
+                            width: `${Math.min(100, Math.max(0, pctNum))}%`,
+                            height: "100%",
+                            background: coverageColor(pctNum),
+                            borderRadius: 2,
+                            transition: "width 0.4s ease",
+                          }}
+                        />
+                      </div>
 
+                      <div
+                        style={{
+                          color: "#8b949e",
+                          fontSize: 12,
+                          lineHeight: 1.5,
+                          marginTop: 9,
+                        }}
+                      >
+                        {item.description}
+                      </div>
+                    </div>
+                  );
+                })
+              : config.explanation.map(([title, text]) => (
+                  <div key={title} style={cardStyle}>
+                    <div
+                      style={{
+                        color: config.accent,
+                        fontWeight: 650,
+                        fontSize: 14,
+                      }}
+                    >
+                      {title}
+                    </div>
                     <div
                       style={{
                         color: "#8b949e",
                         fontSize: 12,
-                        lineHeight: 1.5,
-                        marginTop: 9,
+                        lineHeight: 1.55,
+                        marginTop: 7,
                       }}
                     >
-                      {item.description}
+                      {text}
                     </div>
                   </div>
-                );
-              })
-            ) : (
-              config.explanation.map(([title, text]) => (
-                <div key={title} style={cardStyle}>
-                  <div
-                    style={{
-                      color: config.accent,
-                      fontWeight: 650,
-                      fontSize: 14,
-                    }}
-                  >
-                    {title}
-                  </div>
-                  <div
-                    style={{
-                      color: "#8b949e",
-                      fontSize: 12,
-                      lineHeight: 1.55,
-                      marginTop: 7,
-                    }}
-                  >
-                    {text}
-                  </div>
-                </div>
-              ))
-            )}
+                ))}
           </div>
 
           {/* Mode Navigation Tabs (Unit Test Coverage) */}
@@ -1505,9 +1532,7 @@ export default function CoverageTypeDashboard({
                           ? `${tab.accent}25`
                           : "rgba(255,255,255,0.15)"
                         : "rgba(255,255,255,0.03)",
-                      color: isCurrent
-                        ? tab.accent || "#ffffff"
-                        : "#8b949e",
+                      color: isCurrent ? tab.accent || "#ffffff" : "#8b949e",
                       border: isCurrent
                         ? `1px solid ${tab.accent || "rgba(255,255,255,0.3)"}`
                         : "1px solid rgba(255,255,255,0.06)",
@@ -1590,40 +1615,71 @@ export default function CoverageTypeDashboard({
                           : "#8b949e",
               }}
             >
-              <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 260 }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  flex: 1,
+                  minWidth: 260,
+                }}
+              >
                 {activeMetricView === "testcases" ? (
                   <>
-                    <FlaskConical size={15} style={{ flexShrink: 0, color: "#c084fc" }} />
+                    <FlaskConical
+                      size={15}
+                      style={{ flexShrink: 0, color: "#c084fc" }}
+                    />
                     <span>
-                      <b>Unit Testcase Files:</b> List of test suite files from <b>Jest</b> and <b>Vitest</b>. Playwright, Cypress, and Supertest files are automatically filtered out from Unit Test scope.
+                      <b>File Testcase Unit Test:</b> Danh sách các file kịch
+                      bản kiểm thử của <b>Jest</b> và <b>Vitest</b>. Các file
+                      Playwright, Cypress và Supertest tự động được lọc bỏ khỏi
+                      phạm vi Unit Test.
                     </span>
                   </>
                 ) : activeMetricView === "statements" ? (
                   <>
-                    <FileCode size={15} style={{ flexShrink: 0, color: "#a78bfa" }} />
+                    <FileCode
+                      size={15}
+                      style={{ flexShrink: 0, color: "#a78bfa" }}
+                    />
                     <span>
-                      <b>Statement Coverage:</b> Percentage breakdown of source code statements executed during unit tests.
+                      <b>Statement Coverage:</b> Bảng thống kê tỷ lệ phần trăm
+                      các câu lệnh (statements) trong mã nguồn đã được thực thi
+                      khi chạy unit test.
                     </span>
                   </>
                 ) : activeMetricView === "branches" ? (
                   <>
-                    <GitBranch size={15} style={{ flexShrink: 0, color: "#fbbf24" }} />
+                    <GitBranch
+                      size={15}
+                      style={{ flexShrink: 0, color: "#fbbf24" }}
+                    />
                     <span>
-                      <b>Branch Coverage:</b> Percentage breakdown of conditional branch paths (if/else, switch, ternary) tested across all directions.
+                      <b>Branch Coverage:</b> Bảng thống kê tỷ lệ phần trăm các
+                      nhánh rẽ điều kiện (if/else, switch, ternary) đã được kiểm
+                      thử đầy đủ các hướng.
                     </span>
                   </>
                 ) : activeMetricView === "functions" ? (
                   <>
-                    <Cpu size={15} style={{ flexShrink: 0, color: "#38bdf8" }} />
+                    <Cpu
+                      size={15}
+                      style={{ flexShrink: 0, color: "#38bdf8" }}
+                    />
                     <span>
-                      <b>Function Coverage:</b> Identified functions and methods with actual names, execution hit counts, and CFG integration.
+                      <b>Function Coverage:</b> Danh sách phương thức và hàm với
+                      tên thật đã được nhận diện, đo lường số lần gọi và tích
+                      hợp CFG.
                     </span>
                   </>
                 ) : (
                   <>
                     <ListChecks size={15} style={{ flexShrink: 0 }} />
                     <span>
-                      <b>Source File Coverage:</b> Comprehensive coverage summary of source code files under test (Lines, Branches, Functions, Statements).
+                      <b>Source File Coverage:</b> Bảng tổng hợp độ bao phủ của
+                      các file mã nguồn (Source code under test: Lines,
+                      Branches, Functions, Statements).
                     </span>
                   </>
                 )}
@@ -1641,9 +1697,18 @@ export default function CoverageTypeDashboard({
                       padding: "4px 10px",
                       borderRadius: 6,
                       cursor: "pointer",
-                      background: functionViewMode === "map" ? "#38bdf8" : "rgba(255,255,255,0.06)",
-                      color: functionViewMode === "map" ? "#0d1117" : "#bae6fd",
-                      border: "none",
+                      background:
+                        functionViewMode === "map"
+                          ? "var(--color-primary)"
+                          : "var(--color-surface)",
+                      color:
+                        functionViewMode === "map"
+                          ? "#ffffff"
+                          : "var(--color-text-secondary)",
+                      border:
+                        functionViewMode === "map"
+                          ? "1px solid var(--color-primary)"
+                          : "1px solid var(--color-border)",
                       display: "flex",
                       alignItems: "center",
                       gap: 4,
@@ -1661,9 +1726,18 @@ export default function CoverageTypeDashboard({
                       padding: "4px 10px",
                       borderRadius: 6,
                       cursor: "pointer",
-                      background: functionViewMode === "table" ? "#38bdf8" : "rgba(255,255,255,0.06)",
-                      color: functionViewMode === "table" ? "#0d1117" : "#bae6fd",
-                      border: "none",
+                      background:
+                        functionViewMode === "table"
+                          ? "var(--color-primary)"
+                          : "var(--color-surface)",
+                      color:
+                        functionViewMode === "table"
+                          ? "#ffffff"
+                          : "var(--color-text-secondary)",
+                      border:
+                        functionViewMode === "table"
+                          ? "1px solid var(--color-primary)"
+                          : "1px solid var(--color-border)",
                       display: "flex",
                       alignItems: "center",
                       gap: 4,
@@ -1745,12 +1819,17 @@ export default function CoverageTypeDashboard({
               </div>
 
               {loadingTestSuites ? (
-                <div style={{ padding: 30, textAlign: "center", color: "#6e7681" }}>
-                  Loading test case files list...
+                <div
+                  style={{ padding: 30, textAlign: "center", color: "#6e7681" }}
+                >
+                  Đang tải danh sách file testcase...
                 </div>
               ) : filteredTestSuites.length === 0 ? (
-                <div style={{ padding: 30, textAlign: "center", color: "#6e7681" }}>
-                  No Jest or Vitest test case files found. Click "Run Analysis" to run and analyze.
+                <div
+                  style={{ padding: 30, textAlign: "center", color: "#6e7681" }}
+                >
+                  Chưa tìm thấy file testcase nào của Jest hoặc Vitest. Hãy bấm
+                  "Run Analysis" để chạy và phân tích.
                 </div>
               ) : (
                 <div>
@@ -1780,7 +1859,8 @@ export default function CoverageTypeDashboard({
 
                   {/* Rows */}
                   {filteredTestSuites.map((suite) => {
-                    const isPassed = suite.status === "passed" && suite.failedTests === 0;
+                    const isPassed =
+                      suite.status === "passed" && suite.failedTests === 0;
                     const isExpanded = expandedSuite === suite.filePath;
 
                     return (
@@ -1864,7 +1944,12 @@ export default function CoverageTypeDashboard({
                           </div>
 
                           {/* Framework Badge */}
-                          <div style={{ display: "flex", justifyContent: "center" }}>
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "center",
+                            }}
+                          >
                             <span
                               style={{
                                 fontSize: 11,
@@ -1927,7 +2012,12 @@ export default function CoverageTypeDashboard({
                           </div>
 
                           {/* Status */}
-                          <div style={{ display: "flex", justifyContent: "center" }}>
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "center",
+                            }}
+                          >
                             <span
                               style={{
                                 fontSize: 11,
@@ -1960,7 +2050,6 @@ export default function CoverageTypeDashboard({
                               gap: 6,
                             }}
                           >
-
                             <button
                               onClick={() => onOpenFile?.(suite.filePath)}
                               style={{
@@ -1977,7 +2066,34 @@ export default function CoverageTypeDashboard({
                               Open test
                             </button>
 
-                            {(suite.assertions && suite.assertions.length > 0 || suite.message) && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onSuggestTestcase?.(suite.filePath);
+                              }}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 4,
+                                padding: "4px 8px",
+                                borderRadius: 5,
+                                background: "rgba(168, 85, 247, 0.15)",
+                                border: "1px solid rgba(168, 85, 247, 0.35)",
+                                color: "#c084fc",
+                                fontSize: 11,
+                                fontWeight: 600,
+                                cursor: "pointer",
+                                transition: "all 0.15s ease",
+                                whiteSpace: "nowrap",
+                              }}
+                              className="hover:bg-purple-500/25 hover:border-purple-400"
+                              title={`Yêu cầu AI Agent gợi ý test case bổ sung cho ${suite.fileName}`}
+                            >
+                              <Sparkles size={11} />
+                              <span>Suggest test</span>
+                            </button>
+
+                            {((suite.assertions && suite.assertions.length > 0) || suite.message) && (
                               <button
                                 onClick={() =>
                                   setExpandedSuite(
@@ -1995,7 +2111,7 @@ export default function CoverageTypeDashboard({
                                   display: "flex",
                                   alignItems: "center",
                                 }}
-                                title={suite.message ? "View error details" : "View inner test cases list"}
+                                title={suite.message ? "Xem chi tiết lỗi" : "Xem danh sách test case con"}
                               >
                                 {isExpanded ? (
                                   <ChevronDown size={13} />
@@ -2033,7 +2149,7 @@ export default function CoverageTypeDashboard({
                                 overflowY: "auto",
                               }}>
                                 <span style={{ fontWeight: 700, display: "block", marginBottom: 4, color: "#f87171" }}>
-                                  ⚠ Error Detail:
+                                  ⚠ Chi tiết lỗi:
                                 </span>
                                 {suite.message}
                               </div>
@@ -2049,7 +2165,7 @@ export default function CoverageTypeDashboard({
                                     textTransform: "uppercase",
                                   }}
                                 >
-                                  Test cases in {suite.fileName}:
+                                  Danh sách test case trong {suite.fileName}:
                                 </div>
                                 <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
                                   {suite.assertions.map((testCase, idx) => {
@@ -2183,17 +2299,25 @@ export default function CoverageTypeDashboard({
                     gap: 12,
                   }}
                 >
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 10 }}
+                  >
                     <Cpu size={16} style={{ color: "#38bdf8" }} />
                     <span>Function Coverage Breakdown</span>
                     <span
-                      style={{ fontSize: 11, color: "#8b949e", fontWeight: 400 }}
+                      style={{
+                        fontSize: 11,
+                        color: "#8b949e",
+                        fontWeight: 400,
+                      }}
                     >
                       ({filteredFunctions.length} functions)
                     </span>
                   </div>
 
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 10 }}
+                  >
                     <div
                       style={{
                         display: "flex",
@@ -2259,14 +2383,26 @@ export default function CoverageTypeDashboard({
                 </div>
 
                 {loadingFunctions ? (
-                  <div style={{ padding: 30, textAlign: "center", color: "#6e7681" }}>
-                    Loading functions list...
+                  <div
+                    style={{
+                      padding: 30,
+                      textAlign: "center",
+                      color: "#6e7681",
+                    }}
+                  >
+                    Đang tải danh sách hàm...
                   </div>
                 ) : filteredFunctions.length === 0 ? (
-                  <div style={{ padding: 30, textAlign: "center", color: "#6e7681" }}>
+                  <div
+                    style={{
+                      padding: 30,
+                      textAlign: "center",
+                      color: "#6e7681",
+                    }}
+                  >
                     {functionsList.length === 0
-                      ? "No function data available. Click 'Run Analysis' to analyze Jest/Vitest."
-                      : "No matching functions found for the filter."}
+                      ? "Chưa có dữ liệu hàm. Hãy bấm 'Run Analysis' để phân tích Jest/Vitest."
+                      : "Không tìm thấy hàm phù hợp với bộ lọc."}
                   </div>
                 ) : (
                   <div>
@@ -2297,7 +2433,10 @@ export default function CoverageTypeDashboard({
                       const isCovered = fn.hit > 0;
                       return (
                         <div
-                          key={fn.id || `${fn.filePath}:${fn.functionName}:${fn.startLine}`}
+                          key={
+                            fn.id ||
+                            `${fn.filePath}:${fn.functionName}:${fn.startLine}`
+                          }
                           style={{
                             display: "grid",
                             gridTemplateColumns:
@@ -2382,7 +2521,12 @@ export default function CoverageTypeDashboard({
                             {isCovered ? `${fn.hit} hits` : "0 hits"}
                           </div>
 
-                          <div style={{ display: "flex", justifyContent: "center" }}>
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "center",
+                            }}
+                          >
                             <span
                               style={{
                                 fontSize: 10,
@@ -2738,7 +2882,8 @@ export default function CoverageTypeDashboard({
                             style={{
                               padding: "14px 18px",
                               background: "rgba(0, 0, 0, 0.4)",
-                              borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
+                              borderBottom:
+                                "1px solid rgba(255, 255, 255, 0.08)",
                               display: "flex",
                               flexDirection: "column",
                               gap: 16,
@@ -2822,7 +2967,7 @@ export default function CoverageTypeDashboard({
                                   gap: 8,
                                 }}
                               >
-                                <span>{cacheEntry?.error ? `Error: ${cacheEntry.error}` : "Failed to load flow analysis data for this file."}</span>
+                                <span>{cacheEntry?.error ? `Lỗi: ${cacheEntry.error}` : "Không thể tải dữ liệu phân tích luồng cho file này."}</span>
                                 <button
                                   onClick={() => ensureFileCoverage(file.filePath, true)}
                                   style={{
@@ -2835,7 +2980,7 @@ export default function CoverageTypeDashboard({
                                     cursor: "pointer",
                                   }}
                                 >
-                                  Retry
+                                  Thử lại
                                 </button>
                               </div>
                             )}

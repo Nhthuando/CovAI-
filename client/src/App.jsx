@@ -16,14 +16,15 @@ import GithubCallbackPage from "./pages/GithubCallbackPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
 import IntegrationReportPage from "./pages/IntegrationReportPage";
 import { NotificationProvider } from "./contexts/NotificationContext";
+import { ThemeProvider } from "./contexts/ThemeContext";
 import { useAuth } from "./hooks/useAuth";
 
 /* ── Landing Page ─────────────────────────────────────────── */
 function LandingPage() {
   return (
-    <div style={{ background: "var(--surface-main)", minHeight: "100vh" }}>
+    <div className="min-h-screen bg-[var(--color-bg)] text-[var(--color-text)] transition-colors duration-150 flex flex-col">
       <Navbar />
-      <main>
+      <main className="flex-1">
         <Hero />
         <IDEPreview />
         <Features />
@@ -132,9 +133,11 @@ function AppContent() {
 
 function App() {
   return (
-    <NotificationProvider>
-      <AppContent />
-    </NotificationProvider>
+    <ThemeProvider>
+      <NotificationProvider>
+        <AppContent />
+      </NotificationProvider>
+    </ThemeProvider>
   );
 }
 

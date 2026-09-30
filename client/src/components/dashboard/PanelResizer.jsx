@@ -30,7 +30,8 @@ export default function PanelResizer({
       onDoubleClick={onDoubleClick}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
-      title="Drag to resize · Double-click to reset"
+      title={`Resize ${label} · Double-click to reset`}
+      aria-label={`Resize ${label}`}
       className="relative flex items-center justify-center flex-shrink-0 select-none group"
       style={{
         width: 14,
@@ -46,16 +47,11 @@ export default function PanelResizer({
       <div
         className="w-px h-full transition-all duration-200"
         style={{
-          background: isDragging
-            ? "linear-gradient(180deg, #7c3aed 0%, #a78bfa 30%, #22d3ee 70%, #7c3aed 100%)"
-            : isHovered
-              ? "linear-gradient(180deg, rgba(124, 58, 237, 0.2) 0%, #a78bfa 25%, #22d3ee 75%, rgba(124, 58, 237, 0.2) 100%)"
-              : "rgba(255, 255, 255, 0.08)",
-          boxShadow: isDragging
-            ? "0 0 12px rgba(167, 139, 250, 0.8), 0 0 4px rgba(34, 211, 238, 0.8)"
-            : isHovered
-              ? "0 0 8px rgba(167, 139, 250, 0.5)"
-              : "none",
+          background:
+            isDragging || isHovered
+              ? "var(--color-primary)"
+              : "var(--color-border)",
+          boxShadow: "none",
           width: isDragging ? 2 : 1,
         }}
       />
@@ -73,21 +69,12 @@ export default function PanelResizer({
           height: 42,
           borderRadius: 9999,
           background: isDragging
-            ? "#7c3aed"
+            ? "var(--color-primary)"
             : isHovered
-              ? "rgba(124, 58, 237, 0.45)"
-              : "rgba(255, 255, 255, 0.12)",
-          border: isDragging
-            ? "1px solid #c4b5fd"
-            : isHovered
-              ? "1px solid rgba(167, 139, 250, 0.7)"
-              : "1px solid rgba(255, 255, 255, 0.1)",
-          boxShadow: isDragging
-            ? "0 0 14px rgba(124, 58, 237, 0.9), 0 0 6px rgba(34, 211, 238, 0.7)"
-            : isHovered
-              ? "0 0 10px rgba(167, 139, 250, 0.5)"
-              : "0 1px 4px rgba(0,0,0,0.4)",
-          backdropFilter: "blur(4px)",
+              ? "var(--color-primary)"
+              : "var(--color-surface)",
+          border: "1px solid var(--color-border)",
+          boxShadow: "none",
         }}
       >
         {/* 3 micro grip dots */}
@@ -96,11 +83,8 @@ export default function PanelResizer({
             width: 2,
             height: 2,
             borderRadius: "50%",
-            background: isDragging
-              ? "#fff"
-              : isHovered
-                ? "#e0e7ff"
-                : "rgba(255, 255, 255, 0.5)",
+            background:
+              isDragging || isHovered ? "#fff" : "var(--color-text-secondary)",
           }}
         />
         <span
@@ -108,11 +92,8 @@ export default function PanelResizer({
             width: 2,
             height: 2,
             borderRadius: "50%",
-            background: isDragging
-              ? "#fff"
-              : isHovered
-                ? "#e0e7ff"
-                : "rgba(255, 255, 255, 0.5)",
+            background:
+              isDragging || isHovered ? "#fff" : "var(--color-text-secondary)",
           }}
         />
         <span
@@ -120,11 +101,8 @@ export default function PanelResizer({
             width: 2,
             height: 2,
             borderRadius: "50%",
-            background: isDragging
-              ? "#fff"
-              : isHovered
-                ? "#e0e7ff"
-                : "rgba(255, 255, 255, 0.5)",
+            background:
+              isDragging || isHovered ? "#fff" : "var(--color-text-secondary)",
           }}
         />
       </motion.div>
@@ -141,11 +119,9 @@ export default function PanelResizer({
             style={{
               top: "calc(50% + 32px)",
               [side === "left" ? "left" : "right"]: 12,
-              background: "rgba(13, 17, 23, 0.95)",
-              border: "1px solid rgba(124, 58, 237, 0.35)",
-              boxShadow:
-                "0 6px 20px rgba(0, 0, 0, 0.6), 0 0 10px rgba(124, 58, 237, 0.2)",
-              backdropFilter: "blur(10px)",
+              background: "var(--color-surface)",
+              border: "1px solid var(--color-border)",
+              boxShadow: "0 4px 12px rgba(0, 0, 0, 0.2)",
               whiteSpace: "nowrap",
             }}
           >
@@ -154,7 +130,7 @@ export default function PanelResizer({
                 fontFamily: "var(--font-mono)",
                 fontSize: 11,
                 fontWeight: 600,
-                color: "#c4b5fd",
+                color: "var(--color-primary)",
               }}
             >
               {Math.round(currentWidth)}px
@@ -163,7 +139,7 @@ export default function PanelResizer({
               <span
                 style={{
                   fontSize: 10,
-                  color: "#8b949e",
+                  color: "var(--color-text-secondary)",
                   fontFamily: "var(--font-sans)",
                 }}
               >
