@@ -987,7 +987,7 @@ export const deleteProject = async (projectId, userId) => {
       fs.rmSync(projectStoragePath, { recursive: true, force: true });
     }
   } catch (cleanupError) {
-    console.error("Lỗi xóa file vật lý của project:", cleanupError);
+    console.error("Error deleting physical files of project:", cleanupError);
   }
 };
 

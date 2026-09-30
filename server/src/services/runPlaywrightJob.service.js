@@ -25,41 +25,41 @@ export const processRunPlaywrightJob = async (jobId) => {
     const { testDirectory } = job.metadata || {};
 
     if (!rootDir) {
-      throw new Error("Snapshot rootDir không tồn tại");
+      throw new Error("Snapshot rootDir does not exist");
     }
 
     await saveJobOutput(jobId, { stdout: "", stderr: "" });
     await updateJobProgress(jobId, 10);
-    await addJobLog(jobId, "INFO", "Pipeline PLAYWRIGHT_TESTS bắt đầu.");
+    await addJobLog(jobId, "INFO", "PLAYWRIGHT_TESTS pipeline started.");
 
-    // 1. Cài đặt dependencies
+    // 1. Install dependencies
     await updateJobProgress(jobId, 30);
     await installPlaywrightDeps(jobId, rootDir);
 
-    // 2. Chạy test
+    // 2. Run tests
     await updateJobProgress(jobId, 60);
-    await addJobLog(jobId, "INFO", "Bước 2/2: Thực thi Playwright tests...");
+    await addJobLog(jobId, "INFO", "Step 2/2: Executing Playwright tests...");
     const result = await runPlaywrightTests(jobId, rootDir, testDirectory);
 
     await updateJobProgress(jobId, 100);
 
     if (result.success) {
       await markJobSuccess(jobId, { exitCode: result.exitCode });
-      await addJobLog(jobId, "INFO", "Playwright tests hoàn thành thành công.");
+      await addJobLog(jobId, "INFO", "Playwright tests completed successfully.");
     } else {
       await markJobFailed(
         jobId,
-        new Error(`Playwright tests thất bại với exit code ${result.exitCode}`),
+        new Error(`Playwright tests failed with exit code ${result.exitCode}`),
       );
       await addJobLog(
         jobId,
         "ERROR",
-        `Playwright tests thất bại. Exit code: ${result.exitCode}`,
+        `Playwright tests failed. Exit code: ${result.exitCode}`,
       );
     }
   } catch (error) {
-    console.error(`[RunPlaywrightJob ${jobId}] Lỗi:`, error);
-    await addJobLog(jobId, "ERROR", `Lỗi pipeline: ${error.message}`);
+    console.error(`[RunPlaywrightJob ${jobId}] Error:`, error);
+    await addJobLog(jobId, "ERROR", `Pipeline error: ${error.message}`);
     await markJobFailed(jobId, error);
   }
 };

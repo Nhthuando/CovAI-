@@ -23,12 +23,12 @@ const findCoverageFiles = (dir, fileList = []) => {
 
 export const aggregateCoverageReports = async (rootDir, snapshotId) => {
     if (!rootDir || !snapshotId) {
-        throw new ServiceError("Thiếu rootDir hoặc snapshotId", 400);
+        throw new ServiceError("Missing rootDir or snapshotId", 400);
     }
 
     const files = findCoverageFiles(rootDir);
     if (files.length === 0) {
-        throw new Error("Không tìm thấy file coverage nào trong dự án.");
+        throw new Error("No coverage files found in project.");
     }
 
     let globalTotal = {

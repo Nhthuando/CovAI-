@@ -545,7 +545,7 @@ const FileRow = ({ file, index, onOpenFile }) => {
           </span>
         </div>
 
-        {/* Lines bar (chính) */}
+        {/* Lines bar (main) */}
         <CoverageBar pct={file.linesPct} />
 
         {/* Mini bars: branches / funcs / stmts */}
@@ -823,10 +823,10 @@ const CoverageDashboard = ({ snapshotId, projectId, onOpenFile }) => {
   // MOCK handler: Unit Test
   const handleRunUnitTest = async () => {
     if (!snapshotId || isRunningUnitTest) return;
-    // Mock validate: chỉ cho chạy nếu có jest/vitest
-    // Đang chưa detect framework nên luôn báo lỗi demo
+    // Mock validate: only allow running if jest/vitest present
+    // Framework not detected yet so show demo message
     setError(
-      "Unit Test chỉ hỗ trợ Jest hoặc Vitest. Framework hiện tại không được support.",
+      "Unit Test only supports Jest or Vitest. Current framework is not supported.",
     );
     return;
     /*
@@ -838,10 +838,10 @@ const CoverageDashboard = ({ snapshotId, projectId, onOpenFile }) => {
   // MOCK handler: System Test
   const handleRunSystemTest = async () => {
     if (!snapshotId || isRunningSystemTest) return;
-    // Mock validate: chỉ cho chạy nếu có playwright/cypress
-    // Đang chưa detect framework nên luôn báo lỗi demo
+    // Mock validate: only allow running if playwright/cypress present
+    // Framework not detected yet so show demo message
     setError(
-      "System Test chỉ hỗ trợ Playwright hoặc Cypress. Framework hiện tại không được support.",
+      "System Test only supports Playwright or Cypress. Current framework is not supported.",
     );
     return;
     /*
@@ -850,7 +850,7 @@ const CoverageDashboard = ({ snapshotId, projectId, onOpenFile }) => {
     */
   };
 
-  // Reset page khi sort thay đổi
+  // Reset page when sort changes
   const toggleSort = (field) => {
     if (sortBy === field) setOrder((o) => (o === "asc" ? "desc" : "asc"));
     else {
@@ -867,7 +867,7 @@ const CoverageDashboard = ({ snapshotId, projectId, onOpenFile }) => {
     );
   };
 
-  // Client-side search filter (trên page hiện tại)
+  // Client-side search filter (on current page)
   const filtered = files.filter((f) =>
     f.filePath.toLowerCase().includes(search.toLowerCase()),
   );

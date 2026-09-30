@@ -32,10 +32,10 @@ export const register = async (req, res) => {
     });
   } catch (error) {
     console.log(error);
-    if (error.message === "Tài khoản đã tồn tại!") {
+    if (error.message === "Account already exists!") {
       return res.status(400).json({ message: error.message });
     }
-    return res.status(500).json({ message: "Có lỗi server!" });
+    return res.status(500).json({ message: "Internal server error!" });
   }
 };
 
@@ -64,18 +64,18 @@ export const login = async (req, res) => {
   } catch (error) {
     console.log(error);
     if (
-      error.message === "Tài khoản đã tồn tại!" ||
-      error.message === "Email hoặc mật khẩu không chính xác!"
+      error.message === "Account already exists!" ||
+      error.message === "Incorrect email or password!"
     ) {
       return res.status(400).json({ message: error.message });
     }
-    return res.status(500).json({ message: "Có lỗi server!" });
+    return res.status(500).json({ message: "Internal server error!" });
   }
 };
 
 export const getGithubRepositories = async (req, res) => {
   try {
-    // Lấy user từ DB để lấy token đã lưu (từ luồng OAuth trước đó)
+    // Get user from DB to retrieve stored token (from previous OAuth flow)
     const user = await prisma.user.findUnique({
       where: { id: req.user.id },
       select: { githubAccessTokenEnc: true },
@@ -83,20 +83,20 @@ export const getGithubRepositories = async (req, res) => {
 
     if (!user || !user.githubAccessTokenEnc) {
       return res.status(401).json({
-        message: "User chưa liên kết GitHub hoặc token không hợp lệ!",
+        message: "User has not linked GitHub or token is invalid!",
       });
     }
 
-    // Decrypt token đã mã hóa
+    // Decrypt encrypted token
     let accessToken;
     try {
       accessToken = decrypt(user.githubAccessTokenEnc);
     } catch {
-      // Fallback: token cũ chưa encrypt
+      // Fallback: legacy unencrypted token
       accessToken = user.githubAccessTokenEnc;
     }
 
-    // Sử dụng token đã giải mã để lấy repo từ GitHub API
+    // Use decrypted token to fetch repos from GitHub API
     let repos = [];
     let page = 1;
     const perPage = 15;
@@ -113,7 +113,7 @@ export const getGithubRepositories = async (req, res) => {
       );
 
       if (!response.ok) {
-        throw new Error("Không thể lấy repository từ GitHub!");
+        throw new Error("Unable to fetch repositories from GitHub!");
       }
 
       const pageRepos = await response.json();
@@ -138,27 +138,27 @@ export const githubOAuthAccess = async (req, res) => {
     if (allowAccess === undefined) {
       return res
         .status(400)
-        .json({ message: "Thiếu thông tin cho phép truy cập!" });
+        .json({ message: "Missing permission parameter!" });
     }
 
     if (!allowAccess) {
-      // Nếu user từ chối, xóa hoặc đánh dấu là không có token
+      // If user declined, clear token
       await prisma.user.update({
         where: { id: req.user.id },
         data: { githubAccessTokenEnc: null },
       });
       return res
         .status(200)
-        .json({ message: "Bạn đã từ chối cấp quyền truy cập repository!" });
+        .json({ message: "You declined repository access permission!" });
     }
 
-    // Nếu đồng ý, giữ nguyên token (giả định token đã được lưu từ luồng OAuth)
+    // If approved, keep token (assumes saved during OAuth)
     return res
       .status(200)
-      .json({ message: "Đã cấp quyền truy cập repository thành công!" });
+      .json({ message: "Repository access granted successfully!" });
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ message: "Có lỗi server!" });
+    return res.status(500).json({ message: "Internal server error!" });
   }
 };
 
@@ -169,14 +169,14 @@ export const oAuthGithub = async (req, res) => {
     if (error === "access_denied") {
       return res.status(200).json({
         message:
-          "Bạn đã từ chối cấp quyền truy cập repository riêng tư, hệ thống chỉ có thể truy cập các repository công khai!",
+          "You declined private repository access; system can only access public repositories!",
       });
     }
 
     if (!code)
       return res
         .status(400)
-        .json({ message: "Không tìm thấy code từ github!" });
+        .json({ message: "Code parameter not found from GitHub!" });
     const tokenResponse = await fetch(
       "https://github.com/login/oauth/access_token",
       {
@@ -195,7 +195,7 @@ export const oAuthGithub = async (req, res) => {
     const tokenData = await tokenResponse.json();
     const accessToken = tokenData.access_token;
     if (!accessToken)
-      return res.status(400).json({ message: "Không thể lấy access token!" });
+      return res.status(400).json({ message: "Unable to retrieve access token!" });
     const [userDetail, emailResponse] = await Promise.all([
       fetch("https://api.github.com/user", {
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -212,17 +212,17 @@ export const oAuthGithub = async (req, res) => {
     if (!primaryEmail) {
       return res
         .status(400)
-        .json({ message: "Không lấy được email từ GitHub!" });
+        .json({ message: "Unable to retrieve email from GitHub!" });
     }
     let user = await prisma.user.findUnique({
       where: { email: primaryEmail },
     });
-    // Encrypt access token trước khi lưu
+    // Encrypt access token before storing
     let encryptedToken;
     try {
       encryptedToken = encrypt(accessToken);
     } catch {
-      // Fallback nếu chưa cấu hình ENCRYPTION_KEY
+      // Fallback if ENCRYPTION_KEY is not configured
       encryptedToken = accessToken;
     }
 
@@ -251,13 +251,13 @@ export const oAuthGithub = async (req, res) => {
       { expiresIn: process.env.JWT_EXPIRES_IN || "7d" },
     );
     return res.status(200).json({
-      message: "Đăng nhập Github thành công!",
+      message: "GitHub login successful!",
       token,
       name: user.name,
       email: user.email,
     });
   } catch (error) {
     console.log(error);
-    return res.status(500).json({ message: "Có lỗi server!" });
+    return res.status(500).json({ message: "Internal server error!" });
   }
 };

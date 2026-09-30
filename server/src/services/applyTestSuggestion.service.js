@@ -300,7 +300,7 @@ export const applyUnitTestSuggestion = async ({ snapshotId, projectId, userId, s
                 });
             }
         } catch (sumErr) {
-            console.warn("[applyUnitTestSuggestion] Lỗi parse coverage-summary mới:", sumErr.message);
+            console.warn("[applyUnitTestSuggestion] Error parsing new coverage-summary:", sumErr.message);
         }
     }
 

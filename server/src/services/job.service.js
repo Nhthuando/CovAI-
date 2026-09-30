@@ -99,7 +99,7 @@ export const cleanupStaleJobsForProject = async (projectId, client = prisma) => 
       await addJobLog(
         job.id,
         "WARN",
-        `Job đã chạy quá thời gian quy định (${Math.round(elapsedMs / 1000)}s). Tự động tạm dừng để giải phóng dự án.`,
+        `Job timed out (${Math.round(elapsedMs / 1000)}s). Automatically paused to release project.`,
         client,
       ).catch(() => { });
     }
@@ -136,7 +136,7 @@ export const cleanupAllStaleJobs = async (userId = null, client = prisma) => {
       await addJobLog(
         job.id,
         "WARN",
-        `Job đã chạy quá thời gian quy định (${Math.round(elapsedMs / 1000)}s). Tự động tạm dừng.`,
+        `Job timed out (${Math.round(elapsedMs / 1000)}s). Automatically paused.`,
         client,
       ).catch(() => { });
     }

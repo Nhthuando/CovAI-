@@ -214,7 +214,7 @@ export const buildAiPayload = async (snapshotId, forceRebuild = false) => {
             cached: false
         };
     } catch (error) {
-        console.error(`[AIContextBuilder] Lỗi khi build payload cho snapshot ${snapshotId}:`, error);
+        console.error(`[AIContextBuilder] Error building payload for snapshot ${snapshotId}:`, error);
         throw new ServiceError("Failed to build AI payload", 500);
     }
 };

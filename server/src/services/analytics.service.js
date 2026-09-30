@@ -1,6 +1,6 @@
 import prisma from "../config/prisma.js";
 /**
- * Lấy các chỉ số tổng quan của toàn hệ thống
+ * Retrieve global system overview metrics
  */
 export const getSystemOverview = async () => {
     const totalUsers = await prisma.user.count();
@@ -42,7 +42,7 @@ export const getSystemOverview = async () => {
 };
 
 /**
- * Lấy danh sách người dùng sử dụng AI nhiều nhất
+ * Retrieve top AI active users
  */
 export const getTopAiUsers = async (limit = 10) => {
     return prisma.user.findMany({
@@ -59,7 +59,7 @@ export const getTopAiUsers = async (limit = 10) => {
 };
 
 /**
- * Lấy danh sách các Job chạy gần đây
+ * Retrieve recent jobs list
  */
 export const getRecentJobs = async (limit = 10) => {
     return prisma.job.findMany({

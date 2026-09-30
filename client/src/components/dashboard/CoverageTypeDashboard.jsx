@@ -66,7 +66,7 @@ const CONFIG = {
   integration: {
     title: "Integration Test Coverage",
     subtitle:
-      "Kiểm tra API và trao đổi dữ liệu giữa frontend, backend và dịch vụ.",
+      "Verifying APIs and data exchange between frontend, backend, and services.",
     supported: "Playwright · Supertest",
     accent: "#fbbf24",
     focus: [
@@ -76,14 +76,14 @@ const CONFIG = {
       "Critical APIs",
     ],
     explanation: [
-      ["API contracts", "Request, response, status code và dữ liệu trả về."],
+      ["API contracts", "Request, response, status code, and returned data."],
       [
         "Frontend ↔ Backend",
-        "Các lời gọi API từ giao diện đến route/controller.",
+        "API calls from UI to routes/controllers.",
       ],
       [
         "Service integration",
-        "Luồng controller, service và database/dependency.",
+        "Controller flows, services, and database/dependencies.",
       ],
     ],
   },
@@ -96,13 +96,13 @@ const CONFIG = {
     explanation: [
       [
         "User journeys",
-        "Các luồng đăng nhập, thao tác và hoàn thành nghiệp vụ.",
+        "Auth flows, actions, and end-to-end business workflows.",
       ],
       [
         "Browser behavior",
-        "Giao diện, điều hướng và tương tác trên trình duyệt.",
+        "UI, navigation, and browser interactions.",
       ],
-      ["Full system", "Frontend, backend và dữ liệu hoạt động cùng nhau."],
+      ["Full system", "Frontend, backend, and data working together."],
     ],
   },
 };
@@ -647,7 +647,7 @@ export default function CoverageTypeDashboard({
     if (!snapshotId || running) return;
     setRunning(true);
     setRunProgress(8);
-    setRunStep("Khởi động môi trường phân tích kiểm thử...");
+    setRunStep("Initializing test analysis environment...");
     setError("");
     try {
       let response;
@@ -669,33 +669,33 @@ export default function CoverageTypeDashboard({
       const fw = response.data?.framework || (type === "unit" ? "jest & vitest" : "");
       setActiveFramework(fw);
       const jobs = response.data?.jobs || (response.data?.job ? [response.data.job] : []);
-      if (jobs.length === 0) throw new Error("Backend không trả về job chạy kiểm thử.");
+      if (jobs.length === 0) throw new Error("Backend did not return test run jobs.");
       for (const j of jobs) {
         if (j?.id) {
           await waitForJob(j.id, (prog) => {
             setRunProgress(prog);
             if (prog <= 20) {
-              setRunStep("Đang chuẩn bị dependencies & môi trường Docker...");
+              setRunStep("Preparing dependencies & Docker environment...");
             } else if (prog <= 45) {
-              setRunStep("Đang chạy Jest unit test suites & sinh coverage...");
+              setRunStep("Running Jest unit test suites & generating coverage...");
             } else if (prog <= 65) {
-              setRunStep("Đang chạy Vitest unit test suites & sinh coverage...");
+              setRunStep("Running Vitest unit test suites & generating coverage...");
             } else if (prog <= 85) {
-              setRunStep("Hợp nhất báo cáo coverage đa khung & phân tích AST functions...");
+              setRunStep("Merging multi-framework coverage & analyzing AST functions...");
             } else if (prog < 100) {
-              setRunStep("Lưu trữ kết quả phân tích & đồng bộ dữ liệu...");
+              setRunStep("Saving analysis results & syncing data...");
             } else {
-              setRunStep("Hoàn thành phân tích kiểm thử!");
+              setRunStep("Test analysis completed!");
             }
           });
         }
       }
       setRunProgress(100);
-      setRunStep("Hoàn thành phân tích thành công!");
+      setRunStep("Analysis completed successfully!");
       invalidateCoverageQueries(snapshotId);
       await refetchCoverage();
     } catch (runError) {
-      setError(runError.message || "Quá trình phân tích thất bại.");
+      setError(runError.message || "Analysis process failed.");
     } finally {
       setTimeout(() => {
         setRunning(false);
@@ -850,13 +850,13 @@ export default function CoverageTypeDashboard({
       });
 
       if (needImprovementFiles.length === 0) {
-        setBulkSuggestMessage("Tất cả các file mã nguồn đã đạt 100% độ bao phủ kiểm thử!");
+        setBulkSuggestMessage("All source files have reached 100% test coverage!");
         setTimeout(() => setBulkSuggestMessage(""), 5000);
         return;
       }
 
       setIsBulkSuggesting(true);
-      setBulkSuggestMessage(`Đang tạo gợi ý test inline cho ${needImprovementFiles.length} file...`);
+      setBulkSuggestMessage(`Generating inline test suggestions for ${needImprovementFiles.length} files...`);
 
       // Expand all files that need improvement simultaneously so user can review all at once
       setExpandedFiles(new Set(needImprovementFiles.map((f) => f.filePath)));
@@ -867,10 +867,10 @@ export default function CoverageTypeDashboard({
         await Promise.all(
           needImprovementFiles.map((f) => handleSuggestTestcaseInline(f.filePath))
         );
-        setBulkSuggestMessage(`✓ Đã sinh gợi ý test trực tiếp bên dưới ${needImprovementFiles.length} file. Bạn có thể sửa code và bấm Apply ngay trong dropdown.`);
+        setBulkSuggestMessage(`✓ Generated inline test suggestions under ${needImprovementFiles.length} files. You can edit code and click Apply directly in the dropdown.`);
       } catch (err) {
         console.error("Bulk inline suggest failed:", err);
-        setBulkSuggestMessage(`Lỗi sinh testcase: ${err.message}`);
+        setBulkSuggestMessage(`Error generating testcases: ${err.message}`);
       } finally {
         setIsBulkSuggesting(false);
         setTimeout(() => setBulkSuggestMessage(""), 8000);
@@ -1016,7 +1016,7 @@ export default function CoverageTypeDashboard({
               fontWeight: 600,
               cursor: isBulkSuggesting ? "wait" : "pointer",
             }}
-            title="Gợi ý testcase AI cho toàn bộ các file chưa đạt 100% coverage trực tiếp dưới các file"
+            title="AI testcase suggestions directly under all files that have not reached 100% coverage"
           >
             <Sparkles size={14} className="text-purple-400" />
             <span>{isBulkSuggesting ? "Generating inline tests..." : "Suggest test"}</span>
@@ -1121,7 +1121,7 @@ export default function CoverageTypeDashboard({
                 Test execution failed for current run
               </div>
               <div style={{ fontSize: 12, color: "#cbd5e1", marginTop: 2 }}>
-                Coverage: <span style={{ color: "#ef4444", fontWeight: 600 }}>Unavailable for current run</span> (Không tính kết quả của run bị fail)
+                Coverage: <span style={{ color: "#ef4444", fontWeight: 600 }}>Unavailable for current run</span> (Results of failed runs excluded)
               </div>
             </div>
           </div>
@@ -1170,7 +1170,7 @@ export default function CoverageTypeDashboard({
               }}
             >
               <span style={{ fontWeight: 600, color: "#e2e8f0" }}>
-                ℹ️ Hiển thị kết quả lần chạy thành công trước đó (kết quả cũ):
+                ℹ️ Displaying results from previous successful run (cached):
               </span>
               <span>
                 Statements: <b style={{ color: "#cbd5e1" }}>{lastSuccessfulCov.statements || lastSuccessfulCov.lines || 0}%</b>
@@ -1207,16 +1207,16 @@ export default function CoverageTypeDashboard({
             <span style={{ fontSize: 18 }}>⚠️</span>
             <div>
               <div style={{ fontSize: 14, fontWeight: 600, color: "#fcd34d" }}>
-                Coverage được đo lường thực tế từ lần chạy hiện tại (có một số test assertion không đạt)
+                Coverage measured from current run (some test assertions failed)
               </div>
               <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>
-                Các file dưới đây hiển thị % code coverage chính xác dựa trên các test case đã chạy thực tế.
+                The files below display accurate % code coverage based on actual tests executed.
               </div>
             </div>
           </div>
           {failedSuiteName && (
             <div style={{ fontSize: 12, color: "#cbd5e1" }}>
-              <span style={{ color: "#94a3b8" }}>Suite có test không đạt: </span>
+              <span style={{ color: "#94a3b8" }}>Suites with failed tests: </span>
               <code style={{ background: "rgba(0,0,0,0.4)", padding: "2px 6px", borderRadius: 4, color: "#fcd34d" }}>
                 {failedSuiteName}
               </code>
@@ -1264,7 +1264,7 @@ export default function CoverageTypeDashboard({
                 </div>
                 {isLatestRunFailed && type === "unit" && lastSuccessfulCov && (
                   <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
-                    Last successful: <b style={{ color: "#cbd5e1" }}>{pct(lastSuccessfulValues[i])}</b> (cũ)
+                    Last successful: <b style={{ color: "#cbd5e1" }}>{pct(lastSuccessfulValues[i])}</b> (cached)
                   </div>
                 )}
               </div>
@@ -1285,7 +1285,7 @@ export default function CoverageTypeDashboard({
                   {
                     key: "statements",
                     title: "Statement coverage",
-                    description: "Bao nhiêu câu lệnh đã được test thực thi.",
+                    description: "How many statements were executed during testing.",
                     pctValue: statPct,
                     raw: rawTotals?.statements,
                     icon: FileCode,
@@ -1295,7 +1295,7 @@ export default function CoverageTypeDashboard({
                     key: "branches",
                     title: "Branch coverage",
                     description:
-                      "Bao nhiêu nhánh if/else/switch đã được đi qua.",
+                      "How many if/else/switch branches were traversed.",
                     pctValue: branchPct,
                     raw: rawTotals?.branches,
                     icon: GitBranch,
@@ -1304,7 +1304,7 @@ export default function CoverageTypeDashboard({
                   {
                     key: "functions",
                     title: "Function coverage",
-                    description: "Bao nhiêu hàm hoặc method đã được gọi.",
+                    description: "How many functions or methods were called.",
                     pctValue: funcPct,
                     raw: rawTotals?.functions,
                     icon: Cpu,
@@ -1337,7 +1337,7 @@ export default function CoverageTypeDashboard({
                         transition: "all 0.2s ease",
                       }}
                       className="hover:border-white/20 transition-all"
-                      title={`Nhấn để xem chi tiết ${item.title}`}
+                      title={`Click to view ${item.title} details`}
                     >
                       <div
                         style={{
@@ -1372,7 +1372,7 @@ export default function CoverageTypeDashboard({
                             color: isActive ? item.accentColor : "#8b949e",
                           }}
                         >
-                          {isActive ? "Đang chọn" : "Chi tiết →"}
+                          {isActive ? "Selected" : "Details →"}
                         </span>
                       </div>
 
@@ -1631,10 +1631,10 @@ export default function CoverageTypeDashboard({
                       style={{ flexShrink: 0, color: "#c084fc" }}
                     />
                     <span>
-                      <b>File Testcase Unit Test:</b> Danh sách các file kịch
-                      bản kiểm thử của <b>Jest</b> và <b>Vitest</b>. Các file
-                      Playwright, Cypress và Supertest tự động được lọc bỏ khỏi
-                      phạm vi Unit Test.
+                      <b>Unit Test Files:</b> List of test specification files
+                      from <b>Jest</b> and <b>Vitest</b>. Playwright, Cypress,
+                      and Supertest files are automatically filtered out from
+                      the Unit Test scope.
                     </span>
                   </>
                 ) : activeMetricView === "statements" ? (
@@ -1644,9 +1644,8 @@ export default function CoverageTypeDashboard({
                       style={{ flexShrink: 0, color: "#a78bfa" }}
                     />
                     <span>
-                      <b>Statement Coverage:</b> Bảng thống kê tỷ lệ phần trăm
-                      các câu lệnh (statements) trong mã nguồn đã được thực thi
-                      khi chạy unit test.
+                      <b>Statement Coverage:</b> Statistical percentage of source
+                      code statements executed during unit testing.
                     </span>
                   </>
                 ) : activeMetricView === "branches" ? (
@@ -1656,9 +1655,8 @@ export default function CoverageTypeDashboard({
                       style={{ flexShrink: 0, color: "#fbbf24" }}
                     />
                     <span>
-                      <b>Branch Coverage:</b> Bảng thống kê tỷ lệ phần trăm các
-                      nhánh rẽ điều kiện (if/else, switch, ternary) đã được kiểm
-                      thử đầy đủ các hướng.
+                      <b>Branch Coverage:</b> Statistical percentage of conditional
+                      branches (if/else, switch, ternary) evaluated across all paths.
                     </span>
                   </>
                 ) : activeMetricView === "functions" ? (
@@ -1668,18 +1666,17 @@ export default function CoverageTypeDashboard({
                       style={{ flexShrink: 0, color: "#38bdf8" }}
                     />
                     <span>
-                      <b>Function Coverage:</b> Danh sách phương thức và hàm với
-                      tên thật đã được nhận diện, đo lường số lần gọi và tích
-                      hợp CFG.
+                      <b>Function Coverage:</b> Identified functions and methods,
+                      tracking execution call counts and CFG mapping.
                     </span>
                   </>
                 ) : (
                   <>
                     <ListChecks size={15} style={{ flexShrink: 0 }} />
                     <span>
-                      <b>Source File Coverage:</b> Bảng tổng hợp độ bao phủ của
-                      các file mã nguồn (Source code under test: Lines,
-                      Branches, Functions, Statements).
+                      <b>Source File Coverage:</b> Overall coverage breakdown of
+                      source files under test (Lines, Branches, Functions,
+                      Statements).
                     </span>
                   </>
                 )}
@@ -1822,14 +1819,14 @@ export default function CoverageTypeDashboard({
                 <div
                   style={{ padding: 30, textAlign: "center", color: "#6e7681" }}
                 >
-                  Đang tải danh sách file testcase...
+                  Loading test case files...
                 </div>
               ) : filteredTestSuites.length === 0 ? (
                 <div
                   style={{ padding: 30, textAlign: "center", color: "#6e7681" }}
                 >
-                  Chưa tìm thấy file testcase nào của Jest hoặc Vitest. Hãy bấm
-                  "Run Analysis" để chạy và phân tích.
+                  No Jest or Vitest test case files found. Click
+                  "Run Analysis" to run and analyze.
                 </div>
               ) : (
                 <div>
@@ -2084,7 +2081,7 @@ export default function CoverageTypeDashboard({
                                   display: "flex",
                                   alignItems: "center",
                                 }}
-                                title={suite.message ? "Xem chi tiết lỗi" : "Xem danh sách test case con"}
+                                title={suite.message ? "View error details" : "View child test cases"}
                               >
                                 {isExpanded ? (
                                   <ChevronDown size={13} />
@@ -2122,7 +2119,7 @@ export default function CoverageTypeDashboard({
                                 overflowY: "auto",
                               }}>
                                 <span style={{ fontWeight: 700, display: "block", marginBottom: 4, color: "#f87171" }}>
-                                  ⚠ Chi tiết lỗi:
+                                  ⚠ Error Details:
                                 </span>
                                 {suite.message}
                               </div>
@@ -2138,7 +2135,7 @@ export default function CoverageTypeDashboard({
                                     textTransform: "uppercase",
                                   }}
                                 >
-                                  Danh sách test case trong {suite.fileName}:
+                                  Test cases in {suite.fileName}:
                                 </div>
                                 <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
                                   {suite.assertions.map((testCase, idx) => {
@@ -2363,7 +2360,7 @@ export default function CoverageTypeDashboard({
                       color: "#6e7681",
                     }}
                   >
-                    Đang tải danh sách hàm...
+                    Loading function list...
                   </div>
                 ) : filteredFunctions.length === 0 ? (
                   <div
@@ -2374,8 +2371,8 @@ export default function CoverageTypeDashboard({
                     }}
                   >
                     {functionsList.length === 0
-                      ? "Chưa có dữ liệu hàm. Hãy bấm 'Run Analysis' để phân tích Jest/Vitest."
-                      : "Không tìm thấy hàm phù hợp với bộ lọc."}
+                      ? "No function data available. Click 'Run Analysis' to analyze Jest/Vitest."
+                      : "No matching functions found for the filter."}
                   </div>
                 ) : (
                   <div>
@@ -2782,7 +2779,7 @@ export default function CoverageTypeDashboard({
                                 transition: "all 0.15s ease",
                               }}
                               className="hover:bg-purple-500/25 hover:text-white"
-                              title="Tạo gợi ý test case AI inline cho file này"
+                              title="Generate AI inline test suggestions for this file"
                             >
                               <Sparkles size={11} />
                               Suggest
@@ -2808,7 +2805,7 @@ export default function CoverageTypeDashboard({
                                 transition: "all 0.15s ease",
                               }}
                               className="hover:bg-white/10 hover:text-white"
-                              title={isExpanded ? "Đóng xem & sửa code" : "Xem độ bao phủ & sửa code trực tiếp"}
+                              title={isExpanded ? "Close view & edit" : "View coverage & edit code directly"}
                             >
                               {isExpanded ? "Close" : "View & Edit"}
                             </button>
@@ -2940,7 +2937,7 @@ export default function CoverageTypeDashboard({
                                   gap: 8,
                                 }}
                               >
-                                <span>{cacheEntry?.error ? `Lỗi: ${cacheEntry.error}` : "Không thể tải dữ liệu phân tích luồng cho file này."}</span>
+                                <span>{cacheEntry?.error ? `Error: ${cacheEntry.error}` : "Failed to load flow analysis data for this file."}</span>
                                 <button
                                   onClick={() => ensureFileCoverage(file.filePath, true)}
                                   style={{
@@ -2953,7 +2950,7 @@ export default function CoverageTypeDashboard({
                                     cursor: "pointer",
                                   }}
                                 >
-                                  Thử lại
+                                  Retry
                                 </button>
                               </div>
                             )}

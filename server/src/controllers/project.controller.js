@@ -571,7 +571,7 @@ class ProjectController {
 
       return res.status(201).json({
         success: true,
-        message: "Snapshot và Job được tạo thành công",
+        message: "Snapshot and Job created successfully",
         snapshot: {
           id: result.snapshot.id,
           projectId: result.snapshot.projectId,
@@ -620,7 +620,7 @@ class ProjectController {
           needsTests: true,
           snapshotId: targetSnapshot.id,
           message:
-            "Dự án chưa có file test. Vui lòng tạo test trước khi chạy phân tích.",
+            "Project has no test files yet. Please create tests before running analysis.",
         });
       }
 
@@ -634,10 +634,10 @@ class ProjectController {
       const reused = queuedJob.reused === true;
       const { reused: _reused, ...job } = queuedJob;
 
-      // SCRUM-138..144: Kick-off full pipeline bất đồng bộ qua Queue
+      // Kick-off full async pipeline via Queue
       if (!reused)
         addJobToQueue("RUN_TESTS", job.id).catch((err) => {
-          console.error("Lỗi khi thêm RUN_TESTS vào queue:", err);
+          console.error("Error adding RUN_TESTS to queue:", err);
         });
 
       return res.status(201).json({
@@ -698,7 +698,7 @@ class ProjectController {
       });
 
       addJobToQueue("BUILD_CFG", job.id).catch((err) => {
-        console.error("Lỗi khi thêm BUILD_CFG vào queue:", err);
+        console.error("Error adding BUILD_CFG to queue:", err);
       });
 
       return res.status(201).json({
@@ -1338,9 +1338,9 @@ class ProjectController {
         userId: req.user.id,
       });
 
-      // Kick-off full pipeline bất đồng bộ (không await)
+      // Kick-off full async pipeline (non-blocking)
       addJobToQueue("AI_SUGGEST", job.id).catch((err) => {
-        console.error("Lỗi khi thêm AI_SUGGEST vào queue:", err);
+        console.error("Error adding AI_SUGGEST to queue:", err);
       });
 
       return res.status(202).json({
@@ -1404,7 +1404,7 @@ class ProjectController {
       });
 
       addJobToQueue("AI_TESTS", job.id).catch((err) => {
-        console.error("Lỗi khi thêm AI_TESTS vào queue:", err);
+        console.error("Error adding AI_TESTS to queue:", err);
       });
 
       return res.status(202).json({
@@ -1721,7 +1721,7 @@ The user is working on project: ${project.name}.
       const { id: projectId } = req.params;
       const { snapshotId } = req.body;
 
-      // Import hàm khởi tạo job chúng ta vừa làm ở Bước 1
+      // Import job initialization helper
       const { createVitestJob } = await import("../services/job.service.js");
 
       const job = await createVitestJob({
@@ -1730,9 +1730,9 @@ The user is working on project: ${project.name}.
         userId: req.user.id,
       });
 
-      // Đẩy job vào queue để chạy ngầm (trả về kết quả cho client ngay lập tức)
+      // Push job to queue for background processing (returns immediately to client)
       addJobToQueue("RUN_VITEST_TESTS", job.id).catch((err) => {
-        console.error("Lỗi khi thêm RUN_VITEST_TESTS vào queue:", err);
+        console.error("Error adding RUN_VITEST_TESTS to queue:", err);
       });
 
       return res.status(202).json({
@@ -1939,12 +1939,12 @@ The user is working on project: ${project.name}.
       const { id: projectId } = req.params;
       const { snapshotId, testDirectory } = req.body;
 
-      // Import muộn để tránh vòng lặp dependencies
+      // Late import to avoid circular dependencies
       const { createPlaywrightJob } =
         await import("../services/job.service.js");
       const { addJobToQueue } = await import("../services/queue.service.js");
 
-      // Khởi tạo job
+      // Initialize job
       const job = await createPlaywrightJob({
         projectId,
         snapshotId,
@@ -1952,9 +1952,9 @@ The user is working on project: ${project.name}.
         testDirectory,
       });
 
-      // Đẩy job vào queue để worker chạy ngầm
+      // Push job to queue for worker processing
       addJobToQueue("PLAYWRIGHT_SYSTEM_TEST", job.id).catch((err) => {
-        console.error("Lỗi khi thêm PLAYWRIGHT_SYSTEM_TEST vào queue:", err);
+        console.error("Error adding PLAYWRIGHT_SYSTEM_TEST to queue:", err);
       });
 
       return res.status(202).json({

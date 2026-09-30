@@ -99,7 +99,7 @@ export default function SettingsSidebar({
     );
   }
 
-  // --- default: sidebar dọc (desktop/tablet) ---
+  // --- default: vertical sidebar (desktop/tablet) ---
   return (
     <div className="flex flex-col h-full bg-[var(--color-surface)] border-r border-[var(--color-border)] w-full justify-between select-none font-sans">
       <div>

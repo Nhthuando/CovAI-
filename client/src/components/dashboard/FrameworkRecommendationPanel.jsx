@@ -21,7 +21,7 @@ export default function FrameworkRecommendationPanel({ projectId, snapshotId }) 
       const response = await getFrameworkRecommendationApi(projectId, snapshotId);
       setData(response.data);
     } catch (loadError) {
-      setError(loadError.message || "Không thể phân tích test framework.");
+      setError(loadError.message || "Unable to analyze test framework.");
     } finally {
       setLoading(false);
     }
@@ -37,7 +37,7 @@ export default function FrameworkRecommendationPanel({ projectId, snapshotId }) 
       const response = await selectTestingFrameworkApi(projectId, snapshotId, framework);
       setData(response.data);
     } catch (saveError) {
-      setError(saveError.message || "Không thể lưu framework đã chọn.");
+      setError(saveError.message || "Unable to save selected framework.");
     } finally {
       setSaving("");
     }
@@ -55,18 +55,18 @@ export default function FrameworkRecommendationPanel({ projectId, snapshotId }) 
           <Sparkles size={14} style={{ color: "#a78bfa" }} />
           <span style={{ color: "#e6edf3", fontSize: 12, fontWeight: 600 }}>Test framework</span>
         </div>
-        <button onClick={load} disabled={loading || Boolean(saving)} title="Phân tích lại" style={{ color: "#8b949e" }}>
+        <button onClick={load} disabled={loading || Boolean(saving)} title="Re-analyze" style={{ color: "#8b949e" }}>
           {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
         </button>
       </div>
 
       {error && <p style={{ color: "#f87171", fontSize: 11, lineHeight: 1.45, marginTop: 8 }}>{error}</p>}
-      {loading && !data && <p style={{ color: "#8b949e", fontSize: 11, marginTop: 8 }}>Đang phân tích dự án…</p>}
+      {loading && !data && <p style={{ color: "#8b949e", fontSize: 11, marginTop: 8 }}>Analyzing project…</p>}
 
       {data && (
         <>
           <p style={{ color: "#8b949e", fontSize: 11, marginTop: 8, lineHeight: 1.5 }}>
-            Đề xuất: <strong style={{ color: "#c4b5fd" }}>{labelFor(data.recommendedFramework)}</strong> · {data.projectType}
+            Recommended: <strong style={{ color: "#c4b5fd" }}>{labelFor(data.recommendedFramework)}</strong> · {data.projectType}
           </p>
           <div className="flex gap-2" style={{ marginTop: 10 }}>
             {(data.candidates || []).map((candidate) => {
@@ -95,7 +95,7 @@ export default function FrameworkRecommendationPanel({ projectId, snapshotId }) 
           </div>
           {data.selection?.requiresInstallation && (
             <p style={{ color: "#fbbf24", fontSize: 10, lineHeight: 1.45, marginTop: 8 }}>
-              Cần cài framework đã chọn trước khi chạy test.
+              Selected framework must be installed before running tests.
             </p>
           )}
           {data.explanation?.[0] && <p style={{ color: "#6e7681", fontSize: 10, lineHeight: 1.45, marginTop: 8 }}>{data.explanation[0]}</p>}

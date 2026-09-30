@@ -175,7 +175,7 @@ export const executeJobDirectly = async (type, jobId, customData = {}) => {
         await processInstallDepsJob(jobId);
         const updatedInstallJob = await prisma.job.findUnique({ where: { id: jobId }, select: { status: true } });
         if (updatedInstallJob?.status !== 'SUCCESS') {
-          console.error(`[Queue] INSTALL_DEPS thất bại, dừng COVERAGE_PIPELINE`);
+          console.error(`[Queue] INSTALL_DEPS failed, stopping COVERAGE_PIPELINE`);
           return;
         }
         const runJob = await createRunTestsJob({
@@ -234,9 +234,9 @@ const worker = new Worker(
     try {
       console.log(`[Queue] job.data = ${JSON.stringify({ type, jobId, ...customData })}`);
       await executeJobDirectly(type, jobId, customData);
-      console.log(`[Queue] Hoàn thành Job ${jobId} (Type: ${type})`);
+      console.log(`[Queue] Job ${jobId} completed (Type: ${type})`);
     } catch (error) {
-      console.error(`[Queue] Lỗi xử lý Job ${jobId} (Type: ${type}):`, error);
+      console.error(`[Queue] Error processing Job ${jobId} (Type: ${type}):`, error);
       throw error;
     }
   },
@@ -245,7 +245,7 @@ const worker = new Worker(
 
 worker.on('failed', (job, err) => {
   console.error(
-    `[Queue] BullMQ báo Job ${job?.data?.jobId} failed với lỗi: ${err.message}`,
+    `[Queue] BullMQ reported Job ${job?.data?.jobId} failed with error: ${err.message}`,
   );
 });
 
@@ -257,7 +257,7 @@ worker.on('error', (err) => {
 
 export const addJobToQueue = async (type, jobId, customData = {}, jobOptions = {}) => {
   if (!isRedisConnected && process.env.NODE_ENV !== 'test') {
-    console.warn(`[Queue] Redis không khả dụng. Thực thi Job ${jobId} (${type}) trực tiếp in-memory...`);
+    console.warn(`[Queue] Redis unavailable. Executing Job ${jobId} (${type}) directly in-memory...`);
     setTimeout(() => executeJobDirectly(type, jobId, customData), 10);
     return;
   }
@@ -265,10 +265,10 @@ export const addJobToQueue = async (type, jobId, customData = {}, jobOptions = {
   try {
     const dedupeKey = `${type}-${jobId}`.replace(/[^A-Za-z0-9_-]/g, '-');
     await jobQueue.add(type, { type, jobId, ...customData }, { jobId: dedupeKey, ...jobOptions });
-    console.log(`[Queue] Đã đưa Job ${jobId} (Type: ${type}) vào hàng đợi với dedupe key ${dedupeKey}.`);
+    console.log(`[Queue] Queued Job ${jobId} (Type: ${type}) with dedupe key ${dedupeKey}.`);
   } catch (redisErr) {
     if (process.env.NODE_ENV !== 'test') {
-      console.warn(`[Queue] Lỗi khi thêm job vào Redis (${redisErr.message}). Chuyển sang thực thi trực tiếp in-memory...`);
+      console.warn(`[Queue] Error adding job to Redis (${redisErr.message}). Falling back to direct in-memory execution...`);
       setTimeout(() => executeJobDirectly(type, jobId, customData), 10);
     } else {
       throw redisErr;
@@ -283,7 +283,7 @@ export const addSupertestCoveragePipeline = async (installJobId, supertestJobId,
   const pipelineJobId = `${supertestJobId}-pipeline`;
 
   if (!isRedisConnected && process.env.NODE_ENV !== 'test') {
-    console.warn(`[Queue] Redis không khả dụng cho Supertest pipeline. Chạy trực tiếp in-memory...`);
+    console.warn(`[Queue] Redis unavailable for Supertest pipeline. Running directly in-memory...`);
     setTimeout(async () => {
       await executeJobDirectly('INSTALL_DEPS', installJobId);
       await executeJobDirectly('SUPERTEST_COVERAGE', supertestJobId);

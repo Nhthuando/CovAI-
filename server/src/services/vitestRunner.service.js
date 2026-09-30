@@ -81,7 +81,7 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
     const containerHasVitest = fs.existsSync("/app/node_modules/vitest");
 
     if (!rootHasVitest && !backendHasVitest && !containerHasVitest) {
-        await addJobLog(jobId, "INFO", `Cài đặt vitest và coverage provider...`).catch(() => { });
+        await addJobLog(jobId, "INFO", `Installing vitest and coverage provider...`).catch(() => { });
         await dockerRunner.run({
             snapshotPath: rootDir,
             command: "npm install -D vitest @vitest/coverage-v8 vite --no-package-lock --legacy-peer-deps --progress=false",
@@ -115,7 +115,7 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
         const backendBin = resolveVitestBin(backendDir);
         const vitestCmd = `cd backend && ${backendBin} run ${targetArg} --coverage --coverage.reporter=json-summary --coverage.reporter=json --coverage.reporter=lcov --reporter=json --outputFile=../coverage/vitest-results.json --passWithNoTests`;
 
-        await addJobLog(jobId, "INFO", `[VITEST] Chạy Vitest tại backend/ với lệnh: ${vitestCmd} (timeout: ${Math.round(effectiveTimeout / 60000)}m)`).catch(() => { });
+        await addJobLog(jobId, "INFO", `[VITEST] Running Vitest in backend/ with command: ${vitestCmd} (timeout: ${Math.round(effectiveTimeout / 60000)}m)`).catch(() => { });
 
         result = await dockerRunner.run({
             snapshotPath: rootDir,
@@ -151,7 +151,7 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
         const rootResultsPathCheck = path.join(rootCoverageDir, "vitest-results.json");
         const backendResultsPathCheck = path.join(backendDir, "coverage", "vitest-results.json");
         if ((!result.success || (!fs.existsSync(rootResultsPathCheck) && !fs.existsSync(backendResultsPathCheck))) && result.exitCode !== null) {
-            await addJobLog(jobId, "WARN", `[VITEST] Vitest backend coverage gặp lỗi (exit ${result.exitCode}), thử lại chế độ kiểm thử cơ bản để lấy kết quả test...`).catch(() => { });
+            await addJobLog(jobId, "WARN", `[VITEST] Vitest backend coverage failed (exit ${result.exitCode}), retrying basic test mode to collect test results...`).catch(() => { });
             const fallbackCmd = `cd backend && ${backendBin} run ${targetArg} --passWithNoTests --reporter=json --outputFile=../coverage/vitest-results.json`;
             const fallbackResult = await dockerRunner.run({
                 snapshotPath: rootDir,
@@ -202,7 +202,7 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
 
         const coverageCmd = `${baseCmd} ${configArg} ${targetArg} --passWithNoTests --globals --coverage.enabled=true --coverage.provider=v8 --coverage.reporter=json-summary --coverage.reporter=json --coverage.reporter=lcov --reporter=json --outputFile=coverage/vitest-results.json`.replace(/\s+/g, " ").trim();
 
-        await addJobLog(jobId, "INFO", `[VITEST] Chạy Vitest tại rootDir: ${coverageCmd} (timeout: ${Math.round(effectiveTimeout / 60000)}m)`).catch(() => { });
+        await addJobLog(jobId, "INFO", `[VITEST] Running Vitest at rootDir: ${coverageCmd} (timeout: ${Math.round(effectiveTimeout / 60000)}m)`).catch(() => { });
 
         result = await dockerRunner.run({
             snapshotPath: rootDir,
@@ -215,7 +215,7 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
         const vitestResultsPathCheck = path.join(rootCoverageDir, "vitest-results.json");
         // If coverage failed (e.g. coverage provider mismatch), retry running vitest without coverage so test case results are still captured
         if ((!result.success || !fs.existsSync(vitestResultsPathCheck)) && result.exitCode !== null) {
-            await addJobLog(jobId, "WARN", `[VITEST] Vitest coverage gặp lỗi (exit ${result.exitCode}), thử lại chế độ kiểm thử cơ bản để lấy kết quả test...`).catch(() => { });
+            await addJobLog(jobId, "WARN", `[VITEST] Vitest coverage failed (exit ${result.exitCode}), retrying basic test mode to collect test results...`).catch(() => { });
             const fallbackCmd = `${baseCmd} ${configArg} ${targetArg} --passWithNoTests --reporter=json --outputFile=coverage/vitest-results.json`.replace(/\s+/g, " ").trim();
             const fallbackResult = await dockerRunner.run({
                 snapshotPath: rootDir,
@@ -244,7 +244,7 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
     const vitestResultsPath = path.join(rootCoverageDir, "vitest-results.json");
     const hasResults = fs.existsSync(vitestResultsPath);
 
-    await addJobLog(jobId, "INFO", `[VITEST] Hoàn thành vitest (exit ${result.exitCode}, kết quả: ${hasResults ? "có" : "không tìm thấy"}).`).catch(() => { });
+    await addJobLog(jobId, "INFO", `[VITEST] Vitest completed (exit ${result.exitCode}, results: ${hasResults ? "found" : "not found"}).`).catch(() => { });
 
     return {
         ...result,

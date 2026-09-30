@@ -334,7 +334,7 @@ export default function FileCodeExecutionView({
                 cursor: "pointer",
                 transition: "all 0.15s ease",
               }}
-              title="Xem luồng thực thi và độ bao phủ code"
+              title="View execution flow and code coverage"
             >
               <Eye size={12} />
               Coverage Flow
@@ -355,7 +355,7 @@ export default function FileCodeExecutionView({
                 cursor: "pointer",
                 transition: "all 0.15s ease",
               }}
-              title="Sửa code trực tiếp ngay trong giao diện này"
+              title="Edit code directly in this view"
             >
               <Edit3 size={12} />
               Edit Code
@@ -368,7 +368,7 @@ export default function FileCodeExecutionView({
                     background: "#f59e0b",
                     boxShadow: "0 0 6px #f59e0b",
                   }}
-                  title="Có thay đổi chưa lưu"
+                  title="Unsaved changes"
                 />
               )}
             </button>
@@ -380,13 +380,13 @@ export default function FileCodeExecutionView({
             <>
               {/* Statement & Line summary */}
               <span style={{ fontSize: 11, color: "var(--color-text-secondary, #8b949e)" }}>
-                Bao phủ câu lệnh:{" "}
+                Statement coverage:{" "}
                 <b style={{ color: stmtsPct >= 80 ? "#4ade80" : stmtsPct >= 60 ? "#fbbf24" : "#f87171" }}>
                   {totalStatements > 0 ? `${coveredStatements}/${totalStatements}` : `${coveredLines}/${executableLines}`} ({stmtsPct}%)
                 </b>
                 {executableLines > 0 && (
                   <span style={{ marginLeft: 6, color: "var(--color-text-muted, #6e7681)" }}>
-                    ({coveredLines}/{executableLines} dòng)
+                    ({coveredLines}/{executableLines} lines)
                   </span>
                 )}
               </span>
@@ -403,7 +403,7 @@ export default function FileCodeExecutionView({
                     border: "1px solid rgba(239, 68, 68, 0.3)",
                   }}
                 >
-                  ⚑ {missedLines} dòng chưa chạy
+                  ⚑ {missedLines} lines uncovered
                 </span>
               ) : executableLines > 0 ? (
                 <span
@@ -417,7 +417,7 @@ export default function FileCodeExecutionView({
                     border: "1px solid rgba(34, 197, 94, 0.3)",
                   }}
                 >
-                  ✓ 100% Bao phủ
+                  ✓ 100% Coverage
                 </span>
               ) : null}
 
@@ -446,7 +446,7 @@ export default function FileCodeExecutionView({
                     fontWeight: filterMode === "all" ? 700 : 500,
                   }}
                 >
-                  Tất cả ({codeLines.length})
+                  All ({codeLines.length})
                 </button>
                 <button
                   onClick={() => setFilterMode("covered")}
@@ -461,7 +461,7 @@ export default function FileCodeExecutionView({
                     fontWeight: filterMode === "covered" ? 700 : 500,
                   }}
                 >
-                  Đã chạy ({coveredLines})
+                  Executed ({coveredLines})
                 </button>
                 {missedLines > 0 && (
                   <button
@@ -477,7 +477,7 @@ export default function FileCodeExecutionView({
                       fontWeight: filterMode === "missed" ? 700 : 500,
                     }}
                   >
-                    Chưa chạy ({missedLines})
+                    Uncovered ({missedLines})
                   </button>
                 )}
               </div>
@@ -500,7 +500,7 @@ export default function FileCodeExecutionView({
                   transition: "all 0.15s ease",
                 }}
                 className="hover:opacity-90"
-                title="Chỉnh sửa mã nguồn trực tiếp tại đây"
+                title="Edit source code directly here"
               >
                 <Edit3 size={12} />
                 Edit Code
@@ -540,7 +540,7 @@ export default function FileCodeExecutionView({
                     cursor: isSaving ? "not-allowed" : "pointer",
                   }}
                   className="hover:bg-white/10 hover:text-white"
-                  title="Hủy các thay đổi chưa lưu"
+                  title="Discard unsaved changes"
                 >
                   <RotateCcw size={11} />
                   Discard
@@ -578,7 +578,7 @@ export default function FileCodeExecutionView({
                   transition: "all 0.15s ease",
                 }}
                 className={isDirty && !isSaving ? "hover:opacity-90" : ""}
-                title="Lưu file vào đĩa (Ctrl+S)"
+                title="Save file to disk (Ctrl+S)"
               >
                 {isSaving ? (
                   <>
@@ -617,7 +617,7 @@ export default function FileCodeExecutionView({
           }}
         >
           <CheckCircle2 size={13} />
-          <span>Đã lưu file thành công vào đĩa dự án!</span>
+          <span>File saved successfully to project disk!</span>
         </div>
       )}
 
@@ -635,7 +635,7 @@ export default function FileCodeExecutionView({
           }}
         >
           <AlertCircle size={13} />
-          <span>Lỗi khi lưu file: {errorMessage}</span>
+          <span>Error saving file: {errorMessage}</span>
         </div>
       )}
 
@@ -655,7 +655,7 @@ export default function FileCodeExecutionView({
         >
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <AlertTriangle size={13} />
-            <span>Bạn có thay đổi chưa lưu trong chế độ soạn thảo mã nguồn.</span>
+            <span>You have unsaved changes in the code editor.</span>
           </div>
           <button
             onClick={() => setViewMode("editor")}
@@ -668,7 +668,7 @@ export default function FileCodeExecutionView({
               fontWeight: 600,
             }}
           >
-            Chuyển sang Edit Code để lưu →
+            Switch to Edit Code to save →
           </button>
         </div>
       )}
@@ -716,8 +716,8 @@ export default function FileCodeExecutionView({
           {visibleLineEntries.length === 0 ? (
             <div style={{ padding: 24, textAlign: "center", color: "#6e7681" }}>
               {codeLines.length === 0
-                ? "Chưa có nội dung mã nguồn của file này."
-                : "Không có dòng nào phù hợp với bộ lọc đã chọn."}
+                ? "No source code content available for this file."
+                : "No lines match the selected filter."}
             </div>
           ) : (
             visibleLineEntries.map(({ lineNum, codeText, isExecutable, isCovered, isMissed, isFailed, hits, error, reason }) => {
@@ -751,11 +751,11 @@ export default function FileCodeExecutionView({
                   className="hover:bg-white/[0.04]"
                   title={
                     error
-                      ? `Lỗi: ${error}`
+                      ? `Error: ${error}`
                       : reason
                         ? reason
                         : isCovered
-                          ? `Đã thực thi ${hits} lần`
+                          ? `Executed ${hits} times`
                           : ""
                   }
                 >
@@ -852,7 +852,7 @@ export default function FileCodeExecutionView({
                             fontSize: 10,
                             cursor: "pointer",
                           }}
-                          title="AI gợi ý test case bao phủ dòng này"
+                          title="AI suggest test case covering this line"
                         >
                           <Sparkles size={10} />
                           <span>Suggest</span>

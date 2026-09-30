@@ -65,7 +65,7 @@ export default function FileBranchCFGView({
         {functionsWithCfg.length > 1 && (
           <div className="flex items-center gap-1 flex-wrap">
             <span className="text-[11px] text-[var(--color-text-secondary)]">
-              Hàm:
+              Function:
             </span>
             {functionsWithCfg.map((fn, idx) => {
               const isSelected = idx === selectedFnIndex;
@@ -81,7 +81,7 @@ export default function FileBranchCFGView({
                   }`}
                 >
                   {fn.name}(){" "}
-                  {hasBranches ? `(${fn.branches.length} rẽ nhánh)` : ""}
+                  {hasBranches ? `(${fn.branches.length} branches)` : ""}
                 </button>
               );
             })}
@@ -248,7 +248,7 @@ export default function FileBranchCFGView({
                 {(!isTrueCovered || !isFalseCovered) && (
                   <div className="mt-2.5 flex items-center gap-2">
                     <span className="text-xs text-[var(--color-danger)]">
-                      ⚠️ Còn nhánh chưa được kiểm thử
+                      ⚠️ Uncovered branches remain
                     </span>
                     {onSuggestTestcase && (
                       <button
@@ -256,7 +256,7 @@ export default function FileBranchCFGView({
                         className="flex items-center gap-1 px-2.5 py-1 rounded-[var(--radius-sm)] bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs cursor-pointer font-medium transition-colors border-none"
                       >
                         <Sparkles size={11} />
-                        <span>Gợi ý testcase</span>
+                        <span>Suggest testcase</span>
                       </button>
                     )}
                   </div>
@@ -267,7 +267,7 @@ export default function FileBranchCFGView({
         ) : (
           /* Function has no branches: straight pipeline */
           <div className="px-4 py-2 rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] text-xs font-mono">
-            Thực thi tuần tự (Không có rẽ nhánh điều kiện)
+            Sequential execution (No conditional branches)
           </div>
         )}
 

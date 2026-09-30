@@ -205,10 +205,10 @@ export const getCoverageSummary = async (req, res) => {
         const { snapshotId } = req.params;
 
         if (!snapshotId || typeof snapshotId !== "string" || snapshotId.trim().length === 0) {
-            return res.status(400).json({ success: false, message: "snapshotId không hợp lệ." });
+            return res.status(400).json({ success: false, message: "Invalid snapshotId." });
         }
 
-        // Verify snapshot tồn tại và thuộc project của user
+        // Verify snapshot exists and belongs to user project
         const snapshot = await prisma.projectSnapshot.findUnique({
             where: { id: snapshotId },
             select: {
@@ -225,11 +225,11 @@ export const getCoverageSummary = async (req, res) => {
         });
 
         if (!snapshot) {
-            return res.status(404).json({ success: false, message: "Snapshot không tồn tại." });
+            return res.status(404).json({ success: false, message: "Snapshot does not exist." });
         }
 
         if (snapshot.project.ownerId !== userId) {
-            return res.status(403).json({ success: false, message: "Bạn không có quyền truy cập snapshot này." });
+            return res.status(403).json({ success: false, message: "You do not have access to this snapshot." });
         }
 
         // Retrieve CoverageSummary
@@ -447,21 +447,21 @@ export const getCoverageSummary = async (req, res) => {
         });
 
     } catch (error) {
-        console.error("[CoverageSummary] Lỗi server:", error);
+        console.error("[CoverageSummary] Server error:", error);
         if (error instanceof ServiceError) {
             return res.status(error.statusCode).json({ success: false, message: error.message });
         }
-        return res.status(500).json({ success: false, message: "Có lỗi server!" });
+        return res.status(500).json({ success: false, message: "Internal server error!" });
     }
 };
 
 /**
  * POST /api/coverage/:snapshotId/run
  *
- * Trigger pipeline bất đồng bộ:
+ * Trigger asynchronous pipeline:
  *   INSTALL_DEPS Job (npm install) → on success → RUN_TESTS Job (jest --coverage)
  *
- * Trả về ngay installJobId để Frontend poll trạng thái.
+ * Returns installJobId immediately for Frontend polling.
  */
 export const runCoverage = async (req, res) => {
     try {
@@ -472,10 +472,10 @@ export const runCoverage = async (req, res) => {
 
         const { snapshotId } = req.params;
         if (!snapshotId || typeof snapshotId !== "string" || snapshotId.trim().length === 0) {
-            return res.status(400).json({ success: false, message: "snapshotId không hợp lệ." });
+            return res.status(400).json({ success: false, message: "Invalid snapshotId." });
         }
 
-        // Lấy snapshot + kiểm tra quyền
+        // Fetch snapshot and verify permissions
         const snapshot = await prisma.projectSnapshot.findUnique({
             where: { id: snapshotId },
             select: {
@@ -489,17 +489,17 @@ export const runCoverage = async (req, res) => {
         });
 
         if (!snapshot) {
-            return res.status(404).json({ success: false, message: "Snapshot không tồn tại." });
+            return res.status(404).json({ success: false, message: "Snapshot does not exist." });
         }
         if (snapshot.project.ownerId !== userId) {
-            return res.status(403).json({ success: false, message: "Bạn không có quyền truy cập snapshot này." });
+            return res.status(403).json({ success: false, message: "You do not have access to this snapshot." });
         }
 
-        // Snapshot phải có rootDir (INGEST job đã xong)
+        // Snapshot must have rootDir (INGEST job completed)
         if (!snapshot.rootDir) {
             return res.status(409).json({
                 success: false,
-                message: "Snapshot chưa được giải nén (INGEST job chưa hoàn thành). Hãy đợi INGEST xong.",
+                message: "Snapshot is not extracted yet (INGEST job pending). Please wait for INGEST to complete.",
             });
         }
 
@@ -513,36 +513,36 @@ export const runCoverage = async (req, res) => {
             return res.status(422).json({ success: false, message: "Invalid Node.js project: package.json was not found in the uploaded project." });
         }
 
-        // Tạo INSTALL_DEPS Job
+        // Create INSTALL_DEPS Job
         const installJob = await createInstallDepsJob({
             projectId: snapshot.projectId,
             snapshotId,
             userId,
         });
 
-        // Kick-off pipeline bất đồng bộ qua Queue (COVERAGE_PIPELINE)
+        // Kick-off async pipeline via Queue (COVERAGE_PIPELINE)
         addJobToQueue("COVERAGE_PIPELINE", installJob.id, {
             snapshotId,
             userId,
             projectId: snapshot.projectId
         }).catch((err) => {
-            console.error(`[Coverage Pipeline] Lỗi khi thêm vào queue:`, err);
+            console.error(`[Coverage Pipeline] Error adding to queue:`, err);
         });
 
         return res.status(200).json({
             success: true,
-            message: "Pipeline coverage đã được khởi động (INSTALL_DEPS → RUN_TESTS).",
+            message: "Coverage pipeline started (INSTALL_DEPS → RUN_TESTS).",
             installJobId: installJob.id,
             snapshotId,
-            hint: "Poll GET /api/job/:jobId để theo dõi trạng thái.",
+            hint: "Poll GET /api/job/:jobId to track status.",
         });
 
     } catch (error) {
-        console.error("[RunCoverage] Lỗi server:", error);
+        console.error("[RunCoverage] Server error:", error);
         if (error instanceof ServiceError) {
             return res.status(error.statusCode).json({ success: false, message: error.message });
         }
-        return res.status(500).json({ success: false, message: "Có lỗi server!" });
+        return res.status(500).json({ success: false, message: "Internal server error!" });
     }
 };
 
@@ -633,7 +633,7 @@ export const getCoverageFiles = async (req, res) => {
         // ── SCRUM-155: Validate params ───────────────────────────────────────
         const { snapshotId } = req.params;
         if (!snapshotId || typeof snapshotId !== "string" || snapshotId.trim().length === 0) {
-            return res.status(400).json({ success: false, message: "snapshotId không hợp lệ." });
+            return res.status(400).json({ success: false, message: "Invalid snapshotId." });
         }
 
         // ── SCRUM-158: Parse & validate sorting params ───────────────────────
@@ -664,13 +664,13 @@ export const getCoverageFiles = async (req, res) => {
         });
 
         if (!snapshot) {
-            return res.status(404).json({ success: false, message: "Snapshot không tồn tại." });
+            return res.status(404).json({ success: false, message: "Snapshot does not exist." });
         }
 
         if (snapshot.project.ownerId !== userId) {
             return res.status(403).json({
                 success: false,
-                message: "Bạn không có quyền truy cập snapshot này.",
+                message: "You do not have access to this snapshot.",
             });
         }
 
@@ -769,11 +769,11 @@ export const getCoverageFiles = async (req, res) => {
         });
 
     } catch (error) {
-        console.error("[CoverageFiles] Lỗi server:", error);
+        console.error("[CoverageFiles] Server error:", error);
         if (error instanceof ServiceError) {
             return res.status(error.statusCode).json({ success: false, message: error.message });
         }
-        return res.status(500).json({ success: false, message: "Có lỗi server!" });
+        return res.status(500).json({ success: false, message: "Internal server error!" });
     }
 };
 
@@ -786,7 +786,7 @@ export const getCoverageFiles = async (req, res) => {
  * GET /api/coverage/:snapshotId/functions
  *
  * Query params:
- *  - filePath : string  (optional) — lọc functions theo file path (SCRUM-163, partial match)
+ *  - filePath : string  (optional) — filter functions by file path (SCRUM-163, partial match)
  *  - sortBy   : "functionName" | "filePath" | "hit" | "startLine"  (default: "filePath")
  *  - order    : "asc" | "desc"  (default: "asc")
  *  - page     : number >= 1     (default: 1)
@@ -1254,7 +1254,7 @@ export const getCoverageFunctions = async (req, res) => {
         // ── SCRUM-160: Validate route param ───────────────────────────────────
         const { snapshotId } = req.params;
         if (!snapshotId || typeof snapshotId !== "string" || snapshotId.trim().length === 0) {
-            return res.status(400).json({ success: false, message: "snapshotId không hợp lệ." });
+            return res.status(400).json({ success: false, message: "Invalid snapshotId." });
         }
 
         // ── SCRUM-163: Parse filter + sorting + pagination ────────────────────
@@ -1288,13 +1288,13 @@ export const getCoverageFunctions = async (req, res) => {
         });
 
         if (!snapshot) {
-            return res.status(404).json({ success: false, message: "Snapshot không tồn tại." });
+            return res.status(404).json({ success: false, message: "Snapshot does not exist." });
         }
 
         if (snapshot.project.ownerId !== userId) {
             return res.status(403).json({
                 success: false,
-                message: "Bạn không có quyền truy cập snapshot này.",
+                message: "You do not have access to this snapshot.",
             });
         }
 
@@ -1378,11 +1378,11 @@ export const getCoverageFunctions = async (req, res) => {
         });
 
     } catch (error) {
-        console.error("[CoverageFunctions] Lỗi server:", error);
+        console.error("[CoverageFunctions] Server error:", error);
         if (error instanceof ServiceError) {
             return res.status(error.statusCode).json({ success: false, message: error.message });
         }
-        return res.status(500).json({ success: false, message: "Có lỗi server!" });
+        return res.status(500).json({ success: false, message: "Internal server error!" });
     }
 };
 

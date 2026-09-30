@@ -110,7 +110,7 @@ export const processVitestCoverageJob = async (jobId) => {
             await parseCoverageFilesForSnapshot({ projectId, snapshotId, coverageReport, userId });
             await parseCoverageFunctionsForSnapshot({ projectId, snapshotId, coverageReport, userId });
         } catch (parseErr) {
-            await addJobLog(jobId, "WARN", `[VitestCoverage] Cảnh báo parse coverage: ${parseErr.message}`).catch(() => { });
+            await addJobLog(jobId, "WARN", `[VitestCoverage] Coverage parsing warning: ${parseErr.message}`).catch(() => { });
         }
 
         await updateJobProgress(jobId, 80);

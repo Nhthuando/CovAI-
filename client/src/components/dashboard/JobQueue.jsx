@@ -1418,7 +1418,7 @@ export default function JobQueue({ projectId, onSync }) {
                               cursor: "pointer",
                               transition: "all 0.15s ease",
                             }}
-                            title="Tạm dừng / Hủy job đang chạy này"
+                            title="Pause / Cancel this running job"
                             className="hover:bg-red-500/20"
                           >
                             <Ban size={11} />

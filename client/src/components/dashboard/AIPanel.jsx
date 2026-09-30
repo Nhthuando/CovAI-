@@ -270,7 +270,7 @@ function TestSuggestionCard({
                 color: "var(--color-success)",
                 border: "1px solid var(--color-border)",
               }}
-              title="Tự động áp dụng test case cho cả Jest và Vitest"
+              title="Automatically apply test cases for both Jest and Vitest"
             >
               <Sparkles size={11} />
               <span>Apply all</span>
@@ -320,7 +320,7 @@ function TestSuggestionCard({
             border: "1px solid var(--color-border)",
           }}
         >
-          {current.isExisting ? "File có sẵn" : "File mới"}
+          {current.isExisting ? "Existing file" : "New file"}
         </span>
       </div>
 
@@ -349,14 +349,14 @@ function TestSuggestionCard({
               border: "none",
               cursor: current.isApplying ? "wait" : "pointer",
             }}
-            title={`Ghi test case ${current.framework?.toUpperCase()} vào ${current.targetTestFile}`}
+            title={`Write ${current.framework?.toUpperCase()} test cases to ${current.targetTestFile}`}
           >
             {current.isApplying ? (
               <Loader2 size={13} className="animate-spin" />
             ) : (
               <Check size={13} />
             )}
-            <span>Apply vào {current.targetTestFile}</span>
+            <span>Apply to {current.targetTestFile}</span>
           </motion.button>
         ) : (
           <>
@@ -369,7 +369,7 @@ function TestSuggestionCard({
               }}
             >
               <Check size={13} />
-              <span>Đã apply ({current.framework?.toUpperCase()})</span>
+              <span>Applied ({current.framework?.toUpperCase()})</span>
             </div>
 
             <motion.button
@@ -385,14 +385,14 @@ function TestSuggestionCard({
                 border: "1px solid var(--color-border)",
                 cursor: current.isUndoing ? "wait" : "pointer",
               }}
-              title="Hoàn tác file test về trạng thái trước khi Apply"
+              title="Revert test file to state before Apply"
             >
               {current.isUndoing ? (
                 <Loader2 size={13} className="animate-spin" />
               ) : (
                 <RotateCcw size={13} />
               )}
-              <span>Undo (Hoàn tác)</span>
+              <span>Undo</span>
             </motion.button>
 
             {onRunAnalysis && (
@@ -408,7 +408,7 @@ function TestSuggestionCard({
                   border: "1px solid var(--color-border)",
                   cursor: "pointer",
                 }}
-                title="Chạy lại Unit Test Coverage để xác nhận độ bao phủ tăng"
+                title="Re-run Unit Test Coverage to confirm coverage increase"
               >
                 <span>Run Analysis ↵</span>
               </motion.button>
@@ -493,7 +493,7 @@ function IdeChangesWidget({
               background: "rgba(255, 255, 255, 0.08)",
               border: "1px solid rgba(255, 255, 255, 0.15)",
             }}
-            title="Mở xem Review & Diff so sánh toàn diện"
+            title="Open Review & Diff for comprehensive comparison"
           >
             <FileDiff size={12} className="text-purple-400" />
             <span>Review</span>
@@ -510,7 +510,7 @@ function IdeChangesWidget({
                 background: "linear-gradient(135deg, #7c3aed, #9333ea)",
                 boxShadow: "0 0 10px rgba(124, 58, 237, 0.35)",
               }}
-              title="Áp dụng tất cả các file test đề xuất"
+              title="Apply all suggested test files"
             >
               {anyApplying ? (
                 <Loader2 size={12} className="animate-spin" />
@@ -554,7 +554,7 @@ function IdeChangesWidget({
                 <div
                   className="flex items-center gap-2 min-w-0 cursor-pointer flex-1 mr-2"
                   onClick={() => onReviewFile?.(file, idx)}
-                  title={`Bấm để review diff của ${file.targetTestFile}`}
+                  title={`Click to review diff of ${file.targetTestFile}`}
                 >
                   {getIdeFileIcon(fileName)}
                   <span className="font-semibold text-[#e6edf3] truncate hover:text-purple-300 transition-colors">
@@ -602,7 +602,7 @@ function IdeChangesWidget({
                     type="button"
                     onClick={() => onReviewFile?.(file, idx)}
                     className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
-                    title="Xem chi tiết Diff của file này"
+                    title="View Diff details for this file"
                   >
                     <Eye size={12} />
                     <span className="hidden sm:inline">Review</span>
@@ -619,7 +619,7 @@ function IdeChangesWidget({
                         background:
                           file.framework === "vitest" ? "#d97706" : "#7c3aed",
                       }}
-                      title={`Apply testcase vào ${file.targetTestFile}`}
+                      title={`Apply testcases to ${file.targetTestFile}`}
                     >
                       {isApplying ? (
                         <Loader2 size={11} className="animate-spin" />
@@ -645,7 +645,7 @@ function IdeChangesWidget({
                         disabled={isUndoing}
                         onClick={() => onUndoFile?.(file)}
                         className="p-1 rounded text-slate-400 hover:text-red-400 hover:bg-white/5 transition-colors cursor-pointer"
-                        title="Hoàn tác file này"
+                        title="Undo this file"
                       >
                         {isUndoing ? (
                           <Loader2 size={11} className="animate-spin" />
@@ -672,7 +672,7 @@ function IdeChangesWidget({
           }}
         >
           <div className="text-[11px] text-purple-300 font-medium">
-            💡 Các file test đã được ghi vào dự án. Chạy lại phân tích để xác nhận độ bao phủ:
+            💡 Test files have been written to the project. Re-run analysis to verify coverage increase:
           </div>
           <button
             type="button"
@@ -682,7 +682,7 @@ function IdeChangesWidget({
               background: "linear-gradient(135deg, #7c3aed, #a855f7)",
               boxShadow: "0 0 12px rgba(124, 58, 237, 0.4)",
             }}
-            title="Chạy lại Run Analysis"
+            title="Re-run Analysis"
           >
             <Play size={11} className="fill-white" />
             <span>Run Analysis ↵</span>
@@ -1018,8 +1018,8 @@ function ChatMessage({
                 lineHeight: 1.6,
               }}
             >
-              Bạn đã vượt quá giới hạn lượt chat miễn phí hôm nay để đảm bảo
-              chất lượng máy chủ.
+              You have exceeded the free chat limit today to ensure
+              server quality.
             </p>
             <p
               style={{
@@ -1029,7 +1029,7 @@ function ChatMessage({
                 fontStyle: "italic",
               }}
             >
-              Hãy quay lại vào ngày mai nhé! Cảm ơn bạn đã sử dụng hệ thống.
+              Please return tomorrow! Thank you for using the platform.
             </p>
           </div>
         </div>
@@ -1626,7 +1626,7 @@ export default function AIPanel({
       showToast({
         type: "warning",
         title: "No Project",
-        message: "Vui lòng chọn hoặc tạo một dự án trước khi sử dụng AI.",
+        message: "Please select or create a project before using AI.",
       });
       return;
     }
@@ -1637,8 +1637,8 @@ export default function AIPanel({
       id: getNextId(),
       role: "user",
       content: isTest
-        ? `✨ Hãy gợi ý test case bổ sung cho file test \`${filePath}\``
-        : `✨ Hãy gợi ý test case Jest & Vitest cho file \`${filePath}\``,
+        ? `✨ Please suggest additional test cases for test file \`${filePath}\``
+        : `✨ Please suggest Jest & Vitest test cases for file \`${filePath}\``,
       timestamp: new Date().toLocaleTimeString("vi-VN", {
         hour: "2-digit",
         minute: "2-digit",
@@ -1653,7 +1653,7 @@ export default function AIPanel({
       const data = res?.data;
 
       if (!data) {
-        throw new Error("Không nhận được dữ liệu gợi ý test case từ server.");
+        throw new Error("No test case suggestion data received from server.");
       }
 
       if (data.isFullyCovered) {
@@ -1665,11 +1665,11 @@ export default function AIPanel({
             minute: "2-digit",
           }),
           content:
-            `✅ **File \`${data.sourceFile || filePath}\` đã đạt 100% kiểm thử!**\n\n` +
+            `✅ **File \`${data.sourceFile || filePath}\` has reached 100% test coverage!**\n\n` +
             (data.targetTestFile ? `- **File test**: \`${data.targetTestFile}\` (${(data.framework || "jest").toUpperCase()})\n` : "") +
-            `- **Độ bao phủ**: 100% Statements, 100% Branches, 100% Lines\n` +
-            `- **Lỗi assertion**: 0 lỗi\n\n` +
-            `💬 *Ghi chú: File này đã vượt qua 100% và đạt độ bao phủ tối đa. Không cần gợi ý thêm testcase!*`,
+            `- **Coverage**: 100% Statements, 100% Branches, 100% Lines\n` +
+            `- **Assertion errors**: 0 errors\n\n` +
+            `💬 *Note: This file has passed 100% and reached maximum coverage. No additional testcases needed!*`,
         };
         setMessages((m) => [...m, assistantMsg]);
         return;
@@ -1705,31 +1705,31 @@ export default function AIPanel({
       let summaryText = "";
       if (hasMultiple) {
         summaryText =
-          `Tôi đã phân tích file **\`${data.sourceFile || filePath}\`** và đề xuất bộ test cho cả **Jest** và **Vitest**:\n\n` +
+          `I analyzed file **\`${data.sourceFile || filePath}\`** and suggested tests for both **Jest** and **Vitest**:\n\n` +
           suggestionsList
             .map(
               (s) =>
-                `- **${s.framework?.toUpperCase()}**: file \`${s.targetTestFile}\` (${s.isExisting ? "Đã có sẵn - sẽ cập nhật" : "File mới"})`,
+                `- **${s.framework?.toUpperCase()}**: file \`${s.targetTestFile}\` (${s.isExisting ? "Existing file - will update" : "New file"})`,
             )
             .join("\n") +
-          `\n- **Dòng chưa cover**: ${data.uncoveredLines?.length ? data.uncoveredLines.join(", ") : "100% dòng đã được kiểm thử"}\n` +
-          `- **Lỗi assertion**: ${data.failedLines?.length ? data.failedLines.join(", ") : "0 lỗi"}\n\n` +
-          `Bạn có thể chuyển đổi giữa các tab **JEST** và **VITEST** bên dưới để xem mã test và bấm **Apply** vào từng file test tương ứng (hoặc bấm **Apply cả 2**)!`;
+          `\n- **Uncovered lines**: ${data.uncoveredLines?.length ? data.uncoveredLines.join(", ") : "100% lines covered"}\n` +
+          `- **Assertion errors**: ${data.failedLines?.length ? data.failedLines.join(", ") : "0 errors"}\n\n` +
+          `You can toggle between **JEST** and **VITEST** tabs below to review test code and click **Apply** to write to test files (or click **Apply both**)!`;
       } else {
         const single = suggestionsList[0];
         summaryText = isTest
-          ? `Tôi đã phân tích và đề xuất bổ sung test case cho file test **\`${single.targetTestFile}\`** (${single.framework?.toUpperCase()}):\n\n` +
+          ? `I analyzed and suggested additional test cases for test file **\`${single.targetTestFile}\`** (${single.framework?.toUpperCase()}):\n\n` +
             (single.sourceFile && single.sourceFile !== single.targetTestFile
-              ? `- **File mã nguồn tương ứng**: \`${single.sourceFile}\`\n`
+              ? `- **Corresponding source file**: \`${single.sourceFile}\`\n`
               : "") +
-            `- **Dòng chưa cover trong mã nguồn**: ${data.uncoveredLines?.length ? data.uncoveredLines.join(", ") : "100% dòng đã được kiểm thử"}\n` +
-            `- **Lỗi assertion**: ${data.failedLines?.length ? data.failedLines.join(", ") : "0 lỗi"}\n` +
-            `- **File test**: \`${single.targetTestFile}\` (${single.isExisting ? "Đã có sẵn - sẽ cập nhật test case" : "File mới"})\n\n` +
+            `- **Uncovered lines in source**: ${data.uncoveredLines?.length ? data.uncoveredLines.join(", ") : "100% lines covered"}\n` +
+            `- **Assertion errors**: ${data.failedLines?.length ? data.failedLines.join(", ") : "0 errors"}\n` +
+            `- **Test file**: \`${single.targetTestFile}\` (${single.isExisting ? "Existing file - will update test cases" : "New file"})\n\n` +
             `${single.explanation}`
-          : `Tôi đã phân tích file **\`${single.sourceFile}\`** (${single.framework?.toUpperCase()}):\n\n` +
-            `- **Dòng chưa cover**: ${data.uncoveredLines?.length ? data.uncoveredLines.join(", ") : "100% dòng đã được kiểm thử"}\n` +
-            `- **Lỗi assertion**: ${data.failedLines?.length ? data.failedLines.join(", ") : "0 lỗi"}\n` +
-            `- **File test đích**: \`${single.targetTestFile}\` (${single.isExisting ? "Đã có sẵn - sẽ nối thêm" : "File mới"})\n\n` +
+          : `I analyzed file **\`${single.sourceFile}\`** (${single.framework?.toUpperCase()}):\n\n` +
+            `- **Uncovered lines**: ${data.uncoveredLines?.length ? data.uncoveredLines.join(", ") : "100% lines covered"}\n` +
+            `- **Assertion errors**: ${data.failedLines?.length ? data.failedLines.join(", ") : "0 errors"}\n` +
+            `- **Target test file**: \`${single.targetTestFile}\` (${single.isExisting ? "Existing file - will append" : "New file"})\n\n` +
             `${single.explanation}`;
       }
 
@@ -1757,7 +1757,7 @@ export default function AIPanel({
             hour: "2-digit",
             minute: "2-digit",
           }),
-          content: `❌ Lỗi khi gợi ý testcase cho \`${filePath}\`: ${err.message || "Không thể kết nối API AI."}`,
+          content: `❌ Error suggesting testcases for \`${filePath}\`: ${err.message || "Unable to connect to AI API."}`,
         },
       ]);
     } finally {
@@ -1813,7 +1813,7 @@ export default function AIPanel({
       showToast({
         type: "success",
         title: "Test Applied",
-        message: `Đã áp dụng testcase vào ${targetPath}`,
+        message: `Applied testcases to ${targetPath}`,
       });
       // Do not redirect view away so user stays in current context
     } catch (err) {
@@ -1830,7 +1830,7 @@ export default function AIPanel({
       showToast({
         type: "error",
         title: "Apply Failed",
-        message: err.message || "Không thể ghi file test.",
+        message: err.message || "Unable to write test file.",
       });
     }
   };
@@ -1874,7 +1874,7 @@ export default function AIPanel({
       showToast({
         type: "info",
         title: "Reverted",
-        message: `Đã hoàn tác file ${targetPath}`,
+        message: `Reverted file ${targetPath}`,
       });
     } catch (err) {
       setMessages((prev) =>
@@ -1890,7 +1890,7 @@ export default function AIPanel({
       showToast({
         type: "error",
         title: "Undo Failed",
-        message: err.message || "Không thể hoàn tác file.",
+        message: err.message || "Unable to revert file.",
       });
     }
   };
@@ -1910,7 +1910,7 @@ export default function AIPanel({
       showToast({
         type: "warning",
         title: "No Project",
-        message: "Vui lòng chọn hoặc tạo một dự án trước khi sử dụng AI.",
+        message: "Please select or create a project before using AI.",
       });
       return;
     }
@@ -1943,7 +1943,7 @@ export default function AIPanel({
         ? uncoveredFiles.map((f) => ({
           filePath: f,
           fileName: f.split("/").pop(),
-          reason: "Chưa đạt 100% coverage",
+          reason: "Has not reached 100% coverage",
         }))
         : []);
 
@@ -1953,7 +1953,7 @@ export default function AIPanel({
     const userMsg = {
       id: getNextId(),
       role: "user",
-      content: `✨ Phân tích độ bao phủ toàn bộ dự án và đề xuất testcase (${totalCount} file mã nguồn · ${testCountDisplay} file testcase)`,
+      content: `✨ Analyze overall project coverage and suggest testcases (${totalCount} source files · ${testCountDisplay} test files)`,
       timestamp: new Date().toLocaleTimeString("vi-VN", {
         hour: "2-digit",
         minute: "2-digit",
@@ -1966,7 +1966,7 @@ export default function AIPanel({
       id: loadingId,
       role: "assistant",
       isLoading: true,
-      content: `⚡ **Đang phân tích độ bao phủ toàn diện...**\n\nHệ thống đang đối chiếu bảng **Source File Coverage** với **${testCountDisplay} file test Jest & Vitest** để phát hiện các nhánh điều kiện còn thiếu và tổng hợp mã testcase...`,
+      content: `⚡ **Analyzing comprehensive coverage...**\n\nThe system is cross-referencing **Source File Coverage** against **${testCountDisplay} Jest & Vitest test files** to detect missing branches and generate testcase code...`,
       timestamp: new Date().toLocaleTimeString("vi-VN", {
         hour: "2-digit",
         minute: "2-digit",
@@ -2008,9 +2008,9 @@ export default function AIPanel({
             m.id === loadingId
               ? {
                 ...m,
-                content: `⚡ **Đang phân tích độ bao phủ toàn diện... (${completedCount}/${totalTargets} file hoàn tất)**\n\n` +
-                  (recentFile ? `↳ Vừa xử lý: \`${cleanFilePath(recentFile)}\`\n` : "") +
-                  `Hệ thống đang chạy song song để phát hiện các nhánh điều kiện còn thiếu và tổng hợp mã testcase...`,
+                content: `⚡ **Analyzing comprehensive coverage... (${completedCount}/${totalTargets} files completed)**\n\n` +
+                  (recentFile ? `↳ Just processed: \`${cleanFilePath(recentFile)}\`\n` : "") +
+                  `The system is running concurrently to detect missing conditional branches and synthesize testcases...`,
                 ideChanges: fileChanges.length > 0 ? {
                   totalFiles: fileChanges.length,
                   totalAdded: fileChanges.reduce((sum, f) => sum + (f.linesAdded || 0), 0),
@@ -2085,7 +2085,7 @@ export default function AIPanel({
                 linesDeleted: 0,
                 explanation:
                   primary.explanation ||
-                  "Bổ sung test case cho các nhánh chưa cover.",
+                  "Add test cases for uncovered branches.",
                 uncoveredLines: data.uncoveredLines || [],
                 failedLines: data.failedLines || [],
                 suggestions: suggestionsList.map((s, sIdx) => ({
@@ -2132,10 +2132,10 @@ export default function AIPanel({
       const totalDeleted = 0;
 
       // 1. Overview Markdown content
-      let overviewContent = `### 📊 Báo cáo phân tích độ bao phủ (${totalCount} file mã nguồn · ${testCountDisplay} file testcase Jest & Vitest)\n\n`;
+      let overviewContent = `### 📊 Coverage Analysis Report (${totalCount} source files · ${testCountDisplay} Jest & Vitest test files)\n\n`;
 
       if (passed100.length > 0) {
-        overviewContent += `#### ✅ Các file mã nguồn đã đạt chuẩn 100% toàn diện (${passed100.length}/${totalCount} file) — Không cần tạo thêm gợi ý:\n`;
+        overviewContent += `#### ✅ Source files reaching 100% comprehensive coverage (${passed100.length}/${totalCount} files) — No further suggestions needed:\n`;
         overviewContent += passed100
           .map((s, idx) => {
             const testList = s.matchingTests?.length
@@ -2147,22 +2147,22 @@ export default function AIPanel({
                 .join(", ")
               : s.primaryTestFile
                 ? `\`${cleanFilePath(s.primaryTestFile)}\``
-                : "Đã có test suite";
-            return `${idx + 1}. \`${cleanFilePath(s.filePath)}\` (Lines: ${s.linesPct ?? 100}% · Branches: ${s.branchesPct ?? 100}% · Funcs: ${s.funcsPct ?? 100}% · Stmts: ${s.stmtsPct ?? 100}%)\n   ↳ File test liên kết: ${testList} *(Đã đạt chuẩn 100% - Không cần gợi ý)*`;
+                : "Test suite present";
+            return `${idx + 1}. \`${cleanFilePath(s.filePath)}\` (Lines: ${s.linesPct ?? 100}% · Branches: ${s.branchesPct ?? 100}% · Funcs: ${s.funcsPct ?? 100}% · Stmts: ${s.stmtsPct ?? 100}%)\n   ↳ Linked test file: ${testList} *(Reached 100% coverage - No suggestions needed)*`;
           })
           .join("\n");
         overviewContent += "\n\n";
       }
 
       if (fileChanges.length > 0) {
-        overviewContent += `#### ⚡ Đề xuất thay đổi mã test (${fileChanges.length} file testcase):\n`;
-        overviewContent += `Đã tạo sẵn bộ testcase hoàn chỉnh bao phủ các nhánh điều kiện còn thiếu. Bạn có thể bấm **Review** để xem diff code chi tiết trước khi áp dụng, hoặc bấm **Apply all** để cập nhật toàn bộ vào dự án.`;
+        overviewContent += `#### ⚡ Proposed Test Code Updates (${fileChanges.length} test files):\n`;
+        overviewContent += `Complete testcases covering missing branches have been generated. You can click **Review** to inspect detailed code diffs before applying, or click **Apply all** to update all test files in the project.`;
       } else {
         overviewContent +=
-          `🎉 **Tuyệt vời! Tất cả ${totalCount} file mã nguồn và ${testCountDisplay} file test Jest & Vitest của dự án đã đạt 100% độ bao phủ!**\n\n` +
-          `- Toàn bộ test case đều chạy thành công (0 lỗi assertion).\n` +
-          `- Mã nguồn đã đạt 100% độ bao phủ (Statements, Branches, Lines, Functions).\n\n` +
-          `💬 *Ghi chú: Toàn bộ file đều đã đạt 100% nên không cần tạo thêm gợi ý testcase.*`;
+          `🎉 **Excellent! All ${totalCount} source files and ${testCountDisplay} Jest & Vitest test files have reached 100% coverage!**\n\n` +
+          `- All test cases executed successfully (0 assertion errors).\n` +
+          `- Source code has reached 100% coverage (Statements, Branches, Lines, Functions).\n\n` +
+          `💬 *Note: All files have reached 100% coverage so no further testcase suggestions are needed.*`;
       }
 
       const finalAssistantMsg = {
@@ -2201,7 +2201,7 @@ export default function AIPanel({
                 hour: "2-digit",
                 minute: "2-digit",
               }),
-              content: `❌ Lỗi khi tự động gợi ý testcase: ${err.message || "Không thể kết nối API AI."}`,
+              content: `❌ Error auto-generating testcases: ${err.message || "Unable to connect to AI API."}`,
             }
             : m,
         ),
@@ -2301,14 +2301,14 @@ export default function AIPanel({
       showToast({
         type: "success",
         title: "Test Applied",
-        message: `Đã áp dụng test case ${suggestion.framework?.toUpperCase()} vào ${suggestion.targetTestFile}`,
+        message: `Applied ${suggestion.framework?.toUpperCase()} test case to ${suggestion.targetTestFile}`,
       });
       // Stays in current view without redirecting
     } catch (err) {
       showToast({
         type: "error",
         title: "Apply Failed",
-        message: err.message || "Không thể áp dụng test case vào file.",
+        message: err.message || "Unable to apply test case to file.",
       });
       setMessages((prev) =>
         prev.map((m) => {
@@ -2390,14 +2390,14 @@ export default function AIPanel({
       showToast({
         type: "info",
         title: "Undone",
-        message: `Đã hoàn tác file ${suggestion.targetTestFile} về trạng thái trước đó.`,
+        message: `Reverted file ${suggestion.targetTestFile} to previous state.`,
       });
       // Stays in current view without redirecting
     } catch (err) {
       showToast({
         type: "error",
         title: "Undo Failed",
-        message: err.message || "Không thể hoàn tác file test.",
+        message: err.message || "Unable to revert test file.",
       });
       setMessages((prev) =>
         prev.map((m) => {

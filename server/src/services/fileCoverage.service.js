@@ -285,8 +285,8 @@ export const extractBranchFlow = (fileCoverageData, sourceCode = "") => {
                     trueSnippet = ternaryMatch[1].trim();
                     falseSnippet = ternaryMatch[2].replace(/;$/, "").trim();
                 } else {
-                    trueSnippet = "Biểu thức khi điều kiện đúng (? ...)";
-                    falseSnippet = "Biểu thức khi điều kiện sai (: ...)";
+                    trueSnippet = "Expression when condition is true (? ...)";
+                    falseSnippet = "Expression when condition is false (: ...)";
                 }
             } else {
                 const loc0 = branch.locations?.[0];
@@ -297,7 +297,7 @@ export const extractBranchFlow = (fileCoverageData, sourceCode = "") => {
                         : l.slice(loc0.start.column || 0).trim();
                 }
                 if (!trueSnippet) {
-                    trueSnippet = rawLine.replace(/if\s*\(.*?\)\s*/, "").trim() || "Thực thi khối if";
+                    trueSnippet = rawLine.replace(/if\s*\(.*?\)\s*/, "").trim() || "Execute if block";
                 }
 
                 const nextLine = (codeLines[line] || "").trim();
@@ -306,7 +306,7 @@ export const extractBranchFlow = (fileCoverageData, sourceCode = "") => {
                 } else if (nextLine) {
                     falseSnippet = nextLine;
                 } else {
-                    falseSnippet = "Bỏ qua if / Đi tiếp câu lệnh sau";
+                    falseSnippet = "Bypass if / proceed to next statement";
                 }
             }
 
@@ -315,7 +315,7 @@ export const extractBranchFlow = (fileCoverageData, sourceCode = "") => {
                 {
                     index: 0,
                     type: "True",
-                    label: isTernary ? "Nhánh True (? khi đúng)" : "Nhánh True (Thoả điều kiện if)",
+                    label: isTernary ? "True branch (? when true)" : "True branch (Condition met)",
                     hits: hit0,
                     pct: truePct,
                     covered: hit0 > 0,
@@ -325,7 +325,7 @@ export const extractBranchFlow = (fileCoverageData, sourceCode = "") => {
                 {
                     index: 1,
                     type: "False",
-                    label: isTernary ? "Nhánh False (: khi sai)" : "Nhánh False (Không thoả điều kiện / Đi tiếp)",
+                    label: isTernary ? "False branch (: when false)" : "False branch (Condition not met / continue)",
                     hits: hit1,
                     pct: falsePct,
                     covered: hit1 > 0,
@@ -341,8 +341,8 @@ export const extractBranchFlow = (fileCoverageData, sourceCode = "") => {
                 const isDefault = codeSnippet.includes("default");
                 const caseMatch = codeSnippet.match(/case\s+([^:]+):/i);
                 const caseLabel = isDefault
-                    ? "Nhánh Default"
-                    : (caseMatch ? `Case ${caseMatch[1].trim()}` : `Trường hợp #${idx + 1}`);
+                    ? "Default branch"
+                    : (caseMatch ? `Case ${caseMatch[1].trim()}` : `Case #${idx + 1}`);
 
                 return {
                     index: idx,
@@ -363,7 +363,7 @@ export const extractBranchFlow = (fileCoverageData, sourceCode = "") => {
                 return {
                     index: idx,
                     type: `Branch ${idx + 1}`,
-                    label: `Rẽ nhánh #${idx + 1}`,
+                    label: `Branch #${idx + 1}`,
                     hits,
                     pct: totalHits > 0 ? Math.round((hits / totalHits) * 100) : 0,
                     covered: hits > 0,

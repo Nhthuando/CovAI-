@@ -22,7 +22,7 @@ const detectDockerAvailable = () => {
 
 const DOCKER_AVAILABLE = detectDockerAvailable();
 if (!DOCKER_AVAILABLE) {
-  console.warn("[DockerRunner] Docker không khả dụng — sẽ chạy lệnh trực tiếp qua shell.");
+  console.warn("[DockerRunner] Docker unavailable — executing command directly via shell.");
 }
 
 /**
@@ -54,8 +54,8 @@ export const dockerRunner = {
       // sh -c: Wrap command to handle complex strings
 
       if (jobId) {
-        const mode = DOCKER_AVAILABLE ? "Docker container" : "shell trực tiếp";
-        addJobLog(jobId, "INFO", `[DockerRunner] Khởi động ${mode} với lệnh: ${command}`).catch(() => { });
+        const mode = DOCKER_AVAILABLE ? "Docker container" : "direct shell";
+        addJobLog(jobId, "INFO", `[DockerRunner] Starting ${mode} with command: ${command}`).catch(() => { });
       }
 
       let child;
@@ -105,7 +105,7 @@ export const dockerRunner = {
         timedOut = true;
         child.kill("SIGKILL");
         if (jobId) {
-          await addJobLog(jobId, "ERROR", `[DockerRunner] Quá thời gian thực thi (${timeoutMs}ms)`).catch(() => { });
+          await addJobLog(jobId, "ERROR", `[DockerRunner] Execution timed out (${timeoutMs}ms)`).catch(() => { });
         }
         reject(
           new ServiceError(
@@ -169,7 +169,7 @@ export const dockerRunner = {
         if (timedOut) return;
         const mode = DOCKER_AVAILABLE ? "Docker" : "shell";
         if (jobId) {
-          await addJobLog(jobId, "ERROR", `[DockerRunner] Lỗi khởi tạo ${mode}: ${err.message}`).catch(() => { });
+          await addJobLog(jobId, "ERROR", `[DockerRunner] Error initializing ${mode}: ${err.message}`).catch(() => { });
         }
         reject(new ServiceError(`Failed to spawn ${mode}: ${err.message}`, 500));
       });
@@ -185,7 +185,7 @@ export const dockerRunner = {
 
         if (jobId) {
           const status = code === 0 ? "INFO" : "ERROR";
-          await addJobLog(jobId, status, `[DockerRunner] Container thoát với mã code ${code}`).catch(() => { });
+          await addJobLog(jobId, status, `[DockerRunner] Container exited with code ${code}`).catch(() => { });
         }
 
         resolve({

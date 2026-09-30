@@ -19,8 +19,8 @@ import { parseJestResults, parseVitestResults, formatScenariosForPrisma } from "
 import { detectTestingFrameworks, classifyTestFile } from "../utils/testingFrameworkDetector.js";
 import prisma from "../config/prisma.js";
 
-const INSTALL_TIMEOUT_MS = 5 * 60 * 1000; // 5 phút
-const JEST_TIMEOUT_MS = 2.5 * 60 * 1000;   // 2.5 phút
+const INSTALL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const JEST_TIMEOUT_MS = 2.5 * 60 * 1000;   // 2.5 minutes
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -164,7 +164,7 @@ export const detectAndRunBuild = async (jobId, rootDir) => {
             const buildCmd = hasBuildScript ? "npm run build" : (hasTsConfig ? "npx tsc --skipLibCheck" : null);
             if (buildCmd) {
                 if (jobId) {
-                    await addJobLog(jobId, "INFO", `[BUILD] Phát hiện project cần build trước khi test (${buildCmd}). Đang tiến hành build...`).catch(() => { });
+                    await addJobLog(jobId, "INFO", `[BUILD] Detected project requires build before testing (${buildCmd}). Building...`).catch(() => { });
                 }
                 const buildRes = await dockerRunner.run({
                     snapshotPath: rootDir,
@@ -174,12 +174,12 @@ export const detectAndRunBuild = async (jobId, rootDir) => {
                 });
                 if (buildRes.success || buildRes.exitCode === 0) {
                     if (jobId) {
-                        await addJobLog(jobId, "INFO", `[BUILD] Build project thành công.`).catch(() => { });
+                        await addJobLog(jobId, "INFO", `[BUILD] Project built successfully.`).catch(() => { });
                     }
                     return true;
                 } else {
                     if (jobId) {
-                        await addJobLog(jobId, "WARN", `[BUILD] Build kết thúc với mã ${buildRes.exitCode}: ${(buildRes.stderr || buildRes.stdout || "").slice(0, 300)}`).catch(() => { });
+                        await addJobLog(jobId, "WARN", `[BUILD] Build finished with exit code ${buildRes.exitCode}: ${(buildRes.stderr || buildRes.stdout || "").slice(0, 300)}`).catch(() => { });
                     }
                     return false;
                 }
@@ -187,7 +187,7 @@ export const detectAndRunBuild = async (jobId, rootDir) => {
         }
     } catch (err) {
         if (jobId) {
-            await addJobLog(jobId, "WARN", `[BUILD] Lỗi khi kiểm tra/thực thi build: ${err.message}`).catch(() => { });
+            await addJobLog(jobId, "WARN", `[BUILD] Error checking/executing build: ${err.message}`).catch(() => { });
         }
     }
     return false;
@@ -433,7 +433,7 @@ export const findUnitFiles = (rootDir) => {
 };
 
 /**
- * SCRUM-139: Chạy npm install trong rootDir thông qua Docker nếu thiếu dependencies.
+ * SCRUM-139: Run npm install in rootDir via Docker if dependencies missing.
  * @returns {Promise<void>}
  */
 const runNpmInstall = async (jobId, rootDir) => {
@@ -447,9 +447,9 @@ const runNpmInstall = async (jobId, rootDir) => {
     const backendHasDeps = !fs.existsSync(backendPkg) || (fs.existsSync(backendModulesDir) && fs.readdirSync(backendModulesDir).length > 3);
 
     if (rootHasDeps && backendHasDeps) {
-        await addJobLog(jobId, "INFO", "[SCRUM-139] node_modules đã tồn tại đầy đủ tại root.").catch(() => { });
+        await addJobLog(jobId, "INFO", "[SCRUM-139] node_modules exists at root.").catch(() => { });
     } else if (hasRootPkg && !rootHasDeps) {
-        await addJobLog(jobId, "INFO", `[SCRUM-139] Bắt đầu npm install tại: ${rootDir}`).catch(() => { });
+        await addJobLog(jobId, "INFO", `[SCRUM-139] Starting npm install at: ${rootDir}`).catch(() => { });
 
         const result = await dockerRunner.run({
             snapshotPath: rootDir,
@@ -459,13 +459,13 @@ const runNpmInstall = async (jobId, rootDir) => {
         });
 
         if (result.success) {
-            await addJobLog(jobId, "INFO", "[SCRUM-139] npm install hoàn thành thành công.").catch(() => { });
+            await addJobLog(jobId, "INFO", "[SCRUM-139] npm install completed successfully.").catch(() => { });
         } else {
             if (fs.existsSync(nodeModulesDir) && fs.readdirSync(nodeModulesDir).length > 2) {
-                await addJobLog(jobId, "WARN", `[SCRUM-139] npm install có cảnh báo (exit code ${result.exitCode}), tiếp tục chạy tests...`).catch(() => { });
+                await addJobLog(jobId, "WARN", `[SCRUM-139] npm install warning (exit code ${result.exitCode}), continuing test execution...`).catch(() => { });
             } else {
                 const errorDetail = result.stderr?.trim() || result.stdout?.trim() || "";
-                const msg = `[SCRUM-139] npm install thất bại với exit code ${result.exitCode}${errorDetail ? `: ${errorDetail.slice(0, 200)}` : ""}`;
+                const msg = `[SCRUM-139] npm install failed with exit code ${result.exitCode}${errorDetail ? `: ${errorDetail.slice(0, 200)}` : ""}`;
                 await addJobLog(jobId, "ERROR", msg).catch(() => { });
                 throw new Error(msg);
             }
@@ -499,7 +499,7 @@ const runNpmInstall = async (jobId, rootDir) => {
             const relSub = path.relative(rootDir, subDir).replace(/\\/g, "/");
             const subModules = path.join(subDir, "node_modules");
             if (!fs.existsSync(subModules) || fs.readdirSync(subModules).length <= 2) {
-                await addJobLog(jobId, "INFO", `[SCRUM-139] Cài đặt dependencies cho ${relSub}...`).catch(() => { });
+                await addJobLog(jobId, "INFO", `[SCRUM-139] Installing dependencies for ${relSub}...`).catch(() => { });
                 await dockerRunner.run({
                     snapshotPath: rootDir,
                     command: `npm install --prefix ${relSub} --prefer-offline --legacy-peer-deps --no-audit --no-fund --progress=false`,
@@ -516,7 +516,7 @@ const runNpmInstall = async (jobId, rootDir) => {
         if (fs.existsSync(rootPkg)) {
             const pkg = JSON.parse(fs.readFileSync(rootPkg, "utf8"));
             if (pkg.scripts && (pkg.scripts.build || pkg.scripts["build:ts"] || pkg.scripts.compile)) {
-                await addJobLog(jobId, "INFO", `[SCRUM-139] Thực hiện build cho project...`).catch(() => { });
+                await addJobLog(jobId, "INFO", `[SCRUM-139] Building project...`).catch(() => { });
                 await dockerRunner.run({
                     snapshotPath: rootDir,
                     command: "npm run build --if-present",
@@ -529,7 +529,7 @@ const runNpmInstall = async (jobId, rootDir) => {
 };
 
 /**
- * SCRUM-140: Chạy jest --coverage trong rootDir thông qua Docker.
+ * SCRUM-140: Run jest --coverage in rootDir via Docker.
  * @param {string} jobId
  * @param {string} rootDir
  * @param {string|null} jestConfigPath
@@ -887,7 +887,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
         const fileCount = Array.isArray(rootFiles) && rootFiles.length > 0 ? rootFiles.length : 50;
         const effectiveTimeout = Math.min(4 * 60 * 1000, Math.max(JEST_TIMEOUT_MS, fileCount * 4 * 1000));
 
-        await addJobLog(jobId, "INFO", `[SCRUM-140] Bắt đầu jest --coverage (${rootFiles.length > 0 ? rootFiles.length + ' file' : 'toàn bộ'}) tại Docker container (timeout: ${Math.round(effectiveTimeout / 60000)}m)`).catch(() => { });
+        await addJobLog(jobId, "INFO", `[SCRUM-140] Starting jest --coverage (${rootFiles.length > 0 ? rootFiles.length + ' files' : 'all'}) in Docker container (timeout: ${Math.round(effectiveTimeout / 60000)}m)`).catch(() => { });
 
         let rootPkgModified = false;
         let originalRootPkgContent = null;
@@ -980,7 +980,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
         const fileArgs = relativeSubFiles.map(f => `"${f}"`).join(" ");
 
         const subTimeout = Math.min(4 * 60 * 1000, Math.max(JEST_TIMEOUT_MS, relativeSubFiles.length * 4 * 1000));
-        await addJobLog(jobId, "INFO", `[SCRUM-140] Đang chạy Jest cho subpackage ${pkgDir} (${relativeSubFiles.length} file)...`).catch(() => { });
+        await addJobLog(jobId, "INFO", `[SCRUM-140] Running Jest for subpackage ${pkgDir} (${relativeSubFiles.length} files)...`).catch(() => { });
 
         // Generate isolated setup and jest config for subpackage
         const tempSubSetupName = `covai-setup-${subSlug}.js`;
@@ -1082,7 +1082,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                     fs.copyFileSync(subResultsPath, rootJestResultsPath);
                 }
             } catch (err) {
-                console.warn(`[runJestCoverage] Lỗi merge test results từ ${pkgDir}:`, err.message);
+                console.warn(`[runJestCoverage] Error merging test results from ${pkgDir}:`, err.message);
             }
         }
 
@@ -1099,7 +1099,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                 const mergedFinal = mergeCoverageFinal(rootFinalData, subFinalData);
                 fs.writeFileSync(rootCovFinal, JSON.stringify(mergedFinal, null, 2), "utf8");
             } catch (err) {
-                console.warn(`[runJestCoverage] Lỗi merge coverage-final từ ${pkgDir}:`, err.message);
+                console.warn(`[runJestCoverage] Error merging coverage-final from ${pkgDir}:`, err.message);
             }
         }
 
@@ -1116,7 +1116,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                 const mergedSummary = mergeCoverageSummaries(rootSummaryData, subSummaryData);
                 fs.writeFileSync(rootCovSummary, JSON.stringify(mergedSummary, null, 2), "utf8");
             } catch (err) {
-                console.warn(`[runJestCoverage] Lỗi merge coverage-summary từ ${pkgDir}:`, err.message);
+                console.warn(`[runJestCoverage] Error merging coverage-summary from ${pkgDir}:`, err.message);
             }
         }
 
@@ -1145,17 +1145,17 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
     const summaryFile = path.join(covDir, "coverage-summary.json");
     const mainResultsPath = path.join(covDir, "jest-results.json");
     if (overallExitCode >= 2 && !fs.existsSync(summaryFile) && !fs.existsSync(mainResultsPath)) {
-        const msg = `[SCRUM-140] jest kết thúc với exit code ${overallExitCode} và không sinh coverage`;
+        const msg = `[SCRUM-140] jest exited with exit code ${overallExitCode} without generating coverage`;
         await addJobLog(jobId, "ERROR", msg).catch(() => { });
         throw new Error(msg);
     }
 
-    await addJobLog(jobId, "INFO", `[SCRUM-140] jest hoàn thành (exit ${overallExitCode}).`).catch(() => { });
+    await addJobLog(jobId, "INFO", `[SCRUM-140] jest completed (exit ${overallExitCode}).`).catch(() => { });
     return { exitCode: overallExitCode };
 };
 
 /**
- * SCRUM-141: Parse coverage-final.json để lấy per-file coverage data.
+ * SCRUM-141: Parse coverage-final.json for per-file coverage data.
  */
 export const readCoverageFinal = (coverageDir) => {
     const finalPath = path.join(coverageDir, "coverage-final.json");
@@ -1188,14 +1188,14 @@ export const readCoverageFinal = (coverageDir) => {
 };
 
 /**
- * SCRUM-141: Parse per-file coverage từ coverage-final.json và lưu CoverageFile vào DB.
+ * SCRUM-141: Parse per-file coverage from coverage-final.json and persist CoverageFile.
  */
 export const parseFinalCoverageFiles = async (jobId, snapshotId, projectId, userId, coverageDir) => {
     const { parseCoverageFilesForSnapshot } = await import("./coverageFileParser.service.js");
     const coverageReport = readCoverageFinal(coverageDir);
 
     if (!coverageReport) {
-        await addJobLog(jobId, "WARN", "[SCRUM-141] coverage-final.json không tồn tại, bỏ qua parse CoverageFile.").catch(() => { });
+        await addJobLog(jobId, "WARN", "[SCRUM-141] coverage-final.json does not exist, skipping CoverageFile parsing.").catch(() => { });
         return;
     }
 
@@ -1209,22 +1209,22 @@ export const parseFinalCoverageFiles = async (jobId, snapshotId, projectId, user
         await addJobLog(
             jobId,
             "INFO",
-            `[SCRUM-141] Đã parse ${result.totalFiles} CoverageFile records.`
+            `[SCRUM-141] Parsed ${result.totalFiles} CoverageFile records.`
         ).catch(() => { });
     } catch (err) {
-        await addJobLog(jobId, "WARN", `[SCRUM-141] Lỗi parse CoverageFile: ${err.message}`).catch(() => { });
+        await addJobLog(jobId, "WARN", `[SCRUM-141] Error parsing CoverageFile: ${err.message}`).catch(() => { });
     }
 };
 
 /**
- * SCRUM-141: Parse per-function coverage từ coverage-final.json và lưu CoverageFunction vào DB.
+ * SCRUM-141: Parse per-function coverage from coverage-final.json and persist CoverageFunction.
  */
 export const parseFinalCoverageFunctions = async (jobId, snapshotId, projectId, userId, coverageDir) => {
     const { parseCoverageFunctionsForSnapshot } = await import("./coverageFunctionParser.service.js");
     const coverageReport = readCoverageFinal(coverageDir);
 
     if (!coverageReport) {
-        await addJobLog(jobId, "WARN", "[SCRUM-141] coverage-final.json không tồn tại, bỏ qua parse CoverageFunction.").catch(() => { });
+        await addJobLog(jobId, "WARN", "[SCRUM-141] coverage-final.json does not exist, skipping CoverageFunction parsing.").catch(() => { });
         return;
     }
 
@@ -1238,10 +1238,10 @@ export const parseFinalCoverageFunctions = async (jobId, snapshotId, projectId, 
         await addJobLog(
             jobId,
             "INFO",
-            `[SCRUM-141] Đã parse ${result.totalFunctions} CoverageFunction records.`
+            `[SCRUM-141] Parsed ${result.totalFunctions} CoverageFunction records.`
         ).catch(() => { });
     } catch (err) {
-        await addJobLog(jobId, "WARN", `[SCRUM-141] Lỗi parse CoverageFunction: ${err.message}`).catch(() => { });
+        await addJobLog(jobId, "WARN", `[SCRUM-141] Error parsing CoverageFunction: ${err.message}`).catch(() => { });
     }
 };
 
@@ -1398,12 +1398,12 @@ export const mergeTestResults = (...results) => {
  * Runs both Jest and Vitest unit tests in a single unified workflow,
  * supporting projects with thousands of test cases.
  *
- * @param {string} jobId  - ID của Job có type="RUN_TESTS"
+ * @param {string} jobId  - ID of Job with type="RUN_TESTS"
  */
 export const processRunTestsJob = async (jobId) => {
     assertStringField(jobId, "jobId");
 
-    // ── SCRUM-143: Chuyển sang RUNNING ───────────────────────────────────────
+    // ── SCRUM-143: Transition to RUNNING ──────────────────────────────────────
     try {
         await markJobRunning(jobId);
     } catch (error) {
@@ -1412,25 +1412,25 @@ export const processRunTestsJob = async (jobId) => {
             error.message === "Only queued jobs can start" ||
             error.message === "Cannot start a canceled job"
         ) {
-            console.log(`[RunTestsJob ${jobId}] Bỏ qua: ${error.message}`);
+            console.log(`[RunTestsJob ${jobId}] Skipped: ${error.message}`);
             return;
         }
-        console.error(`[RunTestsJob ${jobId}] Lỗi khi chuyển RUNNING:`, error);
+        console.error(`[RunTestsJob ${jobId}] Error transitioning to RUNNING:`, error);
         return;
     }
 
-    // ── Lấy thông tin Job + Snapshot ─────────────────────────────────────────
+    // ── Fetch Job + Snapshot info ──────────────────────────────────────────
     let job;
     try {
         job = await getJobById(jobId);
     } catch (error) {
-        console.error(`[RunTestsJob ${jobId}] Không lấy được Job:`, error);
+        console.error(`[RunTestsJob ${jobId}] Unable to fetch Job:`, error);
         return;
     }
 
-    // Validate snapshot có rootDir
+    // Validate snapshot has rootDir
     if (!job.snapshot?.rootDir) {
-        const msg = "Snapshot chưa có rootDir — INGEST job chưa hoàn thành.";
+        const msg = "Snapshot does not have rootDir — INGEST job pending.";
         console.error(`[RunTestsJob ${jobId}] ${msg}`);
         await markJobFailed(jobId, new Error(msg)).catch(() => { });
         return;
@@ -1443,7 +1443,7 @@ export const processRunTestsJob = async (jobId) => {
     const jestConfigPath = job.snapshot.jestConfigPath ?? null;
     const coverageDir = path.join(rootDir, "coverage");
 
-    // Khởi tạo output record
+    // Initialize output record
     await saveJobOutput(jobId, { stdout: "", stderr: "" }).catch(() => { });
 
     // Invalidate stale coverage files from any previous run to ensure fresh and real metrics
@@ -1464,13 +1464,13 @@ export const processRunTestsJob = async (jobId) => {
         }
     }
 
-    // ── SCRUM-144: Progress 10% — bắt đầu ───────────────────────────────────
+    // ── SCRUM-144: Progress 10% — started ───────────────────────────────────
     await updateJobProgress(jobId, 10).catch(() => { });
-    await addJobLog(jobId, "INFO", "Pipeline RUN_TESTS bắt đầu.").catch(() => { });
+    await addJobLog(jobId, "INFO", "RUN_TESTS pipeline started.").catch(() => { });
 
     try {
         // ── SCRUM-139: Install dependencies (Fast check) ─────────────────────
-        await addJobLog(jobId, "INFO", "Bước 1/4: Kiểm tra & cài đặt dependencies...").catch(() => { });
+        await addJobLog(jobId, "INFO", "Step 1/4: Checking & installing dependencies...").catch(() => { });
         await runNpmInstall(jobId, rootDir);
         await detectAndRunBuild(jobId, rootDir);
 
@@ -1478,7 +1478,7 @@ export const processRunTestsJob = async (jobId) => {
         await updateJobProgress(jobId, 25).catch(() => { });
 
         // ── SCRUM-140: Discover and classify unit test files ──────────────────
-        await addJobLog(jobId, "INFO", "Bước 2/4: Quét và phân loại test files (Jest & Vitest)...").catch(() => { });
+        await addJobLog(jobId, "INFO", "Step 2/4: Scanning and classifying test files (Jest & Vitest)...").catch(() => { });
 
         const { jestFiles, vitestFiles, skippedFiles } = findUnitFiles(rootDir);
         const hasVitest = vitestFiles.length > 0;
@@ -1488,7 +1488,7 @@ export const processRunTestsJob = async (jobId) => {
         await addJobLog(
             jobId,
             "INFO",
-            `[FRAMEWORK] Phát hiện: Jest (${jestFiles.length} file), Vitest (${vitestFiles.length} file) | Đã loại trừ ${skippedFiles.length} file integration/frontend.`
+            `[FRAMEWORK] Detected: Jest (${jestFiles.length} files), Vitest (${vitestFiles.length} files) | Excluded ${skippedFiles.length} integration/frontend files.`
         ).catch(() => { });
 
         let runnerResult = { exitCode: 0 };
@@ -1496,26 +1496,26 @@ export const processRunTestsJob = async (jobId) => {
         if (runBoth) {
             // Step 2a: Run Vitest first
             await updateJobProgress(jobId, 40).catch(() => { });
-            await addJobLog(jobId, "INFO", `[VITEST] 1/2: Đang chạy ${vitestFiles.length} file Vitest...`).catch(() => { });
+            await addJobLog(jobId, "INFO", `[VITEST] 1/2: Running ${vitestFiles.length} Vitest files...`).catch(() => { });
             try {
                 const { runVitestCoverage } = await import("./vitestRunner.service.js");
                 await runVitestCoverage(jobId, rootDir, job.snapshot?.vitestCommand, vitestFiles);
             } catch (vitestErr) {
-                await addJobLog(jobId, "WARN", `[VITEST] Cảnh báo chạy Vitest: ${vitestErr.message}`).catch(() => { });
+                await addJobLog(jobId, "WARN", `[VITEST] Vitest execution warning: ${vitestErr.message}`).catch(() => { });
             }
 
             // Step 2b: Run Jest
             await updateJobProgress(jobId, 60).catch(() => { });
-            await addJobLog(jobId, "INFO", `[JEST] 2/2: Đang chạy ${jestFiles.length} file Jest...`).catch(() => { });
+            await addJobLog(jobId, "INFO", `[JEST] 2/2: Running ${jestFiles.length} Jest files...`).catch(() => { });
             try {
                 runnerResult = await runJestCoverage(jobId, rootDir, jestConfigPath, jestFiles);
             } catch (jestErr) {
-                await addJobLog(jobId, "WARN", `[JEST] Cảnh báo chạy Jest: ${jestErr.message}`).catch(() => { });
+                await addJobLog(jobId, "WARN", `[JEST] Jest execution warning: ${jestErr.message}`).catch(() => { });
             }
 
             // Step 2c: Merge coverage & test results
             await updateJobProgress(jobId, 75).catch(() => { });
-            await addJobLog(jobId, "INFO", "Bước 3/4: Hợp nhất kết quả coverage từ Jest & Vitest...").catch(() => { });
+            await addJobLog(jobId, "INFO", "Step 3/4: Merging coverage results from Jest & Vitest...").catch(() => { });
 
             const jestFinalPath = path.join(coverageDir, "jest-coverage-final.json");
             const vitestFinalPath = path.join(coverageDir, "vitest-coverage-final.json");
@@ -1584,10 +1584,10 @@ export const processRunTestsJob = async (jobId) => {
                     };
                     if (formattedScenarios) dataPayload.scenarios = formattedScenarios;
                     await prisma.testRun.create({ data: dataPayload });
-                    await addJobLog(jobId, "INFO", `[SCRUM-141] Đã lưu TestRun (JEST): ${jestRunData.totalTests} tests (${jestRunData.passedTests} passed).`).catch(() => { });
+                    await addJobLog(jobId, "INFO", `[SCRUM-141] Saved TestRun (JEST): ${jestRunData.totalTests} tests (${jestRunData.passedTests} passed).`).catch(() => { });
                 }
             } catch (e) {
-                console.warn("[processRunTestsJob] Lỗi parse jest TestRun:", e.message);
+                console.warn("[processRunTestsJob] Error parsing Jest TestRun:", e.message);
             }
 
             // Save TestRun for VITEST
@@ -1605,15 +1605,15 @@ export const processRunTestsJob = async (jobId) => {
                     };
                     if (formattedScenarios) dataPayload.scenarios = formattedScenarios;
                     await prisma.testRun.create({ data: dataPayload });
-                    await addJobLog(jobId, "INFO", `[SCRUM-141] Đã lưu TestRun (VITEST): ${vitestRunData.totalTests} tests (${vitestRunData.passedTests} passed).`).catch(() => { });
+                    await addJobLog(jobId, "INFO", `[SCRUM-141] Saved TestRun (VITEST): ${vitestRunData.totalTests} tests (${vitestRunData.passedTests} passed).`).catch(() => { });
                 }
             } catch (e) {
-                console.warn("[processRunTestsJob] Lỗi parse vitest TestRun:", e.message);
+                console.warn("[processRunTestsJob] Error parsing Vitest TestRun:", e.message);
             }
 
         } else if (hasVitest) {
             await updateJobProgress(jobId, 50).catch(() => { });
-            await addJobLog(jobId, "INFO", `[VITEST] Chạy ${vitestFiles.length} file Vitest...`).catch(() => { });
+            await addJobLog(jobId, "INFO", `[VITEST] Running ${vitestFiles.length} Vitest files...`).catch(() => { });
             const { runVitestCoverage } = await import("./vitestRunner.service.js");
             runnerResult = await runVitestCoverage(jobId, rootDir, job.snapshot?.vitestCommand, vitestFiles);
             await updateJobProgress(jobId, 70).catch(() => { });
@@ -1631,11 +1631,11 @@ export const processRunTestsJob = async (jobId) => {
                 };
                 if (formattedScenarios) dataPayload.scenarios = formattedScenarios;
                 await prisma.testRun.create({ data: dataPayload });
-                await addJobLog(jobId, "INFO", `[SCRUM-141] Đã lưu TestRun (VITEST): ${testResults.totalTests} tests.`).catch(() => { });
+                await addJobLog(jobId, "INFO", `[SCRUM-141] Saved TestRun (VITEST): ${testResults.totalTests} tests.`).catch(() => { });
             }
         } else if (hasJest) {
             await updateJobProgress(jobId, 50).catch(() => { });
-            await addJobLog(jobId, "INFO", `[JEST] Chạy ${jestFiles.length} file Jest...`).catch(() => { });
+            await addJobLog(jobId, "INFO", `[JEST] Running ${jestFiles.length} Jest files...`).catch(() => { });
             runnerResult = await runJestCoverage(jobId, rootDir, jestConfigPath, jestFiles);
             await updateJobProgress(jobId, 70).catch(() => { });
 
@@ -1652,11 +1652,11 @@ export const processRunTestsJob = async (jobId) => {
                 };
                 if (formattedScenarios) dataPayload.scenarios = formattedScenarios;
                 await prisma.testRun.create({ data: dataPayload });
-                await addJobLog(jobId, "INFO", `[SCRUM-141] Đã lưu TestRun (JEST): ${testResults.totalTests} tests.`).catch(() => { });
+                await addJobLog(jobId, "INFO", `[SCRUM-141] Saved TestRun (JEST): ${testResults.totalTests} tests.`).catch(() => { });
             }
         } else {
             // Fallback if no files matched strict unit filter
-            await addJobLog(jobId, "INFO", "[RUN_TESTS] Chạy fallback runner...").catch(() => { });
+            await addJobLog(jobId, "INFO", "[RUN_TESTS] Running fallback runner...").catch(() => { });
             runnerResult = await runJestCoverage(jobId, rootDir, jestConfigPath);
             await updateJobProgress(jobId, 70).catch(() => { });
         }
@@ -1725,7 +1725,7 @@ export const processRunTestsJob = async (jobId) => {
             await addJobLog(
                 jobId,
                 "WARN",
-                `[RUN_TESTS] Runner hoàn tất với cảnh báo một số test assertion không đạt (exit code ${runnerResult.exitCode}). Thu thập kết quả coverage thực tế từ các test đã chạy...`
+                `[RUN_TESTS] Runner completed with warning: some test assertions failed (exit code ${runnerResult.exitCode}). Collecting actual coverage results from executed tests...`
             ).catch(() => { });
         }
 
@@ -1751,7 +1751,7 @@ export const processRunTestsJob = async (jobId) => {
                 `statements=${summaryResult.total.statements.pct}% | files=${summaryResult.fileCount}`
             ).catch(() => { });
         } catch (parseErr) {
-            await addJobLog(jobId, "WARN", `[SCRUM-141] Lỗi parse coverage-summary: ${parseErr.message}`).catch(() => { });
+            await addJobLog(jobId, "WARN", `[SCRUM-141] Error parsing coverage-summary: ${parseErr.message}`).catch(() => { });
         }
 
         // Parse coverage-final.json → CoverageFile (per-file detail)
@@ -1763,38 +1763,38 @@ export const processRunTestsJob = async (jobId) => {
         // Verify lcov.info
         const lcovPath = path.join(coverageDir, "lcov.info");
         const hasLcov = fs.existsSync(lcovPath);
-        await addJobLog(jobId, "INFO", `lcov.info: ${hasLcov ? "có" : "không tìm thấy"}`).catch(() => { });
+        await addJobLog(jobId, "INFO", `lcov.info: ${hasLcov ? "found" : "not found"}`).catch(() => { });
 
         // ── SCRUM-144: Progress 85% — sau parse ──────────────────────────────
         await updateJobProgress(jobId, 85).catch(() => { });
 
-        // ── SCRUM-142: Store results lên Firebase ─────────────────────────────
-        await addJobLog(jobId, "INFO", "Bước 4/4: Lưu coverage files lên Firebase...").catch(() => { });
+        // ── SCRUM-142: Store results to Firebase ──────────────────────────────
+        await addJobLog(jobId, "INFO", "Step 4/4: Saving coverage files to Firebase...").catch(() => { });
         let storageResult = {};
         try {
             storageResult = await storeCoverageOutputs(snapshotId, projectId, coverageDir);
             await addJobLog(
                 jobId,
                 "INFO",
-                `[SCRUM-142] Đã lưu ${storageResult.uploadedCount} files lên Firebase.`
+                `[SCRUM-142] Saved ${storageResult.uploadedCount} files to Firebase.`
             ).catch(() => { });
         } catch (storageErr) {
-            await addJobLog(jobId, "WARN", `[SCRUM-142] Lỗi lưu Firebase: ${storageErr.message}`).catch(() => { });
+            await addJobLog(jobId, "WARN", `[SCRUM-142] Firebase save error: ${storageErr.message}`).catch(() => { });
         }
 
-        // ── SCRUM-144: Progress 100% — hoàn thành ────────────────────────────
+        // ── SCRUM-144: Progress 100% — completed ──────────────────────────────
         await updateJobProgress(jobId, 100).catch(() => { });
 
-        // ── SCRUM-143: Chuyển sang SUCCESS ───────────────────────────────────
+        // ── SCRUM-143: Transition to SUCCESS ──────────────────────────────────
         const coverageResult = coverageResultFromSummary(summaryResult);
         await markJobSuccess(jobId, {
             coverageResult,
             hasTestFailures: runnerResult && runnerResult.exitCode !== 0,
             exitCode: runnerResult?.exitCode ?? 0
         });
-        await addJobLog(jobId, "INFO", "Pipeline RUN_TESTS hoàn thành thành công.").catch(() => { });
+        await addJobLog(jobId, "INFO", "RUN_TESTS pipeline completed successfully.").catch(() => { });
 
-        console.log(`[RunTestsJob ${jobId}] Pipeline hoàn thành thành công.`);
+        console.log(`[RunTestsJob ${jobId}] Pipeline completed successfully.`);
 
         // Chain to BUILD_CFG
         try {
@@ -1806,14 +1806,14 @@ export const processRunTestsJob = async (jobId) => {
             if (buildCfgJob) {
                 const { addJobToQueue } = await import("./queue.service.js");
                 await addJobToQueue("BUILD_CFG", buildCfgJob.id);
-                console.log(`[RunTestsJob ${jobId}] Đã tự động trigger BUILD_CFG job: ${buildCfgJob.id}`);
+                console.log(`[RunTestsJob ${jobId}] Automatically triggered BUILD_CFG job: ${buildCfgJob.id}`);
             }
         } catch (chainErr) {
-            console.error(`[RunTestsJob ${jobId}] Lỗi khi trigger BUILD_CFG:`, chainErr);
+            console.error(`[RunTestsJob ${jobId}] Error triggering BUILD_CFG:`, chainErr);
         }
     } catch (error) {
-        console.error(`[RunTestsJob ${jobId}] Thất bại:`, error);
-        await addJobLog(jobId, "ERROR", `Pipeline thất bại: ${error.message}`).catch(() => { });
+        console.error(`[RunTestsJob ${jobId}] Failed:`, error);
+        await addJobLog(jobId, "ERROR", `Pipeline failed: ${error.message}`).catch(() => { });
         await markJobFailed(jobId, error).catch(() => { });
 
         // Fail pending BUILD_CFG if this fails
@@ -1826,10 +1826,10 @@ export const processRunTestsJob = async (jobId) => {
             });
             if (buildCfgJob) {
                 await markJobFailed(buildCfgJob.id, new Error(`Failed because RUN_TESTS pipeline failed: ${error.message}`));
-                console.log(`[RunTestsJob ${jobId}] Đã đánh dấu failed cho BUILD_CFG job: ${buildCfgJob.id}`);
+                console.log(`[RunTestsJob ${jobId}] Marked BUILD_CFG job as failed: ${buildCfgJob.id}`);
             }
         } catch (failChainErr) {
-            console.error(`[RunTestsJob ${jobId}] Lỗi khi fail BUILD_CFG:`, failChainErr);
+            console.error(`[RunTestsJob ${jobId}] Error failing BUILD_CFG:`, failChainErr);
         }
     }
 };

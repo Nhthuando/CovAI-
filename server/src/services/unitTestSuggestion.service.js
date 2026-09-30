@@ -208,7 +208,7 @@ ${testCases.join("\n\n")}
         updatedContent = updatedContent.trimEnd() + "\n\n" + newTests.trim() + "\n";
 
         return {
-            explanation: `Đã đề xuất các test case bổ sung cho ${framework.toUpperCase()} nhắm vào các nhánh và dòng chưa cover: [${uncoveredLines.join(", ") || "edge cases"}].`,
+            explanation: `Suggested additional test cases for ${framework.toUpperCase()} targeting uncovered branches and lines: [${uncoveredLines.join(", ") || "edge cases"}].`,
             suggestedTestCode: newTests.trim(),
             fullUpdatedContent: updatedContent
         };
@@ -219,7 +219,7 @@ ${testCases.join("\n\n")}
         : `${importNames ? `import { ${importNames} } from '${cleanImportPath}';\n` : `// Jest test suite for ${sourceFile}\n`}${newTests}`;
 
     return {
-        explanation: `Tạo file test mới ${framework.toUpperCase()} để kiểm thử các hàm và nhánh chưa được bao phủ trong ${sourceFile}.`,
+        explanation: `Created new ${framework.toUpperCase()} test file to test uncovered functions and branches in ${sourceFile}.`,
         suggestedTestCode: fullCode.trim(),
         fullUpdatedContent: fullCode.trim() + "\n"
     };
@@ -445,10 +445,10 @@ REQUIREMENTS:
     const targetBranchesList = uncoveredBranches.map(b => `${b.type}:${b.line}`);
     const primaryTargetLines = coverageDetails.uncoveredLines?.slice(0, 5) || [];
     const primaryReason = uncoveredBranches.length > 0
-        ? `Nhánh ${uncoveredBranches[0].type} tại dòng ${uncoveredBranches[0].line} (${uncoveredBranches[0].condition || "điều kiện rẽ nhánh"}) chưa được thực thi`
+        ? `Branch ${uncoveredBranches[0].type} at line ${uncoveredBranches[0].line} (${uncoveredBranches[0].condition || "branch condition"}) was not executed`
         : (primaryTargetLines.length > 0
-            ? `Dòng ${primaryTargetLines.join(", ")} chưa được kiểm thử trong suite hiện tại`
-            : "Bổ sung test cases bao phủ các trường hợp biên và điều kiện logic");
+            ? `Lines ${primaryTargetLines.join(", ")} not tested in current suite`
+            : "Add test cases covering edge cases and logical conditions");
 
     const primarySuggestion = {
         suggestionId: `sug-${Date.now()}-1`,
@@ -460,7 +460,7 @@ REQUIREMENTS:
         targetLines: primaryTargetLines,
         targetBranches: targetBranchesList,
         reason: primaryReason,
-        explanation: aiResult.explanation || `Đề xuất test ${framework.toUpperCase()} cho ${cleanSourceFile}`,
+        explanation: aiResult.explanation || `Suggested ${framework.toUpperCase()} tests for ${cleanSourceFile}`,`
         generatedCode: aiResult.suggestedTestCode || aiResult.fullUpdatedContent,
         suggestedTestCode: aiResult.suggestedTestCode || aiResult.fullUpdatedContent,
         originalCode: testFileInfo.content || "",
@@ -486,8 +486,8 @@ REQUIREMENTS:
             testType: "unit",
             targetLines: [b2.line],
             targetBranches: [`${b2.type}:${b2.line}`],
-            reason: `Nhánh ${b2.type} tại dòng ${b2.line} (${b2.condition || "điều kiện rẽ nhánh"}) chưa được thực thi`,
-            explanation: `Bổ sung test case kiểm tra nhánh rẽ dòng ${b2.line} trong ${cleanSourceFile}`,
+            reason: `Branch ${b2.type} at line ${b2.line} (${b2.condition || "branch condition"}) was not executed`,
+            explanation: `Add test cases covering branch at line ${b2.line} in ${cleanSourceFile}`,
             generatedCode: `    test('should cover ${b2.type} branch at line ${b2.line}', () => {\n        // Target uncovered branch at line ${b2.line}\n        expect(true).toBe(true);\n    });`,
             suggestedTestCode: `    test('should cover ${b2.type} branch at line ${b2.line}', () => {\n        // Target uncovered branch at line ${b2.line}\n        expect(true).toBe(true);\n    });`,
             originalCode: testFileInfo.content || "",
@@ -642,7 +642,7 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
             sourceFile: sourceFileToInspect,
             targetTestFile: testFileRef,
             framework: isTest ? (targetFilePath.includes("vitest") ? "vitest" : "jest") : "jest",
-            explanation: `File \`${sourceFileToInspect}\` đã đạt 100% kiểm thử (Statements: 100%, Branches: 100%, Lines: 100%) với 0 lỗi assertion. Không cần gợi ý thêm testcase!`,
+            explanation: `File \`${sourceFileToInspect}\` has reached 100% test coverage (Statements: 100%, Branches: 100%, Lines: 100%) with 0 assertion errors. No further suggestions needed!`,
             uncoveredLines: [],
             failedLines: [],
             suggestions: []

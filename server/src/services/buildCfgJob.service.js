@@ -63,7 +63,7 @@ export async function processBuildCfgJob(job) {
           error.message === "Only queued jobs can start" ||
           error.message === "Cannot start a canceled job"
       ) {
-          console.log(`[BuildCfgJob ${jobId}] Bỏ qua vì Job không tồn tại hoặc không thể bắt đầu.`);
+          console.log(`[BuildCfgJob ${jobId}] Skipped because Job does not exist or cannot start.`);
           return;
       }
       throw error;

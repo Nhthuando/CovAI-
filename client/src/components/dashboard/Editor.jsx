@@ -1172,10 +1172,10 @@ export default function Editor({
               style={{ color: "var(--color-success)", flexShrink: 0 }}
             />
             <span>
-              Đã áp dụng testcase vào file{" "}
-              <strong>{appliedNotification.targetTestFile}</strong>. Hãy xem lại
-              mã dự thảo và bấm <strong>Run Analysis</strong> để xác nhận test
-              vượt qua và độ bao phủ tăng.
+              Applied test case to file{" "}
+              <strong>{appliedNotification.targetTestFile}</strong>. Please review
+              the draft code and click <strong>Run Analysis</strong> to confirm tests
+              pass and coverage increases.
             </span>
           </div>
           <div className="flex items-center gap-2">

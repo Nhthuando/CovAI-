@@ -14,7 +14,7 @@ export const useAuth = () => {
         }
 
         try {
-            // Giải mã payload của JWT (không cần verify chữ ký ở client)
+            // Decode JWT payload (no signature verification needed on client)
             const payload = JSON.parse(atob(token.split('.')[1]));
 
             const userData = {

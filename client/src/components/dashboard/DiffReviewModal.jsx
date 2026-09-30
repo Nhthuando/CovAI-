@@ -184,7 +184,7 @@ export default function DiffReviewModal({
                   background: "rgba(255, 255, 255, 0.05)",
                   border: "1px solid rgba(255, 255, 255, 0.1)",
                 }}
-                title={sideBySide ? "Chuyển sang chế độ xem hợp nhất (Unified)" : "Chuyển sang chế độ xem chia đôi (Split)"}
+                title={sideBySide ? "Switch to Unified view" : "Switch to Split view"}
               >
                 {sideBySide ? <Rows size={13} /> : <Columns size={13} />}
                 <span>{sideBySide ? "Split Diff" : "Inline Diff"}</span>
@@ -203,7 +203,7 @@ export default function DiffReviewModal({
                   }}
                 >
                   {isApplying ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
-                  <span>Apply file này</span>
+                  <span>Apply this file</span>
                 </button>
               ) : (
                 <button
@@ -215,7 +215,7 @@ export default function DiffReviewModal({
                     color: "#f87171",
                     border: "1px solid rgba(239, 68, 68, 0.35)",
                   }}
-                  title="Hoàn tác test case đã thêm"
+                  title="Undo added test cases"
                 >
                   <RotateCcw size={13} />
                   <span>Undo</span>
@@ -234,10 +234,10 @@ export default function DiffReviewModal({
                     color: "#86efac",
                     border: "1px solid rgba(34, 197, 94, 0.4)",
                   }}
-                  title="Áp dụng toàn bộ các file test"
+                  title="Apply all test files"
                 >
                   <Sparkles size={13} />
-                  <span>Apply cả {files.length} file</span>
+                  <span>Apply all {files.length} files</span>
                 </button>
               )}
 
@@ -254,7 +254,7 @@ export default function DiffReviewModal({
                     background: "rgba(147, 51, 234, 0.25)",
                     border: "1px solid rgba(168, 85, 247, 0.5)",
                   }}
-                  title="Chạy lại kiểm thử để xác nhận độ bao phủ tăng"
+                  title="Re-run tests to confirm coverage increase"
                 >
                   <Play size={12} className="fill-purple-300" />
                   <span>Run Analysis ↵</span>
@@ -325,7 +325,7 @@ export default function DiffReviewModal({
                   disabled={activeIdx === 0}
                   onClick={() => setActiveIdx((prev) => Math.max(0, prev - 1))}
                   className="p-1 rounded hover:text-white disabled:opacity-30 cursor-pointer"
-                  title="File trước"
+                  title="Previous file"
                 >
                   <ChevronLeft size={14} />
                 </button>
@@ -385,17 +385,17 @@ export default function DiffReviewModal({
           >
             <div className="flex items-center gap-2 text-slate-300 truncate mr-4">
               <span className="text-purple-400 font-semibold flex-shrink-0">
-                💡 Mục tiêu:
+                💡 Goal:
               </span>
               <span className="truncate">
-                {currentSuggestion?.explanation || activeFile.explanation || "Bổ sung test case cho các nhánh chưa được bao phủ."}
+                {currentSuggestion?.explanation || activeFile.explanation || "Add test cases for uncovered branches."}
               </span>
             </div>
 
             <div className="flex items-center gap-3 text-slate-400 flex-shrink-0 text-[11px] font-mono">
-              <span>Đỏ: Mã gốc</span>
+              <span>Red: Original code</span>
               <span>•</span>
-              <span className="text-green-400 font-semibold">Xanh: Mã đề xuất bổ sung</span>
+              <span className="text-green-400 font-semibold">Green: Proposed additions</span>
             </div>
           </div>
         </motion.div>

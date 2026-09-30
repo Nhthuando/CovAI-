@@ -1,8 +1,8 @@
 import rateLimit from "express-rate-limit";
 
 /**
- * Global rate limiter — áp dụng cho tất cả requests.
- * 3000 requests / 15 phút / IP.
+ * Global rate limiter — applies to all requests.
+ * 3000 requests / 15 minutes / IP.
  */
 export const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -11,13 +11,13 @@ export const globalLimiter = rateLimit({
   legacyHeaders: false,
   message: {
     success: false,
-    message: "Quá nhiều requests, vui lòng thử lại sau 15 phút.",
+    message: "Too many requests, please try again in 15 minutes.",
   },
 });
 
 /**
  * Auth rate limiter — cho login, register, forgot password.
- * 10 requests / 15 phút / IP.
+ * 10 requests / 15 minutes / IP.
  */
 export const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -26,13 +26,13 @@ export const authLimiter = rateLimit({
   legacyHeaders: false,
   message: {
     success: false,
-    message: "Quá nhiều lần thử, vui lòng thử lại sau 15 phút.",
+    message: "Too many attempts, please try again in 15 minutes.",
   },
 });
 
 /**
- * AI rate limiter — cho các endpoint AI (chat, suggest, tests).
- * 100 requests / 15 phút / IP.
+ * AI rate limiter — for AI endpoints (chat, suggest, tests).
+ * 100 requests / 15 minutes / IP.
  */
 export const aiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -41,6 +41,6 @@ export const aiLimiter = rateLimit({
   legacyHeaders: false,
   message: {
     success: false,
-    message: "Quá nhiều yêu cầu AI, vui lòng thử lại sau.",
+    message: "Too many AI requests, please try again later.",
   },
 });

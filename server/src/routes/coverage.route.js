@@ -20,21 +20,21 @@ import {
 
 const router = express.Router();
 
-// GET /api/coverage/:snapshotId/summary — lấy kết quả coverage summary
+// GET /api/coverage/:snapshotId/summary — fetch coverage summary result
 router.get("/:snapshotId/summary", authMiddleware, getCoverageSummary);
 router.get("/:snapshotId/frameworks", authMiddleware, getCoverageFrameworks);
 
-// SCRUM-155: GET /api/coverage/:snapshotId/files — lấy danh sách CoverageFile
+// GET /api/coverage/:snapshotId/files — fetch CoverageFile list
 // Query: ?sortBy=filePath|linesPct|branchesPct|funcsPct|stmtsPct&order=asc|desc&page=1&limit=50
 router.get("/:snapshotId/files", authMiddleware, getCoverageFiles);
 
-// GET /api/coverage/:snapshotId/file-coverage — lấy line-by-line coverage & assertion failures
+// GET /api/coverage/:snapshotId/file-coverage — fetch line-by-line coverage & assertion failures
 router.get("/:snapshotId/file-coverage", authMiddleware, getFileCoverage);
 
-// POST /api/coverage/:snapshotId/suggest-testcase — đề xuất unit testcase bằng AI cho file nguồn
+// POST /api/coverage/:snapshotId/suggest-testcase — suggest AI unit testcases for source file
 router.post("/:snapshotId/suggest-testcase", authMiddleware, suggestUnitTestcase);
 
-// POST /api/coverage/:snapshotId/apply-suggestion — ghi testcase vào disk, rerun test, collect new coverage
+// POST /api/coverage/:snapshotId/apply-suggestion — write testcase to disk, rerun test, collect new coverage
 router.post("/:snapshotId/apply-suggestion", authMiddleware, applySuggestion);
 
 // POST /api/coverage/:snapshotId/run — trigger pipeline INSTALL_DEPS → RUN_TESTS
@@ -43,7 +43,7 @@ router.post("/:snapshotId/run", authMiddleware, runCoverage);
 router.post("/:snapshotId/supertest/run", authMiddleware, runSupertestCoverage);
 router.post("/:snapshotId/:coverageType/run", authMiddleware, runCoverageByType);
 
-// SCRUM-160: GET /api/coverage/:snapshotId/functions — lấy danh sách CoverageFunction
+// GET /api/coverage/:snapshotId/functions — fetch CoverageFunction list
 // Query: ?filePath=<filter>&sortBy=functionName|filePath|hit|startLine&order=asc|desc&page=1&limit=50
 router.get("/:snapshotId/functions", authMiddleware, getCoverageFunctions);
 

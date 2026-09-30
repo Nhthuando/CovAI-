@@ -19,9 +19,9 @@ import prisma from "../config/prisma.js";
 
 /**
  * Pipeline cho Supertest Coverage:
- * 1. Chạy Supertest (runSupertest)
+ * 1. Run Supertest (runSupertest)
  * 2. Parse coverage (reuse existing parsers)
- * 3. Lưu kết quả vào DB & Firebase
+ * 3. Save results to DB & Firebase
  */
 export const processSupertestCoverageJob = async (jobId) => {
     try {
@@ -57,9 +57,9 @@ export const processSupertestCoverageJob = async (jobId) => {
 
         await saveJobOutput(jobId, { stdout: "", stderr: "" }).catch(() => { });
         await updateJobProgress(jobId, 10);
-        await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'PREPARE_ENV', label: "Bắt đầu Supertest coverage pipeline...", progress: 10 }));
+        await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'PREPARE_ENV', label: "Starting Supertest coverage pipeline...", progress: 10 }));
 
-        // 1. Chạy Supertest
+        // 1. Run Supertest
         await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'RUN_JEST', label: "Running Supertest test suite...", progress: 20 }));
         const runResult = await runSupertest(
             jobId,
@@ -105,10 +105,10 @@ export const processSupertestCoverageJob = async (jobId) => {
                 dataPayload.scenarios = formattedScenarios;
             }
             await prisma.testRun.create({ data: dataPayload });
-            await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'PARSE_COVERAGE', label: `[SCRUM-141] Đã lưu TestRun (SUPERTEST): ${supertestResults.totalTests} tests.`, progress: 60 })).catch(() => { });
+            await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'PARSE_COVERAGE', label: `[SCRUM-141] Saved TestRun (SUPERTEST): ${supertestResults.totalTests} tests.`, progress: 60 })).catch(() => { });
         }
 
-        // Parse chi tiết (reuse logic từ runTestsJob)
+        // Parse details (reuse logic from runTestsJob)
         const { parseCoverageFilesForSnapshot } = await import("./coverageFileParser.service.js");
         const { parseCoverageFunctionsForSnapshot } = await import("./coverageFunctionParser.service.js");
 
@@ -119,7 +119,7 @@ export const processSupertestCoverageJob = async (jobId) => {
 
         await updateJobProgress(jobId, 80);
 
-        // 3. Lưu kết quả
+        // 3. Save results
         const storageResult = await storeCoverageOutputs(snapshotId, projectId, coverageDir);
 
         await markJobSuccess(jobId, {
@@ -138,9 +138,9 @@ export const processSupertestCoverageJob = async (jobId) => {
             storageBasePath: storageResult.baseStoragePath,
         });
 
-        await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'COMPLETE', label: "Supertest coverage pipeline hoàn thành.", progress: 100 }));
+        await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'COMPLETE', label: "Supertest coverage pipeline completed.", progress: 100 }));
     } catch (error) {
-        console.error(`[SupertestCoverageJob ${jobId}] Lỗi:`, error);
+        console.error(`[SupertestCoverageJob ${jobId}] Error:`, error);
         await markJobFailed(jobId, error).catch(() => { });
     }
 };

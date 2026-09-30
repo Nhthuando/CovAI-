@@ -14,7 +14,7 @@ export async function runCyclomaticAnalysis(snapshotId) {
 
     if (!snapshot) throw new Error('Snapshot not found');
 
-    // Đường dẫn thực tế của code đã giải nén
+    // Actual path of extracted code
     const searchPath = path.join(process.cwd(), 'uploads', 'snapshots', snapshotId);
 
     if (!fs.existsSync(searchPath)) {

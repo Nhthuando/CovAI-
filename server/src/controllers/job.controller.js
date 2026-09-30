@@ -12,11 +12,11 @@ export const listProjectJobs = async (req, res) => {
   try {
     const userId = req.user.id;
     if (!userId)
-      return res.status(401).json({ message: "Không thể lấy user Id!" });
+      return res.status(401).json({ message: "Unable to retrieve user ID!" });
 
     const { projectId } = req.params;
     if (!projectId)
-      return res.status(400).json({ message: "Thiếu projectId!" });
+      return res.status(400).json({ message: "Missing projectId!" });
 
     const project = await prisma.project.findFirst({
       where: {
@@ -29,7 +29,7 @@ export const listProjectJobs = async (req, res) => {
       return res
         .status(404)
         .json({
-          message: "Không tìm thấy Project hoặc Project không thuộc về user!",
+          message: "Project not found or does not belong to user!",
         });
     }
 
@@ -42,12 +42,12 @@ export const listProjectJobs = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: "GET Job thành công!",
+      message: "Job retrieved successfully!",
       jobs,
     });
   } catch (error) {
     console.error("[listProjectJobs] Error:", error);
-    return res.status(500).json({ success: false, message: "Có lỗi server!" });
+    return res.status(500).json({ success: false, message: "Internal server error!" });
   }
 };
 
@@ -55,7 +55,7 @@ export const listUserJobs = async (req, res) => {
   try {
     const userId = req.user.id;
     if (!userId)
-      return res.status(401).json({ message: "Không thể lấy user Id!" });
+      return res.status(401).json({ message: "Unable to retrieve user ID!" });
 
     await cleanupAllStaleJobs(userId).catch(() => { });
 
@@ -68,10 +68,10 @@ export const listUserJobs = async (req, res) => {
     });
     return res
       .status(200)
-      .json({ message: "GET toàn bộ Job thành công!", jobs });
+      .json({ message: "All jobs retrieved successfully!", jobs });
   } catch (error) {
     console.log(error);
-    return res.status(500).json({ message: "Có lỗi server!" });
+    return res.status(500).json({ message: "Internal server error!" });
   }
 };
 
@@ -79,7 +79,7 @@ export const getJobDetail = async (req, res) => {
   try {
     const userId = req.user.id;
     if (!userId)
-      return res.status(401).json({ message: "Không thể lấy user id!" });
+      return res.status(401).json({ message: "Unable to retrieve user ID!" });
     const { jobId } = req.params;
     const job = await prisma.job.findUnique({
       where: { id: jobId },
@@ -99,12 +99,12 @@ export const getJobDetail = async (req, res) => {
       },
     });
 
-    if (!job) return res.status(404).json({ message: "Job không tồn tại!" });
+    if (!job) return res.status(404).json({ message: "Job does not exist!" });
     if (job.userId !== userId)
-      return res.status(403).json({ message: "Job không thuộc về user!" });
+      return res.status(403).json({ message: "Job does not belong to user!" });
 
     return res.status(200).json({
-      message: "GET Job Detail thành công",
+      message: "Job details retrieved successfully",
       job: {
         ...job,
         payload: job.payloadJson ? JSON.parse(job.payloadJson) : null,
@@ -116,14 +116,14 @@ export const getJobDetail = async (req, res) => {
     });
   } catch (error) {
     console.log(error);
-    return res.status(500).json({ message: "Có lỗi server!" });
+    return res.status(500).json({ message: "Internal server error!" });
   }
 };
 
 /**
- * SCRUM-73: Tạo Ingest Job
- * Nhận file ZIP, upload lên Firebase, tạo Snapshot + Job QUEUED,
- * sau đó kick-off pipeline xử lý bất đồng bộ (không await).
+ * SCRUM-73: Create Ingest Job
+ * Receive ZIP, upload to Firebase, create Snapshot + Job QUEUED,
+ * then kick off asynchronous processing pipeline (non-blocking).
  *
  * Route: POST /api/job/:projectId/ingest
  * Middleware: authMiddleware, uploadSingleZip
@@ -141,24 +141,24 @@ export const ingestJob = async (req, res) => {
 
     // ── Validate input ─────────────────────────────────────────────────
     if (!file) {
-      return res.status(400).json({ message: "Vui lòng upload file .zip." });
+      return res.status(400).json({ message: "Please upload a .zip file." });
     }
     if (
       !projectId ||
       typeof projectId !== "string" ||
       projectId.trim().length === 0
     ) {
-      return res.status(400).json({ message: "projectId không hợp lệ." });
+      return res.status(400).json({ message: "Invalid projectId." });
     }
 
-    // ── Scan archive bomb trước khi làm bất cứ điều gì ────────────────────
+    // ── Scan archive bomb before processing ───────────────────────────────
     try {
       await scanArchiveBomb(file.buffer, file.originalname);
     } catch (scanError) {
       return res.status(400).json({ message: scanError.message });
     }
 
-    // ── Kiểm tra project tồn tại và thuộc về user ─────────────────────
+    // ── Verify project exists and belongs to user ───────────────────────
     const project = await prisma.project.findFirst({
       where: { id: projectId, ownerId: userId },
     });
@@ -166,11 +166,11 @@ export const ingestJob = async (req, res) => {
       return res
         .status(404)
         .json({
-          message: "Project không tồn tại hoặc bạn không có quyền truy cập.",
+          message: "Project not found or you do not have access.",
         });
     }
 
-    // ── Tính checksum để phát hiện snapshot trùng lặp ─────────────────
+    // ── Calculate checksum to detect duplicate snapshot ─────────────────
     const checksum = createHash("sha256").update(file.buffer).digest("hex");
     const existingSnapshot = await prisma.projectSnapshot.findFirst({
       where: { projectId, checksum },
@@ -180,11 +180,11 @@ export const ingestJob = async (req, res) => {
         .status(409)
         .json({
           message:
-            "Source code này đã được import trước đó (duplicate snapshot).",
+            "This source code was imported previously (duplicate snapshot).",
         });
     }
 
-    // ── Upload file ZIP lên Firebase Storage ──────────────────────────
+    // ── Upload ZIP file to Firebase Storage ──────────────────────────────
     const safeOriginalName = path
       .basename(file.originalname)
       .replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -202,7 +202,7 @@ export const ingestJob = async (req, res) => {
         res
           .status(500)
           .json({
-            message: "Lỗi khi upload file lên Firebase: " + err.message,
+            message: "Error uploading file to Firebase: " + err.message,
           });
       }
     });
@@ -210,7 +210,7 @@ export const ingestJob = async (req, res) => {
     // Upload finish handler
     blobStream.on("finish", async () => {
       try {
-        // ── SCRUM-73: Tạo ProjectSnapshot + Job QUEUED trong 1 transaction ──
+        // ── SCRUM-73: Create ProjectSnapshot + Job QUEUED in 1 transaction ───
         const { snapshot, job } = await createSnapshotIngestJob({
           projectId,
           userId,
@@ -218,16 +218,16 @@ export const ingestJob = async (req, res) => {
           storagePath,
         });
 
-        // ── SCRUM-74, 76, 77, 78: Kick-off pipeline bất đồng bộ ──────────
-        // KHÔNG dùng await → API trả về ngay, worker xử lý ngầm
+        // ── Kick-off asynchronous pipeline ──────────────────────────────────
+        // Non-blocking: API returns immediately, worker processes in background
         addJobToQueue("INGEST", job.id).catch((err) => {
-          console.error("Lỗi khi thêm INGEST vào queue:", err);
+          console.error("Error adding INGEST to queue:", err);
         });
 
-        // ── Trả về kết quả ngay cho Frontend ─────────────────────────────
+        // ── Return immediate result to Frontend ──────────────────────────────
         return res.status(200).json({
           message:
-            "Đã tiếp nhận yêu cầu import source code! Job đang được xử lý.",
+            "Source code import request received! Job is being processed.",
           snapshotId: snapshot.id,
           jobId: job.id,
           jobStatus: job.status, // "QUEUED"
@@ -240,8 +240,8 @@ export const ingestJob = async (req, res) => {
           },
         });
       } catch (dbError) {
-        console.error("[IngestJob] Lỗi Database sau khi upload:", dbError);
-        // Rollback: xóa file đã upload nếu DB lỗi
+        console.error("[IngestJob] Database error after upload:", dbError);
+        // Rollback: remove uploaded file if DB fails
         await blob.delete().catch(() => { });
         if (dbError instanceof ServiceError) {
           return res
@@ -250,18 +250,18 @@ export const ingestJob = async (req, res) => {
         }
         return res
           .status(500)
-          .json({ message: "Lỗi lưu dữ liệu, đã rollback file upload." });
+          .json({ message: "Error saving data, rolled back uploaded file." });
       }
     });
 
-    // Bắt đầu stream upload
+    // Start upload stream
     blobStream.end(file.buffer);
   } catch (error) {
-    console.error("[IngestJob] Lỗi server:", error);
+    console.error("[IngestJob] Server error:", error);
     if (error instanceof ServiceError) {
       return res.status(error.statusCode).json({ message: error.message });
     }
-    return res.status(500).json({ message: "Có lỗi server!" });
+    return res.status(500).json({ message: "Internal server error!" });
   }
 };
 
@@ -278,23 +278,23 @@ export const cancelJobController = async (req, res) => {
     });
 
     if (!job) {
-      return res.status(404).json({ success: false, message: "Job không tồn tại." });
+      return res.status(404).json({ success: false, message: "Job does not exist." });
     }
     if (job.userId !== userId) {
-      return res.status(403).json({ success: false, message: "Không có quyền hủy job này." });
+      return res.status(403).json({ success: false, message: "Not authorized to cancel this job." });
     }
 
     const canceled = await cancelJob(jobId);
     return res.status(200).json({
       success: true,
-      message: "Job đã được tạm dừng/hủy thành công.",
+      message: "Job was cancelled/paused successfully.",
       job: canceled,
     });
   } catch (error) {
     if (error instanceof ServiceError) {
       return res.status(error.statusCode).json({ success: false, message: error.message });
     }
-    return res.status(500).json({ success: false, message: error.message || "Lỗi khi hủy job." });
+    return res.status(500).json({ success: false, message: error.message || "Error cancelling job." });
   }
 };
 

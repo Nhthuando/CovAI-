@@ -16,7 +16,7 @@ export const useSocket = (userId, onNotification) => {
   const [error, setError] = useState(null);
   const onNotificationRef = useRef(onNotification);
 
-  // luôn cập nhật ref, không gây re-run effect
+  // Always update ref without causing effect re-runs
   useEffect(() => {
     onNotificationRef.current = onNotification;
   }, [onNotification]);
@@ -25,7 +25,7 @@ export const useSocket = (userId, onNotification) => {
     if (!userId) return;
 
     const socket = io(SOCKET_URL, {
-      /* ... giữ nguyên config */
+      /* ... preserve config */
     });
     socketRef.current = socket;
 
@@ -48,7 +48,7 @@ export const useSocket = (userId, onNotification) => {
     });
 
     return () => socket.disconnect();
-  }, [userId]); // ✅ chỉ phụ thuộc userId, không phụ thuộc callback nữa
+  }, [userId]); // Only depends on userId, no longer depends on callback
 
   return { socket: socketRef.current, isConnected, error };
 };

@@ -123,7 +123,7 @@ async function startServer() {
 
     httpServer.listen(PORT, () => {
       console.log("-----------------------------------------------");
-      console.log("CovAI server đang được chạy dưới port: " + PORT);
+      console.log("CovAI server is running on port: " + PORT);
       console.log("-----------------------------------------------");
     });
   } catch (error) {

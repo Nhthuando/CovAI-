@@ -42,7 +42,7 @@ export function extractFunctions(code) {
                             functionName,
                             startLine: node.loc.start.line,
                             endLine: node.loc.end.line,
-                            node: node // Lưu node để tính complexity
+                            node: node // Store node for complexity computation
                         });
                     }
                 }

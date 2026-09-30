@@ -16,7 +16,7 @@ export default function GithubCallbackPage() {
     const error = searchParams.get("error");
 
     if (error === "access_denied") {
-      alert("Bạn đã từ chối cấp quyền truy cập GitHub.");
+      alert("You declined GitHub access permission.");
       navigate("/login");
       return;
     }
@@ -40,7 +40,7 @@ export default function GithubCallbackPage() {
           navigate("/projects");
         })
         .catch((err) => {
-          alert("Lỗi đăng nhập GitHub: " + err.message);
+          alert("GitHub login error: " + err.message);
           navigate("/login");
         });
     } else {
