@@ -56,11 +56,25 @@ async function executeWithRetry(apiCall, maxRetries = 3) {
  * @returns {Promise<string>} The generated text response
  */
 export const generateText = async (prompt, systemInstruction = null) => {
+  return generateMultimodalText(prompt, [], systemInstruction);
+};
+
+/**
+ * Send prompts & attachments (images) & Receive responses
+ * @param {string} prompt - The prompt to send to the Gemini model
+ * @param {Array<{ data: string, mimeType: string }>} images - Optional array of images in base64
+ * @param {string|null} systemInstruction - Optional system instruction for the model
+ * @returns {Promise<string>} The generated text response
+ */
+export const generateMultimodalText = async (
+  prompt,
+  images = [],
+  systemInstruction = null,
+) => {
   if (!genAI) {
     throw new Error("GEMINI_API_KEY is not configured.");
   }
 
-  // Using gemini-1.5-flash as the stable default model.
   const modelOptions = { model: "gemini-3.5-flash-lite" };
   if (systemInstruction) {
     modelOptions.systemInstruction = systemInstruction;
@@ -68,15 +82,32 @@ export const generateText = async (prompt, systemInstruction = null) => {
 
   const model = genAI.getGenerativeModel(modelOptions);
 
+  const parts = [];
+
+  if (Array.isArray(images) && images.length > 0) {
+    for (const img of images) {
+      if (!img?.data) continue;
+      const base64Data = img.data.includes(";base64,")
+        ? img.data.split(";base64,")[1]
+        : img.data;
+      parts.push({
+        inlineData: {
+          data: base64Data,
+          mimeType: img.mimeType || "image/png",
+        },
+      });
+    }
+  }
+
+  parts.push({ text: prompt });
+
   const apiCall = async () => {
-    // Send prompts with generationConfig to prevent response truncation
     const result = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      contents: [{ role: "user", parts }],
       generationConfig: {
         maxOutputTokens: 65536,
       },
     });
-    // Receive responses
     return result.response.text();
   };
 

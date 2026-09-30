@@ -965,6 +965,7 @@ function LayoutInner() {
                       : null) ||
                     testPromptSnapshotId
                   }
+                  fileTree={fileTree}
                   pendingAiSuggestion={pendingAiSuggestion}
                   onClearPendingSuggestion={() => setPendingAiSuggestion(null)}
                   onOpenFile={handleOpenFileByPath}

@@ -28,6 +28,7 @@ model User {
   jobs                 Job[]          @relation("UserJobs")
   notifications        Notification[]
   projects             Project[]
+  chatSessions         ChatSession[]
 }
 
 model Project {
@@ -59,6 +60,7 @@ model Project {
   owner                User              @relation(fields: [ownerId], references: [id])
   snapshots            ProjectSnapshot[]
   qualityReports       QualityReport[]
+  chatSessions         ChatSession[]
 
   @@index([ownerId])
 }
@@ -363,6 +365,34 @@ model PerformanceMetric {
   metricsJson String
   createdAt   DateTime        @default(now())
   snapshot    ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+}
+
+model ChatSession {
+  id        String        @id @default(cuid())
+  projectId String
+  userId    String
+  title     String        @default("New Chat")
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  messages  ChatMessage[]
+  project   Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, userId])
+  @@index([projectId, updatedAt])
+}
+
+model ChatMessage {
+  id          String      @id @default(cuid())
+  sessionId   String
+  role        String      // "user" | "assistant" | "system"
+  content     String      @db.Text
+  model       String?     // e.g. "gemini-1.5-pro"
+  attachments Json?       // [{ id, type, name, path, previewUrl, ... }]
+  createdAt   DateTime    @default(now())
+  session     ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt])
 }
 
 enum SnapshotSource {

@@ -147,7 +147,7 @@ export const webhookService = {
       });
 
       if (!user?.githubAccessTokenEnc) {
-        throw new ServiceError("User GitHub token not available", 401);
+        throw new ServiceError("User GitHub token not available", 400);
       }
 
       // Clone or update repository
