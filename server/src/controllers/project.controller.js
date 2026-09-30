@@ -7,7 +7,10 @@ import { GitHubCloneService } from "../services/githubClone.service.js";
 import { detectJest } from "../utils/jestDetector.js";
 import { createAiSuggestJob } from "../services/job.service.js";
 import { processAiSuggestJob } from "../services/aiSuggestJob.service.js";
-import { generateText } from "../services/gemini.service.js";
+import {
+  generateText,
+  generateMultimodalText,
+} from "../services/gemini.service.js";
 import { checkAndIncrementQuota } from "../services/aiQuota.service.js";
 import { getAiTestById, listAiTests } from "../services/aiTest.service.js";
 import { detectAndSaveProject as detectAndSavePlaywright } from "../services/playwrightDetection.service.js";
@@ -1437,10 +1440,199 @@ class ProjectController {
     }
   }
 
+  async getChatSessions(req, res) {
+    try {
+      const { id: projectId } = req.params;
+      const sessions = await prisma.chatSession.findMany({
+        where: {
+          projectId,
+          userId: req.user.id,
+        },
+        orderBy: { updatedAt: "desc" },
+        include: {
+          _count: {
+            select: { messages: true },
+          },
+          messages: {
+            take: 1,
+            orderBy: { createdAt: "desc" },
+            select: {
+              content: true,
+              createdAt: true,
+              role: true,
+            },
+          },
+        },
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: sessions,
+      });
+    } catch (error) {
+      console.error("Error in getChatSessions:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to load chat history sessions",
+      });
+    }
+  }
+
+  async createChatSession(req, res) {
+    try {
+      const { id: projectId } = req.params;
+      const { title } = req.body;
+
+      const session = await prisma.chatSession.create({
+        data: {
+          projectId,
+          userId: req.user.id,
+          title:
+            (title && typeof title === "string" ? title.trim() : null) ||
+            "New Chat",
+        },
+      });
+
+      return res.status(201).json({
+        success: true,
+        data: session,
+      });
+    } catch (error) {
+      console.error("Error in createChatSession:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to create chat session",
+      });
+    }
+  }
+
+  async getChatSessionMessages(req, res) {
+    try {
+      const { id: projectId, sessionId } = req.params;
+
+      const session = await prisma.chatSession.findFirst({
+        where: {
+          id: sessionId,
+          projectId,
+          userId: req.user.id,
+        },
+      });
+
+      if (!session) {
+        return res.status(404).json({
+          success: false,
+          message: "Chat session not found",
+        });
+      }
+
+      const messages = await prisma.chatMessage.findMany({
+        where: { sessionId },
+        orderBy: { createdAt: "asc" },
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          session,
+          messages,
+        },
+      });
+    } catch (error) {
+      console.error("Error in getChatSessionMessages:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to fetch chat session messages",
+      });
+    }
+  }
+
+  async updateChatSession(req, res) {
+    try {
+      const { id: projectId, sessionId } = req.params;
+      const { title } = req.body;
+
+      if (!title || typeof title !== "string" || !title.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Title is required",
+        });
+      }
+
+      const session = await prisma.chatSession.findFirst({
+        where: {
+          id: sessionId,
+          projectId,
+          userId: req.user.id,
+        },
+      });
+
+      if (!session) {
+        return res.status(404).json({
+          success: false,
+          message: "Chat session not found",
+        });
+      }
+
+      const updated = await prisma.chatSession.update({
+        where: { id: sessionId },
+        data: {
+          title: title.trim(),
+        },
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: updated,
+      });
+    } catch (error) {
+      console.error("Error in updateChatSession:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to update chat session",
+      });
+    }
+  }
+
+  async deleteChatSession(req, res) {
+    try {
+      const { id: projectId, sessionId } = req.params;
+
+      const session = await prisma.chatSession.findFirst({
+        where: {
+          id: sessionId,
+          projectId,
+          userId: req.user.id,
+        },
+      });
+
+      if (!session) {
+        return res.status(404).json({
+          success: false,
+          message: "Chat session not found",
+        });
+      }
+
+      await prisma.chatSession.delete({
+        where: { id: sessionId },
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: "Chat session deleted successfully",
+      });
+    } catch (error) {
+      console.error("Error in deleteChatSession:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to delete chat session",
+      });
+    }
+  }
+
   async chat(req, res) {
     try {
       const { id: projectId } = req.params;
-      const { message, history } = req.body;
+      const { message, history, attachments, model, sessionId } = req.body;
 
       if (!message || typeof message !== "string") {
         return res.status(400).json({
@@ -1455,6 +1647,40 @@ class ProjectController {
       // We just ensure project exists to provide context
       const project = await getProjectById(projectId);
 
+      // Manage or create ChatSession
+      let session = null;
+      if (sessionId) {
+        session = await prisma.chatSession.findFirst({
+          where: { id: sessionId, projectId, userId: req.user.id },
+        });
+      }
+
+      if (!session) {
+        const autoTitle =
+          message
+            .trim()
+            .replace(/[\r\n]+/g, " ")
+            .slice(0, 40) || "New Chat";
+        session = await prisma.chatSession.create({
+          data: {
+            projectId,
+            userId: req.user.id,
+            title: autoTitle,
+          },
+        });
+      } else if (session.title === "New Chat") {
+        const autoTitle = message
+          .trim()
+          .replace(/[\r\n]+/g, " ")
+          .slice(0, 40);
+        if (autoTitle) {
+          session = await prisma.chatSession.update({
+            where: { id: session.id },
+            data: { title: autoTitle },
+          });
+        }
+      }
+
       let prompt = `You are a helpful AI coding assistant named TestCovAI Agent. You assist users with code coverage, testing, and general programming questions.
 The user is working on project: ${project.name}.
 `;
@@ -1465,6 +1691,32 @@ The user is working on project: ${project.name}.
           prompt += `${msg.role === "user" ? "User" : "Assistant"}: ${msg.content}\n`;
         });
         prompt += "----------------------------\n";
+      }
+
+      // Handle attachments (images, text/code files, referenced project files)
+      const images = [];
+      const codeFiles = [];
+
+      if (Array.isArray(attachments) && attachments.length > 0) {
+        for (const att of attachments) {
+          if (att.type === "image" || att.mimeType?.startsWith("image/")) {
+            images.push(att);
+          } else {
+            codeFiles.push(att);
+          }
+        }
+      }
+
+      if (codeFiles.length > 0) {
+        prompt += "\n--- Attached Files & Code References ---\n";
+        for (const f of codeFiles) {
+          const label = f.path || f.name || "Attached File";
+          prompt += `File: ${label}\n`;
+          if (f.content) {
+            prompt += "```\n" + f.content + "\n```\n\n";
+          }
+        }
+        prompt += "-----------------------------------------\n";
       }
 
       if (message.trim().toLowerCase() === "analyze coverage") {
@@ -1498,12 +1750,42 @@ The user is working on project: ${project.name}.
 
       prompt += `\nUser: ${message}\nAssistant:`;
 
-      const reply = await generateText(prompt);
+      const reply = await generateMultimodalText(prompt, images);
+
+      // Persist messages to DB
+      await prisma.chatMessage.create({
+        data: {
+          sessionId: session.id,
+          role: "user",
+          content: message,
+          model: typeof model === "string" ? model : null,
+          attachments:
+            Array.isArray(attachments) && attachments.length > 0
+              ? attachments
+              : undefined,
+        },
+      });
+
+      await prisma.chatMessage.create({
+        data: {
+          sessionId: session.id,
+          role: "assistant",
+          content: reply,
+          model: typeof model === "string" ? model : null,
+        },
+      });
+
+      await prisma.chatSession.update({
+        where: { id: session.id },
+        data: { updatedAt: new Date() },
+      });
 
       return res.status(200).json({
         success: true,
         data: {
           reply,
+          sessionId: session.id,
+          sessionTitle: session.title,
         },
       });
     } catch (error) {
@@ -1676,7 +1958,7 @@ The user is working on project: ${project.name}.
   async generateIntegrationTest(req, res) {
     try {
       const { id: projectId } = req.params;
-      const { snapshotId, framework } = req.body;
+      const { snapshotId, framework, force } = req.body;
 
       if (!framework) {
         return res
@@ -1691,6 +1973,7 @@ The user is working on project: ${project.name}.
         projectId,
         snapshotId,
         userId: req.user.id,
+        force,
       });
 
       return res.status(202).json({

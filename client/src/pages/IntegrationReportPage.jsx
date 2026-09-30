@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { fetchIntegrationReport } from '../services/report.service';
 import { ArrowLeft, Database, BarChart2, AlertCircle, FileText, Activity } from 'lucide-react';
 import { format } from 'date-fns';
+import IntegrationGuidancePanel from '../components/dashboard/integration/IntegrationGuidancePanel';
 
 export default function IntegrationReportPage() {
   const { projectId } = useParams();
@@ -214,8 +215,9 @@ export default function IntegrationReportPage() {
               </div>
             )}
           </div>
-
         </div>
+
+        <IntegrationGuidancePanel projectId={projectId} />
 
         {/* History Tables */}
         <div className="space-y-8 pb-8">

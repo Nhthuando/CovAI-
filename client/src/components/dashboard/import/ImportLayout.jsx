@@ -162,56 +162,11 @@ export default function ImportLayout({ onClose, onSuccess }) {
 
             {/* Right Column: GitHub Integration (7 cols) */}
             <div className="lg:col-span-7 p-6 flex flex-col relative bg-[var(--color-surface)]">
-              {/* When GitHub is not linked */}
-              {hasGithub === false && (
-                <div className="absolute inset-0 z-20 flex flex-col items-center justify-center p-8 bg-[var(--color-surface)]/95 backdrop-blur-xs">
-                  <div className="flex flex-col items-center text-center max-w-sm gap-3.5">
-                    <div className="w-12 h-12 rounded-[var(--radius-lg)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] flex items-center justify-center text-[var(--color-text)]">
-                      <GithubIcon size={24} />
-                    </div>
-                    <div>
-                      <h4 className="text-sm font-bold text-[var(--color-text)] tracking-tight">
-                        Connect GitHub Account
-                      </h4>
-                      <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">
-                        Link your GitHub account to import public or private
-                        repositories with one click and track test branch
-                        coverage.
-                      </p>
-                    </div>
-
-                    <a
-                      href={`https://github.com/login/oauth/authorize?client_id=${
-                        import.meta.env.VITE_GITHUB_CLIENT_ID || ""
-                      }&scope=repo,user:email`}
-                      className="mt-2 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-[var(--radius-md)] text-xs font-semibold text-white bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] transition-colors cursor-pointer shadow-xs"
-                      id="connect-github-btn"
-                    >
-                      <GithubIcon size={14} />
-                      <span>Connect with GitHub</span>
-                    </a>
-
-                    <p className="text-[11px] text-[var(--color-text-muted)] mt-1">
-                      You can still upload local archives on the left without
-                      connecting GitHub.
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* When connected */}
-              <div
-                className={`flex-1 flex flex-col ${
-                  hasGithub === false
-                    ? "opacity-10 pointer-events-none filter blur-[1px]"
-                    : ""
-                }`}
-              >
-                <GitHubImport
-                  onClose={onClose}
-                  onSuccess={handleImportSuccess}
-                />
-              </div>
+              <GitHubImport
+                onClose={onClose}
+                onSuccess={handleImportSuccess}
+                hasGithub={hasGithub}
+              />
             </div>
           </div>
 

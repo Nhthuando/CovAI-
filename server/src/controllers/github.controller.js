@@ -188,7 +188,7 @@ export const importGitHubRepository = async (req, res) => {
     } else if (error.message === "Invalid repository") {
       return res.status(400).json({ message: "Invalid repository format." });
     } else if (error.message === "Missing GitHub token") {
-      return res.status(401).json({
+      return res.status(400).json({
         message:
           "GitHub authentication token is missing. Please connect your GitHub account.",
       });

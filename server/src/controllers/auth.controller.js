@@ -82,9 +82,7 @@ export const getGithubRepositories = async (req, res) => {
     });
 
     if (!user || !user.githubAccessTokenEnc) {
-      return res.status(401).json({
-        message: "User chưa liên kết GitHub hoặc token không hợp lệ!",
-      });
+      return res.status(200).json([]);
     }
 
     // Decrypt token đã mã hóa

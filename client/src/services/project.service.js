@@ -18,7 +18,10 @@ async function handleResponse(res) {
       localStorage.removeItem("userEmail");
       window.location.href = "/login";
     }
-    throw new Error(data.message || "Failed API call");
+    const err = new Error(data.message || "Failed API call");
+    err.status = res.status;
+    err.code = data.code;
+    throw err;
   }
   return data;
 }
@@ -116,10 +119,18 @@ export async function importGithubRepoApi(projectId, owner, repo) {
 }
 
 export async function getGithubRepositoriesApi() {
-  const res = await fetch(`${BASE_URL}/auth/github/repositories`, {
-    headers: getAuthHeaders(),
-  });
-  return handleResponse(res);
+  try {
+    const res = await fetch(`${BASE_URL}/auth/github/repositories`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      return [];
+    }
+    return handleResponse(res);
+  } catch (err) {
+    console.warn("[getGithubRepositoriesApi]", err);
+    return [];
+  }
 }
 
 export async function getFileContentApi(projectId, filePath) {
@@ -186,12 +197,68 @@ export async function getUserProfileApi() {
   return handleResponse(res);
 }
 
-export async function sendAiChatMessageApi(projectId, message, history, model) {
+export async function sendAiChatMessageApi(
+  projectId,
+  message,
+  history,
+  model,
+  attachments = [],
+  sessionId = null,
+) {
   const res = await fetch(`${BASE_URL}/projects/${projectId}/chat`, {
     method: "POST",
     headers: getAuthHeaders(),
-    body: JSON.stringify({ message, history, model }),
+    body: JSON.stringify({ message, history, model, attachments, sessionId }),
   });
+  return handleResponse(res);
+}
+
+export async function getChatSessionsApi(projectId) {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/chat/sessions`, {
+    headers: getAuthHeaders(),
+  });
+  return handleResponse(res);
+}
+
+export async function createChatSessionApi(projectId, title) {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/chat/sessions`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ title }),
+  });
+  return handleResponse(res);
+}
+
+export async function getChatSessionMessagesApi(projectId, sessionId) {
+  const res = await fetch(
+    `${BASE_URL}/projects/${projectId}/chat/sessions/${sessionId}`,
+    {
+      headers: getAuthHeaders(),
+    },
+  );
+  return handleResponse(res);
+}
+
+export async function updateChatSessionApi(projectId, sessionId, title) {
+  const res = await fetch(
+    `${BASE_URL}/projects/${projectId}/chat/sessions/${sessionId}`,
+    {
+      method: "PATCH",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ title }),
+    },
+  );
+  return handleResponse(res);
+}
+
+export async function deleteChatSessionApi(projectId, sessionId) {
+  const res = await fetch(
+    `${BASE_URL}/projects/${projectId}/chat/sessions/${sessionId}`,
+    {
+      method: "DELETE",
+      headers: getAuthHeaders(),
+    },
+  );
   return handleResponse(res);
 }
 
@@ -287,13 +354,13 @@ export async function generateSkeletonApi(
   return handleResponse(res);
 }
 
-export async function generateIntegrationTestApi(projectId, snapshotId) {
+export async function generateIntegrationTestApi(projectId, snapshotId, force = false) {
   const res = await fetch(
     `${BASE_URL}/projects/${projectId}/ai/generate-integration-test`,
     {
       method: "POST",
       headers: getAuthHeaders(),
-      body: JSON.stringify({ snapshotId, framework: "SUPERTEST" }),
+      body: JSON.stringify({ snapshotId, framework: "SUPERTEST", force }),
     },
   );
   return handleResponse(res);

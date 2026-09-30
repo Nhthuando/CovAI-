@@ -348,19 +348,30 @@ export const createSnapshotJob = async ({
     throw new ServiceError("Snapshot does not belong to project", 400);
   if (!user) throw new ServiceError("User not found", 404);
 
-  await assertNoActiveJob(projectId, type);
+  await assertNoActiveJob(projectId, type, prisma, { snapshotId });
 
-  const job = await prisma.job.create({
-    data: {
-      projectId,
-      snapshotId,
-      userId,
-      type,
-      status: "QUEUED",
-      progress: 0,
-      payloadJson: payloadJson != null ? JSON.stringify(payloadJson) : null,
-    },
-  });
+  let job;
+  try {
+    job = await prisma.job.create({
+      data: {
+        projectId,
+        snapshotId,
+        userId,
+        type,
+        status: "QUEUED",
+        progress: 0,
+        payloadJson: payloadJson != null ? JSON.stringify(payloadJson) : null,
+      },
+    });
+  } catch (error) {
+    if (error.code === 'P2002') {
+      throw new ServiceError(
+        `A ${type} job is already queued or running for this project/snapshot`,
+        409,
+      );
+    }
+    throw error;
+  }
 
   await addJobLog(job.id, "INFO", `Job created (${type})`);
 
