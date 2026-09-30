@@ -44,6 +44,253 @@ export const coverageResultFromSummary = (summaryResult) => {
 };
 
 /**
+ * Dynamically build Jest moduleNameMapper without hardcoding static paths.
+ * Resolves package name and directory paths based on actual disk structure.
+ *
+ * @param {string} rootDir
+ * @param {Object} projectJestConfig
+ * @param {string} rootPkgName
+ * @returns {Object}
+ */
+export const buildJestModuleNameMapper = (rootDir, projectJestConfig = {}, rootPkgName = "") => {
+    const baseMapper = {
+        "^(\\.{1,2}/.*)\\.js$": "$1",
+        "^(\\.{1,2}/.*)\\.jsx$": "$1",
+        "^(\\.{1,2}/.*)\\.mjs$": "$1",
+        "^(\\.{1,2}/.*)\\.cjs$": "$1",
+    };
+
+    // Only map dist/src alias if dist/src exists or if project / subproject config has dist/src references
+    const hasDistSrc = fs.existsSync(path.join(rootDir, "dist", "src"));
+    let hasDistSrcReferences = false;
+    try {
+        const babelrcPath = path.join(rootDir, ".babelrc");
+        if (fs.existsSync(babelrcPath)) {
+            const babelContent = fs.readFileSync(babelrcPath, "utf8");
+            if (babelContent.includes("dist/src")) hasDistSrcReferences = true;
+        }
+        if (!hasDistSrcReferences && fs.existsSync(rootDir)) {
+            const subEntries = fs.readdirSync(rootDir, { withFileTypes: true });
+            for (const entry of subEntries) {
+                if (entry.isDirectory() && !["node_modules", ".git", "storage"].includes(entry.name)) {
+                    const subBabel = path.join(rootDir, entry.name, ".babelrc");
+                    if (fs.existsSync(subBabel)) {
+                        const content = fs.readFileSync(subBabel, "utf8");
+                        if (content.includes("dist/src")) {
+                            hasDistSrcReferences = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    } catch { }
+
+    if (hasDistSrc || hasDistSrcReferences) {
+        const distSrcTarget = hasDistSrc
+            ? "<rootDir>/dist/src"
+            : (fs.existsSync(path.join(rootDir, "src")) ? "<rootDir>/src" : null);
+        if (distSrcTarget) {
+            baseMapper["^(?:\\.{1,2}/)+dist/src$"] = distSrcTarget;
+            baseMapper["^(?:\\.{1,2}/)+dist/src/(.*)$"] = `${distSrcTarget}/$1`;
+            baseMapper[".*dist/src$"] = distSrcTarget;
+            baseMapper[".*dist/src/(.*)"] = `${distSrcTarget}/$1`;
+        }
+    }
+
+    if (rootPkgName) {
+        // Resolve package self-reference dynamically based on actual directory structure
+        let selfTarget = null;
+        if (fs.existsSync(path.join(rootDir, "dist", "src"))) {
+            selfTarget = "<rootDir>/dist/src";
+        } else if (fs.existsSync(path.join(rootDir, "src"))) {
+            selfTarget = "<rootDir>/src";
+        } else if (fs.existsSync(path.join(rootDir, "dist"))) {
+            selfTarget = "<rootDir>/dist";
+        } else if (fs.existsSync(path.join(rootDir, "lib"))) {
+            selfTarget = "<rootDir>/lib";
+        }
+
+        if (selfTarget) {
+            baseMapper[`^${rootPkgName}$`] = selfTarget;
+            baseMapper[`^${rootPkgName}/(.*)$`] = `${selfTarget}/$1`;
+        }
+    }
+
+    return {
+        ...baseMapper,
+        ...(projectJestConfig?.moduleNameMapper || {})
+    };
+};
+
+/**
+ * Detect if project requires building (e.g. tsc / babel / build script) before running tests,
+ * and execute build inside container if necessary.
+ *
+ * @param {string} jobId
+ * @param {string} rootDir
+ * @returns {Promise<boolean>}
+ */
+export const detectAndRunBuild = async (jobId, rootDir) => {
+    const pkgPath = path.join(rootDir, "package.json");
+    if (!fs.existsSync(pkgPath)) return false;
+
+    try {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+        const scripts = pkg.scripts || {};
+        const main = pkg.main || "";
+        const typings = pkg.typings || pkg.types || "";
+
+        const distExists = fs.existsSync(path.join(rootDir, "dist"));
+        const buildDirExists = fs.existsSync(path.join(rootDir, "build"));
+
+        const hasBuildScript = Boolean(scripts.build);
+        const referencesDist = (
+            main.startsWith("dist") ||
+            main.startsWith("./dist") ||
+            main.startsWith("build") ||
+            main.startsWith("./build") ||
+            typings.startsWith("dist") ||
+            typings.startsWith("./dist") ||
+            typings.startsWith("build") ||
+            typings.startsWith("./build")
+        );
+        const hasTsConfig = fs.existsSync(path.join(rootDir, "tsconfig.json"));
+
+        const needsBuild = (hasBuildScript && (!distExists && !buildDirExists)) ||
+            (referencesDist && (!distExists && !buildDirExists));
+
+        if (needsBuild) {
+            const buildCmd = hasBuildScript ? "npm run build" : (hasTsConfig ? "npx tsc --skipLibCheck" : null);
+            if (buildCmd) {
+                if (jobId) {
+                    await addJobLog(jobId, "INFO", `[BUILD] Phát hiện project cần build trước khi test (${buildCmd}). Đang tiến hành build...`).catch(() => { });
+                }
+                const buildRes = await dockerRunner.run({
+                    snapshotPath: rootDir,
+                    command: buildCmd,
+                    timeoutMs: 180000,
+                    jobId: jobId || "build-pre-test"
+                });
+                if (buildRes.success || buildRes.exitCode === 0) {
+                    if (jobId) {
+                        await addJobLog(jobId, "INFO", `[BUILD] Build project thành công.`).catch(() => { });
+                    }
+                    return true;
+                } else {
+                    if (jobId) {
+                        await addJobLog(jobId, "WARN", `[BUILD] Build kết thúc với mã ${buildRes.exitCode}: ${(buildRes.stderr || buildRes.stdout || "").slice(0, 300)}`).catch(() => { });
+                    }
+                    return false;
+                }
+            }
+        }
+    } catch (err) {
+        if (jobId) {
+            await addJobLog(jobId, "WARN", `[BUILD] Lỗi khi kiểm tra/thực thi build: ${err.message}`).catch(() => { });
+        }
+    }
+    return false;
+};
+
+/**
+ * Parses module resolution errors from test runner output.
+ * Returns detailed structured diagnostic information.
+ *
+ * @param {string} errorOutput
+ * @param {string} rootDir
+ * @returns {Object|null}
+ */
+export const parseModuleResolutionError = (errorOutput, rootDir = "") => {
+    if (!errorOutput || typeof errorOutput !== "string") return null;
+
+    const cannotFindMatch = errorOutput.match(/Cannot find module ['"]([^'"]+)['"]\s+from\s+['"]([^'"]+)['"]/i);
+    if (cannotFindMatch) {
+        const missingModule = cannotFindMatch[1];
+        const testFile = cannotFindMatch[2];
+        let expectedSourcePath = null;
+        try {
+            if (missingModule.startsWith(".")) {
+                expectedSourcePath = path.resolve(rootDir, path.dirname(testFile), missingModule);
+            } else {
+                expectedSourcePath = path.resolve(rootDir, "node_modules", missingModule);
+            }
+        } catch { }
+
+        return {
+            type: "MODULE_RESOLUTION_ERROR",
+            missingModule,
+            testFile,
+            pathResolving: missingModule,
+            workingDirectory: rootDir,
+            expectedSourcePath,
+            actualError: cannotFindMatch[0],
+            rawOutput: errorOutput.slice(0, 1000)
+        };
+    }
+    return null;
+};
+
+/**
+ * Resolves imports in a test file to verify they exist before test execution.
+ * Checks relative imports, detects needed dist/src or build artifacts,
+ * and returns diagnostic information.
+ *
+ * @param {string} testFile - Path to test file
+ * @param {string} rootDir - Root directory of the repository
+ * @returns {{ valid: boolean, errors: Object[] }}
+ */
+export const checkTestFileImports = (testFile, rootDir) => {
+    const fullTestPath = path.isAbsolute(testFile) ? testFile : path.join(rootDir, testFile);
+    if (!fs.existsSync(fullTestPath)) {
+        return { valid: false, errors: [{ type: "FILE_NOT_FOUND", testFile, path: fullTestPath }] };
+    }
+
+    const errors = [];
+    try {
+        const content = fs.readFileSync(fullTestPath, "utf8");
+        const importRegex = /(?:import\s+(?:.*?from\s+)?|require\s*\(\s*)['"]([^'"]+)['"]/g;
+        let match;
+        const testDir = path.dirname(fullTestPath);
+
+        while ((match = importRegex.exec(content)) !== null) {
+            const importPath = match[1];
+            if (importPath.startsWith(".")) {
+                const resolvedTarget = path.resolve(testDir, importPath);
+                const candidates = [
+                    resolvedTarget,
+                    resolvedTarget + ".js",
+                    resolvedTarget + ".jsx",
+                    resolvedTarget + ".ts",
+                    resolvedTarget + ".tsx",
+                    resolvedTarget + ".mjs",
+                    resolvedTarget + ".cjs",
+                    path.join(resolvedTarget, "index.js"),
+                    path.join(resolvedTarget, "index.ts"),
+                    path.join(resolvedTarget, "index.mjs")
+                ];
+
+                const exists = candidates.some(c => fs.existsSync(c));
+                if (!exists) {
+                    errors.push({
+                        type: "MODULE_RESOLUTION_ERROR",
+                        testFile,
+                        missingModule: importPath,
+                        pathResolving: importPath,
+                        resolvedPath: resolvedTarget,
+                        expectedSourcePath: candidates[1],
+                        actualFileSystemPath: "Not found",
+                        workingDirectory: rootDir
+                    });
+                }
+            }
+        }
+    } catch { }
+
+    return { valid: errors.length === 0, errors };
+};
+
+/**
  * Scan repository for unit test files.
  * Strictly ignores frontend directories (client, frontend, ui, web) and .jsx/.tsx files.
  * Strictly ignores integration/E2E files (supertest, playwright, cypress).
@@ -199,18 +446,14 @@ const runNpmInstall = async (jobId, rootDir) => {
     const rootHasDeps = !hasRootPkg || (fs.existsSync(nodeModulesDir) && fs.readdirSync(nodeModulesDir).length > 3);
     const backendHasDeps = !fs.existsSync(backendPkg) || (fs.existsSync(backendModulesDir) && fs.readdirSync(backendModulesDir).length > 3);
 
-    // If dependencies already exist, skip npm install for high performance
     if (rootHasDeps && backendHasDeps) {
-        await addJobLog(jobId, "INFO", "[SCRUM-139] node_modules đã tồn tại đầy đủ, bỏ qua npm install để tăng tốc độ chạy.").catch(() => { });
-        return;
-    }
-
-    if (hasRootPkg && !rootHasDeps) {
+        await addJobLog(jobId, "INFO", "[SCRUM-139] node_modules đã tồn tại đầy đủ tại root.").catch(() => { });
+    } else if (hasRootPkg && !rootHasDeps) {
         await addJobLog(jobId, "INFO", `[SCRUM-139] Bắt đầu npm install tại: ${rootDir}`).catch(() => { });
 
         const result = await dockerRunner.run({
             snapshotPath: rootDir,
-            command: "npm install --prefer-offline --legacy-peer-deps --no-audit --no-fund --progress=false",
+            command: "npm install --include=dev --prefer-offline --legacy-peer-deps --no-audit --no-fund --progress=false",
             timeoutMs: INSTALL_TIMEOUT_MS,
             jobId
         });
@@ -233,7 +476,7 @@ const runNpmInstall = async (jobId, rootDir) => {
     try {
         const findSubPackages = (dir, depth = 1) => {
             const list = [];
-            if (depth > 2) return list;
+            if (depth > 3) return list;
             try {
                 for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
                     if (item.isDirectory() && !["node_modules", ".git", "coverage", "dist", "build", "storage", "client", "frontend"].includes(item.name)) {
@@ -242,7 +485,7 @@ const runNpmInstall = async (jobId, rootDir) => {
                         if (fs.existsSync(subPkg)) {
                             list.push(subDir);
                         }
-                        if (depth < 2) {
+                        if (depth < 3) {
                             list.push(...findSubPackages(subDir, depth + 1));
                         }
                     }
@@ -310,6 +553,15 @@ const getPackageForFile = (relFile, root) => {
     return "";
 };
 
+const resolveJestBin = (dir) => {
+    const localBin = path.join(dir, "node_modules", ".bin", "jest");
+    if (fs.existsSync(localBin)) return "./node_modules/.bin/jest";
+    const parentBin = path.join(dir, "..", "node_modules", ".bin", "jest");
+    if (fs.existsSync(parentBin)) return "../node_modules/.bin/jest";
+    if (fs.existsSync("/app/node_modules/.bin/jest")) return "/app/node_modules/.bin/jest";
+    return "npx jest";
+};
+
 export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFiles = []) => {
     const covDir = path.join(rootDir, "coverage");
     if (!fs.existsSync(covDir)) {
@@ -327,6 +579,9 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
         } catch { }
     }
 
+    // Ensure project is compiled (e.g. tsc -> dist/src) before running any tests
+    await detectAndRunBuild(jobId, rootDir);
+
     const packageGroups = new Map();
     if (Array.isArray(filesToRun) && filesToRun.length > 0) {
         for (const file of filesToRun) {
@@ -340,7 +595,8 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
     const shouldRunRoot = packageGroups.size === 0 || rootFiles.length > 0;
     let overallExitCode = 0;
 
-    let jestCmd = 'npx --yes jest --coverage --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=coverage/jest-results.json --forceExit --testTimeout=30000 --maxWorkers=50% --cache';
+    const rootJestBin = resolveJestBin(rootDir);
+    let jestCmd = `${rootJestBin} --coverage --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=coverage/jest-results.json --forceExit --testTimeout=30000 --maxWorkers=50% --cache`;
 
     let tempConfigCreated = false;
     const tempConfigName = "covai-jest-runner.json";
@@ -457,28 +713,13 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
         }
     } catch { }
 
-    const defaultModuleNameMapper = {
-        "^(\\.{1,2}/.*)\\.js$": "$1",
-        "^(\\.{1,2}/.*)\\.jsx$": "$1",
-        "^(\\.{1,2}/.*)\\.mjs$": "$1",
-        "^(\\.{1,2}/.*)\\.cjs$": "$1",
-        ...(rootPkgName ? {
-            [`^${rootPkgName}$`]: "<rootDir>/dist/src",
-            [`^${rootPkgName}/(.*)$`]: "<rootDir>/dist/src/$1",
-        } : {}),
-        "^jest-cucumber$": "<rootDir>/dist/src",
-        "^jest-cucumber/(.*)$": "<rootDir>/dist/src/$1",
-        ".*dist/src$": "<rootDir>/dist/src",
-        ".*dist/src/(.*)": "<rootDir>/dist/src/$1",
-        ...(projectJestConfig?.moduleNameMapper || {})
-    };
+    const defaultModuleNameMapper = buildJestModuleNameMapper(rootDir, projectJestConfig, rootPkgName);
 
     const coveragePathIgnorePatterns = [
         "/node_modules/",
         "/client/",
         "/frontend/",
         "/routes/",
-        "/controllers/",
         "/endpoints/",
         "/api/",
         "app\\.[cm]?[jt]s$",
@@ -559,12 +800,13 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             tempSetupPath,
             `try { const { jest } = await import('@jest/globals'); if (typeof globalThis.jest === 'undefined' && jest) { globalThis.jest = jest; } } catch { }\n` +
             `try {\n` +
-            `  if (typeof expect !== 'undefined' && expect.extend) {\n` +
-            `    expect.extend({\n` +
-            `      toBeTrue(received) { return { pass: received === true, message: () => 'expected ' + received + ' to be true' }; },\n` +
-            `      toBeFalse(received) { return { pass: received === false, message: () => 'expected ' + received + ' to be false' }; }\n` +
-            `    });\n` +
-            `  }\n` +
+            `  const matchers = {\n` +
+            `    toBeTrue(received) { return { pass: received === true, message: () => 'expected ' + received + ' to be true' }; },\n` +
+            `    toBeFalse(received) { return { pass: received === false, message: () => 'expected ' + received + ' to be false' }; }\n` +
+            `  };\n` +
+            `  if (typeof expect !== 'undefined' && expect && expect.extend) expect.extend(matchers);\n` +
+            `  if (typeof global !== 'undefined' && global.expect && global.expect.extend) global.expect.extend(matchers);\n` +
+            `  if (typeof globalThis !== 'undefined' && globalThis.expect && globalThis.expect.extend) globalThis.expect.extend(matchers);\n` +
             `} catch { }\n`,
             "utf8"
         );
@@ -615,7 +857,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                     testMatch: baseTestMatch,
                     testTimeout: 30000,
                     testPathIgnorePatterns: [
-                        "/node_modules/", "/client/", "/frontend/", "playwright", "cypress", "supertest", "vitest",
+                        "/node_modules/", "/client/", "/frontend/", "/dist/", "playwright", "cypress", "supertest", "vitest",
                         ...(Array.isArray(projectJestConfig?.testPathIgnorePatterns)
                             ? projectJestConfig.testPathIgnorePatterns.filter(p => !p.includes("node_modules"))
                             : [])
@@ -637,7 +879,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                     const relativeConfig = path.relative(rootDir, jestConfigPath).replace(/\\/g, '/');
                     jestCmd += ` --config=${relativeConfig}`;
                 }
-                jestCmd += ' --testPathIgnorePatterns="playwright|cypress|supertest|vitest|client|frontend"';
+                jestCmd += ' --testPathIgnorePatterns="playwright|cypress|supertest|vitest|client|frontend|dist"';
             }
         }
 
@@ -647,6 +889,39 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
 
         await addJobLog(jobId, "INFO", `[SCRUM-140] Bắt đầu jest --coverage (${rootFiles.length > 0 ? rootFiles.length + ' file' : 'toàn bộ'}) tại Docker container (timeout: ${Math.round(effectiveTimeout / 60000)}m)`).catch(() => { });
 
+        let rootPkgModified = false;
+        let originalRootPkgContent = null;
+        try {
+            const rootPkgPath = path.join(rootDir, "package.json");
+            if (fs.existsSync(rootPkgPath)) {
+                originalRootPkgContent = fs.readFileSync(rootPkgPath, "utf8");
+                const rootPkg = JSON.parse(originalRootPkgContent);
+                if (!rootPkg.type || rootPkg.type !== "module") {
+                    const hasEsmFiles = (rootFiles || []).some(f => {
+                        try {
+                            const c = fs.readFileSync(path.join(rootDir, f), "utf8");
+                            return /\bimport\s+/.test(c) || /\bexport\s+/.test(c);
+                        } catch { return false; }
+                    });
+                    const backendPkgPath = path.join(rootDir, "backend", "package.json");
+                    let backendIsModule = false;
+                    try {
+                        backendIsModule = fs.existsSync(backendPkgPath) && JSON.parse(fs.readFileSync(backendPkgPath, "utf8"))?.type === "module";
+                    } catch { }
+                    const hasTsConfig = fs.existsSync(path.join(rootDir, "tsconfig.json"));
+                    const hasTsFiles = (rootFiles || []).some(f => /\.[cm]?tsx?$/.test(f));
+                    const isTsProject = hasTsConfig || hasTsFiles;
+                    if (!isTsProject && (hasEsmFiles || backendIsModule)) {
+                        rootPkg.type = "module";
+                        fs.writeFileSync(rootPkgPath, JSON.stringify(rootPkg, null, 2), "utf8");
+                        rootPkgModified = true;
+                    }
+                }
+            }
+        } catch { }
+
+        await detectAndRunBuild(jobId, rootDir);
+
         let result;
         try {
             result = await dockerRunner.run({
@@ -655,13 +930,26 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                 timeoutMs: effectiveTimeout,
                 jobId,
                 env: {
-                    NODE_OPTIONS: "--experimental-vm-modules"
+                    NODE_OPTIONS: "--experimental-vm-modules",
+                    NODE_PATH: "/app/node_modules:/usr/local/lib/node_modules:./node_modules",
                 }
             });
             if (result.exitCode !== 0 && result.exitCode !== null) {
                 overallExitCode = result.exitCode;
             }
+            if (!result.success || (result.exitCode !== 0 && result.exitCode !== null)) {
+                const outputText = (result.stderr || "") + "\n" + (result.stdout || "");
+                const modResError = parseModuleResolutionError(outputText, rootDir);
+                if (modResError) {
+                    await addJobLog(jobId, "ERROR", `[MODULE_RESOLUTION] Test file: "${modResError.testFile}", missing module: "${modResError.missingModule}", resolved path: "${modResError.expectedSourcePath || modResError.pathResolving}", workingDirectory: "${modResError.workingDirectory}"`).catch(() => { });
+                }
+            }
         } finally {
+            if (rootPkgModified && originalRootPkgContent) {
+                try {
+                    fs.writeFileSync(path.join(rootDir, "package.json"), originalRootPkgContent, "utf8");
+                } catch { }
+            }
             if (tempConfigCreated && fs.existsSync(tempConfigPath)) {
                 try { fs.unlinkSync(tempConfigPath); } catch { }
             }
@@ -694,17 +982,88 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
         const subTimeout = Math.min(4 * 60 * 1000, Math.max(JEST_TIMEOUT_MS, relativeSubFiles.length * 4 * 1000));
         await addJobLog(jobId, "INFO", `[SCRUM-140] Đang chạy Jest cho subpackage ${pkgDir} (${relativeSubFiles.length} file)...`).catch(() => { });
 
-        const subJestCmd = `cd "${pkgDir}" && npx --yes jest ${fileArgs} --coverage --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile="${subResultsRel}" --forceExit --testTimeout=30000 --maxWorkers=50% --cache`;
+        // Generate isolated setup and jest config for subpackage
+        const tempSubSetupName = `covai-setup-${subSlug}.js`;
+        const tempSubSetupPath = path.join(targetDir, tempSubSetupName);
+        try {
+            fs.writeFileSync(
+                tempSubSetupPath,
+                `try {\n` +
+                `  const matchers = {\n` +
+                `    toBeTrue(received) { return { pass: received === true, message: () => 'expected ' + received + ' to be true' }; },\n` +
+                `    toBeFalse(received) { return { pass: received === false, message: () => 'expected ' + received + ' to be false' }; }\n` +
+                `  };\n` +
+                `  if (typeof expect !== 'undefined' && expect && expect.extend) expect.extend(matchers);\n` +
+                `  if (typeof global !== 'undefined' && global.expect && global.expect.extend) global.expect.extend(matchers);\n` +
+                `  if (typeof globalThis !== 'undefined' && globalThis.expect && globalThis.expect.extend) globalThis.expect.extend(matchers);\n` +
+                `} catch { }\n`,
+                "utf8"
+            );
+        } catch { }
 
-        const subResult = await dockerRunner.run({
-            snapshotPath: rootDir,
-            command: subJestCmd,
-            timeoutMs: subTimeout,
-            jobId,
-            env: {
-                NODE_OPTIONS: "--experimental-vm-modules"
+        const relRootFromSub = path.relative(targetDir, rootDir).replace(/\\/g, "/") || "..";
+        const hasDistSrc = fs.existsSync(path.join(rootDir, "dist", "src"));
+        const targetDistSrc = hasDistSrc
+            ? `<rootDir>/${relRootFromSub}/dist/src/index.js`
+            : (fs.existsSync(path.join(rootDir, "src")) ? `<rootDir>/${relRootFromSub}/src/index.ts` : `<rootDir>/${relRootFromSub}/src`);
+
+        const subModuleNameMapper = {
+            "^(?:\\.\\./)+dist/src$": targetDistSrc,
+            "^(?:\\.\\./)+dist/src/(.*)$": hasDistSrc ? `<rootDir>/${relRootFromSub}/dist/src/$1` : `<rootDir>/${relRootFromSub}/src/$1`,
+            ".*dist/src$": targetDistSrc,
+            ".*dist/src/(.*)": hasDistSrc ? `<rootDir>/${relRootFromSub}/dist/src/$1` : `<rootDir>/${relRootFromSub}/src/$1`,
+            "^jest-cucumber$": targetDistSrc,
+            "^jest-cucumber/(.*)$": hasDistSrc ? `<rootDir>/${relRootFromSub}/dist/src/$1` : `<rootDir>/${relRootFromSub}/src/$1`,
+        };
+
+        const pkgJestConfig = readProjectJestConfig(targetDir);
+        const tempSubConfigName = `covai-jest-${subSlug}.json`;
+        const tempSubConfigPath = path.join(targetDir, tempSubConfigName);
+        let tempSubConfigCreated = false;
+        try {
+            const subConfig = {
+                ...pkgJestConfig,
+                setupFilesAfterEnv: [
+                    ...(Array.isArray(pkgJestConfig?.setupFilesAfterEnv) ? pkgJestConfig.setupFilesAfterEnv : []),
+                    `<rootDir>/${tempSubSetupName}`
+                ],
+                moduleNameMapper: {
+                    ...subModuleNameMapper,
+                    ...(pkgJestConfig?.moduleNameMapper || {})
+                },
+                moduleFileExtensions: Array.from(new Set([
+                    ...(Array.isArray(pkgJestConfig?.moduleFileExtensions) ? pkgJestConfig.moduleFileExtensions : []),
+                    "js", "jsx", "ts", "tsx", "mjs", "cjs", "json", "node"
+                ]))
+            };
+            fs.writeFileSync(tempSubConfigPath, JSON.stringify(subConfig, null, 2), "utf8");
+            tempSubConfigCreated = true;
+        } catch { }
+
+        const configFlag = tempSubConfigCreated ? ` --config="${tempSubConfigName}"` : "";
+        const subJestBin = resolveJestBin(targetDir);
+        const subJestCmd = `cd "${pkgDir}" && ${subJestBin} ${fileArgs}${configFlag} --coverage --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile="${subResultsRel}" --forceExit --testTimeout=30000 --maxWorkers=50% --cache`;
+
+        let subResult;
+        try {
+            subResult = await dockerRunner.run({
+                snapshotPath: rootDir,
+                command: subJestCmd,
+                timeoutMs: subTimeout,
+                jobId,
+                env: {
+                    NODE_OPTIONS: "--experimental-vm-modules",
+                    NODE_PATH: "/app/node_modules:/usr/local/lib/node_modules:./node_modules:../node_modules",
+                }
+            });
+        } finally {
+            if (tempSubConfigCreated && fs.existsSync(tempSubConfigPath)) {
+                try { fs.unlinkSync(tempSubConfigPath); } catch { }
             }
-        });
+            if (fs.existsSync(tempSubSetupPath)) {
+                try { fs.unlinkSync(tempSubSetupPath); } catch { }
+            }
+        }
 
         if (subResult.exitCode !== 0 && subResult.exitCode !== null) {
             overallExitCode = subResult.exitCode;
@@ -798,7 +1157,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
 /**
  * SCRUM-141: Parse coverage-final.json để lấy per-file coverage data.
  */
-const readCoverageFinal = (coverageDir) => {
+export const readCoverageFinal = (coverageDir) => {
     const finalPath = path.join(coverageDir, "coverage-final.json");
     if (!fs.existsSync(finalPath)) {
         return null;
@@ -831,7 +1190,7 @@ const readCoverageFinal = (coverageDir) => {
 /**
  * SCRUM-141: Parse per-file coverage từ coverage-final.json và lưu CoverageFile vào DB.
  */
-const parseFinalCoverageFiles = async (jobId, snapshotId, projectId, userId, coverageDir) => {
+export const parseFinalCoverageFiles = async (jobId, snapshotId, projectId, userId, coverageDir) => {
     const { parseCoverageFilesForSnapshot } = await import("./coverageFileParser.service.js");
     const coverageReport = readCoverageFinal(coverageDir);
 
@@ -860,7 +1219,7 @@ const parseFinalCoverageFiles = async (jobId, snapshotId, projectId, userId, cov
 /**
  * SCRUM-141: Parse per-function coverage từ coverage-final.json và lưu CoverageFunction vào DB.
  */
-const parseFinalCoverageFunctions = async (jobId, snapshotId, projectId, userId, coverageDir) => {
+export const parseFinalCoverageFunctions = async (jobId, snapshotId, projectId, userId, coverageDir) => {
     const { parseCoverageFunctionsForSnapshot } = await import("./coverageFunctionParser.service.js");
     const coverageReport = readCoverageFinal(coverageDir);
 
@@ -942,10 +1301,10 @@ export const mergeCoverageSummaries = (sum1 = {}, sum2 = {}) => {
     for (const [key, item] of Object.entries(merged)) {
         if (key === "total" || !item || typeof item !== "object") continue;
         const normKey = key.replace(/\\/g, "/").toLowerCase();
-        // Exclude API files and frontend files from unit coverage totals
+        // Exclude route files, endpoints, entry files, and frontend files from unit coverage totals
         if (
-            /(^|\/)(routes?|controllers?|endpoints?|api)(\/|\.|$)/i.test(normKey) ||
-            /\.(route|routes|controller|controllers)\.[cm]?[jt]sx?$/i.test(normKey) ||
+            /(^|\/)(routes?|endpoints?)(\/|\.|$)/i.test(normKey) ||
+            /\.(route|routes)\.[cm]?[jt]sx?$/i.test(normKey) ||
             /(^|\/)(app|server)\.[cm]?[jt]sx?$/i.test(normKey) ||
             /^(src\/)?(index|main)\.[cm]?[jt]sx?$/i.test(normKey.replace(/^\.?\//, "")) ||
             /(^|\/)(client|frontend|pages|components|ui|web)\//i.test(normKey) ||
@@ -1087,6 +1446,24 @@ export const processRunTestsJob = async (jobId) => {
     // Khởi tạo output record
     await saveJobOutput(jobId, { stdout: "", stderr: "" }).catch(() => { });
 
+    // Invalidate stale coverage files from any previous run to ensure fresh and real metrics
+    if (!fs.existsSync(coverageDir)) {
+        try { fs.mkdirSync(coverageDir, { recursive: true }); } catch { }
+    }
+    const staleCoverageFiles = [
+        path.join(coverageDir, "coverage-summary.json"),
+        path.join(coverageDir, "coverage-final.json"),
+        path.join(coverageDir, "jest-results.json"),
+        path.join(coverageDir, "vitest-results.json"),
+        path.join(coverageDir, "test-results.json"),
+        path.join(coverageDir, "lcov.info")
+    ];
+    for (const sf of staleCoverageFiles) {
+        if (fs.existsSync(sf)) {
+            try { fs.unlinkSync(sf); } catch { }
+        }
+    }
+
     // ── SCRUM-144: Progress 10% — bắt đầu ───────────────────────────────────
     await updateJobProgress(jobId, 10).catch(() => { });
     await addJobLog(jobId, "INFO", "Pipeline RUN_TESTS bắt đầu.").catch(() => { });
@@ -1095,6 +1472,7 @@ export const processRunTestsJob = async (jobId) => {
         // ── SCRUM-139: Install dependencies (Fast check) ─────────────────────
         await addJobLog(jobId, "INFO", "Bước 1/4: Kiểm tra & cài đặt dependencies...").catch(() => { });
         await runNpmInstall(jobId, rootDir);
+        await detectAndRunBuild(jobId, rootDir);
 
         // ── SCRUM-144: Progress 25% — sau install ─────────────────────────────
         await updateJobProgress(jobId, 25).catch(() => { });
@@ -1283,8 +1661,75 @@ export const processRunTestsJob = async (jobId) => {
             await updateJobProgress(jobId, 70).catch(() => { });
         }
 
-        // Re-compute and normalize coverage-summary.json totals to exclude API and frontend files
+        // ── SCRUM-140/Problem 1 & 3: Check test execution result ─────────────
         const summaryFile = path.join(coverageDir, "coverage-summary.json");
+        const hasCoverageSummary = fs.existsSync(summaryFile);
+
+        if (runnerResult && runnerResult.exitCode !== 0 && runnerResult.exitCode !== null) {
+            const jobOutputModule = await import("./jobOutput.service.js").catch(() => ({}));
+            const jobFetcher = jobOutputModule.getJobOutput || jobOutputModule.getOutputByJob;
+            const jobOutput = typeof jobFetcher === "function" ? await jobFetcher(jobId).catch(() => null) : null;
+            const fullOutput = (jobOutput?.stderr || "") + "\n" + (jobOutput?.stdout || "");
+            const modResError = parseModuleResolutionError(fullOutput, rootDir);
+
+            // Case 1: Fatal crash / Module resolution failure / Runner failed before generating coverage
+            if (modResError || !hasCoverageSummary) {
+                const existingSummary = await prisma.coverageSummary.findUnique({ where: { snapshotId } });
+                const previousCoverage = existingSummary ? {
+                    statements: existingSummary.stmtsPct,
+                    branches: existingSummary.branchesPct,
+                    functions: existingSummary.funcsPct,
+                    lines: existingSummary.linesPct
+                } : null;
+
+                const failMessage = modResError
+                    ? `Test suite failed to run: Cannot find module '${modResError.missingModule}' from '${modResError.testFile}'`
+                    : `Test execution failed with exit code ${runnerResult.exitCode}`;
+
+                await addJobLog(jobId, "ERROR", `[RUN_TESTS] ${failMessage}`).catch(() => { });
+
+                // Persist failed test run in DB for accurate history
+                try {
+                    await prisma.testRun.create({
+                        data: {
+                            snapshotId,
+                            type: hasVitest && !hasJest ? "VITEST" : "JEST",
+                            totalTests: 0,
+                            passedTests: 0,
+                            failedTests: 1,
+                            skippedTests: 0,
+                            durationMs: 0,
+                            status: "FAILED",
+                            startedAt: new Date(),
+                            finishedAt: new Date(),
+                            scenarios: {
+                                create: [{
+                                    title: modResError ? `Module resolution: ${modResError.missingModule}` : "Test execution failed",
+                                    status: "failed",
+                                    failureMessages: [failMessage, fullOutput.slice(0, 1000)].filter(Boolean),
+                                    testFile: modResError?.testFile || null
+                                }]
+                            }
+                        }
+                    });
+                } catch { }
+
+                const failErr = new Error(failMessage);
+                failErr.moduleResolutionError = modResError;
+                failErr.previousCoverage = previousCoverage;
+                await markJobFailed(jobId, failErr).catch(() => { });
+                return;
+            }
+
+            // Case 2: Tests executed and valid coverage was produced, but some assertions failed (e.g. exit code 1)
+            await addJobLog(
+                jobId,
+                "WARN",
+                `[RUN_TESTS] Runner hoàn tất với cảnh báo một số test assertion không đạt (exit code ${runnerResult.exitCode}). Thu thập kết quả coverage thực tế từ các test đã chạy...`
+            ).catch(() => { });
+        }
+
+        // Re-compute and normalize coverage-summary.json totals to exclude API and frontend files
         if (fs.existsSync(summaryFile)) {
             try {
                 const currentSum = JSON.parse(fs.readFileSync(summaryFile, "utf8"));
@@ -1342,7 +1787,11 @@ export const processRunTestsJob = async (jobId) => {
 
         // ── SCRUM-143: Chuyển sang SUCCESS ───────────────────────────────────
         const coverageResult = coverageResultFromSummary(summaryResult);
-        await markJobSuccess(jobId, { coverageResult });
+        await markJobSuccess(jobId, {
+            coverageResult,
+            hasTestFailures: runnerResult && runnerResult.exitCode !== 0,
+            exitCode: runnerResult?.exitCode ?? 0
+        });
         await addJobLog(jobId, "INFO", "Pipeline RUN_TESTS hoàn thành thành công.").catch(() => { });
 
         console.log(`[RunTestsJob ${jobId}] Pipeline hoàn thành thành công.`);

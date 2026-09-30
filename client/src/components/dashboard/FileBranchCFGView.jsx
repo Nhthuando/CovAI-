@@ -306,31 +306,12 @@ export default function FileBranchCFGView({
                   </div>
                 </div>
 
-                {/* Missing Branch Warning & Suggest Button */}
-                {(!isTrueCovered || !isFalseCovered) && onSuggestTestcase && (
+                {/* Missing Branch Warning */}
+                {(!isTrueCovered || !isFalseCovered) && (
                   <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ fontSize: 11, color: "#f87171" }}>
                       ⚠️ Remaining un-tested branches
                     </span>
-                    <button
-                      onClick={() => onSuggestTestcase(filePath)}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 3,
-                        padding: "3px 8px",
-                        borderRadius: 4,
-                        background: "rgba(168, 85, 247, 0.2)",
-                        border: "1px solid rgba(168, 85, 247, 0.4)",
-                        color: "#c084fc",
-                        fontSize: 11,
-                        cursor: "pointer",
-                        fontWeight: 600,
-                      }}
-                    >
-                      <Sparkles size={11} />
-                      <span>Suggest testcase</span>
-                    </button>
                   </div>
                 )}
               </div>

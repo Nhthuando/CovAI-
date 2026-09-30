@@ -15,6 +15,12 @@ const prismaMock = {
         findMany: jest.fn(),
         count: jest.fn(),
     },
+    testRun: {
+        findFirst: jest.fn().mockResolvedValue(null),
+    },
+    job: {
+        findFirst: jest.fn().mockResolvedValue(null),
+    },
 };
 
 jest.unstable_mockModule('../config/prisma.js', () => ({
@@ -45,6 +51,13 @@ jest.unstable_mockModule('../services/job.service.js', () => ({
     createVitestCoverageJob: jest.fn().mockResolvedValue({ id: 'vitest-1' }),
     createCypressSystemCoverageJob: jest.fn().mockResolvedValue({ id: 'cypress-1' }),
     createPlaywrightSystemCoverageJob: jest.fn().mockResolvedValue({ id: 'playwright-1' }),
+    addJobLog: jest.fn().mockResolvedValue({}),
+    getJobById: jest.fn().mockResolvedValue({ id: 'job-1', status: 'SUCCESS' }),
+    markJobRunning: jest.fn().mockResolvedValue({}),
+    markJobSuccess: jest.fn().mockResolvedValue({}),
+    markJobFailed: jest.fn().mockResolvedValue({}),
+    updateJobProgress: jest.fn().mockResolvedValue({}),
+    cancelJob: jest.fn().mockResolvedValue({}),
 }));
 
 const mockAddJobToQueue = jest.fn();
@@ -67,6 +80,7 @@ jest.unstable_mockModule('../services/supertestDetection.service.js', () => ({
 const mockGetFileCoverageDetails = jest.fn();
 jest.unstable_mockModule('../services/fileCoverage.service.js', () => ({
     getFileCoverageDetails: mockGetFileCoverageDetails,
+    normalizePath: (p) => (p ? p.replace(/\\/g, '/') : p),
 }));
 
 const mockSuggestUnitTestcases = jest.fn();

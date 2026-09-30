@@ -181,3 +181,12 @@ export async function getIntegrationWorkspace(snapshotId) {
     });
     return handleResponse(res);
 }
+
+export async function applyUnitTestSuggestion(snapshotId, { suggestion, suggestions, projectId } = {}) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/apply-suggestion`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ suggestion, suggestions, projectId }),
+    });
+    return handleResponse(res);
+}

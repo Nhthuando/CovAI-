@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { describe, expect, it } from "@jest/globals";
-import { coverageResultFromSummary, findUnitFiles, mergeCoverageSummaries } from "../services/runTestsJob.service.js";
+import { coverageResultFromSummary, findUnitFiles, mergeCoverageSummaries, buildJestModuleNameMapper } from "../services/runTestsJob.service.js";
 import { isApiFilePath } from "../utils/apiFileDetector.js";
 
 describe("isApiFilePath", () => {
@@ -74,6 +74,26 @@ describe("coverageResultFromSummary", () => {
 
     it("returns null when aggregation did not produce a summary", () => {
         expect(coverageResultFromSummary(null)).toBeNull();
+    });
+});
+
+describe("buildJestModuleNameMapper", () => {
+    it("does not hard-code dist/src when the project uses a real src root", () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "covai-jest-mapper-"));
+        try {
+            fs.mkdirSync(path.join(tempDir, "src"), { recursive: true });
+            fs.writeFileSync(path.join(tempDir, "package.json"), JSON.stringify({ name: "demo-app" }, null, 2));
+
+            const mapper = buildJestModuleNameMapper(tempDir, {}, "demo-app");
+            const serialized = JSON.stringify(mapper);
+
+            expect(serialized).toContain("<rootDir>/src");
+            expect(serialized).not.toContain("dist/src");
+            expect(mapper["^demo-app$"]).toBe("<rootDir>/src");
+            expect(mapper["^demo-app/(.*)$"]).toBe("<rootDir>/src/$1");
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
     });
 });
 

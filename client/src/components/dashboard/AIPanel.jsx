@@ -1837,8 +1837,7 @@ export default function AIPanel({
         title: "Test Applied",
         message: `Đã áp dụng testcase vào ${targetPath}`,
       });
-
-      onOpenFile?.(targetPath);
+      // Do not redirect view away so user stays in current context
     } catch (err) {
       setMessages((prev) =>
         prev.map((m) => {
@@ -2326,8 +2325,7 @@ export default function AIPanel({
         title: "Test Applied",
         message: `Đã áp dụng test case ${suggestion.framework?.toUpperCase()} vào ${suggestion.targetTestFile}`,
       });
-
-      onOpenFile?.(suggestion.targetTestFile);
+      // Stays in current view without redirecting
     } catch (err) {
       showToast({
         type: "error",
@@ -2416,8 +2414,7 @@ export default function AIPanel({
         title: "Undone",
         message: `Đã hoàn tác file ${suggestion.targetTestFile} về trạng thái trước đó.`,
       });
-
-      onOpenFile?.(suggestion.targetTestFile);
+      // Stays in current view without redirecting
     } catch (err) {
       showToast({
         type: "error",

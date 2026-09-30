@@ -131,6 +131,7 @@ body {
   width: 5px;
   height: 5px;
 }
+
 ::-webkit-scrollbar-button {
   display: none !important;
   width: 0 !important;

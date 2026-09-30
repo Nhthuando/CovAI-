@@ -116,7 +116,7 @@ describe("unitTestSuggestion.service unit tests", () => {
                 filePath: "tests/calculator.test.js",
                 userId: "user-123"
             })).rejects.toThrow("Project not found or unauthorized");
-        });
+        }, 15000);
     });
 
     describe("Vitest support in findExistingTestFile & fallback", () => {

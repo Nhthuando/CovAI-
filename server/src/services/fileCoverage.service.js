@@ -457,7 +457,17 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
         throw new ServiceError("Forbidden: Unauthorized project access", 403);
     }
 
-    const rootDir = snapshot.rootDir;
+    const resolveRootDir = (r) => {
+        if (!r) return null;
+        if (fs.existsSync(r)) return r;
+        if (r.startsWith("/app/")) {
+            const hostCandidate = path.resolve(process.cwd(), r.replace(/^\/app\//, ""));
+            if (fs.existsSync(hostCandidate)) return hostCandidate;
+        }
+        return r;
+    };
+
+    const rootDir = resolveRootDir(snapshot.rootDir);
     if (!rootDir || !fs.existsSync(rootDir)) {
         return {
             filePath: targetFilePath,

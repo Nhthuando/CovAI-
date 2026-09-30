@@ -4,12 +4,12 @@ import path from "path";
 const FRAMEWORKS = [
     {
         name: "jest",
-        configFiles: ["jest.config.js", "jest.config.cjs", "jest.config.mjs", "jest.config.ts"],
+        configFiles: ["jest.config.js", "jest.config.cjs", "jest.config.mjs", "jest.config.ts", "jest.config.json"],
         packageKey: "jest",
     },
     {
         name: "vitest",
-        configFiles: ["vitest.config.js", "vitest.config.cjs", "vitest.config.mjs", "vitest.config.ts"],
+        configFiles: ["vitest.config.js", "vitest.config.cjs", "vitest.config.mjs", "vitest.config.ts", "vitest.config.mts"],
         packageKey: "vitest",
     },
     {
@@ -126,16 +126,42 @@ export function detectTestingFrameworks(rootDir) {
 
     const packageJson = readPackageJson(path.join(rootDir, "package.json"), errors) || {};
     const scripts = packageJson.scripts || {};
+
+    // Check subpackage package.json files (e.g. backend/package.json, packages/*/package.json)
+    const subPackages = [];
+    try {
+        for (const entry of fs.readdirSync(rootDir, { withFileTypes: true })) {
+            if (entry.isDirectory() && !IGNORED_DIRECTORIES.has(entry.name)) {
+                const subPkgPath = path.join(rootDir, entry.name, "package.json");
+                if (fs.existsSync(subPkgPath)) {
+                    subPackages.push({ dir: entry.name, pkg: readPackageJson(subPkgPath, errors) || {} });
+                }
+            }
+        }
+    } catch { }
+
     const frameworks = FRAMEWORKS.map(({ name, configFiles, packageKey }) => {
         const configPaths = configFiles
             .map((file) => path.join(rootDir, file))
             .filter((file) => fs.existsSync(file));
-        const dependencyTypes = DEPENDENCY_SECTIONS.filter((section) => Boolean(packageJson[section]?.[packageKey]));
+
+        // Also check config files in subdirectories (e.g. backend/vitest.config.js, examples/vitest/vitest.config.mts)
+        for (const sub of subPackages) {
+            for (const file of configFiles) {
+                const subCfg = path.join(rootDir, sub.dir, file);
+                if (fs.existsSync(subCfg) && !configPaths.includes(subCfg)) {
+                    configPaths.push(subCfg);
+                }
+            }
+        }
+
+        const allPkgs = [packageJson, ...subPackages.map(s => s.pkg)];
+        const dependencyTypes = DEPENDENCY_SECTIONS.filter((section) => allPkgs.some(p => Boolean(p[section]?.[packageKey])));
         const frameworkScripts = Object.entries(scripts)
             .filter(([, command]) => typeof command === "string" && new RegExp(`\\b${packageKey}\\b`, "i").test(command))
             .map(([name, command]) => ({ name, command }));
-        const hasPackageConfig = Boolean(packageJson[packageKey]);
-        return { name, detected: Boolean(configPaths.length || dependencyTypes.length || frameworkScripts.length || hasPackageConfig), version: dependencyTypes.map((section) => packageJson[section][packageKey])[0] || null, configPaths, hasPackageConfig, scripts: frameworkScripts, dependencyTypes };
+        const hasPackageConfig = allPkgs.some(p => Boolean(p[packageKey]));
+        return { name, detected: Boolean(configPaths.length || dependencyTypes.length || frameworkScripts.length || hasPackageConfig), version: dependencyTypes.map((section) => packageJson[section]?.[packageKey])[0] || null, configPaths, hasPackageConfig, scripts: frameworkScripts, dependencyTypes };
     });
 
     const detectedUnitFrameworks = frameworks.filter(f => f.detected && (f.name === "vitest" || f.name === "jest")).map(f => f.name);
@@ -161,9 +187,12 @@ export function detectTestingFrameworks(rootDir) {
         }
     }
 
+    const unit = detectedFrameworks.filter(f => f === "vitest" || f === "jest");
+
     return {
         frameworks,
         detectedFrameworks,
+        unit,
         primaryFramework: detectedFrameworks[0] || null,
         frameworkType: detectedFrameworks.length > 1 ? "multiple" : detectedFrameworks.length === 1 ? "single" : "none",
         hasMultipleFrameworks: detectedFrameworks.length > 1,

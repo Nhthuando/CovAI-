@@ -259,22 +259,24 @@ export const parseCoverageFilesForSnapshot = async ({
       });
     }
 
-    await tx.coverageSummary.upsert({
-      where: { snapshotId },
-      update: {
-        linesPct: safeNum(summaryRow.linesPct),
-        branchesPct: safeNum(summaryRow.branchesPct),
-        funcsPct: safeNum(summaryRow.funcsPct),
-        stmtsPct: safeNum(summaryRow.stmtsPct),
-      },
-      create: {
-        snapshotId,
-        linesPct: safeNum(summaryRow.linesPct),
-        branchesPct: safeNum(summaryRow.branchesPct),
-        funcsPct: safeNum(summaryRow.funcsPct),
-        stmtsPct: safeNum(summaryRow.stmtsPct),
-      },
-    });
+    if (rawSummary) {
+      await tx.coverageSummary.upsert({
+        where: { snapshotId },
+        update: {
+          linesPct: safeNum(summaryRow.linesPct),
+          branchesPct: safeNum(summaryRow.branchesPct),
+          funcsPct: safeNum(summaryRow.funcsPct),
+          stmtsPct: safeNum(summaryRow.stmtsPct),
+        },
+        create: {
+          snapshotId,
+          linesPct: safeNum(summaryRow.linesPct),
+          branchesPct: safeNum(summaryRow.branchesPct),
+          funcsPct: safeNum(summaryRow.funcsPct),
+          stmtsPct: safeNum(summaryRow.stmtsPct),
+        },
+      });
+    }
   });
 
   return {

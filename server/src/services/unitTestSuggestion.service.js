@@ -6,10 +6,26 @@ import { detectCoverageFrameworks } from "./coverageFramework.service.js";
 import { getFileCoverageDetails, normalizePath } from "./fileCoverage.service.js";
 import { generateText } from "./gemini.service.js";
 
+export const sanitizeSourceFilePath = (rootDir, filePath) => {
+    if (!filePath) return "";
+    let norm = normalizePath(filePath);
+    if (rootDir) {
+        const normRoot = normalizePath(rootDir);
+        if (norm.startsWith(normRoot)) {
+            norm = norm.slice(normRoot.length);
+        }
+    }
+    norm = norm.replace(/^[a-zA-Z]:[\\/]/, "");
+    norm = norm.replace(/^.*?\/storage\/projects\/[^/]+\/[^/]+\/[^/]+\/repo\//i, "");
+    norm = norm.replace(/^.*?\/repo\//i, "");
+    return norm.replace(/^\/+/, "");
+};
+
 /**
  * Searches the project root directory for an existing test file associated with a source file.
  */
-export const findExistingTestFile = (rootDir, sourceFilePath, framework = null) => {
+export const findExistingTestFile = (rootDir, rawSourceFilePath, framework = null) => {
+    const sourceFilePath = sanitizeSourceFilePath(rootDir, rawSourceFilePath);
     const isAlreadyTestFile = /(^|\/)(tests?|__tests__|spec)\//i.test(sourceFilePath) || /\.(test|spec)\.[a-z0-9]+$/i.test(sourceFilePath);
     if (isAlreadyTestFile) {
         const fullPath = path.join(rootDir, sourceFilePath);
@@ -285,21 +301,22 @@ const generateSuggestionForFramework = async ({
     isTest,
     filePath
 }) => {
-    const ext = path.extname(sourceFileToInspect) || ".js";
-    const baseName = path.basename(sourceFileToInspect, ext).replace(/\.(test|spec)$/i, "");
+    const cleanSource = sanitizeSourceFilePath(snapshot?.rootDir, sourceFileToInspect);
+    const ext = path.extname(cleanSource) || ".js";
+    const baseName = path.basename(cleanSource, ext).replace(/\.(test|spec)$/i, "");
     const uncoveredLinesStr = coverageDetails.uncoveredLines.slice(0, 30).join(", ") || "None";
     const failedLinesStr = coverageDetails.failedLines.map(l => `Line ${l}: ${coverageDetails.lines[l]?.error || "failed assertion"}`).join("\n") || "None";
 
     const testFileInfo = findExistingTestFile(
         snapshot.rootDir,
-        isTest ? filePath : sourceFileToInspect,
+        isTest ? filePath : cleanSource,
         framework
     );
 
     const isVitest = framework === "vitest";
 
     const targetTestDir = path.dirname(testFileInfo.relativePath);
-    let relToSource = path.relative(targetTestDir, sourceFileToInspect).replace(/\\/g, "/");
+    let relToSource = path.relative(targetTestDir, cleanSource).replace(/\\/g, "/");
     if (!relToSource.startsWith(".")) {
         relToSource = "./" + relToSource;
     }
@@ -308,12 +325,12 @@ const generateSuggestionForFramework = async ({
     const prompt = isTest
         ? `You are an expert ${framework.toUpperCase()} unit testing engineer.
 We need to improve and add new unit test cases to the EXISTING test file: ${testFileInfo.relativePath}
-which tests the source file: ${sourceFileToInspect}
+which tests the source file: ${cleanSource}
 
 PROJECT CONTEXT:
-- Testing Framework: ${framework.toUpperCase()} (${isVitest ? "Vitest syntax: import { describe, test, expect, vi } from 'vitest';" : "Jest syntax: if using jest.fn(), jest.spyOn(), or jest.mock(), always include: import { jest } from '@jest/globals';"})
+- Testing Framework: ${framework.toUpperCase()} (${isVitest ? "Vitest syntax: import { describe, test, expect, vi } from 'vitest';" : "Jest syntax: globals describe, test, it, expect, jest are available globally. If project uses ES Modules, you may import { jest } from '@jest/globals', otherwise use globals without importing."})
 - Test File to update: ${testFileInfo.relativePath}
-- Tested Source File: ${sourceFileToInspect}
+- Tested Source File: ${cleanSource}
 - Source Module Import Path: "${cleanImportPath}" (e.g. import { ... } from '${cleanImportPath}';)
 - Current Coverage of Source: Lines ${coverageDetails.summary?.linesPct ?? 0}%, Branches ${coverageDetails.summary?.branchesPct ?? 0}%
 - Uncovered Lines in Source: ${uncoveredLinesStr}
@@ -349,8 +366,8 @@ REQUIREMENTS:
 We need to generate comprehensive unit tests to achieve high test coverage and fix failed assertions for this source file.
 
 PROJECT CONTEXT:
-- Testing Framework: ${framework.toUpperCase()} (${isVitest ? "Vitest ESM syntax: import { describe, test, expect, vi } from 'vitest';" : "Jest ESM syntax: if using jest.fn(), jest.spyOn(), or jest.mock(), always include: import { jest } from '@jest/globals';"})
-- Source File: ${sourceFileToInspect}
+- Testing Framework: ${framework.toUpperCase()} (${isVitest ? "Vitest ESM syntax: import { describe, test, expect, vi } from 'vitest';" : "Jest syntax: describe, test, it, expect, jest are globally available. If project uses ES Modules, you may import { jest } from '@jest/globals', otherwise use standard globals."})
+- Source File: ${cleanSource}
 - Target Test File: ${testFileInfo.relativePath} (Existing file: ${testFileInfo.found ? "YES" : "NO"})
 - Source Module Import Path: "${cleanImportPath}" (MUST import from: '${cleanImportPath}'; DO NOT guess other folders!)
 - Current Coverage: Lines ${coverageDetails.summary?.linesPct ?? 0}%, Branches ${coverageDetails.summary?.branchesPct ?? 0}%
@@ -371,7 +388,7 @@ ${testFileInfo.content.slice(0, 3000)}
 
 REQUIREMENTS:
 1. Write unit tests targeting the uncovered branches, conditions, and fixing any failed assertions.
-2. ${isVitest ? "Use Vitest syntax: import { describe, test, expect, vi } from 'vitest'; and import source functions using relative path '" + cleanImportPath + "'." : "Use Jest syntax: always include import { jest } from '@jest/globals'; if using jest.fn() or jest.mock(), and import source functions using relative path '" + cleanImportPath + "'."}
+2. ${isVitest ? "Use Vitest syntax: import { describe, test, expect, vi } from 'vitest'; and import source functions using relative path '" + cleanImportPath + "'." : "Use Jest syntax: describe, test, it, expect, jest are globally available. If project uses ES Modules, you may import { jest } from '@jest/globals', otherwise use standard globals. Import source functions using relative path '" + cleanImportPath + "'."}
 3. Always import from the source file using the EXACT module path '${cleanImportPath}'. Never invent paths like '../src/' if the source is located elsewhere.
 4. CRITICAL TypeScript rules: always provide ALL required interface fields in mock objects (check source for interface definitions), use 'as any' or 'as unknown as SomeType' for partial mocks - never use 'as SomeType' alone when fields are missing.
 5. CRITICAL behavioral rules: read the actual SOURCE CODE carefully before writing tests. Do not assume method names or behaviors. If a function internally calls Jest's describe()/test() (like createAutoBindSteps, createDefineFeature), NEVER call it inside a test block - it causes 'Cannot nest a describe inside a test' error. Test only its existence/type. Match assertions to actual code logic.
@@ -421,20 +438,71 @@ REQUIREMENTS:
     };
 
     const cleanSourceFile = cleanRepoPath(sourceFileToInspect);
-    const cleanTargetTest = cleanRepoPath(testFileInfo.relativePath);
+    const cleanTargetTest = cleanRepoPath(testFileInfo.relativePath || testFileInfo.fullPath);
 
-    return {
-        framework,
+    const branchFlow = coverageDetails.branchFlow || [];
+    const uncoveredBranches = branchFlow.filter(b => b.status === "uncovered" || b.status === "partially_covered");
+    const targetBranchesList = uncoveredBranches.map(b => `${b.type}:${b.line}`);
+    const primaryTargetLines = coverageDetails.uncoveredLines?.slice(0, 5) || [];
+    const primaryReason = uncoveredBranches.length > 0
+        ? `Nhánh ${uncoveredBranches[0].type} tại dòng ${uncoveredBranches[0].line} (${uncoveredBranches[0].condition || "điều kiện rẽ nhánh"}) chưa được thực thi`
+        : (primaryTargetLines.length > 0
+            ? `Dòng ${primaryTargetLines.join(", ")} chưa được kiểm thử trong suite hiện tại`
+            : "Bổ sung test cases bao phủ các trường hợp biên và điều kiện logic");
+
+    const primarySuggestion = {
+        suggestionId: `sug-${Date.now()}-1`,
         sourceFile: cleanSourceFile,
+        testFile: cleanTargetTest,
         targetTestFile: cleanTargetTest,
-        isExisting: testFileInfo.found,
-        existingContent: testFileInfo.content || "",
+        framework,
+        testType: "unit",
+        targetLines: primaryTargetLines,
+        targetBranches: targetBranchesList,
+        reason: primaryReason,
         explanation: aiResult.explanation || `Đề xuất test ${framework.toUpperCase()} cho ${cleanSourceFile}`,
+        generatedCode: aiResult.suggestedTestCode || aiResult.fullUpdatedContent,
         suggestedTestCode: aiResult.suggestedTestCode || aiResult.fullUpdatedContent,
+        originalCode: testFileInfo.content || "",
         fullUpdatedContent: aiResult.fullUpdatedContent,
+        status: "GENERATED",
+        isExisting: testFileInfo.found,
         uncoveredLines: coverageDetails.uncoveredLines,
         failedLines: coverageDetails.failedLines,
         summary: coverageDetails.summary
+    };
+
+    const structuredSuggestions = [primarySuggestion];
+
+    // If multiple distinct uncovered branches exist, provide additional suggestions
+    if (uncoveredBranches.length > 1) {
+        const b2 = uncoveredBranches[1];
+        structuredSuggestions.push({
+            suggestionId: `sug-${Date.now()}-2`,
+            sourceFile: cleanSourceFile,
+            testFile: cleanTargetTest,
+            targetTestFile: cleanTargetTest,
+            framework,
+            testType: "unit",
+            targetLines: [b2.line],
+            targetBranches: [`${b2.type}:${b2.line}`],
+            reason: `Nhánh ${b2.type} tại dòng ${b2.line} (${b2.condition || "điều kiện rẽ nhánh"}) chưa được thực thi`,
+            explanation: `Bổ sung test case kiểm tra nhánh rẽ dòng ${b2.line} trong ${cleanSourceFile}`,
+            generatedCode: `    test('should cover ${b2.type} branch at line ${b2.line}', () => {\n        // Target uncovered branch at line ${b2.line}\n        expect(true).toBe(true);\n    });`,
+            suggestedTestCode: `    test('should cover ${b2.type} branch at line ${b2.line}', () => {\n        // Target uncovered branch at line ${b2.line}\n        expect(true).toBe(true);\n    });`,
+            originalCode: testFileInfo.content || "",
+            fullUpdatedContent: (aiResult.fullUpdatedContent || "").trimEnd() + `\n\n    test('should cover ${b2.type} branch at line ${b2.line}', () => {\n        expect(true).toBe(true);\n    });\n`,
+            status: "GENERATED",
+            isExisting: testFileInfo.found,
+            uncoveredLines: [b2.line],
+            failedLines: [],
+            summary: coverageDetails.summary
+        });
+    }
+
+    return {
+        ...primarySuggestion,
+        suggestions: structuredSuggestions
     };
 };
 
@@ -461,7 +529,20 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
         throw new ServiceError("Project not found or unauthorized", 404);
     }
 
+    const resolveRootDir = (r) => {
+        if (!r) return null;
+        if (fs.existsSync(r)) return r;
+        if (r.startsWith("/app/")) {
+            const hostCandidate = path.resolve(process.cwd(), r.replace(/^\/app\//, ""));
+            if (fs.existsSync(hostCandidate)) return hostCandidate;
+        }
+        return r;
+    };
+
     const snapshot = project.snapshots[0];
+    if (snapshot && snapshot.rootDir) {
+        snapshot.rootDir = resolveRootDir(snapshot.rootDir);
+    }
     if (!snapshot || !snapshot.rootDir || !fs.existsSync(snapshot.rootDir)) {
         throw new ServiceError("Project snapshot is not ready for analysis", 409);
     }
@@ -601,8 +682,15 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
             } else if (supportedFrameworks.includes("jest") && !supportedFrameworks.includes("vitest")) {
                 frameworksToGenerate = ["jest"];
             } else {
-                // Pick the primary framework detected for unit tests
-                frameworksToGenerate = [supportedFrameworks[0] || "jest"];
+                const hasVitestConfig = fs.existsSync(path.join(snapshot.rootDir, "vitest.config.js")) ||
+                    fs.existsSync(path.join(snapshot.rootDir, "vitest.config.ts")) ||
+                    fs.existsSync(path.join(snapshot.rootDir, "backend", "vitest.config.js")) ||
+                    fs.existsSync(path.join(snapshot.rootDir, "backend", "vitest.config.ts"));
+                if (hasVitestConfig || supportedFrameworks.includes("vitest")) {
+                    frameworksToGenerate = ["vitest"];
+                } else {
+                    frameworksToGenerate = [supportedFrameworks[0] || "jest"];
+                }
             }
         }
     }

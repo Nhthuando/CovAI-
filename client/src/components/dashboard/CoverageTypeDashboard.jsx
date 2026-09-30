@@ -19,7 +19,8 @@ import {
   X,
   Zap,
   BarChart3,
-  Network
+  Network,
+  Loader2,
 } from "lucide-react";
 import {
   getCoverageFiles,
@@ -29,14 +30,16 @@ import {
   getCoverageTestSuites,
   getTestExecution,
   runCoverageByType,
-  getFileCoverage
+  getFileCoverage,
+  suggestUnitTestcase,
+  applyUnitTestSuggestion,
 } from "../../services/coverage.service.js";
 import {
   useCoverageDashboard,
   invalidateCoverageQueries,
 } from "../../hooks/useCoverageQuery.js";
+import { getJobDetailApi, cancelJobApi, getProjectJobsApi } from "../../services/job.service.js";
 import { queryClient } from "../../lib/queryClient.js";
-import { getJobDetailApi, cancelJobApi } from "../../services/job.service.js";
 import { getProjectCfgApi } from "../../services/project.service.js";
 import FunctionExecutionFlow from "./FunctionExecutionFlow.jsx";
 import FileCodeExecutionView from "./FileCodeExecutionView.jsx";
@@ -44,6 +47,7 @@ import FileBranchCFGView from "./FileBranchCFGView.jsx";
 import FileFunctionCallGraphView from "./FileFunctionCallGraphView.jsx";
 import CFGCalculator from "./CFGCalculator.jsx";
 import WaveProgressBar from "./WaveProgressBar.jsx";
+import InlineTestSuggestions from "./InlineTestSuggestions.jsx";
 
 const CONFIG = {
   unit: {
@@ -251,45 +255,339 @@ export default function CoverageTypeDashboard({
   const [loadingFlow, setLoadingFlow] = useState(false);
   const [showCfgModal, setShowCfgModal] = useState(false);
 
-  // Accordion dropdown states for source file flow analysis
-  const [expandedFile, setExpandedFile] = useState(null);
+  // Multi-accordion state: Set of expanded filePaths (supports opening File A, File B, File C simultaneously)
+  const [expandedFiles, setExpandedFiles] = useState(new Set());
   const [fileCoverageCache, setFileCoverageCache] = useState({});
+
+  // Inline suggestions state by filePath: { [filePath]: [suggestion1, ...] }
+  const [inlineSuggestions, setInlineSuggestions] = useState({});
+  const [loadingSuggestions, setLoadingSuggestions] = useState({});
+  const [applyingSuggestionIds, setApplyingSuggestionIds] = useState(new Set());
+  const [applyResultsByFile, setApplyResultsByFile] = useState({});
+  const [applyProgressSteps, setApplyProgressSteps] = useState({});
+
+  // Ensure file coverage data is always available in cache when a file is viewed/expanded
+  const ensureFileCoverage = useCallback(
+    async (filePath, force = false) => {
+      if (!snapshotId || !filePath) return null;
+      if (!force && fileCoverageCache[filePath]?.data) return fileCoverageCache[filePath].data;
+
+      setFileCoverageCache((prev) => ({
+        ...prev,
+        [filePath]: { loading: true },
+      }));
+
+      try {
+        const res = await queryClient.fetchQuery({
+          queryKey: ["fileCoverage", snapshotId, filePath],
+          queryFn: () => getFileCoverage(snapshotId, filePath),
+          staleTime: force ? 0 : 15 * 60 * 1000,
+        });
+        const data = res?.data || res;
+        setFileCoverageCache((prev) => ({
+          ...prev,
+          [filePath]: { loading: false, data },
+        }));
+        return data;
+      } catch (err) {
+        console.warn("Error fetching file coverage for", filePath, err);
+        setFileCoverageCache((prev) => ({
+          ...prev,
+          [filePath]: { loading: false, error: err.message },
+        }));
+        return null;
+      }
+    },
+    [snapshotId, fileCoverageCache],
+  );
 
   const toggleExpandFile = useCallback(
     async (filePath) => {
-      if (expandedFile === filePath) {
-        setExpandedFile(null);
-        return;
-      }
-      setExpandedFile(filePath);
+      setExpandedFiles((prev) => {
+        const next = new Set(prev);
+        if (next.has(filePath)) {
+          next.delete(filePath);
+        } else {
+          next.add(filePath);
+        }
+        return next;
+      });
 
       // Automatically fetch file coverage details if not yet in cache
-      if (!fileCoverageCache[filePath]?.data && snapshotId) {
-        setFileCoverageCache((prev) => ({
+      ensureFileCoverage(filePath);
+    },
+    [ensureFileCoverage],
+  );
+
+  // Trigger inline suggestion generation directly below the source file without opening separate screen
+  const handleSuggestTestcaseInline = useCallback(
+    async (filePath) => {
+      if (!snapshotId || !filePath) return;
+      // Auto-expand this file so the suggestion displays immediately inline
+      setExpandedFiles((prev) => new Set(prev).add(filePath));
+      // Pre-load coverage data so execution view displays smoothly without error
+      ensureFileCoverage(filePath);
+
+      setLoadingSuggestions((prev) => ({ ...prev, [filePath]: true }));
+      try {
+        const res = await suggestUnitTestcase(snapshotId, filePath, projectId, activeFramework);
+        const data = res?.data || res;
+        const sugs = Array.isArray(data?.suggestions)
+          ? data.suggestions
+          : (data?.suggestion ? [data.suggestion] : (Array.isArray(data) ? data : []));
+        const finalSugs = sugs.length > 0 ? sugs : (data ? [data] : []);
+
+        setInlineSuggestions((prev) => ({
           ...prev,
-          [filePath]: { loading: true },
+          [filePath]: finalSugs.map((s, idx) => ({
+            ...s,
+            suggestionId: s.suggestionId || `${filePath}-sug-${idx + 1}`,
+            status: s.status || "GENERATED",
+          })),
         }));
-        try {
-          const res = await queryClient.fetchQuery({
-            queryKey: ["fileCoverage", snapshotId, filePath],
-            queryFn: () => getFileCoverage(snapshotId, filePath),
-            staleTime: 15 * 60 * 1000,
-          });
-          setFileCoverageCache((prev) => ({
-            ...prev,
-            [filePath]: { loading: false, data: res?.data || res },
-          }));
-        } catch (err) {
-          console.warn("Error fetching file coverage for", filePath, err);
-          setFileCoverageCache((prev) => ({
-            ...prev,
-            [filePath]: { loading: false, error: err.message },
-          }));
-        }
+      } catch (err) {
+        console.error("Failed to generate test suggestions inline:", err);
+      } finally {
+        setLoadingSuggestions((prev) => ({ ...prev, [filePath]: false }));
       }
     },
-    [expandedFile, fileCoverageCache, snapshotId],
+    [snapshotId, projectId, activeFramework, ensureFileCoverage],
   );
+
+  // Auto-fetch file coverage details for any expanded file if missing from cache
+  useEffect(() => {
+    expandedFiles.forEach((fPath) => {
+      if (!fileCoverageCache[fPath]) {
+        ensureFileCoverage(fPath);
+      }
+    });
+  }, [expandedFiles, fileCoverageCache, ensureFileCoverage]);
+
+  // Edit test code inline directly in dropdown
+  const handleUpdateSuggestionCode = useCallback((filePath, sugId, newCode) => {
+    setInlineSuggestions((prev) => {
+      const fileSugs = prev[filePath] || [];
+      return {
+        ...prev,
+        [filePath]: fileSugs.map((s) =>
+          (s.suggestionId === sugId || s.id === sugId)
+            ? { ...s, generatedCode: newCode, status: "EDITED" }
+            : s,
+        ),
+      };
+    });
+  }, []);
+
+  // Apply single suggestion inline, execute runner, update real coverage
+  const handleApplySuggestionInline = useCallback(
+    async (filePath, suggestion) => {
+      if (!snapshotId || !suggestion) return;
+      const sugId = suggestion.suggestionId || suggestion.id;
+      setApplyingSuggestionIds((prev) => new Set(prev).add(sugId));
+      setApplyProgressSteps((prev) => ({
+        ...prev,
+        [filePath]: "Writing modified test file to disk...",
+      }));
+
+      // Status transition: GENERATED/EDITED -> APPLYING
+      setInlineSuggestions((prev) => {
+        const fileSugs = prev[filePath] || [];
+        return {
+          ...prev,
+          [filePath]: fileSugs.map((s) =>
+            (s.suggestionId === sugId || s.id === sugId)
+              ? { ...s, status: "APPLYING" }
+              : s,
+          ),
+        };
+      });
+
+      try {
+        setApplyProgressSteps((prev) => ({
+          ...prev,
+          [filePath]: "Executing test runner & verifying real new coverage...",
+        }));
+
+        const res = await applyUnitTestSuggestion(snapshotId, {
+          suggestion,
+          projectId,
+        });
+
+        const resultData = res?.data || res;
+        const testStatus = resultData?.testStatus || resultData?.status;
+        const isPassed = testStatus === "PASSED" || resultData?.success === true;
+
+        setInlineSuggestions((prev) => {
+          const fileSugs = prev[filePath] || [];
+          return {
+            ...prev,
+            [filePath]: fileSugs.map((s) =>
+              (s.suggestionId === sugId || s.id === sugId)
+                ? {
+                  ...s,
+                  status: isPassed ? "PASSED" : "FAILED",
+                  testRunError: resultData?.testRunError || resultData?.errorDetail || resultData?.message || null,
+                }
+                : s,
+            ),
+          };
+        });
+
+        const oldCov = resultData?.previousCoverage || resultData?.oldCoverage;
+        if (oldCov && resultData?.newCoverage) {
+          setApplyResultsByFile((prev) => ({
+            ...prev,
+            [filePath]: {
+              ...resultData,
+              oldCoverage: oldCov,
+              newCoverage: resultData.newCoverage,
+            },
+          }));
+        }
+
+        // Invalidate cached query data and refetch new verified coverage from test runner
+        invalidateCoverageQueries(snapshotId);
+        await refetchCoverage();
+
+        // Refresh file coverage in-place so FileCodeExecutionView immediately updates with fresh hits & lines
+        await ensureFileCoverage(filePath, true);
+      } catch (err) {
+        console.error("Failed to apply suggestion:", err);
+        setInlineSuggestions((prev) => {
+          const fileSugs = prev[filePath] || [];
+          return {
+            ...prev,
+            [filePath]: fileSugs.map((s) =>
+              (s.suggestionId === sugId || s.id === sugId)
+                ? { ...s, status: "FAILED", testRunError: err.message }
+                : s,
+            ),
+          };
+        });
+      } finally {
+        setApplyingSuggestionIds((prev) => {
+          const next = new Set(prev);
+          next.delete(sugId);
+          return next;
+        });
+        setApplyProgressSteps((prev) => {
+          const next = { ...prev };
+          delete next[filePath];
+          return next;
+        });
+      }
+    },
+    [snapshotId, projectId, refetchCoverage, ensureFileCoverage],
+  );
+
+  // Apply all suggestions inline safely without overwriting
+  const handleApplyAllInline = useCallback(
+    async (filePath, suggestions) => {
+      if (!snapshotId || !suggestions?.length) return;
+      const sugIds = suggestions.map((s) => s.suggestionId || s.id);
+      setApplyingSuggestionIds((prev) => {
+        const next = new Set(prev);
+        sugIds.forEach((id) => next.add(id));
+        return next;
+      });
+
+      setApplyProgressSteps((prev) => ({
+        ...prev,
+        [filePath]: `Applying ${suggestions.length} suggestions safely without conflicts...`,
+      }));
+
+      setInlineSuggestions((prev) => {
+        const fileSugs = prev[filePath] || [];
+        return {
+          ...prev,
+          [filePath]: fileSugs.map((s) =>
+            sugIds.includes(s.suggestionId || s.id)
+              ? { ...s, status: "APPLYING" }
+              : s,
+          ),
+        };
+      });
+
+      try {
+        setApplyProgressSteps((prev) => ({
+          ...prev,
+          [filePath]: "Running tests to measure verified new coverage...",
+        }));
+
+        const res = await applyUnitTestSuggestion(snapshotId, {
+          suggestions,
+          projectId,
+        });
+
+        const resultData = res?.data || res;
+        const testStatus = resultData?.testStatus || resultData?.status;
+        const isPassed = testStatus === "PASSED" || resultData?.success === true;
+
+        setInlineSuggestions((prev) => {
+          const fileSugs = prev[filePath] || [];
+          return {
+            ...prev,
+            [filePath]: fileSugs.map((s) =>
+              sugIds.includes(s.suggestionId || s.id)
+                ? {
+                  ...s,
+                  status: isPassed ? "PASSED" : "FAILED",
+                  testRunError: resultData?.testRunError || resultData?.errorDetail || resultData?.message || null,
+                }
+                : s,
+            ),
+          };
+        });
+
+        const oldCov = resultData?.previousCoverage || resultData?.oldCoverage;
+        if (oldCov && resultData?.newCoverage) {
+          setApplyResultsByFile((prev) => ({
+            ...prev,
+            [filePath]: {
+              ...resultData,
+              oldCoverage: oldCov,
+              newCoverage: resultData.newCoverage,
+            },
+          }));
+        }
+
+        invalidateCoverageQueries(snapshotId);
+        await refetchCoverage();
+
+        // Refresh file coverage in-place so FileCodeExecutionView immediately updates with fresh hits & lines
+        await ensureFileCoverage(filePath, true);
+      } catch (err) {
+        console.error("Failed to apply all suggestions:", err);
+      } finally {
+        setApplyingSuggestionIds((prev) => {
+          const next = new Set(prev);
+          sugIds.forEach((id) => next.delete(id));
+          return next;
+        });
+        setApplyProgressSteps((prev) => {
+          const next = { ...prev };
+          delete next[filePath];
+          return next;
+        });
+      }
+    },
+    [snapshotId, projectId, refetchCoverage, ensureFileCoverage],
+  );
+
+  // Reject a suggestion
+  const handleRejectInline = useCallback((filePath, sugId) => {
+    setInlineSuggestions((prev) => {
+      const fileSugs = prev[filePath] || [];
+      return {
+        ...prev,
+        [filePath]: fileSugs.map((s) =>
+          (s.suggestionId === sugId || s.id === sugId)
+            ? { ...s, status: "REJECTED" }
+            : s,
+        ),
+      };
+    });
+  }, []);
 
   // Test suites & functions search and filter state
   const [expandedSuite, setExpandedSuite] = useState(null);
@@ -325,7 +623,22 @@ export default function CoverageTypeDashboard({
     setRunStep("Khởi động môi trường phân tích kiểm thử...");
     setError("");
     try {
-      const response = await runCoverageByType(snapshotId, type);
+      let response;
+      try {
+        response = await runCoverageByType(snapshotId, type);
+      } catch (err) {
+        if (err.message && (err.message.includes("already queued") || err.message.includes("running") || err.message.includes("409"))) {
+          const projJobs = await getProjectJobsApi(projectId).catch(() => ({ jobs: [] }));
+          const active = (projJobs.jobs || []).find((j) => ["QUEUED", "RUNNING"].includes(j.status));
+          if (active) {
+            response = { data: { jobs: [active] } };
+          } else {
+            throw err;
+          }
+        } else {
+          throw err;
+        }
+      }
       const fw = response.data?.framework || (type === "unit" ? "jest & vitest" : "");
       setActiveFramework(fw);
       const jobs = response.data?.jobs || (response.data?.job ? [response.data.job] : []);
@@ -486,7 +799,10 @@ export default function CoverageTypeDashboard({
   }, [unitTestSuites, testSuiteSearch]);
 
   // Bulk suggest tests based on Source File coverage (Lines, Branches, Funcs, Stmts)
-  // Cross-references with existing Jest & Vitest test files to provide targeted test improvements
+  // Generates suggestions directly inline below each file without redirecting to a separate panel
+  const [isBulkSuggesting, setIsBulkSuggesting] = useState(false);
+  const [bulkSuggestMessage, setBulkSuggestMessage] = useState("");
+
   const handleBulkSuggestTest = async () => {
     let sourceFiles = selectedFiles;
     if ((!sourceFiles || sourceFiles.length === 0) && snapshotId) {
@@ -498,108 +814,48 @@ export default function CoverageTypeDashboard({
       }
     }
 
-    let testFiles = unitTestSuites;
-    if ((!testFiles || testFiles.length === 0) && snapshotId) {
-      try {
-        const res = await getCoverageTestSuites(snapshotId, type);
-        testFiles = res?.data?.testSuites || [];
-        setTestSuites(testFiles);
-      } catch (err) {
-        console.warn("Could not load test suites:", err);
-      }
-    }
-
-    const getCleanBase = (p) => {
-      if (!p) return "";
-      let name = p.replace(/\\/g, "/").split("/").pop() || "";
-      name = name.replace(/(\.(test|spec|jest|vitest))+/gi, "");
-      name = name.replace(/\.[a-z0-9]+$/i, "");
-      return name.toLowerCase();
-    };
-
-    const findMatchingTests = (sourcePath) => {
-      const clean = getCleanBase(sourcePath);
-      return (testFiles || []).filter((t) => {
-        const tc = getCleanBase(t.filePath);
-        return tc === clean || tc.includes(clean) || clean.includes(tc);
+    if (type === "unit") {
+      const needImprovementFiles = (sourceFiles || []).filter((sf) => {
+        const linesPct = sf.linesPct ?? 100;
+        const branchesPct = sf.branchesPct ?? 100;
+        const stmtsPct = sf.stmtsPct ?? 100;
+        return linesPct < 100 || branchesPct < 100 || stmtsPct < 100;
       });
-    };
 
-    const passed100Files = [];
-    const needImprovementFiles = [];
-
-    for (const sf of sourceFiles) {
-      const linesPct = sf.linesPct ?? 100;
-      const branchesPct = sf.branchesPct ?? 100;
-      const funcsPct = sf.funcsPct ?? 100;
-      const stmtsPct = sf.stmtsPct ?? 100;
-
-      const matchingTests = findMatchingTests(sf.filePath);
-      const is100 =
-        branchesPct >= 100 &&
-        stmtsPct >= 100 &&
-        linesPct >= 100 &&
-        funcsPct >= 100 &&
-        (!sf.uncoveredLines || sf.uncoveredLines.length === 0);
-
-      let reason = "";
-      if (branchesPct < 100 && stmtsPct < 100) {
-        reason = `Branch: ${branchesPct}%, Statements: ${stmtsPct}% (${sf.uncoveredLines?.length || 0} nhánh/dòng chưa test)`;
-      } else if (branchesPct < 100) {
-        reason = `Branch coverage mới đạt ${branchesPct}% (${sf.uncoveredLines?.length || 0} nhánh chưa test)`;
-      } else if (stmtsPct < 100) {
-        reason = `Statement coverage mới đạt ${stmtsPct}%`;
-      } else if (linesPct < 100) {
-        reason = `Line coverage mới đạt ${linesPct}%`;
+      if (needImprovementFiles.length === 0) {
+        setBulkSuggestMessage("Tất cả các file mã nguồn đã đạt 100% độ bao phủ kiểm thử!");
+        setTimeout(() => setBulkSuggestMessage(""), 5000);
+        return;
       }
 
-      const itemData = {
-        filePath: sf.filePath,
-        fileName: sf.filePath.split("/").pop(),
-        linesPct,
-        branchesPct,
-        funcsPct,
-        stmtsPct,
-        uncoveredLines: sf.uncoveredLines || [],
-        matchingTests: matchingTests.map((t) => ({ filePath: t.filePath, framework: t.framework, status: t.status })),
-        primaryTestFile: matchingTests[0]?.filePath || null,
-        reason,
-      };
+      setIsBulkSuggesting(true);
+      setBulkSuggestMessage(`Đang tạo gợi ý test inline cho ${needImprovementFiles.length} file...`);
 
-      if (is100) {
-        passed100Files.push(itemData);
-      } else {
-        needImprovementFiles.push(itemData);
+      // Expand all files that need improvement simultaneously so user can review all at once
+      setExpandedFiles(new Set(needImprovementFiles.map((f) => f.filePath)));
+      needImprovementFiles.forEach((f) => ensureFileCoverage(f.filePath));
+
+      try {
+        // Sequentially / concurrently fetch inline suggestions for each file
+        await Promise.all(
+          needImprovementFiles.map((f) => handleSuggestTestcaseInline(f.filePath))
+        );
+        setBulkSuggestMessage(`✓ Đã sinh gợi ý test trực tiếp bên dưới ${needImprovementFiles.length} file. Bạn có thể sửa code và bấm Apply ngay trong dropdown.`);
+      } catch (err) {
+        console.error("Bulk inline suggest failed:", err);
+        setBulkSuggestMessage(`Lỗi sinh testcase: ${err.message}`);
+      } finally {
+        setIsBulkSuggesting(false);
+        setTimeout(() => setBulkSuggestMessage(""), 8000);
       }
+      return;
     }
 
-    const totalCount = passed100Files.length + needImprovementFiles.length;
-    const primaryTarget =
-      needImprovementFiles[0]?.filePath ||
-      (sourceFiles[0]?.filePath || "");
-
-    onSuggestTestcase?.(primaryTarget, {
+    // For non-unit tests (e.g. integration / system), fallback to external handler if present
+    onSuggestTestcase?.(sourceFiles[0]?.filePath, {
       isBulk: true,
       snapshotId,
       projectId,
-      totalCount,
-      totalTestSuitesCount: testFiles?.length || 0,
-      allSuitesSummary: {
-        total: totalCount,
-        passed100Files,
-        needImprovementFiles,
-        passed100Suites: passed100Files,
-        needImprovementSuites: needImprovementFiles,
-      },
-      uncoveredFiles: needImprovementFiles.map((s) => s.filePath),
-      hasUncovered: needImprovementFiles.length > 0,
-      uncoveredCount: needImprovementFiles.length,
-      overallCoverage: {
-        statements: statPct,
-        branches: branchPct,
-        functions: funcPct,
-        lines: linePct,
-      },
     });
   };
 
@@ -627,6 +883,22 @@ export default function CoverageTypeDashboard({
     ? selectedFiles.reduce((sum, file) => sum + (file.linesPct || 0), 0) /
     selectedFiles.length
     : 0;
+
+  const isLatestRunFailed = summary?.latestRunStatus === "failed" || coverageData?.latestRunStatus === "failed";
+  const hasPartialFailures = summary?.latestRunStatus === "passed_with_failures" || coverageData?.latestRunStatus === "passed_with_failures" || summary?.hasTestFailures;
+  const lastSuccessfulCov = summary?.lastSuccessfulCoverage || coverageData?.lastSuccessfulCoverage;
+  const latestRunErr = summary?.latestRunError || coverageData?.latestRunError;
+  const failedSuiteName = summary?.failedSuite || coverageData?.failedSuite;
+
+  const lastSuccessfulValues = useMemo(() => {
+    if (!lastSuccessfulCov) return [0, 0, 0, 0];
+    return [
+      lastSuccessfulCov.statements ?? lastSuccessfulCov.lines ?? 0,
+      lastSuccessfulCov.branches ?? 0,
+      lastSuccessfulCov.functions ?? 0,
+      lastSuccessfulCov.lines ?? 0,
+    ];
+  }, [lastSuccessfulCov]);
 
   const values =
     type === "unit"
@@ -702,7 +974,7 @@ export default function CoverageTypeDashboard({
           )}
           <button
             onClick={handleBulkSuggestTest}
-            disabled={loading || running}
+            disabled={loading || running || isBulkSuggesting}
             style={{
               ...buttonStyle("#d8b4fe"),
               background: "linear-gradient(135deg, rgba(168,85,247,0.25), rgba(99,102,241,0.25))",
@@ -712,12 +984,12 @@ export default function CoverageTypeDashboard({
               alignItems: "center",
               gap: 6,
               fontWeight: 600,
-              cursor: "pointer",
+              cursor: isBulkSuggesting ? "wait" : "pointer",
             }}
-            title="Gợi ý testcase AI cho toàn bộ các file chưa đạt 100% coverage"
+            title="Gợi ý testcase AI cho toàn bộ các file chưa đạt 100% coverage trực tiếp dưới các file"
           >
             <Sparkles size={14} className="text-purple-400" />
-            <span>Suggest test</span>
+            <span>{isBulkSuggesting ? "Generating inline tests..." : "Suggest test"}</span>
           </button>
           <button
             onClick={async () => {
@@ -738,6 +1010,26 @@ export default function CoverageTypeDashboard({
           </button>
         </div>
       </div>
+
+      {bulkSuggestMessage && (
+        <div
+          style={{
+            padding: "10px 16px",
+            marginBottom: 16,
+            borderRadius: 8,
+            background: "rgba(168, 85, 247, 0.12)",
+            border: "1px solid rgba(168, 85, 247, 0.35)",
+            color: "#d8b4fe",
+            fontSize: 13,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <Sparkles size={16} />
+          <span>{bulkSuggestMessage}</span>
+        </div>
+      )}
 
       {running && (
         <WaveProgressBar
@@ -778,6 +1070,131 @@ export default function CoverageTypeDashboard({
         </div>
       )}
 
+      {/* Test Execution Failure Banner with Diagnostic Detail & Previous Coverage Notice */}
+      {isLatestRunFailed && (
+        <div
+          style={{
+            padding: "16px 20px",
+            marginBottom: 20,
+            borderRadius: 10,
+            background: "rgba(239, 68, 68, 0.12)",
+            border: "1px solid rgba(239, 68, 68, 0.4)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 12,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 20 }}>❌</span>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: "#fca5a5" }}>
+                Test execution failed for current run
+              </div>
+              <div style={{ fontSize: 12, color: "#cbd5e1", marginTop: 2 }}>
+                Coverage: <span style={{ color: "#ef4444", fontWeight: 600 }}>Unavailable for current run</span> (Không tính kết quả của run bị fail)
+              </div>
+            </div>
+          </div>
+
+          {failedSuiteName && (
+            <div style={{ fontSize: 12, color: "#e2e8f0" }}>
+              <span style={{ color: "#94a3b8" }}>Failed Suite: </span>
+              <code style={{ background: "rgba(0,0,0,0.4)", padding: "2px 6px", borderRadius: 4, color: "#f87171" }}>
+                {failedSuiteName}
+              </code>
+            </div>
+          )}
+
+          {latestRunErr && (
+            <div
+              style={{
+                fontSize: 11,
+                fontFamily: "var(--font-mono)",
+                background: "rgba(0, 0, 0, 0.5)",
+                border: "1px solid rgba(239, 68, 68, 0.25)",
+                padding: "10px 14px",
+                borderRadius: 6,
+                color: "#fca5a5",
+                whiteSpace: "pre-wrap",
+                maxHeight: 140,
+                overflowY: "auto",
+              }}
+            >
+              {latestRunErr}
+            </div>
+          )}
+
+          {lastSuccessfulCov && (
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "center",
+                gap: 14,
+                fontSize: 12,
+                padding: "10px 14px",
+                background: "rgba(255, 255, 255, 0.04)",
+                borderRadius: 6,
+                border: "1px dashed rgba(255, 255, 255, 0.2)",
+                color: "#94a3b8",
+              }}
+            >
+              <span style={{ fontWeight: 600, color: "#e2e8f0" }}>
+                ℹ️ Hiển thị kết quả lần chạy thành công trước đó (kết quả cũ):
+              </span>
+              <span>
+                Statements: <b style={{ color: "#cbd5e1" }}>{lastSuccessfulCov.statements || lastSuccessfulCov.lines || 0}%</b>
+              </span>
+              <span>
+                Branches: <b style={{ color: "#cbd5e1" }}>{lastSuccessfulCov.branches || 0}%</b>
+              </span>
+              <span>
+                Functions: <b style={{ color: "#cbd5e1" }}>{lastSuccessfulCov.functions || 0}%</b>
+              </span>
+              <span>
+                Lines: <b style={{ color: "#cbd5e1" }}>{lastSuccessfulCov.lines || 0}%</b>
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Partial Test Assertions Notice (Coverage is valid, but some assertions failed) */}
+      {!isLatestRunFailed && hasPartialFailures && (
+        <div
+          style={{
+            padding: "12px 18px",
+            marginBottom: 20,
+            borderRadius: 10,
+            background: "rgba(245, 158, 11, 0.1)",
+            border: "1px solid rgba(245, 158, 11, 0.35)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 18 }}>⚠️</span>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "#fcd34d" }}>
+                Coverage được đo lường thực tế từ lần chạy hiện tại (có một số test assertion không đạt)
+              </div>
+              <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>
+                Các file dưới đây hiển thị % code coverage chính xác dựa trên các test case đã chạy thực tế.
+              </div>
+            </div>
+          </div>
+          {failedSuiteName && (
+            <div style={{ fontSize: 12, color: "#cbd5e1" }}>
+              <span style={{ color: "#94a3b8" }}>Suite có test không đạt: </span>
+              <code style={{ background: "rgba(0,0,0,0.4)", padding: "2px 6px", borderRadius: 4, color: "#fcd34d" }}>
+                {failedSuiteName}
+              </code>
+            </div>
+          )}
+        </div>
+      )}
+
       {loading ? (
         <div style={{ color: "#8b949e", padding: 40, textAlign: "center" }}>
           Loading coverage analysis...
@@ -808,15 +1225,20 @@ export default function CoverageTypeDashboard({
                   style={{
                     color:
                       type === "unit"
-                        ? coverageColor(values[i])
+                        ? (isLatestRunFailed ? "#f87171" : coverageColor(values[i]))
                         : config.accent,
-                    fontSize: 27,
+                    fontSize: isLatestRunFailed && type === "unit" ? 18 : 27,
                     fontWeight: 750,
                     marginTop: 8,
                   }}
                 >
-                  {type === "unit" ? pct(values[i]) : values[i]}
+                  {type === "unit" ? (isLatestRunFailed ? "Unavailable" : pct(values[i])) : values[i]}
                 </div>
+                {isLatestRunFailed && type === "unit" && lastSuccessfulCov && (
+                  <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
+                    Last successful: <b style={{ color: "#cbd5e1" }}>{pct(lastSuccessfulValues[i])}</b> (cũ)
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -2106,10 +2528,14 @@ export default function CoverageTypeDashboard({
                   {/* Table Rows */}
                   {displayFiles.slice(0, 50).map((file) => {
                     const isFull = (file.linesPct || 0) >= 100;
-                    const isExpanded = expandedFile === file.filePath;
+                    const isExpanded = expandedFiles.has(file.filePath);
                     const cacheEntry = fileCoverageCache[file.filePath];
                     const isLoadingDetails = cacheEntry?.loading;
                     const fileDetails = cacheEntry?.data;
+                    const fileSuggestions = inlineSuggestions[file.filePath] || [];
+                    const isSuggesting = loadingSuggestions[file.filePath] || false;
+                    const lastApply = applyResultsByFile[file.filePath] || null;
+                    const progressStep = applyProgressSteps[file.filePath] || "";
 
                     return (
                       <div key={file.filePath}>
@@ -2209,7 +2635,7 @@ export default function CoverageTypeDashboard({
                             );
                           })}
 
-                          {/* Action: Open source file & Dropdown Toggle Button on Far Right */}
+                          {/* Action: Inline Suggest Test, Open Code & Expand Toggle */}
                           <div
                             style={{
                               display: "flex",
@@ -2219,21 +2645,55 @@ export default function CoverageTypeDashboard({
                             }}
                           >
                             <button
-                              onClick={() => onOpenFile?.(file.filePath)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSuggestTestcaseInline(file.filePath);
+                              }}
+                              disabled={isSuggesting}
                               style={{
                                 padding: "4px 8px",
                                 borderRadius: 5,
-                                background: "rgba(255,255,255,0.05)",
-                                border: "1px solid rgba(255,255,255,0.1)",
-                                color: "#c9d1d9",
+                                background: "rgba(168, 85, 247, 0.15)",
+                                border: "1px solid rgba(168, 85, 247, 0.35)",
+                                color: "#d8b4fe",
+                                fontSize: 11,
+                                fontWeight: 600,
+                                cursor: isSuggesting ? "wait" : "pointer",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 4,
+                                transition: "all 0.15s ease",
+                              }}
+                              className="hover:bg-purple-500/25 hover:text-white"
+                              title="Tạo gợi ý test case AI inline cho file này"
+                            >
+                              <Sparkles size={11} />
+                              Suggest
+                            </button>
+
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleExpandFile(file.filePath);
+                              }}
+                              style={{
+                                padding: "4px 8px",
+                                borderRadius: 5,
+                                background: isExpanded
+                                  ? "rgba(56, 189, 248, 0.18)"
+                                  : "rgba(255, 255, 255, 0.05)",
+                                border: isExpanded
+                                  ? "1px solid rgba(56, 189, 248, 0.4)"
+                                  : "1px solid rgba(255, 255, 255, 0.1)",
+                                color: isExpanded ? "#38bdf8" : "#c9d1d9",
                                 fontSize: 11,
                                 cursor: "pointer",
                                 transition: "all 0.15s ease",
                               }}
                               className="hover:bg-white/10 hover:text-white"
-                              title="Open source file in editor"
+                              title={isExpanded ? "Đóng xem & sửa code" : "Xem độ bao phủ & sửa code trực tiếp"}
                             >
-                              Open code
+                              {isExpanded ? "Close" : "View & Edit"}
                             </button>
 
                             <button
@@ -2260,7 +2720,7 @@ export default function CoverageTypeDashboard({
                               title={
                                 isExpanded
                                   ? "Collapse flow analysis"
-                                  : "View execution flow analysis"
+                                  : "View execution flow analysis & suggestions"
                               }
                             >
                               {isExpanded ? (
@@ -2279,19 +2739,44 @@ export default function CoverageTypeDashboard({
                               padding: "14px 18px",
                               background: "rgba(0, 0, 0, 0.4)",
                               borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: 16,
                             }}
                           >
-                            {isLoadingDetails ? (
+                            {/* Inline Suggestions Section */}
+                            {(fileSuggestions.length > 0 || isSuggesting) && (
+                              <InlineTestSuggestions
+                                filePath={file.filePath}
+                                suggestions={fileSuggestions}
+                                isLoading={isSuggesting}
+                                onApply={(sug) => handleApplySuggestionInline(file.filePath, sug)}
+                                onApplyAll={(sugs) => handleApplyAllInline(file.filePath, sugs)}
+                                onReject={(sugId) => handleRejectInline(file.filePath, sugId)}
+                                onUpdateSuggestionCode={(sugId, newCode) =>
+                                  handleUpdateSuggestionCode(file.filePath, sugId, newCode)
+                                }
+                                applyingIds={applyingSuggestionIds}
+                                lastApplyResult={lastApply}
+                                progressStep={progressStep}
+                              />
+                            )}
+
+                            {isLoadingDetails || (!fileDetails && !cacheEntry?.error) ? (
                               <div
                                 style={{
                                   padding: "24px",
                                   textAlign: "center",
                                   color: "#8b949e",
                                   fontSize: 12,
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  gap: 8,
                                 }}
                               >
-                                Analyzing execution flow for{" "}
-                                {cleanDisplayPath(file.filePath)}...
+                                <Loader2 size={16} className="animate-spin text-purple-400" />
+                                <span>Analyzing execution flow for {cleanDisplayPath(file.filePath)}...</span>
                               </div>
                             ) : fileDetails ? (
                               activeMetricView === "branches" ? (
@@ -2299,7 +2784,7 @@ export default function CoverageTypeDashboard({
                                   filePath={file.filePath}
                                   fileCoverage={fileDetails}
                                   onOpenFile={onOpenFile}
-                                  onSuggestTestcase={onSuggestTestcase}
+                                  onSuggestTestcase={() => handleSuggestTestcaseInline(file.filePath)}
                                 />
                               ) : activeMetricView === "functions" ? (
                                 <FileFunctionCallGraphView
@@ -2307,14 +2792,21 @@ export default function CoverageTypeDashboard({
                                   fileCoverage={fileDetails}
                                   testSuites={testSuites}
                                   onOpenFile={onOpenFile}
-                                  onSuggestTestcase={onSuggestTestcase}
+                                  onSuggestTestcase={() => handleSuggestTestcaseInline(file.filePath)}
                                 />
                               ) : (
                                 <FileCodeExecutionView
                                   filePath={file.filePath}
                                   fileCoverage={fileDetails}
+                                  projectId={projectId}
+                                  snapshotId={snapshotId}
                                   onOpenFile={onOpenFile}
-                                  onSuggestTestcase={onSuggestTestcase}
+                                  onFileSaved={async (savedPath) => {
+                                    await ensureFileCoverage(savedPath, true);
+                                    invalidateCoverageQueries(snapshotId);
+                                    await refetchCoverage();
+                                  }}
+                                  onSuggestTestcase={() => handleSuggestTestcaseInline(file.filePath)}
                                 />
                               )
                             ) : (
@@ -2324,9 +2816,27 @@ export default function CoverageTypeDashboard({
                                   textAlign: "center",
                                   color: "#f87171",
                                   fontSize: 12,
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  alignItems: "center",
+                                  gap: 8,
                                 }}
                               >
-                                Failed to load flow analysis data for this file.
+                                <span>{cacheEntry?.error ? `Error: ${cacheEntry.error}` : "Failed to load flow analysis data for this file."}</span>
+                                <button
+                                  onClick={() => ensureFileCoverage(file.filePath, true)}
+                                  style={{
+                                    padding: "4px 10px",
+                                    background: "rgba(239, 68, 68, 0.15)",
+                                    border: "1px solid rgba(239, 68, 68, 0.3)",
+                                    borderRadius: 4,
+                                    color: "#f87171",
+                                    fontSize: 11,
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  Retry
+                                </button>
                               </div>
                             )}
                           </div>

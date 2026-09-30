@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "child_process";
+import path from "path";
 import { ServiceError } from "../utils/serviceError.js";
 import { addJobLog } from "./job.service.js";
 import { appendJobOutput } from "./jobOutput.service.js";
@@ -60,9 +61,17 @@ export const dockerRunner = {
       let child;
       let timer;
 
+      const nodeModulesBin = path.join(snapshotPath, "node_modules", ".bin");
+      const appModulesBin = "/app/node_modules/.bin";
+      const currentPath = process.env.PATH || "";
+      const customPath = `${nodeModulesBin}:${appModulesBin}:${currentPath}`;
+
       const mergedEnv = {
         ...process.env,
+        CI: "true",
+        PATH: customPath,
         NODE_OPTIONS: "--experimental-vm-modules",
+        NODE_PATH: `/app/node_modules:${path.join(snapshotPath, "node_modules")}:${process.env.NODE_PATH || ""}`,
         ...env,
       };
 
@@ -90,6 +99,7 @@ export const dockerRunner = {
       } else {
         child = spawn(command, { shell: true, cwd: snapshotPath, env: mergedEnv });
       }
+      try { child.stdin?.end(); } catch { }
 
       timer = setTimeout(async () => {
         timedOut = true;

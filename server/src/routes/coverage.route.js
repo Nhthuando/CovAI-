@@ -13,6 +13,7 @@ import {
     approveIntegrationTests,
     getFileCoverage,
     suggestUnitTestcase,
+    applySuggestion,
     getCoverageTestSuites,
     getIntegrationHistory
 } from "../controllers/coverage.controller.js";
@@ -32,6 +33,9 @@ router.get("/:snapshotId/file-coverage", authMiddleware, getFileCoverage);
 
 // POST /api/coverage/:snapshotId/suggest-testcase — đề xuất unit testcase bằng AI cho file nguồn
 router.post("/:snapshotId/suggest-testcase", authMiddleware, suggestUnitTestcase);
+
+// POST /api/coverage/:snapshotId/apply-suggestion — ghi testcase vào disk, rerun test, collect new coverage
+router.post("/:snapshotId/apply-suggestion", authMiddleware, applySuggestion);
 
 // POST /api/coverage/:snapshotId/run — trigger pipeline INSTALL_DEPS → RUN_TESTS
 router.post("/:snapshotId/run", authMiddleware, runCoverage);
