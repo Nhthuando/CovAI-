@@ -460,7 +460,7 @@ REQUIREMENTS:
         targetLines: primaryTargetLines,
         targetBranches: targetBranchesList,
         reason: primaryReason,
-        explanation: aiResult.explanation || `Suggested ${framework.toUpperCase()} tests for ${cleanSourceFile}`,`
+        explanation: aiResult.explanation || `Suggested ${framework.toUpperCase()} tests for ${cleanSourceFile}`,
         generatedCode: aiResult.suggestedTestCode || aiResult.fullUpdatedContent,
         suggestedTestCode: aiResult.suggestedTestCode || aiResult.fullUpdatedContent,
         originalCode: testFileInfo.content || "",

@@ -183,16 +183,20 @@ function RepoItem({ repo, onClose, onSuccess, showToast }) {
 }
 
 /* ── Repo List ───────────────────────────────────────────── */
-export default function RepoList({ onClose, onSuccess }) {
+export default function RepoList({ onClose, onSuccess, hasGithub }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [repos, setRepos] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(hasGithub !== false);
   const [errorMsg, setErrorMsg] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const reposPerPage = 5;
   const { showToast } = useToast();
 
   useEffect(() => {
+    if (hasGithub === false) {
+      setLoading(false);
+      return;
+    }
     getGithubRepositoriesApi()
       .then((data) => {
         const mapped = Array.isArray(data)
@@ -214,7 +218,7 @@ export default function RepoList({ onClose, onSuccess }) {
         setErrorMsg(err.message || "Failed to load repositories.");
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [hasGithub]);
 
   const filteredRepos = repos.filter((r) =>
     r.name.toLowerCase().includes(searchQuery.toLowerCase()),

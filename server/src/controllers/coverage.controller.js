@@ -389,19 +389,30 @@ export const getCoverageSummary = async (req, res) => {
         }
 
         // Check latest test run or analysis job to distinguish current run from last successful coverage
-        const latestTestRun = prisma.testRun?.findFirst
-            ? await prisma.testRun.findFirst({
-                where: { snapshotId: snapshot.id },
-                orderBy: { createdAt: "desc" },
-                include: { scenarios: true }
-            })
-            : null;
-        const latestJob = prisma.job?.findFirst
-            ? await prisma.job.findFirst({
-                where: { snapshotId: snapshot.id, type: "RUN_TESTS" },
-                orderBy: { createdAt: "desc" }
-            })
-            : null;
+        let latestTestRun = null;
+        let latestJob = null;
+        try {
+            if (prisma.testRun?.findFirst) {
+                latestTestRun = await prisma.testRun.findFirst({
+                    where: { snapshotId: snapshot.id },
+                    orderBy: { createdAt: "desc" },
+                    include: { scenarios: true }
+                });
+            }
+        } catch (testRunErr) {
+            console.warn("[CoverageSummary] Warning querying latestTestRun:", testRunErr.message);
+        }
+
+        try {
+            if (prisma.job?.findFirst) {
+                latestJob = await prisma.job.findFirst({
+                    where: { snapshotId: snapshot.id, type: "RUN_TESTS" },
+                    orderBy: { createdAt: "desc" }
+                });
+            }
+        } catch (jobErr) {
+            console.warn("[CoverageSummary] Warning querying latestJob:", jobErr.message);
+        }
 
         const isJobFailed = latestJob?.status === "FAILED";
         const hasModuleResolutionError = latestJob?.errorMessage?.includes("Cannot find module") ||
@@ -808,10 +819,12 @@ export const getTestExecution = async (req, res) => {
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
         if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
 
-        const testRuns = await prisma.testRun.findMany({
-            where: { snapshotId },
-            orderBy: { createdAt: "desc" }
-        });
+        const testRuns = (prisma.testRun?.findMany
+            ? await prisma.testRun.findMany({
+                where: { snapshotId },
+                orderBy: { createdAt: "desc" }
+            }).catch(() => [])
+            : []) || [];
 
         // Map to expected frontend structure
         const latestByType = (type) => testRuns.find(r => r.type === type) || null;

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Sparkles,
@@ -21,6 +21,17 @@ import {
   FileDiff,
   Eye,
   Play,
+  Paperclip,
+  Image as ImageIcon,
+  X,
+  FileText,
+  AtSign,
+  Plus,
+  History,
+  MessageSquare,
+  Trash2,
+  Edit2,
+  Search,
 } from "lucide-react";
 
 import {
@@ -30,6 +41,11 @@ import {
   getFileContentApi,
   updateFileContentApi,
   createProjectFileApi,
+  getProjectTreeApi,
+  getChatSessionsApi,
+  getChatSessionMessagesApi,
+  updateChatSessionApi,
+  deleteChatSessionApi,
 } from "../../services/project.service";
 import {
   suggestUnitTestcase,
@@ -91,6 +107,100 @@ function getIdeFileIcon(fileName = "") {
     );
   }
   return <TestTube2 size={13} className="text-purple-400 flex-shrink-0" />;
+}
+
+/* ── Flatten File Tree Utility ──────────────────────────── */
+function flattenFiles(nodes) {
+  const result = [];
+  const seen = new Set();
+
+  function traverse(list) {
+    if (!Array.isArray(list)) return;
+    for (const node of list) {
+      if (!node) continue;
+      const rawPath = node.path || node.id;
+      const normalizedPath = rawPath ? String(rawPath).replace(/\\/g, "/") : "";
+
+      const isFile =
+        node.type === "file" ||
+        (!node.children &&
+          normalizedPath &&
+          (!node.children || node.children.length === 0));
+
+      if (isFile && normalizedPath && !seen.has(normalizedPath)) {
+        seen.add(normalizedPath);
+        result.push({
+          id: normalizedPath,
+          path: normalizedPath,
+          name: node.name || normalizedPath.split("/").pop(),
+        });
+      }
+
+      if (node.children && Array.isArray(node.children)) {
+        traverse(node.children);
+      }
+    }
+  }
+
+  traverse(nodes);
+  return result;
+}
+
+/* ── Chat Session Date & Grouping Helpers ────────────────── */
+function formatSessionTime(dateString) {
+  if (!dateString) return "";
+  const d = new Date(dateString);
+  const now = new Date();
+  const diffMs = now - d;
+  const diffSec = Math.floor(diffMs / 1000);
+  const diffMin = Math.floor(diffSec / 60);
+  const diffHour = Math.floor(diffMin / 60);
+  const diffDay = Math.floor(diffHour / 24);
+
+  if (diffMin < 1) return "Just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffHour < 24) return `${diffHour}h ago`;
+  if (diffDay === 1) return "Yesterday";
+  if (diffDay < 7) return `${diffDay}d ago`;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function groupSessionsByDate(sessions) {
+  if (!Array.isArray(sessions) || sessions.length === 0) return [];
+
+  const groups = {
+    today: [],
+    yesterday: [],
+    previous7Days: [],
+    older: [],
+  };
+
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterdayStart = new Date(todayStart);
+  yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+  const weekAgoStart = new Date(todayStart);
+  weekAgoStart.setDate(weekAgoStart.getDate() - 7);
+
+  for (const session of sessions) {
+    const sDate = new Date(session.updatedAt || session.createdAt);
+    if (sDate >= todayStart) {
+      groups.today.push(session);
+    } else if (sDate >= yesterdayStart) {
+      groups.yesterday.push(session);
+    } else if (sDate >= weekAgoStart) {
+      groups.previous7Days.push(session);
+    } else {
+      groups.older.push(session);
+    }
+  }
+
+  return [
+    { label: "Today", items: groups.today },
+    { label: "Yesterday", items: groups.yesterday },
+    { label: "Previous 7 Days", items: groups.previous7Days },
+    { label: "Older", items: groups.older },
+  ].filter((g) => g.items.length > 0);
 }
 
 /* ── Initial conversation (English) ─────────────────────── */
@@ -1052,6 +1162,65 @@ function ChatMessage({
             wordWrap: "break-word",
           }}
         >
+          {/* Attached items (Images, Files, Project references) */}
+          {msg.attachments && msg.attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-2.5">
+              {msg.attachments.map((att) => {
+                if (
+                  att.type === "image" ||
+                  att.mimeType?.startsWith("image/")
+                ) {
+                  return (
+                    <div
+                      key={att.id || att.name}
+                      className="relative rounded-lg overflow-hidden border border-[var(--color-border)] bg-[var(--color-bg)]"
+                      style={{ maxHeight: 180 }}
+                    >
+                      <img
+                        src={att.previewUrl || att.data}
+                        alt={att.name || "Attachment"}
+                        className="max-h-40 object-contain rounded-lg"
+                      />
+                    </div>
+                  );
+                }
+                if (att.type === "project_file") {
+                  return (
+                    <div
+                      key={att.id || att.path}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-mono"
+                      style={{
+                        background: "rgba(109, 93, 251, 0.12)",
+                        border: "1px solid var(--color-primary)",
+                        color: "var(--color-primary)",
+                      }}
+                    >
+                      <AtSign size={11} />
+                      <span className="truncate max-w-[200px]">{att.path}</span>
+                    </div>
+                  );
+                }
+                return (
+                  <div
+                    key={att.id || att.name}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-mono"
+                    style={{
+                      background: "var(--color-surface)",
+                      border: "1px solid var(--color-border)",
+                      color: "var(--color-text)",
+                    }}
+                  >
+                    <FileText
+                      size={11}
+                      className="text-[var(--color-primary)]"
+                    />
+                    <span className="truncate max-w-[200px]">{att.name}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           <FormattedMessage content={msg.content} />
 
           {/* Options / Action chips generated by AI */}
@@ -1269,12 +1438,53 @@ const AI_MODELS = [
 ];
 
 /* ── Modern Prompt Input (Compact & Dynamic Auto-Resize) ─── */
-function ChatInput({ onSend, isTyping, selectedModel, setSelectedModel }) {
+function ChatInput({
+  onSend,
+  isTyping,
+  selectedModel,
+  setSelectedModel,
+  fileTree = [],
+  projectId,
+}) {
   const [input, setInput] = useState("");
   const [focused, setFocused] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [attachments, setAttachments] = useState([]);
+
+  // @ mention autocomplete state
+  const [atMentionOpen, setAtMentionOpen] = useState(false);
+  const [atMentionQuery, setAtMentionQuery] = useState("");
+  const [atMentionIndex, setAtMentionIndex] = useState(0);
+
   const textareaRef = useRef(null);
   const menuRef = useRef(null);
+  const atMenuRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const selectedMentionItemRef = useRef(null);
+
+  const allProjectFiles = useMemo(() => {
+    return flattenFiles(fileTree);
+  }, [fileTree]);
+
+  const filteredMentionFiles = useMemo(() => {
+    if (!allProjectFiles || allProjectFiles.length === 0) return [];
+    if (!atMentionQuery) return allProjectFiles;
+    const q = atMentionQuery.toLowerCase();
+    return allProjectFiles.filter(
+      (f) =>
+        f.path.toLowerCase().includes(q) || f.name.toLowerCase().includes(q),
+    );
+  }, [allProjectFiles, atMentionQuery]);
+
+  // Keep highlighted item visible during keyboard navigation
+  useEffect(() => {
+    if (atMentionOpen && selectedMentionItemRef.current) {
+      selectedMentionItemRef.current.scrollIntoView({
+        block: "nearest",
+        behavior: "smooth",
+      });
+    }
+  }, [atMentionIndex, atMentionOpen]);
 
   const autoResize = useCallback(() => {
     const ta = textareaRef.current;
@@ -1291,42 +1501,364 @@ function ChatInput({ onSend, isTyping, selectedModel, setSelectedModel }) {
     autoResize();
   }, [input, autoResize]);
 
-  // Click outside to close model dropdown
+  // Click outside to close menus
   useEffect(() => {
     const handleClickOutside = (e) => {
       if (menuRef.current && !menuRef.current.contains(e.target)) {
         setModelMenuOpen(false);
       }
+      if (atMenuRef.current && !atMenuRef.current.contains(e.target)) {
+        setAtMentionOpen(false);
+      }
     };
-    if (modelMenuOpen) {
-      document.addEventListener("mousedown", handleClickOutside);
-    }
+    document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [modelMenuOpen]);
+  }, []);
 
-  const handleSend = () => {
-    if (!input.trim() || isTyping) return;
-    onSend(input.trim());
-    setInput("");
-    if (textareaRef.current) {
-      textareaRef.current.style.height = "24px";
+  // Clipboard paste handler: handles pasted images silently without toast
+  const handlePaste = useCallback((e) => {
+    const items = e.clipboardData?.items;
+    if (!items || items.length === 0) return;
+
+    let imageFound = false;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type && item.type.startsWith("image/")) {
+        imageFound = true;
+        const file = item.getAsFile();
+        if (!file) continue;
+
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const base64 = ev.target.result;
+          const newAtt = {
+            id:
+              "img-" +
+              Date.now() +
+              "-" +
+              Math.random().toString(36).substr(2, 5),
+            type: "image",
+            name: `Pasted_Image_${new Date().toLocaleTimeString().replace(/:/g, "-")}.png`,
+            mimeType: file.type || "image/png",
+            data: base64,
+            previewUrl: base64,
+            size: file.size,
+          };
+          setAttachments((prev) => [...prev, newAtt]);
+        };
+        reader.readAsDataURL(file);
+      }
+    }
+
+    if (imageFound) {
+      e.preventDefault();
+    }
+  }, []);
+
+  // System file picker handler: attach files / images from system
+  const handleSystemFileSelect = (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    files.forEach((file) => {
+      if (file.type && file.type.startsWith("image/")) {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          setAttachments((prev) => [
+            ...prev,
+            {
+              id:
+                "img-" +
+                Date.now() +
+                "-" +
+                Math.random().toString(36).substr(2, 5),
+              type: "image",
+              name: file.name,
+              mimeType: file.type || "image/png",
+              data: ev.target.result,
+              previewUrl: ev.target.result,
+              size: file.size,
+            },
+          ]);
+        };
+        reader.readAsDataURL(file);
+      } else {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          setAttachments((prev) => [
+            ...prev,
+            {
+              id:
+                "file-" +
+                Date.now() +
+                "-" +
+                Math.random().toString(36).substr(2, 5),
+              type: "file",
+              name: file.name,
+              size: file.size,
+              content: ev.target.result,
+            },
+          ]);
+        };
+        reader.readAsText(file);
+      }
+    });
+
+    e.target.value = "";
+  };
+
+  const removeAttachment = (id) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
+  };
+
+  // Text input change & @ mention detection
+  const handleInputChange = (e) => {
+    const val = e.target.value;
+    setInput(val);
+
+    const cursor = e.target.selectionStart;
+    const textBeforeCursor = val.slice(0, cursor);
+
+    // Look for @ or @/ right before cursor
+    const match = textBeforeCursor.match(/(?:^|\s)@(\/?[\w\.\-\/]*)$/);
+
+    if (match) {
+      const rawQuery = match[1];
+      const query = rawQuery.startsWith("/") ? rawQuery.slice(1) : rawQuery;
+      setAtMentionQuery(query);
+      setAtMentionOpen(true);
+      setAtMentionIndex(0);
+    } else {
+      setAtMentionOpen(false);
     }
   };
 
+  // Selecting a file from @ mention
+  const handleSelectMentionFile = async (file) => {
+    const cursor = textareaRef.current
+      ? textareaRef.current.selectionStart
+      : input.length;
+    const textBeforeCursor = input.slice(0, cursor);
+    const textAfterCursor = input.slice(cursor);
+
+    const replacedBefore = textBeforeCursor.replace(
+      /(?:^|\s)@(\/?[\w\.\-\/]*)$/,
+      (match) => {
+        const prefix = match.startsWith(" ") ? " " : "";
+        return `${prefix}@${file.path} `;
+      },
+    );
+
+    setInput(replacedBefore + textAfterCursor);
+    setAtMentionOpen(false);
+
+    // Add to attachments as project_file so its content is sent to AI
+    if (!attachments.some((a) => a.path === file.path)) {
+      const newAtt = {
+        id: "proj-" + file.path,
+        type: "project_file",
+        name: file.name,
+        path: file.path,
+        content: null,
+      };
+      setAttachments((prev) => [...prev, newAtt]);
+
+      if (projectId) {
+        getFileContentApi(projectId, file.path)
+          .then((res) => {
+            if (res?.content !== undefined) {
+              setAttachments((prev) =>
+                prev.map((a) =>
+                  a.id === newAtt.id ? { ...a, content: res.content } : a,
+                ),
+              );
+            }
+          })
+          .catch(() => {});
+      }
+    }
+
+    setTimeout(() => {
+      textareaRef.current?.focus();
+    }, 50);
+  };
+
+  // Keyboard navigation for @ mention and send
   const handleKeyDown = (e) => {
+    if (atMentionOpen && filteredMentionFiles.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setAtMentionIndex((prev) => (prev + 1) % filteredMentionFiles.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setAtMentionIndex(
+          (prev) =>
+            (prev - 1 + filteredMentionFiles.length) %
+            filteredMentionFiles.length,
+        );
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        handleSelectMentionFile(filteredMentionFiles[atMentionIndex]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setAtMentionOpen(false);
+        return;
+      }
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
   };
 
-  const canSend = input.trim() && !isTyping;
+  const handleSend = () => {
+    if ((!input.trim() && attachments.length === 0) || isTyping) return;
+    onSend(input.trim(), attachments);
+    setInput("");
+    setAttachments([]);
+    setAtMentionOpen(false);
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "24px";
+    }
+  };
+
+  const canSend = (input.trim() || attachments.length > 0) && !isTyping;
 
   return (
     <div
       className="flex-shrink-0 relative"
       style={{ padding: "6px 14px 12px" }}
+      onPaste={handlePaste}
     >
+      {/* Hidden file input for system file attachment */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={handleSystemFileSelect}
+      />
+
+      {/* ── @ Project File Autocomplete Dropdown ── */}
+      <AnimatePresence>
+        {atMentionOpen && (
+          <motion.div
+            ref={atMenuRef}
+            initial={{ opacity: 0, y: 8, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 8, scale: 0.96 }}
+            transition={{ duration: 0.15, ease: "easeOut" }}
+            style={{
+              position: "absolute",
+              bottom: "calc(100% - 2px)",
+              left: 14,
+              width: 320,
+              maxHeight: 280,
+              background: "var(--color-surface)",
+              border: "1px solid var(--color-border)",
+              borderRadius: 12,
+              boxShadow: "var(--shadow-lg)",
+              padding: "6px",
+              zIndex: 60,
+              overflowY: "auto",
+            }}
+            className="custom-scrollbar"
+          >
+            <div
+              className="px-2.5 py-1.5 text-[10px] font-semibold tracking-wider uppercase flex items-center justify-between"
+              style={{
+                color: "var(--color-text-secondary)",
+                borderBottom: "1px solid var(--color-border)",
+              }}
+            >
+              <span className="flex items-center gap-1.5">
+                <AtSign size={11} className="text-[var(--color-primary)]" />
+                <span>Reference Project File</span>
+              </span>
+              <span
+                style={{
+                  color: "var(--color-text-muted)",
+                  fontFamily: "var(--font-mono)",
+                }}
+              >
+                {filteredMentionFiles.length}{" "}
+                {filteredMentionFiles.length === 1 ? "file" : "files"}
+                {allProjectFiles.length > filteredMentionFiles.length
+                  ? ` (of ${allProjectFiles.length})`
+                  : ""}
+              </span>
+            </div>
+
+            <div className="flex flex-col gap-0.5 mt-1">
+              {filteredMentionFiles.length === 0 ? (
+                <div className="px-3 py-4 text-center text-xs text-[var(--color-text-muted)] font-mono">
+                  {allProjectFiles.length === 0
+                    ? "No files in project yet"
+                    : "No matching files found"}
+                </div>
+              ) : (
+                filteredMentionFiles.map((file, idx) => {
+                  const isSelected = idx === atMentionIndex;
+                  return (
+                    <button
+                      key={file.path}
+                      ref={isSelected ? selectedMentionItemRef : null}
+                      type="button"
+                      onClick={() => handleSelectMentionFile(file)}
+                      onMouseEnter={() => setAtMentionIndex(idx)}
+                      className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition-colors cursor-pointer w-full"
+                      style={{
+                        background: isSelected
+                          ? "rgba(109, 93, 251, 0.12)"
+                          : "transparent",
+                        border: isSelected
+                          ? "1px solid var(--color-primary)"
+                          : "1px solid transparent",
+                      }}
+                    >
+                      <FileCode
+                        size={14}
+                        className={
+                          isSelected
+                            ? "text-[var(--color-primary)] shrink-0"
+                            : "text-[var(--color-text-muted)] shrink-0"
+                        }
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div
+                          className="text-xs font-mono font-medium truncate"
+                          style={{
+                            color: isSelected
+                              ? "var(--color-primary)"
+                              : "var(--color-text)",
+                          }}
+                        >
+                          {file.name}
+                        </div>
+                        <div
+                          className="text-[10px] font-mono truncate"
+                          style={{ color: "var(--color-text-muted)" }}
+                        >
+                          {file.path}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* ── AI Model Selector Dropdown ── */}
       <AnimatePresence>
         {modelMenuOpen && (
@@ -1446,7 +1978,7 @@ function ChatInput({ onSend, isTyping, selectedModel, setSelectedModel }) {
         )}
       </AnimatePresence>
 
-      {/* ── Input Box ── */}
+      {/* ── Main Input Box ── */}
       <div
         className="relative rounded-2xl transition-all duration-200"
         style={{
@@ -1458,14 +1990,70 @@ function ChatInput({ onSend, isTyping, selectedModel, setSelectedModel }) {
           padding: "8px 12px 6px",
         }}
       >
+        {/* Attachments chip row */}
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 pb-2 mb-1.5 border-b border-[var(--color-border)]">
+            {attachments.map((att) => (
+              <div
+                key={att.id}
+                className="group/att flex items-center gap-1.5 pl-1.5 pr-1 py-0.5 rounded-lg text-xs"
+                style={{
+                  background:
+                    att.type === "project_file"
+                      ? "rgba(109, 93, 251, 0.12)"
+                      : "var(--color-surface-secondary)",
+                  border:
+                    att.type === "project_file"
+                      ? "1px solid var(--color-primary)"
+                      : "1px solid var(--color-border)",
+                  color:
+                    att.type === "project_file"
+                      ? "var(--color-primary)"
+                      : "var(--color-text)",
+                }}
+              >
+                {att.type === "image" ? (
+                  <div className="w-5 h-5 rounded overflow-hidden flex-shrink-0 border border-[var(--color-border)] bg-[var(--color-bg)]">
+                    <img
+                      src={att.previewUrl || att.data}
+                      alt="Thumbnail"
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                ) : att.type === "project_file" ? (
+                  <AtSign size={12} className="flex-shrink-0" />
+                ) : (
+                  <FileText
+                    size={12}
+                    className="flex-shrink-0 text-[var(--color-primary)]"
+                  />
+                )}
+
+                <span className="font-mono text-[11px] truncate max-w-[140px]">
+                  {att.type === "project_file" ? `@${att.path}` : att.name}
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() => removeAttachment(att.id)}
+                  className="p-0.5 rounded hover:bg-[var(--color-danger)]/15 hover:text-[var(--color-danger)] text-[var(--color-text-muted)] cursor-pointer transition-colors"
+                  title="Remove"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <textarea
           ref={textareaRef}
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={handleInputChange}
           onKeyDown={handleKeyDown}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
-          placeholder="Ask COV anything..."
+          placeholder="Ask COV or type @ to reference..."
           rows={1}
           className="w-full resize-none outline-none bg-transparent custom-scrollbar"
           style={{
@@ -1480,53 +2068,86 @@ function ChatInput({ onSend, isTyping, selectedModel, setSelectedModel }) {
           }}
         />
 
-        {/* Toolbar row inside input box */}
-        <div className="flex items-center justify-between pt-1">
-          {/* Model Selector Button */}
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={() => setModelMenuOpen(!modelMenuOpen)}
-            type="button"
-            className="flex items-center gap-1.5 px-2 py-1 rounded-lg cursor-pointer transition-all"
-            style={{
-              background: modelMenuOpen
-                ? "var(--color-surface)"
-                : "var(--color-bg)",
-              border: modelMenuOpen
-                ? "1px solid var(--color-primary)"
-                : "1px solid var(--color-border)",
-              fontSize: 11,
-              color: "var(--color-text)",
-            }}
-            title="Switch AI Model"
-          >
-            <Sparkles
-              size={11}
+        {/* Clean Single Horizontal Row: [+] [Model Selector] on Left, [Send] on Right */}
+        <div className="flex items-center justify-between pt-1 gap-2">
+          {/* Left: [+] Add File button + Model Selector */}
+          <div className="flex items-center gap-1.5 min-w-0">
+            {/* '+' Add File Button */}
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center justify-center rounded-lg cursor-pointer transition-all shrink-0"
               style={{
-                color: selectedModel?.badgeColor || "var(--color-primary)",
-              }}
-            />
-            <span style={{ fontWeight: 500 }}>
-              {selectedModel?.name || "Gemini 1.5 Pro"}
-            </span>
-            <ChevronDown
-              size={12}
-              style={{
+                width: 26,
+                height: 26,
+                background: "var(--color-bg)",
+                border: "1px solid var(--color-border)",
                 color: "var(--color-text-secondary)",
-                transform: modelMenuOpen ? "rotate(180deg)" : "rotate(0deg)",
-                transition: "transform 0.2s ease",
               }}
-            />
-          </motion.button>
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = "var(--color-primary)";
+                e.currentTarget.style.borderColor = "var(--color-primary)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = "var(--color-text-secondary)";
+                e.currentTarget.style.borderColor = "var(--color-border)";
+              }}
+              title="Attach file or image (+)"
+            >
+              <Plus size={15} strokeWidth={2.4} />
+            </motion.button>
 
-          {/* Send Button */}
+            {/* Model Selector Button */}
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => setModelMenuOpen(!modelMenuOpen)}
+              type="button"
+              className="flex items-center gap-1.5 px-2 py-1 rounded-lg cursor-pointer transition-all"
+              style={{
+                background: modelMenuOpen
+                  ? "var(--color-surface)"
+                  : "var(--color-bg)",
+                border: modelMenuOpen
+                  ? "1px solid var(--color-primary)"
+                  : "1px solid var(--color-border)",
+                fontSize: 11,
+                color: "var(--color-text)",
+              }}
+              title="Switch AI Model"
+            >
+              <Sparkles
+                size={11}
+                style={{
+                  color: selectedModel?.badgeColor || "var(--color-primary)",
+                }}
+              />
+              <span
+                style={{ fontWeight: 500 }}
+                className="truncate max-w-[120px]"
+              >
+                {selectedModel?.name || "Gemini 1.5 Pro"}
+              </span>
+              <ChevronDown
+                size={12}
+                style={{
+                  color: "var(--color-text-secondary)",
+                  transform: modelMenuOpen ? "rotate(180deg)" : "rotate(0deg)",
+                  transition: "transform 0.2s ease",
+                }}
+              />
+            </motion.button>
+          </div>
+
+          {/* Right: Send Button */}
           <motion.button
             whileHover={canSend ? { scale: 1.08 } : {}}
             whileTap={canSend ? { scale: 0.92 } : {}}
             onClick={handleSend}
             disabled={!canSend}
-            className="flex items-center justify-center rounded-xl cursor-pointer"
+            className="flex items-center justify-center rounded-xl cursor-pointer shrink-0"
             style={{
               width: 28,
               height: 28,
@@ -1545,17 +2166,6 @@ function ChatInput({ onSend, isTyping, selectedModel, setSelectedModel }) {
           </motion.button>
         </div>
       </div>
-
-      <div
-        className="mt-1 text-center select-none"
-        style={{
-          color: "var(--color-text-muted)",
-          fontSize: 10,
-          fontFamily: "var(--font-sans)",
-        }}
-      >
-        Press Enter ↵ to send · Shift+Enter for new line
-      </div>
     </div>
   );
 }
@@ -1573,11 +2183,33 @@ const isTestFile = (filePath) => {
 export default function AIPanel({
   projectId,
   snapshotId,
+  fileTree = [],
   pendingAiSuggestion,
   onClearPendingSuggestion,
   onOpenFile,
   onRunAnalysis,
 }) {
+  const [internalTree, setInternalTree] = useState(fileTree || []);
+
+  useEffect(() => {
+    if (Array.isArray(fileTree) && fileTree.length > 0) {
+      setInternalTree(fileTree);
+    } else if (projectId) {
+      getProjectTreeApi(projectId)
+        .then((res) => {
+          const list = Array.isArray(res?.data)
+            ? res.data
+            : Array.isArray(res?.tree)
+              ? res.tree
+              : [];
+          if (list.length > 0) {
+            setInternalTree(list);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [fileTree, projectId]);
+
   const [messages, setMessages] = useState(INITIAL_MESSAGES);
   const [isTyping, setIsTyping] = useState(false);
   const [selectedModel, setSelectedModel] = useState(AI_MODELS[0]);
@@ -1608,14 +2240,170 @@ export default function AIPanel({
       );
   }, [snapshotId]);
 
+  const [sessions, setSessions] = useState([]);
+  const [activeSessionId, setActiveSessionId] = useState(null);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isFetchingSessions, setIsFetchingSessions] = useState(false);
+  const [isLoadingSession, setIsLoadingSession] = useState(false);
+  const [historySearchQuery, setHistorySearchQuery] = useState("");
+  const [editingSessionId, setEditingSessionId] = useState(null);
+  const [editingTitle, setEditingTitle] = useState("");
+
+  const fetchSessions = useCallback(async () => {
+    if (!projectId) return;
+    setIsFetchingSessions(true);
+    try {
+      const res = await getChatSessionsApi(projectId);
+      if (res?.success && Array.isArray(res.data)) {
+        setSessions(res.data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch chat sessions:", err);
+    } finally {
+      setIsFetchingSessions(false);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    if (projectId) {
+      fetchSessions();
+    } else {
+      setSessions([]);
+      setActiveSessionId(null);
+    }
+  }, [projectId, fetchSessions]);
+
+  const handleSelectSession = async (sessionId) => {
+    if (!sessionId || sessionId === activeSessionId) {
+      setIsHistoryOpen(false);
+      return;
+    }
+
+    setIsLoadingSession(true);
+    try {
+      const res = await getChatSessionMessagesApi(projectId, sessionId);
+      if (res?.success && res.data) {
+        const dbMessages = res.data.messages || [];
+        const formatted = dbMessages.map((m) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          model: m.model,
+          attachments: m.attachments || [],
+          timestamp: new Date(m.createdAt).toLocaleTimeString("en-US", {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+        }));
+
+        setActiveSessionId(sessionId);
+        setMessages(formatted.length > 0 ? formatted : INITIAL_MESSAGES);
+        setIsHistoryOpen(false);
+      }
+    } catch (err) {
+      console.error("Failed to load chat session messages:", err);
+      showToast({
+        type: "error",
+        title: "Load Failed",
+        message: "Could not load messages for this conversation.",
+      });
+    } finally {
+      setIsLoadingSession(false);
+    }
+  };
+
   const handleNewChat = () => {
+    setActiveSessionId(null);
     setMessages(INITIAL_MESSAGES);
+    setIsHistoryOpen(false);
     showToast({
       type: "info",
       title: "New Session",
-      message: "Chat history has been cleared.",
+      message: "Chat history cleared. Started a fresh conversation.",
     });
   };
+
+  const handleStartRenameSession = (session, e) => {
+    e.stopPropagation();
+    setEditingSessionId(session.id);
+    setEditingTitle(session.title || "");
+  };
+
+  const handleSaveRenameSession = async (sessionId) => {
+    const trimmed = editingTitle.trim();
+    if (!trimmed) {
+      setEditingSessionId(null);
+      return;
+    }
+    try {
+      const res = await updateChatSessionApi(projectId, sessionId, trimmed);
+      if (res?.success) {
+        setSessions((prev) =>
+          prev.map((s) => (s.id === sessionId ? { ...s, title: trimmed } : s)),
+        );
+        showToast({
+          type: "success",
+          title: "Renamed",
+          message: "Conversation title updated.",
+        });
+      }
+    } catch (err) {
+      console.error("Failed to rename session:", err);
+      showToast({
+        type: "error",
+        title: "Error",
+        message: "Failed to rename conversation.",
+      });
+    } finally {
+      setEditingSessionId(null);
+    }
+  };
+
+  const handleDeleteSession = async (sessionId, e) => {
+    e.stopPropagation();
+    try {
+      const res = await deleteChatSessionApi(projectId, sessionId);
+      if (res?.success) {
+        setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+        if (activeSessionId === sessionId) {
+          setActiveSessionId(null);
+          setMessages(INITIAL_MESSAGES);
+        }
+        showToast({
+          type: "info",
+          title: "Deleted",
+          message: "Conversation has been deleted.",
+        });
+      }
+    } catch (err) {
+      console.error("Failed to delete session:", err);
+      showToast({
+        type: "error",
+        title: "Error",
+        message: "Failed to delete conversation.",
+      });
+    }
+  };
+
+  const filteredSessions = useMemo(() => {
+    if (!historySearchQuery.trim()) return sessions;
+    const q = historySearchQuery.toLowerCase();
+    return sessions.filter(
+      (s) =>
+        s.title?.toLowerCase().includes(q) ||
+        s.messages?.[0]?.content?.toLowerCase().includes(q),
+    );
+  }, [sessions, historySearchQuery]);
+
+  const filteredGroupedSessions = useMemo(() => {
+    return groupSessionsByDate(filteredSessions);
+  }, [filteredSessions]);
+
+  const activeSessionTitle = useMemo(() => {
+    if (!activeSessionId) return null;
+    const found = sessions.find((s) => s.id === activeSessionId);
+    return found?.title || null;
+  }, [sessions, activeSessionId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -2420,7 +3208,7 @@ export default function AIPanel({
     }
   };
 
-  const handleSend = async (text) => {
+  const handleSend = async (text, attachments = []) => {
     if (!projectId) {
       showToast({
         type: "warning",
@@ -2434,6 +3222,7 @@ export default function AIPanel({
       id: getNextId(),
       role: "user",
       content: text,
+      attachments: attachments || [],
       timestamp: new Date().toLocaleTimeString("en-US", {
         hour: "2-digit",
         minute: "2-digit",
@@ -2453,7 +3242,14 @@ export default function AIPanel({
         text,
         currentHistory,
         selectedModel.id,
+        attachments || [],
+        activeSessionId,
       );
+
+      if (res?.data?.sessionId) {
+        setActiveSessionId(res.data.sessionId);
+        fetchSessions();
+      }
 
       setMessages((m) => [
         ...m,
@@ -2513,7 +3309,7 @@ export default function AIPanel({
 
   return (
     <motion.div
-      className="flex flex-col h-full flex-shrink-0"
+      className="flex flex-col h-full flex-shrink-0 relative overflow-hidden"
       initial={{ opacity: 0, x: 20 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ duration: 0.3, ease: "easeOut" }}
@@ -2528,14 +3324,14 @@ export default function AIPanel({
         className="flex items-center justify-between flex-shrink-0"
         style={{
           height: 48,
-          padding: "0 18px",
+          padding: "0 14px",
           borderBottom: "1px solid var(--color-border)",
           background: "var(--color-surface)",
         }}
       >
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2 min-w-0">
           <div
-            className="flex items-center justify-center rounded-lg"
+            className="flex items-center justify-center rounded-lg flex-shrink-0"
             style={{
               width: 26,
               height: 26,
@@ -2545,19 +3341,35 @@ export default function AIPanel({
           >
             <Bot size={14} style={{ color: "#ffffff" }} />
           </div>
-          <div>
-            <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span
+              style={{
+                fontSize: 13,
+                fontWeight: 700,
+                color: "var(--color-text)",
+                fontFamily: "var(--font-sans)",
+                letterSpacing: "-0.01em",
+              }}
+            >
+              COV
+            </span>
+            {activeSessionTitle ? (
               <span
+                title={activeSessionTitle}
+                className="truncate hidden sm:inline-block"
                 style={{
-                  fontSize: 13,
-                  fontWeight: 700,
-                  color: "var(--color-text)",
-                  fontFamily: "var(--font-sans)",
-                  letterSpacing: "-0.01em",
+                  fontSize: 10,
+                  color: "var(--color-text-secondary)",
+                  background: "var(--color-bg)",
+                  padding: "1px 6px",
+                  borderRadius: 4,
+                  border: "1px solid var(--color-border)",
+                  maxWidth: 130,
                 }}
               >
-                COV
+                {activeSessionTitle}
               </span>
+            ) : (
               <span
                 style={{
                   fontSize: 9,
@@ -2571,52 +3383,446 @@ export default function AIPanel({
               >
                 AI Agent
               </span>
-            </div>
+            )}
           </div>
         </div>
 
         {/* Header Actions */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 mr-1">
-            <span
-              style={{
-                width: 6,
-                height: 6,
-                borderRadius: "50%",
-                background: "var(--color-success)",
-                display: "inline-block",
-              }}
-            />
-            <span
-              style={{
-                fontSize: 10,
-                color: "var(--color-success)",
-                fontFamily: "var(--font-mono)",
-                fontWeight: 600,
-              }}
-            >
-              READY
-            </span>
-          </div>
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={() => setIsHistoryOpen((prev) => !prev)}
+            className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer transition-colors"
+            style={{
+              color: isHistoryOpen
+                ? "var(--color-primary)"
+                : "var(--color-text-secondary)",
+              fontSize: 11,
+              fontWeight: 500,
+              background: isHistoryOpen
+                ? "var(--color-bg)"
+                : "var(--color-surface)",
+              border: `1px solid ${
+                isHistoryOpen ? "var(--color-primary)" : "var(--color-border)"
+              }`,
+            }}
+            title="View chat history"
+          >
+            <History size={12} />
+            <span>History</span>
+            {sessions.length > 0 && (
+              <span
+                style={{
+                  fontSize: 9,
+                  fontWeight: 600,
+                  padding: "0 4px",
+                  borderRadius: 6,
+                  background: "var(--color-bg)",
+                  color: "var(--color-text-secondary)",
+                  border: "1px solid var(--color-border)",
+                }}
+              >
+                {sessions.length}
+              </span>
+            )}
+          </motion.button>
 
           <motion.button
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={handleNewChat}
-            className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer"
+            className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer transition-colors"
             style={{
-              color: "var(--color-text-secondary)",
+              color: "var(--color-text)",
               fontSize: 11,
+              fontWeight: 500,
               background: "var(--color-surface)",
               border: "1px solid var(--color-border)",
             }}
             title="Start a new chat session"
           >
-            <RotateCcw size={11} />
+            <Plus size={12} />
             <span>New</span>
           </motion.button>
         </div>
       </div>
+
+      {/* ── Chat History Drawer (ChatGPT style) ──────────── */}
+      <AnimatePresence>
+        {isHistoryOpen && (
+          <motion.div
+            initial={{ opacity: 0, x: -280 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -280 }}
+            transition={{ duration: 0.22, ease: "easeOut" }}
+            className="absolute inset-0 z-30 flex flex-col"
+            style={{
+              background: "var(--color-surface)",
+              boxShadow: "4px 0 24px rgba(0,0,0,0.15)",
+            }}
+          >
+            {/* History Header */}
+            <div
+              className="flex items-center justify-between flex-shrink-0 px-3.5"
+              style={{
+                height: 48,
+                borderBottom: "1px solid var(--color-border)",
+                background: "var(--color-surface)",
+              }}
+            >
+              <div className="flex items-center gap-2">
+                <History size={15} style={{ color: "var(--color-primary)" }} />
+                <span
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: "var(--color-text)",
+                  }}
+                >
+                  Chat History
+                </span>
+                {sessions.length > 0 && (
+                  <span
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 600,
+                      padding: "1px 6px",
+                      borderRadius: 10,
+                      background: "var(--color-bg)",
+                      color: "var(--color-text-secondary)",
+                      border: "1px solid var(--color-border)",
+                    }}
+                  >
+                    {sessions.length}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={handleNewChat}
+                  className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer transition-colors"
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 500,
+                    background: "var(--color-primary)",
+                    color: "#ffffff",
+                    border: "none",
+                  }}
+                  title="Start a new chat session"
+                >
+                  <Plus size={12} />
+                  <span>New Chat</span>
+                </motion.button>
+                <button
+                  onClick={() => setIsHistoryOpen(false)}
+                  className="p-1.5 rounded-md cursor-pointer hover:opacity-80 transition-colors"
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "var(--color-text-muted)",
+                  }}
+                  title="Close History"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+            </div>
+
+            {/* Search Bar */}
+            <div
+              className="p-3 border-b flex-shrink-0"
+              style={{ borderColor: "var(--color-border)" }}
+            >
+              <div
+                className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg"
+                style={{
+                  background: "var(--color-bg)",
+                  border: "1px solid var(--color-border)",
+                }}
+              >
+                <Search
+                  size={13}
+                  style={{ color: "var(--color-text-muted)", flexShrink: 0 }}
+                />
+                <input
+                  type="text"
+                  placeholder="Search conversations..."
+                  value={historySearchQuery}
+                  onChange={(e) => setHistorySearchQuery(e.target.value)}
+                  className="w-full bg-transparent outline-none"
+                  style={{
+                    fontSize: 12,
+                    color: "var(--color-text)",
+                  }}
+                />
+                {historySearchQuery && (
+                  <button
+                    onClick={() => setHistorySearchQuery("")}
+                    className="p-0.5 cursor-pointer hover:opacity-80"
+                    style={{ color: "var(--color-text-muted)" }}
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Sessions List */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-4">
+              {isFetchingSessions ? (
+                <div className="flex flex-col items-center justify-center py-12 gap-2 text-muted">
+                  <Loader2
+                    size={18}
+                    className="animate-spin"
+                    style={{ color: "var(--color-primary)" }}
+                  />
+                  <span
+                    style={{
+                      fontSize: 12,
+                      color: "var(--color-text-secondary)",
+                    }}
+                  >
+                    Loading history...
+                  </span>
+                </div>
+              ) : filteredGroupedSessions.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-center px-4">
+                  <div
+                    className="w-10 h-10 rounded-full flex items-center justify-center mb-2"
+                    style={{
+                      background: "var(--color-bg)",
+                      border: "1px solid var(--color-border)",
+                    }}
+                  >
+                    <MessageSquare
+                      size={18}
+                      style={{ color: "var(--color-text-muted)" }}
+                    />
+                  </div>
+                  <p
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      margin: 0,
+                      color: "var(--color-text)",
+                    }}
+                  >
+                    {historySearchQuery
+                      ? "No matching conversations"
+                      : "No conversation history yet"}
+                  </p>
+                  <p
+                    style={{
+                      fontSize: 11,
+                      color: "var(--color-text-muted)",
+                      marginTop: 4,
+                      maxWidth: 240,
+                    }}
+                  >
+                    {historySearchQuery
+                      ? "Try searching with a different term"
+                      : "Chats you have with COV will automatically appear here"}
+                  </p>
+                </div>
+              ) : (
+                filteredGroupedSessions.map((group) => (
+                  <div key={group.label} className="space-y-1">
+                    <div
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        color: "var(--color-text-muted)",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.06em",
+                        padding: "4px 8px",
+                      }}
+                    >
+                      {group.label}
+                    </div>
+                    <div className="space-y-1">
+                      {group.items.map((session) => {
+                        const isActive = session.id === activeSessionId;
+                        const isEditing = editingSessionId === session.id;
+                        const lastMsg = session.messages?.[0]?.content || "";
+
+                        return (
+                          <div
+                            key={session.id}
+                            onClick={() =>
+                              !isEditing && handleSelectSession(session.id)
+                            }
+                            className="group flex items-center justify-between p-2.5 rounded-lg cursor-pointer transition-all relative"
+                            style={{
+                              background: isActive
+                                ? "var(--color-bg)"
+                                : "transparent",
+                              border: `1px solid ${
+                                isActive ? "var(--color-border)" : "transparent"
+                              }`,
+                            }}
+                            onMouseEnter={(e) => {
+                              if (!isActive)
+                                e.currentTarget.style.background =
+                                  "var(--color-bg)";
+                            }}
+                            onMouseLeave={(e) => {
+                              if (!isActive)
+                                e.currentTarget.style.background =
+                                  "transparent";
+                            }}
+                          >
+                            <div className="flex items-start gap-2.5 min-w-0 flex-1 mr-2">
+                              <MessageSquare
+                                size={14}
+                                className="mt-0.5 flex-shrink-0"
+                                style={{
+                                  color: isActive
+                                    ? "var(--color-primary)"
+                                    : "var(--color-text-muted)",
+                                }}
+                              />
+                              <div className="min-w-0 flex-1">
+                                {isEditing ? (
+                                  <form
+                                    onSubmit={(e) => {
+                                      e.preventDefault();
+                                      handleSaveRenameSession(session.id);
+                                    }}
+                                    className="flex items-center gap-1"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <input
+                                      autoFocus
+                                      type="text"
+                                      value={editingTitle}
+                                      onChange={(e) =>
+                                        setEditingTitle(e.target.value)
+                                      }
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Escape")
+                                          setEditingSessionId(null);
+                                      }}
+                                      className="w-full px-1.5 py-0.5 rounded text-xs outline-none"
+                                      style={{
+                                        background: "var(--color-surface)",
+                                        border:
+                                          "1px solid var(--color-primary)",
+                                        color: "var(--color-text)",
+                                      }}
+                                    />
+                                    <button
+                                      type="submit"
+                                      className="p-1 cursor-pointer hover:opacity-80"
+                                      style={{ color: "var(--color-success)" }}
+                                      title="Save"
+                                    >
+                                      <Check size={12} />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingSessionId(null)}
+                                      className="p-1 cursor-pointer hover:opacity-80"
+                                      style={{
+                                        color: "var(--color-text-muted)",
+                                      }}
+                                      title="Cancel"
+                                    >
+                                      <X size={12} />
+                                    </button>
+                                  </form>
+                                ) : (
+                                  <>
+                                    <div className="flex items-center justify-between gap-1">
+                                      <span
+                                        className="truncate"
+                                        style={{
+                                          fontSize: 12,
+                                          fontWeight: isActive ? 600 : 500,
+                                          color: isActive
+                                            ? "var(--color-text)"
+                                            : "var(--color-text-secondary)",
+                                        }}
+                                      >
+                                        {session.title || "New Chat"}
+                                      </span>
+                                      <span
+                                        style={{
+                                          fontSize: 10,
+                                          color: "var(--color-text-muted)",
+                                          flexShrink: 0,
+                                        }}
+                                      >
+                                        {formatSessionTime(
+                                          session.updatedAt ||
+                                            session.createdAt,
+                                        )}
+                                      </span>
+                                    </div>
+                                    {lastMsg && (
+                                      <div
+                                        className="truncate"
+                                        style={{
+                                          fontSize: 11,
+                                          color: "var(--color-text-muted)",
+                                          marginTop: 2,
+                                        }}
+                                      >
+                                        {lastMsg}
+                                      </div>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Actions on hover */}
+                            {!isEditing && (
+                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                                <button
+                                  onClick={(e) =>
+                                    handleStartRenameSession(session, e)
+                                  }
+                                  className="p-1 rounded cursor-pointer hover:opacity-80"
+                                  style={{
+                                    background: "transparent",
+                                    border: "none",
+                                    color: "var(--color-text-muted)",
+                                  }}
+                                  title="Rename conversation"
+                                >
+                                  <Edit2 size={12} />
+                                </button>
+                                <button
+                                  onClick={(e) =>
+                                    handleDeleteSession(session.id, e)
+                                  }
+                                  className="p-1 rounded cursor-pointer hover:opacity-80"
+                                  style={{
+                                    background: "transparent",
+                                    border: "none",
+                                    color: "var(--color-danger, #ef4444)",
+                                  }}
+                                  title="Delete conversation"
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── Messages Feed ────────────────────────────────── */}
       <div
@@ -3070,6 +4276,8 @@ export default function AIPanel({
         isTyping={isTyping}
         selectedModel={selectedModel}
         setSelectedModel={setSelectedModel}
+        fileTree={internalTree}
+        projectId={projectId}
       />
 
       {/* ── Monaco Code Review Diff Modal ────────────────── */}
