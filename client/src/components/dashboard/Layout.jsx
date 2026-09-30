@@ -145,6 +145,12 @@ function LayoutInner() {
   const [cfgInitialContext, setCfgInitialContext] = useState(null);
   const [archInitialContext, setArchInitialContext] = useState(null);
 
+  useEffect(() => {
+    if (activeActivity !== "architecture") {
+      setArchInitialContext(null);
+    }
+  }, [activeActivity]);
+
   const handleOpenArchitecture = (filePath) => {
     setArchInitialContext({ initialFile: filePath });
     setActiveActivity("architecture");
