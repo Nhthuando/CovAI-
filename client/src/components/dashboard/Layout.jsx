@@ -143,9 +143,35 @@ function LayoutInner() {
   const [coverageType, setCoverageType] = useState("unit");
   const [showImport, setShowImport] = useState(false);
   const [showQualityDashboard, setShowQualityDashboard] = useState(false);
+  const [cfgInitialContext, setCfgInitialContext] = useState(null);
+  const [archInitialContext, setArchInitialContext] = useState(null);
+
+  useEffect(() => {
+    if (activeActivity !== "architecture") {
+      setArchInitialContext(null);
+    }
+  }, [activeActivity]);
+
+  const handleOpenArchitecture = (filePath) => {
+    setArchInitialContext({ initialFile: filePath });
+    setActiveActivity("architecture");
+    const params = new URLSearchParams(location.search);
+    params.set("tab", "architecture");
+    navigate(`${location.pathname}?${params.toString()}`);
+  };
+
+  const handleOpenCFG = (filePath = null, functionName = null) => {
+    if (filePath) {
+      setCfgInitialContext({ initialFile: filePath, initialFunc: functionName });
+    } else {
+      setCfgInitialContext(null);
+    }
+    setShowCFG(true);
+  };
 
   const handleCloseCFG = () => {
     setShowCFG(false);
+    setCfgInitialContext(null);
     if (activeActivity === "logic-analysis") {
       const params = new URLSearchParams(location.search);
       params.set("tab", "explorer");
@@ -193,19 +219,22 @@ function LayoutInner() {
   };
 
   useEffect(() => {
-    if (!project?.id) {
+    const projectId = project?.id;
+    if (!projectId) {
       setLatestRunJob(null);
       return undefined;
     }
     let cancelled = false;
+    let timerId = null;
+
     const refreshRunJob = async () => {
       try {
-        const response = await getProjectJobsApi(project.id);
+        const response = await getProjectJobsApi(projectId);
         const jobs = response.jobs || [];
         const targetSnapshotId =
           project.snapshots?.[0]?.id ||
           project.latestSnapshotId ||
-          localStorage.getItem(`latestSnapshot_${project.id}`);
+          localStorage.getItem(`latestSnapshot_${projectId}`);
         const latest =
           jobs
             .filter(
@@ -215,18 +244,29 @@ function LayoutInner() {
             )
             .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] ||
           null;
-        if (!cancelled) setLatestRunJob(latest);
+        if (!cancelled) {
+          setLatestRunJob(latest);
+          // If a job is active, poll faster (4s); if idle, poll slowly (20s) to keep app responsive without hammering DB
+          const hasActiveJob = jobs.some((j) => ["QUEUED", "RUNNING"].includes(j.status));
+          const nextInterval = hasActiveJob ? 4000 : 20000;
+          if (!cancelled) {
+            timerId = window.setTimeout(refreshRunJob, nextInterval);
+          }
+        }
       } catch (err) {
-        console.error("Failed to refresh jobs", err);
+        if (!cancelled) {
+          // On transient error, back off gracefully
+          timerId = window.setTimeout(refreshRunJob, 10000);
+        }
       }
     };
+
     refreshRunJob();
-    const timer = window.setInterval(refreshRunJob, 4000);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      if (timerId) window.clearTimeout(timerId);
     };
-  }, [project]);
+  }, [project?.id]);
 
   useEffect(() => {
     if (isMobile) {
@@ -590,13 +630,13 @@ function LayoutInner() {
   const rawActivePath = activeTabId || activeFileId;
   const activeFilePath = rawActivePath
     ? String(rawActivePath)
-        .replace(/\\/g, "/")
-        .replace(/^\.?\//, "")
+      .replace(/\\/g, "/")
+      .replace(/^\.?\//, "")
     : null;
   const cleanFilePath =
     activeFilePath &&
-    project?.name &&
-    activeFilePath.startsWith(project.name + "/")
+      project?.name &&
+      activeFilePath.startsWith(project.name + "/")
       ? activeFilePath.slice(project.name.length + 1)
       : activeFilePath;
   const filePathSegments = cleanFilePath
@@ -650,11 +690,10 @@ function LayoutInner() {
                   >
                     <span className="flex-shrink-0 select-none">/</span>
                     <span
-                      className={`truncate max-w-[100px] md:max-w-[180px] ${
-                        isLast
+                      className={`truncate max-w-[100px] md:max-w-[180px] ${isLast
                           ? "text-[var(--color-text)] font-semibold"
                           : "text-[var(--color-text-secondary)] font-medium"
-                      }`}
+                        }`}
                       title={cleanFilePath}
                     >
                       {segment}
@@ -693,11 +732,10 @@ function LayoutInner() {
             <button
               type="button"
               onClick={() => setSidebarOpen((o) => !o)}
-              className={`p-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${
-                sidebarOpen
+              className={`p-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${sidebarOpen
                   ? "text-[var(--color-primary)]"
                   : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              }`}
+                }`}
               title={
                 sidebarOpen
                   ? "Collapse Explorer (Left)"
@@ -714,11 +752,10 @@ function LayoutInner() {
             <button
               type="button"
               onClick={() => setAiPanelOpen((o) => !o)}
-              className={`p-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${
-                aiPanelOpen
+              className={`p-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${aiPanelOpen
                   ? "text-[var(--color-primary)]"
                   : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              }`}
+                }`}
               title={
                 aiPanelOpen
                   ? "Collapse Assistant (Right)"
@@ -846,73 +883,81 @@ function LayoutInner() {
           className="flex flex-1 min-w-0 min-h-0 relative"
           variants={panelVariants}
         >
-          {activeActivity === "settings" ? (
-            <div className="w-full h-full overflow-y-auto">
-              {isMobile && (
-                <SettingsSidebar
-                  activeSetting={activeSetting}
-                  onSelectSetting={setActiveSetting}
-                  variant="tabs"
-                />
-              )}
-              {activeSetting === "profile" && <UserProfile />}
-              {activeSetting === "appearance" && <Appearance />}
-              {activeSetting === "security" && <Security />}
-              {activeSetting === "notifications" && <NotificationsSettings />}
-              {activeSetting === "billing" && <Billing />}
-            </div>
-          ) : activeActivity === "jobs" ? (
-            <JobQueue projectId={project?.id} onSync={handleGitSync} />
-          ) : activeActivity === "architecture" ? (
-            <ProjectArchitecturePanel projectId={project?.id} />
-          ) : (
-            <>
-              <div className={activeActivity === "coverage" ? "w-full h-full overflow-y-auto" : "hidden"}>
-                <div className={coverageType === "unit" ? "h-full" : "hidden"}>
-                  <UnitTestDashboard
-                    snapshotId={
-                      project?.latestSnapshotId ||
-                      (project?.id
-                        ? localStorage.getItem(`latestSnapshot_${project.id}`)
-                        : null) ||
-                      testPromptSnapshotId
-                    }
-                    projectId={project?.id}
-                    onOpenFile={handleOpenFileByPath}
-                    onSuggestTestcase={handleSuggestTestcase}
-                    onOpenCFG={() => setShowCFG(true)}
-                    runTrigger={coverageRunTrigger}
-                  />
-                </div>
-                <div className={coverageType === "integration" ? "h-full" : "hidden"}>
-                  <IntegrationTestDashboard
-                    snapshotId={
-                      project?.latestSnapshotId ||
-                      (project?.id
-                        ? localStorage.getItem(`latestSnapshot_${project.id}`)
-                        : null) ||
-                      testPromptSnapshotId
-                    }
-                    projectId={project?.id}
-                    onOpenFile={handleOpenFileByPath}
-                  />
-                </div>
-                <div className={coverageType === "system" ? "h-full" : "hidden"}>
-                  <SystemTestDashboard
-                    snapshotId={
-                      project?.latestSnapshotId ||
-                      (project?.id
-                        ? localStorage.getItem(`latestSnapshot_${project.id}`)
-                        : null) ||
-                      testPromptSnapshotId
-                    }
-                    projectId={project?.id}
-                    onOpenFile={handleOpenFileByPath}
-                  />
-                </div>
-              </div>
+          <div className={activeActivity === "settings" ? "w-full h-full overflow-y-auto" : "hidden"}>
+            {isMobile && (
+              <SettingsSidebar
+                activeSetting={activeSetting}
+                onSelectSetting={setActiveSetting}
+                variant="tabs"
+              />
+            )}
+            {activeSetting === "profile" && <UserProfile />}
+            {activeSetting === "appearance" && <Appearance />}
+            {activeSetting === "security" && <Security />}
+            {activeSetting === "notifications" && <NotificationsSettings />}
+            {activeSetting === "billing" && <Billing />}
+          </div>
 
-              <div className={activeActivity === "coverage" ? "hidden" : "w-full h-full"}>
+          <div className={activeActivity === "jobs" ? "w-full h-full overflow-y-auto" : "hidden"}>
+            <JobQueue projectId={project?.id} onSync={handleGitSync} />
+          </div>
+
+          <div className={activeActivity === "architecture" ? "w-full h-full overflow-y-auto" : "hidden"}>
+            <ProjectArchitecturePanel
+              projectId={project?.id}
+              initialFile={archInitialContext?.initialFile}
+            />
+          </div>
+
+          <div className={activeActivity === "coverage" ? "w-full h-full overflow-y-auto" : "hidden"}>
+            <div className={coverageType === "unit" ? "h-full" : "hidden"}>
+              <UnitTestDashboard
+                snapshotId={
+                  project?.latestSnapshotId ||
+                  (project?.id
+                    ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                    : null) ||
+                  testPromptSnapshotId
+                }
+                projectId={project?.id}
+                onOpenFile={handleOpenFileByPath}
+                onSuggestTestcase={handleSuggestTestcase}
+                onOpenCFG={() => setShowCFG(true)}
+                runTrigger={coverageRunTrigger}
+              />
+            </div>
+            <div className={coverageType === "integration" ? "h-full" : "hidden"}>
+              <IntegrationTestDashboard
+                snapshotId={
+                  project?.latestSnapshotId ||
+                  (project?.id
+                    ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                    : null) ||
+                  testPromptSnapshotId
+                }
+                projectId={project?.id}
+                onOpenFile={handleOpenFileByPath}
+                onOpenCFG={handleOpenCFG}
+                onSuggestTestcase={handleSuggestTestcase}
+                onOpenArchitecture={handleOpenArchitecture}
+              />
+            </div>
+            <div className={coverageType === "system" ? "h-full" : "hidden"}>
+              <SystemTestDashboard
+                snapshotId={
+                  project?.latestSnapshotId ||
+                  (project?.id
+                    ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                    : null) ||
+                  testPromptSnapshotId
+                }
+                projectId={project?.id}
+                onOpenFile={handleOpenFileByPath}
+              />
+            </div>
+          </div>
+
+          <div className={activeActivity !== "settings" && activeActivity !== "jobs" && activeActivity !== "architecture" && activeActivity !== "coverage" ? "w-full h-full" : "hidden"}>
                 <Editor
                   tabs={tabs}
                   activeTabId={activeTabId}
@@ -939,8 +984,6 @@ function LayoutInner() {
                   refreshTrigger={editorRefreshTrigger}
                 />
               </div>
-            </>
-          )}
         </motion.div>
         <AnimatePresence initial={false}>
           {aiPanelOpen && (
@@ -1052,7 +1095,7 @@ function LayoutInner() {
       </AnimatePresence>
       <AnimatePresence>
         {showCFG && (
-          <CFGCalculator project={project} onClose={handleCloseCFG} />
+          <CFGCalculator project={project} onClose={handleCloseCFG} initialFile={cfgInitialContext?.initialFile} initialFunc={cfgInitialContext?.initialFunc} />
         )}
       </AnimatePresence>
       <AnimatePresence>

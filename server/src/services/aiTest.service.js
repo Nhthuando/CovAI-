@@ -9,7 +9,7 @@ import { addJobToQueue } from "./queue.service.js";
 import { extractValidEndpoints } from "./apiEndpointParser.service.js";
 
 
-export const queueSupertestGeneration = async ({ projectId, snapshotId, userId }) => {
+export const queueSupertestGeneration = async ({ projectId, snapshotId, userId, force }) => {
   const db = prisma;
 
   // 1. Verify project ownership
@@ -55,6 +55,37 @@ export const queueSupertestGeneration = async ({ projectId, snapshotId, userId }
     const err = new Error("ANALYSIS_REQUIRED");
     err.status = 400;
     throw err;
+  }
+
+  // 2.8 Pre-flight Dirty Check (F-03)
+  if (!force) {
+    const existingTests = await db.aiTest.findMany({
+      where: { snapshotId: resolvedSnapshotId, mode: "SUPERTEST" }
+    });
+    
+    let hasEdits = false;
+    for (const test of existingTests) {
+      if (test.metaJson) {
+        try {
+          const meta = JSON.parse(test.metaJson);
+          if (meta.userModified) {
+            hasEdits = true;
+            break;
+          }
+          if (meta.requests?.some(r => r.userEdited || r.isManuallyAdded || r.enabled === false)) {
+            hasEdits = true;
+            break;
+          }
+        } catch (e) {}
+      }
+    }
+    
+    if (hasEdits) {
+      const err = new Error("Cannot overwrite user-edited integration scenarios.");
+      err.status = 409;
+      err.code = "USER_MODIFICATIONS_EXIST";
+      throw err;
+    }
   }
 
   // 3. Create job (deduped — reuses active SUPERTEST job if exists)

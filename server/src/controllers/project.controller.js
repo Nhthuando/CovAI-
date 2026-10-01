@@ -316,6 +316,9 @@ class ProjectController {
       return res.status(200).json({ success: true, data });
     } catch (error) {
       if (error instanceof ServiceError) {
+        if (error.statusCode === 404) {
+          return res.status(200).json({ success: true, data: null });
+        }
         return res
           .status(error.statusCode)
           .json({ success: false, message: error.message });
@@ -1471,9 +1474,9 @@ class ProjectController {
       });
     } catch (error) {
       console.error("Error in getChatSessions:", error);
-      return res.status(500).json({
-        success: false,
-        message: "Failed to load chat history sessions",
+      return res.status(200).json({
+        success: true,
+        data: [],
       });
     }
   }
@@ -1958,7 +1961,7 @@ The user is working on project: ${project.name}.
   async generateIntegrationTest(req, res) {
     try {
       const { id: projectId } = req.params;
-      const { snapshotId, framework } = req.body;
+      const { snapshotId, framework, force } = req.body;
 
       if (!framework) {
         return res
@@ -1973,6 +1976,7 @@ The user is working on project: ${project.name}.
         projectId,
         snapshotId,
         userId: req.user.id,
+        force,
       });
 
       return res.status(202).json({

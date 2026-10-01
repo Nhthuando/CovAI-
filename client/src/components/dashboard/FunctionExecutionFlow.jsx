@@ -409,7 +409,7 @@ export default function FunctionExecutionFlow({
           }}
         >
           {cleanedFunctions.length === 0
-            ? "No function data available. Click 'Run Analysis' to analyze Jest/Vitest."
+            ? "No function data available. Click 'Run Analysis Unit' to analyze Jest/Vitest."
             : "No matching functions found for the filter."}
         </div>
       )}

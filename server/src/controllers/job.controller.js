@@ -8,6 +8,41 @@ import { addJobToQueue } from "../services/queue.service.js";
 import { createSnapshotIngestJob, cleanupAllStaleJobs, cancelJob } from "../services/job.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 
+const withDbRetry = async (fn, maxRetries = 2, delayMs = 250) => {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await fn();
+    } catch (err) {
+      attempt++;
+      const isTransient =
+        err.message?.includes("Connection terminated") ||
+        err.message?.includes("connection timeout") ||
+        err.message?.includes("unexpectedly") ||
+        err.message?.includes("timeout") ||
+        err.code === "P1001" ||
+        err.code === "P1017";
+
+      if (isTransient && attempt <= maxRetries) {
+        console.warn(`[job.controller] Transient DB connection glitch (${err.message}), retrying ${attempt}/${maxRetries}...`);
+        await new Promise((r) => setTimeout(r, delayMs * attempt));
+        continue;
+      }
+      throw err;
+    }
+  }
+};
+
+let lastStaleCleanup = 0;
+const STALE_CLEANUP_INTERVAL_MS = 60 * 1000;
+const throttledCleanup = async (userId) => {
+  const now = Date.now();
+  if (now - lastStaleCleanup > STALE_CLEANUP_INTERVAL_MS) {
+    lastStaleCleanup = now;
+    await cleanupAllStaleJobs(userId).catch(() => {});
+  }
+};
+
 export const listProjectJobs = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -18,12 +53,14 @@ export const listProjectJobs = async (req, res) => {
     if (!projectId)
       return res.status(400).json({ message: "Missing projectId!" });
 
-    const project = await prisma.project.findFirst({
-      where: {
-        id: projectId,
-        ownerId: userId,
-      },
-    });
+    const project = await withDbRetry(() =>
+      prisma.project.findFirst({
+        where: {
+          id: projectId,
+          ownerId: userId,
+        },
+      })
+    );
 
     if (!project) {
       return res
@@ -33,12 +70,14 @@ export const listProjectJobs = async (req, res) => {
         });
     }
 
-    await cleanupAllStaleJobs(userId).catch(() => { });
+    await throttledCleanup(userId);
 
-    const jobs = await prisma.job.findMany({
-      where: { projectId: projectId },
-      orderBy: { createdAt: "desc" },
-    });
+    const jobs = await withDbRetry(() =>
+      prisma.job.findMany({
+        where: { projectId: projectId },
+        orderBy: { createdAt: "desc" },
+      })
+    );
 
     return res.status(200).json({
       success: true,
@@ -46,7 +85,7 @@ export const listProjectJobs = async (req, res) => {
       jobs,
     });
   } catch (error) {
-    console.error("[listProjectJobs] Error:", error);
+    console.error("[listProjectJobs] Error:", error.message || error);
     return res.status(500).json({ success: false, message: "Internal server error!" });
   }
 };
@@ -57,20 +96,22 @@ export const listUserJobs = async (req, res) => {
     if (!userId)
       return res.status(401).json({ message: "Unable to retrieve user ID!" });
 
-    await cleanupAllStaleJobs(userId).catch(() => { });
+    await throttledCleanup(userId);
 
-    const jobs = await prisma.job.findMany({
-      where: { userId },
-      orderBy: { createdAt: "desc" },
-      include: {
-        project: { select: { name: true } },
-      },
-    });
+    const jobs = await withDbRetry(() =>
+      prisma.job.findMany({
+        where: { userId },
+        orderBy: { createdAt: "desc" },
+        include: {
+          project: { select: { name: true } },
+        },
+      })
+    );
     return res
       .status(200)
       .json({ message: "All jobs retrieved successfully!", jobs });
   } catch (error) {
-    console.log(error);
+    console.error("[listUserJobs] Error:", error.message || error);
     return res.status(500).json({ message: "Internal server error!" });
   }
 };
@@ -81,23 +122,25 @@ export const getJobDetail = async (req, res) => {
     if (!userId)
       return res.status(401).json({ message: "Unable to retrieve user ID!" });
     const { jobId } = req.params;
-    const job = await prisma.job.findUnique({
-      where: { id: jobId },
-      select: {
-        id: true,
-        type: true,
-        status: true,
-        progress: true,
-        payloadJson: true,
-        resultJson: true,
-        errorMessage: true,
-        startedAt: true,
-        finishedAt: true,
-        userId: true,
-        logs: true,
-        output: true,
-      },
-    });
+    const job = await withDbRetry(() =>
+      prisma.job.findUnique({
+        where: { id: jobId },
+        select: {
+          id: true,
+          type: true,
+          status: true,
+          progress: true,
+          payloadJson: true,
+          resultJson: true,
+          errorMessage: true,
+          startedAt: true,
+          finishedAt: true,
+          userId: true,
+          logs: true,
+          output: true,
+        },
+      })
+    );
 
     if (!job) return res.status(404).json({ message: "Job does not exist!" });
     if (job.userId !== userId)
@@ -115,7 +158,7 @@ export const getJobDetail = async (req, res) => {
       },
     });
   } catch (error) {
-    console.log(error);
+    console.error("[getJobDetail] Error:", error.message || error);
     return res.status(500).json({ message: "Internal server error!" });
   }
 };

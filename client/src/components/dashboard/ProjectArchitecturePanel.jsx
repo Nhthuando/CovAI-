@@ -344,7 +344,7 @@ function ControlFlowDiagram({ functionRecord }) {
   );
 }
 
-export default function ProjectArchitecturePanel({ projectId }) {
+export default function ProjectArchitecturePanel({ projectId, initialFile }) {
   const [snapshots, setSnapshots] = useState([]);
   const [snapshotId, setSnapshotId] = useState("");
   const [analysis, setAnalysis] = useState(null);
@@ -385,9 +385,13 @@ export default function ProjectArchitecturePanel({ projectId }) {
         snapshotId,
       );
       setAnalysis(response.data);
-      setSelectedNodeId(
-        (current) => current || response.data?.graph?.nodes?.[0]?.id || "",
-      );
+      setSelectedNodeId((current) => {
+        if (initialFile && response.data?.graph?.nodes) {
+          const matched = response.data.graph.nodes.find(n => n.relativePath === initialFile || n.id === initialFile);
+          if (matched) return matched.id;
+        }
+        return current || response.data?.graph?.nodes?.[0]?.id || "";
+      });
       setSelectedFunctionId(
         (current) => current || response.data?.functions?.[0]?.id || "",
       );
@@ -410,6 +414,13 @@ export default function ProjectArchitecturePanel({ projectId }) {
   useEffect(() => {
     loadAnalysis();
   }, [loadAnalysis]);
+
+  useEffect(() => {
+    if (initialFile && analysis?.graph?.nodes) {
+      const matched = analysis.graph.nodes.find(n => n.relativePath === initialFile || n.id === initialFile);
+      if (matched) setSelectedNodeId(matched.id);
+    }
+  }, [initialFile, analysis]);
 
   useEffect(() => {
     if (!job || !["QUEUED", "RUNNING"].includes(job.status) || !projectId)

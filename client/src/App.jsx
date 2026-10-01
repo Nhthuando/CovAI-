@@ -17,6 +17,8 @@ import ResetPasswordPage from "./pages/ResetPasswordPage";
 import IntegrationReportPage from "./pages/IntegrationReportPage";
 import { NotificationProvider } from "./contexts/NotificationContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import { RunningProcessProvider } from "./contexts/RunningProcessContext";
+import GlobalProcessIndicator from "./components/GlobalProcessIndicator";
 import { useAuth } from "./hooks/useAuth";
 
 /* ── Landing Page ─────────────────────────────────────────── */
@@ -127,6 +129,7 @@ function AppContent() {
         />
         <Route path="/auth/github/callback" element={<GithubCallbackPage />} />
       </Routes>
+      <GlobalProcessIndicator />
     </>
   );
 }
@@ -135,7 +138,9 @@ function App() {
   return (
     <ThemeProvider>
       <NotificationProvider>
-        <AppContent />
+        <RunningProcessProvider>
+          <AppContent />
+        </RunningProcessProvider>
       </NotificationProvider>
     </ThemeProvider>
   );

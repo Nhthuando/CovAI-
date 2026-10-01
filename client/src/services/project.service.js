@@ -18,7 +18,10 @@ async function handleResponse(res) {
       localStorage.removeItem("userEmail");
       window.location.href = "/login";
     }
-    throw new Error(data.message || "Failed API call");
+    const err = new Error(data.message || "Failed API call");
+    err.status = res.status;
+    err.code = data.code;
+    throw err;
   }
   return data;
 }
@@ -351,13 +354,13 @@ export async function generateSkeletonApi(
   return handleResponse(res);
 }
 
-export async function generateIntegrationTestApi(projectId, snapshotId) {
+export async function generateIntegrationTestApi(projectId, snapshotId, force = false) {
   const res = await fetch(
     `${BASE_URL}/projects/${projectId}/ai/generate-integration-test`,
     {
       method: "POST",
       headers: getAuthHeaders(),
-      body: JSON.stringify({ snapshotId, framework: "SUPERTEST" }),
+      body: JSON.stringify({ snapshotId, framework: "SUPERTEST", force }),
     },
   );
   return handleResponse(res);

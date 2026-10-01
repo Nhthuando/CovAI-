@@ -53,16 +53,33 @@ async function handleResponse(res) {
   return data;
 }
 
+async function fetchWithRetry(url, options = {}, retries = 1, delayMs = 400) {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      const res = await fetch(url, options);
+      if (res.status >= 500 && i < retries) {
+        await new Promise((r) => setTimeout(r, delayMs));
+        continue;
+      }
+      return await handleResponse(res);
+    } catch (err) {
+      if (i < retries) {
+        await new Promise((r) => setTimeout(r, delayMs));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
 /**
  * GET /api/job/:projectId/jobs
  * Returns { message, jobs }
  */
 export async function getProjectJobsApi(projectId) {
   try {
-    const res = await fetch(`${BASE_URL}/job/${projectId}/jobs`, {
-      headers: await getAuthHeaders(),
-    });
-    return handleResponse(res);
+    const headers = await getAuthHeaders();
+    return await fetchWithRetry(`${BASE_URL}/job/${projectId}/jobs`, { headers });
   } catch (error) {
     if (error instanceof TypeError) {
       throw new Error(
@@ -79,10 +96,8 @@ export async function getProjectJobsApi(projectId) {
  */
 export async function getUserJobsApi() {
   try {
-    const res = await fetch(`${BASE_URL}/job/user`, {
-      headers: await getAuthHeaders(),
-    });
-    return handleResponse(res);
+    const headers = await getAuthHeaders();
+    return await fetchWithRetry(`${BASE_URL}/job/user`, { headers });
   } catch (error) {
     if (error instanceof TypeError) {
       throw new Error(
@@ -99,10 +114,8 @@ export async function getUserJobsApi() {
  */
 export async function getJobDetailApi(jobId) {
   try {
-    const res = await fetch(`${BASE_URL}/job/${jobId}`, {
-      headers: await getAuthHeaders(),
-    });
-    return handleResponse(res);
+    const headers = await getAuthHeaders();
+    return await fetchWithRetry(`${BASE_URL}/job/${jobId}`, { headers });
   } catch (error) {
     if (error instanceof TypeError) {
       throw new Error(

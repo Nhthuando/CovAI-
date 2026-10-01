@@ -13,6 +13,7 @@ import { processCypressTests } from "./cypressPostProcessor.service.js";
 import { processSupertestTests } from "./supertestPostProcessor.service.js";
 import { notificationService } from "./notification.service.js";
 import { saveAiTestsToFilesystem, removeAiTestsFromFilesystem } from "./aiTestStorage.service.js";
+import crypto from "crypto";
 
 /**
  * Orchestrates the full Skeleton Test Generation Pipeline
@@ -83,7 +84,7 @@ export const processAiTestsJob = async (jobId) => {
                 snapshotId,
             });
 
-            await addJobLog(jobId, "INFO", "Cleaning up old Supertest tests for this snapshot...");
+            await addJobLog(jobId, "INFO", "Replacing old Supertest tests atomically...");
             // Clean up old SUPERTEST files using in-memory filtering because Prisma doesn't support json filtering cleanly on all DBs
             const existingTests = await prisma.aiTest.findMany({
                 where: { snapshotId }
@@ -97,26 +98,52 @@ export const processAiTestsJob = async (jobId) => {
                 });
             const supertestIds = supertestTests.map(t => t.id);
 
-            if (supertestIds.length > 0) {
-                removeAiTestsFromFilesystem(job.snapshot.rootDir, supertestTests);
-                await prisma.aiTest.deleteMany({
-                    where: { id: { in: supertestIds } }
-                });
-            }
-
-            // Clean up old AiSuggestions (since we are replacing them)
-            await prisma.aiSuggestion.deleteMany({
-                where: { snapshotId }
+            // Step 1: Write NEW files to unique staging paths
+            allTests.forEach(t => {
+                if (!t.id) t.id = crypto.randomUUID();
+                t.filePath = t.filePath.replace('.test.js', `-${t.id.substring(0, 8)}.test.js`);
             });
 
+            if (allTests.length > 0) {
+                saveAiTestsToFilesystem(job.snapshot.rootDir, allTests);
+            }
+
+            // Step 2: Atomic DB Transaction
+            await prisma.$transaction(async (tx) => {
+                if (supertestIds.length > 0) {
+                    await tx.aiTest.deleteMany({
+                        where: { id: { in: supertestIds } }
+                    });
+                }
+                
+                await tx.aiSuggestion.deleteMany({
+                    where: { snapshotId }
+                });
+                
+                if (suggestions && suggestions.length > 0) {
+                    await tx.aiSuggestion.createMany({ data: suggestions });
+                }
+
+                if (allTests.length > 0) {
+                    await tx.aiTest.createMany({ data: allTests });
+                }
+            });
+
+            // Step 3: Cleanup old files asynchronously
+            if (supertestIds.length > 0) {
+                try {
+                    removeAiTestsFromFilesystem(job.snapshot.rootDir, supertestTests);
+                } catch (err) {
+                    console.error("[aiTestsJob] Failed to clean up old files after DB transaction", err);
+                    await addJobLog(jobId, "WARN", "Failed to clean up some old test files. New tests are safely saved.");
+                }
+            }
+
             if (suggestions && suggestions.length > 0) {
-                await prisma.aiSuggestion.createMany({ data: suggestions });
                 await addJobLog(jobId, "INFO", `Saved ${suggestions.length} Supertest integration scenario suggestions.`);
             }
 
             if (allTests.length > 0) {
-                saveAiTestsToFilesystem(job.snapshot.rootDir, allTests);
-                await prisma.aiTest.createMany({ data: allTests });
                 await addJobLog(jobId, "INFO", summary.message);
             } else {
                 await addJobLog(jobId, "INFO", "No Supertest integration test files were generated.");

@@ -49,14 +49,43 @@ async function executeWithRetry(apiCall, maxRetries = 3) {
   }
 }
 
+const VALID_MODELS = ["gemini-2.5-flash", "gemini-3.5-flash"];
+
+/**
+ * Normalizes model names, replacing deprecated models (1.5-pro, 1.5-flash, 2.0-flash, 3.5-flash-lite)
+ * with the currently active and verified models.
+ */
+function resolveModelName(requestedModel) {
+  if (!requestedModel) {
+    return process.env.GEMINI_MODEL || "gemini-2.5-flash";
+  }
+  const clean = requestedModel.trim();
+  if (VALID_MODELS.includes(clean)) {
+    return clean;
+  }
+  // If requesting a deprecated model or unknown model, fall back to gemini-2.5-flash
+  return process.env.GEMINI_MODEL || "gemini-2.5-flash";
+}
+
 /**
  * Send prompts & Receive responses
  * @param {string} prompt - The prompt to send to the Gemini model
- * @param {string|null} systemInstruction - Optional system instruction for the model
+ * @param {string|null} modelOrInstruction - Optional model name (e.g., 'gemini-2.5-flash') or system instruction
+ * @param {string|null} maybeInstruction - Optional system instruction if model name was provided as 2nd arg
  * @returns {Promise<string>} The generated text response
  */
-export const generateText = async (prompt, systemInstruction = null) => {
-  return generateMultimodalText(prompt, [], systemInstruction);
+export const generateText = async (prompt, modelOrInstruction = null, maybeInstruction = null) => {
+  let modelName = null;
+  let systemInstruction = null;
+
+  if (typeof modelOrInstruction === "string" && (modelOrInstruction.startsWith("gemini-") || modelOrInstruction.includes("/"))) {
+    modelName = modelOrInstruction;
+    systemInstruction = maybeInstruction;
+  } else {
+    systemInstruction = modelOrInstruction;
+  }
+
+  return generateMultimodalText(prompt, [], systemInstruction, modelName);
 };
 
 /**
@@ -64,23 +93,28 @@ export const generateText = async (prompt, systemInstruction = null) => {
  * @param {string} prompt - The prompt to send to the Gemini model
  * @param {Array<{ data: string, mimeType: string }>} images - Optional array of images in base64
  * @param {string|null} systemInstruction - Optional system instruction for the model
+ * @param {string|null} modelName - Optional specific model name
  * @returns {Promise<string>} The generated text response
  */
 export const generateMultimodalText = async (
   prompt,
   images = [],
   systemInstruction = null,
+  modelName = null,
 ) => {
   if (!genAI) {
     throw new Error("GEMINI_API_KEY is not configured.");
   }
 
-  const modelOptions = { model: "gemini-3.5-flash-lite" };
-  if (systemInstruction) {
-    modelOptions.systemInstruction = systemInstruction;
-  }
-
-  const model = genAI.getGenerativeModel(modelOptions);
+  const primaryModelName = resolveModelName(modelName);
+  
+  const createModelInstance = (mName) => {
+    const modelOptions = { model: mName };
+    if (systemInstruction) {
+      modelOptions.systemInstruction = systemInstruction;
+    }
+    return genAI.getGenerativeModel(modelOptions);
+  };
 
   const parts = [];
 
@@ -102,13 +136,28 @@ export const generateMultimodalText = async (
   parts.push({ text: prompt });
 
   const apiCall = async () => {
-    const result = await model.generateContent({
-      contents: [{ role: "user", parts }],
-      generationConfig: {
-        maxOutputTokens: 65536,
-      },
-    });
-    return result.response.text();
+    try {
+      const model = createModelInstance(primaryModelName);
+      const result = await model.generateContent({
+        contents: [{ role: "user", parts }],
+        generationConfig: {
+          maxOutputTokens: 65536,
+        },
+      });
+      return result.response.text();
+    } catch (primaryErr) {
+      // If primary model failed with 404 or model error, try secondary fallback model
+      const fallbackModel = primaryModelName === "gemini-2.5-flash" ? "gemini-3.5-flash" : "gemini-2.5-flash";
+      console.warn(`[Gemini API] Primary model ${primaryModelName} error: ${primaryErr.message}. Attempting fallback with ${fallbackModel}...`);
+      const model = createModelInstance(fallbackModel);
+      const result = await model.generateContent({
+        contents: [{ role: "user", parts }],
+        generationConfig: {
+          maxOutputTokens: 65536,
+        },
+      });
+      return result.response.text();
+    }
   };
 
   return executeWithRetry(apiCall);

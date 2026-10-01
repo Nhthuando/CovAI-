@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { fetchIntegrationReport } from '../services/report.service';
 import { ArrowLeft, Database, BarChart2, AlertCircle, FileText, Activity } from 'lucide-react';
+import { format } from 'date-fns';
+import IntegrationGuidancePanel from '../components/dashboard/integration/IntegrationGuidancePanel';
 
 const formatDate = (val) => {
   if (!val) return '';
@@ -231,8 +233,9 @@ export default function IntegrationReportPage() {
               </div>
             )}
           </div>
-
         </div>
+
+        <IntegrationGuidancePanel projectId={projectId} />
 
         {/* History Tables */}
         <div className="space-y-8 pb-8">
@@ -335,7 +338,7 @@ export default function IntegrationReportPage() {
                         <td className="px-4 py-3 font-mono text-xs">{gen.snapshotId.substring(0, 8)}</td>
                         <td className="px-4 py-3">
                           <span className={`px-2 py-1 rounded text-xs font-medium ${gen.status === 'SUCCESS' ? 'bg-green-500/20 text-green-400' :
-                              gen.status === 'FAILED' ? 'bg-red-500/20 text-red-400' : 'bg-yellow-500/20 text-yellow-400'
+                            gen.status === 'FAILED' ? 'bg-red-500/20 text-red-400' : 'bg-yellow-500/20 text-yellow-400'
                             }`}>
                             {gen.status}
                           </span>

@@ -82,7 +82,9 @@ export const getGithubRepositories = async (req, res) => {
     });
 
     if (!user || !user.githubAccessTokenEnc) {
-      return res.status(200).json([]);
+      return res.status(401).json({
+        message: "User has not linked GitHub or token is invalid!",
+      });
     }
 
     // Decrypt encrypted token

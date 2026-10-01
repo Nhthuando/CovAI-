@@ -520,7 +520,7 @@ function TestSuggestionCard({
                 }}
                 title="Re-run Unit Test Coverage to confirm coverage increase"
               >
-                <span>Run Analysis ↵</span>
+                <span>Run Analysis Unit ↵</span>
               </motion.button>
             )}
           </>
@@ -792,10 +792,10 @@ function IdeChangesWidget({
               background: "linear-gradient(135deg, #7c3aed, #a855f7)",
               boxShadow: "0 0 12px rgba(124, 58, 237, 0.4)",
             }}
-            title="Re-run Analysis"
+            title="Re-run Analysis Unit"
           >
             <Play size={11} className="fill-white" />
-            <span>Run Analysis ↵</span>
+            <span>Run Analysis Unit ↵</span>
           </button>
         </div>
       )}

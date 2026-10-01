@@ -1174,7 +1174,7 @@ export default function Editor({
             <span>
               Applied test case to file{" "}
               <strong>{appliedNotification.targetTestFile}</strong>. Please review
-              the draft code and click <strong>Run Analysis</strong> to confirm tests
+              the draft code and click <strong>Run Analysis Unit</strong> to confirm tests
               pass and coverage increases.
             </span>
           </div>
@@ -1193,7 +1193,7 @@ export default function Editor({
                   border: "none",
                 }}
               >
-                Run Analysis
+                Run Analysis Unit
               </button>
             )}
             <button

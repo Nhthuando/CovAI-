@@ -1564,10 +1564,33 @@ import {
     regenerateScenarioService
 } from "../services/scenarioManager.service.js";
 
+const verifyAiTestOwnership = async (aiTestId, userId, res, expectedSnapshotId = null) => {
+    const aiTest = await prisma.aiTest.findUnique({
+        where: { id: aiTestId },
+        select: { snapshotId: true, project: { select: { ownerId: true } } }
+    });
+    if (!aiTest) {
+        res.status(404).json({ success: false, message: "AiTest not found." });
+        return false;
+    }
+    if (aiTest.project.ownerId !== userId) {
+        res.status(403).json({ success: false, message: "Forbidden." });
+        return false;
+    }
+    if (expectedSnapshotId && aiTest.snapshotId !== expectedSnapshotId) {
+        res.status(403).json({ success: false, message: "Snapshot mismatch." });
+        return false;
+    }
+    return true;
+};
+
 export const updateScenario = async (req, res) => {
     try {
         const { aiTestId, scenarioId } = req.params;
         const { code } = req.body;
+        
+        if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res))) return;
+
         const updatedTest = await updateScenarioService(aiTestId, decodeURIComponent(scenarioId), code);
         return res.status(200).json({ success: true, data: updatedTest });
     } catch (error) {
@@ -1580,6 +1603,9 @@ export const addScenario = async (req, res) => {
     try {
         const { aiTestId } = req.params;
         const { code, endpoint } = req.body;
+        
+        if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res))) return;
+
         const updatedTest = await addScenarioService(aiTestId, code, endpoint);
         return res.status(200).json({ success: true, data: updatedTest });
     } catch (error) {
@@ -1591,6 +1617,9 @@ export const addScenario = async (req, res) => {
 export const deleteScenario = async (req, res) => {
     try {
         const { aiTestId, scenarioId } = req.params;
+        
+        if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res))) return;
+
         const updatedTest = await deleteScenarioService(aiTestId, decodeURIComponent(scenarioId));
         return res.status(200).json({ success: true, data: updatedTest });
     } catch (error) {
@@ -1603,6 +1632,9 @@ export const toggleScenario = async (req, res) => {
     try {
         const { aiTestId, scenarioId } = req.params;
         const { enable } = req.body;
+        
+        if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res))) return;
+
         const updatedTest = await toggleScenarioService(aiTestId, decodeURIComponent(scenarioId), enable);
         return res.status(200).json({ success: true, data: updatedTest });
     } catch (error) {
@@ -1616,6 +1648,9 @@ export const toggleScenario = async (req, res) => {
 export const regenerateScenario = async (req, res) => {
     try {
         const { snapshotId, aiTestId, scenarioId } = req.params;
+        
+        if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res, snapshotId))) return;
+        
         const snapshot = await prisma.projectSnapshot.findUnique({ where: { id: snapshotId } });
         if (!snapshot) throw new Error("Snapshot not found");
 
@@ -1640,8 +1675,11 @@ export const regenerateScenario = async (req, res) => {
 import { getScenarioService } from "../services/scenarioManager.service.js";
 export const getScenario = async (req, res) => {
     try {
-        const { aiTestId, scenarioName } = req.params;
-        const result = await getScenarioService(aiTestId, decodeURIComponent(scenarioName));
+        const { aiTestId, scenarioId } = req.params;
+        
+        if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res))) return;
+
+        const result = await getScenarioService(aiTestId, decodeURIComponent(scenarioId));
         return res.status(200).json({ success: true, data: result });
     } catch (error) {
         return res.status(500).json({ success: false, message: error.message });

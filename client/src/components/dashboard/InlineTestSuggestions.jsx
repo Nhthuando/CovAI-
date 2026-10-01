@@ -1,19 +1,16 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import {
     Check,
     X,
-    Edit2,
-    Save,
     RotateCcw,
     Sparkles,
-    AlertTriangle,
     CheckCircle2,
-    XCircle,
     Loader2,
     Code,
     Layers,
     ArrowRight,
-    FileCode
+    FileCode,
+    Zap
 } from "lucide-react";
 
 /**
@@ -74,6 +71,175 @@ const getStatusBadge = (status) => {
     }
 };
 
+/**
+ * Direct Line-by-Line Code Editor
+ * Allows clicking on any line to edit directly without needing to click an "Edit" button first.
+ */
+function InlineCodeEditor({ code, originalCode, onChange, onReset }) {
+    const textareaRef = useRef(null);
+    const lines = (code || "").split("\n");
+    const isModified = Boolean(originalCode && code !== originalCode);
+
+    const handleGutterClick = (lineIndex) => {
+        if (!textareaRef.current) return;
+        const lineList = (code || "").split("\n");
+        let charOffset = 0;
+        for (let i = 0; i < lineIndex; i++) {
+            charOffset += (lineList[i] !== undefined ? lineList[i].length : 0) + 1;
+        }
+        textareaRef.current.focus();
+        textareaRef.current.setSelectionRange(charOffset, charOffset);
+    };
+
+    return (
+        <div
+            style={{
+                position: "relative",
+                background: "#090d16",
+                border: isModified ? "1px solid rgba(168, 85, 247, 0.5)" : "1px solid rgba(255, 255, 255, 0.1)",
+                borderRadius: 6,
+                overflow: "hidden",
+                transition: "border-color 0.2s ease",
+            }}
+        >
+            {/* Header bar */}
+            <div
+                style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "6px 12px",
+                    background: isModified ? "rgba(168, 85, 247, 0.08)" : "rgba(255, 255, 255, 0.03)",
+                    borderBottom: "1px solid rgba(255, 255, 255, 0.06)",
+                    fontSize: 11,
+                    color: "#94a3b8",
+                }}
+            >
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <Code size={12} style={{ color: "#38bdf8" }} />
+                    <span style={{ fontWeight: 600, color: "#cbd5e1" }}>Interactive Test Code</span>
+                    <span style={{ color: "#64748b", fontSize: 10, marginLeft: 4 }}>
+                        (Click any line to edit directly)
+                    </span>
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    {isModified ? (
+                        <>
+                            <span
+                                style={{
+                                    fontSize: 10,
+                                    color: "#c084fc",
+                                    background: "rgba(168, 85, 247, 0.15)",
+                                    border: "1px solid rgba(168, 85, 247, 0.3)",
+                                    padding: "1px 6px",
+                                    borderRadius: 4,
+                                    fontWeight: 600,
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 3,
+                                }}
+                            >
+                                <Check size={10} /> Edited (auto-saved)
+                            </span>
+                            <button
+                                onClick={onReset}
+                                style={{
+                                    background: "transparent",
+                                    border: "none",
+                                    color: "#94a3b8",
+                                    cursor: "pointer",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 3,
+                                    fontSize: 10,
+                                    padding: "2px 6px",
+                                    borderRadius: 4,
+                                }}
+                                className="hover:text-white hover:bg-white/10"
+                                title="Reset to original AI suggestion"
+                            >
+                                <RotateCcw size={10} /> Reset
+                            </button>
+                        </>
+                    ) : (
+                        <span style={{ fontSize: 10, color: "#64748b" }}>
+                            {lines.length} lines · Directly editable
+                        </span>
+                    )}
+                </div>
+            </div>
+
+            {/* Editor Body: Gutter with Line Numbers + Monospace Textarea */}
+            <div
+                style={{
+                    display: "flex",
+                    minHeight: `${Math.min(22, Math.max(6, lines.length + 1)) * 20 + 16}px`,
+                    background: "#090d16",
+                }}
+            >
+                {/* Line numbers gutter */}
+                <div
+                    style={{
+                        padding: "8px 8px 8px 12px",
+                        borderRight: "1px solid rgba(255, 255, 255, 0.06)",
+                        color: "#475569",
+                        userSelect: "none",
+                        fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                        fontSize: 12,
+                        textAlign: "right",
+                        minWidth: 36,
+                        boxSizing: "border-box",
+                        background: "rgba(0, 0, 0, 0.25)",
+                    }}
+                >
+                    {lines.map((_, i) => (
+                        <div
+                            key={i}
+                            onClick={() => handleGutterClick(i)}
+                            style={{
+                                height: 20,
+                                lineHeight: "20px",
+                                cursor: "pointer",
+                            }}
+                            className="hover:text-sky-400"
+                            title={`Jump to line ${i + 1}`}
+                        >
+                            {i + 1}
+                        </div>
+                    ))}
+                </div>
+
+                {/* Direct Editable Textarea */}
+                <textarea
+                    ref={textareaRef}
+                    value={code}
+                    onChange={(e) => onChange(e.target.value)}
+                    rows={Math.min(26, Math.max(6, lines.length + 1))}
+                    style={{
+                        flex: 1,
+                        background: "transparent",
+                        color: "#e2e8f0",
+                        fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                        fontSize: 12,
+                        lineHeight: "20px",
+                        padding: "8px 12px",
+                        border: "none",
+                        outline: "none",
+                        resize: "vertical",
+                        whiteSpace: "pre",
+                        overflowX: "auto",
+                        boxSizing: "border-box",
+                        width: "100%",
+                    }}
+                    placeholder="Click here to type or edit test code directly..."
+                    spellCheck={false}
+                />
+            </div>
+        </div>
+    );
+}
+
 export default function InlineTestSuggestions({
     filePath,
     suggestions = [],
@@ -86,7 +252,6 @@ export default function InlineTestSuggestions({
     lastApplyResult = null,
     progressStep = "",
 }) {
-    const [editingId, setEditingId] = useState(null);
     const [editedCode, setEditedCode] = useState({});
 
     if (isLoading) {
@@ -118,26 +283,28 @@ export default function InlineTestSuggestions({
         return null;
     }
 
-    const activeSuggestions = suggestions.filter(s => s.status !== "REJECTED");
-    const canApplyAll = activeSuggestions.length > 1 && !activeSuggestions.every(s => s.status === "PASSED");
+    const activeSuggestions = suggestions.filter((s) => s.status !== "REJECTED");
+    const canApplyAll = activeSuggestions.length > 1 && !activeSuggestions.every((s) => s.status === "PASSED");
 
-    const startEditing = (sug) => {
-        setEditingId(sug.suggestionId || sug.id);
-        setEditedCode(prev => ({
+    const handleCodeChange = (sugId, newCode) => {
+        setEditedCode((prev) => ({
             ...prev,
-            [sug.suggestionId || sug.id]: sug.generatedCode || sug.suggestedTestCode || ""
+            [sugId]: newCode,
         }));
-    };
-
-    const saveEditing = (sugId) => {
-        if (onUpdateSuggestionCode && editedCode[sugId] !== undefined) {
-            onUpdateSuggestionCode(sugId, editedCode[sugId]);
+        if (onUpdateSuggestionCode) {
+            onUpdateSuggestionCode(sugId, newCode);
         }
-        setEditingId(null);
     };
 
-    const cancelEditing = () => {
-        setEditingId(null);
+    const handleResetCode = (sug, sugId) => {
+        const original = sug.originalGeneratedCode || sug.suggestedTestCode || sug.generatedCode || "";
+        setEditedCode((prev) => ({
+            ...prev,
+            [sugId]: original,
+        }));
+        if (onUpdateSuggestionCode) {
+            onUpdateSuggestionCode(sugId, original);
+        }
     };
 
     return (
@@ -161,12 +328,24 @@ export default function InlineTestSuggestions({
                     justifyContent: "space-between",
                     borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
                     paddingBottom: 10,
+                    flexWrap: "wrap",
+                    gap: 8,
                 }}
             >
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <Sparkles size={16} style={{ color: "#38bdf8" }} />
                     <span style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0" }}>
-                        Suggested Tests for <code style={{ color: "#7dd3fc", background: "rgba(255,255,255,0.05)", padding: "1px 5px", borderRadius: 4 }}>{filePath}</code>
+                        Suggested Tests for{" "}
+                        <code
+                            style={{
+                                color: "#7dd3fc",
+                                background: "rgba(255,255,255,0.05)",
+                                padding: "1px 5px",
+                                borderRadius: 4,
+                            }}
+                        >
+                            {filePath}
+                        </code>
                     </span>
                     <span
                         style={{
@@ -184,7 +363,14 @@ export default function InlineTestSuggestions({
 
                 {canApplyAll && onApplyAll && (
                     <button
-                        onClick={() => onApplyAll(activeSuggestions)}
+                        onClick={() => {
+                            const prepared = activeSuggestions.map((s) => {
+                                const id = s.suggestionId || s.id;
+                                const code = editedCode[id] ?? (s.generatedCode || s.suggestedTestCode || "");
+                                return { ...s, generatedCode: code, suggestedTestCode: code };
+                            });
+                            onApplyAll(prepared);
+                        }}
                         style={{
                             padding: "5px 12px",
                             background: "linear-gradient(135deg, #0284c7 0%, #0369a1 100%)",
@@ -203,7 +389,7 @@ export default function InlineTestSuggestions({
                         className="hover:opacity-90"
                     >
                         <Layers size={13} />
-                        Apply All ({activeSuggestions.length})
+                        Apply All for this file ({activeSuggestions.length})
                     </button>
                 )}
             </div>
@@ -289,14 +475,12 @@ export default function InlineTestSuggestions({
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 {suggestions.map((sug, idx) => {
                     const sugId = sug.suggestionId || sug.id || `sug-${idx}`;
-                    const isApplying = applyingIds.has ? applyingIds.has(sugId) : (applyingIds === sugId);
-                    const isEditing = editingId === sugId;
-                    const status = isApplying ? "APPLYING" : (sug.status || "GENERATED");
+                    const isApplying = applyingIds.has ? applyingIds.has(sugId) : applyingIds === sugId;
+                    const status = isApplying ? "APPLYING" : sug.status || "GENERATED";
                     const badge = getStatusBadge(status);
 
-                    const currentCode = isEditing
-                        ? (editedCode[sugId] ?? (sug.generatedCode || sug.suggestedTestCode || ""))
-                        : (sug.generatedCode || sug.suggestedTestCode || "");
+                    const originalCode = sug.originalGeneratedCode || sug.suggestedTestCode || sug.generatedCode || "";
+                    const currentCode = editedCode[sugId] !== undefined ? editedCode[sugId] : originalCode;
 
                     return (
                         <div
@@ -357,7 +541,15 @@ export default function InlineTestSuggestions({
                                 </div>
 
                                 {/* Target Metadata */}
-                                <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 11, color: "#94a3b8" }}>
+                                <div
+                                    style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 10,
+                                        fontSize: 11,
+                                        color: "#94a3b8",
+                                    }}
+                                >
                                     {sug.testFile && (
                                         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                                             <FileCode size={12} style={{ color: "#38bdf8" }} />
@@ -367,7 +559,10 @@ export default function InlineTestSuggestions({
 
                                     {sug.targetLines && sug.targetLines.length > 0 && (
                                         <div>
-                                            Target: <span style={{ color: "#facc15", fontWeight: 600 }}>Line {sug.targetLines.join(", ")}</span>
+                                            Target:{" "}
+                                            <span style={{ color: "#facc15", fontWeight: 600 }}>
+                                                Line {sug.targetLines.join(", ")}
+                                            </span>
                                         </div>
                                     )}
                                 </div>
@@ -381,132 +576,13 @@ export default function InlineTestSuggestions({
                                 </div>
                             )}
 
-                            {/* Code block or Inline Editor */}
-                            <div
-                                style={{
-                                    position: "relative",
-                                    background: "#0d1117",
-                                    border: "1px solid rgba(255, 255, 255, 0.1)",
-                                    borderRadius: 6,
-                                    overflow: "hidden",
-                                }}
-                            >
-                                <div
-                                    style={{
-                                        display: "flex",
-                                        alignItems: "center",
-                                        justifyContent: "space-between",
-                                        padding: "6px 12px",
-                                        background: "rgba(255, 255, 255, 0.03)",
-                                        borderBottom: "1px solid rgba(255, 255, 255, 0.06)",
-                                        fontSize: 11,
-                                        color: "#64748b",
-                                    }}
-                                >
-                                    <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                                        <Code size={12} />
-                                        <span>{isEditing ? "Editing Test Code" : "Generated Test Code"}</span>
-                                    </div>
-
-                                    {!isEditing && (
-                                        <button
-                                            onClick={() => startEditing(sug)}
-                                            style={{
-                                                background: "transparent",
-                                                border: "none",
-                                                color: "#94a3b8",
-                                                cursor: "pointer",
-                                                display: "flex",
-                                                alignItems: "center",
-                                                gap: 4,
-                                                fontSize: 11,
-                                                padding: "2px 6px",
-                                                borderRadius: 4,
-                                            }}
-                                            className="hover:text-white hover:bg-white/10"
-                                            title="Edit generated test inline"
-                                        >
-                                            <Edit2 size={11} />
-                                            Edit
-                                        </button>
-                                    )}
-                                </div>
-
-                                {isEditing ? (
-                                    <div style={{ padding: 8 }}>
-                                        <textarea
-                                            value={currentCode}
-                                            onChange={(e) => setEditedCode(prev => ({ ...prev, [sugId]: e.target.value }))}
-                                            rows={Math.min(18, Math.max(6, currentCode.split("\n").length + 1))}
-                                            style={{
-                                                width: "100%",
-                                                background: "#0d1117",
-                                                color: "#e2e8f0",
-                                                fontFamily: "monospace",
-                                                fontSize: 12,
-                                                lineHeight: 1.5,
-                                                border: "1px solid rgba(56, 189, 248, 0.4)",
-                                                borderRadius: 4,
-                                                padding: 8,
-                                                outline: "none",
-                                                resize: "vertical",
-                                            }}
-                                        />
-                                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 6 }}>
-                                            <button
-                                                onClick={cancelEditing}
-                                                style={{
-                                                    padding: "4px 10px",
-                                                    background: "rgba(255, 255, 255, 0.06)",
-                                                    border: "1px solid rgba(255, 255, 255, 0.1)",
-                                                    borderRadius: 4,
-                                                    color: "#cbd5e1",
-                                                    fontSize: 11,
-                                                    cursor: "pointer",
-                                                }}
-                                                className="hover:bg-white/10"
-                                            >
-                                                Cancel
-                                            </button>
-                                            <button
-                                                onClick={() => saveEditing(sugId)}
-                                                style={{
-                                                    padding: "4px 10px",
-                                                    background: "#0284c7",
-                                                    border: "1px solid #38bdf8",
-                                                    borderRadius: 4,
-                                                    color: "#ffffff",
-                                                    fontSize: 11,
-                                                    fontWeight: 600,
-                                                    cursor: "pointer",
-                                                    display: "flex",
-                                                    alignItems: "center",
-                                                    gap: 4,
-                                                }}
-                                                className="hover:opacity-90"
-                                            >
-                                                <Save size={11} />
-                                                Save Changes
-                                            </button>
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <pre
-                                        style={{
-                                            margin: 0,
-                                            padding: "10px 14px",
-                                            color: "#e2e8f0",
-                                            fontFamily: "monospace",
-                                            fontSize: 12,
-                                            lineHeight: 1.5,
-                                            overflowX: "auto",
-                                            maxHeight: 260,
-                                        }}
-                                    >
-                                        <code>{currentCode}</code>
-                                    </pre>
-                                )}
-                            </div>
+                            {/* Direct Interactive Code Editor: Click any line to edit directly */}
+                            <InlineCodeEditor
+                                code={currentCode}
+                                originalCode={originalCode}
+                                onChange={(newCode) => handleCodeChange(sugId, newCode)}
+                                onReset={() => handleResetCode(sug, sugId)}
+                            />
 
                             {/* Action Buttons bar */}
                             <div
@@ -544,27 +620,36 @@ export default function InlineTestSuggestions({
 
                                 {onApply && (
                                     <button
-                                        onClick={() => onApply({ ...sug, generatedCode: currentCode })}
+                                        onClick={() =>
+                                            onApply({
+                                                ...sug,
+                                                generatedCode: currentCode,
+                                                suggestedTestCode: currentCode,
+                                            })
+                                        }
                                         disabled={isApplying || status === "PASSED"}
                                         style={{
                                             padding: "5px 14px",
-                                            background: status === "PASSED"
-                                                ? "rgba(34, 197, 94, 0.15)"
-                                                : isApplying
+                                            background:
+                                                status === "PASSED"
+                                                    ? "rgba(34, 197, 94, 0.15)"
+                                                    : isApplying
                                                     ? "rgba(2, 132, 199, 0.5)"
                                                     : "linear-gradient(135deg, #0284c7 0%, #0369a1 100%)",
-                                            border: status === "PASSED"
-                                                ? "1px solid rgba(34, 197, 94, 0.4)"
-                                                : "1px solid rgba(56, 189, 248, 0.4)",
+                                            border:
+                                                status === "PASSED"
+                                                    ? "1px solid rgba(34, 197, 94, 0.4)"
+                                                    : "1px solid rgba(56, 189, 248, 0.4)",
                                             borderRadius: 5,
                                             color: status === "PASSED" ? "#4ade80" : "#ffffff",
                                             fontSize: 11,
                                             fontWeight: 600,
-                                            cursor: (isApplying || status === "PASSED") ? "not-allowed" : "pointer",
+                                            cursor: isApplying || status === "PASSED" ? "not-allowed" : "pointer",
                                             display: "flex",
                                             alignItems: "center",
                                             gap: 6,
-                                            boxShadow: status === "PASSED" ? "none" : "0 2px 6px rgba(2, 132, 199, 0.2)",
+                                            boxShadow:
+                                                status === "PASSED" ? "none" : "0 2px 6px rgba(2, 132, 199, 0.2)",
                                             transition: "all 0.15s ease",
                                         }}
                                         className={status !== "PASSED" && !isApplying ? "hover:opacity-90" : ""}
@@ -581,7 +666,7 @@ export default function InlineTestSuggestions({
                                             </>
                                         ) : (
                                             <>
-                                                <Check size={12} />
+                                                <Zap size={12} />
                                                 Apply
                                             </>
                                         )}
@@ -595,4 +680,3 @@ export default function InlineTestSuggestions({
         </div>
     );
 }
-

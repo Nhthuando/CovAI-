@@ -12,8 +12,9 @@ function parseCode(code) {
     });
 }
 
-function findScenarioPath(ast, scenarioName) {
+function findScenarioPath(ast, scenarioName, targetIndex = 0) {
     let foundPath = null;
+    let currentIndex = 0;
     traverse(ast, {
         CallExpression(path) {
             if (foundPath) return;
@@ -27,7 +28,11 @@ function findScenarioPath(ast, scenarioName) {
             }
             
             if (isTest && args.length > 0 && args[0].type === 'StringLiteral' && args[0].value === scenarioName) {
-                foundPath = path;
+                if (currentIndex === targetIndex) {
+                    foundPath = path;
+                } else {
+                    currentIndex++;
+                }
             }
         }
     });
@@ -36,15 +41,28 @@ function findScenarioPath(ast, scenarioName) {
 
 import crypto from 'crypto';
 
-function getScenarioName(aiTest, scenarioId) {
+function getScenarioIdentity(aiTest, scenarioId) {
     let meta = {};
     if (aiTest.metaJson) {
         try { meta = JSON.parse(aiTest.metaJson); } catch(e) {}
     }
     
     // 1. Try finding by explicit scenarioId
-    const req = (meta.requests || []).find(r => r.scenarioId === scenarioId);
-    if (req) return req.testName;
+    const reqs = meta.requests || [];
+    let nameIndex = 0;
+    const req = reqs.find((r, idx) => {
+        if (r.scenarioId === scenarioId) {
+            for (let i = 0; i < idx; i++) {
+                if (reqs[i].testName === r.testName) nameIndex++;
+            }
+            return true;
+        }
+        return false;
+    });
+    
+    if (req) {
+        return { testName: req.testName, nameIndex };
+    }
 
     // 2. Fallback for legacy records (MD5 hash of testName)
     try {
@@ -69,9 +87,9 @@ function getScenarioName(aiTest, scenarioId) {
                 }
             }
         });
-        return foundName;
+        return { testName: foundName, nameIndex: 0 };
     } catch(e) {
-        return scenarioId;
+        return { testName: scenarioId, nameIndex: 0 };
     }
 }
 
@@ -79,11 +97,11 @@ export const getScenarioService = async (aiTestId, scenarioId) => {
     const aiTest = await prisma.aiTest.findUnique({ where: { id: aiTestId } });
     if (!aiTest) throw new Error("AiTest not found");
     
-    const scenarioName = getScenarioName(aiTest, scenarioId);
+    const { testName, nameIndex } = getScenarioIdentity(aiTest, scenarioId);
     const ast = parseCode(aiTest.content);
-    const path = findScenarioPath(ast, scenarioName);
+    const path = findScenarioPath(ast, testName, nameIndex);
     
-    if (!path) throw new Error(`Scenario '${scenarioName}' not found in AST`);
+    if (!path) throw new Error(`Scenario '${testName}' (index ${nameIndex}) not found in AST`);
     
     const { code } = generate(path.node);
     return { code, aiTest };
@@ -93,7 +111,7 @@ export const updateScenarioService = async (aiTestId, scenarioId, updatedCode) =
     const aiTest = await prisma.aiTest.findUnique({ where: { id: aiTestId } });
     if (!aiTest) throw new Error("AiTest not found");
 
-    const scenarioName = getScenarioName(aiTest, scenarioId);
+    const { testName, nameIndex } = getScenarioIdentity(aiTest, scenarioId);
 
     // Ensure the updated code is valid JS/TS
     const updatedAst = parseCode(updatedCode);
@@ -108,11 +126,11 @@ export const updateScenarioService = async (aiTestId, scenarioId, updatedCode) =
     if (!updatedNode) throw new Error("Updated code does not contain a valid test statement");
 
     const originalAst = parseCode(aiTest.content);
-    const path = findScenarioPath(originalAst, scenarioName);
-    if (!path) throw new Error(`Scenario '${scenarioName}' not found in AST`);
+    const path = findScenarioPath(originalAst, testName, nameIndex);
+    if (!path) throw new Error(`Scenario '${testName}' (index ${nameIndex}) not found in AST`);
 
     // Extract the potentially new test name
-    const newTestName = updatedNode.arguments[0]?.value || scenarioName;
+    const newTestName = updatedNode.arguments[0]?.value || testName;
 
     // Replace the node
     path.replaceWith(updatedNode);
@@ -125,9 +143,10 @@ export const updateScenarioService = async (aiTestId, scenarioId, updatedCode) =
     if (aiTest.metaJson) {
         try { meta = JSON.parse(aiTest.metaJson); } catch(e) {}
     }
+    meta.userModified = true; // Mark artifact as dirty
     const requests = Array.isArray(meta.requests) ? meta.requests : [];
     const updatedRequests = requests.map(r => {
-        if (r.scenarioId === scenarioId || r.testName === scenarioName) {
+        if (r.scenarioId === scenarioId || (r.testName === testName && nameIndex === 0 && !r.scenarioId)) {
             return { ...r, testName: newTestName, scenarioId, userEdited: true, lastModifiedAt: new Date().toISOString() };
         }
         return r;
@@ -152,11 +171,11 @@ export const deleteScenarioService = async (aiTestId, scenarioId) => {
     const aiTest = await prisma.aiTest.findUnique({ where: { id: aiTestId } });
     if (!aiTest) throw new Error("AiTest not found");
 
-    const scenarioName = getScenarioName(aiTest, scenarioId);
+    const { testName, nameIndex } = getScenarioIdentity(aiTest, scenarioId);
     const ast = parseCode(aiTest.content);
-    const path = findScenarioPath(ast, scenarioName);
+    const path = findScenarioPath(ast, testName, nameIndex);
     
-    if (!path) throw new Error(`Scenario '${scenarioName}' not found in AST`);
+    if (!path) throw new Error(`Scenario '${testName}' (index ${nameIndex}) not found in AST`);
     
     path.remove();
     const { code: finalCode } = generate(ast);
@@ -165,8 +184,9 @@ export const deleteScenarioService = async (aiTestId, scenarioId) => {
     if (aiTest.metaJson) {
         try { meta = JSON.parse(aiTest.metaJson); } catch(e) {}
     }
+    meta.userModified = true; // Mark artifact as dirty
     const requests = Array.isArray(meta.requests) ? meta.requests : [];
-    meta.requests = requests.filter(r => r.scenarioId !== scenarioId && r.testName !== scenarioName);
+    meta.requests = requests.filter(r => r.scenarioId !== scenarioId && !(r.testName === testName && nameIndex === 0 && !r.scenarioId));
 
     const updatedTest = await prisma.aiTest.update({
         where: { id: aiTestId },
@@ -183,11 +203,11 @@ export const toggleScenarioService = async (aiTestId, scenarioId, enable) => {
     const aiTest = await prisma.aiTest.findUnique({ where: { id: aiTestId } });
     if (!aiTest) throw new Error("AiTest not found");
 
-    const scenarioName = getScenarioName(aiTest, scenarioId);
+    const { testName, nameIndex } = getScenarioIdentity(aiTest, scenarioId);
     const ast = parseCode(aiTest.content);
-    const path = findScenarioPath(ast, scenarioName);
+    const path = findScenarioPath(ast, testName, nameIndex);
     
-    if (!path) throw new Error(`Scenario '${scenarioName}' not found in AST`);
+    if (!path) throw new Error(`Scenario '${testName}' (index ${nameIndex}) not found in AST`);
 
     const callee = path.node.callee;
     if (enable) {
@@ -213,9 +233,10 @@ export const toggleScenarioService = async (aiTestId, scenarioId, enable) => {
     if (aiTest.metaJson) {
         try { meta = JSON.parse(aiTest.metaJson); } catch(e) {}
     }
+    meta.userModified = true; // Mark artifact as dirty
     const requests = Array.isArray(meta.requests) ? meta.requests : [];
     meta.requests = requests.map(r => {
-        if (r.scenarioId === scenarioId || r.testName === scenarioName) {
+        if (r.scenarioId === scenarioId || (r.testName === testName && nameIndex === 0 && !r.scenarioId)) {
             return { ...r, enabled: enable, scenarioId, lastModifiedAt: new Date().toISOString() };
         }
         return r;
@@ -272,6 +293,7 @@ export const addScenarioService = async (aiTestId, newScenarioCode, endpoint) =>
     if (aiTest.metaJson) {
         try { meta = JSON.parse(aiTest.metaJson); } catch(e) {}
     }
+    meta.userModified = true; // Mark artifact as dirty
     const requests = Array.isArray(meta.requests) ? meta.requests : [];
     const newScenarioId = crypto.randomUUID();
     requests.push({
@@ -302,11 +324,11 @@ export const regenerateScenarioService = async (aiTestId, scenarioId, payload = 
     const aiTest = await prisma.aiTest.findUnique({ where: { id: aiTestId } });
     if (!aiTest) throw new Error("AiTest not found");
 
-    const scenarioName = getScenarioName(aiTest, scenarioId);
+    const { testName, nameIndex } = getScenarioIdentity(aiTest, scenarioId);
     const ast = parseCode(aiTest.content);
-    const path = findScenarioPath(ast, scenarioName);
+    const path = findScenarioPath(ast, testName, nameIndex);
     
-    if (!path) throw new Error(`Scenario '${scenarioName}' not found in AST`);
+    if (!path) throw new Error(`Scenario '${testName}' (index ${nameIndex}) not found in AST`);
 
     const { code: originalCode } = generate(path.node);
     

@@ -257,7 +257,7 @@ export default function DiffReviewModal({
                   title="Re-run tests to confirm coverage increase"
                 >
                   <Play size={12} className="fill-purple-300" />
-                  <span>Run Analysis ↵</span>
+                  <span>Run Analysis Unit ↵</span>
                 </button>
               )}
 

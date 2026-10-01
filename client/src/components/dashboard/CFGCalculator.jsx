@@ -312,7 +312,7 @@ function CFGNode({
   );
 }
 
-export default function CFGCalculator({ project, onClose }) {
+export default function CFGCalculator({ project, onClose, initialFile, initialFunc }) {
   const { isMobile } = useBreakpoints();
   const [cfgs, setCfgs] = useState([]);
   const [ccs, setCcs] = useState([]);
