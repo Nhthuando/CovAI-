@@ -26,7 +26,7 @@ export const sanitizeSourceFilePath = (rootDir, filePath) => {
  */
 export const findExistingTestFile = (rootDir, rawSourceFilePath, framework = null) => {
     const sourceFilePath = sanitizeSourceFilePath(rootDir, rawSourceFilePath);
-    const isAlreadyTestFile = /(^|\/)(tests?|__tests__|spec)\//i.test(sourceFilePath) || /\.(test|spec)\.[a-z0-9]+$/i.test(sourceFilePath);
+    const isAlreadyTestFile = /(^|\/)(tests?|__tests__|specs?)\//i.test(sourceFilePath) || /\.(test|spec|steps?)\.[a-z0-9]+$/i.test(sourceFilePath);
     if (isAlreadyTestFile) {
         const fullPath = path.join(rootDir, sourceFilePath);
         const exists = fs.existsSync(fullPath);
@@ -34,15 +34,57 @@ export const findExistingTestFile = (rootDir, rawSourceFilePath, framework = nul
             found: exists,
             relativePath: normalizePath(sourceFilePath),
             absolutePath: fullPath,
-            content: exists ? fs.readFileSync(fullPath, "utf8") : ""
+            fileName: path.basename(sourceFilePath),
+            content: exists ? fs.readFileSync(fullPath, "utf8") : "",
+            framework: (exists && fs.readFileSync(fullPath, "utf8").includes("vitest")) ? "vitest" : (framework || "jest")
         };
     }
 
     const ext = path.extname(sourceFilePath) || ".js";
     const rawBaseName = path.basename(sourceFilePath, ext);
-    const baseName = rawBaseName.replace(/\.(test|spec)$/i, "");
+    const baseName = rawBaseName.replace(/\.(test|spec|steps?)$/i, "");
     const dirName = path.dirname(sourceFilePath);
 
+    // 1. Scan existing test files in project to check if any test imports or tests this source file
+    let bestImportMatch = null;
+    const normSource = normalizePath(sourceFilePath);
+    const scanDir = (dir, depth = 0) => {
+        if (depth > 6 || bestImportMatch) return;
+        let entries;
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+        for (const e of entries) {
+            if (["node_modules", ".git", "coverage", "dist", "build", ".next", ".vite"].includes(e.name)) continue;
+            const full = path.join(dir, e.name);
+            if (e.isDirectory()) {
+                scanDir(full, depth + 1);
+            } else if (e.isFile() && /\.(test|spec|steps?)\.[a-z0-9]+$/i.test(e.name)) {
+                try {
+                    const content = fs.readFileSync(full, "utf8");
+                    if (content.includes(baseName)) {
+                        const rel = normalizePath(path.relative(rootDir, full));
+                        const sourcePrefix = normSource.includes("/") ? normSource.split("/")[0] : "";
+                        if (!bestImportMatch || (sourcePrefix && rel.startsWith(sourcePrefix))) {
+                            bestImportMatch = { full, rel, content };
+                        }
+                    }
+                } catch { }
+            }
+        }
+    };
+    try { scanDir(rootDir); } catch { }
+
+    if (bestImportMatch) {
+        return {
+            found: true,
+            relativePath: bestImportMatch.rel,
+            absolutePath: bestImportMatch.full,
+            fileName: path.basename(bestImportMatch.rel),
+            content: bestImportMatch.content,
+            framework: bestImportMatch.content.includes("vitest") ? "vitest" : (framework || "jest")
+        };
+    }
+
+    // 2. Vitest-specific candidate paths
     if (framework === "vitest") {
         const vitestCandidates = [
             path.join("tests", `${baseName}.vitest.test${ext}`),
@@ -51,7 +93,8 @@ export const findExistingTestFile = (rootDir, rawSourceFilePath, framework = nul
             path.join("tests", `vitest.test${ext}`),
             path.join("tests", `vitest.spec${ext}`),
             path.join(dirName, `${baseName}.vitest.test${ext}`),
-            path.join(dirName, `${baseName}.spec${ext}`)
+            path.join(dirName, `${baseName}.spec${ext}`),
+            path.join(dirName, "__tests__", `${baseName}.vitest.test${ext}`),
         ];
 
         for (const candidate of vitestCandidates) {
@@ -61,12 +104,13 @@ export const findExistingTestFile = (rootDir, rawSourceFilePath, framework = nul
                     found: true,
                     relativePath: normalizePath(candidate),
                     absolutePath: fullPath,
-                    content: fs.readFileSync(fullPath, "utf8")
+                    fileName: path.basename(candidate),
+                    content: fs.readFileSync(fullPath, "utf8"),
+                    framework: "vitest"
                 };
             }
         }
 
-        // Also check if tests/<baseName>.test.js exists and explicitly uses vitest
         const genericTestPath = path.join("tests", `${baseName}.test${ext}`);
         if (fs.existsSync(path.join(rootDir, genericTestPath))) {
             const content = fs.readFileSync(path.join(rootDir, genericTestPath), "utf8");
@@ -75,24 +119,13 @@ export const findExistingTestFile = (rootDir, rawSourceFilePath, framework = nul
                     found: true,
                     relativePath: normalizePath(genericTestPath),
                     absolutePath: path.join(rootDir, genericTestPath),
-                    content
+                    fileName: path.basename(genericTestPath),
+                    content,
+                    framework: "vitest"
                 };
             }
         }
 
-        // Check if tests/vitest.test.js exists in rootDir as common Vitest suite
-        const commonVitestTest = path.join("tests", `vitest.test${ext}`);
-        if (fs.existsSync(path.join(rootDir, commonVitestTest))) {
-            const fullPath = path.join(rootDir, commonVitestTest);
-            return {
-                found: true,
-                relativePath: normalizePath(commonVitestTest),
-                absolutePath: fullPath,
-                content: fs.readFileSync(fullPath, "utf8")
-            };
-        }
-
-        // If no existing vitest file, default to tests/<baseName>.vitest.test.js if tests/<baseName>.test.js already exists
         const defaultVitestPath = fs.existsSync(path.join(rootDir, genericTestPath))
             ? normalizePath(path.join("tests", `${baseName}.vitest.test${ext}`))
             : normalizePath(path.join("tests", `${baseName}.test${ext}`));
@@ -100,40 +133,66 @@ export const findExistingTestFile = (rootDir, rawSourceFilePath, framework = nul
         return {
             found: false,
             relativePath: defaultVitestPath,
+            suggestedFilePath: defaultVitestPath,
             absolutePath: path.join(rootDir, defaultVitestPath),
-            content: ""
+            fileName: path.basename(defaultVitestPath),
+            content: "",
+            framework: "vitest"
         };
     }
 
+    // 3. Conventional candidate paths (including specs, step-definitions, subpackages)
     const candidates = [
         path.join("tests", `${baseName}.test${ext}`),
         path.join("tests", `${baseName}.spec${ext}`),
         path.join("tests", dirName, `${baseName}.test${ext}`),
         path.join(dirName, `${baseName}.test${ext}`),
         path.join(dirName, `${baseName}.spec${ext}`),
+        path.join(dirName, `${baseName}.steps${ext}`),
         path.join(dirName, "__tests__", `${baseName}.test${ext}`),
-        path.join(dirName, "__tests__", `${baseName}.spec${ext}`)
+        path.join(dirName, "__tests__", `${baseName}.spec${ext}`),
+        path.join("specs", `${baseName}.test${ext}`),
+        path.join("specs", `${baseName}.steps${ext}`),
+        path.join("specs", "step-definitions", `${baseName}.steps${ext}`)
     ];
+
+    if (dirName.includes("src")) {
+        candidates.push(
+            path.join(dirName.replace("src", "specs"), "step-definitions", `${baseName}.steps${ext}`),
+            path.join(dirName.replace("src", "specs"), `${baseName}.test${ext}`),
+            path.join(dirName.replace("src", "tests"), `${baseName}.test${ext}`)
+        );
+    }
 
     for (const candidate of candidates) {
         const fullPath = path.join(rootDir, candidate);
         if (fs.existsSync(fullPath)) {
+            const content = fs.readFileSync(fullPath, "utf8");
             return {
                 found: true,
                 relativePath: normalizePath(candidate),
                 absolutePath: fullPath,
-                content: fs.readFileSync(fullPath, "utf8")
+                fileName: path.basename(candidate),
+                content,
+                framework: content.includes("vitest") ? "vitest" : "jest"
             };
         }
     }
 
-    // Default target for new test file per specification: tests/<source>.test.<ext>
-    const defaultNewTestPath = normalizePath(path.join("tests", `${baseName}.test${ext}`));
+    // Default target for new test file
+    let defaultNewTestPath = normalizePath(path.join("tests", `${baseName}.test${ext}`));
+    if (dirName.includes("src")) {
+        defaultNewTestPath = normalizePath(dirName.replace("src", "tests") + `/${baseName}.test${ext}`);
+    }
+
     return {
         found: false,
         relativePath: defaultNewTestPath,
+        suggestedFilePath: defaultNewTestPath,
         absolutePath: path.join(rootDir, defaultNewTestPath),
-        content: ""
+        fileName: path.basename(defaultNewTestPath),
+        content: "",
+        framework: "jest"
     };
 };
 

@@ -13,10 +13,17 @@ import {
   Loader2,
   Code2,
   AlertTriangle,
+  FlaskConical,
+  Columns,
+  Maximize2,
+  ExternalLink,
+  ChevronRight,
+  Layers,
 } from "lucide-react";
 import MonacoEditor from "@monaco-editor/react";
 import { updateFileContentApi } from "../../services/project.service.js";
 import { cleanDisplayPath } from "./CoverageTypeDashboard.jsx";
+import TestFileViewerPanel from "./TestFileViewerPanel.jsx";
 
 /* ── Extension to Language Mapping ───────────────────────── */
 const EXT_LANG_MAP = {
@@ -56,13 +63,25 @@ export default function FileCodeExecutionView({
   onOpenFile,
   onSuggestTestcase,
   onFileSaved,
+  suggestions = [],
+  isLoadingSuggestions = false,
+  applyingSuggestionIds = new Set(),
+  onApplySuggestion,
+  onApplyAllSuggestions,
+  isLight = false,
 }) {
   const initialSourceCode = fileCoverage?.sourceCode || "";
   const linesMap = fileCoverage?.lines || {};
   const statements = fileCoverage?.statements || [];
   const summary = fileCoverage?.summary || {};
+  const testFile = fileCoverage?.testFile || null;
+  const hasTestFile = Boolean(testFile?.found);
+  const testFileName = testFile?.fileName || (testFile?.filePath ? testFile.filePath.split("/").pop() : null);
 
-  // View mode: "coverage" (visual execution flow) or "editor" (in-place Monaco code editor)
+  // Layout mode: "split" (Side-by-side Source & Test) | "source" (Source code only) | "test" (Test code only)
+  const [layoutMode, setLayoutMode] = useState("split");
+
+  // View mode for source code: "coverage" (visual execution flow) or "editor" (in-place Monaco code editor)
   const [viewMode, setViewMode] = useState("coverage");
   const [editorContent, setEditorContent] = useState(initialSourceCode);
   const [isDirty, setIsDirty] = useState(false);
@@ -194,7 +213,7 @@ export default function FileCodeExecutionView({
     });
   }, [codeLines, getLineData, filterMode]);
 
-  // Save handler for inline editor
+  // Save handler for inline source editor
   const handleSave = useCallback(async () => {
     if (!projectId || !filePath) {
       setErrorMessage("Missing project ID or file path to save.");
@@ -210,12 +229,14 @@ export default function FileCodeExecutionView({
       await updateFileContentApi(projectId, filePath, editorContent);
       setIsDirty(false);
       setSaveStatus("success");
-      onFileSaved?.(filePath, editorContent);
       setTimeout(() => setSaveStatus(null), 3000);
+      if (onFileSaved) {
+        await onFileSaved(filePath);
+      }
     } catch (err) {
-      console.error("Failed to save file content:", err);
+      console.error("[FileCodeExecutionView] Failed to save code:", err);
       setSaveStatus("error");
-      setErrorMessage(err.message || "Failed to save file to disk.");
+      setErrorMessage(err?.response?.data?.message || err?.message || "Failed to save file.");
     } finally {
       setIsSaving(false);
     }
@@ -229,20 +250,6 @@ export default function FileCodeExecutionView({
     setSaveStatus(null);
     setErrorMessage("");
   }, [initialSourceCode]);
-
-  // Keyboard shortcut Ctrl+S / Cmd+S in Editor mode
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
-        if (viewMode === "editor") {
-          e.preventDefault();
-          handleSaveRef.current?.();
-        }
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [viewMode]);
 
   const handleEditorDidMount = (editor, monaco) => {
     editorRef.current = editor;
@@ -277,45 +284,57 @@ export default function FileCodeExecutionView({
 
   const lang = getLanguage(filePath);
 
-  return (
+  /* ── Sub-component: Source Code Panel ─────────────────────── */
+  const renderSourcePanel = () => (
     <div
       style={{
         borderRadius: 8,
-        border: "1px solid rgba(255, 255, 255, 0.08)",
-        background: "#090d13",
+        border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)",
+        background: isLight ? "#ffffff" : "#0d1117",
         overflow: "hidden",
-        boxShadow: "0 4px 20px rgba(0, 0, 0, 0.4)",
+        boxShadow: isLight ? "0 4px 16px rgba(15, 23, 42, 0.05)" : "0 4px 20px rgba(0, 0, 0, 0.3)",
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        minHeight: 520,
       }}
     >
-      {/* View Header */}
+      {/* Source Sub-Header */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "10px 16px",
-          background: "rgba(167, 139, 250, 0.08)",
-          borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
+          padding: "10px 14px",
+          background: isLight ? "#f8fafc" : "#161b22",
+          borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
           flexWrap: "wrap",
-          gap: 10,
+          gap: 8,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <FileCode size={15} style={{ color: "#a78bfa" }} />
-          <span style={{ fontSize: 12, fontWeight: 700, color: "#e6edf3", fontFamily: "var(--font-mono)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <FileCode size={14} style={{ color: isLight ? "#6366f1" : "#a78bfa" }} />
+          <span
+            style={{
+              fontSize: 12,
+              fontWeight: 700,
+              color: isLight ? "#0f172a" : "#e6edf3",
+              fontFamily: "var(--font-mono)",
+            }}
+          >
             {cleanDisplayPath(filePath)}
           </span>
 
-          {/* Mode Switcher Tabs */}
+          {/* Mode Switcher: Coverage Flow vs Edit Code */}
           <div
             style={{
               display: "flex",
               alignItems: "center",
-              background: "rgba(0, 0, 0, 0.35)",
+              background: isLight ? "#e2e8f0" : "rgba(0, 0, 0, 0.35)",
               borderRadius: 6,
               padding: 2,
-              border: "1px solid rgba(255, 255, 255, 0.08)",
-              marginLeft: 6,
+              border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.08)",
+              marginLeft: 4,
             }}
           >
             <button
@@ -323,20 +342,24 @@ export default function FileCodeExecutionView({
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: 5,
-                padding: "3px 9px",
+                gap: 4,
+                padding: "3px 8px",
                 borderRadius: 4,
                 fontSize: 11,
                 fontWeight: viewMode === "coverage" ? 700 : 500,
-                background: viewMode === "coverage" ? "rgba(167, 139, 250, 0.25)" : "transparent",
-                color: viewMode === "coverage" ? "#c084fc" : "#8b949e",
+                background: viewMode === "coverage"
+                  ? (isLight ? "#ffffff" : "rgba(167, 139, 250, 0.25)")
+                  : "transparent",
+                color: viewMode === "coverage"
+                  ? (isLight ? "#4f46e5" : "#c084fc")
+                  : (isLight ? "#64748b" : "#8b949e"),
                 border: "none",
                 cursor: "pointer",
                 transition: "all 0.15s ease",
               }}
               title="View execution flow and code coverage"
             >
-              <Eye size={12} />
+              <Eye size={11} />
               Coverage Flow
             </button>
             <button
@@ -344,20 +367,24 @@ export default function FileCodeExecutionView({
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: 5,
-                padding: "3px 9px",
+                gap: 4,
+                padding: "3px 8px",
                 borderRadius: 4,
                 fontSize: 11,
                 fontWeight: viewMode === "editor" ? 700 : 500,
-                background: viewMode === "editor" ? "rgba(56, 189, 248, 0.22)" : "transparent",
-                color: viewMode === "editor" ? "#38bdf8" : "#8b949e",
+                background: viewMode === "editor"
+                  ? (isLight ? "#ffffff" : "rgba(56, 189, 248, 0.22)")
+                  : "transparent",
+                color: viewMode === "editor"
+                  ? (isLight ? "#0284c7" : "#38bdf8")
+                  : (isLight ? "#64748b" : "#8b949e"),
                 border: "none",
                 cursor: "pointer",
                 transition: "all 0.15s ease",
               }}
               title="Edit code directly in this view"
             >
-              <Edit3 size={12} />
+              <Edit3 size={11} />
               Edit Code
               {isDirty && (
                 <span
@@ -375,49 +402,45 @@ export default function FileCodeExecutionView({
           </div>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        {/* Right side controls of Source Panel */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           {viewMode === "coverage" ? (
             <>
-              {/* Statement & Line summary */}
-              <span style={{ fontSize: 11, color: "var(--color-text-secondary, #8b949e)" }}>
-                Statement coverage:{" "}
-                <b style={{ color: stmtsPct >= 80 ? "#4ade80" : stmtsPct >= 60 ? "#fbbf24" : "#f87171" }}>
+              {/* Coverage stats */}
+              <span style={{ fontSize: 11, color: isLight ? "#64748b" : "#8b949e" }}>
+                Statement:{" "}
+                <b style={{ color: stmtsPct >= 80 ? "#16a34a" : stmtsPct >= 60 ? "#d97706" : "#dc2626" }}>
                   {totalStatements > 0 ? `${coveredStatements}/${totalStatements}` : `${coveredLines}/${executableLines}`} ({stmtsPct}%)
                 </b>
-                {executableLines > 0 && (
-                  <span style={{ marginLeft: 6, color: "var(--color-text-muted, #6e7681)" }}>
-                    ({coveredLines}/{executableLines} lines)
-                  </span>
-                )}
               </span>
 
               {missedLines > 0 ? (
                 <span
                   style={{
                     fontSize: 11,
-                    padding: "2px 8px",
-                    borderRadius: 10,
-                    background: "rgba(239, 68, 68, 0.15)",
-                    color: "#f87171",
+                    padding: "2px 7px",
+                    borderRadius: 8,
+                    background: isLight ? "rgba(239, 68, 68, 0.1)" : "rgba(239, 68, 68, 0.15)",
+                    color: isLight ? "#dc2626" : "#f87171",
                     fontWeight: 600,
-                    border: "1px solid rgba(239, 68, 68, 0.3)",
+                    border: isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.3)",
                   }}
                 >
-                  ⚑ {missedLines} lines uncovered
+                  ⚑ {missedLines} missed
                 </span>
               ) : executableLines > 0 ? (
                 <span
                   style={{
                     fontSize: 11,
-                    padding: "2px 8px",
-                    borderRadius: 10,
-                    background: "rgba(34, 197, 94, 0.15)",
-                    color: "#4ade80",
+                    padding: "2px 7px",
+                    borderRadius: 8,
+                    background: isLight ? "rgba(34, 197, 94, 0.1)" : "rgba(34, 197, 94, 0.15)",
+                    color: isLight ? "#16a34a" : "#4ade80",
                     fontWeight: 600,
-                    border: "1px solid rgba(34, 197, 94, 0.3)",
+                    border: isLight ? "1px solid #bbf7d0" : "1px solid rgba(34, 197, 94, 0.3)",
                   }}
                 >
-                  ✓ 100% Coverage
+                  ✓ 100%
                 </span>
               ) : null}
 
@@ -426,11 +449,11 @@ export default function FileCodeExecutionView({
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: 3,
-                  background: "rgba(255,255,255,0.03)",
+                  gap: 2,
+                  background: isLight ? "#f1f5f9" : "rgba(255,255,255,0.03)",
                   padding: 2,
                   borderRadius: 5,
-                  border: "1px solid rgba(255,255,255,0.06)",
+                  border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.06)",
                 }}
               >
                 <button
@@ -440,8 +463,8 @@ export default function FileCodeExecutionView({
                     padding: "2px 6px",
                     borderRadius: 3,
                     border: "none",
-                    background: filterMode === "all" ? "rgba(167, 139, 250, 0.25)" : "transparent",
-                    color: filterMode === "all" ? "#c084fc" : "#8b949e",
+                    background: filterMode === "all" ? (isLight ? "#ffffff" : "rgba(167, 139, 250, 0.25)") : "transparent",
+                    color: filterMode === "all" ? (isLight ? "#4f46e5" : "#c084fc") : (isLight ? "#64748b" : "#8b949e"),
                     cursor: "pointer",
                     fontWeight: filterMode === "all" ? 700 : 500,
                   }}
@@ -455,8 +478,8 @@ export default function FileCodeExecutionView({
                     padding: "2px 6px",
                     borderRadius: 3,
                     border: "none",
-                    background: filterMode === "covered" ? "rgba(34, 197, 94, 0.2)" : "transparent",
-                    color: filterMode === "covered" ? "#4ade80" : "#8b949e",
+                    background: filterMode === "covered" ? (isLight ? "#ffffff" : "rgba(34, 197, 94, 0.2)") : "transparent",
+                    color: filterMode === "covered" ? (isLight ? "#16a34a" : "#4ade80") : (isLight ? "#64748b" : "#8b949e"),
                     cursor: "pointer",
                     fontWeight: filterMode === "covered" ? 700 : 500,
                   }}
@@ -471,40 +494,16 @@ export default function FileCodeExecutionView({
                       padding: "2px 6px",
                       borderRadius: 3,
                       border: "none",
-                      background: filterMode === "missed" ? "rgba(239, 68, 68, 0.2)" : "transparent",
-                      color: filterMode === "missed" ? "#f87171" : "#8b949e",
+                      background: filterMode === "missed" ? (isLight ? "#ffffff" : "rgba(239, 68, 68, 0.2)") : "transparent",
+                      color: filterMode === "missed" ? (isLight ? "#dc2626" : "#f87171") : (isLight ? "#64748b" : "#8b949e"),
                       cursor: "pointer",
                       fontWeight: filterMode === "missed" ? 700 : 500,
                     }}
                   >
-                    Uncovered ({missedLines})
+                    Missed ({missedLines})
                   </button>
                 )}
               </div>
-
-              {/* Button to toggle to Editor */}
-              <button
-                onClick={() => setViewMode("editor")}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 4,
-                  padding: "4px 9px",
-                  borderRadius: 5,
-                  background: "rgba(56, 189, 248, 0.12)",
-                  border: "1px solid rgba(56, 189, 248, 0.3)",
-                  color: "#38bdf8",
-                  fontSize: 11,
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  transition: "all 0.15s ease",
-                }}
-                className="hover:opacity-90"
-                title="Edit source code directly here"
-              >
-                <Edit3 size={12} />
-                Edit Code
-              </button>
             </>
           ) : (
             <>
@@ -514,8 +513,8 @@ export default function FileCodeExecutionView({
                   fontSize: 10,
                   padding: "2px 6px",
                   borderRadius: 4,
-                  background: "rgba(255, 255, 255, 0.06)",
-                  color: "#94a3b8",
+                  background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.06)",
+                  color: isLight ? "#475569" : "#94a3b8",
                   textTransform: "uppercase",
                   fontFamily: "var(--font-mono)",
                 }}
@@ -531,15 +530,15 @@ export default function FileCodeExecutionView({
                     display: "flex",
                     alignItems: "center",
                     gap: 4,
-                    padding: "4px 9px",
+                    padding: "3px 8px",
                     borderRadius: 5,
-                    background: "rgba(255, 255, 255, 0.05)",
-                    border: "1px solid rgba(255, 255, 255, 0.12)",
-                    color: "#94a3b8",
+                    background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.05)",
+                    border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.12)",
+                    color: isLight ? "#475569" : "#94a3b8",
                     fontSize: 11,
                     cursor: isSaving ? "not-allowed" : "pointer",
                   }}
-                  className="hover:bg-white/10 hover:text-white"
+                  className="hover:opacity-90"
                   title="Discard unsaved changes"
                 >
                   <RotateCcw size={11} />
@@ -553,46 +552,36 @@ export default function FileCodeExecutionView({
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: 6,
-                  padding: "4px 12px",
+                  gap: 5,
+                  padding: "4px 10px",
                   borderRadius: 5,
                   background: saveStatus === "success"
-                    ? "rgba(34, 197, 94, 0.2)"
+                    ? (isLight ? "#16a34a" : "rgba(34, 197, 94, 0.2)")
                     : isDirty
-                      ? "linear-gradient(135deg, #0284c7 0%, #0369a1 100%)"
-                      : "rgba(255, 255, 255, 0.05)",
-                  border: saveStatus === "success"
-                    ? "1px solid rgba(34, 197, 94, 0.4)"
-                    : isDirty
-                      ? "1px solid rgba(56, 189, 248, 0.5)"
-                      : "1px solid rgba(255, 255, 255, 0.1)",
-                  color: saveStatus === "success"
-                    ? "#4ade80"
-                    : isDirty
-                      ? "#ffffff"
-                      : "#64748b",
+                      ? (isLight ? "#2563eb" : "linear-gradient(135deg, #0284c7 0%, #0369a1 100%)")
+                      : (isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.05)"),
+                  border: isDirty ? "none" : (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)"),
+                  color: isDirty || saveStatus === "success" ? "#ffffff" : (isLight ? "#94a3b8" : "#64748b"),
                   fontSize: 11,
                   fontWeight: 600,
                   cursor: isSaving || !projectId || !isDirty ? "not-allowed" : "pointer",
-                  boxShadow: isDirty ? "0 2px 8px rgba(2, 132, 199, 0.25)" : "none",
                   transition: "all 0.15s ease",
                 }}
-                className={isDirty && !isSaving ? "hover:opacity-90" : ""}
-                title="Save file to disk (Ctrl+S)"
+                title="Save source file to disk (Ctrl+S)"
               >
                 {isSaving ? (
                   <>
-                    <Loader2 size={12} className="animate-spin" />
+                    <Loader2 size={11} className="animate-spin" />
                     Saving...
                   </>
                 ) : saveStatus === "success" ? (
                   <>
-                    <Check size={12} />
+                    <Check size={11} />
                     Saved!
                   </>
                 ) : (
                   <>
-                    <Save size={12} />
+                    <Save size={11} />
                     Save (Ctrl+S)
                   </>
                 )}
@@ -606,17 +595,17 @@ export default function FileCodeExecutionView({
       {saveStatus === "success" && (
         <div
           style={{
-            padding: "6px 16px",
-            background: "rgba(34, 197, 94, 0.12)",
-            borderBottom: "1px solid rgba(34, 197, 94, 0.25)",
-            color: "#4ade80",
+            padding: "5px 14px",
+            background: isLight ? "#dcfce7" : "rgba(34, 197, 94, 0.12)",
+            borderBottom: isLight ? "1px solid #bbf7d0" : "1px solid rgba(34, 197, 94, 0.25)",
+            color: isLight ? "#15803d" : "#4ade80",
             fontSize: 11,
             display: "flex",
             alignItems: "center",
             gap: 6,
           }}
         >
-          <CheckCircle2 size={13} />
+          <CheckCircle2 size={12} />
           <span>File saved successfully to project disk!</span>
         </div>
       )}
@@ -624,246 +613,523 @@ export default function FileCodeExecutionView({
       {saveStatus === "error" && errorMessage && (
         <div
           style={{
-            padding: "6px 16px",
-            background: "rgba(239, 68, 68, 0.12)",
-            borderBottom: "1px solid rgba(239, 68, 68, 0.25)",
-            color: "#f87171",
+            padding: "5px 14px",
+            background: isLight ? "#fee2e2" : "rgba(239, 68, 68, 0.12)",
+            borderBottom: isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.25)",
+            color: isLight ? "#b91c1c" : "#f87171",
             fontSize: 11,
             display: "flex",
             alignItems: "center",
             gap: 6,
           }}
         >
-          <AlertCircle size={13} />
+          <AlertCircle size={12} />
           <span>Error saving file: {errorMessage}</span>
         </div>
       )}
 
-      {/* Unsaved changes notice if looking at coverage view */}
-      {viewMode === "coverage" && isDirty && (
-        <div
-          style={{
-            padding: "6px 16px",
-            background: "rgba(245, 158, 11, 0.12)",
-            borderBottom: "1px solid rgba(245, 158, 11, 0.25)",
-            color: "#fbbf24",
-            fontSize: 11,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <AlertTriangle size={13} />
-            <span>You have unsaved changes in the code editor.</span>
+      {/* Main Content Area */}
+      <div style={{ flex: 1, minHeight: 460, position: "relative", overflowY: "auto" }}>
+        {viewMode === "editor" ? (
+          <div style={{ height: "100%", minHeight: 460 }}>
+            <MonacoEditor
+              height="100%"
+              minHeight="460px"
+              language={lang}
+              theme={isLight ? "vs" : "covai-dark-inline"}
+              value={editorContent}
+              onChange={(val) => {
+                setEditorContent(val ?? "");
+                setIsDirty(true);
+              }}
+              beforeMount={handleEditorWillMount}
+              onMount={handleEditorDidMount}
+              options={{
+                fontSize: 12,
+                fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace",
+                lineHeight: 22,
+                minimap: { enabled: false },
+                scrollBeyondLastLine: false,
+                automaticLayout: true,
+                tabSize: 2,
+                wordWrap: "on",
+                renderLineHighlight: "all",
+                smoothScrolling: true,
+              }}
+            />
           </div>
-          <button
-            onClick={() => setViewMode("editor")}
+        ) : (
+          /* Visual Coverage Execution Flow View */
+          <div
             style={{
-              background: "transparent",
-              border: "underline",
-              color: "#fde047",
-              cursor: "pointer",
-              fontSize: 11,
-              fontWeight: 600,
+              padding: "6px 0",
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+              fontSize: 12,
+              lineHeight: "22px",
             }}
           >
-            Switch to Edit Code to save →
+            {visibleLineEntries.length === 0 ? (
+              <div style={{ padding: 24, textAlign: "center", color: isLight ? "#94a3b8" : "#6e7681" }}>
+                {codeLines.length === 0
+                  ? "No source code content available for this file."
+                  : "No lines match the selected filter."}
+              </div>
+            ) : (
+              visibleLineEntries.map(({ lineNum, codeText, isExecutable, isCovered, isMissed, isFailed, hits, error, reason }) => {
+                const lineNumStr = String(lineNum).padStart(2, "0");
+
+                let rowBg = "transparent";
+                let borderLeft = "3px solid transparent";
+
+                if (isFailed) {
+                  rowBg = isLight ? "rgba(239, 68, 68, 0.12)" : "rgba(239, 68, 68, 0.12)";
+                  borderLeft = "3px solid #ef4444";
+                } else if (isMissed) {
+                  rowBg = isLight ? "rgba(239, 68, 68, 0.06)" : "rgba(239, 68, 68, 0.08)";
+                  borderLeft = "3px solid #ef4444";
+                } else if (isCovered) {
+                  rowBg = isLight ? "rgba(34, 197, 94, 0.05)" : "rgba(34, 197, 94, 0.03)";
+                  borderLeft = isLight ? "3px solid #16a34a" : "3px solid #22c55e";
+                }
+
+                return (
+                  <div
+                    key={lineNum}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      padding: "2px 14px",
+                      background: rowBg,
+                      borderLeft: borderLeft,
+                      transition: "background 0.1s ease",
+                    }}
+                    className={isLight ? "hover:bg-slate-100" : "hover:bg-white/[0.04]"}
+                    title={
+                      error
+                        ? `Error: ${error}`
+                        : reason
+                          ? reason
+                          : isCovered
+                            ? `Executed ${hits} times`
+                            : ""
+                    }
+                  >
+                    {/* Line number */}
+                    <span
+                      style={{
+                        width: 30,
+                        color: isMissed || isFailed
+                          ? (isLight ? "#dc2626" : "#f87171")
+                          : isCovered
+                            ? (isLight ? "#475569" : "#8b949e")
+                            : (isLight ? "#94a3b8" : "#484f58"),
+                        textAlign: "right",
+                        userSelect: "none",
+                        fontWeight: isCovered || isMissed ? 600 : 400,
+                        marginRight: 10,
+                      }}
+                    >
+                      {lineNumStr}
+                    </span>
+
+                    {/* Separator */}
+                    <span
+                      style={{
+                        color: isLight ? "#cbd5e1" : "rgba(255, 255, 255, 0.12)",
+                        userSelect: "none",
+                        marginRight: 12,
+                      }}
+                    >
+                      │
+                    </span>
+
+                    {/* Code text */}
+                    <span
+                      style={{
+                        flex: 1,
+                        whiteSpace: "pre-wrap",
+                        wordBreak: "break-all",
+                        color: isMissed || isFailed
+                          ? (isLight ? "#b91c1c" : "#fca5a5")
+                          : isCovered
+                            ? (isLight ? "#0f172a" : "#e6edf3")
+                            : (isLight ? "#64748b" : "#8b949e"),
+                      }}
+                    >
+                      {codeText || " "}
+                    </span>
+
+                    {/* Hits Badge on the right */}
+                    {isExecutable && (
+                      <div
+                        style={{
+                          marginLeft: 12,
+                          flexShrink: 0,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 700,
+                            padding: "1px 6px",
+                            borderRadius: 4,
+                            background: isFailed
+                              ? (isLight ? "rgba(239, 68, 68, 0.15)" : "rgba(239, 68, 68, 0.2)")
+                              : isCovered
+                                ? (isLight ? "rgba(34, 197, 94, 0.12)" : "rgba(34, 197, 94, 0.14)")
+                                : (isLight ? "rgba(239, 68, 68, 0.1)" : "rgba(239, 68, 68, 0.15)"),
+                            color: isFailed
+                              ? (isLight ? "#dc2626" : "#fca5a5")
+                              : isCovered
+                                ? (isLight ? "#15803d" : "#4ade80")
+                                : (isLight ? "#dc2626" : "#f87171"),
+                            border: isFailed
+                              ? (isLight ? "1px solid #fca5a5" : "1px solid rgba(239, 68, 68, 0.4)")
+                              : isCovered
+                                ? (isLight ? "1px solid #86efac" : "1px solid rgba(34, 197, 94, 0.3)")
+                                : (isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.3)"),
+                          }}
+                        >
+                          {isFailed
+                            ? "× Failed"
+                            : isCovered
+                              ? `✓ ${hits} hit${hits > 1 ? "s" : ""}`
+                              : "⚑ 0 hits"}
+                        </span>
+
+                        {isMissed && onSuggestTestcase && (
+                          <button
+                            onClick={() => onSuggestTestcase(filePath)}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 3,
+                              padding: "1px 5px",
+                              borderRadius: 4,
+                              background: isLight ? "#f5f3ff" : "rgba(168, 85, 247, 0.15)",
+                              border: isLight ? "1px solid #ddd6fe" : "1px solid rgba(168, 85, 247, 0.35)",
+                              color: isLight ? "#7c3aed" : "#c084fc",
+                              fontSize: 10,
+                              cursor: "pointer",
+                            }}
+                            title="AI suggest test case covering this line"
+                          >
+                            <Sparkles size={9} />
+                            <span>Suggest</span>
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Source Footer status */}
+      <div
+        style={{
+          padding: "6px 14px",
+          background: isLight ? "#f8fafc" : "#161b22",
+          borderTop: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          fontSize: 11,
+          color: isLight ? "#64748b" : "#8b949e",
+        }}
+      >
+        <span>Source: {cleanDisplayPath(filePath)}</span>
+        <span>{codeLines.length} lines · {coveredLines}/{executableLines} covered</span>
+      </div>
+    </div>
+  );
+
+  /* ── Sub-component: Associated Test File Panel ────────────── */
+  const renderTestPanel = () => (
+    <TestFileViewerPanel
+      sourceFilePath={filePath}
+      testFile={testFile}
+      projectId={projectId}
+      snapshotId={snapshotId}
+      suggestions={suggestions}
+      isLoadingSuggestions={isLoadingSuggestions}
+      applyingSuggestionIds={applyingSuggestionIds}
+      onApplySuggestion={onApplySuggestion}
+      onApplyAllSuggestions={onApplyAllSuggestions}
+      onSuggestMissingTest={() => onSuggestTestcase && onSuggestTestcase(filePath)}
+      onOpenFile={onOpenFile}
+      onTestFileSaved={async (savedPath) => {
+        if (onFileSaved) await onFileSaved(savedPath);
+      }}
+      isLight={isLight}
+    />
+  );
+
+  return (
+    <div
+      style={{
+        borderRadius: 10,
+        border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)",
+        background: isLight ? "#ffffff" : "#090d13",
+        overflow: "hidden",
+        boxShadow: isLight ? "0 6px 24px rgba(15, 23, 42, 0.06)" : "0 6px 26px rgba(0, 0, 0, 0.45)",
+      }}
+    >
+      {/* ── Top Bar: Layout Selector & Quick Status ───────────── */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "10px 16px",
+          background: isLight ? "#f8fafc" : "rgba(167, 139, 250, 0.08)",
+          borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
+          flexWrap: "wrap",
+          gap: 10,
+        }}
+      >
+        {/* Left: Source File and Linked Test Badge */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <FileCode size={16} style={{ color: isLight ? "#4f46e5" : "#a78bfa" }} />
+            <span
+              style={{
+                fontSize: 13,
+                fontWeight: 700,
+                color: isLight ? "#0f172a" : "#f0f6fc",
+                fontFamily: "var(--font-mono)",
+              }}
+            >
+              {cleanDisplayPath(filePath)}
+            </span>
+          </div>
+
+          {/* Test connection status badge */}
+          {hasTestFile ? (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 5,
+                padding: "2px 8px",
+                borderRadius: 5,
+                background: isLight ? "#dcfce7" : "rgba(34, 197, 94, 0.15)",
+                border: isLight ? "1px solid #86efac" : "1px solid rgba(34, 197, 94, 0.3)",
+                color: isLight ? "#15803d" : "#4ade80",
+                fontSize: 11,
+                fontWeight: 600,
+              }}
+              title={`Associated Test File: ${testFile?.filePath}`}
+            >
+              <FlaskConical size={12} />
+              <span>Test: {testFileName}</span>
+            </div>
+          ) : (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 5,
+                padding: "2px 8px",
+                borderRadius: 5,
+                background: isLight ? "#fef3c7" : "rgba(245, 158, 11, 0.15)",
+                border: isLight ? "1px solid #fde68a" : "1px solid rgba(245, 158, 11, 0.3)",
+                color: isLight ? "#b45309" : "#fbbf24",
+                fontSize: 11,
+                fontWeight: 600,
+              }}
+              title="File này chưa có file test tương ứng nào được tìm thấy trong dự án"
+            >
+              <AlertTriangle size={12} />
+              <span>Chưa có file test liên kết</span>
+            </div>
+          )}
+        </div>
+
+        {/* Center: Layout Switcher Tabs */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            background: isLight ? "#e2e8f0" : "rgba(0, 0, 0, 0.4)",
+            borderRadius: 7,
+            padding: 3,
+            border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)",
+          }}
+        >
+          <button
+            onClick={() => setLayoutMode("split")}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              padding: "4px 10px",
+              borderRadius: 5,
+              fontSize: 11,
+              fontWeight: layoutMode === "split" ? 700 : 500,
+              border: "none",
+              background: layoutMode === "split"
+                ? (isLight ? "#ffffff" : "linear-gradient(135deg, #7c3aed 0%, #6366f1 100%)")
+                : "transparent",
+              color: layoutMode === "split"
+                ? (isLight ? "#4338ca" : "#ffffff")
+                : (isLight ? "#64748b" : "#8b949e"),
+              cursor: "pointer",
+              boxShadow: layoutMode === "split"
+                ? (isLight ? "0 2px 4px rgba(0,0,0,0.08)" : "0 2px 6px rgba(124, 58, 237, 0.35)")
+                : "none",
+              transition: "all 0.15s ease",
+            }}
+            title="Split View: Hiển thị song song File Code và File Test"
+          >
+            <Columns size={12} />
+            <span>Song song (Code & Test)</span>
           </button>
+
+          <button
+            onClick={() => setLayoutMode("source")}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              padding: "4px 10px",
+              borderRadius: 5,
+              fontSize: 11,
+              fontWeight: layoutMode === "source" ? 700 : 500,
+              border: "none",
+              background: layoutMode === "source"
+                ? (isLight ? "#ffffff" : "rgba(255, 255, 255, 0.12)")
+                : "transparent",
+              color: layoutMode === "source"
+                ? (isLight ? "#0f172a" : "#ffffff")
+                : (isLight ? "#64748b" : "#8b949e"),
+              cursor: "pointer",
+              boxShadow: layoutMode === "source" ? "0 2px 4px rgba(0,0,0,0.08)" : "none",
+              transition: "all 0.15s ease",
+            }}
+            title="Chỉ hiển thị mã nguồn"
+          >
+            <FileCode size={12} />
+            <span>Mã nguồn</span>
+          </button>
+
+          <button
+            onClick={() => setLayoutMode("test")}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              padding: "4px 10px",
+              borderRadius: 5,
+              fontSize: 11,
+              fontWeight: layoutMode === "test" ? 700 : 500,
+              border: "none",
+              background: layoutMode === "test"
+                ? (isLight ? "#ffffff" : "rgba(255, 255, 255, 0.12)")
+                : "transparent",
+              color: layoutMode === "test"
+                ? (isLight ? "#0f172a" : "#ffffff")
+                : (isLight ? "#64748b" : "#8b949e"),
+              cursor: "pointer",
+              boxShadow: layoutMode === "test" ? "0 2px 4px rgba(0,0,0,0.08)" : "none",
+              transition: "all 0.15s ease",
+            }}
+            title="Chỉ hiển thị file test"
+          >
+            <FlaskConical size={12} />
+            <span>File Test</span>
+          </button>
+        </div>
+
+        {/* Right: Quick Action Buttons */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button
+            onClick={() => onSuggestTestcase && onSuggestTestcase(filePath)}
+            disabled={isLoadingSuggestions}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              padding: "5px 12px",
+              borderRadius: 6,
+              fontSize: 11,
+              fontWeight: 700,
+              background: "linear-gradient(135deg, #7c3aed 0%, #6366f1 100%)",
+              color: "#ffffff",
+              border: "none",
+              cursor: isLoadingSuggestions ? "wait" : "pointer",
+              boxShadow: "0 2px 8px rgba(124, 58, 237, 0.35)",
+              transition: "all 0.15s ease",
+            }}
+            className="hover:opacity-95"
+            title="Gợi ý unit test mới cho file này"
+          >
+            {isLoadingSuggestions ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <Sparkles size={12} />
+            )}
+            <span>Suggest Missing Test</span>
+          </button>
+
+          <button
+            onClick={() => onOpenFile?.(filePath)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              padding: "5px 9px",
+              borderRadius: 6,
+              fontSize: 11,
+              background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.05)",
+              border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.12)",
+              color: isLight ? "#334155" : "#cbd5e1",
+              cursor: "pointer",
+            }}
+            className={isLight ? "hover:bg-slate-100" : "hover:bg-white/10 hover:text-white"}
+            title="Mở file mã nguồn trong IDE"
+          >
+            <ExternalLink size={12} />
+            <span>IDE</span>
+          </button>
+        </div>
+      </div>
+
+      {/* ── Main Layout Body ──────────────────────────────────── */}
+      {layoutMode === "split" && (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(0, 1.05fr) minmax(0, 0.95fr)",
+            gap: 12,
+            padding: 12,
+            background: isLight ? "#f1f5f9" : "#05070b",
+          }}
+        >
+          <div style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
+            {renderSourcePanel()}
+          </div>
+          <div style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
+            {renderTestPanel()}
+          </div>
         </div>
       )}
 
-      {/* Main Content Area */}
-      {viewMode === "editor" ? (
-        <div style={{ height: 480, position: "relative" }}>
-          <MonacoEditor
-            height="100%"
-            language={lang}
-            theme="covai-dark-inline"
-            value={editorContent}
-            onChange={(val) => {
-              setEditorContent(val ?? "");
-              setIsDirty(true);
-            }}
-            beforeMount={handleEditorWillMount}
-            onMount={handleEditorDidMount}
-            options={{
-              fontSize: 12.5,
-              fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace",
-              lineHeight: 22,
-              minimap: { enabled: false },
-              scrollBeyondLastLine: false,
-              automaticLayout: true,
-              tabSize: 2,
-              wordWrap: "on",
-              renderLineHighlight: "all",
-              smoothScrolling: true,
-            }}
-          />
+      {layoutMode === "source" && (
+        <div style={{ padding: 12, background: isLight ? "#f1f5f9" : "#05070b" }}>
+          {renderSourcePanel()}
         </div>
-      ) : (
-        /* Visual Coverage Execution Flow View */
-        <div
-          style={{
-            maxHeight: 480,
-            overflowY: "auto",
-            fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-            fontSize: 12,
-            lineHeight: "22px",
-            padding: "6px 0",
-          }}
-        >
-          {visibleLineEntries.length === 0 ? (
-            <div style={{ padding: 24, textAlign: "center", color: "#6e7681" }}>
-              {codeLines.length === 0
-                ? "No source code content available for this file."
-                : "No lines match the selected filter."}
-            </div>
-          ) : (
-            visibleLineEntries.map(({ lineNum, codeText, isExecutable, isCovered, isMissed, isFailed, hits, error, reason }) => {
-              const lineNumStr = String(lineNum).padStart(2, "0");
+      )}
 
-              let rowBg = "transparent";
-              let borderLeft = "3px solid transparent";
-
-              if (isFailed) {
-                rowBg = "rgba(239, 68, 68, 0.12)";
-                borderLeft = "3px solid #ef4444";
-              } else if (isMissed) {
-                rowBg = "rgba(239, 68, 68, 0.08)";
-                borderLeft = "3px solid #ef4444";
-              } else if (isCovered) {
-                rowBg = "rgba(34, 197, 94, 0.03)";
-                borderLeft = "3px solid #22c55e";
-              }
-
-              return (
-                <div
-                  key={lineNum}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    padding: "2px 16px",
-                    background: rowBg,
-                    borderLeft: borderLeft,
-                    transition: "background 0.1s ease",
-                  }}
-                  className="hover:bg-white/[0.04]"
-                  title={
-                    error
-                      ? `Error: ${error}`
-                      : reason
-                        ? reason
-                        : isCovered
-                          ? `Executed ${hits} times`
-                          : ""
-                  }
-                >
-                  {/* Line number */}
-                  <span
-                    style={{
-                      width: 32,
-                      color: isMissed || isFailed ? "#f87171" : isCovered ? "#8b949e" : "#484f58",
-                      textAlign: "right",
-                      userSelect: "none",
-                      fontWeight: isCovered || isMissed ? 600 : 400,
-                      marginRight: 12,
-                    }}
-                  >
-                    {lineNumStr}
-                  </span>
-
-                  {/* Separator */}
-                  <span
-                    style={{
-                      color: "rgba(255, 255, 255, 0.12)",
-                      userSelect: "none",
-                      marginRight: 14,
-                    }}
-                  >
-                    │
-                  </span>
-
-                  {/* Code text */}
-                  <span
-                    style={{
-                      flex: 1,
-                      whiteSpace: "pre-wrap",
-                      wordBreak: "break-all",
-                      color: isMissed || isFailed
-                        ? "#fca5a5"
-                        : isCovered
-                          ? "#e6edf3"
-                          : "#8b949e",
-                    }}
-                  >
-                    {codeText || " "}
-                  </span>
-
-                  {/* Hits Badge on the right */}
-                  {isExecutable && (
-                    <div
-                      style={{
-                        marginLeft: 16,
-                        flexShrink: 0,
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 6,
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: 11,
-                          fontWeight: 700,
-                          padding: "1px 7px",
-                          borderRadius: 4,
-                          background: isFailed
-                            ? "rgba(239, 68, 68, 0.2)"
-                            : isCovered
-                              ? "rgba(34, 197, 94, 0.14)"
-                              : "rgba(239, 68, 68, 0.15)",
-                          color: isFailed ? "#fca5a5" : isCovered ? "#4ade80" : "#f87171",
-                          border: isFailed
-                            ? "1px solid rgba(239, 68, 68, 0.4)"
-                            : isCovered
-                              ? "1px solid rgba(34, 197, 94, 0.3)"
-                              : "1px solid rgba(239, 68, 68, 0.3)",
-                        }}
-                      >
-                        {isFailed
-                          ? "× Failed"
-                          : isCovered
-                            ? `✓ ${hits} hit${hits > 1 ? "s" : ""}`
-                            : "⚑ 0 hits"}
-                      </span>
-
-                      {isMissed && onSuggestTestcase && (
-                        <button
-                          onClick={() => onSuggestTestcase(filePath)}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 3,
-                            padding: "1px 6px",
-                            borderRadius: 4,
-                            background: "rgba(168, 85, 247, 0.15)",
-                            border: "1px solid rgba(168, 85, 247, 0.35)",
-                            color: "#c084fc",
-                            fontSize: 10,
-                            cursor: "pointer",
-                          }}
-                          title="AI suggest test case covering this line"
-                        >
-                          <Sparkles size={10} />
-                          <span>Suggest</span>
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })
-          )}
+      {layoutMode === "test" && (
+        <div style={{ padding: 12, background: isLight ? "#f1f5f9" : "#05070b" }}>
+          {renderTestPanel()}
         </div>
       )}
     </div>

@@ -12,7 +12,7 @@ import {
     parseModuleResolutionError
 } from "./runTestsJob.service.js";
 import { runVitestCoverage } from "./vitestRunner.service.js";
-import { getFileCoverageDetails, normalizePath } from "./fileCoverage.service.js";
+import { getFileCoverageDetails, normalizePath, findAssociatedTestFile } from "./fileCoverage.service.js";
 
 /**
  * Resolve snapshot root directory across Windows host and Docker container paths.
@@ -62,7 +62,11 @@ const sanitizePath = (rootDir, targetPath) => {
  * @returns {{ targetTestFile: string, changed: boolean, originalContent: string, newContent: string }}
  */
 export const applyCodeToTestFile = (rootDir, suggestion) => {
-    const rawTestFile = suggestion.testFile || suggestion.targetTestFile;
+    let rawTestFile = suggestion.testFile || suggestion.targetTestFile;
+    if (!rawTestFile && suggestion.sourceFile) {
+        const found = findAssociatedTestFile(rootDir, suggestion.sourceFile);
+        rawTestFile = found.found ? found.filePath : (found.suggestedFilePath || `tests/${path.basename(suggestion.sourceFile, path.extname(suggestion.sourceFile))}.test.js`);
+    }
     if (!rawTestFile) {
         throw new ServiceError("testFile is required in suggestion metadata", 400);
     }
