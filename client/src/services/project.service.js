@@ -354,7 +354,11 @@ export async function generateSkeletonApi(
   return handleResponse(res);
 }
 
-export async function generateIntegrationTestApi(projectId, snapshotId, force = false) {
+export async function generateIntegrationTestApi(
+  projectId,
+  snapshotId,
+  force = false,
+) {
   const res = await fetch(
     `${BASE_URL}/projects/${projectId}/ai/generate-integration-test`,
     {
@@ -410,6 +414,21 @@ export async function restoreProjectSnapshotApi(projectId, snapshotId) {
     {
       method: "POST",
       headers: getAuthHeaders(),
+    },
+  );
+  return handleResponse(res);
+}
+
+export async function getArchitectureAiSummaryApi(
+  projectId,
+  { snapshotId, filePath, force = false },
+) {
+  const res = await fetch(
+    `${BASE_URL}/projects/${projectId}/architecture/ai-summary`,
+    {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ snapshotId, filePath, force }),
     },
   );
   return handleResponse(res);

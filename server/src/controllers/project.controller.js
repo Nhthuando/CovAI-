@@ -44,6 +44,7 @@ import {
   restoreProjectCheckpoint,
 } from "../services/project.service.js";
 import { createBuildCfgJob } from "../services/job.service.js";
+import { getArchitectureAiSummary } from "../services/architectureAiSummary.service.js";
 import { addJobToQueue } from "../services/queue.service.js";
 import { analysisJobResponse } from "../services/analysisResponse.service.js";
 import { detectProjectFrameworks } from "../services/frameworkDetection.service.js";
@@ -366,6 +367,34 @@ class ProjectController {
       return res.status(500).json({
         success: false,
         message: "Failed to start architecture analysis",
+      });
+    }
+  }
+
+  /**
+   * POST /projects/:id/architecture/ai-summary
+   */
+  async getArchitectureAiSummary(req, res) {
+    try {
+      const { snapshotId, filePath, force } = req.body;
+      const data = await getArchitectureAiSummary({
+        projectId: req.params.id,
+        snapshotId,
+        filePath,
+        userId: req.user.id,
+        force: Boolean(force),
+      });
+      return res.status(200).json({ success: true, data });
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+      console.error(error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to generate architecture AI summary",
       });
     }
   }

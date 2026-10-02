@@ -40,6 +40,10 @@ router.post(
 );
 router.post("/:id/run-analysis", projectController.runCoverageAnalysis);
 router.post("/:id/structure-analysis", projectController.runStructureAnalysis);
+router.post(
+  "/:id/architecture/ai-summary",
+  projectController.getArchitectureAiSummary,
+);
 router.post("/:id/quality-analysis", runQualityAnalysis);
 router.get("/:id/quality-report", fetchQualityReport);
 router.post("/:id/cfg/build", projectController.buildCfg);

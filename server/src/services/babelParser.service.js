@@ -1,23 +1,23 @@
-import { parse } from '@babel/parser';
-import fs from 'fs';
+import { parse } from "@babel/parser";
+import fs from "fs";
 
 /**
  * Reusable Babel parser configuration.
  */
 const parserOptions = {
-    sourceType: "module",
-    plugins: [
-        "jsx",
-        "typescript",
-        "classProperties",
-        "classPrivateMethods",
-        "classPrivateProperties",
-        "optionalChaining",
-        "nullishCoalescingOperator",
-        "dynamicImport",
-        "objectRestSpread",
-        "topLevelAwait"
-    ]
+  sourceType: "module",
+  plugins: [
+    "jsx",
+    "typescript",
+    "classProperties",
+    "classPrivateMethods",
+    "classPrivateProperties",
+    "optionalChaining",
+    "nullishCoalescingOperator",
+    "dynamicImport",
+    "objectRestSpread",
+    "topLevelAwait",
+  ],
 };
 
 /**
@@ -26,19 +26,19 @@ const parserOptions = {
  * @returns {Object} Result object containing success status, AST, or error message.
  */
 export const parseJavaScriptCode = (codeString) => {
-    try {
-        const ast = parse(codeString, parserOptions);
-        return {
-            success: true,
-            ast
-        };
-    } catch (error) {
-        return {
-            success: false,
-            ast: null,
-            error: error.message
-        };
-    }
+  try {
+    const ast = parse(codeString, parserOptions);
+    return {
+      success: true,
+      ast,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      ast: null,
+      error: error.message,
+    };
+  }
 };
 
 /**
@@ -59,26 +59,31 @@ export const parseJavaScriptCode = (codeString) => {
  * @returns {{success: boolean, ast: object|null, error?: string}}
  */
 export const parseJavaScriptFile = (filePath) => {
-    if (typeof filePath !== 'string') {
-        return { success: false, ast: null, error: 'Invalid file path' };
-    }
+  if (typeof filePath !== "string") {
+    return { success: false, ast: null, error: "Invalid file path" };
+  }
 
-    if (!fs.existsSync(filePath)) {
-        return {
-            success: false,
-            ast: null,
-            error: `File does not exist: ${filePath}`
-        };
-    }
+  if (!fs.existsSync(filePath)) {
+    return {
+      success: false,
+      ast: null,
+      error: `File does not exist: ${filePath}`,
+    };
+  }
 
-    try {
-        const code = fs.readFileSync(filePath, 'utf-8');
-        return parseJavaScriptCode(code);
-    } catch (error) {
-        return {
-            success: false,
-            ast: null,
-            error: `Failed to read file: ${error.message}`
-        };
-    }
+  try {
+    const code = fs.readFileSync(filePath, "utf-8");
+    const lineCount = code ? code.split(/\r?\n/).length : 0;
+    return {
+      ...parseJavaScriptCode(code),
+      lineCount,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      ast: null,
+      lineCount: 0,
+      error: `Failed to read file: ${error.message}`,
+    };
+  }
 };

@@ -161,7 +161,10 @@ function LayoutInner() {
 
   const handleOpenCFG = (filePath = null, functionName = null) => {
     if (filePath) {
-      setCfgInitialContext({ initialFile: filePath, initialFunc: functionName });
+      setCfgInitialContext({
+        initialFile: filePath,
+        initialFunc: functionName,
+      });
     } else {
       setCfgInitialContext(null);
     }
@@ -755,7 +758,7 @@ function LayoutInner() {
           </motion.div>
         )}
         <AnimatePresence initial={false}>
-          {sidebarOpen && (
+          {sidebarOpen && activeActivity !== "architecture" && (
             <motion.div
               key="sidebar"
               initial={
@@ -831,7 +834,7 @@ function LayoutInner() {
             </motion.div>
           )}
         </AnimatePresence>
-        {!isMobile && sidebarOpen && (
+        {!isMobile && sidebarOpen && activeActivity !== "architecture" && (
           <PanelResizer
             onMouseDown={handleSidebarResize}
             isDragging={isDraggingSidebar}
@@ -864,8 +867,8 @@ function LayoutInner() {
           ) : activeActivity === "jobs" ? (
             <JobQueue projectId={project?.id} onSync={handleGitSync} />
           ) : activeActivity === "architecture" ? (
-            <ProjectArchitecturePanel 
-              projectId={project?.id} 
+            <ProjectArchitecturePanel
+              projectId={project?.id}
               initialFile={archInitialContext?.initialFile}
             />
           ) : activeActivity === "coverage" ? (
@@ -1057,7 +1060,12 @@ function LayoutInner() {
       </AnimatePresence>
       <AnimatePresence>
         {showCFG && (
-          <CFGCalculator project={project} onClose={handleCloseCFG} initialFile={cfgInitialContext?.initialFile} initialFunc={cfgInitialContext?.initialFunc} />
+          <CFGCalculator
+            project={project}
+            onClose={handleCloseCFG}
+            initialFile={cfgInitialContext?.initialFile}
+            initialFunc={cfgInitialContext?.initialFunc}
+          />
         )}
       </AnimatePresence>
       <AnimatePresence>

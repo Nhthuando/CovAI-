@@ -12,7 +12,9 @@ export const extractFunctions = (ast, filePath) => {
   if (!ast) return [];
   const functions = [];
   const add = (functionPath) => {
-    functions.push(getFunctionMetadata(functionPath, functionPath.node.type, filePath));
+    functions.push(
+      getFunctionMetadata(functionPath, functionPath.node.type, filePath),
+    );
   };
 
   traverse(ast, {
@@ -23,8 +25,11 @@ export const extractFunctions = (ast, filePath) => {
     ObjectMethod: add,
   });
 
-  return functions.sort((left, right) =>
-    left.startLine - right.startLine || left.endLine - right.endLine || left.id.localeCompare(right.id),
+  return functions.sort(
+    (left, right) =>
+      left.startLine - right.startLine ||
+      left.endLine - right.endLine ||
+      left.id.localeCompare(right.id),
   );
 };
 
@@ -38,8 +43,10 @@ export const extractFunctions = (ast, filePath) => {
 const parameterName = (parameter) => {
   if (!parameter) return "pattern";
   if (parameter.type === "Identifier") return parameter.name;
-  if (parameter.type === "RestElement") return `...${parameterName(parameter.argument)}`;
-  if (parameter.type === "AssignmentPattern") return parameterName(parameter.left);
+  if (parameter.type === "RestElement")
+    return `...${parameterName(parameter.argument)}`;
+  if (parameter.type === "AssignmentPattern")
+    return parameterName(parameter.left);
   return "pattern";
 };
 
@@ -56,25 +63,42 @@ const isCommonJsExport = (assignment) => {
   const left = assignment?.left;
   if (left?.type !== "MemberExpression") return false;
   const object = left.object;
-  return object?.name === "exports"
-    || (object?.type === "MemberExpression" && object.object?.name === "module" && object.property?.name === "exports");
+  return (
+    object?.name === "exports" ||
+    (object?.type === "MemberExpression" &&
+      object.object?.name === "module" &&
+      object.property?.name === "exports")
+  );
 };
 
-const findAssignment = (functionPath) => functionPath.findParent((ancestor) => ancestor.isAssignmentExpression?.());
+const findAssignment = (functionPath) =>
+  functionPath.findParent((ancestor) => ancestor.isAssignmentExpression?.());
 
 const functionName = (functionPath) => {
   const node = functionPath.node;
   if (node.id?.name) return node.id.name;
   if (node.key) return getNameFromKey(node.key);
   const parent = functionPath.parentPath;
-  if (parent?.isVariableDeclarator?.() && parent.node.id.type === "Identifier") return parent.node.id.name;
-  if ((parent?.isObjectProperty?.() || parent?.isClassProperty?.()) && parent.node.key) return getNameFromKey(parent.node.key);
+  if (parent?.isVariableDeclarator?.() && parent.node.id.type === "Identifier")
+    return parent.node.id.name;
+  if (
+    (parent?.isObjectProperty?.() || parent?.isClassProperty?.()) &&
+    parent.node.key
+  )
+    return getNameFromKey(parent.node.key);
   const assignment = findAssignment(functionPath);
   return assignmentName(assignment?.node) || "anonymous";
 };
 
 const isExported = (functionPath) => {
-  if (functionPath.findParent((ancestor) => ancestor.isExportNamedDeclaration?.() || ancestor.isExportDefaultDeclaration?.())) return true;
+  if (
+    functionPath.findParent(
+      (ancestor) =>
+        ancestor.isExportNamedDeclaration?.() ||
+        ancestor.isExportDefaultDeclaration?.(),
+    )
+  )
+    return true;
   return isCommonJsExport(findAssignment(functionPath)?.node);
 };
 
@@ -82,13 +106,31 @@ const getFunctionMetadata = (functionPath, type, filePath) => {
   const node = functionPath.node;
   const name = functionName(functionPath);
   const isAnonymous = name === "anonymous";
+  const isArrow =
+    type === "ArrowFunctionExpression" ||
+    functionPath.isArrowFunctionExpression?.();
+  const displayName = isAnonymous
+    ? isArrow
+      ? "arrow function"
+      : "anonymous"
+    : name;
   let controlFlow = { nodes: [], edges: [] };
-  try { controlFlow = buildCFG(node).graphJson; } catch { /* Catalog remains usable if CFG generation cannot classify a construct. */ }
+  try {
+    controlFlow = buildCFG(node).graphJson;
+  } catch {
+    /* Catalog remains usable if CFG generation cannot classify a construct. */
+  }
 
   return {
-    id: createFunctionId(filePath, node.loc?.start.line, node.loc?.end.line, type),
+    id: createFunctionId(
+      filePath,
+      node.loc?.start.line,
+      node.loc?.end.line,
+      type,
+    ),
     name,
-    label: isAnonymous ? `anonymous@L${node.loc?.start.line ?? 0}` : name,
+    displayName,
+    label: isAnonymous ? `${displayName}@L${node.loc?.start.line ?? 0}` : name,
     type,
     filePath,
     startLine: node.loc?.start.line ?? null,
