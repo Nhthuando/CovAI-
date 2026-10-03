@@ -22,6 +22,7 @@ import {
   Network,
   Loader2,
   Layers,
+  Activity,
 } from "lucide-react";
 import { useTheme } from "../../contexts/ThemeContext";
 import {
@@ -47,6 +48,7 @@ import FunctionExecutionFlow from "./FunctionExecutionFlow.jsx";
 import FileCodeExecutionView from "./FileCodeExecutionView.jsx";
 import FileBranchCFGView from "./FileBranchCFGView.jsx";
 import FileFunctionCallGraphView from "./FileFunctionCallGraphView.jsx";
+import UnitTestExecutionVisualizer from "./UnitTestExecutionVisualizer.jsx";
 import CFGCalculator from "./CFGCalculator.jsx";
 import WaveProgressBar from "./WaveProgressBar.jsx";
 import InlineTestSuggestions from "./InlineTestSuggestions.jsx";
@@ -297,10 +299,13 @@ export default function CoverageTypeDashboard({
   const [activeFramework, setActiveFramework] = useState("");
   const [generateError, setGenerateError] = useState("");
 
-  // Mode view for Unit test: "testcases" (default for unit) | "all" | "statements" | "branches" | "functions"
+  // Mode view for Unit test: "testcases" (default for unit) | "visualization" | "all" | "statements" | "branches" | "functions"
   const [activeMetricView, setActiveMetricView] = useState(
     type === "unit" ? "testcases" : "all",
   );
+
+  // View mode for Unit Testcases: "table" | "visualization"
+  const [testCaseViewMode, setTestCaseViewMode] = useState("table");
 
   // View mode for Function coverage
   const [functionViewMode, setFunctionViewMode] = useState("map"); // "map" | "table"
@@ -2215,6 +2220,17 @@ export default function CoverageTypeDashboard({
                   icon: FlaskConical,
                   accent: isLight ? "#7c3aed" : "#c084fc",
                 },
+                ...(type === "unit"
+                  ? [
+                      {
+                        id: "visualization",
+                        label: "Test Execution Visualization",
+                        count: `${totals.passed}/${totals.total || unitTestSuites.length}`,
+                        icon: Activity,
+                        accent: isLight ? "#059669" : "#34d399",
+                      },
+                    ]
+                  : []),
                 {
                   id: "all",
                   label: "Source file coverage",
@@ -2321,7 +2337,7 @@ export default function CoverageTypeDashboard({
                 );
               })}
 
-              {activeMetricView !== "testcases" && (
+              {activeMetricView !== "testcases" && activeMetricView !== "visualization" && (
                 <button
                   onClick={() => setActiveMetricView("testcases")}
                   style={
@@ -2378,62 +2394,74 @@ export default function CoverageTypeDashboard({
                 flexWrap: "wrap",
                 gap: 12,
                 background: isLight
-                  ? activeMetricView === "testcases"
-                    ? "#faf5ff"
-                    : activeMetricView === "statements"
-                      ? "#eef2ff"
-                      : activeMetricView === "branches"
-                        ? "#fffbeb"
-                        : activeMetricView === "functions"
-                          ? "#f0f9ff"
-                          : "#f8fafc"
-                  : activeMetricView === "testcases"
-                    ? "rgba(192, 132, 252, 0.08)"
-                    : activeMetricView === "statements"
-                      ? "rgba(167, 139, 250, 0.08)"
-                      : activeMetricView === "branches"
-                        ? "rgba(251, 191, 36, 0.08)"
-                        : activeMetricView === "functions"
-                          ? "rgba(56, 189, 248, 0.08)"
-                          : "rgba(255, 255, 255, 0.04)",
+                  ? activeMetricView === "visualization"
+                    ? "#ecfdf5"
+                    : activeMetricView === "testcases"
+                      ? "#faf5ff"
+                      : activeMetricView === "statements"
+                        ? "#eef2ff"
+                        : activeMetricView === "branches"
+                          ? "#fffbeb"
+                          : activeMetricView === "functions"
+                            ? "#f0f9ff"
+                            : "#f8fafc"
+                  : activeMetricView === "visualization"
+                    ? "rgba(16, 185, 129, 0.08)"
+                    : activeMetricView === "testcases"
+                      ? "rgba(192, 132, 252, 0.08)"
+                      : activeMetricView === "statements"
+                        ? "rgba(167, 139, 250, 0.08)"
+                        : activeMetricView === "branches"
+                          ? "rgba(251, 191, 36, 0.08)"
+                          : activeMetricView === "functions"
+                            ? "rgba(56, 189, 248, 0.08)"
+                            : "rgba(255, 255, 255, 0.04)",
                 border: isLight
-                  ? activeMetricView === "testcases"
-                    ? "1px solid #e9d5ff"
-                    : activeMetricView === "statements"
-                      ? "1px solid #c7d2fe"
-                      : activeMetricView === "branches"
-                        ? "1px solid #fde68a"
-                        : activeMetricView === "functions"
-                          ? "1px solid #bae6fd"
-                          : "1px solid #e2e8f0"
-                  : activeMetricView === "testcases"
-                    ? "1px solid rgba(192, 132, 252, 0.25)"
-                    : activeMetricView === "statements"
-                      ? "1px solid rgba(167, 139, 250, 0.25)"
-                      : activeMetricView === "branches"
-                        ? "1px solid rgba(251, 191, 36, 0.25)"
-                        : activeMetricView === "functions"
-                          ? "1px solid rgba(56, 189, 248, 0.25)"
-                          : "1px solid rgba(255, 255, 255, 0.08)",
+                  ? activeMetricView === "visualization"
+                    ? "1px solid #a7f3d0"
+                    : activeMetricView === "testcases"
+                      ? "1px solid #e9d5ff"
+                      : activeMetricView === "statements"
+                        ? "1px solid #c7d2fe"
+                        : activeMetricView === "branches"
+                          ? "1px solid #fde68a"
+                          : activeMetricView === "functions"
+                            ? "1px solid #bae6fd"
+                            : "1px solid #e2e8f0"
+                  : activeMetricView === "visualization"
+                    ? "1px solid rgba(16, 185, 129, 0.25)"
+                    : activeMetricView === "testcases"
+                      ? "1px solid rgba(192, 132, 252, 0.25)"
+                      : activeMetricView === "statements"
+                        ? "1px solid rgba(167, 139, 250, 0.25)"
+                        : activeMetricView === "branches"
+                          ? "1px solid rgba(251, 191, 36, 0.25)"
+                          : activeMetricView === "functions"
+                            ? "1px solid rgba(56, 189, 248, 0.25)"
+                            : "1px solid rgba(255, 255, 255, 0.08)",
                 color: isLight
-                  ? activeMetricView === "testcases"
-                    ? "#581c87"
-                    : activeMetricView === "statements"
-                      ? "#3730a3"
-                      : activeMetricView === "branches"
-                        ? "#92400e"
-                        : activeMetricView === "functions"
-                          ? "#075985"
-                          : "#334155"
-                  : activeMetricView === "testcases"
-                    ? "#e9d5ff"
-                    : activeMetricView === "statements"
-                      ? "#c4b5fd"
-                      : activeMetricView === "branches"
-                        ? "#fde68a"
-                        : activeMetricView === "functions"
-                          ? "#bae6fd"
-                          : "#8b949e",
+                  ? activeMetricView === "visualization"
+                    ? "#065f46"
+                    : activeMetricView === "testcases"
+                      ? "#581c87"
+                      : activeMetricView === "statements"
+                        ? "#3730a3"
+                        : activeMetricView === "branches"
+                          ? "#92400e"
+                          : activeMetricView === "functions"
+                            ? "#075985"
+                            : "#334155"
+                  : activeMetricView === "visualization"
+                    ? "#6ee7b7"
+                    : activeMetricView === "testcases"
+                      ? "#e9d5ff"
+                      : activeMetricView === "statements"
+                        ? "#c4b5fd"
+                        : activeMetricView === "branches"
+                          ? "#fde68a"
+                          : activeMetricView === "functions"
+                            ? "#bae6fd"
+                            : "#8b949e",
               }}
             >
               <div
@@ -2445,7 +2473,18 @@ export default function CoverageTypeDashboard({
                   minWidth: 260,
                 }}
               >
-                {activeMetricView === "testcases" ? (
+                {activeMetricView === "visualization" ? (
+                  <>
+                    <Activity
+                      size={15}
+                      style={{ flexShrink: 0, color: isLight ? "#059669" : "#34d399" }}
+                    />
+                    <span>
+                      <b>Test Execution Visualization Unit:</b> Real-time interactive execution
+                      timeline, test suite waterfall, assertion status tree, and bottleneck diagnostics.
+                    </span>
+                  </>
+                ) : activeMetricView === "testcases" ? (
                   <>
                     <FlaskConical
                       size={15}
@@ -2502,6 +2541,72 @@ export default function CoverageTypeDashboard({
                   </>
                 )}
               </div>
+
+              {/* View Mode Switcher for Unit Testcases */}
+              {type === "unit" && activeMetricView === "testcases" && (
+                <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                  <button
+                    onClick={() => setTestCaseViewMode("table")}
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 650,
+                      padding: "4px 10px",
+                      borderRadius: 6,
+                      cursor: "pointer",
+                      background:
+                        testCaseViewMode === "table"
+                          ? (isLight ? "#7c3aed" : "var(--color-primary)")
+                          : (isLight ? "#ffffff" : "var(--color-surface)"),
+                      color:
+                        testCaseViewMode === "table"
+                          ? "#ffffff"
+                          : (isLight ? "#475569" : "var(--color-text-secondary)"),
+                      border:
+                        testCaseViewMode === "table"
+                          ? (isLight ? "1px solid #7c3aed" : "1px solid var(--color-primary)")
+                          : (isLight ? "1px solid #cbd5e1" : "1px solid var(--color-border)"),
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 4,
+                      transition: "all 0.15s ease",
+                      boxShadow: isLight && testCaseViewMode === "table" ? "0 1px 2px rgba(124, 58, 237, 0.2)" : "none",
+                    }}
+                  >
+                    <FlaskConical size={12} />
+                    <span>📋 File Table</span>
+                  </button>
+                  <button
+                    onClick={() => setTestCaseViewMode("visualization")}
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 650,
+                      padding: "4px 10px",
+                      borderRadius: 6,
+                      cursor: "pointer",
+                      background:
+                        testCaseViewMode === "visualization"
+                          ? (isLight ? "#7c3aed" : "var(--color-primary)")
+                          : (isLight ? "#ffffff" : "var(--color-surface)"),
+                      color:
+                        testCaseViewMode === "visualization"
+                          ? "#ffffff"
+                          : (isLight ? "#475569" : "var(--color-text-secondary)"),
+                      border:
+                        testCaseViewMode === "visualization"
+                          ? (isLight ? "1px solid #7c3aed" : "1px solid var(--color-primary)")
+                          : (isLight ? "1px solid #cbd5e1" : "1px solid var(--color-border)"),
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 4,
+                      transition: "all 0.15s ease",
+                      boxShadow: isLight && testCaseViewMode === "visualization" ? "0 1px 2px rgba(124, 58, 237, 0.2)" : "none",
+                    }}
+                  >
+                    <Activity size={12} />
+                    <span>⚡ Execution Visualization</span>
+                  </button>
+                </div>
+              )}
 
               {/* View Mode Switcher for Function */}
               {activeMetricView === "functions" && (
@@ -2572,7 +2677,26 @@ export default function CoverageTypeDashboard({
           )}
 
           {/* ── TABLE VIEW SWITCHER ─────────────────────────────────── */}
-          {type === "unit" && activeMetricView === "testcases" ? (
+          {type === "unit" && (activeMetricView === "visualization" || (activeMetricView === "testcases" && testCaseViewMode === "visualization")) ? (
+            <div style={{ marginTop: 14 }}>
+              <UnitTestExecutionVisualizer
+                testSuites={unitTestSuites}
+                executions={executions}
+                sourceFiles={selectedFiles}
+                isLight={isLight}
+                onOpenFile={onOpenFile}
+                onSelectSourceFile={(filePath) => {
+                  setSelectedSourceFile(filePath);
+                  setActiveMetricView("all");
+                  ensureFileCoverage(filePath);
+                }}
+                onRunTests={run}
+                running={running}
+                runProgress={runProgress}
+                runStep={runStep}
+              />
+            </div>
+          ) : type === "unit" && activeMetricView === "testcases" ? (
             /* ── A. Unit Testcase Files Table (Jest / Vitest only) ───── */
             <div
               style={{
@@ -2609,6 +2733,28 @@ export default function CoverageTypeDashboard({
                 </div>
 
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <button
+                    onClick={() => setTestCaseViewMode("visualization")}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 5,
+                      padding: "4px 9px",
+                      borderRadius: 6,
+                      background: isLight ? "#ede9fe" : "rgba(124, 58, 237, 0.2)",
+                      color: isLight ? "#6d28d9" : "#c084fc",
+                      border: isLight ? "1px solid #c4b5fd" : "1px solid rgba(192, 132, 252, 0.35)",
+                      fontSize: 11,
+                      fontWeight: 650,
+                      cursor: "pointer",
+                      transition: "all 0.15s ease",
+                    }}
+                    title="Switch to Test Execution Visualization Unit"
+                  >
+                    <Activity size={12} />
+                    <span>Visualize Execution</span>
+                  </button>
+
                   {/* Search input */}
                   <div
                     style={{
@@ -3633,7 +3779,7 @@ export default function CoverageTypeDashboard({
                             );
                           })}
 
-                          {/* Action: Inline Suggest Test, Open Code & Expand Toggle */}
+                          {/* Action: Open Code & Expand Toggle */}
                           <div
                             style={{
                               display: "flex",
@@ -3642,33 +3788,6 @@ export default function CoverageTypeDashboard({
                               gap: 6,
                             }}
                           >
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleSuggestTestcaseInline(file.filePath);
-                              }}
-                              disabled={isSuggesting}
-                              style={{
-                                padding: "4px 8px",
-                                borderRadius: 5,
-                                background: isLight ? "#f5f3ff" : "rgba(168, 85, 247, 0.15)",
-                                border: isLight ? "1px solid #ddd6fe" : "1px solid rgba(168, 85, 247, 0.35)",
-                                color: isLight ? "#7c3aed" : "#d8b4fe",
-                                fontSize: 11,
-                                fontWeight: 600,
-                                cursor: isSuggesting ? "wait" : "pointer",
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 4,
-                                transition: "all 0.15s ease",
-                              }}
-                              className={isLight ? "hover:bg-purple-100" : "hover:bg-purple-500/25 hover:text-white"}
-                              title="Generate AI inline test suggestions for this file"
-                            >
-                              <Sparkles size={11} />
-                              Suggest
-                            </button>
-
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -3817,6 +3936,12 @@ export default function CoverageTypeDashboard({
                                   applyingSuggestionIds={applyingSuggestionIds}
                                   onApplySuggestion={(sug) => handleApplySuggestionInline(file.filePath, sug)}
                                   onApplyAllSuggestions={(sugs) => handleApplyAllInline(file.filePath, sugs)}
+                                  onRejectSuggestion={(sugId) => handleRejectInline(file.filePath, sugId)}
+                                  onUpdateSuggestionCode={(sugId, newCode) =>
+                                    handleUpdateSuggestionCode(file.filePath, sugId, newCode)
+                                  }
+                                  lastApplyResult={lastApply}
+                                  progressStep={progressStep}
                                   isLight={isLight}
                                 />
                               )

@@ -81,6 +81,7 @@ const mockGetFileCoverageDetails = jest.fn();
 jest.unstable_mockModule('../services/fileCoverage.service.js', () => ({
     getFileCoverageDetails: mockGetFileCoverageDetails,
     normalizePath: (p) => (p ? p.replace(/\\/g, '/') : p),
+    findAssociatedTestFile: jest.fn(() => null),
 }));
 
 const mockSuggestUnitTestcases = jest.fn();

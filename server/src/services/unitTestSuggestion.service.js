@@ -3,7 +3,7 @@ import path from "path";
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { detectCoverageFrameworks } from "./coverageFramework.service.js";
-import { getFileCoverageDetails, normalizePath } from "./fileCoverage.service.js";
+import { getFileCoverageDetails, normalizePath, findAssociatedTestFile } from "./fileCoverage.service.js";
 import { generateText } from "./gemini.service.js";
 
 export const sanitizeSourceFilePath = (rootDir, filePath) => {
@@ -25,174 +25,30 @@ export const sanitizeSourceFilePath = (rootDir, filePath) => {
  * Searches the project root directory for an existing test file associated with a source file.
  */
 export const findExistingTestFile = (rootDir, rawSourceFilePath, framework = null) => {
-    const sourceFilePath = sanitizeSourceFilePath(rootDir, rawSourceFilePath);
-    const isAlreadyTestFile = /(^|\/)(tests?|__tests__|specs?)\//i.test(sourceFilePath) || /\.(test|spec|steps?)\.[a-z0-9]+$/i.test(sourceFilePath);
-    if (isAlreadyTestFile) {
-        const fullPath = path.join(rootDir, sourceFilePath);
-        const exists = fs.existsSync(fullPath);
-        return {
-            found: exists,
-            relativePath: normalizePath(sourceFilePath),
-            absolutePath: fullPath,
-            fileName: path.basename(sourceFilePath),
-            content: exists ? fs.readFileSync(fullPath, "utf8") : "",
-            framework: (exists && fs.readFileSync(fullPath, "utf8").includes("vitest")) ? "vitest" : (framework || "jest")
-        };
-    }
+    const cleanSource = sanitizeSourceFilePath(rootDir, rawSourceFilePath);
+    const associated = findAssociatedTestFile(rootDir, cleanSource, framework);
 
-    const ext = path.extname(sourceFilePath) || ".js";
-    const rawBaseName = path.basename(sourceFilePath, ext);
-    const baseName = rawBaseName.replace(/\.(test|spec|steps?)$/i, "");
-    const dirName = path.dirname(sourceFilePath);
-
-    // 1. Scan existing test files in project to check if any test imports or tests this source file
-    let bestImportMatch = null;
-    const normSource = normalizePath(sourceFilePath);
-    const scanDir = (dir, depth = 0) => {
-        if (depth > 6 || bestImportMatch) return;
-        let entries;
-        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-        for (const e of entries) {
-            if (["node_modules", ".git", "coverage", "dist", "build", ".next", ".vite"].includes(e.name)) continue;
-            const full = path.join(dir, e.name);
-            if (e.isDirectory()) {
-                scanDir(full, depth + 1);
-            } else if (e.isFile() && /\.(test|spec|steps?)\.[a-z0-9]+$/i.test(e.name)) {
-                try {
-                    const content = fs.readFileSync(full, "utf8");
-                    if (content.includes(baseName)) {
-                        const rel = normalizePath(path.relative(rootDir, full));
-                        const sourcePrefix = normSource.includes("/") ? normSource.split("/")[0] : "";
-                        if (!bestImportMatch || (sourcePrefix && rel.startsWith(sourcePrefix))) {
-                            bestImportMatch = { full, rel, content };
-                        }
-                    }
-                } catch { }
-            }
-        }
-    };
-    try { scanDir(rootDir); } catch { }
-
-    if (bestImportMatch) {
+    if (associated && associated.found) {
         return {
             found: true,
-            relativePath: bestImportMatch.rel,
-            absolutePath: bestImportMatch.full,
-            fileName: path.basename(bestImportMatch.rel),
-            content: bestImportMatch.content,
-            framework: bestImportMatch.content.includes("vitest") ? "vitest" : (framework || "jest")
+            relativePath: associated.filePath,
+            suggestedFilePath: associated.filePath,
+            absolutePath: path.join(rootDir, associated.filePath),
+            fileName: associated.fileName,
+            content: associated.testCode || "",
+            framework: associated.framework || "jest"
         };
     }
 
-    // 2. Vitest-specific candidate paths
-    if (framework === "vitest") {
-        const vitestCandidates = [
-            path.join("tests", `${baseName}.vitest.test${ext}`),
-            path.join("tests", `${baseName}.vitest${ext}`),
-            path.join("tests", `${baseName}.spec${ext}`),
-            path.join("tests", `vitest.test${ext}`),
-            path.join("tests", `vitest.spec${ext}`),
-            path.join(dirName, `${baseName}.vitest.test${ext}`),
-            path.join(dirName, `${baseName}.spec${ext}`),
-            path.join(dirName, "__tests__", `${baseName}.vitest.test${ext}`),
-        ];
-
-        for (const candidate of vitestCandidates) {
-            const fullPath = path.join(rootDir, candidate);
-            if (fs.existsSync(fullPath)) {
-                return {
-                    found: true,
-                    relativePath: normalizePath(candidate),
-                    absolutePath: fullPath,
-                    fileName: path.basename(candidate),
-                    content: fs.readFileSync(fullPath, "utf8"),
-                    framework: "vitest"
-                };
-            }
-        }
-
-        const genericTestPath = path.join("tests", `${baseName}.test${ext}`);
-        if (fs.existsSync(path.join(rootDir, genericTestPath))) {
-            const content = fs.readFileSync(path.join(rootDir, genericTestPath), "utf8");
-            if (content.includes("vitest") || content.includes("from 'vitest'") || content.includes('from "vitest"')) {
-                return {
-                    found: true,
-                    relativePath: normalizePath(genericTestPath),
-                    absolutePath: path.join(rootDir, genericTestPath),
-                    fileName: path.basename(genericTestPath),
-                    content,
-                    framework: "vitest"
-                };
-            }
-        }
-
-        const defaultVitestPath = fs.existsSync(path.join(rootDir, genericTestPath))
-            ? normalizePath(path.join("tests", `${baseName}.vitest.test${ext}`))
-            : normalizePath(path.join("tests", `${baseName}.test${ext}`));
-
-        return {
-            found: false,
-            relativePath: defaultVitestPath,
-            suggestedFilePath: defaultVitestPath,
-            absolutePath: path.join(rootDir, defaultVitestPath),
-            fileName: path.basename(defaultVitestPath),
-            content: "",
-            framework: "vitest"
-        };
-    }
-
-    // 3. Conventional candidate paths (including specs, step-definitions, subpackages)
-    const candidates = [
-        path.join("tests", `${baseName}.test${ext}`),
-        path.join("tests", `${baseName}.spec${ext}`),
-        path.join("tests", dirName, `${baseName}.test${ext}`),
-        path.join(dirName, `${baseName}.test${ext}`),
-        path.join(dirName, `${baseName}.spec${ext}`),
-        path.join(dirName, `${baseName}.steps${ext}`),
-        path.join(dirName, "__tests__", `${baseName}.test${ext}`),
-        path.join(dirName, "__tests__", `${baseName}.spec${ext}`),
-        path.join("specs", `${baseName}.test${ext}`),
-        path.join("specs", `${baseName}.steps${ext}`),
-        path.join("specs", "step-definitions", `${baseName}.steps${ext}`)
-    ];
-
-    if (dirName.includes("src")) {
-        candidates.push(
-            path.join(dirName.replace("src", "specs"), "step-definitions", `${baseName}.steps${ext}`),
-            path.join(dirName.replace("src", "specs"), `${baseName}.test${ext}`),
-            path.join(dirName.replace("src", "tests"), `${baseName}.test${ext}`)
-        );
-    }
-
-    for (const candidate of candidates) {
-        const fullPath = path.join(rootDir, candidate);
-        if (fs.existsSync(fullPath)) {
-            const content = fs.readFileSync(fullPath, "utf8");
-            return {
-                found: true,
-                relativePath: normalizePath(candidate),
-                absolutePath: fullPath,
-                fileName: path.basename(candidate),
-                content,
-                framework: content.includes("vitest") ? "vitest" : "jest"
-            };
-        }
-    }
-
-    // Default target for new test file
-    let defaultNewTestPath = normalizePath(path.join("tests", `${baseName}.test${ext}`));
-    if (dirName.includes("src")) {
-        defaultNewTestPath = normalizePath(dirName.replace("src", "tests") + `/${baseName}.test${ext}`);
-    }
-
+    const defaultRel = associated?.suggestedFilePath || (cleanSource ? `tests/${path.basename(cleanSource, path.extname(cleanSource))}.test${path.extname(cleanSource) || ".js"}` : "tests/sample.test.js");
     return {
         found: false,
-        relativePath: defaultNewTestPath,
-        suggestedFilePath: defaultNewTestPath,
-        absolutePath: path.join(rootDir, defaultNewTestPath),
-        fileName: path.basename(defaultNewTestPath),
+        relativePath: defaultRel,
+        suggestedFilePath: defaultRel,
+        absolutePath: path.join(rootDir, defaultRel),
+        fileName: path.basename(defaultRel),
         content: "",
-        framework: "jest"
+        framework: associated?.framework || framework || "jest"
     };
 };
 
@@ -416,23 +272,30 @@ ${testFileInfo.content.slice(0, 25000)}
 \`\`\`
 
 CRITICAL REQUIREMENTS:
-1. DEEP & EXHAUSTIVE BRANCH COVERAGE:
+1. PURE JEST / VITEST SYNTAX:
+   - ALWAYS write pure, standard Jest or Vitest unit tests using describe(...), test(...) or it(...), and standard expect(...) assertions.
+   - DO NOT use Cucumber/Gherkin step definitions or step destructuring like ({ given, when, then }) => ... .
+   - Directly instantiate classes and call functions with real arguments (e.g. const machine = new ArcadeMachine(); machine.requireCoins = false;).
+   - If the existing file has defineFeature(...), add a standard describe('${baseName} - Additional Unit Tests', () => { ... }) block outside or alongside existing tests.
+2. DEEP & EXHAUSTIVE BRANCH COVERAGE:
    - Analyze every uncovered line (${uncoveredLinesStr}) and branch condition listed above.
    - For every if/else condition, ternary operator, switch branch, catch block, or null/undefined check, write dedicated test cases that supply input guaranteeing that branch is entered and executed.
-2. BOUNDARY & ERROR TESTING:
-   - Include tests for edge cases and boundary conditions (e.g., null, undefined, empty array/object, 0, negative values, empty string, malformed payloads).
+3. BOUNDARY, TYPE COERCION & ERROR TESTING:
+   - Include tests for edge cases and boundary conditions (null, undefined, 0, negative values, empty strings, invalid types).
+   - In JavaScript, be mindful of operator type coercion: ('10' + 'abc' produces '10abc' string concatenation, NOT NaN). Only assert toBeNaN() if the source implementation explicitly coerces input via Number() or uses numeric operators (-, *, /). Never write assertions that contradict the actual behavior of the source code.
+   - Carefully account for any state initialized in beforeEach(...) (e.g., initial balance, counters, mocks) when computing expected assertion values.
+   - Ensure ALL test() / it() blocks are strictly enclosed inside their proper describe(...) closures. NEVER leave dangling test cases outside describe blocks.
    - If a function throws errors or rejects promises on invalid input, test that using expect(() => ...).toThrow(...) or expect(promise).rejects.toThrow(...).
-3. HIGH QUALITY & NO PLACEHOLDER ASSERTIONS:
+4. HIGH QUALITY & NO PLACEHOLDER ASSERTIONS:
    - DO NOT write trivial assertions like expect(true).toBe(true) or empty test wrappers.
    - Every assertion must verify real outputs, state changes, or mock call arguments (e.g. expect(res).toEqual(...), expect(fn).toHaveBeenCalledWith(...)).
-4. MOCKING & ISOLATION:
+5. MOCKING & ISOLATION:
    - Mock all external I/O, database models, HTTP requests, or external libraries using ${isVitest ? "vi.fn() / vi.mock()" : "jest.fn() / jest.mock()"} so tests run quickly and deterministically in isolation.
-5. INTEGRATION INTO EXISTING TEST FILE:
+6. INTEGRATION INTO EXISTING TEST FILE:
    - Seamlessly merge new test blocks into ${testFileInfo.relativePath} without duplicating existing imports or test names.
-6. Provide an explanation in Vietnamese summarizing the added test cases and exactly which branches were covered.
 7. Format your output strictly in JSON:
 {
-  "explanation": "Vietnamese explanation of the added test cases and which branches are covered",
+  "explanation": "Summary of the added test cases and which branches are covered",
   "suggestedTestCode": "// only the new test code blocks",
   "fullUpdatedContent": "// complete test file content to be written"
 }`
@@ -463,26 +326,33 @@ ${testFileInfo.content.slice(0, 25000)}
 ` : ""}
 
 CRITICAL REQUIREMENTS:
-1. DEEP & EXHAUSTIVE BRANCH COVERAGE:
+1. PURE JEST / VITEST SYNTAX:
+   - ALWAYS write pure, standard Jest or Vitest unit tests using describe(...), test(...) or it(...), and standard expect(...) assertions.
+   - DO NOT use Cucumber/Gherkin step definitions or step destructuring like ({ given, when, then }) => ... .
+   - Directly instantiate classes and call functions with real arguments (e.g. const machine = new ArcadeMachine(); machine.requireCoins = false;).
+   - If the existing file has defineFeature(...), add a standard describe('${baseName} - Additional Unit Tests', () => { ... }) block.
+2. DEEP & EXHAUSTIVE BRANCH COVERAGE:
    - Analyze every function, line, and branch in the source code.
    - For every uncovered branch (listed above: ${branchDetailsStr}), craft test inputs specifically designed to execute that logical path (true branch, false branch, fallback defaults, error branches).
-2. BOUNDARY & ERROR TESTING:
-   - Test edge cases: null, undefined, empty collections, extreme boundary numbers, invalid types.
+3. BOUNDARY, TYPE COERCION & ERROR TESTING:
+   - Test edge cases: null, undefined, 0, negative values, empty collections, extreme boundary numbers, invalid types.
+   - In JavaScript, be mindful of operator type coercion: ('10' + 'abc' produces '10abc', NOT NaN). Only assert toBeNaN() if source code explicitly coerces via Number() or uses numeric operators (-, *, /).
+   - Carefully account for any state initialized in beforeEach(...) when computing expected assertion values.
+   - Ensure all test() / it() blocks are strictly enclosed inside their proper describe(...) closures.
    - Test all error paths: verify throwing exceptions with expect(() => fn(...)).toThrow(...) or expect(asyncFn(...)).rejects.toThrow(...).
-3. REAL ASSERTIONS, NO TRIVIAL PLACEHOLDERS:
+4. REAL ASSERTIONS, NO TRIVIAL PLACEHOLDERS:
    - DO NOT write placeholder assertions like expect(true).toBe(true) or generic dummy tests.
    - Assert exact return values, transformed objects, or mock invocations.
-4. MOCKING & ISOLATION:
+5. MOCKING & ISOLATION:
    - Mock external dependencies, databases, filesystem, and network calls using ${isVitest ? "vi.fn() / vi.mock()" : "jest.fn() / jest.mock()"}.
-5. IMPORTS & SYNTAX:
+6. IMPORTS & SYNTAX:
    - Always import from the source file using the EXACT module path '${cleanImportPath}'.
    - ${isVitest ? "Use Vitest syntax: import { describe, test, it, expect, vi } from 'vitest';" : "Use Jest syntax. If using jest.fn() with ESM, import { jest } from '@jest/globals'."}
-6. Provide an explanation in Vietnamese summarizing the added test cases and which branches were covered.
 7. If this is an EXISTING test file, output the updated full file content with the new test cases seamlessly merged into the existing structure, preserving existing tests.
 8. If this is a NEW test file, output the complete test file including required imports and test blocks.
 9. Format your output strictly in JSON:
 {
-  "explanation": "Vietnamese explanation of the added test cases and which branches are covered",
+  "explanation": "Summary of the added test cases and which branches are covered",
   "suggestedTestCode": "// only the new test code blocks",
   "fullUpdatedContent": "// complete test file content to be written"
 }`;

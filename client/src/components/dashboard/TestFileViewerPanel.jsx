@@ -18,6 +18,8 @@ import {
   RotateCcw,
   Layers,
   ExternalLink,
+  X,
+  TrendingUp,
 } from "lucide-react";
 import MonacoEditor from "@monaco-editor/react";
 import { updateFileContentApi, createProjectFileApi } from "../../services/project.service.js";
@@ -40,6 +42,61 @@ const getLanguage = (filePath) => {
   return EXT_LANG_MAP[match[0].toLowerCase()] || "javascript";
 };
 
+const getStatusBadge = (status, isLight) => {
+  switch (status) {
+    case "APPLYING":
+      return {
+        bg: isLight ? "#eff6ff" : "rgba(59, 130, 246, 0.15)",
+        border: isLight ? "#bfdbfe" : "rgba(59, 130, 246, 0.4)",
+        text: isLight ? "#1d4ed8" : "#60a5fa",
+        label: "Applying...",
+        icon: Loader2,
+        spin: true,
+      };
+    case "PASSED":
+    case "APPLIED":
+      return {
+        bg: isLight ? "#f0fdf4" : "rgba(34, 197, 94, 0.15)",
+        border: isLight ? "#bbf7d0" : "rgba(34, 197, 94, 0.4)",
+        text: isLight ? "#15803d" : "#4ade80",
+        label: "✓ Applied & Passed",
+        icon: Check,
+      };
+    case "FAILED":
+      return {
+        bg: isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.15)",
+        border: isLight ? "#fecaca" : "rgba(239, 68, 68, 0.4)",
+        text: isLight ? "#b91c1c" : "#f87171",
+        label: "✗ Test Failed",
+        icon: X,
+      };
+    case "EDITED":
+      return {
+        bg: isLight ? "#f5f3ff" : "rgba(168, 85, 247, 0.15)",
+        border: isLight ? "#ddd6fe" : "rgba(168, 85, 247, 0.4)",
+        text: isLight ? "#7c3aed" : "#c084fc",
+        label: "Edited",
+        icon: Edit3,
+      };
+    case "REJECTED":
+      return {
+        bg: isLight ? "#f1f5f9" : "rgba(107, 114, 128, 0.15)",
+        border: isLight ? "#cbd5e1" : "rgba(107, 114, 128, 0.4)",
+        text: isLight ? "#64748b" : "#9ca3af",
+        label: "Rejected",
+        icon: X,
+      };
+    default:
+      return {
+        bg: isLight ? "#f0f9ff" : "rgba(56, 189, 248, 0.12)",
+        border: isLight ? "#bae6fd" : "rgba(56, 189, 248, 0.3)",
+        text: isLight ? "#0369a1" : "#38bdf8",
+        label: "Ready to Apply",
+        icon: Sparkles,
+      };
+  }
+};
+
 export default function TestFileViewerPanel({
   sourceFilePath,
   testFile,
@@ -50,6 +107,10 @@ export default function TestFileViewerPanel({
   applyingSuggestionIds = new Set(),
   onApplySuggestion,
   onApplyAllSuggestions,
+  onRejectSuggestion,
+  onUpdateSuggestionCode,
+  lastApplyResult,
+  progressStep,
   onSuggestMissingTest,
   onOpenFile,
   onTestFileSaved,
@@ -67,13 +128,22 @@ export default function TestFileViewerPanel({
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [editedCodes, setEditedCodes] = useState({});
 
   // Sync editor content whenever raw test code changes from disk
   useEffect(() => {
     setEditorContent(rawTestCode);
   }, [rawTestCode]);
 
-  // If new suggestions arrive, switch to suggestions tab if test file wasn't found
+  // If new suggestions arrive or finished loading, switch to suggestions tab automatically
+  const prevLoadingRef = useRef(isLoadingSuggestions);
+  useEffect(() => {
+    if (prevLoadingRef.current && !isLoadingSuggestions && suggestions.length > 0) {
+      setViewMode("suggestions");
+    }
+    prevLoadingRef.current = isLoadingSuggestions;
+  }, [isLoadingSuggestions, suggestions.length]);
+
   useEffect(() => {
     if (!isFound && suggestions.length > 0) {
       setViewMode("suggestions");
@@ -224,7 +294,7 @@ export default function TestFileViewerPanel({
                       : "1px solid rgba(245, 158, 11, 0.3)",
                 }}
               >
-                {isFound ? `✓ Test Linked (${framework})` : "⚠ Chưa có file test"}
+                {isFound ? `✓ Test Linked (${framework})` : "⚠ No test file"}
               </span>
 
               {suggestions.length > 0 && (
@@ -239,7 +309,7 @@ export default function TestFileViewerPanel({
                     border: isLight ? "1px solid #ddd6fe" : "1px solid rgba(168, 85, 247, 0.35)",
                   }}
                 >
-                  ✨ {suggestions.length} gợi ý
+                  ✨ {suggestions.length} suggestion{suggestions.length > 1 ? "s" : ""}
                 </span>
               )}
             </div>
@@ -254,7 +324,7 @@ export default function TestFileViewerPanel({
                 whiteSpace: "nowrap",
               }}
             >
-              {isFound ? testFilePath : `Đề xuất: ${testFilePath}`}
+              {isFound ? testFilePath : `Suggested: ${testFilePath}`}
             </span>
           </div>
         </div>
@@ -436,7 +506,7 @@ export default function TestFileViewerPanel({
               }}
             >
               <Sparkles size={11} className={isLight ? "text-purple-600" : "text-purple-400"} />
-              <span>Gợi ý Unit Test ({suggestions.length})</span>
+              <span>Suggested Tests ({suggestions.length})</span>
             </button>
           )}
         </div>
@@ -483,7 +553,7 @@ export default function TestFileViewerPanel({
                 color: isLight ? "#0f172a" : "#f0f6fc",
               }}
             >
-              Chưa có file test liên kết
+              No Linked Test File
             </h4>
 
             <p
@@ -495,7 +565,7 @@ export default function TestFileViewerPanel({
                 lineHeight: 1.5,
               }}
             >
-              File mã nguồn này chưa có file test tương ứng nào trong cấu trúc thư mục của dự án.
+              This source file currently has no corresponding test file in the project directory structure.
             </p>
 
             <div
@@ -513,7 +583,7 @@ export default function TestFileViewerPanel({
                 gap: 8,
               }}
             >
-              <span style={{ color: isLight ? "#64748b" : "#8b949e" }}>Vị trí đề xuất:</span>
+              <span style={{ color: isLight ? "#64748b" : "#8b949e" }}>Suggested location:</span>
               <span style={{ fontWeight: 600, color: isLight ? "#7c3aed" : "#c084fc" }}>
                 {testFilePath || `tests/${testFileName}`}
               </span>
@@ -544,7 +614,7 @@ export default function TestFileViewerPanel({
               ) : (
                 <Sparkles size={15} />
               )}
-              <span>Gợi ý Unit Test (Suggest Missing Test)</span>
+              <span>Suggest Missing Test Cases</span>
             </button>
           </div>
         )}
@@ -571,8 +641,8 @@ export default function TestFileViewerPanel({
                 <div>
                   <div style={{ fontSize: 12, fontWeight: 700, color: isLight ? "#6b21a8" : "#d8b4fe" }}>
                     {isFound
-                      ? `Đề xuất thêm test case vào file: ${testFileName}`
-                      : `Đề xuất tạo mới file test trong cấu trúc dự án`}
+                      ? `Add test cases to file: ${testFileName}`
+                      : `Create new test file in project structure`}
                   </div>
                   <div style={{ fontSize: 11, color: isLight ? "#64748b" : "#94a3b8", fontFamily: "var(--font-mono, monospace)" }}>
                     📁 {testFilePath}
@@ -580,9 +650,9 @@ export default function TestFileViewerPanel({
                 </div>
               </div>
 
-              {onApplyAllSuggestions && suggestions.length > 1 && (
+              {onApplyAllSuggestions && suggestions.filter((s) => s.status !== "REJECTED" && s.status !== "PASSED").length > 1 && (
                 <button
-                  onClick={() => onApplyAllSuggestions(suggestions)}
+                  onClick={() => onApplyAllSuggestions(suggestions.filter((s) => s.status !== "REJECTED"))}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -599,25 +669,85 @@ export default function TestFileViewerPanel({
                   }}
                 >
                   <Layers size={13} />
-                  <span>Áp dụng tất cả vào dự án ({suggestions.length})</span>
+                  <span>Apply all to project ({suggestions.filter((s) => s.status !== "REJECTED").length})</span>
                 </button>
               )}
             </div>
+
+            {/* Active apply progress banner */}
+            {progressStep && (
+              <div
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 6,
+                  background: isLight ? "#eff6ff" : "rgba(59, 130, 246, 0.12)",
+                  border: isLight ? "1px solid #bfdbfe" : "1px solid rgba(59, 130, 246, 0.3)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  fontSize: 11,
+                  color: isLight ? "#1d4ed8" : "#60a5fa",
+                }}
+              >
+                <Loader2 size={13} className="animate-spin" />
+                <span>{progressStep}</span>
+              </div>
+            )}
+
+            {/* Last verified apply result banner */}
+            {lastApplyResult?.newCoverage && (
+              <div
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 6,
+                  background: isLight ? "#f0fdf4" : "rgba(34, 197, 94, 0.12)",
+                  border: isLight ? "1px solid #bbf7d0" : "1px solid rgba(34, 197, 94, 0.3)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  fontSize: 11,
+                  color: isLight ? "#15803d" : "#4ade80",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600 }}>
+                  <TrendingUp size={13} />
+                  <span>Verified Coverage Increase:</span>
+                </div>
+                <div style={{ display: "flex", gap: 12, fontFamily: "var(--font-mono, monospace)" }}>
+                  <span>Lines: {lastApplyResult.oldCoverage?.lines ?? 0}% → {lastApplyResult.newCoverage?.lines ?? 0}%</span>
+                  <span>Branches: {lastApplyResult.oldCoverage?.branches ?? 0}% → {lastApplyResult.newCoverage?.branches ?? 0}%</span>
+                </div>
+              </div>
+            )}
 
             {/* List of suggestion cards */}
             {suggestions.map((sug, idx) => {
               const sugId = sug.suggestionId || sug.id || idx;
               const isApplying = applyingSuggestionIds.has(sugId);
-              const code = sug.generatedCode || sug.suggestedTestCode || sug.code || "";
+              const currentCode = editedCodes[sugId] !== undefined
+                ? editedCodes[sugId]
+                : (sug.generatedCode || sug.suggestedTestCode || sug.code || "");
+              const originalCode = sug.originalGeneratedCode || sug.suggestedTestCode || sug.generatedCode || "";
+              const isModified = Boolean(originalCode && currentCode !== originalCode);
+              const badge = getStatusBadge(sug.status, isLight);
+              const BadgeIcon = badge.icon;
+              const lines = (currentCode || "").split("\n");
 
               return (
                 <div
                   key={sugId}
                   style={{
                     background: isLight ? "#ffffff" : "#090d16",
-                    border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.1)",
+                    border: isLight
+                      ? isModified
+                        ? "1px solid #c084fc"
+                        : "1px solid #cbd5e1"
+                      : isModified
+                        ? "1px solid rgba(168, 85, 247, 0.4)"
+                        : "1px solid rgba(255,255,255,0.1)",
                     borderRadius: 7,
                     overflow: "hidden",
+                    boxShadow: isLight ? "0 1px 3px rgba(0,0,0,0.05)" : "none",
                   }}
                 >
                   {/* Card Header */}
@@ -629,18 +759,66 @@ export default function TestFileViewerPanel({
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "space-between",
+                      flexWrap: "wrap",
+                      gap: 8,
                     }}
                   >
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                       <Code2 size={13} style={{ color: isLight ? "#7c3aed" : "#c084fc" }} />
                       <span style={{ fontSize: 12, fontWeight: 700, color: isLight ? "#0f172a" : "#f0f6fc" }}>
-                        {sug.reason || `Test case đề xuất #${idx + 1}`}
+                        {sug.reason || `Suggested test case #${idx + 1}`}
+                      </span>
+
+                      {/* Status Badge */}
+                      <span
+                        style={{
+                          fontSize: 10,
+                          padding: "1px 7px",
+                          borderRadius: 10,
+                          fontWeight: 600,
+                          background: badge.bg,
+                          color: badge.text,
+                          border: `1px solid ${badge.border}`,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 4,
+                        }}
+                      >
+                        {BadgeIcon && <BadgeIcon size={10} className={badge.spin ? "animate-spin" : ""} />}
+                        <span>{badge.label}</span>
                       </span>
                     </div>
 
                     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      {/* Reset button if edited */}
+                      {isModified && (
+                        <button
+                          onClick={() => {
+                            setEditedCodes((prev) => ({ ...prev, [sugId]: originalCode }));
+                            onUpdateSuggestionCode?.(sugId, originalCode);
+                          }}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 3,
+                            padding: "3px 7px",
+                            borderRadius: 4,
+                            fontSize: 10,
+                            background: isLight ? "#f5f3ff" : "rgba(168, 85, 247, 0.15)",
+                            border: isLight ? "1px solid #ddd6fe" : "1px solid rgba(168, 85, 247, 0.3)",
+                            color: isLight ? "#7c3aed" : "#c084fc",
+                            cursor: "pointer",
+                          }}
+                          title="Reset to AI original generated code"
+                        >
+                          <RotateCcw size={10} />
+                          <span>Reset</span>
+                        </button>
+                      )}
+
+                      {/* Copy button */}
                       <button
-                        onClick={() => handleCopyCode(code)}
+                        onClick={() => handleCopyCode(currentCode)}
                         style={{
                           display: "flex",
                           alignItems: "center",
@@ -658,10 +836,34 @@ export default function TestFileViewerPanel({
                         {copied ? "Copied" : "Copy"}
                       </button>
 
+                      {/* Reject Button */}
+                      {onRejectSuggestion && sug.status !== "REJECTED" && (
+                        <button
+                          onClick={() => onRejectSuggestion(sugId)}
+                          disabled={isApplying}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 3,
+                            padding: "3px 8px",
+                            borderRadius: 4,
+                            fontSize: 10,
+                            background: isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.1)",
+                            border: isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.3)",
+                            color: isLight ? "#b91c1c" : "#f87171",
+                            cursor: isApplying ? "wait" : "pointer",
+                          }}
+                          title="Reject this suggestion"
+                        >
+                          <X size={11} />
+                          <span>Reject</span>
+                        </button>
+                      )}
+
                       {/* Single Apply Button */}
                       <button
-                        onClick={() => onApplySuggestion?.(sug)}
-                        disabled={isApplying}
+                        onClick={() => onApplySuggestion?.({ ...sug, generatedCode: currentCode, code: currentCode })}
+                        disabled={isApplying || sug.status === "PASSED"}
                         style={{
                           display: "flex",
                           alignItems: "center",
@@ -670,35 +872,122 @@ export default function TestFileViewerPanel({
                           borderRadius: 5,
                           fontSize: 11,
                           fontWeight: 700,
-                          background: isLight ? "#16a34a" : "#22c55e",
+                          background: sug.status === "PASSED"
+                            ? isLight ? "#15803d" : "#16a34a"
+                            : isLight ? "#16a34a" : "#22c55e",
                           color: "#ffffff",
                           border: "none",
-                          cursor: isApplying ? "wait" : "pointer",
+                          cursor: isApplying ? "wait" : sug.status === "PASSED" ? "default" : "pointer",
                           boxShadow: "0 2px 6px rgba(22, 163, 74, 0.25)",
                         }}
                       >
-                        {isApplying ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-                        <span>{isApplying ? "Đang lưu..." : "Lưu vào cấu trúc thư mục"}</span>
+                        {isApplying ? (
+                          <Loader2 size={12} className="animate-spin" />
+                        ) : sug.status === "PASSED" ? (
+                          <Check size={12} />
+                        ) : (
+                          <Check size={12} />
+                        )}
+                        <span>
+                          {isApplying
+                            ? "Applying..."
+                            : sug.status === "PASSED"
+                              ? "Applied"
+                              : "Apply to Project"}
+                        </span>
                       </button>
                     </div>
                   </div>
 
-                  {/* Code snippet */}
-                  <pre
+                  {/* Diagnostic Error Banner if Test Failed */}
+                  {(sug.status === "FAILED" || sug.testRunError) && (
+                    <div
+                      style={{
+                        padding: "8px 12px",
+                        background: isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.12)",
+                        borderLeft: "3px solid #ef4444",
+                        borderBottom: isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.2)",
+                        fontSize: 11,
+                        color: isLight ? "#991b1b" : "#fca5a5",
+                      }}
+                    >
+                      <div style={{ fontWeight: 700, display: "flex", alignItems: "center", gap: 5, marginBottom: 3 }}>
+                        <AlertCircle size={12} />
+                        <span>Test Execution Failed</span>
+                      </div>
+                      <pre
+                        style={{
+                          margin: 0,
+                          whiteSpace: "pre-wrap",
+                          wordBreak: "break-all",
+                          fontFamily: "var(--font-mono, monospace)",
+                          fontSize: 10,
+                          maxHeight: 90,
+                          overflowY: "auto",
+                        }}
+                      >
+                        {sug.testRunError || "Runner returned exit code 1. Check module imports or assertions."}
+                      </pre>
+                    </div>
+                  )}
+
+                  {/* Interactive Code Editor */}
+                  <div
                     style={{
-                      margin: 0,
-                      padding: "10px 14px",
-                      fontSize: 11,
-                      fontFamily: "var(--font-mono, monospace)",
-                      lineHeight: 1.6,
-                      color: isLight ? "#0f172a" : "#e6edf3",
+                      position: "relative",
                       background: isLight ? "#f8fafc" : "#0d1117",
-                      overflowX: "auto",
-                      maxHeight: 280,
+                      display: "flex",
                     }}
                   >
-                    <code>{code}</code>
-                  </pre>
+                    {/* Line numbers gutter */}
+                    <div
+                      style={{
+                        padding: "10px 8px 10px 10px",
+                        textAlign: "right",
+                        color: isLight ? "#94a3b8" : "#475569",
+                        fontSize: 11,
+                        fontFamily: "var(--font-mono, monospace)",
+                        lineHeight: 1.6,
+                        userSelect: "none",
+                        borderRight: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.06)",
+                        minWidth: 32,
+                      }}
+                    >
+                      {lines.map((_, i) => (
+                        <div key={i}>{i + 1}</div>
+                      ))}
+                    </div>
+
+                    {/* Editable textarea with matching line height */}
+                    <textarea
+                      value={currentCode}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setEditedCodes((prev) => ({ ...prev, [sugId]: val }));
+                        onUpdateSuggestionCode?.(sugId, val);
+                      }}
+                      rows={Math.max(lines.length, 4)}
+                      style={{
+                        flex: 1,
+                        margin: 0,
+                        padding: "10px 12px",
+                        fontSize: 11,
+                        fontFamily: "var(--font-mono, monospace)",
+                        lineHeight: 1.6,
+                        color: isLight ? "#0f172a" : "#e6edf3",
+                        background: "transparent",
+                        border: "none",
+                        outline: "none",
+                        resize: "vertical",
+                        minHeight: 100,
+                        maxHeight: 380,
+                        whiteSpace: "pre",
+                        overflowX: "auto",
+                      }}
+                      spellCheck={false}
+                      placeholder="Enter unit test code here..."
+                    />
+                  </div>
                 </div>
               );
             })}
@@ -809,11 +1098,11 @@ export default function TestFileViewerPanel({
         <div>
           {isFound ? (
             <span style={{ color: isLight ? "#15803d" : "#4ade80" }}>
-              ✓ Đã kết nối với mã nguồn
+              ✓ Linked to source file
             </span>
           ) : (
             <span style={{ color: isLight ? "#b45309" : "#fbbf24" }}>
-              Chưa lưu trên đĩa
+              Not saved on disk
             </span>
           )}
         </div>

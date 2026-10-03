@@ -68,6 +68,10 @@ export default function FileCodeExecutionView({
   applyingSuggestionIds = new Set(),
   onApplySuggestion,
   onApplyAllSuggestions,
+  onRejectSuggestion,
+  onUpdateSuggestionCode,
+  lastApplyResult,
+  progressStep,
   isLight = false,
 }) {
   const initialSourceCode = fileCoverage?.sourceCode || "";
@@ -862,6 +866,10 @@ export default function FileCodeExecutionView({
       applyingSuggestionIds={applyingSuggestionIds}
       onApplySuggestion={onApplySuggestion}
       onApplyAllSuggestions={onApplyAllSuggestions}
+      onRejectSuggestion={onRejectSuggestion}
+      onUpdateSuggestionCode={onUpdateSuggestionCode}
+      lastApplyResult={lastApplyResult}
+      progressStep={progressStep}
       onSuggestMissingTest={() => onSuggestTestcase && onSuggestTestcase(filePath)}
       onOpenFile={onOpenFile}
       onTestFileSaved={async (savedPath) => {
@@ -944,10 +952,10 @@ export default function FileCodeExecutionView({
                 fontSize: 11,
                 fontWeight: 600,
               }}
-              title="File này chưa có file test tương ứng nào được tìm thấy trong dự án"
+              title="No corresponding test file found for this source file"
             >
               <AlertTriangle size={12} />
-              <span>Chưa có file test liên kết</span>
+              <span>No linked test file</span>
             </div>
           )}
         </div>
@@ -986,10 +994,10 @@ export default function FileCodeExecutionView({
                 : "none",
               transition: "all 0.15s ease",
             }}
-            title="Split View: Hiển thị song song File Code và File Test"
+            title="Split View: Side-by-side Source Code and Test File"
           >
             <Columns size={12} />
-            <span>Song song (Code & Test)</span>
+            <span>Split View</span>
           </button>
 
           <button
@@ -1013,10 +1021,10 @@ export default function FileCodeExecutionView({
               boxShadow: layoutMode === "source" ? "0 2px 4px rgba(0,0,0,0.08)" : "none",
               transition: "all 0.15s ease",
             }}
-            title="Chỉ hiển thị mã nguồn"
+            title="Show source code only"
           >
             <FileCode size={12} />
-            <span>Mã nguồn</span>
+            <span>Source Code</span>
           </button>
 
           <button
@@ -1040,10 +1048,10 @@ export default function FileCodeExecutionView({
               boxShadow: layoutMode === "test" ? "0 2px 4px rgba(0,0,0,0.08)" : "none",
               transition: "all 0.15s ease",
             }}
-            title="Chỉ hiển thị file test"
+            title="Show test file only"
           >
             <FlaskConical size={12} />
-            <span>File Test</span>
+            <span>Test File</span>
           </button>
         </div>
 
@@ -1068,7 +1076,7 @@ export default function FileCodeExecutionView({
               transition: "all 0.15s ease",
             }}
             className="hover:opacity-95"
-            title="Gợi ý unit test mới cho file này"
+            title="Suggest missing unit tests for this file"
           >
             {isLoadingSuggestions ? (
               <Loader2 size={12} className="animate-spin" />
@@ -1093,7 +1101,7 @@ export default function FileCodeExecutionView({
               cursor: "pointer",
             }}
             className={isLight ? "hover:bg-slate-100" : "hover:bg-white/10 hover:text-white"}
-            title="Mở file mã nguồn trong IDE"
+            title="Open source file in IDE"
           >
             <ExternalLink size={12} />
             <span>IDE</span>

@@ -54,6 +54,87 @@ const sanitizePath = (rootDir, targetPath) => {
 };
 
 /**
+ * Sanitizes test code to ensure it executes reliably in standard Jest / Vitest runners.
+ * If code was generated with Cucumber step destructuring `({ given, when, then })` or `({ given })`:
+ * provides stub wrappers so the test body executes synchronously without error.
+ */
+export const sanitizeSuggestedTestCode = (code, originalFileContent = "") => {
+    if (!code) return "";
+    let sanitized = code;
+
+    // Pattern 1: test('...', ({ given, when, then }) => { ... })
+    // Replace with standard test function providing given/when/then synchronous runners
+    // and local instance of arcadeMachine if used
+    if (/\(\s*\{\s*(?:given|when|then)[^}]*\}\s*\)\s*=>/i.test(sanitized)) {
+        const needsMachine = /\barcadeMachine\b/.test(sanitized) && !/\b(?:const|let|var)\s+arcadeMachine\b/.test(sanitized);
+        const machineInit = needsMachine ? "\n    let arcadeMachine = new ArcadeMachine();" : "";
+        sanitized = sanitized.replace(
+            /(test|it)\s*\(\s*(['"`][^'"`]+['"`])\s*,\s*\(\s*\{[^}]*\}\s*\)\s*=>\s*\{/g,
+            `$1($2, () => {\n    const given = (d, fn) => (typeof fn === 'function' ? fn() : null);\n    const when = (d, fn) => (typeof fn === 'function' ? fn() : null);\n    const then = (d, fn) => (typeof fn === 'function' ? fn() : null);${machineInit}`
+        );
+    }
+
+    return sanitized;
+};
+
+/**
+ * Safely inserts new test code into an existing or new test file.
+ */
+export const insertCodeIntoTestFile = (originalContent, codeToAdd) => {
+    if (!originalContent || !originalContent.trim()) {
+        return codeToAdd.trimEnd() + "\n";
+    }
+
+    if (originalContent.includes(codeToAdd.trim())) {
+        return originalContent;
+    }
+
+    // Separate any top-level imports from test body code
+    const lines = codeToAdd.split("\n");
+    const importLines = [];
+    const bodyLines = [];
+
+    for (const line of lines) {
+        if (/^\s*import\s+.*from\s+['"].+['"];?\s*$/.test(line) || /^\s*import\s+['"].+['"];?\s*$/.test(line)) {
+            const match = line.match(/from\s+['"](.+)['"]/);
+            if (match && originalContent.includes(match[1])) {
+                continue; // Skip if already imported
+            }
+            importLines.push(line);
+        } else {
+            bodyLines.push(line);
+        }
+    }
+
+    let result = originalContent;
+
+    // Place new imports after existing imports
+    if (importLines.length > 0) {
+        const lastImportMatch = [...result.matchAll(/^import\s+.*;?$/gm)].pop();
+        if (lastImportMatch && lastImportMatch.index !== undefined) {
+            const insertPos = lastImportMatch.index + lastImportMatch[0].length;
+            result = result.slice(0, insertPos) + "\n" + importLines.join("\n") + result.slice(insertPos);
+        } else {
+            result = importLines.join("\n") + "\n\n" + result;
+        }
+    }
+
+    const cleanBody = bodyLines.join("\n").trim();
+    if (!cleanBody) {
+        return result;
+    }
+
+    // Append standalone test block cleanly at the end of the file.
+    // If inside a defineFeature file, standard describe/test blocks appended outside defineFeature
+    // execute under Jest without cucumber scenario validation errors.
+    if (!cleanBody.includes("describe(") && (cleanBody.includes("test(") || cleanBody.includes("it("))) {
+        return `${result.trimEnd()}\n\ndescribe('AI Suggested Unit Tests', () => {\n  ${cleanBody.replace(/\n/g, "\n  ")}\n});\n`;
+    }
+
+    return `${result.trimEnd()}\n\n${cleanBody}\n`;
+};
+
+/**
  * Apply suggestion code to an existing or new test file.
  * Safely merges without overwriting if multiple suggestions edit the same file.
  *
@@ -63,12 +144,24 @@ const sanitizePath = (rootDir, targetPath) => {
  */
 export const applyCodeToTestFile = (rootDir, suggestion) => {
     let rawTestFile = suggestion.testFile || suggestion.targetTestFile;
-    if (!rawTestFile && suggestion.sourceFile) {
-        const found = findAssociatedTestFile(rootDir, suggestion.sourceFile);
-        rawTestFile = found.found ? found.filePath : (found.suggestedFilePath || `tests/${path.basename(suggestion.sourceFile, path.extname(suggestion.sourceFile))}.test.js`);
-    }
+
     if (!rawTestFile) {
         throw new ServiceError("testFile is required in suggestion metadata", 400);
+    }
+
+    // Smart subproject alignment: verify testFile matches the sourceFile subproject
+    if (suggestion.sourceFile) {
+        const associated = findAssociatedTestFile(rootDir, suggestion.sourceFile);
+        if (associated && associated.found) {
+            const cleanSrc = sanitizePath(rootDir, suggestion.sourceFile);
+            const srcParts = cleanSrc.split("/");
+            const srcPrefix = srcParts.length > 2 ? srcParts.slice(0, 2).join("/") : (srcParts[0] || "");
+
+            const normRaw = sanitizePath(rootDir, rawTestFile);
+            if (srcPrefix && !normRaw.startsWith(srcPrefix)) {
+                rawTestFile = associated.filePath;
+            }
+        }
     }
 
     const relTestPath = sanitizePath(rootDir, rawTestFile);
@@ -82,29 +175,15 @@ export const applyCodeToTestFile = (rootDir, suggestion) => {
     const fileExisted = fs.existsSync(fullTestPath);
     const originalContent = fileExisted ? fs.readFileSync(fullTestPath, "utf8") : "";
 
-    let newContent = "";
-    const codeToAdd = suggestion.generatedCode || suggestion.suggestedTestCode || suggestion.code || "";
+    let rawCodeToAdd = suggestion.generatedCode || suggestion.suggestedTestCode || suggestion.code || "";
+    const sanitizedCodeToAdd = sanitizeSuggestedTestCode(rawCodeToAdd, originalContent);
     const fullContentProvided = suggestion.fullUpdatedContent;
 
+    let newContent = "";
     if (fullContentProvided && (!fileExisted || !originalContent.trim())) {
         newContent = fullContentProvided.trimEnd() + "\n";
-    } else if (fullContentProvided && !originalContent.includes(codeToAdd.trim())) {
-        // If file content was modified by a previous suggestion, merge the new code block
-        if (originalContent.includes("describe(") || originalContent.includes("test(") || originalContent.includes("it(")) {
-            newContent = originalContent.trimEnd() + "\n\n" + codeToAdd.trim() + "\n";
-        } else {
-            newContent = fullContentProvided.trimEnd() + "\n";
-        }
-    } else if (fileExisted && originalContent.trim()) {
-        if (originalContent.includes(codeToAdd.trim())) {
-            // Already contains code
-            newContent = originalContent;
-        } else {
-            // Append new test block
-            newContent = originalContent.trimEnd() + "\n\n" + codeToAdd.trim() + "\n";
-        }
     } else {
-        newContent = (fullContentProvided || codeToAdd).trimEnd() + "\n";
+        newContent = insertCodeIntoTestFile(originalContent, sanitizedCodeToAdd);
     }
 
     fs.writeFileSync(fullTestPath, newContent, "utf8");
@@ -336,11 +415,13 @@ export const applyUnitTestSuggestion = async ({ snapshotId, projectId, userId, s
     const sourceFilesInspected = new Set(itemsToApply.map(s => s.sourceFile).filter(Boolean));
     for (const sf of sourceFilesInspected) {
         try {
-            const cov = getFileCoverageDetails(rootDir, sf);
-            sourceFileCoverage.push({
-                filePath: sf,
-                ...cov
-            });
+            const cov = snapshotId && userId ? await getFileCoverageDetails(snapshotId, sf, userId).catch(() => null) : null;
+            if (cov) {
+                sourceFileCoverage.push({
+                    filePath: sf,
+                    ...cov
+                });
+            }
         } catch { }
     }
 

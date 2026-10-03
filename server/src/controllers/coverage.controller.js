@@ -822,6 +822,7 @@ export const getTestExecution = async (req, res) => {
         const testRuns = (prisma.testRun?.findMany
             ? await prisma.testRun.findMany({
                 where: { snapshotId },
+                include: { scenarios: true },
                 orderBy: { createdAt: "desc" }
             }).catch(() => [])
             : []) || [];

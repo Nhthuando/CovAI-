@@ -33,7 +33,7 @@ describe("unitTestSuggestion.service unit tests", () => {
         test("defaults to tests/<source>.test.<ext> when no existing test file is found", () => {
             const result = findExistingTestFile(tmpDir, "src/controllers/auth.controller.js");
             expect(result.found).toBe(false);
-            expect(result.relativePath).toBe("tests/auth.controller.test.js");
+            expect(result.relativePath).toBe("tests/controllers/auth.controller.test.js");
         });
 
         test("returns test file itself without nested .test.test.js extensions", () => {

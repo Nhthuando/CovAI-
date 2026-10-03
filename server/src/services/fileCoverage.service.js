@@ -11,11 +11,27 @@ export const normalizePath = (p = "") => {
 };
 
 /**
+ * Strips host or container repo root prefixes to get clean relative repo path.
+ */
+export const cleanRelativePath = (rootDir, targetPath) => {
+    if (!targetPath) return "";
+    let norm = normalizePath(targetPath);
+    if (rootDir) {
+        const normRoot = normalizePath(rootDir);
+        if (norm.startsWith(normRoot)) norm = norm.slice(normRoot.length);
+    }
+    norm = norm.replace(/^[a-zA-Z]:[\\/]/, "");
+    norm = norm.replace(/^.*?\/storage\/projects\/[^/]+\/[^/]+\/[^/]+\/repo\//i, "");
+    norm = norm.replace(/^.*?\/repo\//i, "");
+    return norm.replace(/^\/+/, "");
+};
+
+/**
  * Checks if a candidate path from Istanbul coverage or stack traces matches the target file.
  */
 export const matchesFilePath = (candidatePath = "", targetPath = "") => {
-    const normCandidate = normalizePath(candidatePath);
-    const normTarget = normalizePath(targetPath);
+    const normCandidate = cleanRelativePath(null, candidatePath);
+    const normTarget = cleanRelativePath(null, targetPath);
     if (!normCandidate || !normTarget) return false;
     return normCandidate === normTarget ||
         normCandidate.endsWith("/" + normTarget) ||
@@ -436,7 +452,7 @@ export const findAssociatedTestFile = (rootDir, rawSourceFilePath, framework = n
         return { found: false, filePath: null, fileName: null, suggestedFilePath: null, testCode: "", framework: "jest" };
     }
 
-    const normSource = normalizePath(rawSourceFilePath);
+    const normSource = cleanRelativePath(rootDir, rawSourceFilePath);
     const isAlreadyTestFile = /(^|\/)(tests?|__tests__|specs?)\//i.test(normSource) || /\.(test|spec|steps?)\.[a-z0-9]+$/i.test(normSource);
     if (isAlreadyTestFile) {
         const fullTest = path.join(rootDir, normSource);
@@ -456,11 +472,15 @@ export const findAssociatedTestFile = (rootDir, rawSourceFilePath, framework = n
     const rawBaseName = path.basename(normSource, ext);
     const baseName = rawBaseName.replace(/\.(test|spec|steps?)$/i, "");
     const dirName = path.dirname(normSource);
+    const parts = normSource.split("/");
+    const subprojectPrefix = parts.length > 2 ? parts.slice(0, 2).join("/") : (parts[0] || "");
 
-    // 1. Scan existing test files in project to check if any test imports or tests this source file
+    // 1. Scan existing test files in project with smart subproject scoring
     let bestImportMatch = null;
+    let bestScore = -999;
+
     const scanDir = (dir, depth = 0) => {
-        if (depth > 6 || bestImportMatch) return;
+        if (depth > 6) return;
         let entries;
         try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
         for (const e of entries) {
@@ -470,13 +490,25 @@ export const findAssociatedTestFile = (rootDir, rawSourceFilePath, framework = n
                 scanDir(full, depth + 1);
             } else if (e.isFile() && /\.(test|spec|steps?)\.[a-z0-9]+$/i.test(e.name)) {
                 try {
+                    const rel = normalizePath(path.relative(rootDir, full));
+                    let score = 0;
+
+                    // Match subproject prefix (e.g. examples/typescript vs examples/ecmascript)
+                    if (subprojectPrefix && rel.startsWith(subprojectPrefix)) score += 100;
+                    else if (subprojectPrefix && !rel.startsWith(subprojectPrefix)) score -= 100;
+
+                    // Match file extension (.ts with .ts vs .js with .js)
+                    const testExt = path.extname(rel);
+                    if ((ext === ".ts" || ext === ".tsx") && (testExt === ".ts" || testExt === ".tsx")) score += 30;
+                    else if ((ext === ".js" || ext === ".jsx") && (testExt === ".js" || testExt === ".jsx")) score += 30;
+
                     const content = fs.readFileSync(full, "utf8");
-                    if (content.includes(baseName)) {
-                        const rel = normalizePath(path.relative(rootDir, full));
-                        const sourcePrefix = normSource.includes("/") ? normSource.split("/")[0] : "";
-                        if (!bestImportMatch || (sourcePrefix && rel.startsWith(sourcePrefix))) {
-                            bestImportMatch = { full, rel, content };
-                        }
+                    if (content.includes(baseName)) score += 20;
+                    if (content.includes("./" + baseName) || content.includes("/" + baseName)) score += 50;
+
+                    if (score > bestScore && score > 0) {
+                        bestScore = score;
+                        bestImportMatch = { full, rel, content };
                     }
                 } catch { }
             }
@@ -664,12 +696,20 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
         };
     }
 
-    const testFile = findAssociatedTestFile(rootDir, targetFilePath);
+    const cleanPath = cleanRelativePath(rootDir, targetFilePath);
+    const testFile = findAssociatedTestFile(rootDir, cleanPath);
 
     const getDiskSourceCode = () => {
-        const fullSource = path.join(rootDir, targetFilePath);
-        if (fs.existsSync(fullSource)) {
-            try { return fs.readFileSync(fullSource, "utf8"); } catch {}
+        const candidatePaths = [
+            path.join(rootDir, cleanPath),
+            path.join(rootDir, targetFilePath),
+            targetFilePath,
+            path.join(rootDir, "src", path.basename(cleanPath))
+        ];
+        for (const cp of candidatePaths) {
+            if (cp && fs.existsSync(cp)) {
+                try { return fs.readFileSync(cp, "utf8"); } catch {}
+            }
         }
         return "";
     };
@@ -864,19 +904,22 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
     };
 
     // Locate physical file on disk to extract source code for flow diagrams
-    let sourceCode = "";
-    const candidateSourcePaths = [
-        matchedKey,
-        path.join(rootDir, targetFilePath),
-        path.join(rootDir, normalizePath(targetFilePath)),
-        path.join(rootDir, "src", path.basename(targetFilePath))
-    ];
-    for (const cp of candidateSourcePaths) {
-        if (cp && fs.existsSync(cp)) {
-            try {
-                sourceCode = fs.readFileSync(cp, "utf8");
-                break;
-            } catch { }
+    let sourceCode = getDiskSourceCode();
+    if (!sourceCode) {
+        const candidateSourcePaths = [
+            matchedKey,
+            path.join(rootDir, cleanPath),
+            path.join(rootDir, targetFilePath),
+            targetFilePath,
+            path.join(rootDir, "src", path.basename(cleanPath))
+        ];
+        for (const cp of candidateSourcePaths) {
+            if (cp && fs.existsSync(cp)) {
+                try {
+                    sourceCode = fs.readFileSync(cp, "utf8");
+                    break;
+                } catch { }
+            }
         }
     }
     if (!sourceCode && rootDir && fs.existsSync(rootDir)) {
