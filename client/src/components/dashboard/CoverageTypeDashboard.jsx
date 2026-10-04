@@ -1215,7 +1215,7 @@ export default function CoverageTypeDashboard({
         }}
       >
         <div>
-          {isLight && type === "unit" ? (
+          {type === "unit" ? (
             <>
               <div
                 style={{
@@ -1224,9 +1224,9 @@ export default function CoverageTypeDashboard({
                   gap: 5,
                   padding: "3px 8px",
                   borderRadius: 5,
-                  background: "#eef2ff",
-                  border: "1px solid #e0e7ff",
-                  color: "#4f46e5",
+                  background: isLight ? "#eef2ff" : "rgba(99, 102, 241, 0.15)",
+                  border: isLight ? "1px solid #e0e7ff" : "1px solid rgba(99, 102, 241, 0.35)",
+                  color: isLight ? "#4f46e5" : "#a5b4fc",
                   fontSize: 11,
                   fontWeight: 700,
                   letterSpacing: "0.4px",
@@ -1237,20 +1237,20 @@ export default function CoverageTypeDashboard({
                 <FlaskConical size={12} />
                 <span>Unit Testing Suite</span>
               </div>
-              <h1 style={{ margin: 0, fontSize: 28, fontWeight: 800, color: "#0f172a", letterSpacing: "-0.02em" }}>
+              <h1 style={{ margin: 0, fontSize: 28, fontWeight: 800, color: isLight ? "#0f172a" : "#f8fafc", letterSpacing: "-0.02em" }}>
                 {config.title}
               </h1>
-              <p style={{ color: "#475569", fontSize: 13.5, margin: "6px 0 0" }}>
+              <p style={{ color: isLight ? "#475569" : "#94a3b8", fontSize: 13.5, margin: "6px 0 0" }}>
                 {config.subtitle}
               </p>
-              <div style={{ color: "#64748b", fontSize: 12, marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <div style={{ color: isLight ? "#64748b" : "#94a3b8", fontSize: 12, marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <span>Engines:</span>
-                <span style={{ padding: "2px 7px", borderRadius: 4, background: "#fff1f2", border: "1px solid #fecdd3", color: "#be123c", fontWeight: 700, fontSize: 11 }}>Jest</span>
-                <span style={{ padding: "2px 7px", borderRadius: 4, background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#15803d", fontWeight: 700, fontSize: 11 }}>Vitest</span>
+                <span style={{ padding: "2px 7px", borderRadius: 4, background: isLight ? "#fff1f2" : "rgba(244, 63, 94, 0.15)", border: isLight ? "1px solid #fecdd3" : "1px solid rgba(244, 63, 94, 0.35)", color: isLight ? "#be123c" : "#fb7185", fontWeight: 700, fontSize: 11 }}>Jest</span>
+                <span style={{ padding: "2px 7px", borderRadius: 4, background: isLight ? "#f0fdf4" : "rgba(16, 185, 129, 0.15)", border: isLight ? "1px solid #bbf7d0" : "1px solid rgba(16, 185, 129, 0.35)", color: isLight ? "#15803d" : "#4ade80", fontWeight: 700, fontSize: 11 }}>Vitest</span>
                 {frameworks && (
                   <span>
                     {" "}· Detected:{" "}
-                    <b style={{ color: "#1e293b", fontWeight: 700 }}>
+                    <b style={{ color: isLight ? "#1e293b" : "#f1f5f9", fontWeight: 700 }}>
                       {frameworks.supported?.[type]?.join(", ") || "none"}
                     </b>
                   </span>
@@ -1258,25 +1258,25 @@ export default function CoverageTypeDashboard({
                 {activeFramework && (
                   <span>
                     {" "}· Last execution:{" "}
-                    <b style={{ padding: "2px 8px", borderRadius: 4, background: "#eef2ff", border: "1px solid #c7d2fe", color: "#4338ca", fontSize: 11 }}>{activeFramework}</b>
+                    <b style={{ padding: "2px 8px", borderRadius: 4, background: isLight ? "#eef2ff" : "rgba(99, 102, 241, 0.2)", border: isLight ? "1px solid #c7d2fe" : "1px solid rgba(99, 102, 241, 0.4)", color: isLight ? "#4338ca" : "#c7d2fe", fontSize: 11 }}>{activeFramework}</b>
                   </span>
                 )}
               </div>
             </>
           ) : (
             <>
-              <h1 style={{ margin: 0, fontSize: 27 }}>{config.title}</h1>
-              <p style={{ color: "#8b949e", fontSize: 13, margin: "7px 0 0" }}>
+              <h1 style={{ margin: 0, fontSize: 27, color: isLight ? "#0f172a" : "#f8fafc" }}>{config.title}</h1>
+              <p style={{ color: isLight ? "#475569" : "#8b949e", fontSize: 13, margin: "7px 0 0" }}>
                 {config.subtitle}
               </p>
-              <div style={{ color: "#6e7681", fontSize: 12, marginTop: 7 }}>
+              <div style={{ color: isLight ? "#64748b" : "#6e7681", fontSize: 12, marginTop: 7 }}>
                 Supported:{" "}
                 <span style={{ color: config.accent }}>{config.supported}</span>
                 {frameworks && (
                   <span>
                     {" "}
                     · Detected:{" "}
-                    <b style={{ color: "#c9d1d9" }}>
+                    <b style={{ color: isLight ? "#1e293b" : "#c9d1d9" }}>
                       {frameworks.supported?.[type]?.join(", ") || "none"}
                     </b>
                   </span>
@@ -1312,35 +1312,27 @@ export default function CoverageTypeDashboard({
           <button
             onClick={handleBulkSuggestTest}
             disabled={loading || running || isBulkSuggesting}
-            style={
-              isLight && type === "unit"
-                ? {
-                    background: isBulkSuggesting ? "#ede9fe" : "#ffffff",
-                    border: "1px solid #c4b5fd",
-                    color: "#6d28d9",
-                    boxShadow: "0 1px 2px rgba(109, 40, 217, 0.08)",
-                    borderRadius: 8,
-                    padding: "8px 14px",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    fontWeight: 650,
-                    fontSize: 12.5,
-                    cursor: isBulkSuggesting ? "wait" : "pointer",
-                    transition: "all 0.15s ease",
-                  }
-                : {
-                    ...buttonStyle("#d8b4fe"),
-                    background: "linear-gradient(135deg, rgba(168,85,247,0.25), rgba(99,102,241,0.25))",
-                    border: "1px solid rgba(168,85,247,0.5)",
-                    color: "#d8b4fe",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    fontWeight: 600,
-                    cursor: isBulkSuggesting ? "wait" : "pointer",
-                  }
-            }
+            style={{
+              background: isLight
+                ? (isBulkSuggesting ? "#ede9fe" : "#ffffff")
+                : (isBulkSuggesting ? "rgba(168, 85, 247, 0.25)" : "rgba(168, 85, 247, 0.12)"),
+              border: isLight
+                ? "1px solid #c4b5fd"
+                : "1px solid rgba(168, 85, 247, 0.35)",
+              color: isLight ? "#6d28d9" : "#d8b4fe",
+              boxShadow: isLight
+                ? "0 1px 2px rgba(109, 40, 217, 0.08)"
+                : "0 1px 4px rgba(0, 0, 0, 0.2)",
+              borderRadius: 8,
+              padding: "8px 14px",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              fontWeight: 650,
+              fontSize: 12.5,
+              cursor: isBulkSuggesting ? "wait" : "pointer",
+              transition: "all 0.15s ease",
+            }}
             title="Generate unit test assertions and coverage specs for uncovered functions"
           >
             <FlaskConical size={14} className={isLight ? "text-purple-600" : "text-purple-400"} />
@@ -1350,35 +1342,26 @@ export default function CoverageTypeDashboard({
             <button
               onClick={handleApplyAllGlobal}
               disabled={loading || running || isBulkApplying}
-              style={
-                isLight && type === "unit"
-                  ? {
-                      background: "#16a34a",
-                      border: "1px solid #15803d",
-                      color: "#ffffff",
-                      borderRadius: 8,
-                      padding: "8px 14px",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      fontWeight: 700,
-                      fontSize: 12.5,
-                      cursor: isBulkApplying ? "wait" : "pointer",
-                      boxShadow: "0 1px 3px rgba(22, 163, 74, 0.25)",
-                    }
-                  : {
-                      ...buttonStyle("#4ade80"),
-                      background: "linear-gradient(135deg, rgba(34,197,94,0.3), rgba(16,185,129,0.3))",
-                      border: "1px solid rgba(34,197,94,0.6)",
-                      color: "#4ade80",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      fontWeight: 700,
-                      cursor: isBulkApplying ? "wait" : "pointer",
-                      boxShadow: "0 0 16px rgba(34,197,94,0.25)",
-                    }
-              }
+              style={{
+                background: isLight
+                  ? "#16a34a"
+                  : "linear-gradient(135deg, rgba(34,197,94,0.3), rgba(16,185,129,0.3))",
+                border: isLight
+                  ? "1px solid #15803d"
+                  : "1px solid rgba(34,197,94,0.6)",
+                color: isLight ? "#ffffff" : "#4ade80",
+                borderRadius: 8,
+                padding: "8px 14px",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                fontWeight: 700,
+                fontSize: 12.5,
+                cursor: isBulkApplying ? "wait" : "pointer",
+                boxShadow: isLight
+                  ? "0 1px 3px rgba(22, 163, 74, 0.25)"
+                  : "0 0 16px rgba(34,197,94,0.25)",
+              }}
               title="Apply all generated test suggestions across all files and update coverage"
             >
               {isBulkApplying ? (
@@ -1400,21 +1383,18 @@ export default function CoverageTypeDashboard({
               await refetchCoverage();
             }}
             disabled={loading || running}
-            style={
-              isLight && type === "unit"
-                ? {
-                    background: "#ffffff",
-                    border: "1px solid #cbd5e1",
-                    color: "#334155",
-                    borderRadius: 8,
-                    padding: "8px 14px",
-                    fontWeight: 650,
-                    fontSize: 12.5,
-                    cursor: "pointer",
-                    boxShadow: "0 1px 2px rgba(0,0,0,0.03)",
-                  }
-                : buttonStyle("#8b949e")
-            }
+            style={{
+              background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.05)",
+              border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.12)",
+              color: isLight ? "#334155" : "#e2e8f0",
+              borderRadius: 8,
+              padding: "8px 14px",
+              fontWeight: 650,
+              fontSize: 12.5,
+              cursor: "pointer",
+              boxShadow: isLight ? "0 1px 2px rgba(0,0,0,0.03)" : "none",
+              transition: "all 0.15s ease",
+            }}
           >
             Refresh
           </button>
@@ -1422,24 +1402,29 @@ export default function CoverageTypeDashboard({
             <button
               onClick={run}
               disabled={!snapshotId || running}
-              style={
-                isLight
-                  ? {
-                      background: running ? "#eef2ff" : "#4f46e5",
-                      border: running ? "1px solid #c7d2fe" : "1px solid #4338ca",
-                      color: running ? "#4338ca" : "#ffffff",
-                      boxShadow: running ? "none" : "0 2px 6px rgba(79, 70, 229, 0.25)",
-                      borderRadius: 8,
-                      padding: "8px 16px",
-                      fontWeight: 700,
-                      fontSize: 12.5,
-                      cursor: running ? "wait" : "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                    }
-                  : buttonStyle(config.accent)
-              }
+              style={{
+                background: running
+                  ? (isLight ? "#eef2ff" : "rgba(99, 102, 241, 0.2)")
+                  : (isLight ? "#4f46e5" : "#6366f1"),
+                border: running
+                  ? (isLight ? "1px solid #c7d2fe" : "1px solid rgba(99, 102, 241, 0.4)")
+                  : (isLight ? "1px solid #4338ca" : "1px solid #4f46e5"),
+                color: running
+                  ? (isLight ? "#4338ca" : "#c7d2fe")
+                  : "#ffffff",
+                boxShadow: running
+                  ? "none"
+                  : (isLight ? "0 2px 6px rgba(79, 70, 229, 0.25)" : "0 2px 10px rgba(99, 102, 241, 0.35)"),
+                borderRadius: 8,
+                padding: "8px 16px",
+                fontWeight: 700,
+                fontSize: 12.5,
+                cursor: running ? "wait" : "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                transition: "all 0.15s ease",
+              }}
               title="Run Unit Test Analysis (Jest / Vitest)"
             >
               {running ? `Running (${Math.max(5, Math.min(100, Math.round(runProgress)))}%)...` : "Run Analysis Unit"}
@@ -1450,42 +1435,27 @@ export default function CoverageTypeDashboard({
 
       {(bulkSuggestMessage || allPendingSuggestions.length > 0) && (
         <div
-          style={
-            isLight && type === "unit"
-              ? {
-                  padding: "12px 18px",
-                  marginBottom: 16,
-                  borderRadius: 8,
-                  background: allPendingSuggestions.length > 0 ? "#f0fdf4" : "#f5f3ff",
-                  border: allPendingSuggestions.length > 0 ? "1px solid #bbf7d0" : "1px solid #ddd6fe",
-                  color: allPendingSuggestions.length > 0 ? "#15803d" : "#6d28d9",
-                  fontSize: 13,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  flexWrap: "wrap",
-                  gap: 12,
-                  boxShadow: "0 1px 2px rgba(0,0,0,0.02)",
-                }
-              : {
-                  padding: "12px 18px",
-                  marginBottom: 16,
-                  borderRadius: 8,
-                  background: allPendingSuggestions.length > 0
-                    ? "linear-gradient(135deg, rgba(34, 197, 94, 0.12), rgba(168, 85, 247, 0.12))"
-                    : "rgba(168, 85, 247, 0.12)",
-                  border: allPendingSuggestions.length > 0
-                    ? "1px solid rgba(34, 197, 94, 0.4)"
-                    : "1px solid rgba(168, 85, 247, 0.35)",
-                  color: allPendingSuggestions.length > 0 ? "#86efac" : "#d8b4fe",
-                  fontSize: 13,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  flexWrap: "wrap",
-                  gap: 12,
-                }
-          }
+          style={{
+            padding: "12px 18px",
+            marginBottom: 16,
+            borderRadius: 8,
+            background: isLight
+              ? (allPendingSuggestions.length > 0 ? "#f0fdf4" : "#f5f3ff")
+              : (allPendingSuggestions.length > 0 ? "rgba(34, 197, 94, 0.12)" : "rgba(168, 85, 247, 0.12)"),
+            border: isLight
+              ? (allPendingSuggestions.length > 0 ? "1px solid #bbf7d0" : "1px solid #ddd6fe")
+              : (allPendingSuggestions.length > 0 ? "1px solid rgba(34, 197, 94, 0.4)" : "1px solid rgba(168, 85, 247, 0.35)"),
+            color: isLight
+              ? (allPendingSuggestions.length > 0 ? "#15803d" : "#6d28d9")
+              : (allPendingSuggestions.length > 0 ? "#86efac" : "#d8b4fe"),
+            fontSize: 13,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: 12,
+            boxShadow: isLight ? "0 1px 2px rgba(0,0,0,0.02)" : "0 1px 4px rgba(0,0,0,0.2)",
+          }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <Sparkles size={16} className={allPendingSuggestions.length > 0 ? "text-green-400" : "text-purple-400"} />
@@ -1712,16 +1682,18 @@ export default function CoverageTypeDashboard({
               const rawInfo = i === 0 ? rawTotals?.statements : i === 1 ? rawTotals?.branches : i === 2 ? rawTotals?.functions : rawTotals?.lines;
               const MetricIcon = i === 0 ? FileCode : i === 1 ? GitBranch : i === 2 ? Cpu : Layers;
 
-              if (isLight && type === "unit") {
+              if (type === "unit") {
                 return (
                   <div
                     key={label}
                     style={{
-                      background: "#ffffff",
-                      border: "1px solid #e2e8f0",
+                      background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.03)",
+                      border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
                       borderRadius: 10,
                       padding: "16px 18px",
-                      boxShadow: "0 1px 3px 0 rgba(15, 23, 42, 0.04), 0 1px 2px -1px rgba(15, 23, 42, 0.02)",
+                      boxShadow: isLight
+                        ? "0 1px 3px 0 rgba(15, 23, 42, 0.04), 0 1px 2px -1px rgba(15, 23, 42, 0.02)"
+                        : "0 1px 3px rgba(0, 0, 0, 0.2)",
                       display: "flex",
                       flexDirection: "column",
                       justifyContent: "space-between",
@@ -1730,7 +1702,7 @@ export default function CoverageTypeDashboard({
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <div
                         style={{
-                          color: "#64748b",
+                          color: isLight ? "#64748b" : "#94a3b8",
                           fontSize: 11,
                           fontWeight: 700,
                           textTransform: "uppercase",
@@ -1740,7 +1712,7 @@ export default function CoverageTypeDashboard({
                           gap: 6,
                         }}
                       >
-                        <MetricIcon size={13} style={{ color: i === 0 ? "#6366f1" : i === 1 ? "#d97706" : i === 2 ? "#0284c7" : "#059669" }} />
+                        <MetricIcon size={13} style={{ color: i === 0 ? (isLight ? "#6366f1" : "#818cf8") : i === 1 ? (isLight ? "#d97706" : "#fbbf24") : i === 2 ? (isLight ? "#0284c7" : "#38bdf8") : (isLight ? "#059669" : "#34d399") }} />
                         <span>{label}</span>
                       </div>
 
@@ -1751,9 +1723,21 @@ export default function CoverageTypeDashboard({
                             fontWeight: 700,
                             padding: "1px 6px",
                             borderRadius: 4,
-                            background: metricVal >= 80 ? "#ecfdf5" : metricVal >= 60 ? "#fffbeb" : "#fff1f2",
-                            color: metricVal >= 80 ? "#059669" : metricVal >= 60 ? "#d97706" : "#e11d48",
-                            border: metricVal >= 80 ? "1px solid #a7f3d0" : metricVal >= 60 ? "1px solid #fde68a" : "1px solid #fecdd3",
+                            background: metricVal >= 80
+                              ? (isLight ? "#ecfdf5" : "rgba(16, 185, 129, 0.15)")
+                              : metricVal >= 60
+                                ? (isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.15)")
+                                : (isLight ? "#fff1f2" : "rgba(239, 68, 68, 0.15)"),
+                            color: metricVal >= 80
+                              ? (isLight ? "#059669" : "#34d399")
+                              : metricVal >= 60
+                                ? (isLight ? "#d97706" : "#fbbf24")
+                                : (isLight ? "#e11d48" : "#f87171"),
+                            border: metricVal >= 80
+                              ? (isLight ? "1px solid #a7f3d0" : "1px solid rgba(16, 185, 129, 0.35)")
+                              : metricVal >= 60
+                                ? (isLight ? "1px solid #fde68a" : "1px solid rgba(245, 158, 11, 0.35)")
+                                : (isLight ? "1px solid #fecdd3" : "1px solid rgba(239, 68, 68, 0.35)"),
                           }}
                         >
                           {metricVal >= 80 ? "✓ PASSING" : metricVal >= 60 ? "⚠ FAIR" : "× LOW"}
@@ -1763,7 +1747,7 @@ export default function CoverageTypeDashboard({
 
                     <div
                       style={{
-                        color: isLatestRunFailed ? "#dc2626" : "#0f172a",
+                        color: isLatestRunFailed ? (isLight ? "#dc2626" : "#f87171") : (isLight ? "#0f172a" : "#f8fafc"),
                         fontSize: isLatestRunFailed ? 18 : 28,
                         fontWeight: 800,
                         marginTop: 8,
@@ -1779,7 +1763,7 @@ export default function CoverageTypeDashboard({
                       <div
                         style={{
                           fontSize: 11.5,
-                          color: "#64748b",
+                          color: isLight ? "#64748b" : "#94a3b8",
                           fontFamily: "var(--font-mono, monospace)",
                           marginBottom: 4,
                         }}
@@ -1795,7 +1779,7 @@ export default function CoverageTypeDashboard({
                         style={{
                           width: "100%",
                           height: 4,
-                          background: "#f1f5f9",
+                          background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.08)",
                           borderRadius: 2,
                           overflow: "hidden",
                         }}
@@ -1813,8 +1797,8 @@ export default function CoverageTypeDashboard({
                     </div>
 
                     {isLatestRunFailed && lastSuccessfulCov && (
-                      <div style={{ fontSize: 11, color: "#64748b", marginTop: 6 }}>
-                        Last successful: <b style={{ color: "#334155" }}>{pct(lastSuccessfulValues[i])}</b> (cached)
+                      <div style={{ fontSize: 11, color: isLight ? "#64748b" : "#94a3b8", marginTop: 6 }}>
+                        Last successful: <b style={{ color: isLight ? "#334155" : "#cbd5e1" }}>{pct(lastSuccessfulValues[i])}</b> (cached)
                       </div>
                     )}
                   </div>
@@ -1900,151 +1884,6 @@ export default function CoverageTypeDashboard({
                   const Icon = item.icon;
                   const pctNum = Number(item.pctValue || 0);
 
-                  if (isLight) {
-                    return (
-                      <div
-                        key={item.key}
-                        onClick={() => {
-                          const next = isActive ? "testcases" : item.key;
-                          setActiveMetricView(next);
-                        }}
-                        style={{
-                          background: isActive
-                            ? item.key === "statements" ? "#faf5ff" : item.key === "branches" ? "#fffbeb" : "#f0f9ff"
-                            : "#ffffff",
-                          border: isActive
-                            ? `2px solid ${item.accentColor}`
-                            : "1px solid #e2e8f0",
-                          borderRadius: 12,
-                          padding: 18,
-                          cursor: "pointer",
-                          boxShadow: isActive
-                            ? `0 4px 14px ${item.accentColor}20`
-                            : "0 1px 3px rgba(15, 23, 42, 0.03)",
-                          transition: "all 0.2s ease",
-                        }}
-                        className={isActive ? "" : "hover:border-slate-300 hover:shadow-md transition-all"}
-                        title={`Click to filter by ${item.title}`}
-                      >
-                        <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                            marginBottom: 8,
-                          }}
-                        >
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 8,
-                              color: "#0f172a",
-                              fontWeight: 750,
-                              fontSize: 14.5,
-                            }}
-                          >
-                            <div
-                              style={{
-                                width: 28,
-                                height: 28,
-                                borderRadius: 6,
-                                background: `${item.accentColor}18`,
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                color: item.accentColor,
-                                flexShrink: 0,
-                              }}
-                            >
-                              <Icon size={16} />
-                            </div>
-                            <span>{item.title}</span>
-                          </div>
-
-                          <span
-                            style={{
-                              fontSize: 11,
-                              fontWeight: 700,
-                              padding: "2px 8px",
-                              borderRadius: 12,
-                              background: isActive ? item.accentColor : "#f1f5f9",
-                              color: isActive ? "#ffffff" : "#475569",
-                            }}
-                          >
-                            {isActive ? "Active View" : "Details →"}
-                          </span>
-                        </div>
-
-                        <div
-                          style={{
-                            display: "flex",
-                            alignItems: "baseline",
-                            gap: 8,
-                            marginTop: 6,
-                          }}
-                        >
-                          <span
-                            style={{
-                              fontSize: 26,
-                              fontWeight: 800,
-                              color: "#0f172a",
-                              fontFamily: "var(--font-mono, monospace)",
-                              letterSpacing: "-0.02em",
-                            }}
-                          >
-                            {pct(pctNum)}
-                          </span>
-                          {item.raw?.total ? (
-                            <span
-                              style={{
-                                fontSize: 12,
-                                color: "#64748b",
-                                fontFamily: "var(--font-mono, monospace)",
-                              }}
-                            >
-                              ({item.raw.covered} / {item.raw.total} covered)
-                            </span>
-                          ) : null}
-                        </div>
-
-                        {/* Progress Bar */}
-                        <div
-                          style={{
-                            width: "100%",
-                            height: 5,
-                            background: "#f1f5f9",
-                            border: "1px solid #e2e8f0",
-                            borderRadius: 3,
-                            marginTop: 10,
-                            overflow: "hidden",
-                          }}
-                        >
-                          <div
-                            style={{
-                              width: `${Math.min(100, Math.max(0, pctNum))}%`,
-                              height: "100%",
-                              background: item.accentColor,
-                              borderRadius: 3,
-                              transition: "width 0.4s ease",
-                            }}
-                          />
-                        </div>
-
-                        <div
-                          style={{
-                            color: "#475569",
-                            fontSize: 12,
-                            lineHeight: 1.5,
-                            marginTop: 9,
-                          }}
-                        >
-                          {item.description}
-                        </div>
-                      </div>
-                    );
-                  }
-
                   return (
                     <div
                       key={item.key}
@@ -2053,56 +1892,76 @@ export default function CoverageTypeDashboard({
                         setActiveMetricView(next);
                       }}
                       style={{
-                        ...cardStyle,
-                        cursor: "pointer",
-                        borderColor: isActive
-                          ? item.accentColor
-                          : "rgba(255,255,255,0.08)",
                         background: isActive
-                          ? `${item.accentColor}12`
-                          : "rgba(255,255,255,0.025)",
+                          ? (isLight
+                              ? (item.key === "statements" ? "#faf5ff" : item.key === "branches" ? "#fffbeb" : "#f0f9ff")
+                              : `${item.accentColor}18`)
+                          : (isLight ? "#ffffff" : "rgba(255, 255, 255, 0.025)"),
+                        border: isActive
+                          ? `2px solid ${item.accentColor}`
+                          : (isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)"),
+                        borderRadius: 12,
+                        padding: 18,
+                        cursor: "pointer",
                         boxShadow: isActive
-                          ? `0 0 16px ${item.accentColor}25`
-                          : "none",
+                          ? (isLight ? `0 4px 14px ${item.accentColor}20` : `0 0 16px ${item.accentColor}25`)
+                          : (isLight ? "0 1px 3px rgba(15, 23, 42, 0.03)" : "none"),
                         transition: "all 0.2s ease",
                       }}
-                      className="hover:border-white/20 transition-all"
-                      title={`Click to view ${item.title} details`}
+                      className={isActive ? "" : (isLight ? "hover:border-slate-300 hover:shadow-md transition-all" : "hover:border-white/20 transition-all")}
+                      title={`Click to filter by ${item.title}`}
                     >
                       <div
                         style={{
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "space-between",
-                          marginBottom: 6,
+                          marginBottom: 8,
                         }}
                       >
                         <div
                           style={{
                             display: "flex",
                             alignItems: "center",
-                            gap: 7,
-                            color: item.accentColor,
-                            fontWeight: 650,
-                            fontSize: 14,
+                            gap: 8,
+                            color: isLight ? "#0f172a" : "#f8fafc",
+                            fontWeight: 750,
+                            fontSize: 14.5,
                           }}
                         >
-                          <Icon size={16} />
+                          <div
+                            style={{
+                              width: 28,
+                              height: 28,
+                              borderRadius: 6,
+                              background: `${item.accentColor}18`,
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              color: item.accentColor,
+                              flexShrink: 0,
+                            }}
+                          >
+                            <Icon size={16} />
+                          </div>
                           <span>{item.title}</span>
                         </div>
+
                         <span
                           style={{
                             fontSize: 11,
-                            fontWeight: 600,
+                            fontWeight: 700,
                             padding: "2px 8px",
                             borderRadius: 12,
                             background: isActive
-                              ? `${item.accentColor}30`
-                              : "rgba(255,255,255,0.06)",
-                            color: isActive ? item.accentColor : "#8b949e",
+                              ? item.accentColor
+                              : (isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.06)"),
+                            color: isActive
+                              ? "#ffffff"
+                              : (isLight ? "#475569" : "#94a3b8"),
                           }}
                         >
-                          {isActive ? "Selected" : "Details →"}
+                          {isActive ? "Active View" : "Details →"}
                         </span>
                       </div>
 
@@ -2116,10 +1975,11 @@ export default function CoverageTypeDashboard({
                       >
                         <span
                           style={{
-                            fontSize: 24,
-                            fontWeight: 750,
-                            color: coverageColor(pctNum),
-                            fontFamily: "var(--font-mono)",
+                            fontSize: 26,
+                            fontWeight: 800,
+                            color: isLight ? "#0f172a" : "#f8fafc",
+                            fontFamily: "var(--font-mono, monospace)",
+                            letterSpacing: "-0.02em",
                           }}
                         >
                           {pct(pctNum)}
@@ -2127,12 +1987,12 @@ export default function CoverageTypeDashboard({
                         {item.raw?.total ? (
                           <span
                             style={{
-                              fontSize: 11,
-                              color: "#8b949e",
-                              fontFamily: "var(--font-mono)",
+                              fontSize: 12,
+                              color: isLight ? "#64748b" : "#94a3b8",
+                              fontFamily: "var(--font-mono, monospace)",
                             }}
                           >
-                            ({item.raw.covered}/{item.raw.total})
+                            ({item.raw.covered} / {item.raw.total} covered)
                           </span>
                         ) : null}
                       </div>
@@ -2141,10 +2001,11 @@ export default function CoverageTypeDashboard({
                       <div
                         style={{
                           width: "100%",
-                          height: 4,
-                          background: "rgba(255,255,255,0.08)",
-                          borderRadius: 2,
-                          marginTop: 8,
+                          height: 5,
+                          background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.08)",
+                          border: isLight ? "1px solid #e2e8f0" : "none",
+                          borderRadius: 3,
+                          marginTop: 10,
                           overflow: "hidden",
                         }}
                       >
@@ -2152,8 +2013,8 @@ export default function CoverageTypeDashboard({
                           style={{
                             width: `${Math.min(100, Math.max(0, pctNum))}%`,
                             height: "100%",
-                            background: coverageColor(pctNum),
-                            borderRadius: 2,
+                            background: item.accentColor,
+                            borderRadius: 3,
                             transition: "width 0.4s ease",
                           }}
                         />
@@ -2161,7 +2022,7 @@ export default function CoverageTypeDashboard({
 
                       <div
                         style={{
-                          color: "#8b949e",
+                          color: isLight ? "#475569" : "#94a3b8",
                           fontSize: 12,
                           lineHeight: 1.5,
                           marginTop: 9,
@@ -2203,13 +2064,13 @@ export default function CoverageTypeDashboard({
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: isLight ? 6 : 8,
+                gap: 6,
                 marginTop: 20,
                 overflowX: "auto",
-                padding: isLight ? "4px 6px" : "0 0 4px",
-                background: isLight ? "#f1f5f9" : "transparent",
-                borderRadius: isLight ? 10 : 0,
-                border: isLight ? "1px solid #e2e8f0" : "none",
+                padding: "4px 6px",
+                background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.03)",
+                borderRadius: 10,
+                border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
               }}
             >
               {[
@@ -2236,7 +2097,7 @@ export default function CoverageTypeDashboard({
                   label: "Source file coverage",
                   count: selectedFiles.length,
                   icon: ListChecks,
-                  accent: isLight ? "#2563eb" : undefined,
+                  accent: isLight ? "#2563eb" : "#60a5fa",
                 },
                 {
                   id: "statements",
@@ -2263,76 +2124,59 @@ export default function CoverageTypeDashboard({
                 const isCurrent = activeMetricView === tab.id;
                 const TabIcon = tab.icon;
 
-                if (isLight) {
-                  return (
-                    <button
-                      key={tab.id}
-                      onClick={() => setActiveMetricView(tab.id)}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 6,
-                        padding: "6px 14px",
-                        borderRadius: 8,
-                        fontSize: 12,
-                        fontWeight: isCurrent ? 700 : 500,
-                        cursor: "pointer",
-                        background: isCurrent ? "#ffffff" : "transparent",
-                        color: isCurrent ? "#0f172a" : "#64748b",
-                        border: isCurrent ? "1px solid #cbd5e1" : "1px solid transparent",
-                        boxShadow: isCurrent ? "0 1px 3px rgba(15, 23, 42, 0.06)" : "none",
-                        transition: "all 0.15s ease",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {TabIcon && <TabIcon size={14} style={{ color: isCurrent ? tab.accent : "#94a3b8" }} />}
-                      <span>{tab.label}</span>
-                      <span
-                        style={{
-                          fontSize: 11,
-                          fontWeight: 700,
-                          padding: "1px 6px",
-                          borderRadius: 9999,
-                          background: isCurrent ? "#f1f5f9" : "#e2e8f0",
-                          color: isCurrent ? "#334155" : "#64748b",
-                          fontFamily: "var(--font-mono, monospace)",
-                        }}
-                      >
-                        {tab.count}
-                      </span>
-                    </button>
-                  );
-                }
-
                 return (
                   <button
                     key={tab.id}
-                    onClick={() => {
-                      setActiveMetricView(tab.id);
-                    }}
+                    onClick={() => setActiveMetricView(tab.id)}
                     style={{
                       display: "flex",
                       alignItems: "center",
                       gap: 6,
-                      padding: "7px 15px",
-                      borderRadius: 20,
+                      padding: "6px 14px",
+                      borderRadius: 8,
                       fontSize: 12,
-                      fontWeight: 600,
+                      fontWeight: isCurrent ? 700 : 500,
                       cursor: "pointer",
                       background: isCurrent
-                        ? tab.accent
-                          ? `${tab.accent}25`
-                          : "rgba(255,255,255,0.15)"
-                        : "rgba(255,255,255,0.03)",
-                      color: isCurrent ? tab.accent || "#ffffff" : "#8b949e",
+                        ? (isLight ? "#ffffff" : "rgba(255, 255, 255, 0.08)")
+                        : "transparent",
+                      color: isCurrent
+                        ? (isLight ? "#0f172a" : "#f8fafc")
+                        : (isLight ? "#64748b" : "#94a3b8"),
                       border: isCurrent
-                        ? `1px solid ${tab.accent || "rgba(255,255,255,0.3)"}`
-                        : "1px solid rgba(255,255,255,0.06)",
+                        ? (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.12)")
+                        : "1px solid transparent",
+                      boxShadow: isCurrent
+                        ? (isLight ? "0 1px 3px rgba(15, 23, 42, 0.06)" : "0 1px 3px rgba(0, 0, 0, 0.2)")
+                        : "none",
                       transition: "all 0.15s ease",
+                      whiteSpace: "nowrap",
                     }}
                   >
-                    {TabIcon && <TabIcon size={14} />}
-                    <span>{`${tab.label} (${tab.count})`}</span>
+                    {TabIcon && (
+                      <TabIcon
+                        size={14}
+                        style={{ color: isCurrent ? tab.accent : (isLight ? "#94a3b8" : "#64748b") }}
+                      />
+                    )}
+                    <span>{tab.label}</span>
+                    <span
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 700,
+                        padding: "1px 6px",
+                        borderRadius: 9999,
+                        background: isCurrent
+                          ? (isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.1)")
+                          : (isLight ? "#e2e8f0" : "rgba(255, 255, 255, 0.05)"),
+                        color: isCurrent
+                          ? (isLight ? "#334155" : "#f8fafc")
+                          : (isLight ? "#64748b" : "#94a3b8"),
+                        fontFamily: "var(--font-mono, monospace)",
+                      }}
+                    >
+                      {tab.count}
+                    </span>
                   </button>
                 );
               })}
@@ -2340,37 +2184,22 @@ export default function CoverageTypeDashboard({
               {activeMetricView !== "testcases" && activeMetricView !== "visualization" && (
                 <button
                   onClick={() => setActiveMetricView("testcases")}
-                  style={
-                    isLight
-                      ? {
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 5,
-                          padding: "5px 10px",
-                          borderRadius: 6,
-                          fontSize: 11,
-                          fontWeight: 650,
-                          color: "#6d28d9",
-                          background: "#ede9fe",
-                          border: "1px solid #c4b5fd",
-                          cursor: "pointer",
-                          marginLeft: "auto",
-                          whiteSpace: "nowrap",
-                        }
-                      : {
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 4,
-                          padding: "6px 10px",
-                          borderRadius: 20,
-                          fontSize: 11,
-                          color: "#c084fc",
-                          background: "rgba(192, 132, 252, 0.1)",
-                          border: "1px solid rgba(192, 132, 252, 0.2)",
-                          cursor: "pointer",
-                          marginLeft: "auto",
-                        }
-                  }
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 5,
+                    padding: "5px 10px",
+                    borderRadius: 6,
+                    fontSize: 11,
+                    fontWeight: 650,
+                    color: isLight ? "#6d28d9" : "#c084fc",
+                    background: isLight ? "#ede9fe" : "rgba(124, 58, 237, 0.15)",
+                    border: isLight ? "1px solid #c4b5fd" : "1px solid rgba(192, 132, 252, 0.3)",
+                    cursor: "pointer",
+                    marginLeft: "auto",
+                    whiteSpace: "nowrap",
+                    transition: "all 0.15s ease",
+                  }}
                   title="Back to test case files list"
                 >
                   <FlaskConical size={12} />
@@ -2801,14 +2630,15 @@ export default function CoverageTypeDashboard({
                   "Run Analysis Unit" to run and analyze.
                 </div>
               ) : (
-                <div>
+                <div style={{ overflowX: "auto" }}>
                   {/* Table Header */}
                   <div
                     style={{
                       display: "grid",
                       gridTemplateColumns:
-                        "minmax(220px, 1.4fr) 100px 120px 90px 105px 110px",
+                        "40px minmax(180px, 1.3fr) 85px 100px 80px 95px 105px",
                       gap: 10,
+                      minWidth: 720,
                       padding: "10px 18px",
                       background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)",
                       borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.05)",
@@ -2819,6 +2649,7 @@ export default function CoverageTypeDashboard({
                       letterSpacing: "0.04em",
                     }}
                   >
+                    <span style={{ textAlign: "center" }}>#</span>
                     <span>File Testcase</span>
                     <span style={{ textAlign: "center" }}>Framework</span>
                     <span style={{ textAlign: "right" }}>Test Cases</span>
@@ -2828,7 +2659,7 @@ export default function CoverageTypeDashboard({
                   </div>
 
                   {/* Rows */}
-                  {filteredTestSuites.map((suite) => {
+                  {filteredTestSuites.map((suite, idx) => {
                     const isPassed =
                       suite.status === "passed" && suite.failedTests === 0;
                     const isExpanded = expandedSuite === suite.filePath;
@@ -2839,8 +2670,9 @@ export default function CoverageTypeDashboard({
                           style={{
                             display: "grid",
                             gridTemplateColumns:
-                              "minmax(220px, 1.4fr) 100px 120px 90px 105px 110px",
+                              "40px minmax(180px, 1.3fr) 85px 100px 80px 95px 105px",
                             gap: 10,
+                            minWidth: 720,
                             padding: "12px 18px",
                             alignItems: "center",
                             borderBottom: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255,255,255,.04)",
@@ -2851,6 +2683,26 @@ export default function CoverageTypeDashboard({
                           }}
                           className={isLight ? "hover:bg-slate-50/80" : "hover:bg-white/[0.02]"}
                         >
+                          {/* File Index */}
+                          <div style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
+                            <span
+                              style={{
+                                fontSize: 11,
+                                fontWeight: 700,
+                                fontFamily: "var(--font-mono, monospace)",
+                                color: isLight ? "#64748b" : "#94a3b8",
+                                background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.05)",
+                                border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
+                                borderRadius: 6,
+                                padding: "2px 6px",
+                                minWidth: 26,
+                                textAlign: "center",
+                              }}
+                            >
+                              {idx + 1}
+                            </span>
+                          </div>
+
                           {/* File path */}
                           <div
                             onClick={() => onOpenFile?.(suite.filePath)}
@@ -3135,6 +2987,17 @@ export default function CoverageTypeDashboard({
                                           borderBottom: isLight ? "1px dashed #e2e8f0" : "1px dashed rgba(255,255,255,0.03)",
                                         }}
                                       >
+                                        <span
+                                          style={{
+                                            fontSize: 10.5,
+                                            fontWeight: 700,
+                                            fontFamily: "var(--font-mono)",
+                                            color: isLight ? "#94a3b8" : "#64748b",
+                                            minWidth: 22,
+                                          }}
+                                        >
+                                          #{idx + 1}
+                                        </span>
                                         {testCase.status === "passed" ? (
                                           <Check size={13} style={{ color: isLight ? "#16a34a" : "#4ade80", flexShrink: 0 }} />
                                         ) : (
@@ -3359,13 +3222,14 @@ export default function CoverageTypeDashboard({
                       : "No matching functions found for the filter."}
                   </div>
                 ) : (
-                  <div>
+                  <div style={{ overflowX: "auto" }}>
                     <div
                       style={{
                         display: "grid",
                         gridTemplateColumns:
-                          "minmax(200px, 1.2fr) minmax(220px, 1.5fr) 90px 110px 100px 160px",
+                          "40px minmax(180px, 1.2fr) minmax(200px, 1.4fr) 85px 100px 95px 140px",
                         gap: 10,
+                        minWidth: 760,
                         padding: "10px 18px",
                         background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)",
                         borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.05)",
@@ -3376,6 +3240,7 @@ export default function CoverageTypeDashboard({
                         letterSpacing: "0.04em",
                       }}
                     >
+                      <span style={{ textAlign: "center" }}>#</span>
                       <span>Function Name</span>
                       <span>Source File</span>
                       <span>Location</span>
@@ -3384,7 +3249,7 @@ export default function CoverageTypeDashboard({
                       <span style={{ textAlign: "center" }}>Actions</span>
                     </div>
 
-                    {filteredFunctions.slice(0, 100).map((fn) => {
+                    {filteredFunctions.slice(0, 100).map((fn, idx) => {
                       const isCovered = fn.hit > 0;
                       return (
                         <div
@@ -3395,8 +3260,9 @@ export default function CoverageTypeDashboard({
                           style={{
                             display: "grid",
                             gridTemplateColumns:
-                              "minmax(200px, 1.2fr) minmax(220px, 1.5fr) 90px 110px 100px 160px",
+                              "40px minmax(180px, 1.2fr) minmax(200px, 1.4fr) 85px 100px 95px 140px",
                             gap: 10,
+                            minWidth: 760,
                             padding: "10px 18px",
                             alignItems: "center",
                             borderBottom: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255,255,255,.04)",
@@ -3404,6 +3270,26 @@ export default function CoverageTypeDashboard({
                           }}
                           className={isLight ? "hover:bg-slate-50/80" : "hover:bg-white/[0.02]"}
                         >
+                          {/* Function Index */}
+                          <div style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
+                            <span
+                              style={{
+                                fontSize: 11,
+                                fontWeight: 700,
+                                fontFamily: "var(--font-mono, monospace)",
+                                color: isLight ? "#64748b" : "#94a3b8",
+                                background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.05)",
+                                border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
+                                borderRadius: 6,
+                                padding: "2px 6px",
+                                minWidth: 26,
+                                textAlign: "center",
+                              }}
+                            >
+                              {idx + 1}
+                            </span>
+                          </div>
+
                           <div
                             onClick={() => onOpenFile?.(fn.filePath)}
                             style={{
@@ -3615,14 +3501,15 @@ export default function CoverageTypeDashboard({
                   No data available. Click Run Analysis Unit to start.
                 </div>
               ) : (
-                <div>
+                <div style={{ overflowX: "auto" }}>
                   {/* Table Header */}
                   <div
                     style={{
                       display: "grid",
                       gridTemplateColumns:
-                        "minmax(240px, 1fr) repeat(4, 75px) 115px",
+                        "40px minmax(220px, 1fr) repeat(4, 75px) 115px",
                       gap: 10,
+                      minWidth: 700,
                       padding: "10px 18px",
                       background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)",
                       borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.05)",
@@ -3633,6 +3520,7 @@ export default function CoverageTypeDashboard({
                       letterSpacing: "0.04em",
                     }}
                   >
+                    <span style={{ textAlign: "center" }}>#</span>
                     <span>Source File</span>
                     <span style={{ textAlign: "right" }}>Lines</span>
                     <span
@@ -3662,7 +3550,7 @@ export default function CoverageTypeDashboard({
                   </div>
 
                   {/* Table Rows */}
-                  {displayFiles.slice(0, 50).map((file) => {
+                  {displayFiles.slice(0, 50).map((file, idx) => {
                     const isFull = (file.linesPct || 0) >= 100;
                     const isExpanded = expandedFiles.has(file.filePath);
                     const cacheEntry = fileCoverageCache[file.filePath];
@@ -3679,8 +3567,9 @@ export default function CoverageTypeDashboard({
                           style={{
                             display: "grid",
                             gridTemplateColumns:
-                              "minmax(240px, 1fr) repeat(4, 75px) 115px",
+                              "40px minmax(220px, 1fr) repeat(4, 75px) 115px",
                             gap: 10,
+                            minWidth: 700,
                             padding: "10px 18px",
                             alignItems: "center",
                             borderBottom: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255,255,255,.04)",
@@ -3691,6 +3580,26 @@ export default function CoverageTypeDashboard({
                           }}
                           className={isLight ? "hover:bg-slate-50/80" : "hover:bg-white/[0.02]"}
                         >
+                          {/* File Index */}
+                          <div style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
+                            <span
+                              style={{
+                                fontSize: 11,
+                                fontWeight: 700,
+                                fontFamily: "var(--font-mono, monospace)",
+                                color: isLight ? "#64748b" : "#94a3b8",
+                                background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.05)",
+                                border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
+                                borderRadius: 6,
+                                padding: "2px 6px",
+                                minWidth: 26,
+                                textAlign: "center",
+                              }}
+                            >
+                              {idx + 1}
+                            </span>
+                          </div>
+
                           {/* File path + status icon */}
                           <div
                             style={{

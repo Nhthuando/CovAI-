@@ -743,6 +743,23 @@ export default function UnitTestExecutionVisualizer({
                   >
                     {/* Left: Suite Identifier & Toggle */}
                     <div style={{ display: "flex", alignItems: "center", gap: 8, overflow: "hidden" }}>
+                      <span
+                        style={{
+                          fontSize: 10.5,
+                          fontWeight: 700,
+                          fontFamily: "var(--font-mono, monospace)",
+                          color: isLight ? "#64748b" : "#94a3b8",
+                          background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.05)",
+                          border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
+                          borderRadius: 5,
+                          padding: "1px 5px",
+                          minWidth: 22,
+                          textAlign: "center",
+                          flexShrink: 0,
+                        }}
+                      >
+                        {suiteIdx + 1}
+                      </span>
                       <button
                         onClick={() => toggleSuite(suite.filePath)}
                         style={{
@@ -949,9 +966,9 @@ export default function UnitTestExecutionVisualizer({
                                 key={tcIdx}
                                 style={{
                                   display: "grid",
-                                  gridTemplateColumns: "20px minmax(200px, 1fr) auto 120px",
+                                  gridTemplateColumns: "26px 20px minmax(200px, 1fr) auto 120px",
                                   alignItems: "center",
-                                  gap: 10,
+                                  gap: 8,
                                   padding: "6px 10px",
                                   borderRadius: 6,
                                   background: isLight ? "#ffffff" : "rgba(255,255,255,0.02)",
@@ -960,6 +977,17 @@ export default function UnitTestExecutionVisualizer({
                                   fontFamily: "var(--font-mono)",
                                 }}
                               >
+                                <span
+                                  style={{
+                                    fontSize: 10,
+                                    fontWeight: 700,
+                                    color: isLight ? "#94a3b8" : "#64748b",
+                                    fontFamily: "var(--font-mono)",
+                                    textAlign: "center",
+                                  }}
+                                >
+                                  #{tcIdx + 1}
+                                </span>
                                 {tcPassed ? (
                                   <Check size={13} style={{ color: isLight ? "#16a34a" : "#4ade80" }} />
                                 ) : (
@@ -1045,7 +1073,7 @@ export default function UnitTestExecutionVisualizer({
 
           {/* Suites branch list */}
           <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingLeft: 16, borderLeft: isLight ? "2px dashed #cbd5e1" : "2px dashed rgba(255,255,255,0.15)" }}>
-            {processedSuites.map((suite) => {
+            {processedSuites.map((suite, suiteIdx) => {
               const isSuiteFailed = suite.status === "failed" || (suite.failedTests || 0) > 0;
               const assertions = suite.assertions || [];
 
@@ -1071,6 +1099,22 @@ export default function UnitTestExecutionVisualizer({
                     }}
                   >
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span
+                        style={{
+                          fontSize: 10.5,
+                          fontWeight: 700,
+                          fontFamily: "var(--font-mono, monospace)",
+                          color: isLight ? "#64748b" : "#94a3b8",
+                          background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.05)",
+                          border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
+                          borderRadius: 5,
+                          padding: "1px 5px",
+                          minWidth: 22,
+                          textAlign: "center",
+                        }}
+                      >
+                        {suiteIdx + 1}
+                      </span>
                       {isSuiteFailed ? (
                         <XCircle size={15} style={{ color: "#ef4444" }} />
                       ) : (
@@ -1150,6 +1194,17 @@ export default function UnitTestExecutionVisualizer({
                             }}
                           >
                             <div style={{ display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
+                              <span
+                                style={{
+                                  fontSize: 10,
+                                  fontWeight: 700,
+                                  color: isLight ? "#94a3b8" : "#64748b",
+                                  fontFamily: "var(--font-mono)",
+                                  minWidth: 20,
+                                }}
+                              >
+                                #{idx + 1}
+                              </span>
                               {isTcPassed ? (
                                 <Check size={12} style={{ color: "#10b981", flexShrink: 0 }} />
                               ) : (
