@@ -55,7 +55,7 @@ async function executeWithRetry(apiCall, maxRetries = 3) {
  * @param {string|null} systemInstruction - Optional system instruction for the model
  * @returns {Promise<string>} The generated text response
  */
-export const generateText = async (prompt, systemInstruction = null) => {
+export const generateText = async (prompt, systemInstruction = null, generationConfig = {}) => {
   if (!genAI) {
     throw new Error("GEMINI_API_KEY is not configured.");
   }
@@ -74,6 +74,7 @@ export const generateText = async (prompt, systemInstruction = null) => {
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
         maxOutputTokens: 65536,
+        ...generationConfig,
       },
     });
     // Receive responses

@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import SystemTestEvidence from './SystemTestEvidence.jsx';
+import { io } from "socket.io-client";
 import {
   Sparkles,
   GitBranch,
@@ -20,6 +22,8 @@ import {
   Zap,
   BarChart3,
   Network,
+  ListOrdered,
+  Terminal,
 } from "lucide-react";
 import {
   getCoverageFiles,
@@ -30,33 +34,35 @@ import {
   getTestExecution,
   runCoverageByType,
   getFileCoverage,
+  getSystemCoverageSummary,
+  saveAiSystemTest,
 } from "../../services/coverage.service.js";
 import { getJobDetailApi } from "../../services/job.service.js";
-import { getProjectCfgApi } from "../../services/project.service.js";
+import { getProjectCfgApi, generateSystemTestApi } from "../../services/project.service.js";
 import FunctionExecutionFlow from "./FunctionExecutionFlow.jsx";
 import FileCodeExecutionView from "./FileCodeExecutionView.jsx";
 import FileBranchCFGView from "./FileBranchCFGView.jsx";
 import FileFunctionCallGraphView from "./FileFunctionCallGraphView.jsx";
 import CFGCalculator from "./CFGCalculator.jsx";
+import JobQueue from "./JobQueue.jsx";
 import { CoverageDashboardSkeleton } from "../common/Skeleton.jsx";
 
 const CONFIG = {
   unit: {
     title: "Unit Test Coverage",
-    subtitle: "Kiểm thử độc lập của hàm, nhánh điều kiện và câu lệnh.",
+    subtitle: "Independent testing of functions, condition branches, and statements.",
     supported: "Jest · Vitest",
     accent: "#a78bfa",
     focus: ["Statements", "Branches", "Functions", "Lines"],
     explanation: [
-      ["Statement coverage", "Bao nhiêu câu lệnh đã được test thực thi."],
-      ["Branch coverage", "Bao nhiêu nhánh if/else/switch đã được đi qua."],
-      ["Function coverage", "Bao nhiêu hàm hoặc method đã được gọi."],
+      ["Statement coverage", "Percentage of statements executed by tests."],
+      ["Branch coverage", "Percentage of if/else/switch branches traversed."],
+      ["Function coverage", "Percentage of functions or methods called."],
     ],
   },
   integration: {
     title: "Integration Test Coverage",
-    subtitle:
-      "Kiểm tra API và trao đổi dữ liệu giữa frontend, backend và dịch vụ.",
+    subtitle: "Test APIs and data flow between frontend, backend, and external services.",
     supported: "Playwright · Supertest",
     accent: "#fbbf24",
     focus: [
@@ -66,33 +72,21 @@ const CONFIG = {
       "Critical APIs",
     ],
     explanation: [
-      ["API contracts", "Request, response, status code và dữ liệu trả về."],
-      [
-        "Frontend ↔ Backend",
-        "Các lời gọi API từ giao diện đến route/controller.",
-      ],
-      [
-        "Service integration",
-        "Luồng controller, service và database/dependency.",
-      ],
+      ["API contracts", "Requests, responses, status codes, and payload contracts."],
+      ["Frontend ↔ Backend", "API invocations from client UI to routes/controllers."],
+      ["Service integration", "Controller, service, and database/dependency flows."],
     ],
   },
   system: {
-    title: "System Test Coverage",
-    subtitle: "Kiểm tra E2E các tính năng hoàn chỉnh theo góc nhìn người dùng.",
-    supported: "Playwright · Cypress",
+    title: "System Tests",
+    subtitle: "Verify user journeys across the frontend, real API and database.",
+    supported: "Playwright",
     accent: "#ec4899",
-    focus: ["E2E tests", "Passed", "Failed", "Feature coverage"],
+    focus: ["E2E tests", "Passed", "Failed", "Flaky / Stability", "Coverage"],
     explanation: [
-      [
-        "User journeys",
-        "Các luồng đăng nhập, thao tác và hoàn thành nghiệp vụ.",
-      ],
-      [
-        "Browser behavior",
-        "Giao diện, điều hướng và tương tác trên trình duyệt.",
-      ],
-      ["Full system", "Frontend, backend và dữ liệu hoạt động cùng nhau."],
+      ["User journeys", "Authentication, user actions, and full business workflows."],
+      ["Browser behavior", "UI rendering, routing navigation, and browser interactions."],
+      ["Full system", "Frontend, backend, and database working together."],
     ],
   },
 };
@@ -187,24 +181,6 @@ const buttonStyle = (color) => ({
   cursor: "pointer",
 });
 
-async function waitForJob(jobId) {
-  for (let attempt = 0; attempt < 180; attempt += 1) {
-    const response = await getJobDetailApi(jobId);
-    const job = response?.job;
-    if (job?.status === "SUCCESS") return;
-    if (["FAILED", "CANCELED"].includes(job?.status))
-      throw new Error(
-        job?.errorMessage ||
-          job?.error ||
-          `${job.status}: coverage analysis failed.`,
-      );
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-  }
-  throw new Error(
-    "Coverage analysis timed out. Open Job Queue to inspect logs.",
-  );
-}
-
 export default function CoverageTypeDashboard({
   type,
   snapshotId,
@@ -217,14 +193,166 @@ export default function CoverageTypeDashboard({
 }) {
   const config = CONFIG[type];
   const [summary, setSummary] = useState(null);
+  const [systemSummary, setSystemSummary] = useState(null);
+  const executionMode = "full";
   const [files, setFiles] = useState([]);
   const [executions, setExecutions] = useState({});
   const [frameworks, setFrameworks] = useState(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const [runningStatus, setRunningStatus] = useState("");
   const [error, setError] = useState("");
   const [activeFramework, setActiveFramework] = useState("");
   const [generateError, setGenerateError] = useState("");
+  const [internalGenerating, setInternalGenerating] = useState(false);
+  const [expandedScenario, setExpandedScenario] = useState(null);
+  const [showAiDetails, setShowAiDetails] = useState(false);
+  const isGenerating = generating || internalGenerating;
+  const activeJobIdRef = useRef(null);
+
+  // Socket.IO realtime progress listener
+  useEffect(() => {
+    let userId = null;
+    let socketToken = localStorage.getItem("token");
+    try {
+      const userStr = localStorage.getItem("user");
+      if (userStr) {
+        const user = JSON.parse(userStr);
+        userId = user?.id;
+        socketToken ||= user?.token;
+      }
+    } catch { /* Polling continues when stored user data is unavailable. */ }
+
+    const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
+    const socket = io(SOCKET_URL, {
+      auth: { token: socketToken },
+      withCredentials: true,
+      autoConnect: true,
+      reconnectionAttempts: 5,
+    });
+
+    socket.on("connect", () => {
+      if (userId) socket.emit("subscribe_notifications", userId);
+    });
+
+    const onJobProgress = (data) => {
+      if (data && activeJobIdRef.current && data.jobId === activeJobIdRef.current) {
+        if (data.stage) {
+          setRunningStatus(data.stage);
+        }
+      }
+    };
+
+    socket.on("job:progress", onJobProgress);
+
+    return () => {
+      socket.off("job:progress", onJobProgress);
+      socket.disconnect();
+    };
+  }, []);
+
+  const waitForJobWithProgress = useCallback(async (jobId, defaultInitial = "Starting AUT server...") => {
+    activeJobIdRef.current = jobId;
+    setRunningStatus(defaultInitial);
+    for (let attempt = 0; attempt < 600; attempt += 1) {
+      const response = await getJobDetailApi(jobId);
+      const job = response?.job;
+      if (job?.status === "SUCCESS") {
+        setRunningStatus("");
+        activeJobIdRef.current = null;
+        return;
+      }
+      if (["FAILED", "CANCELED"].includes(job?.status)) {
+        setRunningStatus("");
+        activeJobIdRef.current = null;
+        throw new Error(
+          job?.errorMessage ||
+          job?.error ||
+          `${job.status}: task failed.`,
+        );
+      }
+
+      // Live stage extraction from logs fallback
+      if (job?.logs && job.logs.length > 0) {
+        const latestLogs = [...job.logs].reverse();
+        for (const l of latestLogs) {
+          const msg = l.message || "";
+          if (/^(Inspecting|Generating system tests|Repairing generated tests|Verifying generated tests|Confirming generated tests)/.test(msg)) {
+            setRunningStatus(msg);
+            break;
+          } else if (msg.includes("Starting AUT server")) {
+            setRunningStatus("Starting AUT server...");
+            break;
+          } else if (msg.includes("Executing Playwright") || msg.includes("Selected playwright") || msg.includes("Run command")) {
+            setRunningStatus("Executing Playwright tests...");
+            break;
+          } else if (msg.includes("Executing Cypress") || msg.includes("Selected cypress")) {
+            setRunningStatus("Executing Cypress tests...");
+            break;
+          } else if (msg.includes("Parsing results") || msg.includes("Track 1") || msg.includes("Track 2")) {
+            setRunningStatus("Parsing results...");
+            break;
+          } else if (msg.includes("Dry-Run")) {
+            setRunningStatus("Verifying test syntax in isolated Dry-Run...");
+            break;
+          }
+        }
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+    activeJobIdRef.current = null;
+    setRunningStatus("");
+    throw new Error("Analysis timed out. Open Job Queue to inspect logs.");
+  }, []);
+
+  const handleGenerateAiSystemTest = async () => {
+    if (onGenerate && !projectId) {
+      return onGenerate("system");
+    }
+    if (!projectId || !snapshotId) return;
+    setGenerateError("");
+    setInternalGenerating(true);
+    setRunningStatus("Generating Playwright E2E tests with AI...");
+    try {
+      const response = await generateSystemTestApi(projectId, snapshotId, executionMode);
+      const jobId = response?.data?.job?.id || response?.job?.id;
+      if (jobId) {
+        await waitForJobWithProgress(jobId, "Generating Playwright E2E tests with AI...");
+      }
+      const updatedSys = await load();
+      if (updatedSys?.latestAiTest?.status === "VERIFIED") {
+        await run();
+      }
+    } catch (err) {
+      setGenerateError(err.message || "Failed to generate AI system tests.");
+      await load();
+    } finally {
+      setInternalGenerating(false);
+      setRunningStatus("");
+    }
+  };
+
+  const [isSavingAiTest, setIsSavingAiTest] = useState(false);
+
+  const handleSaveAiSystemTest = async () => {
+    if (!snapshotId || isSavingAiTest) return;
+    setIsSavingAiTest(true);
+    setGenerateError("");
+    try {
+      await saveAiSystemTest(snapshotId);
+      const updatedSys = await load();
+      if (updatedSys?.latestAiTest?.status === "VERIFIED") {
+        await run();
+      }
+    } catch (err) {
+      setGenerateError(err.message || "Failed to save AI test to project.");
+    } finally {
+      setIsSavingAiTest(false);
+    }
+  };
+
+  const [showJobQueueModal, setShowJobQueueModal] = useState(false);
 
   // Mode view for Unit test: "testcases" (default for unit) | "all" | "statements" | "branches" | "functions"
   const [activeMetricView, setActiveMetricView] = useState(
@@ -342,16 +470,51 @@ export default function CoverageTypeDashboard({
     }
     setLoading(true);
     try {
-      const [a, b, c] = await Promise.all([
-        getCoverageSummary(snapshotId),
-        getCoverageFiles(snapshotId, {
-          sortBy: "linesPct",
-          order: "asc",
-          limit: 200,
-        }),
-        getTestExecution(snapshotId),
-      ]);
+      if (type === "system") {
+        const sysRes = await getSystemCoverageSummary(snapshotId);
+        const sysData = sysRes?.data || {
+          hasRun: false,
+          e2eTests: 0,
+          passed: 0,
+          failed: 0,
+          flaky: 0,
+          coverageAvailable: false,
+          featureCoverage: null,
+          files: [],
+          testRuns: [],
+          scenarios: [],
+        };
+        setSystemSummary(sysData);
+        setSummary({
+          coverage: {
+            statements: 0,
+            branches: 0,
+            functions: 0,
+            lines: sysData.featureCoverage || 0,
+          },
+          rawTotals: null,
+        });
+        setFiles(sysData.files || []);
+        if (sysData.latestRun) {
+          setExecutions({
+            playwright: sysData.latestRun.type === "PLAYWRIGHT" ? sysData.latestRun : null,
+            cypress: sysData.latestRun.type === "CYPRESS" ? sysData.latestRun : null,
+          });
+        } else {
+          setExecutions({});
+        }
+        setError("");
+        try {
+          const detection = await getCoverageFrameworks(snapshotId);
+          setFrameworks(detection.data || null);
+        } catch {
+          setFrameworks(null);
+        }
+        setLoading(false);
+        return sysData;
+      }
 
+      const [a, b, c] = await Promise.all([getCoverageSummary(snapshotId), getCoverageFiles(snapshotId, { sortBy: "linesPct", order: "asc", limit: 200 }), getTestExecution(snapshotId)]);
       let mergedFiles = b.data?.files || [];
       if (type === "integration" && projectId) {
         try {
@@ -396,7 +559,7 @@ export default function CoverageTypeDashboard({
     } finally {
       setLoading(false);
     }
-  }, [snapshotId, type, loadFunctions, loadTestSuites]);
+  }, [snapshotId, type, projectId, loadFunctions, loadTestSuites]);
 
   useEffect(() => {
     load();
@@ -406,8 +569,9 @@ export default function CoverageTypeDashboard({
     if (!snapshotId || running) return;
     setRunning(true);
     setError("");
+    setRunningStatus(type === "system" ? "Starting AUT server..." : "Running analysis...");
     try {
-      const response = await runCoverageByType(snapshotId, type);
+      const response = await runCoverageByType(snapshotId, type, undefined, type === "system" ? executionMode : undefined);
       setActiveFramework(response.data?.framework || "");
       const jobs =
         response.data?.jobs || (response.data?.job ? [response.data.job] : []);
@@ -415,7 +579,7 @@ export default function CoverageTypeDashboard({
         throw new Error("Backend did not return a coverage job.");
       for (const j of jobs) {
         if (j?.id) {
-          await waitForJob(j.id);
+          await waitForJobWithProgress(j.id, type === "system" ? "Starting AUT server..." : "Running analysis...");
         }
       }
       await load();
@@ -423,6 +587,7 @@ export default function CoverageTypeDashboard({
       setError(runError.message || "Coverage analysis failed.");
     } finally {
       setRunning(false);
+      setRunningStatus("");
     }
   };
 
@@ -530,17 +695,38 @@ export default function CoverageTypeDashboard({
       selectedFiles.length
     : 0;
 
+  const hasSystemTests = useMemo(() => {
+    if (type !== "system") return false;
+    return Boolean(
+      (systemSummary?.hasRun && systemSummary?.e2eTests > 0) ||
+      (systemSummary?.scenarios && systemSummary.scenarios.length > 0) ||
+      (frameworks?.supported?.system && frameworks.supported.system.length > 0)
+    );
+  }, [type, systemSummary, frameworks]);
+
   const values =
     type === "unit"
       ? [cov.statements, cov.branches, cov.functions, cov.lines]
       : type === "integration"
         ? [
-            selectedFiles.length,
-            selectedFiles.filter((f) => f.linesPct > 0).length,
-            pct(avg),
-            selectedFiles.filter((f) => f.linesPct < 60).length,
+          selectedFiles.length,
+          selectedFiles.filter((f) => f.linesPct > 0).length,
+          pct(avg),
+          selectedFiles.filter((f) => f.linesPct < 60).length,
+        ]
+        : type === "system"
+          ? [
+            systemSummary?.hasRun ? systemSummary.e2eTests : 0,
+            systemSummary?.hasRun ? systemSummary.passed : 0,
+            systemSummary?.hasRun ? systemSummary.failed : 0,
+            systemSummary?.hasRun ? (systemSummary.flaky || 0) : 0,
+            systemSummary?.hasRun && systemSummary.coverageAvailable && systemSummary.featureCoverage != null
+              ? pct(systemSummary.featureCoverage)
+              : systemSummary?.hasRun
+                ? "N/A (Black-box E2E)"
+                : "N/A",
           ]
-        : [totals.total, totals.passed, totals.failed, pct(cov.lines)];
+          : [totals.total, totals.passed, totals.failed, pct(cov.lines)];
 
   return (
     <div
@@ -559,68 +745,257 @@ export default function CoverageTypeDashboard({
           justifyContent: "space-between",
           gap: 20,
           alignItems: "flex-start",
+          flexWrap: "wrap",
           marginBottom: 22,
         }}
       >
-        <div>
+        <div style={{flex:'1 1 300px',minWidth:0}}>
           <h1 style={{ margin: 0, fontSize: 27 }}>{config.title}</h1>
           <p style={{ color: "#8b949e", fontSize: 13, margin: "7px 0 0" }}>
             {config.subtitle}
           </p>
           <div style={{ color: "#6e7681", fontSize: 12, marginTop: 7 }}>
-            Hỗ trợ:{" "}
+            {type === 'system' ? 'Runner: ' : 'Supported: '}
             <span style={{ color: config.accent }}>{config.supported}</span>
-            {frameworks && (
+            {frameworks && type !== 'system' && (
               <span>
                 {" "}
-                · Phát hiện:{" "}
+                · Detected:{" "}
                 <b style={{ color: "#c9d1d9" }}>
-                  {frameworks.supported?.[type]?.join(", ") || "không có"}
+                  {frameworks.supported?.[type]?.join(", ") || "None"}
                 </b>
               </span>
             )}
-            {activeFramework && (
+            {activeFramework && type !== 'system' && (
               <span>
                 {" "}
-                · Vừa chạy:{" "}
+                · Last Run:{" "}
                 <b style={{ color: config.accent }}>{activeFramework}</b>
               </span>
             )}
           </div>
+          {type === 'system' && systemSummary?.hasRun && <div style={{color:'#8b949e',fontSize:12,marginTop:7}}>Last result: {systemSummary.executionMode === 'full' ? 'Full system' : 'Legacy frontend-only run'}</div>}
         </div>
-        <div style={{ display: "flex", gap: 9 }}>
-          {onGenerate && (
+        <div style={{ display: "flex", gap: 9, alignItems: "center",flexWrap:'wrap',flex:'0 1 auto',minWidth:0,maxWidth:'100%' }}>
+          {type === "system" && <span style={{color:'#8b949e',fontSize:12,padding:'7px 10px',border:'1px solid #30363d',borderRadius:6}}>Full system · Real API & database</span>}
+          {projectId && (
             <button
-              onClick={async () => {
-                setGenerateError("");
-                try {
-                  await onGenerate(type);
-                } catch (err) {
-                  setGenerateError(err.message || "Generation failed.");
-                }
+              onClick={() => setShowJobQueueModal(true)}
+              style={{
+                ...buttonStyle(running || isGenerating ? "#38bdf8" : "#8b949e"),
+                background: running || isGenerating
+                  ? "linear-gradient(135deg, rgba(56,189,248,0.2) 0%, rgba(99,102,241,0.2) 100%)"
+                  : "rgba(255, 255, 255, 0.05)",
+                border: running || isGenerating ? "1px solid rgba(56,189,248,0.5)" : "1px solid rgba(255, 255, 255, 0.12)",
+                color: running || isGenerating ? "#38bdf8" : "#c9d1d9",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                cursor: "pointer",
               }}
-              disabled={loading || running || generating}
-              style={buttonStyle("#67e8f9")}
+              title="View Job Queue and real-time execution logs"
             >
-              {generating ? "Generating..." : "Generate AI Tests"}
+              <ListOrdered size={14} />
+              <span>Job Queue</span>
+              {(running || isGenerating) && (
+                <span
+                  style={{
+                    display: "inline-block",
+                    width: 7,
+                    height: 7,
+                    borderRadius: "50%",
+                    backgroundColor: "#38bdf8",
+                    boxShadow: "0 0 6px #38bdf8",
+                  }}
+                />
+              )}
             </button>
           )}
-          <button
-            onClick={load}
-            disabled={loading || running}
-            style={buttonStyle("#8b949e")}
-          >
-            Refresh
-          </button>
-          <button
-            onClick={run}
-            disabled={!snapshotId || running}
-            style={buttonStyle(config.accent)}
-          >
-            {running ? "Running analysis..." : "Run Analysis"}
-          </button>
+          {type === "system" ? (
+            !hasSystemTests ? (
+              <>
+                <button
+                  onClick={handleGenerateAiSystemTest}
+                  disabled={loading || running || isGenerating}
+                  style={{
+                    ...buttonStyle("#67e8f9"),
+                    background: "linear-gradient(135deg, rgba(168,85,247,0.2) 0%, rgba(103,232,249,0.2) 100%)",
+                    border: "1px solid rgba(103,232,249,0.45)",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                  title="Automatically generate Playwright E2E test scenarios using AI"
+                >
+                  {isGenerating && <span style={{ display: "inline-block", animation: "spin 1s linear infinite" }}>⟳</span>}
+                  <span>
+                    {isGenerating
+                      ? "Generating..."
+                      : "Generate tests"}
+                  </span>
+                </button>
+                <button
+                  onClick={load}
+                  disabled={loading || running || isGenerating}
+                  style={buttonStyle("#8b949e")}
+                >
+                  Refresh
+                </button>
+                <button
+                  onClick={run}
+                  disabled={!snapshotId || running || isGenerating}
+                  style={{
+                    ...buttonStyle(config.accent),
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  {running && <span style={{ display: "inline-block", animation: "spin 1s linear infinite" }}>⟳</span>}
+                  <span>{running ? "Running..." : "Run tests"}</span>
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={handleGenerateAiSystemTest}
+                  disabled={loading || running || isGenerating}
+                  style={{
+                    ...buttonStyle("#67e8f9"),
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                  title="Use AI Agent to generate additional E2E test scenarios"
+                >
+                  {isGenerating && <span style={{ display: "inline-block", animation: "spin 1s linear infinite" }}>⟳</span>}
+                  <span>
+                    {isGenerating
+                      ? "Generating..."
+                      : "Generate tests"}
+                  </span>
+                </button>
+                <button
+                  onClick={load}
+                  disabled={loading || running || isGenerating}
+                  style={buttonStyle("#8b949e")}
+                >
+                  Refresh
+                </button>
+                <button
+                  onClick={run}
+                  disabled={!snapshotId || running || isGenerating}
+                  style={{
+                    ...buttonStyle(config.accent),
+                    background: running ? "rgba(236, 72, 153, 0.25)" : undefined,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  {running && <span style={{ display: "inline-block", animation: "spin 1s linear infinite" }}>⟳</span>}
+                  <span>{running ? "Running..." : "Run tests"}</span>
+                </button>
+              </>
+            )
+          ) : (
+            <>
+              {onGenerate && (
+                <button
+                  onClick={async () => {
+                    setGenerateError("");
+                    try { await onGenerate(type); }
+                    catch (err) { setGenerateError(err.message || "Generation failed."); }
+                  }}
+                  disabled={loading || running || generating}
+                  style={buttonStyle("#67e8f9")}
+                >
+                  {generating ? "Generating..." : "Generate AI Tests"}
+                </button>
+              )}
+              <button
+                onClick={load}
+                disabled={loading || running}
+                style={buttonStyle("#8b949e")}
+              >
+                Refresh
+              </button>
+              <button
+                onClick={run}
+                disabled={!snapshotId || running}
+                style={buttonStyle(config.accent)}
+              >
+                {running ? "Running analysis..." : "Run Analysis"}
+              </button>
+            </>
+          )}
         </div>
       </div>
+
+      {/* Live Job Progress Banner */}
+      {(running || isGenerating) && (
+        <div
+          style={{
+            marginBottom: 20,
+            padding: "12px 18px",
+            background: "linear-gradient(135deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.95) 100%)",
+            border: "1px solid rgba(56, 189, 248, 0.4)",
+            borderRadius: 10,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            boxShadow: "0 4px 14px rgba(0, 0, 0, 0.35)",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: "50%",
+                background: "rgba(56, 189, 248, 0.15)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#38bdf8",
+                fontSize: 16,
+              }}
+            >
+              <span style={{ display: "inline-block", animation: "spin 1.5s linear infinite" }}>⟳</span>
+            </div>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#f0f6fc", display: "flex", alignItems: "center", gap: 8 }}>
+                <span>Job in progress</span>
+                <span style={{ fontSize: 10, fontWeight: 700, background: "rgba(56, 189, 248, 0.25)", color: "#38bdf8", padding: "1px 6px", borderRadius: 4, letterSpacing: "0.5px" }}>RUNNING</span>
+              </div>
+              <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>
+                {runningStatus || "Processing task..."}
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowJobQueueModal(true)}
+            style={{
+              background: "rgba(56, 189, 248, 0.15)",
+              border: "1px solid rgba(56, 189, 248, 0.45)",
+              color: "#38bdf8",
+              padding: "7px 14px",
+              borderRadius: 6,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 7,
+              transition: "all 0.2s",
+            }}
+            title="Inspect logs and progress in real-time Job Queue"
+          >
+            <Terminal size={14} />
+            <span>Open Job Queue & Logs</span>
+          </button>
+        </div>
+      )}
 
       {generateError && (
         <div
@@ -664,33 +1039,88 @@ export default function CoverageTypeDashboard({
               gap: 13,
             }}
           >
-            {config.focus.map((label, i) => (
-              <div key={label} style={cardStyle}>
-                <div
-                  style={{
-                    color: "#8b949e",
-                    fontSize: 11,
-                    fontWeight: 700,
-                    textTransform: "uppercase",
-                  }}
-                >
-                  {label}
+            {config.focus.map((label, i) => {
+              const isFeatureCoverage = type === "system" && i === 4;
+              const isFlakyCard = type === "system" && i === 3;
+              const hasRun = systemSummary?.hasRun;
+              const tooltip = isFeatureCoverage
+                ? hasRun && !systemSummary?.coverageAvailable
+                  ? "Black-box E2E user scenario testing. Project has not enabled Istanbul instrumentation."
+                  : "Source code coverage of E2E test scenarios."
+                : undefined;
+
+              const metricColor =
+                type === "unit"
+                  ? coverageColor(values[i])
+                  : type === "system"
+                    ? i === 1 // Passed
+                      ? "#22c55e"
+                      : i === 2 // Failed
+                        ? Number(values[i]) > 0
+                          ? "#f87171"
+                          : "#8b949e"
+                        : i === 3 // Flaky
+                          ? Number(values[i]) > 0
+                            ? "#fbbf24"
+                            : "#8b949e"
+                          : config.accent
+                    : config.accent;
+
+              return (
+                <div key={label} style={cardStyle} title={tooltip}>
+                  <div
+                    style={{
+                      color: "#8b949e",
+                      fontSize: 11,
+                      fontWeight: 700,
+                      textTransform: "uppercase",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 4,
+                    }}
+                  >
+                    <span>{label}</span>
+                    {isFeatureCoverage && (
+                      <span style={{ fontSize: 10, color: "#6e7681" }}>ℹ</span>
+                    )}
+                  </div>
+                  <div
+                    style={{
+                      color: metricColor,
+                      fontSize: typeof values[i] === "string" && values[i].length > 6 ? 17 : 27,
+                      fontWeight: 750,
+                      marginTop: 8,
+                      lineHeight: "1.2",
+                    }}
+                  >
+                    {isFlakyCard ? (
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 7, flexWrap: "wrap" }}>
+                        <span>{values[i]}</span>
+                        {hasRun && (
+                          <span
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 700,
+                              padding: "2px 6px",
+                              borderRadius: 4,
+                              background: Number(values[i]) > 0 ? "rgba(251, 191, 36, 0.15)" : "rgba(34, 197, 94, 0.12)",
+                              color: Number(values[i]) > 0 ? "#fbbf24" : "#4ade80",
+                              border: Number(values[i]) > 0 ? "1px solid rgba(251, 191, 36, 0.35)" : "1px solid rgba(34, 197, 94, 0.25)",
+                            }}
+                          >
+                            {Number(values[i]) > 0 ? "⚠ Needs Attention" : "✓ Stable"}
+                          </span>
+                        )}
+                      </div>
+                    ) : type === "unit" ? (
+                      pct(values[i])
+                    ) : (
+                      values[i]
+                    )}
+                  </div>
                 </div>
-                <div
-                  style={{
-                    color:
-                      type === "unit"
-                        ? coverageColor(values[i])
-                        : config.accent,
-                    fontSize: 27,
-                    fontWeight: 750,
-                    marginTop: 8,
-                  }}
-                >
-                  {type === "unit" ? pct(values[i]) : values[i]}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Interactive Feature Cards (Statement, Branch, Function Coverage) */}
@@ -707,7 +1137,7 @@ export default function CoverageTypeDashboard({
                   {
                     key: "statements",
                     title: "Statement coverage",
-                    description: "Bao nhiêu câu lệnh đã được test thực thi.",
+                    description: "Percentage of statements executed by tests.",
                     pctValue: cov.statements,
                     raw: rawTotals?.statements,
                     icon: FileCode,
@@ -716,8 +1146,7 @@ export default function CoverageTypeDashboard({
                   {
                     key: "branches",
                     title: "Branch coverage",
-                    description:
-                      "Bao nhiêu nhánh if/else/switch đã được đi qua.",
+                    description: "Percentage of if/else/switch branches traversed.",
                     pctValue: cov.branches,
                     raw: rawTotals?.branches,
                     icon: GitBranch,
@@ -726,7 +1155,7 @@ export default function CoverageTypeDashboard({
                   {
                     key: "functions",
                     title: "Function coverage",
-                    description: "Bao nhiêu hàm hoặc method đã được gọi.",
+                    description: "Percentage of functions or methods called.",
                     pctValue: cov.functions,
                     raw: rawTotals?.functions,
                     icon: Cpu,
@@ -765,7 +1194,7 @@ export default function CoverageTypeDashboard({
                         transition: "all 0.2s ease",
                       }}
                       className="hover:border-white/20 transition-all"
-                      title={`Nhấn để xem chi tiết ${item.title}`}
+                      title={`Click to view ${item.title} details`}
                     >
                       <div
                         style={{
@@ -800,7 +1229,7 @@ export default function CoverageTypeDashboard({
                             color: isActive ? item.accentColor : "#8b949e",
                           }}
                         >
-                          {isActive ? "Đang chọn" : "Chi tiết →"}
+                          {isActive ? "Selected" : "Details →"}
                         </span>
                       </div>
 
@@ -998,10 +1427,10 @@ export default function CoverageTypeDashboard({
                     cursor: "pointer",
                     marginLeft: "auto",
                   }}
-                  title="Quay lại danh sách file testcase"
+                  title="Back to test files list"
                 >
                   <FlaskConical size={12} />
-                  <span>Xem file testcase</span>
+                  <span>View Test Files</span>
                 </button>
               )}
             </div>
@@ -1068,10 +1497,7 @@ export default function CoverageTypeDashboard({
                       style={{ flexShrink: 0, color: "#c084fc" }}
                     />
                     <span>
-                      <b>File Testcase Unit Test:</b> Danh sách các file kịch
-                      bản kiểm thử của <b>Jest</b> và <b>Vitest</b>. Các file
-                      Playwright, Cypress và Supertest tự động được lọc bỏ khỏi
-                      phạm vi Unit Test.
+                      <b>Unit Test Files:</b> Test suite files executed by <b>Jest</b> and <b>Vitest</b>. Playwright, Cypress, and Supertest files are automatically excluded from the Unit Test scope.
                     </span>
                   </>
                 ) : activeMetricView === "statements" ? (
@@ -1081,9 +1507,7 @@ export default function CoverageTypeDashboard({
                       style={{ flexShrink: 0, color: "#a78bfa" }}
                     />
                     <span>
-                      <b>Statement Coverage:</b> Bảng thống kê tỷ lệ phần trăm
-                      các câu lệnh (statements) trong mã nguồn đã được thực thi
-                      khi chạy unit test.
+                      <b>Statement Coverage:</b> Percentage of source code statements executed during unit testing.
                     </span>
                   </>
                 ) : activeMetricView === "branches" ? (
@@ -1093,9 +1517,7 @@ export default function CoverageTypeDashboard({
                       style={{ flexShrink: 0, color: "#fbbf24" }}
                     />
                     <span>
-                      <b>Branch Coverage:</b> Bảng thống kê tỷ lệ phần trăm các
-                      nhánh rẽ điều kiện (if/else, switch, ternary) đã được kiểm
-                      thử đầy đủ các hướng.
+                      <b>Branch Coverage:</b> Percentage of conditional branches (if/else, switch, ternary) exercised during testing.
                     </span>
                   </>
                 ) : activeMetricView === "functions" ? (
@@ -1105,18 +1527,14 @@ export default function CoverageTypeDashboard({
                       style={{ flexShrink: 0, color: "#38bdf8" }}
                     />
                     <span>
-                      <b>Function Coverage:</b> Danh sách phương thức và hàm với
-                      tên thật đã được nhận diện, đo lường số lần gọi và tích
-                      hợp CFG.
+                      <b>Function Coverage:</b> Identified methods and functions with invocation metrics and integrated CFG analysis.
                     </span>
                   </>
                 ) : (
                   <>
                     <ListChecks size={15} style={{ flexShrink: 0 }} />
                     <span>
-                      <b>Source File Coverage:</b> Bảng tổng hợp độ bao phủ của
-                      các file mã nguồn (Source code under test: Lines,
-                      Branches, Functions, Statements).
+                      <b>Source File Coverage:</b> Aggregated coverage summary across source files (Lines, Branches, Functions, Statements).
                     </span>
                   </>
                 )}
@@ -1153,7 +1571,7 @@ export default function CoverageTypeDashboard({
                     }}
                   >
                     <Cpu size={12} />
-                    <span>🕸️ Sơ đồ luồng hàm (Method Map)</span>
+                    <span>🕸️ Function Map</span>
                   </button>
                   <button
                     onClick={() => setFunctionViewMode("table")}
@@ -1182,7 +1600,7 @@ export default function CoverageTypeDashboard({
                     }}
                   >
                     <ListChecks size={12} />
-                    <span>📋 Bảng chi tiết</span>
+                    <span>📋 Details Table</span>
                   </button>
                 </div>
               )}
@@ -1239,7 +1657,7 @@ export default function CoverageTypeDashboard({
                     <Search size={13} style={{ color: "#8b949e" }} />
                     <input
                       type="text"
-                      placeholder="Tìm file testcase..."
+                      placeholder="Search test files..."
                       value={testSuiteSearch}
                       onChange={(e) => setTestSuiteSearch(e.target.value)}
                       style={{
@@ -1256,20 +1674,15 @@ export default function CoverageTypeDashboard({
               </div>
 
               {loadingTestSuites ? (
-                <div
-                  style={{ padding: 30, textAlign: "center", color: "#6e7681" }}
-                >
-                  Đang tải danh sách file testcase...
+                <div style={{ padding: 30, textAlign: "center", color: "#6e7681" }}>
+                  Loading test files...
                 </div>
               ) : filteredTestSuites.length === 0 ? (
-                <div
-                  style={{ padding: 30, textAlign: "center", color: "#6e7681" }}
-                >
-                  Chưa tìm thấy file testcase nào của Jest hoặc Vitest. Hãy bấm
-                  "Run Analysis" để chạy và phân tích.
+                <div style={{ padding: 30, textAlign: "center", color: "#6e7681" }}>
+                  No Jest or Vitest test files found yet. Click "Run Analysis" to run tests and analyze coverage.
                 </div>
               ) : (
-                <div>
+                <div style={{overflowX:'auto'}}>
                   {/* Table Header */}
                   <div
                     style={{
@@ -1286,12 +1699,12 @@ export default function CoverageTypeDashboard({
                       textTransform: "uppercase",
                     }}
                   >
-                    <span>File Testcase</span>
+                    <span>Test File</span>
                     <span style={{ textAlign: "center" }}>Framework</span>
                     <span style={{ textAlign: "right" }}>Test Cases</span>
-                    <span style={{ textAlign: "right" }}>Thời gian</span>
-                    <span style={{ textAlign: "center" }}>Trạng thái</span>
-                    <span style={{ textAlign: "center" }}>Hành động</span>
+                    <span style={{ textAlign: "right" }}>Duration</span>
+                    <span style={{ textAlign: "center" }}>Status</span>
+                    <span style={{ textAlign: "center" }}>Actions</span>
                   </div>
 
                   {/* Rows */}
@@ -1328,7 +1741,7 @@ export default function CoverageTypeDashboard({
                               gap: 8,
                               overflow: "hidden",
                             }}
-                            title={`Mở file test ${suite.filePath}`}
+                            title={`Open test file ${suite.filePath}`}
                           >
                             <FlaskConical
                               size={15}
@@ -1469,9 +1882,9 @@ export default function CoverageTypeDashboard({
                                 fontSize: 11,
                                 cursor: "pointer",
                               }}
-                              title="Mở file test trong editor"
+                              title="Open test file in editor"
                             >
-                              Mở test
+                              Open test
                             </button>
 
                             <button
@@ -1489,46 +1902,45 @@ export default function CoverageTypeDashboard({
                                 border: "1px solid rgba(168, 85, 247, 0.35)",
                                 color: "#c084fc",
                                 fontSize: 11,
-                                fontWeight: 600,
+                                fontWeight: 650,
                                 cursor: "pointer",
                                 transition: "all 0.15s ease",
                                 whiteSpace: "nowrap",
                               }}
                               className="hover:bg-purple-500/25 hover:border-purple-400"
-                              title={`Yêu cầu AI Agent gợi ý test case bổ sung cho ${suite.fileName}`}
+                              title={`Ask AI Agent to suggest additional test cases for ${suite.fileName}`}
                             >
                               <Sparkles size={11} />
                               <span>Suggest test</span>
                             </button>
 
-                            {suite.assertions &&
-                              suite.assertions.length > 0 && (
-                                <button
-                                  onClick={() =>
-                                    setExpandedSuite(
-                                      isExpanded ? null : suite.filePath,
-                                    )
-                                  }
-                                  style={{
-                                    padding: "4px 6px",
-                                    borderRadius: 5,
-                                    background: "rgba(255,255,255,0.03)",
-                                    border: "1px solid rgba(255,255,255,0.08)",
-                                    color: "#8b949e",
-                                    fontSize: 11,
-                                    cursor: "pointer",
-                                    display: "flex",
-                                    alignItems: "center",
-                                  }}
-                                  title="Xem danh sách test case con"
-                                >
-                                  {isExpanded ? (
-                                    <ChevronDown size={13} />
-                                  ) : (
-                                    <ChevronRight size={13} />
-                                  )}
-                                </button>
-                              )}
+                            {suite.assertions && suite.assertions.length > 0 && (
+                              <button
+                                onClick={() =>
+                                  setExpandedSuite(
+                                    isExpanded ? null : suite.filePath,
+                                  )
+                                }
+                                style={{
+                                  padding: "4px 6px",
+                                  borderRadius: 5,
+                                  background: "rgba(255,255,255,0.03)",
+                                  border: "1px solid rgba(255,255,255,0.08)",
+                                  color: "#8b949e",
+                                  fontSize: 11,
+                                  cursor: "pointer",
+                                  display: "flex",
+                                  alignItems: "center",
+                                }}
+                                title="View test case list"
+                              >
+                                {isExpanded ? (
+                                  <ChevronDown size={13} />
+                                ) : (
+                                  <ChevronRight size={13} />
+                                )}
+                              </button>
+                            )}
                           </div>
                         </div>
 
@@ -1550,7 +1962,7 @@ export default function CoverageTypeDashboard({
                                 textTransform: "uppercase",
                               }}
                             >
-                              Danh sách test case trong {suite.fileName}:
+                              Test cases in {suite.fileName}:
                             </div>
                             <div
                               style={{
@@ -1664,7 +2076,7 @@ export default function CoverageTypeDashboard({
                         fontWeight: 400,
                       }}
                     >
-                      ({filteredFunctions.length} hàm)
+                      ({filteredFunctions.length} functions)
                     </span>
                   </div>
 
@@ -1686,7 +2098,7 @@ export default function CoverageTypeDashboard({
                       <Search size={13} style={{ color: "#8b949e" }} />
                       <input
                         type="text"
-                        placeholder="Tìm hàm hoặc file..."
+                        placeholder="Search functions or files..."
                         value={functionSearch}
                         onChange={(e) => setFunctionSearch(e.target.value)}
                         style={{
@@ -1702,9 +2114,9 @@ export default function CoverageTypeDashboard({
 
                     <div style={{ display: "flex", gap: 4 }}>
                       {[
-                        { id: "all", label: "Tất cả" },
-                        { id: "uncovered", label: "⚑ Chưa gọi (0 hits)" },
-                        { id: "covered", label: "✓ Đã gọi" },
+                        { id: "all", label: "All" },
+                        { id: "uncovered", label: "⚑ Uncovered (0 hits)" },
+                        { id: "covered", label: "✓ Covered" },
                       ].map((st) => (
                         <button
                           key={st.id}
@@ -1736,14 +2148,8 @@ export default function CoverageTypeDashboard({
                 </div>
 
                 {loadingFunctions ? (
-                  <div
-                    style={{
-                      padding: 30,
-                      textAlign: "center",
-                      color: "#6e7681",
-                    }}
-                  >
-                    Đang tải danh sách hàm...
+                  <div style={{ padding: 30, textAlign: "center", color: "#6e7681" }}>
+                    Loading functions...
                   </div>
                 ) : filteredFunctions.length === 0 ? (
                   <div
@@ -1754,8 +2160,8 @@ export default function CoverageTypeDashboard({
                     }}
                   >
                     {functionsList.length === 0
-                      ? "Chưa có dữ liệu hàm. Hãy bấm 'Run Analysis' để phân tích Jest/Vitest."
-                      : "Không tìm thấy hàm phù hợp với bộ lọc."}
+                      ? "No function data available. Click 'Run Analysis' to analyze Jest/Vitest."
+                      : "No functions matching the filter."}
                   </div>
                 ) : (
                   <div>
@@ -1774,12 +2180,12 @@ export default function CoverageTypeDashboard({
                         textTransform: "uppercase",
                       }}
                     >
-                      <span>Tên Hàm</span>
-                      <span>File Mã Nguồn</span>
-                      <span>Vị trí</span>
-                      <span style={{ textAlign: "right" }}>Số lần gọi</span>
-                      <span style={{ textAlign: "center" }}>Trạng thái</span>
-                      <span style={{ textAlign: "center" }}>Hành động</span>
+                      <span>Function Name</span>
+                      <span>Source File</span>
+                      <span>Location</span>
+                      <span style={{ textAlign: "right" }}>Calls</span>
+                      <span style={{ textAlign: "center" }}>Status</span>
+                      <span style={{ textAlign: "center" }}>Actions</span>
                     </div>
 
                     {filteredFunctions.slice(0, 100).map((fn) => {
@@ -1811,7 +2217,7 @@ export default function CoverageTypeDashboard({
                               overflow: "hidden",
                               cursor: "pointer",
                             }}
-                            title={`Mở file ${fn.filePath} tại hàm ${fn.functionName}`}
+                            title={`Open ${fn.filePath} at function ${fn.functionName}`}
                           >
                             <Code2
                               size={14}
@@ -1918,9 +2324,9 @@ export default function CoverageTypeDashboard({
                                 fontSize: 11,
                                 cursor: "pointer",
                               }}
-                              title="Xem mã nguồn hàm"
+                              title="View function source code"
                             >
-                              Mở code
+                              Open code
                             </button>
                           </div>
                         </div>
@@ -1954,25 +2360,386 @@ export default function CoverageTypeDashboard({
                   {type === "integration"
                     ? "API / integration files"
                     : type === "system"
-                      ? "Files exercised by E2E tests"
+                      ? systemSummary?.hasRun && !systemSummary?.coverageAvailable
+                        ? "E2E Test Scenarios"
+                        : "Files exercised by E2E tests"
                       : activeMetricView === "statements"
-                        ? "Source files (Sắp xếp theo câu lệnh)"
+                        ? "Source files (Sorted by statements)"
                         : activeMetricView === "branches"
-                          ? "Source files (Sắp xếp theo nhánh rẽ)"
+                          ? "Source files (Sorted by branches)"
                           : "Source file coverage"}
                 </span>
                 <span
                   style={{ fontSize: 11, color: "#8b949e", fontWeight: 400 }}
                 >
-                  {displayFiles.length} file được phân tích
+                  {type === "system" && systemSummary?.hasRun && !systemSummary?.coverageAvailable
+                    ? `${systemSummary.scenarios?.length || 0} scenarios executed`
+                    : `${displayFiles.length} files analyzed`}
                 </span>
               </div>
 
-              {displayFiles.length === 0 ? (
+              {type === "system" && !systemSummary?.hasRun ? (
+                <div style={{ padding: "44px 24px", textAlign: "center" }}>
+                  <div
+                    style={{
+                      width: 48,
+                      height: 48,
+                      borderRadius: "50%",
+                      background: "rgba(236, 72, 153, 0.12)",
+                      border: "1px solid rgba(236, 72, 153, 0.25)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      margin: "0 auto 16px",
+                      color: "#ec4899",
+                    }}
+                  >
+                    <Zap size={22} />
+                  </div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: "#f0f6fc", marginBottom: 6 }}>
+                    No E2E scenarios executed on this snapshot yet
+                  </div>
+                  <p style={{ color: "#8b949e", fontSize: 13, maxWidth: 500, margin: "0 auto 20px", lineHeight: 1.55 }}>
+                    No System / E2E test runs (Playwright or Cypress) recorded yet. Run tests or generate AI E2E scenarios to get started.
+                  </p>
+
+                  {systemSummary?.latestAiTest && (
+                    <div
+                      style={{
+                        margin: "0 auto 24px",
+                        maxWidth: 620,
+                        textAlign: "left",
+                        padding: 16,
+                        borderRadius: 10,
+                        border: systemSummary.latestAiTest.status === "VERIFIED"
+                          ? "1px solid rgba(34, 197, 94, 0.35)"
+                          : "1px solid rgba(251, 191, 36, 0.35)",
+                        background: systemSummary.latestAiTest.status === "VERIFIED"
+                          ? "rgba(34, 197, 94, 0.08)"
+                          : "rgba(251, 191, 36, 0.08)",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ fontSize: 16 }}>
+                            {systemSummary.latestAiTest.status === "VERIFIED" ? "✓" : "⚠️"}
+                          </span>
+                          <span
+                            style={{
+                              fontWeight: 700,
+                              fontSize: 14,
+                              color: systemSummary.latestAiTest.status === "VERIFIED" ? "#22c55e" : "#fbbf24",
+                            }}
+                          >
+                            {systemSummary.latestAiTest.status === "VERIFIED"
+                              ? "AI generated E2E scenario and passed dry-run"
+                              : "Dry-run sandbox verification failed"}
+                          </span>
+                        </div>
+                        <span
+                          style={{
+                            fontSize: 11,
+                            padding: "2px 8px",
+                            borderRadius: 12,
+                            fontWeight: 600,
+                            background: systemSummary.latestAiTest.status === "VERIFIED"
+                              ? "rgba(34, 197, 94, 0.2)"
+                              : "rgba(251, 191, 36, 0.2)",
+                            color: systemSummary.latestAiTest.status === "VERIFIED" ? "#4ade80" : "#fde047",
+                          }}
+                        >
+                          {systemSummary.latestAiTest.status === "VERIFIED" ? "VERIFIED" : "DRY-RUN FAILED"}
+                        </span>
+                      </div>
+
+                      <p style={{ margin: "0 0 10px", fontSize: 13, color: "#c9d1d9", lineHeight: 1.55 }}>
+                        {systemSummary.latestAiTest.status === "VERIFIED"
+                          ? `Test scenario saved to: ${systemSummary.latestAiTest.filePath}. Click "Run System Test" to execute!`
+                          : `The generated test scenario failed dry-run verification in the sandbox. The file was not saved automatically to prevent test suite regressions.`}
+                      </p>
+
+                      {systemSummary.latestAiTest.status === "FAILED" && (
+                        <div style={{ marginBottom: 12, padding: "10px 12px", background: "rgba(0,0,0,0.25)", borderRadius: 6, fontSize: 12, color: "#e6edf3" }}>
+                          <div style={{ fontWeight: 600, color: "#fbbf24", marginBottom: 4 }}>Verification did not pass</div>
+                          <div style={{ color: "#8b949e", lineHeight: 1.5 }}>
+                            Tests were checked against the real application and a fresh test database. Review the startup or assertion error below. Regenerate to retry automatic repair; an unverified candidate cannot be saved as a passing test.
+                          </div>
+                        </div>
+                      )}
+
+                      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                        <button
+                          onClick={() => setShowAiDetails(!showAiDetails)}
+                          style={{
+                            background: "transparent",
+                            border: "none",
+                            color: "#67e8f9",
+                            fontSize: 12,
+                            cursor: "pointer",
+                            padding: 0,
+                            textDecoration: "underline",
+                          }}
+                        >
+                          {showAiDetails ? "▲ Hide failure details & AI code" : "▼ View failure details & AI code"}
+                        </button>
+
+                        {systemSummary.latestAiTest.status === "VERIFIED" && (
+                          <button
+                            onClick={handleSaveAiSystemTest}
+                            disabled={isSavingAiTest || loading || running}
+                            title="Save this AI-generated test to your project test suite"
+                            style={{
+                              background: "linear-gradient(135deg, rgba(34, 197, 94, 0.2) 0%, rgba(16, 185, 129, 0.3) 100%)",
+                              border: "1px solid rgba(34, 197, 94, 0.5)",
+                              color: "#4ade80",
+                              borderRadius: 6,
+                              padding: "4px 12px",
+                              fontSize: 12,
+                              fontWeight: 600,
+                              cursor: isSavingAiTest ? "not-allowed" : "pointer",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 6,
+                              transition: "all 0.2s ease",
+                            }}
+                          >
+                            <Zap size={13} />
+                            {isSavingAiTest ? "Saving..." : "⚡ Save Test to Project"}
+                          </button>
+                        )}
+                      </div>
+
+                      {showAiDetails && (
+                        <div style={{ marginTop: 12, borderTop: "1px solid rgba(255,255,255,0.1)", paddingTop: 10 }}>
+                          {systemSummary.latestAiTest.meta?.error && (
+                            <div style={{ marginBottom: 10 }}>
+                              <div style={{ fontSize: 11, fontWeight: 600, color: "#f87171", marginBottom: 4 }}>Dry-run failure details:</div>
+                              <pre style={{ margin: 0, padding: 8, background: "#0d1117", borderRadius: 6, fontSize: 11, color: "#ff7b72", maxHeight: 150, overflowY: "auto", whiteSpace: "pre-wrap" }}>
+                                {systemSummary.latestAiTest.meta.error}
+                              </pre>
+                            </div>
+                          )}
+                          <div>
+                            <div style={{ fontSize: 11, fontWeight: 600, color: "#8b949e", marginBottom: 4 }}>AI-generated test code ({systemSummary.latestAiTest.filePath}):</div>
+                            <pre style={{ margin: 0, padding: 8, background: "#0d1117", borderRadius: 6, fontSize: 11, color: "#c9d1d9", maxHeight: 180, overflowY: "auto", whiteSpace: "pre-wrap" }}>
+                              {systemSummary.latestAiTest.content}
+                            </pre>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <div style={{ display: "flex", justifyContent: "center", gap: 12 }}>
+                    <button
+                      onClick={handleGenerateAiSystemTest}
+                      disabled={loading || running || isGenerating}
+                      style={{
+                        ...buttonStyle("#67e8f9"),
+                        background: "linear-gradient(135deg, rgba(168,85,247,0.2) 0%, rgba(103,232,249,0.2) 100%)",
+                        border: "1px solid rgba(103,232,249,0.45)",
+                        padding: "10px 18px",
+                        fontSize: 13,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 7,
+                      }}
+                    >
+                      {isGenerating && <span style={{ display: "inline-block", animation: "spin 1s linear infinite" }}>⟳</span>}
+                      <span>
+                        {isGenerating
+                          ? runningStatus || "Generating AI tests..."
+                          : "⚡ Generate AI System Tests"}
+                      </span>
+                    </button>
+                    <button
+                      onClick={run}
+                      disabled={!snapshotId || running || isGenerating}
+                      style={{
+                        ...buttonStyle(config.accent),
+                        padding: "10px 18px",
+                        fontSize: 13,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 7,
+                      }}
+                    >
+                      {running && <span style={{ display: "inline-block", animation: "spin 1s linear infinite" }}>⟳</span>}
+                      <span>{running ? runningStatus || "Running analysis..." : "Run System Test"}</span>
+                    </button>
+                  </div>
+                  {generateError && (
+                    <div style={{ margin: "14px auto 0", padding: "10px 14px", background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.3)", borderRadius: 8, color: "#f87171", fontSize: 12, maxWidth: 500 }}>
+                      ⚠ {generateError}
+                    </div>
+                  )}
+                </div>
+              ) : type === "system" && systemSummary?.hasRun && !systemSummary?.coverageAvailable ? (
+                /* E2E Test Scenarios Table */
+                <div style={{overflowX:'auto'}}>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "minmax(240px, 1.5fr) minmax(160px, 1fr) 112px 80px 80px",
+                      minWidth: 760,
+                      gap: 10,
+                      padding: "10px 18px",
+                      background: "rgba(255,255,255,0.02)",
+                      borderBottom: "1px solid rgba(255,255,255,0.05)",
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: "#8b949e",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    <span>Test Scenario</span>
+                    <span>Test File / Suite</span>
+                    <span>Evidence</span>
+                    <span style={{ textAlign: "right" }}>Duration</span>
+                    <span style={{ textAlign: "center" }}>Status</span>
+                  </div>
+
+                  {(systemSummary.scenarios && systemSummary.scenarios.length > 0) ? (
+                    systemSummary.scenarios.map((sc, idx) => {
+                      const isFlaky = sc.status === "flaky";
+                      const isPassed = sc.status === "passed";
+                      const scKey = sc.id || idx;
+                      const isExpanded = expandedScenario === scKey;
+                      const hasFailures = sc.failureMessages && sc.failureMessages.length > 0;
+
+                      return (
+                        <div key={scKey}>
+                          <div
+                            onClick={() => {
+                              if (hasFailures) {
+                                setExpandedScenario(isExpanded ? null : scKey);
+                              }
+                            }}
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "minmax(240px, 1.5fr) minmax(160px, 1fr) 112px 80px 80px",
+                              minWidth: 760,
+                              gap: 10,
+                              padding: "12px 18px",
+                              alignItems: "center",
+                              borderBottom: "1px solid rgba(255,255,255,.04)",
+                              cursor: hasFailures ? "pointer" : "default",
+                              background: isExpanded ? "rgba(255,255,255,0.03)" : "transparent",
+                              transition: "background 0.15s ease",
+                            }}
+                            className="hover:bg-white/[0.02]"
+                          >
+                            <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                              <span style={{ color: isPassed ? "#22c55e" : isFlaky ? "#fbbf24" : "#f87171", fontWeight: 700 }}>
+                                {isPassed ? "✓" : isFlaky ? "⚠" : "✗"}
+                              </span>
+                              <span style={{ fontSize: 13, fontWeight: 600, color: "#f0f6fc" }}>
+                                {sc.title}
+                              </span>
+                              {hasFailures && (
+                                <span style={{ fontSize: 10, color: "#8b949e", background: "rgba(255,255,255,0.06)", padding: "1px 5px", borderRadius: 4 }}>
+                                  {isExpanded ? "▲ Hide error" : "▼ View error"}
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ fontSize: 11, color: "#8b949e", fontFamily: "var(--font-mono)",overflowWrap:'anywhere' }}>
+                              {sc.file || "E2E Spec"}
+                            </div>
+                            <div>{sc.hasEvidence ? <SystemTestEvidence snapshotId={snapshotId} scenarioId={sc.id} title={sc.title} /> : <span style={{color:'#6e7681',fontSize:12}}>Not captured</span>}</div>
+                            <div style={{ textAlign: "right", fontSize: 12, color: "#c9d1d9", fontFamily: "var(--font-mono)" }}>
+                              {sc.durationMs ? `${Number(sc.durationMs).toFixed(0)}ms` : "—"}
+                            </div>
+                            <div style={{ display: "flex", justifyContent: "center" }}>
+                              <span
+                                style={{
+                                  fontSize: 10,
+                                  fontWeight: 700,
+                                  padding: "2px 8px",
+                                  borderRadius: 10,
+                                  background: isPassed
+                                    ? "rgba(34, 197, 94, 0.15)"
+                                    : isFlaky
+                                      ? "rgba(251, 191, 36, 0.15)"
+                                      : "rgba(248, 113, 113, 0.15)",
+                                  color: isPassed ? "#4ade80" : isFlaky ? "#fbbf24" : "#f87171",
+                                  border: isPassed
+                                    ? "1px solid rgba(34, 197, 94, 0.3)"
+                                    : isFlaky
+                                      ? "1px solid rgba(251, 191, 36, 0.3)"
+                                      : "1px solid rgba(248, 113, 113, 0.3)",
+                                }}
+                              >
+                                {isPassed ? "✓ PASS" : isFlaky ? "⚠ FLAKY" : "✗ FAIL"}
+                              </span>
+                            </div>
+                          </div>
+                          {isExpanded && hasFailures && (
+                            <div
+                              style={{
+                                padding: "12px 18px",
+                                background: "rgba(0,0,0,0.35)",
+                                borderBottom: "1px solid rgba(255,255,255,0.06)",
+                                fontFamily: "var(--font-mono)",
+                                fontSize: 11,
+                                color: "#fca5a5",
+                                whiteSpace: "pre-wrap",
+                                lineHeight: 1.5,
+                              }}
+                            >
+                              <div style={{ fontWeight: 700, marginBottom: 4, color: "#f87171" }}>Failure details:</div>
+                              {sc.failureMessages.join("\n\n")}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "minmax(240px, 1.5fr) minmax(160px, 1fr) 112px 80px 80px",
+                        minWidth: 760,
+                        gap: 10,
+                        padding: "14px 18px",
+                        alignItems: "center",
+                      }}
+                    >
+                      <div style={{ fontSize: 13, fontWeight: 600, color: "#f0f6fc" }}>
+                        {systemSummary.runner ? `${systemSummary.runner.toUpperCase()} E2E Suite` : "Playwright E2E Suite"}
+                      </div>
+                      <div style={{ fontSize: 12, color: "#8b949e", fontFamily: "var(--font-mono)" }}>
+                        {systemSummary.latestRun?.type || "PLAYWRIGHT"}
+                      </div>
+                      <div style={{color:'#6e7681'}}>Not captured</div>
+                      <div style={{ textAlign: "right", fontSize: 12, color: "#c9d1d9", fontFamily: "var(--font-mono)" }}>
+                        {systemSummary.latestRun?.durationMs ? `${Number(systemSummary.latestRun.durationMs).toFixed(0)}ms` : "—"}
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "center" }}>
+                        <span
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 700,
+                            padding: "2px 8px",
+                            borderRadius: 10,
+                            background: systemSummary.failed === 0
+                              ? "rgba(34, 197, 94, 0.15)"
+                              : "rgba(248, 113, 113, 0.15)",
+                            color: systemSummary.failed === 0 ? "#4ade80" : "#f87171",
+                            border: systemSummary.failed === 0
+                              ? "1px solid rgba(34, 197, 94, 0.3)"
+                              : "1px solid rgba(248, 113, 113, 0.3)",
+                          }}
+                        >
+                          {systemSummary.failed === 0 ? "✓ PASS" : "✗ FAIL"}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : displayFiles.length === 0 ? (
                 <div
                   style={{ padding: 30, textAlign: "center", color: "#6e7681" }}
                 >
-                  Chưa có dữ liệu. Nhấn Run Analysis để bắt đầu.
+                  No data available. Click Run Analysis to start.
                 </div>
               ) : (
                 <div>
@@ -1992,7 +2759,7 @@ export default function CoverageTypeDashboard({
                       textTransform: "uppercase",
                     }}
                   >
-                    <span>File Mã Nguồn</span>
+                    <span>Source File</span>
                     <span style={{ textAlign: "right" }}>Lines</span>
                     <span
                       style={{
@@ -2017,7 +2784,7 @@ export default function CoverageTypeDashboard({
                     >
                       Stmts
                     </span>
-                    <span style={{ textAlign: "center" }}>Hành động</span>
+                    <span style={{ textAlign: "center" }}>Actions</span>
                   </div>
 
                   {/* Table Rows */}
@@ -2080,7 +2847,7 @@ export default function CoverageTypeDashboard({
                                 fontWeight: isExpanded ? 700 : 500,
                                 fontFamily: "var(--font-mono)",
                               }}
-                              title="Bấm để mở phân tích luồng hoạt động"
+                              title="Click to view flow analysis"
                             >
                               {cleanDisplayPath(file.filePath)}
                             </span>
@@ -2148,9 +2915,9 @@ export default function CoverageTypeDashboard({
                                 transition: "all 0.15s ease",
                               }}
                               className="hover:bg-white/10 hover:text-white"
-                              title="Mở file mã nguồn trong editor"
+                              title="Open source file in editor"
                             >
-                              Mở code
+                              Open code
                             </button>
 
                             <button
@@ -2176,8 +2943,8 @@ export default function CoverageTypeDashboard({
                               className="hover:bg-white/10 hover:text-white"
                               title={
                                 isExpanded
-                                  ? "Thu gọn phân tích luồng"
-                                  : "Xem phân tích luồng hoạt động"
+                                  ? "Collapse flow analysis"
+                                  : "Expand flow analysis"
                               }
                             >
                               {isExpanded ? (
@@ -2208,7 +2975,7 @@ export default function CoverageTypeDashboard({
                                   fontSize: 12,
                                 }}
                               >
-                                Đang tự động phân tích luồng hoạt động cho{" "}
+                                Analyzing execution flow for{" "}
                                 {cleanDisplayPath(file.filePath)}...
                               </div>
                             ) : fileDetails ? (
@@ -2244,8 +3011,7 @@ export default function CoverageTypeDashboard({
                                   fontSize: 12,
                                 }}
                               >
-                                Không thể tải dữ liệu phân tích luồng cho file
-                                này.
+                                Unable to load execution flow data for this file.
                               </div>
                             )}
                           </div>
@@ -2264,6 +3030,85 @@ export default function CoverageTypeDashboard({
           project={{ id: projectId }}
           onClose={() => setShowCfgModal(false)}
         />
+      )}
+      {showJobQueueModal && projectId && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: "rgba(0, 0, 0, 0.75)",
+            backdropFilter: "blur(5px)",
+            zIndex: 9999,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "20px",
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowJobQueueModal(false);
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: "#0d1117",
+              border: "1px solid rgba(255, 255, 255, 0.15)",
+              borderRadius: 14,
+              width: "92vw",
+              maxWidth: 1100,
+              height: "85vh",
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.8)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                padding: "14px 20px",
+                borderBottom: "1px solid rgba(255, 255, 255, 0.1)",
+                background: "rgba(22, 27, 34, 0.95)",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <ListOrdered size={20} color="#38bdf8" />
+                <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#f0f6fc" }}>
+                  System Test Job Queue & Live Execution Logs
+                </h2>
+              </div>
+              <button
+                onClick={() => setShowJobQueueModal(false)}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "#8b949e",
+                  cursor: "pointer",
+                  fontSize: 18,
+                  padding: "4px 8px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  borderRadius: 6,
+                }}
+                title="Close"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div style={{ flex: 1, overflowY: "auto", padding: 0 }}>
+              <JobQueue projectId={projectId} />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

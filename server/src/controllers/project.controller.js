@@ -11,7 +11,6 @@ import { generateText } from "../services/gemini.service.js";
 import { checkAndIncrementQuota } from "../services/aiQuota.service.js";
 import { getAiTestById, listAiTests } from "../services/aiTest.service.js";
 import { detectAndSaveProject as detectAndSavePlaywright } from "../services/playwrightDetection.service.js";
-import { createPlaywrightSystemCoverageJob } from "../services/job.service.js";
 import { detectSystemTestFrameworks } from "../services/systemTestFrameworkDetection.service.js";
 import prisma from "../config/prisma.js";
 import {
@@ -1401,6 +1400,7 @@ class ProjectController {
         snapshotId,
         userId: req.user.id,
         mode: req.body.mode || "SKELETON",
+        executionMode: req.body.executionMode || "full",
       });
 
       addJobToQueue("AI_TESTS", job.id).catch((err) => {
@@ -1829,189 +1829,7 @@ The user is working on project: ${project.name}.
       next(error);
     }
   }
-  /**
-   * POST /projects/:id/cypress-system-test
-   */
-  async runCypressSystemTests(req, res) {
-    try {
-      const { id: projectId } = req.params;
-      const { snapshotId } = req.body;
-
-      const { createCypressSystemTestJob } =
-        await import("../services/job.service.js");
-
-      const job = await createCypressSystemTestJob({
-        projectId,
-        snapshotId,
-        userId: req.user.id,
-      });
-
-      addJobToQueue("CYPRESS_SYSTEM_TEST", job.id).catch((err) => {
-        console.error("Error adding CYPRESS_SYSTEM_TEST to queue:", err);
-      });
-
-      return res.status(202).json({
-        success: true,
-        data: {
-          job: {
-            id: job.id,
-            type: job.type,
-            snapshotId: job.snapshotId,
-            status: job.status,
-            progress: job.progress,
-            createdAt: job.createdAt,
-            updatedAt: job.updatedAt,
-          },
-        },
-      });
-    } catch (error) {
-      console.error(error);
-
-      if (error instanceof ServiceError) {
-        return res
-          .status(error.statusCode)
-          .json({ success: false, message: error.message });
-      }
-
-      return res.status(500).json({
-        success: false,
-        message: "Internal server error",
-      });
-    }
-  }
-
-  /**
-   * POST /projects/:id/cypress-coverage
-   */
-  async runCypressCoverage(req, res) {
-    try {
-      const { id: projectId } = req.params;
-      const { snapshotId } = req.body;
-
-      const { createCypressSystemCoverageJob } =
-        await import("../services/job.service.js");
-
-      const job = await createCypressSystemCoverageJob({
-        projectId,
-        snapshotId,
-        userId: req.user.id,
-      });
-
-      addJobToQueue("CYPRESS_SYSTEM_COVERAGE", job.id).catch((err) => {
-        console.error("Error adding CYPRESS_SYSTEM_COVERAGE to queue:", err);
-      });
-
-      return res.status(202).json({
-        success: true,
-        data: {
-          job: {
-            id: job.id,
-            type: job.type,
-            snapshotId: job.snapshotId,
-            status: job.status,
-            progress: job.progress,
-            createdAt: job.createdAt,
-            updatedAt: job.updatedAt,
-          },
-        },
-      });
-    } catch (error) {
-      console.error(error);
-
-      if (error instanceof ServiceError) {
-        return res
-          .status(error.statusCode)
-          .json({ success: false, message: error.message });
-      }
-
-      return res.status(500).json({
-        success: false,
-        message: "Internal server error",
-      });
-    }
-  }
-
-  /**
-   * POST /projects/:id/playwright-test
-   */
-  async runPlaywrightSystemTests(req, res) {
-    try {
-      const { id: projectId } = req.params;
-      const { snapshotId, testDirectory } = req.body;
-
-      // Import muộn để tránh vòng lặp dependencies
-      const { createPlaywrightJob } =
-        await import("../services/job.service.js");
-      const { addJobToQueue } = await import("../services/queue.service.js");
-
-      // Khởi tạo job
-      const job = await createPlaywrightJob({
-        projectId,
-        snapshotId,
-        userId: req.user.id,
-        testDirectory,
-      });
-
-      // Đẩy job vào queue để worker chạy ngầm
-      addJobToQueue("PLAYWRIGHT_SYSTEM_TEST", job.id).catch((err) => {
-        console.error("Lỗi khi thêm PLAYWRIGHT_SYSTEM_TEST vào queue:", err);
-      });
-
-      return res.status(202).json({
-        success: true,
-        data: {
-          job: {
-            id: job.id,
-            type: job.type,
-            status: job.status,
-          },
-        },
-      });
-    } catch (error) {
-      console.error(error);
-      return res
-        .status(500)
-        .json({ success: false, message: "Internal server error" });
-    }
-  }
-  async runPlaywrightCoverage(req, res, next) {
-    try {
-      const { id: projectId } = req.params;
-      const { snapshotId, testDirectory } = req.body;
-      const userId = req.user?.id;
-
-      if (!snapshotId) {
-        throw new AppError("snapshotId is required", 400);
-      }
-
-      const job = await createPlaywrightSystemCoverageJob({
-        projectId,
-        snapshotId,
-        userId,
-        testDirectory,
-      });
-
-      await addJobToQueue(job.type, job.id, {
-        projectId,
-        snapshotId,
-        userId,
-        testDirectory,
-      });
-
-      res.status(202).json({
-        success: true,
-        data: {
-          job: {
-            id: job.id,
-            type: job.type,
-            status: job.status,
-          },
-        },
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
 }
 
 export default new ProjectController();
+

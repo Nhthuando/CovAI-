@@ -5,6 +5,7 @@ import {
   getCoverageFiles,
   runSupertestCoverage,
   getTestExecution,
+  runCoverageByType,
 } from "../../services/coverage.service.js";
 
 async function handleResponse(res) {
@@ -826,7 +827,7 @@ const CoverageDashboard = ({ snapshotId, projectId, onOpenFile }) => {
     // Mock validate: chỉ cho chạy nếu có jest/vitest
     // Đang chưa detect framework nên luôn báo lỗi demo
     setError(
-      "Unit Test chỉ hỗ trợ Jest hoặc Vitest. Framework hiện tại không được support.",
+      "Unit Test only supports Jest or Vitest. Current framework is not supported.",
     );
     return;
     /*
@@ -835,19 +836,19 @@ const CoverageDashboard = ({ snapshotId, projectId, onOpenFile }) => {
     */
   };
 
-  // MOCK handler: System Test
+  // Handler: System Test
   const handleRunSystemTest = async () => {
     if (!snapshotId || isRunningSystemTest) return;
-    // Mock validate: chỉ cho chạy nếu có playwright/cypress
-    // Đang chưa detect framework nên luôn báo lỗi demo
-    setError(
-      "System Test chỉ hỗ trợ Playwright hoặc Cypress. Framework hiện tại không được support.",
-    );
-    return;
-    /*
     setIsRunningSystemTest(true);
-    setTimeout(() => { setIsRunningSystemTest(false); }, 1200);
-    */
+    setError(null);
+    try {
+      await runCoverageByType(snapshotId, "system");
+      await fetchData();
+    } catch (err) {
+      setError(err.message || "Unable to run System Test.");
+    } finally {
+      setIsRunningSystemTest(false);
+    }
   };
 
   // Reset page khi sort thay đổi

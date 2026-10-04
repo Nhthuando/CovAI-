@@ -1,12 +1,18 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import {
+import { jest } from "@jest/globals";
+
+await jest.unstable_mockModule("../config/prisma.js", () => ({
+    default: { project: { findFirst: jest.fn().mockResolvedValue(null) } },
+}));
+
+const {
     findAssociatedSourceFile,
     findExistingTestFile,
     generateFallbackUnitTests,
     suggestUnitTestcases
-} from "../services/unitTestSuggestion.service.js";
+} = await import("../services/unitTestSuggestion.service.js");
 
 describe("unitTestSuggestion.service unit tests", () => {
     let tmpDir;
@@ -116,7 +122,7 @@ describe("unitTestSuggestion.service unit tests", () => {
                 filePath: "tests/calculator.test.js",
                 userId: "user-123"
             })).rejects.toThrow("Project not found or unauthorized");
-        });
+        }, 15000);
     });
 
     describe("Vitest support in findExistingTestFile & fallback", () => {

@@ -107,26 +107,6 @@ router.post(
   authMiddleware,
   projectController.detectPlaywrightFramework.bind(projectController),
 );
-router.post(
-  "/:id/playwright-test",
-  authMiddleware,
-  projectController.runPlaywrightSystemTests.bind(projectController),
-);
-router.post(
-  "/:id/cypress-system-test",
-  authMiddleware,
-  projectController.runCypressSystemTests.bind(projectController),
-);
-router.post(
-  "/:id/cypress-coverage",
-  authMiddleware,
-  projectController.runCypressCoverage.bind(projectController),
-);
-router.post(
-  "/:id/playwright-coverage",
-  authMiddleware,
-  projectController.runPlaywrightCoverage.bind(projectController),
-);
 router.get(
   "/:id/system-test/frameworks",
   authMiddleware,

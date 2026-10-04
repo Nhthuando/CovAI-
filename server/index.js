@@ -5,6 +5,7 @@ import express from "express";
 import cors from "cors";
 import { createServer } from "http";
 import { Server } from "socket.io";
+import { subscribeToUserRoom } from "./src/utils/socketSubscription.js";
 import authRoute from "./src/routes/auth.route.js";
 import refreshRoute from "./src/routes/refresh.route.js";
 import userRoute from "./src/routes/user.route.js";
@@ -104,8 +105,7 @@ io.on("connection", (socket) => {
   console.log(`[Socket.IO] User connected: ${socket.id}`);
 
   socket.on("subscribe_notifications", (userId) => {
-    socket.join(`user:${userId}`);
-    console.log(`[Socket.IO] User ${userId} subscribed to notifications`);
+    subscribeToUserRoom(socket, userId);
   });
 
   socket.on("disconnect", () => {

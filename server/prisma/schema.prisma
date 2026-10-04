@@ -288,6 +288,7 @@ model AiTest {
   projectId    String
   snapshotId   String
   mode         AiTestMode
+  status       String          @default("VERIFIED")
   filePath     String?
   content      String
   metaJson     String?
@@ -314,9 +315,11 @@ model TestRun {
   id           String          @id @default(cuid())
   snapshotId   String
   type         TestType
+  executionMode String         @default("frontend")
   totalTests   Int
   passedTests  Int
   failedTests  Int
+  flakyTests   Int             @default(0)
   skippedTests Int
   durationMs   Float
   status       String
@@ -324,8 +327,25 @@ model TestRun {
   finishedAt   DateTime
   createdAt    DateTime        @default(now())
   snapshot     ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  scenarios    TestScenario[]
 
   @@index([snapshotId])
+}
+
+model TestScenario {
+  id              String   @id @default(cuid())
+  testRunId       String
+  title           String
+  suiteName       String?
+  status          String
+  durationMs      Float?
+  failureMessages String[]
+  testFile        String?
+  screenshotPath  String?
+  createdAt       DateTime @default(now())
+  testRun         TestRun  @relation(fields: [testRunId], references: [id], onDelete: Cascade)
+
+  @@index([testRunId])
 }
 
 model Notification {
@@ -410,6 +430,7 @@ enum NotificationType {
 enum AiTestMode {
   SKELETON
   FULL
+  PLAYWRIGHT_E2E
 }
 
 enum AiSuggestionPriority {
