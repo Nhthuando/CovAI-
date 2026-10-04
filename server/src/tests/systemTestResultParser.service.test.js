@@ -37,6 +37,88 @@ describe("parseSystemTestResult", () => {
       .toMatchObject({ totalTests: 4, passedTests: 3, failedTests: 1, skippedTests: 0, durationMs: 800, status: "FAILED" });
   });
 
+  it("identifies flaky Playwright tests that pass after retry", () => {
+    const resultPath = report("playwright-flaky.json", {
+      stats: { duration: 2500 },
+      suites: [
+        {
+          title: "login.spec.js",
+          file: "tests/e2e/login.spec.js",
+          specs: [
+            {
+              title: "login with credentials",
+              tests: [
+                {
+                  status: "flaky",
+                  results: [
+                    { status: "failed", duration: 1000, error: { message: "timeout waiting for selector" } },
+                    { status: "passed", duration: 800 },
+                  ],
+                },
+              ],
+            },
+            {
+              title: "login with invalid email",
+              tests: [
+                {
+                  status: "expected",
+                  results: [{ status: "passed", duration: 700 }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const parsed = parseSystemTestResult({ runner: "playwright", resultPath, startedAt, finishedAt });
+    expect(parsed).toMatchObject({
+      totalTests: 2,
+      passedTests: 1,
+      failedTests: 0,
+      flakyTests: 1,
+      skippedTests: 0,
+      status: "PASSED",
+    });
+    expect(parsed.scenarios).toHaveLength(2);
+    expect(parsed.scenarios[0]).toMatchObject({
+      title: "login with credentials",
+      status: "flaky",
+      suiteName: "login.spec.js",
+      failureMessages: ["timeout waiting for selector"],
+    });
+    expect(parsed.scenarios[1]).toMatchObject({
+      title: "login with invalid email",
+      status: "passed",
+    });
+  });
+
+  it("rejects runner errors instead of inventing test cases", () => {
+    const resultPath = report("playwright-errors.json", {
+      stats: { duration: 92, expected: 0, unexpected: 0 },
+      suites: [],
+      errors: [
+        { message: "Error: Cannot find package '@playwright/test'" },
+        { message: "Error: No tests found" },
+      ],
+    });
+    expect(() => parseSystemTestResult({ runner: "playwright", resultPath, startedAt, finishedAt })).toThrow("Playwright execution failed");
+  });
+
+  it("counts expected failures as passing and skipped cases as skipped", () => {
+    const resultPath = report("expected.json", { suites: [{ specs: [{ tests: [
+      { status: "expected", expectedStatus: "failed", results: [{ status: "failed" }] },
+      { status: "skipped", results: [{ status: "skipped" }] },
+    ] }] }] });
+    const parsed = parseSystemTestResult({ runner: "playwright", resultPath, startedAt, finishedAt });
+    expect(parsed).toMatchObject({ totalTests: 2, passedTests: 1, failedTests: 0, skippedTests: 1 });
+    expect(parsed.scenarios.map((scenario) => scenario.status)).toEqual(["passed", "skipped"]);
+  });
+
+  it("rejects empty execution", () => {
+    const resultPath = report("empty.json", { suites: [], stats: { expected: 0 } });
+    expect(() => parseSystemTestResult({ runner: "playwright", resultPath, startedAt, finishedAt })).toThrow("did not execute any tests");
+  });
+
   it("rejects a missing report", () => {
     expect(() => parseSystemTestResult({ runner: "playwright", resultPath: "missing.json", startedAt, finishedAt }))
       .toThrow(expect.objectContaining({ statusCode: 422 }));

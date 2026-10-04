@@ -66,7 +66,7 @@ export async function getProjectJobsApi(projectId) {
   } catch (error) {
     if (error instanceof TypeError) {
       throw new Error(
-        "Không thể kết nối tới backend. Server có thể đang restart hoặc offline.",
+        "Unable to connect to backend server. The server may be restarting or offline.",
       );
     }
     throw error;
@@ -86,7 +86,7 @@ export async function getUserJobsApi() {
   } catch (error) {
     if (error instanceof TypeError) {
       throw new Error(
-        "Không thể kết nối tới backend. Server có thể đang restart hoặc offline.",
+        "Unable to connect to backend server. The server may be restarting or offline.",
       );
     }
     throw error;
@@ -106,7 +106,7 @@ export async function getJobDetailApi(jobId) {
   } catch (error) {
     if (error instanceof TypeError) {
       throw new Error(
-        "Không thể kết nối tới backend. Server có thể đang restart hoặc offline.",
+        "Unable to connect to backend server. The server may be restarting or offline.",
       );
     }
     throw error;

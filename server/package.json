@@ -20,6 +20,7 @@
     "@babel/parser": "^8.0.0",
     "@babel/traverse": "^8.0.0",
     "@google/generative-ai": "^0.24.1",
+    "@playwright/test": "^1.63.0",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "adm-zip": "^0.5.17",
@@ -44,6 +45,7 @@
     "pg": "^8.21.0",
     "prisma": "^7.8.0",
     "socket.io": "^4.8.3",
+    "tree-kill": "^1.2.2",
     "unzipper": "^0.12.3",
     "zod": "^4.4.3"
   },

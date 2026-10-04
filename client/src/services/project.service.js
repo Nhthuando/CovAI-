@@ -354,6 +354,14 @@ export async function generateSkeletonApi(
   return handleResponse(res);
 }
 
+export function generateSystemTestApi(projectId, snapshotId, executionMode = "full") {
+  return fetch(`${BASE_URL}/projects/${projectId}/ai-tests`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ snapshotId, mode: "PLAYWRIGHT_E2E", executionMode }),
+  }).then(handleResponse);
+}
+
 export async function generateIntegrationTestApi(
   projectId,
   snapshotId,

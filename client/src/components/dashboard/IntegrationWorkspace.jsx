@@ -84,7 +84,6 @@ function useLiveJobLogs(jobId, onComplete, onError) {
     const eventSource = new EventSource(
       `${BASE_URL}/job/${jobId}/stream?token=${token}`,
     );
-
     eventSource.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data);
