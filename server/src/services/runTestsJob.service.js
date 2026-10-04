@@ -426,7 +426,9 @@ export const findUnitFiles = (rootDir) => {
 
             if (!entry.isFile()) continue;
 
-            const isHelperDir = /(^|\/)(test-data|test_data|fixtures?|helpers?|mocks?|__mocks__|utils?|support)\//i.test(lowerRel);
+            // If it's a test file (ends with .test.ts, .spec.ts, etc.), do NOT skip it just because it's in a helper/util folder!
+            const isTestFileName = /\.(test|spec|testcase|steps?)\.[cm]?[jt]s$/i.test(entry.name);
+            const isHelperDir = !isTestFileName && /(^|\/)(test-data|test_data|fixtures?|helpers?|mocks?|__mocks__|utils?|support)\//i.test(lowerRel);
             if (isHelperDir) continue;
 
             // Exclude helper/setup files
@@ -925,7 +927,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
     let filesToRun = specificFiles;
     if (!Array.isArray(filesToRun) || filesToRun.length === 0) {
         try {
-            const classified = classifyTestFiles(rootDir);
+            const classified = findUnitFiles(rootDir);
             if (classified.jestFiles && classified.jestFiles.length > 0) {
                 filesToRun = classified.jestFiles;
             }
@@ -1125,11 +1127,32 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
         "ts", "tsx", "js", "jsx", "mjs", "cjs", "json", "node"
     ]));
 
-    // Omit strict coverage thresholds and restrictive roots from runner config so test execution does not fail pass/fail gates prematurely or restrict scanning
-    const { coverageThreshold: _ignoredThreshold, roots: _ignoredRoots, ...cleanProjectJestConfig } = projectJestConfig || {};
+    // Omit strict coverage thresholds from runner config so test execution does not fail pass/fail gates prematurely
+    const { coverageThreshold: _ignoredThreshold, ...cleanProjectJestConfig } = projectJestConfig || {};
+    const effectiveRoots = (cleanProjectJestConfig?.roots && Array.isArray(cleanProjectJestConfig.roots) && cleanProjectJestConfig.roots.length > 0)
+        ? cleanProjectJestConfig.roots
+        : ["<rootDir>"];
     const extensionsToTreatAsEsm = (isEsmProject && cleanProjectJestConfig?.extensionsToTreatAsEsm)
         ? cleanProjectJestConfig.extensionsToTreatAsEsm
         : (isEsmProject ? [".ts", ".tsx"] : undefined);
+
+    const existingConfigNames = [
+        jestConfigPath,
+        "jest.config.js",
+        "jest.config.mjs",
+        "jest.config.cjs",
+        "jest.config.ts",
+        "jest.config.json"
+    ].filter(Boolean);
+
+    let activeProjectConfigFile = null;
+    for (const name of existingConfigNames) {
+        const full = path.isAbsolute(name) ? name : path.join(rootDir, name);
+        if (fs.existsSync(full)) {
+            activeProjectConfigFile = path.relative(rootDir, full).replace(/\\/g, "/");
+            break;
+        }
+    }
 
     const tempSetupName = "covai-jest-setup.mjs";
     const tempSetupPath = path.join(rootDir, tempSetupName);
@@ -1151,12 +1174,18 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
     } catch { }
 
     if (shouldRunRoot) {
-        if (Array.isArray(rootFiles) && rootFiles.length > 0) {
+        if (activeProjectConfigFile) {
+            jestCmd += ` --config=${activeProjectConfigFile}`;
+            if (Array.isArray(rootFiles) && rootFiles.length > 0 && Array.isArray(specificFiles) && specificFiles.length > 0 && specificFiles.length < rootFiles.length) {
+                const fileArgs = rootFiles.slice(0, 100).map(f => `"${f.replace(/\\/g, "/")}"`).join(" ");
+                jestCmd += ` ${fileArgs}`;
+            }
+        } else if (Array.isArray(rootFiles) && rootFiles.length > 0) {
             try {
                 const testMatchPatterns = rootFiles.map(f => `<rootDir>/${f.replace(/\\/g, "/")}`);
                 const tempConfig = {
                     ...cleanProjectJestConfig,
-                    roots: ["<rootDir>"],
+                    roots: effectiveRoots,
                     testMatch: testMatchPatterns,
                     testTimeout: 30000,
                     testPathIgnorePatterns: [
@@ -1194,7 +1223,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                     ];
                 const tempConfig = {
                     ...cleanProjectJestConfig,
-                    roots: ["<rootDir>"],
+                    roots: effectiveRoots,
                     testMatch: baseTestMatch,
                     testTimeout: 30000,
                     testPathIgnorePatterns: [
@@ -1640,7 +1669,7 @@ export const mergeCoverageFinal = (final1 = {}, final2 = {}) => {
 /**
  * Merge two Istanbul coverage-summary objects and recompute totals
  */
-export const mergeCoverageSummaries = (sum1 = {}, sum2 = {}) => {
+export const mergeCoverageSummaries = (sum1 = {}, sum2 = {}, options = {}) => {
     const merged = {};
     const allKeys = new Set([...Object.keys(sum1 || {}), ...Object.keys(sum2 || {})]);
 
@@ -1680,6 +1709,19 @@ export const mergeCoverageSummaries = (sum1 = {}, sum2 = {}) => {
         branches: { total: 0, covered: 0, skipped: 0, pct: 100 },
     };
 
+    // Extract path-matched threshold exceptions from Jest's coverageThreshold (if any)
+    // In Jest, files matching these specific path thresholds are subtracted from the global threshold group
+    const thresholdExceptions = new Set();
+    const coverageThreshold = options?.projectJestConfig?.coverageThreshold;
+    if (coverageThreshold && typeof coverageThreshold === "object") {
+        for (const pattern of Object.keys(coverageThreshold)) {
+            if (pattern === "global") continue;
+            // Normalize path (e.g. "./src/clients/quickbooks-client.ts" -> "src/clients/quickbooks-client.ts")
+            const normPattern = pattern.replace(/^\.\//, "").replace(/\\/g, "/").toLowerCase();
+            thresholdExceptions.add(normPattern);
+        }
+    }
+
     for (const [key, item] of Object.entries(merged)) {
         if (key === "total" || !item || typeof item !== "object") continue;
         const normKey = key.replace(/\\/g, "/").toLowerCase();
@@ -1697,6 +1739,14 @@ export const mergeCoverageSummaries = (sum1 = {}, sum2 = {}) => {
         ) {
             continue;
         }
+
+        // Exclude files with explicit path-level thresholds defined in coverageThreshold
+        // (Jest subtracts these from the global threshold group)
+        const isThresholdException = Array.from(thresholdExceptions).some(exc => normKey.endsWith(exc));
+        if (isThresholdException) {
+            continue;
+        }
+
         for (const metric of ["lines", "statements", "functions", "branches"]) {
             if (item[metric]) {
                 total[metric].total += item[metric].total || 0;
@@ -1835,6 +1885,7 @@ export const processRunTestsJob = async (jobId) => {
     const projectId = job.projectId;
     const userId = job.userId;
     const jestConfigPath = job.snapshot.jestConfigPath ?? null;
+    const projectJestConfig = await readProjectJestConfig(rootDir, jestConfigPath);
     const coverageDir = path.join(rootDir, "coverage");
 
     // Initialize output record
@@ -1935,7 +1986,7 @@ export const processRunTestsJob = async (jobId) => {
                 let vs = {};
                 try { if (fs.existsSync(jestSummaryPath)) js = JSON.parse(fs.readFileSync(jestSummaryPath, "utf8")); } catch { }
                 try { if (fs.existsSync(vitestSummaryPath)) vs = JSON.parse(fs.readFileSync(vitestSummaryPath, "utf8")); } catch { }
-                const mergedSummary = mergeCoverageSummaries(js, vs);
+                const mergedSummary = mergeCoverageSummaries(js, vs, { projectJestConfig, rootDir });
                 fs.writeFileSync(path.join(coverageDir, "coverage-summary.json"), JSON.stringify(mergedSummary, null, 2), "utf8");
             }
 
@@ -2189,7 +2240,7 @@ export const processRunTestsJob = async (jobId) => {
         if (fs.existsSync(summaryFile)) {
             try {
                 const currentSum = JSON.parse(fs.readFileSync(summaryFile, "utf8"));
-                const cleanedSum = mergeCoverageSummaries(currentSum, {});
+                const cleanedSum = mergeCoverageSummaries(currentSum, {}, { projectJestConfig, rootDir });
                 fs.writeFileSync(summaryFile, JSON.stringify(cleanedSum, null, 2), "utf8");
             } catch { }
         }

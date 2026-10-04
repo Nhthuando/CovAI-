@@ -71,6 +71,46 @@ describe("mergeCoverageSummaries", () => {
         expect(merged.total.functions.covered).toBe(68);
         expect(merged.total.functions.pct).toBe(100);
     });
+
+    it("respects projectJestConfig.coverageThreshold by subtracting path-matched files from global total", () => {
+        const inputSummary = {
+            "total": {
+                lines: { total: 100, covered: 90, pct: 90 },
+                statements: { total: 100, covered: 90, pct: 90 },
+                functions: { total: 20, covered: 18, pct: 90 },
+                branches: { total: 20, covered: 18, pct: 90 },
+            },
+            "src/services/normal.service.js": {
+                lines: { total: 80, covered: 80, skipped: 0, pct: 100 },
+                statements: { total: 80, covered: 80, skipped: 0, pct: 100 },
+                functions: { total: 16, covered: 16, skipped: 0, pct: 100 },
+                branches: { total: 16, covered: 16, skipped: 0, pct: 100 },
+            },
+            "src/clients/oauth-client.js": {
+                lines: { total: 20, covered: 10, skipped: 0, pct: 50 },
+                statements: { total: 20, covered: 10, skipped: 0, pct: 50 },
+                functions: { total: 4, covered: 2, skipped: 0, pct: 50 },
+                branches: { total: 4, covered: 2, skipped: 0, pct: 50 },
+            }
+        };
+
+        const projectJestConfig = {
+            coverageThreshold: {
+                global: { statements: 100, branches: 100, functions: 100, lines: 100 },
+                "./src/clients/oauth-client.js": { statements: 50, branches: 50, functions: 50, lines: 50 }
+            }
+        };
+
+        const merged = mergeCoverageSummaries(inputSummary, {}, { projectJestConfig });
+
+        // Global total must exclude src/clients/oauth-client.js
+        expect(merged.total.statements.total).toBe(80);
+        expect(merged.total.statements.covered).toBe(80);
+        expect(merged.total.statements.pct).toBe(100);
+        expect(merged.total.lines.pct).toBe(100);
+        expect(merged.total.functions.pct).toBe(100);
+        expect(merged.total.branches.pct).toBe(100);
+    });
 });
 
 describe("coverageResultFromSummary", () => {

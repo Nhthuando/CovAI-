@@ -9,7 +9,8 @@ import {
     readCoverageFinal,
     mergeCoverageSummaries,
     coverageResultFromSummary,
-    parseModuleResolutionError
+    parseModuleResolutionError,
+    readProjectJestConfig
 } from "./runTestsJob.service.js";
 import { runVitestCoverage } from "./vitestRunner.service.js";
 import { getFileCoverageDetails, normalizePath, findAssociatedTestFile } from "./fileCoverage.service.js";
@@ -420,7 +421,8 @@ export const applyUnitTestSuggestion = async ({ snapshotId, projectId, userId, s
     if (fs.existsSync(summaryFile)) {
         try {
             const rawSum = JSON.parse(fs.readFileSync(summaryFile, "utf8"));
-            const cleanedSum = mergeCoverageSummaries(rawSum, {});
+            const projectJestConfig = await readProjectJestConfig(rootDir, snapshot.jestConfigPath);
+            const cleanedSum = mergeCoverageSummaries(rawSum, {}, { projectJestConfig, rootDir });
             const total = cleanedSum.total;
             if (total) {
                 newCoverage = {
