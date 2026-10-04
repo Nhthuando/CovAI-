@@ -207,6 +207,184 @@ const buttonStyle = (color) => ({
   cursor: "pointer",
 });
 
+export function PaginationControl({
+  currentPage,
+  totalItems,
+  pageSize = 50,
+  onPageChange,
+  isLight = false,
+  itemLabel = "files",
+}) {
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  if (totalItems === 0) return null;
+
+  const startItem = (currentPage - 1) * pageSize + 1;
+  const endItem = Math.min(currentPage * pageSize, totalItems);
+
+  const getPageNumbers = () => {
+    if (totalPages <= 7) {
+      return Array.from({ length: totalPages }, (_, i) => i + 1);
+    }
+    const pages = [1];
+    let left = Math.max(2, currentPage - 1);
+    let right = Math.min(totalPages - 1, currentPage + 1);
+
+    if (currentPage <= 3) {
+      right = 4;
+    } else if (currentPage >= totalPages - 2) {
+      left = totalPages - 3;
+    }
+
+    if (left > 2) pages.push("...");
+    for (let i = left; i <= right; i++) {
+      pages.push(i);
+    }
+    if (right < totalPages - 1) pages.push("...");
+    pages.push(totalPages);
+    return pages;
+  };
+
+  const pages = getPageNumbers();
+
+  return (
+    <div
+      style={{
+        padding: "10px 18px",
+        borderTop: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.06)",
+        background: isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.02)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        flexWrap: "wrap",
+        gap: 10,
+        fontSize: 12,
+      }}
+    >
+      <div style={{ color: isLight ? "#64748b" : "#94a3b8", display: "flex", alignItems: "center", gap: 5 }}>
+        <span>Showing</span>
+        <b style={{ color: isLight ? "#0f172a" : "#f1f5f9" }}>{startItem} – {endItem}</b>
+        <span>of</span>
+        <b style={{ color: isLight ? "#0f172a" : "#f1f5f9" }}>{totalItems}</b>
+        <span>{itemLabel} (Page {currentPage} / {totalPages})</span>
+      </div>
+
+      {totalPages > 1 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <button
+            onClick={() => onPageChange(1)}
+            disabled={currentPage === 1}
+            style={{
+              padding: "3px 8px",
+              borderRadius: 5,
+              background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.05)",
+              border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)",
+              color: currentPage === 1 ? (isLight ? "#cbd5e1" : "#475569") : (isLight ? "#334155" : "#e2e8f0"),
+              cursor: currentPage === 1 ? "not-allowed" : "pointer",
+              fontSize: 11,
+              fontWeight: 600,
+            }}
+            title="First page"
+          >
+            « First
+          </button>
+
+          <button
+            onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+            disabled={currentPage === 1}
+            style={{
+              padding: "3px 9px",
+              borderRadius: 5,
+              background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.05)",
+              border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)",
+              color: currentPage === 1 ? (isLight ? "#cbd5e1" : "#475569") : (isLight ? "#334155" : "#e2e8f0"),
+              cursor: currentPage === 1 ? "not-allowed" : "pointer",
+              fontSize: 11,
+              fontWeight: 600,
+            }}
+            title="Previous page"
+          >
+            ‹ Prev
+          </button>
+
+          {pages.map((p, idx) => {
+            if (p === "...") {
+              return (
+                <span key={`dots-${idx}`} style={{ color: isLight ? "#94a3b8" : "#64748b", padding: "0 2px" }}>
+                  ...
+                </span>
+              );
+            }
+            const isCurrent = p === currentPage;
+            return (
+              <button
+                key={p}
+                onClick={() => onPageChange(p)}
+                style={{
+                  minWidth: 26,
+                  height: 26,
+                  padding: "0 6px",
+                  borderRadius: 5,
+                  background: isCurrent
+                    ? (isLight ? "#7c3aed" : "rgba(124, 58, 237, 0.3)")
+                    : (isLight ? "#ffffff" : "rgba(255, 255, 255, 0.05)"),
+                  border: isCurrent
+                    ? (isLight ? "1px solid #7c3aed" : "1px solid rgba(192, 132, 252, 0.5)")
+                    : (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)"),
+                  color: isCurrent
+                    ? (isLight ? "#ffffff" : "#c084fc")
+                    : (isLight ? "#334155" : "#e2e8f0"),
+                  fontWeight: isCurrent ? 700 : 500,
+                  fontSize: 11.5,
+                  cursor: "pointer",
+                  transition: "all 0.15s ease",
+                }}
+              >
+                {p}
+              </button>
+            );
+          })}
+
+          <button
+            onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+            disabled={currentPage === totalPages}
+            style={{
+              padding: "3px 9px",
+              borderRadius: 5,
+              background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.05)",
+              border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)",
+              color: currentPage === totalPages ? (isLight ? "#cbd5e1" : "#475569") : (isLight ? "#334155" : "#e2e8f0"),
+              cursor: currentPage === totalPages ? "not-allowed" : "pointer",
+              fontSize: 11,
+              fontWeight: 600,
+            }}
+            title="Next page"
+          >
+            Next ›
+          </button>
+
+          <button
+            onClick={() => onPageChange(totalPages)}
+            disabled={currentPage === totalPages}
+            style={{
+              padding: "3px 8px",
+              borderRadius: 5,
+              background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.05)",
+              border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)",
+              color: currentPage === totalPages ? (isLight ? "#cbd5e1" : "#475569") : (isLight ? "#334155" : "#e2e8f0"),
+              cursor: currentPage === totalPages ? "not-allowed" : "pointer",
+              fontSize: 11,
+              fontWeight: 600,
+            }}
+            title="Last page"
+          >
+            Last »
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 async function waitForJob(jobId, onProgress) {
   let lastProgress = 8;
   for (let attempt = 0; attempt < 180; attempt += 1) {
@@ -839,6 +1017,30 @@ export default function CoverageTypeDashboard({
   const [functionSearch, setFunctionSearch] = useState("");
   const [functionStatusFilter, setFunctionStatusFilter] = useState("all");
 
+  // Pagination states (50 items per page)
+  const [sourceFilePage, setSourceFilePage] = useState(1);
+  const [sourceFileSearch, setSourceFileSearch] = useState("");
+  const SOURCE_FILES_PER_PAGE = 50;
+
+  const [testSuitePage, setTestSuitePage] = useState(1);
+  const TEST_SUITES_PER_PAGE = 50;
+
+  const [functionPage, setFunctionPage] = useState(1);
+  const FUNCTIONS_PER_PAGE = 50;
+
+  // Reset pagination when search or filters change
+  useEffect(() => {
+    setSourceFilePage(1);
+  }, [activeMetricView, type, sourceFileSearch]);
+
+  useEffect(() => {
+    setTestSuitePage(1);
+  }, [testSuiteSearch]);
+
+  useEffect(() => {
+    setFunctionPage(1);
+  }, [functionSearch, functionStatusFilter]);
+
   const loadFlowData = useCallback(
     async (filePath) => {
       if (!snapshotId || !filePath) return;
@@ -983,6 +1185,22 @@ export default function CoverageTypeDashboard({
     return selectedFiles;
   }, [selectedFiles, activeMetricView]);
 
+  // Filtered source files with search
+  const filteredSourceFiles = useMemo(() => {
+    let list = displayFiles;
+    if (sourceFileSearch.trim()) {
+      const q = sourceFileSearch.toLowerCase();
+      list = list.filter((f) => f.filePath?.toLowerCase().includes(q));
+    }
+    return list;
+  }, [displayFiles, sourceFileSearch]);
+
+  // Paginated source files (50 per page)
+  const paginatedSourceFiles = useMemo(() => {
+    const start = (sourceFilePage - 1) * SOURCE_FILES_PER_PAGE;
+    return filteredSourceFiles.slice(start, start + SOURCE_FILES_PER_PAGE);
+  }, [filteredSourceFiles, sourceFilePage]);
+
   // Sync selectedSourceFile when displayFiles load
   useEffect(() => {
     if (displayFiles.length > 0) {
@@ -1029,6 +1247,12 @@ export default function CoverageTypeDashboard({
     return list;
   }, [functionsList, functionStatusFilter, functionSearch, type]);
 
+  // Paginated functions (50 per page)
+  const paginatedFunctions = useMemo(() => {
+    const start = (functionPage - 1) * FUNCTIONS_PER_PAGE;
+    return filteredFunctions.slice(start, start + FUNCTIONS_PER_PAGE);
+  }, [filteredFunctions, functionPage]);
+
   // Unit test suites list (Jest & Vitest backend test files only)
   const unitTestSuites = useMemo(() => {
     let list = testSuites;
@@ -1049,6 +1273,12 @@ export default function CoverageTypeDashboard({
         s.framework?.toLowerCase().includes(q),
     );
   }, [unitTestSuites, testSuiteSearch]);
+
+  // Paginated test suites (50 per page)
+  const paginatedTestSuites = useMemo(() => {
+    const start = (testSuitePage - 1) * TEST_SUITES_PER_PAGE;
+    return filteredTestSuites.slice(start, start + TEST_SUITES_PER_PAGE);
+  }, [filteredTestSuites, testSuitePage]);
 
   // Bulk suggest tests based on Source File coverage (Lines, Branches, Funcs, Stmts)
   // Generates suggestions directly inline below each file without redirecting to a separate panel
@@ -2630,8 +2860,9 @@ export default function CoverageTypeDashboard({
                   "Run Analysis Unit" to run and analyze.
                 </div>
               ) : (
-                <div style={{ overflowX: "auto" }}>
-                  {/* Table Header */}
+                <div>
+                  <div style={{ overflowX: "auto" }}>
+                    {/* Table Header */}
                   <div
                     style={{
                       display: "grid",
@@ -2659,7 +2890,7 @@ export default function CoverageTypeDashboard({
                   </div>
 
                   {/* Rows */}
-                  {filteredTestSuites.map((suite, idx) => {
+                  {paginatedTestSuites.map((suite, idx) => {
                     const isPassed =
                       suite.status === "passed" && suite.failedTests === 0;
                     const isExpanded = expandedSuite === suite.filePath;
@@ -2699,7 +2930,7 @@ export default function CoverageTypeDashboard({
                                 textAlign: "center",
                               }}
                             >
-                              {idx + 1}
+                              {(testSuitePage - 1) * TEST_SUITES_PER_PAGE + idx + 1}
                             </span>
                           </div>
 
@@ -3066,7 +3297,17 @@ export default function CoverageTypeDashboard({
                     );
                   })}
                 </div>
-              )}
+
+                <PaginationControl
+                  currentPage={testSuitePage}
+                  totalItems={filteredTestSuites.length}
+                  pageSize={TEST_SUITES_PER_PAGE}
+                  onPageChange={setTestSuitePage}
+                  isLight={isLight}
+                  itemLabel="test files"
+                />
+              </div>
+            )}
             </div>
           ) : type === "unit" && activeMetricView === "functions" ? (
             functionViewMode === "map" ? (
@@ -3222,8 +3463,9 @@ export default function CoverageTypeDashboard({
                       : "No matching functions found for the filter."}
                   </div>
                 ) : (
-                  <div style={{ overflowX: "auto" }}>
-                    <div
+                  <div>
+                    <div style={{ overflowX: "auto" }}>
+                      <div
                       style={{
                         display: "grid",
                         gridTemplateColumns:
@@ -3249,7 +3491,7 @@ export default function CoverageTypeDashboard({
                       <span style={{ textAlign: "center" }}>Actions</span>
                     </div>
 
-                    {filteredFunctions.slice(0, 100).map((fn, idx) => {
+                    {paginatedFunctions.map((fn, idx) => {
                       const isCovered = fn.hit > 0;
                       return (
                         <div
@@ -3286,7 +3528,7 @@ export default function CoverageTypeDashboard({
                                 textAlign: "center",
                               }}
                             >
-                              {idx + 1}
+                              {(functionPage - 1) * FUNCTIONS_PER_PAGE + idx + 1}
                             </span>
                           </div>
 
@@ -3424,7 +3666,17 @@ export default function CoverageTypeDashboard({
                       );
                     })}
                   </div>
-                )}
+
+                  <PaginationControl
+                    currentPage={functionPage}
+                    totalItems={filteredFunctions.length}
+                    pageSize={FUNCTIONS_PER_PAGE}
+                    onPageChange={setFunctionPage}
+                    isLight={isLight}
+                    itemLabel="functions"
+                  />
+                </div>
+              )}
               </div>
             )
           ) : (
@@ -3463,10 +3715,42 @@ export default function CoverageTypeDashboard({
                           : "Source file coverage"}
                 </span>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  {/* Search input for source files */}
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      background: isLight ? "#ffffff" : "rgba(255,255,255,0.04)",
+                      border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.1)",
+                      borderRadius: 6,
+                      padding: "4px 8px",
+                      fontSize: 12,
+                    }}
+                  >
+                    <Search size={13} style={{ color: isLight ? "#64748b" : "#8b949e" }} />
+                    <input
+                      type="text"
+                      placeholder="Search source files..."
+                      value={sourceFileSearch}
+                      onChange={(e) => setSourceFileSearch(e.target.value)}
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        outline: "none",
+                        color: isLight ? "#0f172a" : "#e6edf3",
+                        fontSize: 12,
+                        width: 140,
+                      }}
+                    />
+                  </div>
+
                   <span
                     style={{ fontSize: 11, color: isLight ? "#64748b" : "#8b949e", fontWeight: 400 }}
                   >
-                    {displayFiles.length} files analyzed
+                    {filteredSourceFiles.length !== displayFiles.length
+                      ? `${filteredSourceFiles.length} of ${displayFiles.length} files`
+                      : `${displayFiles.length} files analyzed`}
                   </span>
                   {allPendingSuggestions.length > 0 && (
                     <button
@@ -3501,8 +3785,9 @@ export default function CoverageTypeDashboard({
                   No data available. Click Run Analysis Unit to start.
                 </div>
               ) : (
-                <div style={{ overflowX: "auto" }}>
-                  {/* Table Header */}
+                <div>
+                  <div style={{ overflowX: "auto" }}>
+                    {/* Table Header */}
                   <div
                     style={{
                       display: "grid",
@@ -3550,7 +3835,7 @@ export default function CoverageTypeDashboard({
                   </div>
 
                   {/* Table Rows */}
-                  {displayFiles.slice(0, 50).map((file, idx) => {
+                  {paginatedSourceFiles.map((file, idx) => {
                     const isFull = (file.linesPct || 0) >= 100;
                     const isExpanded = expandedFiles.has(file.filePath);
                     const cacheEntry = fileCoverageCache[file.filePath];
@@ -3596,7 +3881,7 @@ export default function CoverageTypeDashboard({
                                 textAlign: "center",
                               }}
                             >
-                              {idx + 1}
+                              {(sourceFilePage - 1) * SOURCE_FILES_PER_PAGE + idx + 1}
                             </span>
                           </div>
 
@@ -3890,7 +4175,17 @@ export default function CoverageTypeDashboard({
                     );
                   })}
                 </div>
-              )}
+
+                <PaginationControl
+                  currentPage={sourceFilePage}
+                  totalItems={filteredSourceFiles.length}
+                  pageSize={SOURCE_FILES_PER_PAGE}
+                  onPageChange={setSourceFilePage}
+                  isLight={isLight}
+                  itemLabel="source files"
+                />
+              </div>
+            )}
             </div>
           )}
         </>
