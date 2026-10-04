@@ -3,9 +3,33 @@ import path from 'path';
 
 const IGNORED_DIRS = new Set(['node_modules', '.git', 'coverage', 'dist', 'build', '.next', '.turbo', 'storage']);
 
+const isDirectory = (p) => {
+    try {
+        if (!fs.existsSync(p)) return false;
+        if (typeof fs.statSync === 'function') {
+            return fs.statSync(p).isDirectory();
+        }
+        return true;
+    } catch {
+        return false;
+    }
+};
+
+const isFile = (p) => {
+    try {
+        if (!fs.existsSync(p)) return false;
+        if (typeof fs.statSync === 'function') {
+            return fs.statSync(p).isFile();
+        }
+        return true;
+    } catch {
+        return false;
+    }
+};
+
 const hasPackageJson = (dir) => {
     const packageJsonPath = path.join(dir, 'package.json');
-    return fs.existsSync(packageJsonPath) && fs.statSync(packageJsonPath).isFile();
+    return isFile(packageJsonPath);
 };
 
 const readPackageJson = (dir) => {
@@ -42,7 +66,7 @@ export const resolveProjectRoot = (snapshotRoot) => {
     }
 
     const resolvedRoot = path.resolve(snapshotRoot);
-    if (!fs.existsSync(resolvedRoot) || !fs.statSync(resolvedRoot).isDirectory()) {
+    if (!isDirectory(resolvedRoot)) {
         return resolvedRoot;
     }
 
@@ -86,4 +110,73 @@ export const resolveProjectRoot = (snapshotRoot) => {
     });
 
     return candidates[0].dir;
+};
+
+export const hasSourceCodeFiles = (dir) => {
+    if (!dir || typeof dir !== 'string') return false;
+    const resolved = path.resolve(dir);
+    if (!isDirectory(resolved)) return false;
+
+    const SOURCE_EXTS = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs']);
+    let found = false;
+
+    const walk = (current) => {
+        if (found) return;
+        let entries = [];
+        try {
+            entries = fs.readdirSync(current, { withFileTypes: true });
+        } catch {
+            return;
+        }
+
+        for (const entry of entries) {
+            if (found) return;
+            if (entry.isDirectory()) {
+                if (!IGNORED_DIRS.has(entry.name)) {
+                    walk(path.join(current, entry.name));
+                }
+            } else if (entry.isFile()) {
+                const ext = path.extname(entry.name).toLowerCase();
+                if (SOURCE_EXTS.has(ext)) {
+                    found = true;
+                    return;
+                }
+            }
+        }
+    };
+
+    walk(resolved);
+    return found;
+};
+
+export const ensureMinimalPackageJson = (dir) => {
+    if (!dir || typeof dir !== 'string') return null;
+    const resolved = path.resolve(dir);
+    if (!isDirectory(resolved)) return null;
+
+    const packageJsonPath = path.join(resolved, 'package.json');
+    if (isFile(packageJsonPath)) {
+        return packageJsonPath;
+    }
+
+    const baseName = path.basename(resolved).toLowerCase().replace(/[^a-z0-9_-]/g, '-') || 'project';
+    const minimal = {
+        name: baseName,
+        version: '1.0.0',
+        type: 'module',
+        scripts: {
+            test: 'jest'
+        },
+        devDependencies: {
+            jest: '^29.7.0'
+        }
+    };
+
+    try {
+        fs.writeFileSync(packageJsonPath, JSON.stringify(minimal, null, 2), 'utf8');
+        return packageJsonPath;
+    } catch (e) {
+        console.error(`[ensureMinimalPackageJson] Failed to write minimal package.json at ${packageJsonPath}:`, e.message);
+        return null;
+    }
 };

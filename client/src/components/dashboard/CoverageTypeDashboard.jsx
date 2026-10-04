@@ -940,10 +940,6 @@ export default function CoverageTypeDashboard({
   const rawTotals = summary?.rawTotals || null;
 
   const getPctVal = (covVal, rawMetric) => {
-    const parsedCov = covVal != null && covVal !== "" ? Number(covVal) : null;
-    if (parsedCov !== null && !isNaN(parsedCov) && parsedCov > 0) {
-      return parsedCov;
-    }
     if (rawMetric) {
       if (rawMetric.pct != null && !isNaN(Number(rawMetric.pct))) {
         return Number(rawMetric.pct);
@@ -952,7 +948,11 @@ export default function CoverageTypeDashboard({
         return (Number(rawMetric.covered || 0) / Number(rawMetric.total)) * 100;
       }
     }
-    return parsedCov || 0;
+    const parsedCov = covVal != null && covVal !== "" ? Number(covVal) : null;
+    if (parsedCov !== null && !isNaN(parsedCov)) {
+      return parsedCov;
+    }
+    return 0;
   };
 
   const statPct = getPctVal(cov.statements, rawTotals?.statements);

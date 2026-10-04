@@ -883,7 +883,7 @@ export const createCoverageAnalysisJob = async ({
       projectId,
       snapshotId,
       type: "RUN_TESTS",
-      status: { in: ["QUEUED", "RUNNING", "SUCCESS"] },
+      status: { in: ["QUEUED", "RUNNING"] },
     },
     orderBy: { createdAt: "desc" },
   });

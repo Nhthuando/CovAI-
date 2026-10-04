@@ -1,6 +1,7 @@
 import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
+import { pathToFileURL } from "url";
 
 import {
     markJobRunning,
@@ -18,6 +19,8 @@ import { dockerRunner } from "./dockerRunner.service.js";
 import { parseJestResults, parseVitestResults, formatScenariosForPrisma } from "./testResultParser.service.js";
 import { detectTestingFrameworks, classifyTestFile } from "../utils/testingFrameworkDetector.js";
 import prisma from "../config/prisma.js";
+import { resolveProjectRoot, hasSourceCodeFiles, ensureMinimalPackageJson } from "../utils/projectRootResolver.js";
+import { extractFunctions } from "./cyclomaticFunctionExtractor.service.js";
 
 const INSTALL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const JEST_TIMEOUT_MS = 2.5 * 60 * 1000;   // 2.5 minutes
@@ -42,6 +45,91 @@ export const coverageResultFromSummary = (summaryResult) => {
         statements: stmtsPct,
     };
 };
+
+/**
+ * Read project's existing jest config from explicit file, jest.config.*, or package.json
+ * @param {string} repoRoot
+ * @param {string|null} [explicitConfigPath]
+ * @returns {Promise<Object>}
+ */
+export const readProjectJestConfig = async (repoRoot, explicitConfigPath = null) => {
+    // 1. Try explicit path if passed
+    if (explicitConfigPath) {
+        const resolvedPath = path.isAbsolute(explicitConfigPath)
+            ? explicitConfigPath
+            : path.join(repoRoot, explicitConfigPath);
+        if (fs.existsSync(resolvedPath)) {
+            try {
+                if (resolvedPath.endsWith(".json")) {
+                    return JSON.parse(fs.readFileSync(resolvedPath, "utf8"));
+                }
+                const fileUrl = pathToFileURL(resolvedPath).href;
+                const mod = await import(`${fileUrl}?t=${Date.now()}`);
+                return mod.default || mod;
+            } catch (e) {
+                console.warn(`[readProjectJestConfig] Error loading explicit config ${resolvedPath}:`, e.message);
+            }
+        }
+    }
+
+    // 2. Check jest.config.js, jest.config.mjs, jest.config.cjs, jest.config.json
+    const configNames = [
+        "jest.config.js",
+        "jest.config.mjs",
+        "jest.config.cjs",
+        "jest.config.json"
+    ];
+    for (const name of configNames) {
+        const p = path.join(repoRoot, name);
+        if (fs.existsSync(p)) {
+            try {
+                if (name.endsWith(".json")) {
+                    return JSON.parse(fs.readFileSync(p, "utf8"));
+                }
+                const fileUrl = pathToFileURL(p).href;
+                const mod = await import(`${fileUrl}?t=${Date.now()}`);
+                return mod.default || mod;
+            } catch (e) {
+                console.warn(`[readProjectJestConfig] Error loading ${p}:`, e.message);
+            }
+        }
+    }
+
+    // 3. Fallback to package.json "jest" field
+    const pkgPath = path.join(repoRoot, "package.json");
+    if (fs.existsSync(pkgPath)) {
+        try {
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+            if (pkg.jest && typeof pkg.jest === "object") return pkg.jest;
+        } catch { }
+    }
+    return {};
+};
+
+/**
+ * Determine if a project repository uses ESM (Node ES modules or ts-jest ESM preset)
+ * @param {string} repoRoot
+ * @param {Object} [projectJestConfig]
+ * @returns {boolean}
+ */
+export const isEsmProjectForRepo = (repoRoot, projectJestConfig = {}) => {
+    try {
+        const rootPkgPath = path.join(repoRoot, "package.json");
+        if (fs.existsSync(rootPkgPath)) {
+            const p = JSON.parse(fs.readFileSync(rootPkgPath, "utf8"));
+            if (p.type === "module") return true;
+        }
+    } catch { }
+    if (projectJestConfig?.preset && typeof projectJestConfig.preset === "string" && projectJestConfig.preset.includes("esm")) return true;
+    if (Array.isArray(projectJestConfig?.extensionsToTreatAsEsm) && projectJestConfig.extensionsToTreatAsEsm.length > 0) return true;
+    if (projectJestConfig?.transform && typeof projectJestConfig.transform === "object") {
+        for (const v of Object.values(projectJestConfig.transform)) {
+            if (Array.isArray(v) && v[1]?.useESM) return true;
+        }
+    }
+    return false;
+};
+
 
 /**
  * Dynamically build Jest moduleNameMapper without hardcoding static paths.
@@ -394,7 +482,6 @@ export const findUnitFiles = (rootDir) => {
             // Framework classification using classifyTestFile
             const fw = classifyTestFile(content, relPath, detectedUnit);
             const isVitest = fw === "vitest" ||
-                lowerRel.includes("tests/unit") ||
                 lowerRel.includes(".vitest.") ||
                 lowerContent.includes("from 'vitest'") ||
                 lowerContent.includes('from "vitest"') ||
@@ -430,6 +517,272 @@ export const findUnitFiles = (rootDir) => {
 
     walk(rootDir);
     return { jestFiles, vitestFiles, skippedFiles };
+};
+
+/**
+ * Detect all code logic files (non-test, non-config, non-frontend) in the project.
+ * Used when a project does not have Jest or Vitest test files yet so that
+ * analysis can still run and display the code logic files for AI test suggestions.
+ */
+export const findLogicSourceFiles = (rootDir) => {
+    const logicFiles = [];
+    if (!rootDir || typeof rootDir !== "string" || !fs.existsSync(rootDir)) {
+        return logicFiles;
+    }
+
+    const IGNORED_DIRS = new Set([
+        "node_modules", ".git", "coverage", "dist", "build",
+        ".next", ".vite", ".vitest", ".cache", "storage",
+        "client", "frontend", "ui", "web", "test-data", "test_data",
+        "fixtures", "mocks", "__mocks__", "public", "assets", "static"
+    ]);
+
+    const walk = (dir) => {
+        let entries = [];
+        try {
+            entries = fs.readdirSync(dir, { withFileTypes: true });
+        } catch {
+            return;
+        }
+
+        for (const entry of entries) {
+            const fullPath = path.join(dir, entry.name);
+            const relPath = path.relative(rootDir, fullPath).replace(/\\/g, "/");
+            const lowerRel = relPath.toLowerCase();
+
+            if (entry.isDirectory()) {
+                if (
+                    IGNORED_DIRS.has(entry.name) ||
+                    lowerRel.includes("/client/") ||
+                    lowerRel.includes("/frontend/") ||
+                    lowerRel.includes("/tests/") ||
+                    lowerRel.includes("/__tests__/") ||
+                    lowerRel.includes("/specs/")
+                ) {
+                    continue;
+                }
+                walk(fullPath);
+                continue;
+            }
+
+            if (!entry.isFile()) continue;
+
+            // Only inspect JavaScript / TypeScript files
+            if (!/\.[cm]?[jt]s$/i.test(entry.name)) {
+                continue;
+            }
+
+            // Exclude TypeScript type definitions
+            if (/\.d\.ts$/i.test(entry.name)) {
+                continue;
+            }
+
+            // Exclude test files
+            const isTest = (
+                /\.(test|spec|testcase|steps?)\.[cm]?[jt]s$/i.test(entry.name) ||
+                /(^|\/)(tests?|__tests__|specs?|unit)\//i.test(lowerRel)
+            );
+            if (isTest) continue;
+
+            // Exclude helper/setup/config files
+            if (/^(setup|global-?setup|setup-?tests|teardown|helpers?|fixtures?)\.[a-z0-9]+$/i.test(entry.name)) {
+                continue;
+            }
+            if (/^(jest|vitest|babel|webpack|vite|rollup|eslint|prettier|tailwind|postcss)\.config\.[a-z0-9]+$/i.test(entry.name)) {
+                continue;
+            }
+
+            logicFiles.push({
+                absolutePath: fullPath,
+                relativePath: relPath,
+                fileName: entry.name
+            });
+        }
+    };
+
+    walk(rootDir);
+    return logicFiles.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+};
+
+/**
+ * Generate 0% baseline coverage artifacts (coverage-summary.json and coverage-final.json)
+ * for logic files in projects that have no test files yet.
+ */
+export const generateBaselineCoverage = (rootDir, logicFiles, coverageDir) => {
+    if (!fs.existsSync(coverageDir)) {
+        try { fs.mkdirSync(coverageDir, { recursive: true }); } catch { }
+    }
+
+    const summaryData = {
+        total: {
+            lines: { total: 0, covered: 0, skipped: 0, pct: 0 },
+            statements: { total: 0, covered: 0, skipped: 0, pct: 0 },
+            functions: { total: 0, covered: 0, skipped: 0, pct: 0 },
+            branches: { total: 0, covered: 0, skipped: 0, pct: 100 }
+        }
+    };
+    const coverageFinal = {};
+
+    for (const file of logicFiles) {
+        let content = "";
+        try {
+            content = fs.readFileSync(file.absolutePath, "utf8");
+        } catch {
+            continue;
+        }
+
+        const codeLines = content.split("\n");
+        const totalLines = Math.max(1, codeLines.length);
+
+        let funcs = [];
+        try {
+            funcs = extractFunctions(content) || [];
+        } catch {
+            funcs = [];
+        }
+
+        if (funcs.length === 0) {
+            const fnRegex = /(?:function\s+([a-zA-Z0-9_$]+)|(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>|(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*function)/g;
+            let match;
+            let idx = 0;
+            while ((match = fnRegex.exec(content)) !== null) {
+                const fnName = match[1] || match[2] || match[3] || `fn_${idx}`;
+                const line = content.slice(0, match.index).split("\n").length;
+                funcs.push({ functionName: fnName, startLine: line, endLine: line + 5 });
+                idx++;
+            }
+        }
+
+        const totalFuncs = funcs.length;
+        const totalStmts = totalLines;
+
+        summaryData.total.lines.total += totalLines;
+        summaryData.total.statements.total += totalStmts;
+        summaryData.total.functions.total += totalFuncs;
+
+        const fileSummary = {
+            lines: { total: totalLines, covered: 0, skipped: 0, pct: 0 },
+            statements: { total: totalStmts, covered: 0, skipped: 0, pct: 0 },
+            functions: { total: totalFuncs, covered: 0, skipped: 0, pct: 0 },
+            branches: { total: 0, covered: 0, skipped: 0, pct: 100 }
+        };
+
+        summaryData[file.absolutePath] = fileSummary;
+        summaryData[file.relativePath] = fileSummary;
+
+        const statementMap = {};
+        const fnMap = {};
+        const branchMap = {};
+        const s = {};
+        const f = {};
+        const b = {};
+
+        codeLines.forEach((line, i) => {
+            const lineNo = i + 1;
+            statementMap[String(i)] = {
+                start: { line: lineNo, column: 0 },
+                end: { line: lineNo, column: line.length }
+            };
+            s[String(i)] = 0;
+        });
+
+        funcs.forEach((fn, i) => {
+            const sLine = fn.startLine || 1;
+            const eLine = fn.endLine || sLine;
+            fnMap[String(i)] = {
+                name: fn.functionName || `anonymous_${i}`,
+                decl: { start: { line: sLine, column: 0 }, end: { line: eLine, column: 0 } },
+                loc: { start: { line: sLine, column: 0 }, end: { line: eLine, column: 0 } },
+                line: sLine
+            };
+            f[String(i)] = 0;
+        });
+
+        const fileFinalEntry = {
+            path: file.relativePath,
+            statementMap,
+            fnMap,
+            branchMap,
+            s,
+            f,
+            b
+        };
+        coverageFinal[file.relativePath] = fileFinalEntry;
+        coverageFinal[file.absolutePath] = fileFinalEntry;
+    }
+
+    fs.writeFileSync(path.join(coverageDir, "coverage-summary.json"), JSON.stringify(summaryData, null, 2), "utf8");
+    fs.writeFileSync(path.join(coverageDir, "coverage-final.json"), JSON.stringify(coverageFinal, null, 2), "utf8");
+
+    return { summaryData, coverageFinal };
+};
+
+/**
+ * Automatically scans and heals any test files whose imports contain leaked
+ * storage prefixes (e.g. '../storage/projects/.../repo/src/foo') and restores
+ * clean relative import paths based on the test file's location.
+ */
+export const healAllTestFiles = (rootDir, specificFiles = []) => {
+    if (!rootDir || !fs.existsSync(rootDir)) return;
+
+    const filesToHeal = [];
+    if (specificFiles && specificFiles.length > 0) {
+        for (const f of specificFiles) {
+            const fullP = path.isAbsolute(f) ? f : path.join(rootDir, f);
+            if (fs.existsSync(fullP)) {
+                filesToHeal.push({ fullP, relP: path.relative(rootDir, fullP).replace(/\\/g, "/") });
+            }
+        }
+    } else {
+        const walk = (dir) => {
+            if (!fs.existsSync(dir)) return;
+            const entries = fs.readdirSync(dir, { withFileTypes: true });
+            for (const entry of entries) {
+                const fullP = path.join(dir, entry.name);
+                if (entry.isDirectory()) {
+                    if (!["node_modules", ".git", "coverage", "dist", "build", "storage"].includes(entry.name)) {
+                        walk(fullP);
+                    }
+                } else if (entry.isFile() && /\.(test|spec)\.[cm]?[jt]sx?$/i.test(entry.name)) {
+                    filesToHeal.push({ fullP, relP: path.relative(rootDir, fullP).replace(/\\/g, "/") });
+                }
+            }
+        };
+        walk(rootDir);
+    }
+
+    for (const { fullP, relP } of filesToHeal) {
+        try {
+            const content = fs.readFileSync(fullP, "utf8");
+            const testDir = path.dirname(relP);
+
+            const healed = content.replace(
+                /((?:import\s+(?:[\s\S]*?\s+from\s+)?|require\s*\(\s*)['"])([^'"]+)(['"]\s*\)?)/g,
+                (match, prefix, importTarget, suffix) => {
+                    if (/storage\/projects\/[^/]+\/[^/]+\/[^/]+\/repo\//i.test(importTarget) || /(?:^|\/)\.\.\/.*repo\//i.test(importTarget)) {
+                        const cleanSubpath = importTarget
+                            .replace(/^.*\/repo\//i, "")
+                            .replace(/^\.?\//, "");
+
+                        let rel = path.relative(testDir, cleanSubpath).replace(/\\/g, "/");
+                        if (!rel.startsWith(".")) {
+                            rel = "./" + rel;
+                        }
+                        const cleanImport = rel.replace(/\.[cm]?[jt]sx?$/, "");
+                        return `${prefix}${cleanImport}${suffix}`;
+                    }
+                    return match;
+                }
+            );
+
+            if (healed !== content) {
+                fs.writeFileSync(fullP, healed, "utf8");
+                console.log(`[healAllTestFiles] Automatically healed broken import paths in: ${relP}`);
+            }
+        } catch (err) {
+            console.warn(`[healAllTestFiles] Could not heal test file ${relP}: ${err.message}`);
+        }
+    }
 };
 
 /**
@@ -602,6 +955,47 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
     const tempConfigName = "covai-jest-runner.json";
     const tempConfigPath = path.join(rootDir, tempConfigName);
 
+    const projectJestConfig = await readProjectJestConfig(rootDir, jestConfigPath);
+    const isEsmProject = isEsmProjectForRepo(rootDir, projectJestConfig);
+
+    const rootPkgPath = path.join(rootDir, "package.json");
+    let rootPkgName = "";
+    try {
+        if (fs.existsSync(rootPkgPath)) {
+            const p = JSON.parse(fs.readFileSync(rootPkgPath, "utf8"));
+            if (p.name) rootPkgName = p.name;
+        }
+    } catch { }
+
+    const defaultModuleNameMapper = buildJestModuleNameMapper(rootDir, projectJestConfig, rootPkgName);
+
+    const coveragePathIgnorePatterns = [
+        "/node_modules/",
+        "/client/",
+        "/frontend/",
+        "/routes/",
+        "/endpoints/",
+        "/api/",
+        "app\\.[cm]?[jt]s$",
+        "server\\.[cm]?[jt]s$"
+    ];
+
+    const tsJestSafeConfig = {
+        isolatedModules: true,
+        diagnostics: false,
+        ...(isEsmProject ? { useESM: true } : {}),
+        tsconfig: {
+            isolatedModules: true,
+            allowJs: true,
+            esModuleInterop: true,
+            skipLibCheck: true,
+            ...(isEsmProject ? { module: "esnext" } : { module: "commonjs" }),
+            target: "es2020",
+            noImplicitAny: false,
+            strict: false
+        }
+    };
+
     // ── Smart transform detection ─────────────────────────────────────────────
     // Scan root and sub-packages to detect babel-jest / ts-jest availability
     const detectTransforms = (repoRoot) => {
@@ -656,25 +1050,10 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             foundTypeScript = true;
         }
 
-        const tsJestSafeConfig = {
-            isolatedModules: true,
-            diagnostics: false,
-            tsconfig: {
-                isolatedModules: true,
-                allowJs: true,
-                esModuleInterop: true,
-                skipLibCheck: true,
-                module: "commonjs",
-                target: "es2020",
-                noImplicitAny: false,
-                strict: false
-            }
-        };
-
         const transform = {};
         if (foundTsJest || foundTypeScript) {
             transform["^.+\\.tsx?$"] = ["ts-jest", tsJestSafeConfig];
-            if (!foundBabelJest) {
+            if (!foundBabelJest && !isEsmProject) {
                 transform["^.+\\.[cm]?jsx?$"] = ["ts-jest", tsJestSafeConfig];
             }
         }
@@ -690,57 +1069,6 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
         return Object.keys(transform).length > 0 ? transform : null;
     };
 
-    // Read project's existing jest config from package.json
-    const readProjectJestConfig = (repoRoot) => {
-        const pkgPath = path.join(repoRoot, "package.json");
-        if (fs.existsSync(pkgPath)) {
-            try {
-                const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
-                if (pkg.jest && typeof pkg.jest === "object") return pkg.jest;
-            } catch { }
-        }
-        return {};
-    };
-
-    const projectJestConfig = readProjectJestConfig(rootDir);
-
-    const rootPkgPath = path.join(rootDir, "package.json");
-    let rootPkgName = "";
-    try {
-        if (fs.existsSync(rootPkgPath)) {
-            const p = JSON.parse(fs.readFileSync(rootPkgPath, "utf8"));
-            if (p.name) rootPkgName = p.name;
-        }
-    } catch { }
-
-    const defaultModuleNameMapper = buildJestModuleNameMapper(rootDir, projectJestConfig, rootPkgName);
-
-    const coveragePathIgnorePatterns = [
-        "/node_modules/",
-        "/client/",
-        "/frontend/",
-        "/routes/",
-        "/endpoints/",
-        "/api/",
-        "app\\.[cm]?[jt]s$",
-        "server\\.[cm]?[jt]s$"
-    ];
-
-    const tsJestSafeConfig = {
-        isolatedModules: true,
-        diagnostics: false,
-        tsconfig: {
-            isolatedModules: true,
-            allowJs: true,
-            esModuleInterop: true,
-            skipLibCheck: true,
-            module: "commonjs",
-            target: "es2020",
-            noImplicitAny: false,
-            strict: false
-        }
-    };
-
     const normalizeTransform = (t) => {
         if (!t || typeof t !== "object") return {};
         const result = {};
@@ -749,23 +1077,27 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                 result[pattern] = ["ts-jest", tsJestSafeConfig];
             } else if (Array.isArray(transformer) && transformer[0] === "ts-jest") {
                 const existingOpts = transformer[1] || {};
+                const existingTsconfig = existingOpts.tsconfig;
                 result[pattern] = [
                     "ts-jest",
                     {
                         ...existingOpts,
                         isolatedModules: true,
                         diagnostics: false,
-                        tsconfig: {
-                            ...(typeof existingOpts.tsconfig === "object" ? existingOpts.tsconfig : {}),
-                            isolatedModules: true,
-                            allowJs: true,
-                            esModuleInterop: true,
-                            skipLibCheck: true,
-                            module: "commonjs",
-                            target: "es2020",
-                            noImplicitAny: false,
-                            strict: false
-                        }
+                        ...(isEsmProject ? { useESM: true } : {}),
+                        tsconfig: typeof existingTsconfig === "string"
+                            ? existingTsconfig
+                            : {
+                                ...(typeof existingTsconfig === "object" ? existingTsconfig : {}),
+                                isolatedModules: true,
+                                allowJs: true,
+                                esModuleInterop: true,
+                                skipLibCheck: true,
+                                ...(isEsmProject ? { module: "esnext" } : { module: "commonjs" }),
+                                target: "es2020",
+                                noImplicitAny: false,
+                                strict: false
+                            }
                     }
                 ];
             } else {
@@ -784,7 +1116,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
 
     const hasJsTransform = Object.keys(mergedTransform).some(k => k.includes("js") || k.includes("jsx"));
     const hasTsJest = Object.values(mergedTransform).some(v => (typeof v === "string" && v.includes("ts-jest")) || (Array.isArray(v) && v[0]?.includes("ts-jest")));
-    if (hasTsJest && !hasJsTransform) {
+    if (hasTsJest && !hasJsTransform && !isEsmProject) {
         mergedTransform["^.+\\.[cm]?jsx?$"] = ["ts-jest", tsJestSafeConfig];
     }
 
@@ -792,6 +1124,12 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
         ...(Array.isArray(projectJestConfig?.moduleFileExtensions) ? projectJestConfig.moduleFileExtensions : []),
         "ts", "tsx", "js", "jsx", "mjs", "cjs", "json", "node"
     ]));
+
+    // Omit strict coverage thresholds and restrictive roots from runner config so test execution does not fail pass/fail gates prematurely or restrict scanning
+    const { coverageThreshold: _ignoredThreshold, roots: _ignoredRoots, ...cleanProjectJestConfig } = projectJestConfig || {};
+    const extensionsToTreatAsEsm = (isEsmProject && cleanProjectJestConfig?.extensionsToTreatAsEsm)
+        ? cleanProjectJestConfig.extensionsToTreatAsEsm
+        : (isEsmProject ? [".ts", ".tsx"] : undefined);
 
     const tempSetupName = "covai-jest-setup.mjs";
     const tempSetupPath = path.join(rootDir, tempSetupName);
@@ -817,23 +1155,25 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             try {
                 const testMatchPatterns = rootFiles.map(f => `<rootDir>/${f.replace(/\\/g, "/")}`);
                 const tempConfig = {
-                    ...projectJestConfig,
+                    ...cleanProjectJestConfig,
+                    roots: ["<rootDir>"],
                     testMatch: testMatchPatterns,
                     testTimeout: 30000,
                     testPathIgnorePatterns: [
                         "/node_modules/", "/client/", "/frontend/",
-                        ...(Array.isArray(projectJestConfig?.testPathIgnorePatterns)
-                            ? projectJestConfig.testPathIgnorePatterns.filter(p => !p.includes("node_modules"))
+                        ...(Array.isArray(cleanProjectJestConfig?.testPathIgnorePatterns)
+                            ? cleanProjectJestConfig.testPathIgnorePatterns.filter(p => !p.includes("node_modules"))
                             : [])
                     ],
                     setupFilesAfterEnv: [
-                        ...(Array.isArray(projectJestConfig?.setupFilesAfterEnv) ? projectJestConfig.setupFilesAfterEnv : []),
+                        ...(Array.isArray(cleanProjectJestConfig?.setupFilesAfterEnv) ? cleanProjectJestConfig.setupFilesAfterEnv : []),
                         `<rootDir>/${tempSetupName}`
                     ],
                     coveragePathIgnorePatterns,
                     moduleNameMapper: defaultModuleNameMapper,
                     ...(Object.keys(mergedTransform).length > 0 ? { transform: mergedTransform } : {}),
-                    moduleFileExtensions: resolvedModuleFileExtensions
+                    moduleFileExtensions: resolvedModuleFileExtensions,
+                    ...(extensionsToTreatAsEsm ? { extensionsToTreatAsEsm } : {})
                 };
                 fs.writeFileSync(tempConfigPath, JSON.stringify(tempConfig, null, 2), "utf8");
                 tempConfigCreated = true;
@@ -844,8 +1184,8 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             }
         } else {
             try {
-                const baseTestMatch = Array.isArray(projectJestConfig?.testMatch) && projectJestConfig.testMatch.length > 0
-                    ? projectJestConfig.testMatch
+                const baseTestMatch = Array.isArray(cleanProjectJestConfig?.testMatch) && cleanProjectJestConfig.testMatch.length > 0
+                    ? cleanProjectJestConfig.testMatch
                     : [
                         "<rootDir>/**/__tests__/**/*.[jt]s?(x)",
                         "<rootDir>/**/?(*.)+(spec|test|testcase|steps?).[jt]s?(x)",
@@ -853,23 +1193,25 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                         "<rootDir>/tests/**/*.[jt]s?(x)"
                     ];
                 const tempConfig = {
-                    ...projectJestConfig,
+                    ...cleanProjectJestConfig,
+                    roots: ["<rootDir>"],
                     testMatch: baseTestMatch,
                     testTimeout: 30000,
                     testPathIgnorePatterns: [
                         "/node_modules/", "/client/", "/frontend/", "/dist/", "playwright", "cypress", "supertest", "vitest",
-                        ...(Array.isArray(projectJestConfig?.testPathIgnorePatterns)
-                            ? projectJestConfig.testPathIgnorePatterns.filter(p => !p.includes("node_modules"))
+                        ...(Array.isArray(cleanProjectJestConfig?.testPathIgnorePatterns)
+                            ? cleanProjectJestConfig.testPathIgnorePatterns.filter(p => !p.includes("node_modules"))
                             : [])
                     ],
                     setupFilesAfterEnv: [
-                        ...(Array.isArray(projectJestConfig?.setupFilesAfterEnv) ? projectJestConfig.setupFilesAfterEnv : []),
+                        ...(Array.isArray(cleanProjectJestConfig?.setupFilesAfterEnv) ? cleanProjectJestConfig.setupFilesAfterEnv : []),
                         `<rootDir>/${tempSetupName}`
                     ],
                     coveragePathIgnorePatterns,
                     moduleNameMapper: defaultModuleNameMapper,
                     ...(Object.keys(mergedTransform).length > 0 ? { transform: mergedTransform } : {}),
-                    moduleFileExtensions: resolvedModuleFileExtensions
+                    moduleFileExtensions: resolvedModuleFileExtensions,
+                    ...(extensionsToTreatAsEsm ? { extensionsToTreatAsEsm } : {})
                 };
                 fs.writeFileSync(tempConfigPath, JSON.stringify(tempConfig, null, 2), "utf8");
                 tempConfigCreated = true;
@@ -919,8 +1261,6 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                 }
             }
         } catch { }
-
-        await detectAndRunBuild(jobId, rootDir);
 
         let result;
         try {
@@ -1016,25 +1356,32 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             "^jest-cucumber/(.*)$": hasDistSrc ? `<rootDir>/${relRootFromSub}/dist/src/$1` : `<rootDir>/${relRootFromSub}/src/$1`,
         };
 
-        const pkgJestConfig = readProjectJestConfig(targetDir);
+        const pkgJestConfig = await readProjectJestConfig(targetDir);
+        const { coverageThreshold: _subThreshold, roots: _subRoots, ...cleanPkgJestConfig } = pkgJestConfig || {};
+        const isSubEsm = isEsmProjectForRepo(targetDir, pkgJestConfig);
         const tempSubConfigName = `covai-jest-${subSlug}.json`;
         const tempSubConfigPath = path.join(targetDir, tempSubConfigName);
         let tempSubConfigCreated = false;
         try {
             const subConfig = {
-                ...pkgJestConfig,
+                ...cleanPkgJestConfig,
+                roots: ["<rootDir>"],
                 setupFilesAfterEnv: [
-                    ...(Array.isArray(pkgJestConfig?.setupFilesAfterEnv) ? pkgJestConfig.setupFilesAfterEnv : []),
+                    ...(Array.isArray(cleanPkgJestConfig?.setupFilesAfterEnv) ? cleanPkgJestConfig.setupFilesAfterEnv : []),
                     `<rootDir>/${tempSubSetupName}`
                 ],
                 moduleNameMapper: {
                     ...subModuleNameMapper,
-                    ...(pkgJestConfig?.moduleNameMapper || {})
+                    ...(cleanPkgJestConfig?.moduleNameMapper || {})
                 },
                 moduleFileExtensions: Array.from(new Set([
-                    ...(Array.isArray(pkgJestConfig?.moduleFileExtensions) ? pkgJestConfig.moduleFileExtensions : []),
+                    ...(Array.isArray(cleanPkgJestConfig?.moduleFileExtensions) ? cleanPkgJestConfig.moduleFileExtensions : []),
                     "js", "jsx", "ts", "tsx", "mjs", "cjs", "json", "node"
-                ]))
+                ])),
+                ...(isSubEsm && cleanPkgJestConfig?.extensionsToTreatAsEsm
+                    ? { extensionsToTreatAsEsm: cleanPkgJestConfig.extensionsToTreatAsEsm }
+                    : (isSubEsm ? { extensionsToTreatAsEsm: [".ts", ".tsx"] } : {})
+                )
             };
             fs.writeFileSync(tempSubConfigPath, JSON.stringify(subConfig, null, 2), "utf8");
             tempSubConfigCreated = true;
@@ -1173,10 +1520,13 @@ export const readCoverageFinal = (coverageDir) => {
                     const normKey = key.replace(/\\/g, "/");
                     const summaryEntry = summaryRaw[key] || summaryRaw[normKey] || Object.entries(summaryRaw).find(([sk]) => sk.replace(/\\/g, "/") === normKey)?.[1];
                     if (summaryEntry && typeof summaryEntry === "object") {
-                        if (summaryEntry.lines) entry.lines = summaryEntry.lines;
-                        if (summaryEntry.branches) entry.branches = summaryEntry.branches;
-                        if (summaryEntry.functions) entry.functions = summaryEntry.functions;
-                        if (summaryEntry.statements) entry.statements = summaryEntry.statements;
+                        for (const m of ["lines", "branches", "functions", "statements"]) {
+                            if (summaryEntry[m]) {
+                                if (!entry[m] || (summaryEntry[m].covered || 0) >= (entry[m].covered || 0)) {
+                                    entry[m] = summaryEntry[m];
+                                }
+                            }
+                        }
                     }
                 }
             } catch { }
@@ -1291,18 +1641,53 @@ export const mergeCoverageFinal = (final1 = {}, final2 = {}) => {
  * Merge two Istanbul coverage-summary objects and recompute totals
  */
 export const mergeCoverageSummaries = (sum1 = {}, sum2 = {}) => {
-    const merged = { ...sum1, ...sum2 };
+    const merged = {};
+    const allKeys = new Set([...Object.keys(sum1 || {}), ...Object.keys(sum2 || {})]);
+
+    for (const key of allKeys) {
+        if (key === "total") continue;
+        const e1 = sum1?.[key];
+        const e2 = sum2?.[key];
+
+        if (!e1 && !e2) continue;
+        if (!e1) {
+            merged[key] = e2;
+            continue;
+        }
+        if (!e2) {
+            merged[key] = e1;
+            continue;
+        }
+
+        // Intelligently combine metrics from both summaries taking maximum covered counts
+        const combined = {};
+        for (const metric of ["lines", "statements", "functions", "branches"]) {
+            const m1 = e1[metric] || {};
+            const m2 = e2[metric] || {};
+            const covered = Math.max(m1.covered || 0, m2.covered || 0);
+            const total = Math.max(m1.total || 0, m2.total || 0);
+            const skipped = Math.max(m1.skipped || 0, m2.skipped || 0);
+            const pct = total > 0 ? Number(((covered / total) * 100).toFixed(1)) : 100;
+            combined[metric] = { total, covered, skipped, pct };
+        }
+        merged[key] = combined;
+    }
+
     const total = {
         lines: { total: 0, covered: 0, skipped: 0, pct: 100 },
         statements: { total: 0, covered: 0, skipped: 0, pct: 100 },
         functions: { total: 0, covered: 0, skipped: 0, pct: 100 },
         branches: { total: 0, covered: 0, skipped: 0, pct: 100 },
     };
+
     for (const [key, item] of Object.entries(merged)) {
         if (key === "total" || !item || typeof item !== "object") continue;
         const normKey = key.replace(/\\/g, "/").toLowerCase();
-        // Exclude route files, endpoints, entry files, and frontend files from unit coverage totals
+        // Exclude coverage reports, test fixtures, test files, route files, endpoints, entry files, and frontend files from unit coverage totals
         if (
+            /(^|\/)(coverage|dist|build|out|\.next|\.nuxt)\//i.test(normKey) ||
+            /(^|\/)(tests?|specs?|__tests__|__mocks__|test-data|test_data|fixtures?|mocks?|e2e|cypress)(\/|$)/i.test(normKey) ||
+            /\.(test|spec|testcase|steps?)\./i.test(normKey) ||
             /(^|\/)(routes?|endpoints?)(\/|\.|$)/i.test(normKey) ||
             /\.(route|routes)\.[cm]?[jt]sx?$/i.test(normKey) ||
             /(^|\/)(app|server)\.[cm]?[jt]sx?$/i.test(normKey) ||
@@ -1436,7 +1821,16 @@ export const processRunTestsJob = async (jobId) => {
         return;
     }
 
-    const rootDir = job.snapshot.rootDir;
+    let rootDir = resolveProjectRoot(job.snapshot.rootDir) || job.snapshot.rootDir;
+    ensureMinimalPackageJson(rootDir);
+    if (rootDir !== job.snapshot.rootDir && fs.existsSync(path.join(rootDir, "package.json"))) {
+        if (typeof prisma?.projectSnapshot?.update === "function") {
+            prisma.projectSnapshot.update({
+                where: { id: job.snapshotId },
+                data: { rootDir }
+            }).catch(() => { });
+        }
+    }
     const snapshotId = job.snapshotId;
     const projectId = job.projectId;
     const userId = job.userId;
@@ -1484,6 +1878,9 @@ export const processRunTestsJob = async (jobId) => {
         const hasVitest = vitestFiles.length > 0;
         const hasJest = jestFiles.length > 0;
         const runBoth = hasVitest && hasJest;
+
+        // Auto-heal any broken import paths in test files (e.g. leaked storage/projects prefixes)
+        healAllTestFiles(rootDir, [...jestFiles, ...vitestFiles]);
 
         await addJobLog(
             jobId,
@@ -1655,15 +2052,67 @@ export const processRunTestsJob = async (jobId) => {
                 await addJobLog(jobId, "INFO", `[SCRUM-141] Saved TestRun (JEST): ${testResults.totalTests} tests.`).catch(() => { });
             }
         } else {
-            // Fallback if no files matched strict unit filter
-            await addJobLog(jobId, "INFO", "[RUN_TESTS] Running fallback runner...").catch(() => { });
-            runnerResult = await runJestCoverage(jobId, rootDir, jestConfigPath);
+            // Case: No unit test files detected (0 Jest & 0 Vitest test files)
+            // Instead of running a failing test runner on 0 files, detect logic source files
+            // and initialize baseline (0%) coverage so the user can suggest unit tests.
+            await addJobLog(jobId, "INFO", "[RUN_TESTS] No existing unit test files (Jest/Vitest) found. Scanning logic source files...").catch(() => { });
+
+            const logicFiles = findLogicSourceFiles(rootDir);
+
+            if (logicFiles.length > 0) {
+                await addJobLog(
+                    jobId,
+                    "INFO",
+                    `[RUN_TESTS] Found ${logicFiles.length} code logic files. Generating baseline 0% coverage...`
+                ).catch(() => { });
+
+                generateBaselineCoverage(rootDir, logicFiles, coverageDir);
+
+                // Create a baseline TestRun with 0 tests
+                try {
+                    await prisma.testRun.create({
+                        data: {
+                            snapshotId,
+                            type: "JEST",
+                            totalTests: 0,
+                            passedTests: 0,
+                            failedTests: 0,
+                            skippedTests: 0,
+                            durationMs: 0,
+                            status: "PASSED",
+                            startedAt: new Date(),
+                            finishedAt: new Date(),
+                        }
+                    });
+                    await addJobLog(jobId, "INFO", `[RUN_TESTS] Baseline TestRun saved. Ready for unit test suggestions.`).catch(() => { });
+                } catch (trErr) {
+                    console.warn("[RUN_TESTS] Warning saving baseline TestRun:", trErr.message);
+                }
+
+                runnerResult = { exitCode: 0 };
+            } else {
+                // If really no logic files either, try fallback runner
+                await addJobLog(jobId, "INFO", "[RUN_TESTS] Running fallback runner...").catch(() => { });
+                runnerResult = await runJestCoverage(jobId, rootDir, jestConfigPath);
+            }
             await updateJobProgress(jobId, 70).catch(() => { });
         }
 
         // ── SCRUM-140/Problem 1 & 3: Check test execution result ─────────────
         const summaryFile = path.join(coverageDir, "coverage-summary.json");
         const hasCoverageSummary = fs.existsSync(summaryFile);
+        let hasValidCoverage = false;
+        if (hasCoverageSummary) {
+            try {
+                const sum = JSON.parse(fs.readFileSync(summaryFile, "utf8"));
+                const totalLines = sum?.total?.lines?.total || 0;
+                const totalStmts = sum?.total?.statements?.total || 0;
+                const totalFiles = Object.keys(sum || {}).filter(k => k !== "total").length;
+                if (totalLines > 0 || totalStmts > 0 || totalFiles > 0) {
+                    hasValidCoverage = true;
+                }
+            } catch { }
+        }
 
         if (runnerResult && runnerResult.exitCode !== 0 && runnerResult.exitCode !== null) {
             const jobOutputModule = await import("./jobOutput.service.js").catch(() => ({}));
@@ -1672,8 +2121,8 @@ export const processRunTestsJob = async (jobId) => {
             const fullOutput = (jobOutput?.stderr || "") + "\n" + (jobOutput?.stdout || "");
             const modResError = parseModuleResolutionError(fullOutput, rootDir);
 
-            // Case 1: Fatal crash / Module resolution failure / Runner failed before generating coverage
-            if (modResError || !hasCoverageSummary) {
+            // Case 1: Fatal crash / Module resolution failure / Runner failed before generating valid coverage
+            if (modResError || !hasValidCoverage) {
                 const existingSummary = await prisma.coverageSummary.findUnique({ where: { snapshotId } });
                 const previousCoverage = existingSummary ? {
                     statements: existingSummary.stmtsPct,
@@ -1682,9 +2131,16 @@ export const processRunTestsJob = async (jobId) => {
                     lines: existingSummary.linesPct
                 } : null;
 
-                const failMessage = modResError
+                let failMessage = modResError
                     ? `Test suite failed to run: Cannot find module '${modResError.missingModule}' from '${modResError.testFile}'`
                     : `Test execution failed with exit code ${runnerResult.exitCode}`;
+
+                if (!modResError) {
+                    const syntaxMatch = fullOutput.match(/(?:SyntaxError|ReferenceError|TypeError|Error):[^\n\r]+/);
+                    if (syntaxMatch) {
+                        failMessage = `Test execution failed: ${syntaxMatch[0]}`;
+                    }
+                }
 
                 await addJobLog(jobId, "ERROR", `[RUN_TESTS] ${failMessage}`).catch(() => { });
 
@@ -1793,6 +2249,12 @@ export const processRunTestsJob = async (jobId) => {
             exitCode: runnerResult?.exitCode ?? 0
         });
         await addJobLog(jobId, "INFO", "RUN_TESTS pipeline completed successfully.").catch(() => { });
+
+        // Invalidate in-memory coverage & testSuites cache
+        try {
+            const { invalidateCoverageCache } = await import("../controllers/coverage.controller.js");
+            invalidateCoverageCache(snapshotId);
+        } catch (_) { }
 
         console.log(`[RunTestsJob ${jobId}] Pipeline completed successfully.`);
 

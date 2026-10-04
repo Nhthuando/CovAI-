@@ -12,6 +12,15 @@ import { buildIntegrationWorkspace, getIntegrationHistoryService } from "../serv
 import { getFileCoverageDetails } from "../services/fileCoverage.service.js";
 import { suggestUnitTestcases } from "../services/unitTestSuggestion.service.js";
 import { classifyTestFile } from "../utils/testingFrameworkDetector.js";
+import { resolveProjectRoot, hasSourceCodeFiles, ensureMinimalPackageJson } from "../utils/projectRootResolver.js";
+import { findLogicSourceFiles } from "../services/runTestsJob.service.js";
+import {
+    updateScenarioService,
+    addScenarioService,
+    deleteScenarioService,
+    toggleScenarioService,
+    regenerateScenarioService
+} from "../services/scenarioManager.service.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -24,22 +33,28 @@ export { isApiFilePath };
 
 export const resolveSnapshotRootDir = (rootDir) => {
     if (!rootDir) return null;
-    if (fs.existsSync(rootDir)) return rootDir;
-    // Handle Docker /app path on Windows host
-    if (rootDir.startsWith("/app/")) {
-        const hostCandidate = path.resolve(process.cwd(), rootDir.replace(/^\/app\//, ""));
-        if (fs.existsSync(hostCandidate)) return hostCandidate;
+    let candidate = rootDir;
+    if (!fs.existsSync(rootDir)) {
+        // Handle Docker /app path on Windows host
+        if (rootDir.startsWith("/app/")) {
+            const hostCandidate = path.resolve(process.cwd(), rootDir.replace(/^\/app\//, ""));
+            if (fs.existsSync(hostCandidate)) candidate = hostCandidate;
+        } else {
+            // Handle Windows path inside Docker container
+            const storageIdx = rootDir.indexOf("storage");
+            if (storageIdx !== -1) {
+                const subPath = rootDir.slice(storageIdx).replace(/\\/g, "/");
+                const containerCandidate = path.join("/app", subPath);
+                if (fs.existsSync(containerCandidate)) candidate = containerCandidate;
+                else {
+                    const hostCandidate = path.resolve(process.cwd(), subPath);
+                    if (fs.existsSync(hostCandidate)) candidate = hostCandidate;
+                }
+            }
+        }
     }
-    // Handle Windows path inside Docker container
-    const storageIdx = rootDir.indexOf("storage");
-    if (storageIdx !== -1) {
-        const subPath = rootDir.slice(storageIdx).replace(/\\/g, "/");
-        const containerCandidate = path.join("/app", subPath);
-        if (fs.existsSync(containerCandidate)) return containerCandidate;
-        const hostCandidate = path.resolve(process.cwd(), subPath);
-        if (fs.existsSync(hostCandidate)) return hostCandidate;
-    }
-    return rootDir;
+    const resolved = resolveProjectRoot(candidate);
+    return resolved || candidate;
 };
 
 const findOwnedSnapshot = (snapshotId, userId) => prisma.projectSnapshot.findFirst({
@@ -68,10 +83,18 @@ export const getCoverageFrameworks = async (req, res) => {
         const snapshot = await findOwnedSnapshot(req.params.snapshotId, req.user?.id);
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
         if (!snapshot.rootDir) return res.status(409).json({ success: false, message: "Snapshot is not ready for analysis." });
+
+        const resolvedRootDir = resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir;
+        if (resolvedRootDir !== snapshot.rootDir && fs.existsSync(path.join(resolvedRootDir, "package.json"))) {
+            if (typeof prisma?.projectSnapshot?.update === "function") {
+                prisma.projectSnapshot.update({ where: { id: snapshot.id }, data: { rootDir: resolvedRootDir } }).catch(() => { });
+            }
+        }
+
         if (frameworksCache.has(snapshot.id)) {
             return res.json({ success: true, data: frameworksCache.get(snapshot.id) });
         }
-        const data = detectCoverageFrameworks(snapshot.rootDir);
+        const data = detectCoverageFrameworks(resolvedRootDir);
         frameworksCache.set(snapshot.id, data);
         return res.json({ success: true, data });
     } catch (error) {
@@ -89,7 +112,14 @@ export const runCoverageByType = async (req, res) => {
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
         if (!snapshot.rootDir) return res.status(409).json({ success: false, message: "Snapshot is not ready for analysis." });
 
-        const detection = detectCoverageFrameworks(snapshot.rootDir);
+        const resolvedRootDir = resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir;
+        if (resolvedRootDir !== snapshot.rootDir && fs.existsSync(path.join(resolvedRootDir, "package.json"))) {
+            if (typeof prisma?.projectSnapshot?.update === "function") {
+                prisma.projectSnapshot.update({ where: { id: snapshot.id }, data: { rootDir: resolvedRootDir } }).catch(() => { });
+            }
+        }
+
+        const detection = detectCoverageFrameworks(resolvedRootDir);
         let job;
         let jobs = [];
         let framework;
@@ -99,6 +129,7 @@ export const runCoverageByType = async (req, res) => {
             const hasJest = unitFws.includes("jest");
             const hasVitest = unitFws.includes("vitest");
             framework = (hasJest && hasVitest) ? "jest & vitest" : (hasVitest ? "vitest" : "jest");
+            if (!framework) framework = "jest";
 
             // Unified Unit Test Job: Check if a RUN_TESTS job is already active for this snapshot
             const activeUnitJob = await prisma.job.findFirst({
@@ -263,15 +294,18 @@ export const getCoverageSummary = async (req, res) => {
                     const raw = JSON.parse(fs.readFileSync(summaryFile, "utf8"));
                     if (raw) {
                         if (typeFilter === "unit") {
-                            // Filter out route/server entry files, frontend, and test files (controllers tested by unit tests are included)
+                            // Filter out route/server entry files, frontend, test files, and coverage reports
                             const unitFileEntries = Object.entries(raw).filter(([filePath]) => {
                                 if (filePath === "total") return false;
                                 const norm = filePath.replace(/\\/g, "/").toLowerCase();
+                                const isExcludedDir = /(^|\/)(coverage|dist|build|out|\.next|\.nuxt)\//i.test(norm) ||
+                                    /(^|\/)(tests?|__tests__|specs?|e2e|cypress|step-definitions?|fixtures?|mocks?|__mocks__|test-data|test_data)(\/|$)/i.test(norm);
                                 const isFrontend = /(^|\/)(client|frontend|pages|components|ui|web)\//i.test(norm) || /\.[jt]sx$/i.test(norm);
-                                const isTest = /(^|\/)(tests?|__tests__|specs?|e2e|cypress|step-definitions?)\//i.test(norm) || /\.(test|spec|testcase|steps?)\./i.test(norm);
+                                const isTest = isExcludedDir || /\.(test|spec|testcase|steps?)\./i.test(norm);
                                 const isRouteOrEntry = /(^|\/)(routes?|endpoints?)(\/|\.|$)/i.test(norm) ||
                                     /\.(route|routes)\.[cm]?[jt]sx?$/i.test(norm) ||
-                                    /(^|\/)(app|server)\.[cm]?[jt]sx?$/i.test(norm);
+                                    /(^|\/)(app|server)\.[cm]?[jt]sx?$/i.test(norm) ||
+                                    /^(src\/)?(index|main)\.[cm]?[jt]sx?$/i.test(norm.replace(/^\.?\//, ""));
                                 return !isFrontend && !isTest && !isRouteOrEntry;
                             });
 
@@ -518,10 +552,20 @@ export const runCoverage = async (req, res) => {
             return res.status(422).json({ success: false, message: "Invalid Node.js project: package.json was not found in the uploaded project." });
         }
 
-        const fs = await import("fs");
-        const packageJsonPath = `${snapshot.rootDir}/package.json`;
+        const resolvedRootDir = resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir;
+        if (resolvedRootDir !== snapshot.rootDir && fs.existsSync(path.join(resolvedRootDir, "package.json"))) {
+            if (typeof prisma?.projectSnapshot?.update === "function") {
+                prisma.projectSnapshot.update({ where: { id: snapshot.id }, data: { rootDir: resolvedRootDir } }).catch(() => { });
+            }
+        }
+
+        const packageJsonPath = path.join(resolvedRootDir, "package.json");
         if (!fs.existsSync(packageJsonPath)) {
-            return res.status(422).json({ success: false, message: "Invalid Node.js project: package.json was not found in the uploaded project." });
+            if (hasSourceCodeFiles(resolvedRootDir) || hasSourceCodeFiles(snapshot.rootDir)) {
+                ensureMinimalPackageJson(resolvedRootDir);
+            } else {
+                return res.status(422).json({ success: false, message: "Invalid Node.js project: package.json was not found in the uploaded project." });
+            }
         }
 
         // Create INSTALL_DEPS Job
@@ -579,10 +623,20 @@ export const runSupertestCoverage = async (req, res) => {
         if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
         if (!snapshot.rootDir) return res.status(409).json({ success: false, message: "Snapshot is not ready to run tests." });
 
-        const packageJsonPath = `${snapshot.rootDir}/package.json`;
-        const fs = await import("fs");
+        const resolvedRootDir = resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir;
+        if (resolvedRootDir !== snapshot.rootDir && fs.existsSync(path.join(resolvedRootDir, "package.json"))) {
+            if (typeof prisma?.projectSnapshot?.update === "function") {
+                prisma.projectSnapshot.update({ where: { id: snapshot.id }, data: { rootDir: resolvedRootDir } }).catch(() => { });
+            }
+        }
+
+        const packageJsonPath = path.join(resolvedRootDir, "package.json");
         if (!fs.existsSync(packageJsonPath)) {
-            return res.status(422).json({ success: false, message: "Invalid Node.js project: package.json was not found in the uploaded project." });
+            if (hasSourceCodeFiles(resolvedRootDir) || hasSourceCodeFiles(snapshot.rootDir)) {
+                ensureMinimalPackageJson(resolvedRootDir);
+            } else {
+                return res.status(422).json({ success: false, message: "Invalid Node.js project: package.json was not found in the uploaded project." });
+            }
         }
 
         const supertestInfo = await detectSupertest(snapshot.rootDir);
@@ -754,6 +808,29 @@ export const getCoverageFiles = async (req, res) => {
             });
             if (files.length !== beforeCount) {
                 total = Math.max(files.length, total - (beforeCount - files.length));
+            }
+
+            // Fallback: If 0 coverage files recorded yet in DB, detect logic source files from snapshot rootDir
+            if (files.length === 0 && snapshotId) {
+                const snapshotWithRoot = await prisma.projectSnapshot.findUnique({
+                    where: { id: snapshotId },
+                    select: { rootDir: true }
+                });
+                if (snapshotWithRoot?.rootDir) {
+                    const effectiveRoot = resolveSnapshotRootDir(snapshotWithRoot.rootDir) || snapshotWithRoot.rootDir;
+                    const logicFiles = findLogicSourceFiles(effectiveRoot);
+                    if (logicFiles.length > 0) {
+                        total = logicFiles.length;
+                        files = logicFiles.slice(skip, skip + limit).map((lf, idx) => ({
+                            id: `logic_${skip + idx}`,
+                            filePath: lf.relativePath,
+                            linesPct: 0,
+                            branchesPct: 0,
+                            funcsPct: 0,
+                            stmtsPct: 0,
+                        }));
+                    }
+                }
             }
         }
 
@@ -985,7 +1062,8 @@ export const getCoverageTestSuites = async (req, res) => {
 
         const cacheKey = `${snapshotId}:${requestedType}`;
         const cached = testSuitesCache.get(cacheKey);
-        if (cached && (Date.now() - cached.timestamp < 5 * 60 * 1000)) {
+        const shouldBypassCache = req.query?.refresh === "true" || req.headers?.["cache-control"] === "no-cache";
+        if (!shouldBypassCache && cached && (Date.now() - cached.timestamp < 10 * 1000)) {
             return res.status(200).json({ success: true, data: cached.data });
         }
 
@@ -1322,8 +1400,13 @@ export const getCoverageFunctions = async (req, res) => {
             }),
             ...(typeFilter === "unit" && {
                 AND: [
+                    { NOT: { filePath: { contains: "coverage/" } } },
                     { NOT: { filePath: { contains: "client/" } } },
                     { NOT: { filePath: { contains: "frontend/" } } },
+                    { NOT: { filePath: { contains: "tests/" } } },
+                    { NOT: { filePath: { contains: "specs/" } } },
+                    { NOT: { filePath: { contains: "fixtures/" } } },
+                    { NOT: { filePath: { contains: "mocks/" } } },
                     { NOT: { filePath: { endsWith: ".jsx" } } },
                     { NOT: { filePath: { endsWith: ".tsx" } } },
                     { NOT: { filePath: { contains: "routes/" } } },
@@ -1555,15 +1638,6 @@ export const getIntegrationHistory = async (req, res) => {
         return res.status(error.statusCode || 500).json({ success: false, message: error.message || 'Failed to fetch history.' });
     }
 };
-
-
-import {
-    updateScenarioService,
-    addScenarioService,
-    deleteScenarioService,
-    toggleScenarioService,
-    regenerateScenarioService
-} from "../services/scenarioManager.service.js";
 
 const verifyAiTestOwnership = async (aiTestId, userId, res, expectedSnapshotId = null) => {
     const aiTest = await prisma.aiTest.findUnique({

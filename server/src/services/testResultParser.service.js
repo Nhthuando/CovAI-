@@ -36,7 +36,7 @@ export const parseJestResults = (coverageDir) => {
         const scenarios = [];
         if (raw.testResults) {
             raw.testResults.forEach(suite => {
-                if (suite.assertionResults) {
+                if (suite.assertionResults && suite.assertionResults.length > 0) {
                     suite.assertionResults.forEach(assertion => {
                         scenarios.push({
                             title: assertion.title,
@@ -47,14 +47,31 @@ export const parseJestResults = (coverageDir) => {
                             testFile: suite.name // Full path, we might need to normalize
                         });
                     });
+                } else if (suite.status === "failed" || suite.message) {
+                    // Test suite failed at module load or syntax phase
+                    scenarios.push({
+                        title: path.basename(suite.name || "Test Suite"),
+                        suiteName: path.basename(suite.name || "Test Suite"),
+                        status: "failed",
+                        duration: (suite.endTime && suite.startTime) ? (suite.endTime - suite.startTime) : 0,
+                        failureMessages: suite.message ? [suite.message] : ["Test suite failed to run"],
+                        testFile: suite.name || null
+                    });
                 }
             });
         }
 
+        const totalTests = (raw.numTotalTests || 0) > 0
+            ? raw.numTotalTests
+            : (raw.numFailedTestSuites && !raw.success ? raw.numFailedTestSuites : 0);
+        const failedTests = (raw.numFailedTests || 0) > 0
+            ? raw.numFailedTests
+            : (raw.numFailedTestSuites && !raw.success ? raw.numFailedTestSuites : 0);
+
         const results = {
-            totalTests: raw.numTotalTests || 0,
+            totalTests,
             passedTests: raw.numPassedTests || 0,
-            failedTests: raw.numFailedTests || 0,
+            failedTests,
             skippedTests: raw.numPendingTests || 0,
             durationMs: duration,
             status: raw.success ? "PASSED" : "FAILED",

@@ -13,26 +13,33 @@ import {
 } from "./runTestsJob.service.js";
 import { runVitestCoverage } from "./vitestRunner.service.js";
 import { getFileCoverageDetails, normalizePath, findAssociatedTestFile } from "./fileCoverage.service.js";
+import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 
 /**
  * Resolve snapshot root directory across Windows host and Docker container paths.
  */
 export const resolveSnapshotRootDir = (rootDir) => {
     if (!rootDir) return null;
-    if (fs.existsSync(rootDir)) return rootDir;
-    if (rootDir.startsWith("/app/")) {
-        const hostCandidate = path.resolve(process.cwd(), rootDir.replace(/^\/app\//, ""));
-        if (fs.existsSync(hostCandidate)) return hostCandidate;
+    let candidate = rootDir;
+    if (!fs.existsSync(rootDir)) {
+        if (rootDir.startsWith("/app/")) {
+            const hostCandidate = path.resolve(process.cwd(), rootDir.replace(/^\/app\//, ""));
+            if (fs.existsSync(hostCandidate)) candidate = hostCandidate;
+        } else {
+            const storageIdx = rootDir.indexOf("storage");
+            if (storageIdx !== -1) {
+                const subPath = rootDir.slice(storageIdx).replace(/\\/g, "/");
+                const containerCandidate = path.join("/app", subPath);
+                if (fs.existsSync(containerCandidate)) candidate = containerCandidate;
+                else {
+                    const hostCandidate = path.resolve(process.cwd(), subPath);
+                    if (fs.existsSync(hostCandidate)) candidate = hostCandidate;
+                }
+            }
+        }
     }
-    const storageIdx = rootDir.indexOf("storage");
-    if (storageIdx !== -1) {
-        const subPath = rootDir.slice(storageIdx).replace(/\\/g, "/");
-        const containerCandidate = path.join("/app", subPath);
-        if (fs.existsSync(containerCandidate)) return containerCandidate;
-        const hostCandidate = path.resolve(process.cwd(), subPath);
-        if (fs.existsSync(hostCandidate)) return hostCandidate;
-    }
-    return rootDir;
+    const resolved = resolveProjectRoot(candidate);
+    return resolved || candidate;
 };
 
 /**
@@ -78,6 +85,39 @@ export const sanitizeSuggestedTestCode = (code, originalFileContent = "") => {
 };
 
 /**
+ * Normalizes and heals any import specifiers in test files that inadvertently reference
+ * temporary storage paths (e.g. '../storage/projects/.../repo/src/foo')
+ * and converts them to valid relative paths from the test file directory.
+ *
+ * @param {string} code - The test file source code
+ * @param {string} relTestPath - Relative path of the test file within rootDir (e.g. 'tests/configuration.test.ts')
+ * @returns {string} Cleaned code with valid relative imports
+ */
+export const healImportPathsInTestCode = (code, relTestPath = "tests/sample.test.js") => {
+    if (!code) return "";
+    const testDir = path.dirname(relTestPath.replace(/\\/g, "/"));
+
+    return code.replace(
+        /((?:import\s+(?:[\s\S]*?\s+from\s+)?|require\s*\(\s*)['"])([^'"]+)(['"]\s*\)?)/g,
+        (match, prefix, importTarget, suffix) => {
+            if (/storage\/projects\/[^/]+\/[^/]+\/[^/]+\/repo\//i.test(importTarget) || /(?:^|\/)\.\.\/.*repo\//i.test(importTarget)) {
+                const cleanSubpath = importTarget
+                    .replace(/^.*\/repo\//i, "")
+                    .replace(/^\.?\//, "");
+
+                let rel = path.relative(testDir, cleanSubpath).replace(/\\/g, "/");
+                if (!rel.startsWith(".")) {
+                    rel = "./" + rel;
+                }
+                const cleanImport = rel.replace(/\.[cm]?[jt]sx?$/, "");
+                return `${prefix}${cleanImport}${suffix}`;
+            }
+            return match;
+        }
+    );
+};
+
+/**
  * Safely inserts new test code into an existing or new test file.
  */
 export const insertCodeIntoTestFile = (originalContent, codeToAdd) => {
@@ -89,24 +129,38 @@ export const insertCodeIntoTestFile = (originalContent, codeToAdd) => {
         return originalContent;
     }
 
-    // Separate any top-level imports from test body code
+    let result = originalContent;
     const lines = codeToAdd.split("\n");
     const importLines = [];
     const bodyLines = [];
 
     for (const line of lines) {
-        if (/^\s*import\s+.*from\s+['"].+['"];?\s*$/.test(line) || /^\s*import\s+['"].+['"];?\s*$/.test(line)) {
-            const match = line.match(/from\s+['"](.+)['"]/);
-            if (match && originalContent.includes(match[1])) {
-                continue; // Skip if already imported
+        const importMatch = line.match(/^\s*import\s+(?:\{([^}]+)\}|\*\s+as\s+\w+|(\w+))\s+from\s+['"]([^'"]+)['"];?\s*$/);
+        if (importMatch) {
+            const namedImports = importMatch[1];
+            const modSource = importMatch[3];
+
+            // Check if module is already imported in result
+            const existingModRegex = new RegExp(`import\\s+\\{([^}]+)\\}\\s+from\\s+['"]${modSource.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"];?`);
+            const existingMatch = result.match(existingModRegex);
+
+            if (existingMatch && namedImports) {
+                // Merge named imports
+                const existingNames = existingMatch[1].split(",").map(s => s.trim()).filter(Boolean);
+                const newNames = namedImports.split(",").map(s => s.trim()).filter(Boolean);
+                const mergedNames = Array.from(new Set([...existingNames, ...newNames]));
+                result = result.replace(existingMatch[0], `import { ${mergedNames.join(", ")} } from '${modSource}';`);
+            } else if (!result.includes(`from '${modSource}'`) && !result.includes(`from "${modSource}"`)) {
+                importLines.push(line);
             }
-            importLines.push(line);
+        } else if (/^\s*import\s+['"].+['"];?\s*$/.test(line)) {
+            if (!result.includes(line.trim())) {
+                importLines.push(line);
+            }
         } else {
             bodyLines.push(line);
         }
     }
-
-    let result = originalContent;
 
     // Place new imports after existing imports
     if (importLines.length > 0) {
@@ -120,13 +174,11 @@ export const insertCodeIntoTestFile = (originalContent, codeToAdd) => {
     }
 
     const cleanBody = bodyLines.join("\n").trim();
-    if (!cleanBody) {
+    if (!cleanBody || cleanBody.startsWith("// No additional") || cleanBody.startsWith("// See full")) {
         return result;
     }
 
     // Append standalone test block cleanly at the end of the file.
-    // If inside a defineFeature file, standard describe/test blocks appended outside defineFeature
-    // execute under Jest without cucumber scenario validation errors.
     if (!cleanBody.includes("describe(") && (cleanBody.includes("test(") || cleanBody.includes("it("))) {
         return `${result.trimEnd()}\n\ndescribe('AI Suggested Unit Tests', () => {\n  ${cleanBody.replace(/\n/g, "\n  ")}\n});\n`;
     }
@@ -179,12 +231,26 @@ export const applyCodeToTestFile = (rootDir, suggestion) => {
     const sanitizedCodeToAdd = sanitizeSuggestedTestCode(rawCodeToAdd, originalContent);
     const fullContentProvided = suggestion.fullUpdatedContent;
 
+    const hasValidFullContent = fullContentProvided &&
+        typeof fullContentProvided === "string" &&
+        (fullContentProvided.includes("describe(") || fullContentProvided.includes("test(") || fullContentProvided.includes("it("));
+
+    const isPlaceholderOrFallback = !fileExisted ||
+        !originalContent.trim() ||
+        originalContent.includes("// See full updated content below") ||
+        originalContent.includes("// No additional snippets needed") ||
+        (originalContent.includes("unit tests") && originalContent.includes("should execute without error"));
+
     let newContent = "";
-    if (fullContentProvided && (!fileExisted || !originalContent.trim())) {
-        newContent = fullContentProvided.trimEnd() + "\n";
+    if (hasValidFullContent && isPlaceholderOrFallback) {
+        newContent = sanitizeSuggestedTestCode(fullContentProvided.trimEnd() + "\n", originalContent);
+    } else if (hasValidFullContent && (!sanitizedCodeToAdd || sanitizedCodeToAdd.length < 50 || sanitizedCodeToAdd.startsWith("//"))) {
+        newContent = sanitizeSuggestedTestCode(fullContentProvided.trimEnd() + "\n", originalContent);
     } else {
         newContent = insertCodeIntoTestFile(originalContent, sanitizedCodeToAdd);
     }
+
+    newContent = healImportPathsInTestCode(newContent, relTestPath);
 
     fs.writeFileSync(fullTestPath, newContent, "utf8");
 
@@ -424,6 +490,12 @@ export const applyUnitTestSuggestion = async ({ snapshotId, projectId, userId, s
             }
         } catch { }
     }
+
+    // Invalidate coverage in-memory caches so fresh test suites & coverage are served
+    try {
+        const { invalidateCoverageCache } = await import("../controllers/coverage.controller.js");
+        invalidateCoverageCache(snapshotId);
+    } catch (_) { }
 
     return {
         success: true,

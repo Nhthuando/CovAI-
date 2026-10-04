@@ -5,6 +5,7 @@ import { parseCoverageFilesForSnapshot } from "../services/coverageFileParser.se
 import { parseCoverageFunctionsForSnapshot } from "../services/coverageFunctionParser.service.js";
 import { GitHubCloneService } from "../services/githubClone.service.js";
 import { detectJest } from "../utils/jestDetector.js";
+import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 import { createAiSuggestJob } from "../services/job.service.js";
 import { processAiSuggestJob } from "../services/aiSuggestJob.service.js";
 import {
@@ -1275,14 +1276,15 @@ class ProjectController {
           .json({ success: false, message: "Duplicate snapshot" });
       }
 
-      const detection = detectJest(localPath);
+      const resolvedRootDir = resolveProjectRoot(localPath) || localPath;
+      const detection = detectJest(resolvedRootDir);
       const snapshot = await prisma.projectSnapshot.create({
         data: {
           projectId,
           source: "GITHUB",
           commitSha,
           storagePath: localPath,
-          rootDir: localPath,
+          rootDir: resolvedRootDir,
           hasJest: detection.hasJest,
           jestConfigPath: detection.configPath,
           jestCommand: detection.jestCommand,

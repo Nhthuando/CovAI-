@@ -49,22 +49,29 @@ async function executeWithRetry(apiCall, maxRetries = 3) {
   }
 }
 
-const VALID_MODELS = ["gemini-2.5-flash", "gemini-3.5-flash"];
+const VALID_MODELS = ["gemini-3.1-flash-lite-preview", "gemini-2.5-flash"];
+const exhaustedModels = new Set();
 
 /**
- * Normalizes model names, replacing deprecated models (1.5-pro, 1.5-flash, 2.0-flash, 3.5-flash-lite)
+ * Marks a model as quota-exhausted for the remainder of this process session.
+ */
+export function markModelExhausted(modelName) {
+  if (modelName) exhaustedModels.add(modelName);
+}
+
+/**
+ * Normalizes model names, replacing deprecated or quota-exhausted models
  * with the currently active and verified models.
  */
 function resolveModelName(requestedModel) {
-  if (!requestedModel) {
-    return process.env.GEMINI_MODEL || "gemini-2.5-flash";
+  const preferred = (requestedModel && requestedModel.trim()) || process.env.GEMINI_MODEL || "gemini-3.1-flash-lite-preview";
+  if (VALID_MODELS.includes(preferred) && !exhaustedModels.has(preferred)) {
+    return preferred;
   }
-  const clean = requestedModel.trim();
-  if (VALID_MODELS.includes(clean)) {
-    return clean;
+  for (const m of VALID_MODELS) {
+    if (!exhaustedModels.has(m)) return m;
   }
-  // If requesting a deprecated model or unknown model, fall back to gemini-2.5-flash
-  return process.env.GEMINI_MODEL || "gemini-2.5-flash";
+  return "gemini-3.1-flash-lite-preview";
 }
 
 /**
@@ -146,8 +153,11 @@ export const generateMultimodalText = async (
       });
       return result.response.text();
     } catch (primaryErr) {
-      // If primary model failed with 404 or model error, try secondary fallback model
-      const fallbackModel = primaryModelName === "gemini-2.5-flash" ? "gemini-3.5-flash" : "gemini-2.5-flash";
+      if (primaryErr.message && (primaryErr.message.includes("Quota exceeded") || primaryErr.message.includes("429"))) {
+        markModelExhausted(primaryModelName);
+      }
+      // If primary model failed with 404, rate limit, or model error, try secondary fallback model
+      const fallbackModel = primaryModelName === "gemini-3.1-flash-lite-preview" ? "gemini-2.5-flash" : "gemini-3.1-flash-lite-preview";
       console.warn(`[Gemini API] Primary model ${primaryModelName} error: ${primaryErr.message}. Attempting fallback with ${fallbackModel}...`);
       const model = createModelInstance(fallbackModel);
       const result = await model.generateContent({

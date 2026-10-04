@@ -5,7 +5,6 @@ import { buildFullTestPrompt } from "./fullTestPromptBuilder.service.js";
 import { buildAiPayload, loadSourceCode } from "./aiContextBuilder.service.js";
 import { validateGeneratedTest } from "./testValidation.service.js";
 import { createAiTestsJob } from "./job.service.js";
-import { addJobToQueue } from "./queue.service.js";
 import { extractValidEndpoints } from "./apiEndpointParser.service.js";
 
 

@@ -45,19 +45,22 @@ const calculatePct = (section) => {
 };
 
 const extractFilePath = (entry, key) => {
+  let raw = null;
   if (entry.path && typeof entry.path === "string") {
-    return entry.path;
+    raw = entry.path;
+  } else if (entry.filePath && typeof entry.filePath === "string") {
+    raw = entry.filePath;
+  } else if (entry.filename && typeof entry.filename === "string") {
+    raw = entry.filename;
+  } else if (typeof key === "string") {
+    raw = key;
   }
-  if (entry.filePath && typeof entry.filePath === "string") {
-    return entry.filePath;
-  }
-  if (entry.filename && typeof entry.filename === "string") {
-    return entry.filename;
-  }
-  if (typeof key === "string") {
-    return key;
-  }
-  return null;
+  if (!raw || typeof raw !== "string") return null;
+
+  let norm = raw.replace(/\\/g, "/").replace(/^[a-zA-Z]:[\\/]/, "");
+  norm = norm.replace(/^(?:.*?\/)?storage\/projects\/[^/]+\/[^/]+\/[^/]+\/repo\//i, "");
+  norm = norm.replace(/^(?:.*?\/)?repo\//i, "");
+  return norm.replace(/^\/+/, "");
 };
 
 const calculateIstanbulPct = (map) => {
@@ -154,27 +157,20 @@ const getTotalCoverageSummary = (coverageReport) => {
     return null;
   }
 
+  const astStmtsPct = calculateIstanbulPct(total.s);
+  const astFuncsPct = calculateIstanbulPct(total.f);
+  const astBranchesPct = calculateIstanbulPct(total.b);
+
+  const rawStmtsPct = calculatePct(total.statements) ?? calculatePct(total.statement) ?? calculatePct(total.stmts);
+  const rawFuncsPct = calculatePct(total.functions) ?? calculatePct(total.function);
+  const rawBranchesPct = calculatePct(total.branches) ?? calculatePct(total.branch);
+  const rawLinesPct = calculatePct(total.lines) ?? calculatePct(total.line);
+
   return {
-    linesPct: calculatePct(total.lines) ?? calculatePct(total.line) ?? 0,
-
-    branchesPct:
-      calculatePct(total.branches) ??
-      calculatePct(total.branch) ??
-      calculateIstanbulPct(total.b) ??
-      0,
-
-    funcsPct:
-      calculatePct(total.functions) ??
-      calculatePct(total.function) ??
-      calculateIstanbulPct(total.f) ??
-      0,
-
-    stmtsPct:
-      calculatePct(total.statements) ??
-      calculatePct(total.statement) ??
-      calculatePct(total.stmts) ??
-      calculateIstanbulPct(total.s) ??
-      0,
+    linesPct: rawLinesPct ?? astStmtsPct ?? 0,
+    branchesPct: (astBranchesPct !== null && astBranchesPct > 0) ? astBranchesPct : (rawBranchesPct ?? astBranchesPct ?? 0),
+    funcsPct: (astFuncsPct !== null && astFuncsPct > 0) ? astFuncsPct : (rawFuncsPct ?? astFuncsPct ?? 0),
+    stmtsPct: (astStmtsPct !== null && astStmtsPct > 0) ? astStmtsPct : (rawStmtsPct ?? astStmtsPct ?? 0),
   };
 };
 
@@ -186,7 +182,6 @@ export const parseCoverageFilesForSnapshot = async ({
 }) => {
   assertStringField(projectId, "projectId");
   assertStringField(snapshotId, "snapshotId");
-  assertStringField(userId, "userId");
 
   if (!coverageReport || typeof coverageReport !== "object") {
     throw new ServiceError("Invalid coverage report", 400);
@@ -210,7 +205,12 @@ export const parseCoverageFilesForSnapshot = async ({
     throw new ServiceError("Snapshot not found for this project", 404);
   }
 
-  if (!snapshot.project || snapshot.project.ownerId !== userId) {
+  const effectiveUserId = userId || snapshot.project?.ownerId;
+  if (!effectiveUserId) {
+    throw new ServiceError("Cannot determine owner for snapshot", 403);
+  }
+
+  if (userId && snapshot.project && snapshot.project.ownerId !== userId) {
     throw new ServiceError(
       "You do not have permission to update coverage for this project",
       403,

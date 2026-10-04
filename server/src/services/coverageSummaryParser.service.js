@@ -65,54 +65,52 @@ const parseNum = (val) => {
     return 0;
 };
 
+const parseMetricEntry = (metric) => {
+    const total = parseNum(metric?.total);
+    const covered = parseNum(metric?.covered);
+    const skipped = parseNum(metric?.skipped);
+    let pct = parsePct(metric?.pct);
+    if (total === 0 && covered === 0) {
+        pct = 0;
+    }
+    return { total, covered, skipped, pct };
+};
+
 /**
  * SCRUM-118: Parse line coverage from a Jest entry
  */
-const parseLineCoverage = (entry) => ({
-    total: parseNum(entry?.lines?.total),
-    covered: parseNum(entry?.lines?.covered),
-    skipped: parseNum(entry?.lines?.skipped),
-    pct: parsePct(entry?.lines?.pct),
-});
+const parseLineCoverage = (entry) => parseMetricEntry(entry?.lines);
 
 /**
  * SCRUM-119: Parse branch coverage from a Jest entry
  */
-const parseBranchCoverage = (entry) => ({
-    total: parseNum(entry?.branches?.total),
-    covered: parseNum(entry?.branches?.covered),
-    skipped: parseNum(entry?.branches?.skipped),
-    pct: parsePct(entry?.branches?.pct),
-});
+const parseBranchCoverage = (entry) => parseMetricEntry(entry?.branches);
 
 /**
  * SCRUM-120: Parse function coverage from a Jest entry
  */
-const parseFunctionCoverage = (entry) => ({
-    total: parseNum(entry?.functions?.total),
-    covered: parseNum(entry?.functions?.covered),
-    skipped: parseNum(entry?.functions?.skipped),
-    pct: parsePct(entry?.functions?.pct),
-});
+const parseFunctionCoverage = (entry) => parseMetricEntry(entry?.functions);
 
 /**
  * SCRUM-121: Parse statement coverage from a Jest entry
  */
-const parseStatementCoverage = (entry) => ({
-    total: parseNum(entry?.statements?.total),
-    covered: parseNum(entry?.statements?.covered),
-    skipped: parseNum(entry?.statements?.skipped),
-    pct: parsePct(entry?.statements?.pct),
-});
+const parseStatementCoverage = (entry) => parseMetricEntry(entry?.statements);
 
 /**
  * SCRUM-122: Create or update CoverageSummary record in DB.
  */
 const upsertCoverageSummary = async (snapshotId, lines, branches, functions, statements) => {
-    const l = parsePct(lines?.pct ?? lines);
-    const b = parsePct(branches?.pct ?? branches);
-    const f = parsePct(functions?.pct ?? functions);
-    const s = parsePct(statements?.pct ?? statements);
+    let l = parsePct(lines?.pct ?? lines);
+    let b = parsePct(branches?.pct ?? branches);
+    let f = parsePct(functions?.pct ?? functions);
+    let s = parsePct(statements?.pct ?? statements);
+
+    if (lines?.total === 0 && statements?.total === 0) {
+        l = 0;
+        b = 0;
+        f = 0;
+        s = 0;
+    }
 
     return prisma.coverageSummary.upsert({
         where: { snapshotId },

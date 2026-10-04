@@ -2,7 +2,16 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { describe, expect, it } from "@jest/globals";
-import { coverageResultFromSummary, findUnitFiles, mergeCoverageSummaries, buildJestModuleNameMapper } from "../services/runTestsJob.service.js";
+import {
+    coverageResultFromSummary,
+    findUnitFiles,
+    findLogicSourceFiles,
+    generateBaselineCoverage,
+    mergeCoverageSummaries,
+    buildJestModuleNameMapper,
+    readProjectJestConfig,
+    isEsmProjectForRepo
+} from "../services/runTestsJob.service.js";
 import { isApiFilePath } from "../utils/apiFileDetector.js";
 
 describe("isApiFilePath", () => {
@@ -135,6 +144,97 @@ describe("findUnitFiles", () => {
 
             const { jestFiles, vitestFiles } = findUnitFiles(tempDir);
             expect(jestFiles.length + vitestFiles.length).toBe(1);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("findLogicSourceFiles & generateBaselineCoverage (projects with 0 tests)", () => {
+    it("discovers logic source files while ignoring tests, frontend, and config files", () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "covai-logic-files-"));
+        try {
+            fs.mkdirSync(path.join(tempDir, "src", "services"), { recursive: true });
+            fs.mkdirSync(path.join(tempDir, "src", "utils"), { recursive: true });
+            fs.mkdirSync(path.join(tempDir, "client", "src"), { recursive: true });
+            fs.mkdirSync(path.join(tempDir, "tests"), { recursive: true });
+
+            fs.writeFileSync(path.join(tempDir, "src", "services", "bankAccount.js"), "class BankAccount {}\nexport default BankAccount;\n");
+            fs.writeFileSync(path.join(tempDir, "src", "utils", "calc.js"), "export function add(a, b) { return a + b; }\n");
+            fs.writeFileSync(path.join(tempDir, "client", "src", "App.jsx"), "export default () => <div/>;\n");
+            fs.writeFileSync(path.join(tempDir, "tests", "dummy.test.js"), "test('dummy', () => {});\n");
+            fs.writeFileSync(path.join(tempDir, "jest.config.js"), "module.exports = {};\n");
+
+            const files = findLogicSourceFiles(tempDir);
+            expect(files.map(f => f.relativePath)).toEqual([
+                "src/services/bankAccount.js",
+                "src/utils/calc.js"
+            ]);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it("generates 0% baseline coverage-summary.json and coverage-final.json for logic files", () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "covai-baseline-cov-"));
+        try {
+            fs.mkdirSync(path.join(tempDir, "src"), { recursive: true });
+            const filePath = path.join(tempDir, "src", "calculator.js");
+            fs.writeFileSync(filePath, "function add(a, b) {\n  return a + b;\n}\nmodule.exports = { add };\n");
+
+            const logicFiles = findLogicSourceFiles(tempDir);
+            const coverageDir = path.join(tempDir, "coverage");
+            const result = generateBaselineCoverage(tempDir, logicFiles, coverageDir);
+
+            expect(result.summaryData.total.lines.pct).toBe(0);
+            expect(result.summaryData.total.lines.covered).toBe(0);
+            expect(result.summaryData.total.lines.total).toBeGreaterThan(0);
+            expect(result.summaryData.total.functions.total).toBeGreaterThan(0);
+
+            expect(fs.existsSync(path.join(coverageDir, "coverage-summary.json"))).toBe(true);
+            expect(fs.existsSync(path.join(coverageDir, "coverage-final.json"))).toBe(true);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("readProjectJestConfig & isEsmProjectForRepo", () => {
+    it("loads config from jest.config.js and identifies ESM projects", async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "covai-jest-esm-"));
+        try {
+            fs.writeFileSync(path.join(tempDir, "package.json"), JSON.stringify({ name: "esm-project", type: "module" }));
+            fs.writeFileSync(path.join(tempDir, "jest.config.js"), `
+                export default {
+                    preset: 'ts-jest/presets/default-esm',
+                    extensionsToTreatAsEsm: ['.ts']
+                };
+            `);
+
+            const config = await readProjectJestConfig(tempDir);
+            expect(config.preset).toBe("ts-jest/presets/default-esm");
+            expect(config.extensionsToTreatAsEsm).toEqual([".ts"]);
+
+            const isEsm = isEsmProjectForRepo(tempDir, config);
+            expect(isEsm).toBe(true);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it("falls back to package.json jest field if no jest.config exists", async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "covai-pkg-jest-"));
+        try {
+            fs.writeFileSync(path.join(tempDir, "package.json"), JSON.stringify({
+                name: "cjs-project",
+                jest: { testEnvironment: "node" }
+            }));
+
+            const config = await readProjectJestConfig(tempDir);
+            expect(config.testEnvironment).toBe("node");
+
+            const isEsm = isEsmProjectForRepo(tempDir, config);
+            expect(isEsm).toBe(false);
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }

@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { resolveProjectRoot, hasSourceCodeFiles, ensureMinimalPackageJson } from "../utils/projectRootResolver.js";
 
 export const COVERAGE_FRAMEWORKS = Object.freeze({
   unit: ["jest", "vitest"],
@@ -29,11 +30,25 @@ const CONFIG_FILES = Object.freeze({
 });
 
 export function detectCoverageFrameworks(rootDir) {
-  const packagePath = path.join(rootDir, "package.json");
+  let effectiveDir = rootDir;
+  let packagePath = path.join(effectiveDir, "package.json");
   if (!fs.existsSync(packagePath)) {
-    const error = new Error("Invalid Node.js project: package.json was not found in the uploaded project.");
-    error.statusCode = 422;
-    throw error;
+    const resolved = resolveProjectRoot(rootDir);
+    if (resolved && fs.existsSync(path.join(resolved, "package.json"))) {
+      effectiveDir = resolved;
+      packagePath = path.join(effectiveDir, "package.json");
+    }
+  }
+
+  if (!fs.existsSync(packagePath)) {
+    if (hasSourceCodeFiles(effectiveDir) || hasSourceCodeFiles(rootDir)) {
+      ensureMinimalPackageJson(effectiveDir);
+      packagePath = path.join(effectiveDir, "package.json");
+    } else {
+      const error = new Error("Invalid Node.js project: package.json was not found in the uploaded project.");
+      error.statusCode = 422;
+      throw error;
+    }
   }
 
   let pkg;
@@ -59,7 +74,7 @@ export function detectCoverageFrameworks(rootDir) {
 
   for (const [framework, packageNames] of Object.entries(PACKAGE_NAMES)) {
     const installed = packageNames.some((name) => Object.prototype.hasOwnProperty.call(dependencies, name));
-    const configured = (CONFIG_FILES[framework] || []).some((name) => fs.existsSync(path.join(rootDir, name)));
+    const configured = (CONFIG_FILES[framework] || []).some((name) => fs.existsSync(path.join(effectiveDir, name)));
     const scripted = new RegExp(`(^|[^a-z])${framework}([^a-z]|$)`).test(scripts);
     if (installed || configured || scripted) all.push(framework);
   }
@@ -129,11 +144,30 @@ export function detectCoverageFrameworks(rootDir) {
     } catch (_) { }
   };
 
-  scanTestFiles(rootDir);
+  scanTestFiles(effectiveDir);
+  if (effectiveDir !== rootDir) {
+    scanTestFiles(rootDir);
+  }
+
+  // Default unit test fallback: if no unit test framework was detected,
+  // allow unit test analysis (defaulting to "jest") so that projects without
+  // tests yet can run analysis, view logic files, and suggest unit tests.
+  if (!all.includes("jest") && !all.includes("vitest")) {
+    if (testScriptFramework) {
+      all.push(testScriptFramework);
+    } else if (all.length === 0) {
+      all.push("jest");
+    }
+  }
 
   const supported = Object.fromEntries(
     Object.entries(COVERAGE_FRAMEWORKS).map(([type, names]) => [type, names.filter((name) => all.includes(name))]),
   );
+
+  if ((!supported.unit || supported.unit.length === 0) && all.length === 0) {
+    supported.unit = ["jest"];
+  }
+
   return { all, supported, unsupported: all.filter((name) => !Object.values(COVERAGE_FRAMEWORKS).flat().includes(name)), testScriptFramework };
 }
 
@@ -160,6 +194,11 @@ export function selectCoverageFramework(detection, type, requestedFramework = nu
   // 3. Fallback to first supported framework
   const framework = supported[0];
   if (framework) return framework;
+
+  // 4. Default to jest for unit coverage if no explicit unsupported framework was detected
+  if (type === "unit" && (!detection.all || detection.all.length === 0)) {
+    return "jest";
+  }
 
   const detectedText = detection.all.length ? detection.all.join(", ") : "none";
   const error = new Error(
