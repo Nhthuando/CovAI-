@@ -146,19 +146,36 @@ const isFrontendFile = (filePath) => {
 
 export const cleanDisplayPath = (fullPath = "") => {
   if (!fullPath) return "";
-  let normalized = fullPath.replace(/\\/g, "/").replace(/^\.?\//, "");
+  let normalized = fullPath.replace(/\\/g, "/").replace(/^\.?\//, "").trim();
 
   // Match inside docker or repo storage: storage/projects/<id>/.../repo/<relativePath>
   const repoMatch = normalized.match(/(?:^|\/)repo\/(.+)$/i);
-  if (repoMatch) return repoMatch[1];
+  if (repoMatch) return repoMatch[1].replace(/^\/+/, "");
+
+  // If path ends with /repo or is just /app/storage/..., don't show full internal path
+  if (/(?:^|\/)(?:repo|storage\/projects\/[^/]+(?:\/[^/]+)*)\/?$/i.test(normalized)) {
+    return "";
+  }
 
   const storageMatch = normalized.match(/(?:^|\/)storage\/projects\/[^/]+(?:\/[^/]+)*?\/(.+)$/i);
-  if (storageMatch) return storageMatch[1];
+  if (storageMatch) return storageMatch[1].replace(/^\/+/, "");
 
   const uploadMatch = normalized.match(/(?:^|\/)uploads\/snapshots\/[^/]+(?:\/[^/]+)*?\/(.+)$/i);
-  if (uploadMatch) return uploadMatch[1];
+  if (uploadMatch) return uploadMatch[1].replace(/^\/+/, "");
 
-  return normalized;
+  normalized = normalized.replace(/^[a-zA-Z]:\//, "");
+  normalized = normalized.replace(/^\/app\/storage\/?/i, "");
+  return normalized.replace(/^\/+/, "");
+};
+
+export const sanitizeErrorText = (text = "") => {
+  if (!text || typeof text !== "string") return text;
+  return text
+    .replace(/(?:\/app|[a-zA-Z]:[\\/][^ \t\r\n'\"()]*)?[\\/]storage[\\/]projects[\\/][^ \t\r\n'\"()]+(?:[\\/][^ \t\r\n'\"()]+)*?[\\/]repo[\\/]/gi, "")
+    .replace(/(?:\/app)?\/storage\/projects\/[^\s'\"()]+\/repo\//gi, "")
+    .replace(/(?:\/app)?\/storage\/projects\/[^\s'\"()]+\/snapshots\/[^\s'\"()]+\/coverage\//gi, "")
+    .replace(/(?:\/app)?\/storage\/projects\/[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*\/?/gi, "")
+    .replace(/\/app\/storage\/?/gi, "");
 };
 
 export const resolveFunctionName = (fn, flowFunctions = []) => {
@@ -519,6 +536,13 @@ export default function CoverageTypeDashboard({
     }
   }, [snapshotId, getSuggestions]);
 
+  // Synchronize cached suggestions whenever inlineSuggestions changes (avoids calling setState during render phase)
+  useEffect(() => {
+    if (snapshotId && inlineSuggestions && Object.keys(inlineSuggestions).length > 0) {
+      saveSuggestions(snapshotId, inlineSuggestions);
+    }
+  }, [snapshotId, inlineSuggestions, saveSuggestions]);
+
   // Sync analysis running state with runningProcessContext
   useEffect(() => {
     if (processes.analysis.isRunning && processes.analysis.snapshotId === snapshotId) {
@@ -609,16 +633,10 @@ export default function CoverageTypeDashboard({
           status: s.status || "GENERATED",
         }));
 
-        setInlineSuggestions((prev) => {
-          const next = {
-            ...prev,
-            [filePath]: mappedSugs,
-          };
-          if (snapshotId) {
-            saveSuggestions(snapshotId, next);
-          }
-          return next;
-        });
+        setInlineSuggestions((prev) => ({
+          ...prev,
+          [filePath]: mappedSugs,
+        }));
         return mappedSugs;
       } catch (err) {
         console.error("Failed to generate test suggestions inline:", err);
@@ -855,7 +873,7 @@ export default function CoverageTypeDashboard({
   const handleUpdateSuggestionCode = useCallback((filePath, sugId, newCode) => {
     setInlineSuggestions((prev) => {
       const fileSugs = prev[filePath] || [];
-      const updated = {
+      return {
         ...prev,
         [filePath]: fileSugs.map((s) =>
           (s.suggestionId === sugId || s.id === sugId)
@@ -863,10 +881,6 @@ export default function CoverageTypeDashboard({
             : s,
         ),
       };
-      if (snapshotId) {
-        saveSuggestions(snapshotId, updated);
-      }
-      return updated;
     });
   }, [snapshotId, saveSuggestions]);
 
@@ -920,9 +934,6 @@ export default function CoverageTypeDashboard({
           allSugIds.includes(s.suggestionId || s.id) ? { ...s, status: "APPLYING" } : s
         );
       });
-      if (snapshotId) {
-        saveSuggestions(snapshotId, next);
-      }
       return next;
     });
 
@@ -964,9 +975,6 @@ export default function CoverageTypeDashboard({
               : s
           );
         });
-        if (snapshotId) {
-          saveSuggestions(snapshotId, next);
-        }
         return next;
       });
 
@@ -1400,7 +1408,7 @@ export default function CoverageTypeDashboard({
   const hasPartialFailures = summary?.latestRunStatus === "passed_with_failures" || coverageData?.latestRunStatus === "passed_with_failures" || summary?.hasTestFailures;
   const lastSuccessfulCov = summary?.lastSuccessfulCoverage || coverageData?.lastSuccessfulCoverage;
   const latestRunErr = summary?.latestRunError || coverageData?.latestRunError;
-  const failedSuiteName = summary?.failedSuite || coverageData?.failedSuite;
+  const failedSuiteName = cleanDisplayPath(summary?.failedSuite || coverageData?.failedSuite);
 
   const lastSuccessfulValues = useMemo(() => {
     if (!lastSuccessfulCov) return [0, 0, 0, 0];
@@ -1799,7 +1807,7 @@ export default function CoverageTypeDashboard({
             <div style={{ fontSize: 12, color: isLight ? "#334155" : "#e2e8f0" }}>
               <span style={{ color: isLight ? "#64748b" : "#94a3b8" }}>Failed Suite: </span>
               <code style={{ background: isLight ? "#fff1f2" : "rgba(0,0,0,0.4)", border: isLight ? "1px solid #fecdd3" : "none", padding: "2px 6px", borderRadius: 4, color: isLight ? "#be123c" : "#f87171" }}>
-                {failedSuiteName}
+                {cleanDisplayPath(failedSuiteName)}
               </code>
             </div>
           )}
@@ -1819,7 +1827,7 @@ export default function CoverageTypeDashboard({
                 overflowY: "auto",
               }}
             >
-              {latestRunErr}
+              {sanitizeErrorText(latestRunErr)}
             </div>
           )}
 
@@ -1887,7 +1895,7 @@ export default function CoverageTypeDashboard({
             <div style={{ fontSize: 12, color: isLight ? "#334155" : "#cbd5e1" }}>
               <span style={{ color: isLight ? "#64748b" : "#94a3b8" }}>Suites with failed tests: </span>
               <code style={{ background: isLight ? "#fefce8" : "rgba(0,0,0,0.4)", border: isLight ? "1px solid #fef08a" : "none", padding: "2px 6px", borderRadius: 4, color: isLight ? "#a16207" : "#fcd34d" }}>
-                {failedSuiteName}
+                {cleanDisplayPath(failedSuiteName)}
               </code>
             </div>
           )}
@@ -4062,8 +4070,8 @@ export default function CoverageTypeDashboard({
                               gap: 16,
                             }}
                           >
-                            {/* Inline Suggestions Section */}
-                            {(fileSuggestions.length > 0 || isSuggesting) && (
+                            {/* Inline Suggestions Section (only when not in FileCodeExecutionView, which embeds suggestions in TestFileViewerPanel) */}
+                            {(fileSuggestions.length > 0 || isSuggesting) && activeMetricView !== "statements" && (
                               <InlineTestSuggestions
                                 filePath={file.filePath}
                                 suggestions={fileSuggestions}

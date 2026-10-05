@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   FlaskConical,
   FileCode,
@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import MonacoEditor from "@monaco-editor/react";
 import { updateFileContentApi, createProjectFileApi } from "../../services/project.service.js";
+import { cleanDisplayPath } from "./CoverageTypeDashboard.jsx";
 
 /* ── Extension to Language Mapping ───────────────────────── */
 const EXT_LANG_MAP = {
@@ -115,6 +116,11 @@ export default function TestFileViewerPanel({
   onOpenFile,
   onTestFileSaved,
   isLight = false,
+  isGlobalSaving = false,
+  globalSaveSuccess = false,
+  onRegisterTestSaver,
+  onTestDirtyChange,
+  onSaveBoth,
 }) {
   const isFound = Boolean(testFile?.found);
   const testFilePath = testFile?.filePath || testFile?.suggestedFilePath || "";
@@ -124,6 +130,7 @@ export default function TestFileViewerPanel({
 
   const [viewMode, setViewMode] = useState("code"); // "code" | "editor" | "suggestions"
   const [editorContent, setEditorContent] = useState(rawTestCode);
+  const [isTestDirty, setIsTestDirty] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState("");
@@ -133,7 +140,36 @@ export default function TestFileViewerPanel({
   // Sync editor content whenever raw test code changes from disk
   useEffect(() => {
     setEditorContent(rawTestCode);
-  }, [rawTestCode]);
+    setIsTestDirty(false);
+    onTestDirtyChange?.(false);
+  }, [rawTestCode, onTestDirtyChange]);
+
+  const saveTestFileInternal = useCallback(async () => {
+    if (!projectId || !testFilePath) return testFilePath;
+    if (isFound) {
+      await updateFileContentApi(projectId, testFilePath, editorContent);
+    } else {
+      await createProjectFileApi(projectId, testFilePath, editorContent);
+    }
+    setIsTestDirty(false);
+    onTestDirtyChange?.(false);
+    return testFilePath;
+  }, [projectId, testFilePath, isFound, editorContent, onTestDirtyChange]);
+
+  useEffect(() => {
+    if (onRegisterTestSaver) {
+      onRegisterTestSaver(saveTestFileInternal);
+    }
+  }, [saveTestFileInternal, onRegisterTestSaver]);
+
+  const onSaveBothRef = useRef(onSaveBoth || handleSaveTestFile);
+  onSaveBothRef.current = onSaveBoth || handleSaveTestFile;
+
+  const handleEditorDidMount = (editor, monaco) => {
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+      onSaveBothRef.current?.();
+    });
+  };
 
   // If new suggestions arrive or finished loading, switch to suggestions tab automatically
   const prevLoadingRef = useRef(isLoadingSuggestions);
@@ -154,6 +190,8 @@ export default function TestFileViewerPanel({
     if (!editorContent) return [];
     return editorContent.split("\n");
   }, [editorContent]);
+
+  const isTestOver100 = testLines.length > 100;
 
   const handleCopyCode = (code) => {
     navigator.clipboard.writeText(code);
@@ -196,8 +234,9 @@ export default function TestFileViewerPanel({
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
-        height: "100%",
-        minHeight: 520,
+        height: 672,
+        maxHeight: 672,
+        minHeight: 672,
         boxShadow: isLight
           ? "0 4px 16px rgba(15, 23, 42, 0.05)"
           : "0 4px 20px rgba(0, 0, 0, 0.3)",
@@ -259,7 +298,7 @@ export default function TestFileViewerPanel({
                   textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
                 }}
-                title={testFilePath}
+                title={cleanDisplayPath(testFilePath)}
               >
                 {testFileName}
               </span>
@@ -324,42 +363,13 @@ export default function TestFileViewerPanel({
                 whiteSpace: "nowrap",
               }}
             >
-              {isFound ? testFilePath : `Suggested: ${testFilePath}`}
+              {isFound ? cleanDisplayPath(testFilePath) : (testFilePath ? `Suggested: ${cleanDisplayPath(testFilePath)}` : "")}
             </span>
           </div>
         </div>
 
         {/* Right: Actions */}
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {/* Suggest Missing Test Button */}
-          <button
-            onClick={() => onSuggestMissingTest?.()}
-            disabled={isLoadingSuggestions}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 5,
-              padding: "4px 9px",
-              borderRadius: 5,
-              fontSize: 11,
-              fontWeight: 600,
-              background: isLight ? "#f5f3ff" : "rgba(168, 85, 247, 0.18)",
-              border: isLight ? "1px solid #ddd6fe" : "1px solid rgba(168, 85, 247, 0.4)",
-              color: isLight ? "#7c3aed" : "#d8b4fe",
-              cursor: isLoadingSuggestions ? "wait" : "pointer",
-              transition: "all 0.15s ease",
-            }}
-            className={isLight ? "hover:bg-purple-100" : "hover:bg-purple-500/25"}
-            title="Generate AI missing test suggestions for this file"
-          >
-            {isLoadingSuggestions ? (
-              <Loader2 size={12} className="animate-spin" />
-            ) : (
-              <Sparkles size={12} />
-            )}
-            <span>{isLoadingSuggestions ? "Generating..." : "Suggest Missing Test"}</span>
-          </button>
-
           {isFound && (
             <>
               {/* Toggle View / Edit */}
@@ -414,8 +424,11 @@ export default function TestFileViewerPanel({
               {/* Save button if in editor mode */}
               {viewMode === "editor" && (
                 <button
-                  onClick={handleSaveTestFile}
-                  disabled={isSaving}
+                  onClick={() => {
+                    if (onSaveBoth) onSaveBoth();
+                    else handleSaveTestFile();
+                  }}
+                  disabled={isSaving || isGlobalSaving}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -424,14 +437,36 @@ export default function TestFileViewerPanel({
                     borderRadius: 5,
                     fontSize: 11,
                     fontWeight: 600,
-                    background: saveSuccess ? "#16a34a" : isLight ? "#2563eb" : "#3b82f6",
-                    color: "#ffffff",
-                    border: "none",
-                    cursor: isSaving ? "wait" : "pointer",
+                    background: (saveSuccess || globalSaveSuccess)
+                      ? "#16a34a"
+                      : isTestDirty
+                      ? (isLight ? "#2563eb" : "#3b82f6")
+                      : (isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.08)"),
+                    color: isTestDirty || saveSuccess || globalSaveSuccess
+                      ? "#ffffff"
+                      : (isLight ? "#64748b" : "#8b949e"),
+                    border: isTestDirty || saveSuccess || globalSaveSuccess
+                      ? "none"
+                      : (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)"),
+                    cursor: (isSaving || isGlobalSaving) ? "wait" : "pointer",
+                    transition: "all 0.15s ease",
                   }}
+                  title="Save test file & source code (Ctrl+S)"
                 >
-                  {isSaving ? <Loader2 size={12} className="animate-spin" /> : saveSuccess ? <Check size={12} /> : <Save size={12} />}
-                  <span>{saveSuccess ? "Saved!" : "Save Test"}</span>
+                  {(isSaving || isGlobalSaving) ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (saveSuccess || globalSaveSuccess) ? (
+                    <Check size={12} />
+                  ) : (
+                    <Save size={12} />
+                  )}
+                  <span>
+                    {(isSaving || isGlobalSaving)
+                      ? "Saving..."
+                      : (saveSuccess || globalSaveSuccess)
+                      ? "Saved!"
+                      : "Save (Ctrl+S)"}
+                  </span>
                 </button>
               )}
 
@@ -483,9 +518,12 @@ export default function TestFileViewerPanel({
                 borderBottom: viewMode !== "suggestions" ? "2px solid #7c3aed" : "2px solid transparent",
                 color: viewMode !== "suggestions" ? (isLight ? "#0f172a" : "#f0f6fc") : (isLight ? "#64748b" : "#8b949e"),
                 fontWeight: viewMode !== "suggestions" ? 700 : 500,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 5,
               }}
             >
-              Test File Code ({testLines.length} lines)
+              <span>Test File Code ({testLines.length} lines)</span>
             </button>
           )}
 
@@ -513,7 +551,17 @@ export default function TestFileViewerPanel({
       )}
 
       {/* ── Main Content Area ───────────────────────────────── */}
-      <div style={{ flex: 1, overflowY: "auto", position: "relative" }}>
+      <div
+        className="file-panel-scrollbar"
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: "auto",
+          overflowX: "auto",
+          overscrollBehavior: "contain",
+          position: "relative",
+        }}
+      >
         {/* State 1: Test file NOT found yet */}
         {!isFound && viewMode !== "suggestions" && suggestions.length === 0 && (
           <div
@@ -645,7 +693,7 @@ export default function TestFileViewerPanel({
                       : `Create new test file in project structure`}
                   </div>
                   <div style={{ fontSize: 11, color: isLight ? "#64748b" : "#94a3b8", fontFamily: "var(--font-mono, monospace)" }}>
-                    📁 {testFilePath}
+                    📁 {cleanDisplayPath(testFilePath) || testFilePath}
                   </div>
                 </div>
               </div>
@@ -1048,14 +1096,19 @@ export default function TestFileViewerPanel({
 
         {/* State 4: Test file found & Editor Mode */}
         {isFound && viewMode === "editor" && (
-          <div style={{ height: "100%", minHeight: 460 }}>
+          <div style={{ flex: 1, minHeight: 0, height: "100%", width: "100%" }}>
             <MonacoEditor
               height="100%"
-              minHeight="460px"
+              minHeight="100%"
               language={getLanguage(testFilePath)}
               theme={isLight ? "vs" : "vs-dark"}
               value={editorContent}
-              onChange={(val) => setEditorContent(val || "")}
+              onChange={(val) => {
+                setEditorContent(val || "");
+                setIsTestDirty(true);
+                onTestDirtyChange?.(true);
+              }}
+              onMount={handleEditorDidMount}
               options={{
                 minimap: { enabled: false },
                 fontSize: 12,
@@ -1064,6 +1117,13 @@ export default function TestFileViewerPanel({
                 automaticLayout: true,
                 tabSize: 2,
                 wordWrap: "on",
+                scrollbar: {
+                  vertical: isTestOver100 ? "visible" : "auto",
+                  verticalScrollbarSize: 10,
+                  horizontal: "auto",
+                  horizontalScrollbarSize: 10,
+                  alwaysConsumeMouseWheel: true,
+                },
               }}
             />
           </div>
@@ -1091,8 +1151,13 @@ export default function TestFileViewerPanel({
               color: isLight ? "#334155" : "#cbd5e1",
             }}
           >
-            {testFilePath}
+            {cleanDisplayPath(testFilePath) || testFilePath}
           </span>
+          {testLines.length > 0 && (
+            <span style={{ color: isLight ? "#64748b" : "#8b949e", fontSize: 10 }}>
+              ({testLines.length} lines)
+            </span>
+          )}
         </div>
 
         <div>

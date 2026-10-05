@@ -1,3 +1,4 @@
+import fs from "fs";
 import { spawn, spawnSync } from "child_process";
 import path from "path";
 import { ServiceError } from "../utils/serviceError.js";
@@ -12,6 +13,12 @@ const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes default
  */
 const detectDockerAvailable = () => {
   if (process.env.DISABLE_DOCKER_RUNNER) return false;
+  // On Windows host, dependencies are installed on host by npm.cmd.
+  // Mounting Windows node_modules into a Linux Docker container causes binary mismatches,
+  // napi-postinstall hangs, and permission locks. Fall back to direct shell execution.
+  if (process.platform === "win32" && !process.env.FORCE_DOCKER_RUNNER) {
+    return false;
+  }
   try {
     const result = spawnSync("docker", ["--version"], { timeout: 5000, stdio: "pipe" });
     return result.status === 0;
@@ -74,6 +81,32 @@ export const dockerRunner = {
         NODE_PATH: `/app/node_modules:${path.join(snapshotPath, "node_modules")}:${process.env.NODE_PATH || ""}`,
         ...env,
       };
+
+      // Auto-load repo-level environment variables (.env.test, .env.example, .env) into mergedEnv
+      const repoEnvFiles = [".env.test", ".env.example", ".env"];
+      for (const envFile of repoEnvFiles) {
+        const envFilePath = path.join(snapshotPath, envFile);
+        if (fs.existsSync(envFilePath)) {
+          try {
+            const content = fs.readFileSync(envFilePath, "utf8");
+            for (const line of content.split("\n")) {
+              const trimmed = line.trim();
+              if (!trimmed || trimmed.startsWith("#")) continue;
+              const eqIdx = trimmed.indexOf("=");
+              if (eqIdx !== -1) {
+                const key = trimmed.slice(0, eqIdx).trim();
+                let val = trimmed.slice(eqIdx + 1).trim();
+                if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+                  val = val.slice(1, -1);
+                }
+                if (key && !(key in mergedEnv)) {
+                  mergedEnv[key] = val;
+                }
+              }
+            }
+          } catch { }
+        }
+      }
 
       if (DOCKER_AVAILABLE) {
         const envArgs = [];

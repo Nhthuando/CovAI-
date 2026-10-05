@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
+import { cleanStorageText, cleanStoragePath } from "../utils/pathSanitizer.js";
 
 /**
  * Normalizes file paths across Windows/Linux, stripping leading slashes and dot-slashes.
@@ -65,12 +66,12 @@ export const parseAssertionFailuresForFile = (testResultsObj, targetFilePath) =>
                         const lineNumber = parseInt(match[2], 10);
                         if (lineNumber > 0 && matchesFilePath(matchedFilePath, targetFilePath)) {
                             // First clean error message line
-                            const firstLine = msg.split("\n")[0].trim() || "Assertion failed";
+                            const firstLine = cleanStorageText(msg.split("\n")[0].trim() || "Assertion failed");
                             if (!failedLines[lineNumber]) {
                                 failedLines[lineNumber] = {
                                     line: lineNumber,
                                     message: firstLine,
-                                    fullStack: msg.slice(0, 500)
+                                    fullStack: cleanStorageText(msg.slice(0, 500))
                                 };
                             }
                         }
@@ -472,10 +473,11 @@ export const findAssociatedTestFile = (rootDir, rawSourceFilePath, framework = n
     const rawBaseName = path.basename(normSource, ext);
     const baseName = rawBaseName.replace(/\.(test|spec|steps?)$/i, "");
     const dirName = path.dirname(normSource);
-    const parts = normSource.split("/");
-    const subprojectPrefix = parts.length > 2 ? parts.slice(0, 2).join("/") : (parts[0] || "");
+    const parts = normSource.split("/").filter(Boolean);
+    const isMultiPackage = ["packages", "apps", "services", "examples", "modules"].includes(parts[0]);
+    const subprojectPrefix = isMultiPackage && parts.length > 2 ? parts.slice(0, 2).join("/") : "";
 
-    // 1. Scan existing test files in project with smart subproject scoring
+    // 1. Scan existing test files in project with smart import & naming scoring
     let bestImportMatch = null;
     let bestScore = -999;
 
@@ -493,18 +495,64 @@ export const findAssociatedTestFile = (rootDir, rawSourceFilePath, framework = n
                     const rel = normalizePath(path.relative(rootDir, full));
                     let score = 0;
 
-                    // Match subproject prefix (e.g. examples/typescript vs examples/ecmascript)
-                    if (subprojectPrefix && rel.startsWith(subprojectPrefix)) score += 100;
-                    else if (subprojectPrefix && !rel.startsWith(subprojectPrefix)) score -= 100;
+                    const content = fs.readFileSync(full, "utf8");
+
+                    // If caller specifically requested vitest, skip files that lack vitest syntax
+                    if (framework === "vitest" && !content.includes("vitest")) {
+                        continue;
+                    }
+
+                    // Match subproject prefix only in monorepos / multi-package repositories
+                    if (subprojectPrefix) {
+                        if (rel.startsWith(subprojectPrefix)) score += 100;
+                        else score -= 100;
+                    }
 
                     // Match file extension (.ts with .ts vs .js with .js)
                     const testExt = path.extname(rel);
                     if ((ext === ".ts" || ext === ".tsx") && (testExt === ".ts" || testExt === ".tsx")) score += 30;
                     else if ((ext === ".js" || ext === ".jsx") && (testExt === ".js" || testExt === ".jsx")) score += 30;
 
-                    const content = fs.readFileSync(full, "utf8");
-                    if (content.includes(baseName)) score += 20;
-                    if (content.includes("./" + baseName) || content.includes("/" + baseName)) score += 50;
+                    // Direct import/require match - highest confidence!
+                    const hasDirectImport = (
+                        content.includes("/" + baseName + "'") ||
+                        content.includes("/" + baseName + '"') ||
+                        content.includes("./" + baseName) ||
+                        content.includes("/" + baseName + ".") ||
+                        content.includes("/" + baseName + "/") ||
+                        content.includes("from '" + baseName) ||
+                        content.includes('from "' + baseName)
+                    );
+
+                    if (hasDirectImport) {
+                        score += 160;
+                    } else if (content.includes(baseName)) {
+                        score += 50;
+                    }
+
+                    // File name matching
+                    const testBaseName = path.basename(rel, testExt).replace(/\.(test|spec|steps?)$/i, "");
+                    if (testBaseName === baseName) {
+                        score += 120;
+                    } else if (testBaseName.startsWith(baseName) || testBaseName.endsWith(baseName) || testBaseName.includes(baseName)) {
+                        score += 80;
+                    }
+
+                    // Directory similarity (e.g. clients/ or handlers/)
+                    if (dirName && dirName !== "." && dirName !== "src") {
+                        const cleanDirParts = dirName.replace(/^src\/?/, "").split("/").filter(Boolean);
+                        for (const dp of cleanDirParts) {
+                            if (rel.includes("/" + dp + "/") || rel.includes("/" + dp)) {
+                                score += 40;
+                                break;
+                            }
+                        }
+                    }
+
+                    // Penalize placeholder/stub files
+                    if (content.length < 80 || content.includes("// No additional snippets needed")) {
+                        score -= 60;
+                    }
 
                     if (score > bestScore && score > 0) {
                         bestScore = score;
@@ -626,8 +674,14 @@ export const findAssociatedTestFile = (rootDir, rawSourceFilePath, framework = n
     }
 
     let defaultNewTestPath = normalizePath(path.join("tests", `${baseName}.test${ext}`));
+    const hasTestsUnit = fs.existsSync(path.join(rootDir, "tests", "unit"));
     if (dirName.includes("src")) {
-        defaultNewTestPath = normalizePath(dirName.replace("src", "tests") + `/${baseName}.test${ext}`);
+        const subRel = dirName.replace(/^src\/?/, "");
+        defaultNewTestPath = hasTestsUnit
+            ? normalizePath(`tests/unit/${subRel}/${baseName}.test${ext}`.replace(/\/+/g, "/"))
+            : normalizePath(dirName.replace("src", "tests") + `/${baseName}.test${ext}`);
+    } else if (hasTestsUnit) {
+        defaultNewTestPath = normalizePath(`tests/unit/${baseName}.test${ext}`);
     }
 
     return {

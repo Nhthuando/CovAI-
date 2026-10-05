@@ -29,7 +29,7 @@ import {
   ShieldCheck,
   Terminal,
 } from "lucide-react";
-import { cleanDisplayPath } from "./CoverageTypeDashboard.jsx";
+import { cleanDisplayPath, sanitizeErrorText } from "./CoverageTypeDashboard.jsx";
 
 export default function UnitTestExecutionVisualizer({
   testSuites = [],
@@ -790,7 +790,7 @@ export default function UnitTestExecutionVisualizer({
                           textOverflow: "ellipsis",
                           whiteSpace: "nowrap",
                         }}
-                        title={`Open test file: ${suite.filePath}`}
+                        title={`Open test file: ${cleanPath}`}
                       >
                         <div style={{ fontSize: 12.5, fontWeight: 650, color: isLight ? "#0f172a" : "#f1f5f9", fontFamily: "var(--font-mono)" }}>
                           {suite.fileName}
@@ -930,7 +930,7 @@ export default function UnitTestExecutionVisualizer({
                           <span style={{ fontWeight: 700, display: "block", marginBottom: 3 }}>
                             ⚠ Error Trace in {suite.fileName}:
                           </span>
-                          {suite.message}
+                          {sanitizeErrorText(suite.message)}
                         </div>
                       )}
 

@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { cleanStoragePath, cleanStorageText } from "../utils/pathSanitizer.js";
 
 /**
  * Helper to find a file by candidate names in either dir or dir's parent
@@ -36,6 +37,7 @@ export const parseJestResults = (coverageDir) => {
         const scenarios = [];
         if (raw.testResults) {
             raw.testResults.forEach(suite => {
+                const cleanedSuiteFile = cleanStoragePath(suite.name);
                 if (suite.assertionResults && suite.assertionResults.length > 0) {
                     suite.assertionResults.forEach(assertion => {
                         scenarios.push({
@@ -43,19 +45,19 @@ export const parseJestResults = (coverageDir) => {
                             suiteName: assertion.ancestorTitles ? assertion.ancestorTitles.join(" > ") : "",
                             status: assertion.status, // "passed", "failed", "pending"
                             duration: assertion.duration || 0,
-                            failureMessages: assertion.failureMessages || [],
-                            testFile: suite.name // Full path, we might need to normalize
+                            failureMessages: (assertion.failureMessages || []).map(m => cleanStorageText(m)),
+                            testFile: cleanedSuiteFile
                         });
                     });
                 } else if (suite.status === "failed" || suite.message) {
                     // Test suite failed at module load or syntax phase
                     scenarios.push({
-                        title: path.basename(suite.name || "Test Suite"),
-                        suiteName: path.basename(suite.name || "Test Suite"),
+                        title: path.basename(cleanedSuiteFile || suite.name || "Test Suite"),
+                        suiteName: path.basename(cleanedSuiteFile || suite.name || "Test Suite"),
                         status: "failed",
                         duration: (suite.endTime && suite.startTime) ? (suite.endTime - suite.startTime) : 0,
-                        failureMessages: suite.message ? [suite.message] : ["Test suite failed to run"],
-                        testFile: suite.name || null
+                        failureMessages: suite.message ? [cleanStorageText(suite.message)] : ["Test suite failed to run"],
+                        testFile: cleanedSuiteFile || null
                     });
                 }
             });
@@ -107,8 +109,8 @@ export const formatScenariosForPrisma = (scenarios) => {
             suiteName: s.suiteName || (Array.isArray(s.ancestorTitles) ? s.ancestorTitles.join(" > ") : null),
             status: s.status || "UNKNOWN",
             durationMs: typeof s.duration === "number" ? s.duration : (typeof s.durationMs === "number" ? s.durationMs : 0),
-            failureMessages: Array.isArray(s.failureMessages) ? s.failureMessages : (s.failureMessages ? [String(s.failureMessages)] : []),
-            testFile: s.testFile || null
+            failureMessages: (Array.isArray(s.failureMessages) ? s.failureMessages : (s.failureMessages ? [String(s.failureMessages)] : [])).map(m => cleanStorageText(m)),
+            testFile: cleanStoragePath(s.testFile) || null
         }))
     };
 };
@@ -135,6 +137,7 @@ export const parseVitestResults = (coverageDir) => {
         const scenarios = [];
         if (raw.testResults) {
             raw.testResults.forEach(suite => {
+                const cleanedSuiteFile = cleanStoragePath(suite.name);
                 if (suite.assertionResults) {
                     suite.assertionResults.forEach(assertion => {
                         scenarios.push({
@@ -142,8 +145,8 @@ export const parseVitestResults = (coverageDir) => {
                             suiteName: assertion.ancestorTitles ? assertion.ancestorTitles.join(" > ") : "",
                             status: assertion.status,
                             duration: assertion.duration || 0,
-                            failureMessages: assertion.failureMessages || [],
-                            testFile: suite.name
+                            failureMessages: (assertion.failureMessages || []).map(m => cleanStorageText(m)),
+                            testFile: cleanedSuiteFile
                         });
                     });
                 }

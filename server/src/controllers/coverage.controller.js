@@ -21,6 +21,7 @@ import {
     toggleScenarioService,
     regenerateScenarioService
 } from "../services/scenarioManager.service.js";
+import { cleanStoragePath, cleanStorageText } from "../utils/pathSanitizer.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -454,8 +455,8 @@ export const getCoverageSummary = async (req, res) => {
         const isFatalFailure = isJobFailed || hasModuleResolutionError;
 
         const scenarioWithErr = latestTestRun?.scenarios?.find(s => s.failureMessages?.length > 0);
-        const latestRunError = scenarioWithErr?.failureMessages?.[0] || latestJob?.errorMessage || null;
-        const failedSuite = scenarioWithErr?.testFile || null;
+        const latestRunError = cleanStorageText(scenarioWithErr?.failureMessages?.[0] || latestJob?.errorMessage || null);
+        const failedSuite = cleanStoragePath(scenarioWithErr?.testFile) || null;
         const hasTestFailures = (latestTestRun?.failedTests || 0) > 0;
 
         let latestRunStatus = "success";
@@ -466,6 +467,15 @@ export const getCoverageSummary = async (req, res) => {
         } else if (latestTestRun?.status === "PASSED") {
             latestRunStatus = "passed";
         }
+
+        const sanitizedTestExecution = latestTestRun ? {
+            ...latestTestRun,
+            scenarios: latestTestRun.scenarios?.map(s => ({
+                ...s,
+                testFile: cleanStoragePath(s.testFile) || null,
+                failureMessages: (s.failureMessages || []).map(m => cleanStorageText(m))
+            }))
+        } : null;
 
         // Return formatted response with explicit distinction between current run and last successful coverage
         return res.status(200).json({
@@ -485,7 +495,7 @@ export const getCoverageSummary = async (req, res) => {
                 latestRunError,
                 failedSuite,
                 hasTestFailures,
-                testExecution: latestTestRun || null,
+                testExecution: sanitizedTestExecution,
                 rawTotals,
                 summaryCreatedAt: summary?.createdAt ?? null,
             },
@@ -852,7 +862,10 @@ export const getCoverageFiles = async (req, res) => {
                     total,
                     totalPages: Math.ceil(total / limit),
                 },
-                files,
+                files: files.map(f => ({
+                    ...f,
+                    filePath: cleanStoragePath(f.filePath) || f.filePath
+                })),
             },
         });
 
@@ -904,8 +917,20 @@ export const getTestExecution = async (req, res) => {
             }).catch(() => [])
             : []) || [];
 
-        // Map to expected frontend structure
-        const latestByType = (type) => testRuns.find(r => r.type === type) || null;
+        // Map to expected frontend structure with sanitized paths
+        const sanitizeRun = (r) => {
+            if (!r) return null;
+            return {
+                ...r,
+                scenarios: r.scenarios?.map(s => ({
+                    ...s,
+                    testFile: cleanStoragePath(s.testFile) || null,
+                    failureMessages: (s.failureMessages || []).map(m => cleanStorageText(m))
+                }))
+            };
+        };
+
+        const latestByType = (type) => sanitizeRun(testRuns.find(r => r.type === type));
 
         return res.status(200).json({
             success: true,
@@ -1303,7 +1328,7 @@ export const getCoverageTestSuites = async (req, res) => {
             }
 
             suites.push({
-                filePath: relPath,
+                filePath: cleanStoragePath(relPath) || relPath,
                 fileName: baseName,
                 framework,
                 category,
@@ -1313,7 +1338,7 @@ export const getCoverageTestSuites = async (req, res) => {
                 failedTests,
                 durationMs,
                 assertions,
-                message,
+                message: cleanStorageText(message),
             });
         }
 
@@ -1470,7 +1495,10 @@ export const getCoverageFunctions = async (req, res) => {
                     total,
                     totalPages: Math.ceil(total / limit),
                 },
-                functions,
+                functions: functions.map(f => ({
+                    ...f,
+                    filePath: cleanStoragePath(f.filePath) || f.filePath
+                })),
             },
         });
 

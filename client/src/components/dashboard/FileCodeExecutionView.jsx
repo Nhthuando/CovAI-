@@ -111,6 +111,8 @@ export default function FileCodeExecutionView({
     return sourceCodeToRender.split("\n");
   }, [sourceCodeToRender]);
 
+  const isCodeOver100 = codeLines.length > 100;
+
   // Index statements by line number for fallback and enrichment
   const stmtsByLine = useMemo(() => {
     const map = {};
@@ -217,10 +219,22 @@ export default function FileCodeExecutionView({
     });
   }, [codeLines, getLineData, filterMode]);
 
-  // Save handler for inline source editor
-  const handleSave = useCallback(async () => {
-    if (!projectId || !filePath) {
-      setErrorMessage("Missing project ID or file path to save.");
+  // Reference to test saver function provided by TestFileViewerPanel
+  const testSaverRef = useRef(null);
+  const [isTestDirty, setIsTestDirty] = useState(false);
+
+  const handleRegisterTestSaver = useCallback((saverFn) => {
+    testSaverRef.current = saverFn;
+  }, []);
+
+  const handleTestDirtyChange = useCallback((dirty) => {
+    setIsTestDirty(dirty);
+  }, []);
+
+  // Synchronized save handler: saves BOTH source file and test file
+  const handleSaveBoth = useCallback(async () => {
+    if (!projectId) {
+      setErrorMessage("Missing project ID to save.");
       setSaveStatus("error");
       return;
     }
@@ -230,23 +244,45 @@ export default function FileCodeExecutionView({
     setErrorMessage("");
 
     try {
-      await updateFileContentApi(projectId, filePath, editorContent);
+      const savePromises = [];
+
+      // 1. Save source file
+      if (filePath) {
+        savePromises.push(
+          updateFileContentApi(projectId, filePath, editorContent)
+            .then(() => ({ type: "source", path: filePath }))
+        );
+      }
+
+      // 2. Save test file if registered
+      if (testSaverRef.current) {
+        savePromises.push(
+          testSaverRef.current()
+            .then((savedPath) => ({ type: "test", path: savedPath }))
+        );
+      }
+
+      await Promise.all(savePromises);
       setIsDirty(false);
+      setIsTestDirty(false);
       setSaveStatus("success");
       setTimeout(() => setSaveStatus(null), 3000);
+
+      // Notify parent to refresh coverage and file cache
       if (onFileSaved) {
         await onFileSaved(filePath);
       }
     } catch (err) {
       console.error("[FileCodeExecutionView] Failed to save code:", err);
       setSaveStatus("error");
-      setErrorMessage(err?.response?.data?.message || err?.message || "Failed to save file.");
+      setErrorMessage(err?.response?.data?.message || err?.message || "Failed to save files.");
     } finally {
       setIsSaving(false);
     }
   }, [projectId, filePath, editorContent, onFileSaved]);
 
-  handleSaveRef.current = handleSave;
+  const handleSaveBothRef = useRef(handleSaveBoth);
+  handleSaveBothRef.current = handleSaveBoth;
 
   const handleDiscard = useCallback(() => {
     setEditorContent(initialSourceCode);
@@ -255,12 +291,25 @@ export default function FileCodeExecutionView({
     setErrorMessage("");
   }, [initialSourceCode]);
 
+  // Bind Ctrl+S inside source code Monaco editor
   const handleEditorDidMount = (editor, monaco) => {
     editorRef.current = editor;
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-      handleSaveRef.current?.();
+      handleSaveBothRef.current?.();
     });
   };
+
+  // Global window listener: Ctrl+S saves both files regardless of which element has focus
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        handleSaveBothRef.current?.();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   const handleEditorWillMount = (monaco) => {
     monaco.editor.defineTheme("covai-dark-inline", {
@@ -299,8 +348,9 @@ export default function FileCodeExecutionView({
         boxShadow: isLight ? "0 4px 16px rgba(15, 23, 42, 0.05)" : "0 4px 20px rgba(0, 0, 0, 0.3)",
         display: "flex",
         flexDirection: "column",
-        height: "100%",
-        minHeight: 520,
+        height: 672,
+        maxHeight: 672,
+        minHeight: 672,
       }}
     >
       {/* Source Sub-Header */}
@@ -328,6 +378,27 @@ export default function FileCodeExecutionView({
           >
             {cleanDisplayPath(filePath)}
           </span>
+
+          {isCodeOver100 && (
+            <span
+              style={{
+                fontSize: 10,
+                padding: "1px 6px",
+                borderRadius: 4,
+                background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.08)",
+                border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.12)",
+                color: isLight ? "#64748b" : "#94a3b8",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 3,
+                fontWeight: 600,
+                userSelect: "none",
+              }}
+              title={`File has ${codeLines.length} lines (>100 lines) — independent scrollbar enabled`}
+            >
+              {codeLines.length} lines
+            </span>
+          )}
 
           {/* Mode Switcher: Coverage Flow vs Edit Code */}
           <div
@@ -551,8 +622,8 @@ export default function FileCodeExecutionView({
               )}
 
               <button
-                onClick={handleSave}
-                disabled={isSaving || !projectId || !isDirty}
+                onClick={handleSaveBoth}
+                disabled={isSaving || !projectId}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -561,17 +632,17 @@ export default function FileCodeExecutionView({
                   borderRadius: 5,
                   background: saveStatus === "success"
                     ? (isLight ? "#16a34a" : "rgba(34, 197, 94, 0.2)")
-                    : isDirty
+                    : (isDirty || isTestDirty)
                       ? (isLight ? "#2563eb" : "linear-gradient(135deg, #0284c7 0%, #0369a1 100%)")
                       : (isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.05)"),
-                  border: isDirty ? "none" : (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)"),
-                  color: isDirty || saveStatus === "success" ? "#ffffff" : (isLight ? "#94a3b8" : "#64748b"),
+                  border: (isDirty || isTestDirty) ? "none" : (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)"),
+                  color: (isDirty || isTestDirty) || saveStatus === "success" ? "#ffffff" : (isLight ? "#94a3b8" : "#64748b"),
                   fontSize: 11,
                   fontWeight: 600,
-                  cursor: isSaving || !projectId || !isDirty ? "not-allowed" : "pointer",
+                  cursor: isSaving || !projectId ? "not-allowed" : "pointer",
                   transition: "all 0.15s ease",
                 }}
-                title="Save source file to disk (Ctrl+S)"
+                title="Save source file & test file to disk (Ctrl+S)"
               >
                 {isSaving ? (
                   <>
@@ -633,12 +704,22 @@ export default function FileCodeExecutionView({
       )}
 
       {/* Main Content Area */}
-      <div style={{ flex: 1, minHeight: 460, position: "relative", overflowY: "auto" }}>
+      <div
+        className="file-panel-scrollbar"
+        style={{
+          flex: 1,
+          minHeight: 0,
+          position: "relative",
+          overflowY: "auto",
+          overflowX: "auto",
+          overscrollBehavior: "contain",
+        }}
+      >
         {viewMode === "editor" ? (
-          <div style={{ height: "100%", minHeight: 460 }}>
+          <div style={{ flex: 1, minHeight: 0, height: "100%", width: "100%" }}>
             <MonacoEditor
               height="100%"
-              minHeight="460px"
+              minHeight="100%"
               language={lang}
               theme={isLight ? "vs" : "covai-dark-inline"}
               value={editorContent}
@@ -659,6 +740,13 @@ export default function FileCodeExecutionView({
                 wordWrap: "on",
                 renderLineHighlight: "all",
                 smoothScrolling: true,
+                scrollbar: {
+                  vertical: isCodeOver100 ? "visible" : "auto",
+                  verticalScrollbarSize: 10,
+                  horizontal: "auto",
+                  horizontalScrollbarSize: 10,
+                  alwaysConsumeMouseWheel: true,
+                },
               }}
             />
           </div>
@@ -849,7 +937,9 @@ export default function FileCodeExecutionView({
         }}
       >
         <span>Source: {cleanDisplayPath(filePath)}</span>
-        <span>{codeLines.length} lines · {coveredLines}/{executableLines} covered</span>
+        <span>
+          {codeLines.length} lines · {coveredLines}/{executableLines} covered
+        </span>
       </div>
     </div>
   );
@@ -870,12 +960,16 @@ export default function FileCodeExecutionView({
       onUpdateSuggestionCode={onUpdateSuggestionCode}
       lastApplyResult={lastApplyResult}
       progressStep={progressStep}
-      onSuggestMissingTest={() => onSuggestTestcase && onSuggestTestcase(filePath)}
       onOpenFile={onOpenFile}
       onTestFileSaved={async (savedPath) => {
         if (onFileSaved) await onFileSaved(savedPath);
       }}
       isLight={isLight}
+      isGlobalSaving={isSaving}
+      globalSaveSuccess={saveStatus === "success"}
+      onRegisterTestSaver={handleRegisterTestSaver}
+      onTestDirtyChange={handleTestDirtyChange}
+      onSaveBoth={handleSaveBoth}
     />
   );
 
@@ -1058,7 +1152,12 @@ export default function FileCodeExecutionView({
         {/* Right: Quick Action Buttons */}
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <button
-            onClick={() => onSuggestTestcase && onSuggestTestcase(filePath)}
+            onClick={() => {
+              if (layoutMode === "source") {
+                setLayoutMode("split");
+              }
+              onSuggestTestcase && onSuggestTestcase(filePath);
+            }}
             disabled={isLoadingSuggestions}
             style={{
               display: "flex",
@@ -1083,7 +1182,7 @@ export default function FileCodeExecutionView({
             ) : (
               <Sparkles size={12} />
             )}
-            <span>Suggest Missing Test</span>
+            <span>{isLoadingSuggestions ? "Generating Suggestions..." : "Suggest Missing Test"}</span>
           </button>
 
           <button
@@ -1118,12 +1217,13 @@ export default function FileCodeExecutionView({
             gap: 12,
             padding: 12,
             background: isLight ? "#f1f5f9" : "#05070b",
+            alignItems: "stretch",
           }}
         >
-          <div style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
+          <div style={{ minWidth: 0, display: "flex", flexDirection: "column", height: "100%" }}>
             {renderSourcePanel()}
           </div>
-          <div style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
+          <div style={{ minWidth: 0, display: "flex", flexDirection: "column", height: "100%" }}>
             {renderTestPanel()}
           </div>
         </div>

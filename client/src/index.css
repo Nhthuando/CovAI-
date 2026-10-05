@@ -287,3 +287,54 @@ select:-webkit-autofill:focus {
 .coverage-line-uncovered {
   background: rgba(245, 158, 11, 0.08) !important;
 }
+
+/* Independent scrollbar for code and test file panels */
+.file-panel-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.45) rgba(0, 0, 0, 0.04);
+  overscroll-behavior: contain;
+}
+
+.file-panel-scrollbar::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+.file-panel-scrollbar::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 4px;
+}
+
+.file-panel-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.5);
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background-clip: content-box;
+  transition: background-color 0.2s ease;
+}
+
+.file-panel-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(124, 58, 237, 0.8);
+  border: 1px solid transparent;
+  background-clip: content-box;
+}
+
+.dark .file-panel-scrollbar,
+[data-theme="dark"] .file-panel-scrollbar {
+  scrollbar-color: rgba(167, 139, 250, 0.4) rgba(255, 255, 255, 0.03);
+}
+
+.dark .file-panel-scrollbar::-webkit-scrollbar-track,
+[data-theme="dark"] .file-panel-scrollbar::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.dark .file-panel-scrollbar::-webkit-scrollbar-thumb,
+[data-theme="dark"] .file-panel-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(167, 139, 250, 0.45);
+}
+
+.dark .file-panel-scrollbar::-webkit-scrollbar-thumb:hover,
+[data-theme="dark"] .file-panel-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(167, 139, 250, 0.85);
+}
