@@ -2018,6 +2018,12 @@ The user is working on project: ${project.name}.
           .json({ success: false, message: error.message });
       }
 
+      if (error.status) {
+        return res
+          .status(error.status)
+          .json({ success: false, message: error.message, code: error.code });
+      }
+
       return res.status(500).json({
         success: false,
         message: "Internal server error",

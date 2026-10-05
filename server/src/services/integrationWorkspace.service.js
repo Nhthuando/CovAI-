@@ -12,37 +12,70 @@ function categorizeScenario(name) {
     return "Positive";
 }
 
+const endpointCache = new Map();
+const firebaseCache = new Map();
+const aiTestParseCache = new Map(); // Structure: Map<snapshotId, Map<aiTestId, { updatedAt: number, requests: Array }>>
+
 /**
  * Builds the data payload for the Integration Test workspace.
  * Re-extracts endpoints dynamically from source code and merges with Jest execution results.
  */
 export const buildIntegrationWorkspace = async (snapshotId) => {
-    // 1. Gather API Endpoints
-    const sourceCode = await loadSourceCode(snapshotId).catch(() => []);
-    const discoveredEndpoints = extractValidEndpoints(sourceCode);
+    const start = Date.now();
 
-    // 2. Gather Test Executions
-    const testRuns = await prisma.testRun.findMany({
-        where: { snapshotId, type: "SUPERTEST" },
-        orderBy: { createdAt: "desc" },
-        take: 1
-    });
+    const startDb = Date.now();
+    // 1. Run all DB queries concurrently
+    const [testRuns, coverageSummary, coverageFiles, aiTests, snapshot, jobs] = await Promise.all([
+        prisma.testRun.findMany({ where: { snapshotId, type: "SUPERTEST" }, orderBy: { createdAt: "desc" }, take: 1 }),
+        prisma.coverageSummary.findUnique({ where: { snapshotId } }),
+        prisma.coverageFile.findMany({ where: { snapshotId } }),
+        prisma.aiTest.findMany({ where: { snapshotId } }),
+        prisma.projectSnapshot.findUnique({ where: { id: snapshotId }, select: { storagePath: true, rootDir: true } }),
+        prisma.job.findMany({ where: { snapshotId }, orderBy: { createdAt: "desc" }, select: { id: true, type: true, status: true, createdAt: true, startedAt: true, finishedAt: true, errorMessage: true } })
+    ]);
+    const dbTime = Date.now() - startDb;
     const latestRun = testRuns[0] || null;
 
-    // 3. Gather Code Coverage
-    const coverageSummary = await prisma.coverageSummary.findUnique({
-        where: { snapshotId }
-    });
+    // 2. Load API Endpoints (Cached by snapshotId)
+    const startAst = Date.now();
+    let discoveredEndpointsCache = endpointCache.get(snapshotId);
+    let discoveredEndpoints = [];
+    let sourceFilesCount = 0;
+    let sourceTime = 0;
+    if (!discoveredEndpointsCache) {
+        const startSource = Date.now();
+        const sourceCode = await loadSourceCode(snapshotId).catch(() => []);
+        sourceTime = Date.now() - startSource;
+        sourceFilesCount = sourceCode.length;
+        discoveredEndpoints = extractValidEndpoints(sourceCode);
+        endpointCache.set(snapshotId, { discoveredEndpoints, sourceFilesCount });
+    } else {
+        sourceFilesCount = discoveredEndpointsCache.sourceFilesCount;
+        discoveredEndpoints = discoveredEndpointsCache.discoveredEndpoints;
+    }
+    const astTime = Date.now() - startAst;
 
-    const coverageFiles = await prisma.coverageFile.findMany({
-        where: { snapshotId }
-    });
+    // 3. Gather Scenarios (Cached by snapshotId + latestRun)
+    const startFb = Date.now();
+    let testScenarios = [];
+    const firebaseCacheKey = `${snapshotId}_${latestRun?.id || 'none'}`;
+    if (firebaseCache.has(firebaseCacheKey)) {
+        testScenarios = firebaseCache.get(firebaseCacheKey);
+    } else if (snapshot?.storagePath) {
+        try {
+            const file = getBucket().file(`${snapshot.storagePath}/integration-scenarios.json`);
+            const [exists] = await file.exists();
+            if (exists) {
+                const [content] = await file.download();
+                testScenarios = JSON.parse(content.toString("utf8"));
+            }
+            firebaseCache.set(firebaseCacheKey, testScenarios);
+        } catch (e) {
+            console.error("[IntegrationWorkspace] Failed to download scenarios from Firebase:", e);
+        }
+    }
+    const fbTime = Date.now() - startFb;
 
-    // 4. Gather Generated AI Tests (to check if generation exists)
-    const aiTests = await prisma.aiTest.findMany({
-        where: { snapshotId }
-    });
-    
     // We filter only SUPERTEST framework tests
     const integrationTests = aiTests.filter(t => {
         if (!t.metaJson) return false;
@@ -52,33 +85,38 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
         } catch { return false; }
     });
 
-    // 5. Gather detailed scenarios (From Firebase storage)
-    let testScenarios = [];
-    const snapshot = await prisma.projectSnapshot.findUnique({
-        where: { id: snapshotId },
-        select: { storagePath: true, rootDir: true }
-    });
-    
-    if (snapshot?.storagePath) {
-        try {
-            const file = getBucket().file(`${snapshot.storagePath}/integration-scenarios.json`);
-            const [exists] = await file.exists();
-            if (exists) {
-                const [content] = await file.download();
-                testScenarios = JSON.parse(content.toString("utf8"));
-            }
-        } catch (e) {
-            console.error("[IntegrationWorkspace] Failed to download scenarios from Firebase:", e);
-        }
+    // 6. Map Endpoints
+    // Parse all integration tests to extract Supertest calls (using AST cache)
+    const startTestParse = Date.now();
+    let snapshotParseCache = aiTestParseCache.get(snapshotId);
+    if (!snapshotParseCache) {
+        snapshotParseCache = new Map();
+        aiTestParseCache.set(snapshotId, snapshotParseCache);
     }
 
-    // 6. Map Endpoints
-    // Parse all integration tests to extract Supertest calls
     const allParsedRequests = [];
     integrationTests.forEach(t => {
-        const requests = extractTestRequests(t.content, t.filePath);
-        allParsedRequests.push(...requests);
+        const currentUpdatedAt = t.updatedAt ? t.updatedAt.getTime() : 0;
+        const cacheEntry = snapshotParseCache.get(t.id);
+        
+        if (cacheEntry && cacheEntry.updatedAt === currentUpdatedAt) {
+            allParsedRequests.push(...cacheEntry.requests);
+        } else {
+            const requests = extractTestRequests(t.content, t.filePath);
+            snapshotParseCache.set(t.id, { updatedAt: currentUpdatedAt, requests });
+            allParsedRequests.push(...requests);
+        }
     });
+
+    // Cleanup deleted aiTests to prevent memory leak
+    const currentTestIds = new Set(integrationTests.map(t => t.id));
+    for (const cachedId of snapshotParseCache.keys()) {
+        if (!currentTestIds.has(cachedId)) {
+            snapshotParseCache.delete(cachedId);
+        }
+    }
+    
+    const testParseTime = Date.now() - startTestParse;
 
     const isMatch = (parsedReq, discoveredEp) => {
         if (parsedReq.method !== discoveredEp.method) return false;
@@ -228,28 +266,70 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
         } catch { return false; }
     });
 
-    const jobs = await prisma.job.findMany({
-        where: { snapshotId },
-        orderBy: { createdAt: "desc" },
-        select: { id: true, type: true, status: true, createdAt: true }
-    });
-
     const analyzeJob = jobs.find(j => j.type === "ANALYSIS");
     const generateJob = jobs.find(j => j.type === "AI_TESTS");
     // Execution pipeline could be COVERAGE_PIPELINE or SUPERTEST_COVERAGE_PIPELINE
     const executeJob = jobs.find(j => j.type === "COVERAGE_PIPELINE" || j.type === "SUPERTEST_COVERAGE_PIPELINE");
+
+    // Phase 6B: Execution Semantics
+    let semanticState = "NOT_EXECUTED";
+    let executionJobId = null;
+    let testRunId = null;
+    
+    if (executeJob) {
+        executionJobId = executeJob.id;
+        if (executeJob.status === "RUNNING" || executeJob.status === "QUEUED") {
+            semanticState = "RUNNING";
+        } else if (executeJob.status === "CANCELED") {
+            semanticState = "CANCELED";
+        } else if (executeJob.status === "FAILED") {
+            if (latestRun && latestRun.createdAt >= executeJob.createdAt) {
+                // TestRun exists and was created during this job
+                if (latestRun.failedTests > 0) {
+                    semanticState = "TESTS_FAILED";
+                } else if (latestRun.totalTests === 0) {
+                    semanticState = "FAILED_BEFORE_TEST_EXECUTION";
+                } else {
+                    semanticState = "TESTS_FAILED"; // fallback
+                }
+            } else {
+                semanticState = "FAILED_BEFORE_TEST_EXECUTION";
+            }
+        } else if (executeJob.status === "SUCCESS") {
+            if (latestRun && latestRun.createdAt >= executeJob.createdAt) {
+                if (latestRun.totalTests === 0) {
+                    semanticState = "NO_TESTS_EXECUTED";
+                } else if (latestRun.failedTests > 0) {
+                    semanticState = "TESTS_FAILED";
+                } else if (latestRun.passedTests === 0 && latestRun.skippedTests > 0) {
+                    semanticState = "SKIPPED";
+                } else {
+                    semanticState = "SUCCESS";
+                }
+            } else {
+                // SUCCESS job but no TestRun? This implies no tests existed to run.
+                semanticState = "NO_TESTS_EXECUTED";
+            }
+        }
+    }
+
+    if (latestRun && (!executeJob || latestRun.createdAt >= executeJob.createdAt)) {
+        testRunId = latestRun.id;
+    }
+    const totalTime = Date.now() - start;
+    console.log(`[PERF: Integration Workspace] snapshotId=${snapshotId} Total=${totalTime}ms | FS_Read=${sourceTime}ms | AST_Extract=${astTime}ms | DB=${dbTime}ms | Firebase=${fbTime}ms | Test_Parse=${testParseTime}ms`);
 
     return {
         snapshot: {
             id: snapshotId,
             rootDir: snapshot?.rootDir || "",
             framework: "Express", // Infer or placeholder
-            sourceFilesAnalyzed: sourceCode.length,
+            sourceFilesAnalyzed: sourceFilesCount,
         },
         jobs: {
             analyze: analyzeJob ? { id: analyzeJob.id, status: analyzeJob.status } : null,
             generate: generateJob ? { id: generateJob.id, status: generateJob.status } : null,
-            execute: executeJob ? { id: executeJob.id, status: executeJob.status } : null,
+            execute: executeJob ? { id: executeJob.id, status: executeJob.status, errorMessage: executeJob.errorMessage, createdAt: executeJob.createdAt } : null,
         },
         summary: {
             discoveredApis: discoveredEndpoints.length,
@@ -261,6 +341,9 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             failedTests: latestRun?.failedTests || 0,
             skippedTests: latestRun?.skippedTests || 0,
             durationMs: latestRun?.durationMs || 0,
+            semanticState,
+            executionJobId,
+            testRunId,
             codeCoverage: coverageSummary ? {
                 statement: coverageSummary.stmtsPct,
                 branch: coverageSummary.branchesPct,
@@ -273,7 +356,53 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
                 branch: cf.branchesPct,
                 function: cf.funcsPct,
                 line: cf.linesPct
-            }))
+            })),
+            provenance: {
+                apiCoverage: {
+                    source: "Endpoint Analysis + Test Scenario Mapping",
+                    metric: "API Endpoint Coverage",
+                    formula: "tested endpoints / discovered endpoints × 100",
+                    scope: "Discovered Express Endpoints",
+                    snapshotId,
+                    jobId: generateJob?.id || null,
+                    testRunId: null,
+                    timestamp: generateJob?.createdAt || new Date(),
+                    limitation: "Static mapping; does not guarantee runtime execution hit"
+                },
+                execution: {
+                    source: "TestRunner Report",
+                    metric: "Execution Results",
+                    formula: "Pass / Fail / Skip from test runner output",
+                    scope: "Integration Tests",
+                    snapshotId,
+                    jobId: executionJobId,
+                    testRunId: testRunId,
+                    timestamp: latestRun?.createdAt || executeJob?.createdAt || null,
+                    limitation: null
+                },
+                codeCoverage: {
+                    source: "Coverage Parser (Istanbul/V8)",
+                    metric: "Project Code Coverage",
+                    formula: "Executed instructions / Total instructions × 100",
+                    scope: "All project source files",
+                    snapshotId,
+                    jobId: executionJobId,
+                    testRunId: testRunId,
+                    timestamp: coverageSummary?.createdAt || latestRun?.createdAt || null,
+                    limitation: "May represent the latest coverage parser execution rather than Integration-only coverage"
+                },
+                scenarioCount: {
+                    source: "AI Test Generation",
+                    metric: "Scenario Count",
+                    formula: "Parsed scenarios from generated test files",
+                    scope: "Integration Test Scripts",
+                    snapshotId,
+                    jobId: generateJob?.id || null,
+                    testRunId: null,
+                    timestamp: generateJob?.createdAt || new Date(),
+                    limitation: "Static count of 'it' or 'test' blocks; dynamically skipped tests may not execute"
+                }
+            }
         },
         generation: {
             hasAnalysis: analyzeJob?.status === "SUCCESS",
@@ -287,12 +416,14 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
         endpoints,
         aiTests: integrationTests.map(t => {
             const meta = (typeof t.metaJson === 'string' ? JSON.parse(t.metaJson) : t.metaJson) || {};
+            const cacheEntry = snapshotParseCache.get(t.id);
+            const cachedRequests = cacheEntry ? cacheEntry.requests : extractTestRequests(t.content, t.filePath);
             return {
                 id: t.id,
                 filePath: t.filePath,
                 status: meta.status || "DRAFT",
                 isValid: meta.isValid !== false,
-                requests: extractTestRequests(t.content, t.filePath).map(r => {
+                requests: cachedRequests.map(r => {
                     const metaReq = meta.requests ? meta.requests.find(mr => mr.testName === r.testName) : null;
                     const fallbackId = crypto.createHash('md5').update(r.testName).digest('hex').substring(0, 8);
                     return { 

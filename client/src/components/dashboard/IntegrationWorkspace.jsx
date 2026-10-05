@@ -10,6 +10,8 @@ import IntegrationTargetsPane from "./integration/IntegrationTargetsPane.jsx";
 import IntegrationScenariosPane from "./integration/IntegrationScenariosPane.jsx";
 import IntegrationLiveProgress from "./integration/IntegrationLiveProgress.jsx";
 import IntegrationHistoryPane from "./integration/IntegrationHistoryPane.jsx";
+import MetricProvenancePopover from "./integration/MetricProvenancePopover.jsx";
+import IntegrationEndpointDetail from "./integration/IntegrationEndpointDetail.jsx";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
@@ -140,12 +142,19 @@ export default function IntegrationWorkspace({
   onOpenFile,
   onOpenCFG,
   onSuggestTestcase,
-  onOpenArchitecture
+  onOpenArchitecture,
+  initialContext,
+  onContextChange
 }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const [workspace, setWorkspace] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [workspace, setWorkspace] = useState(() => {
+    return (initialContext && initialContext.snapshotId === snapshotId && initialContext.projectId === projectId)
+      ? (initialContext.cachedWorkspace || null)
+      : null;
+  });
+  const [loading, setLoading] = useState(!workspace);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
 
   // Active Jobs State
@@ -155,11 +164,48 @@ export default function IntegrationWorkspace({
   const [selectedTestIds, setSelectedTestIds] = useState([]);
 
   // UI View State
-  const [selectedEndpointIndex, setSelectedEndpointIndex] = useState(null);
-  const [rightPaneTab, setRightPaneTab] = useState("LIVE"); // "LIVE" | "HISTORY" | "SUMMARY"
+  const [selectedEndpointIndex, setSelectedEndpointIndex] = useState(() => {
+    return (initialContext && initialContext.snapshotId === snapshotId) 
+      ? (initialContext.selectedEndpointIndex ?? null) 
+      : null;
+  });
+  const [rightPaneTab, setRightPaneTab] = useState(() => {
+    return (initialContext && initialContext.snapshotId === snapshotId) 
+      ? (initialContext.rightPaneTab ?? "SUMMARY") 
+      : "SUMMARY";
+  });
+
+  // 1. Sync context upwards when it changes
+  useEffect(() => {
+    if (onContextChange && snapshotId && projectId) {
+      onContextChange({
+        snapshotId,
+        projectId,
+        rightPaneTab,
+        selectedEndpointIndex,
+        cachedWorkspace: workspace
+      });
+    }
+  }, [rightPaneTab, selectedEndpointIndex, snapshotId, projectId, workspace, onContextChange]);
+
+
+  // 3. Fallback safely if selected endpoint index is out of bounds
+  useEffect(() => {
+    if (workspace?.endpoints && selectedEndpointIndex !== null) {
+      if (selectedEndpointIndex >= workspace.endpoints.length) {
+        setSelectedEndpointIndex(null);
+        setRightPaneTab("SUMMARY");
+      }
+    }
+  }, [workspace?.endpoints, selectedEndpointIndex]);
 
   const load = useCallback(async () => {
     if (!snapshotId) return;
+    if (workspace) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     try {
       const res = await getIntegrationWorkspace(snapshotId);
       setWorkspace(res.data);
@@ -194,9 +240,14 @@ export default function IntegrationWorkspace({
           setActiveJobType(runningJobType);
           setActiveJobStatus("RUNNING");
           setRightPaneTab("LIVE");
+        } else if (!initialContext || initialContext.snapshotId !== snapshotId) {
+          if (fetchedJobs.analyze?.status === "SUCCESS" || res.data?.aiTests?.length > 0) {
+            setRightPaneTab((prev) => prev === "LIVE" ? "SUMMARY" : prev);
+          }
         }
       }
 
+      // Preserve previously selected test ids if they still exist, otherwise reset to all
       if (res.data?.aiTests && selectedTestIds.length === 0) {
         const allIds = res.data.aiTests.flatMap((t) =>
           t.requests.map((r) => `${t.id}::${r.testName}`),
@@ -208,6 +259,7 @@ export default function IntegrationWorkspace({
       setError(err.message || "Failed to load workspace.");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, [snapshotId, activeJobId]);
 
@@ -272,6 +324,7 @@ export default function IntegrationWorkspace({
     setRightPaneTab("LIVE");
     try {
       const res = await onGenerate();
+      if (res === undefined) return; // User was shown the overwrite confirm modal
       const jobId = res?.data?.job?.id;
       if (jobId) {
         setActiveJobId(jobId);
@@ -512,6 +565,12 @@ export default function IntegrationWorkspace({
             >
               Phase 2
             </span>
+            {refreshing && (
+              <span style={{ fontSize: 11, color: "var(--color-info)", opacity: 0.8, display: "flex", alignItems: "center", gap: 4 }}>
+                <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+                Refreshing...
+              </span>
+            )}
           </h1>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -599,13 +658,13 @@ export default function IntegrationWorkspace({
         </div>
       )}
 
-      {/* 3-PANE LAYOUT */}
+      {/* MASTER-DETAIL LAYOUT */}
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-        {/* LEFT PANE: Targets */}
+        {/* LEFT PANE (MASTER): Targets */}
         <div
           style={{
-            width: 280,
-            minWidth: 240,
+            width: 300,
+            minWidth: 260,
             borderRight: "1px solid var(--color-border)",
             background: "var(--color-surface)",
             display: "flex",
@@ -620,292 +679,427 @@ export default function IntegrationWorkspace({
           />
         </div>
 
-        {/* CENTER PANE: Scenarios */}
+        {/* RIGHT PANE (DETAIL): Context */}
         <div
           style={{
             flex: 1,
-            minWidth: 350,
-            borderRight: "1px solid var(--color-border)",
+            minWidth: 500,
             background: "var(--color-bg)",
             display: "flex",
             flexDirection: "column",
+            overflow: "hidden"
           }}
         >
-          <IntegrationScenariosPane
-            endpoints={workspace?.endpoints || []}
-            onOpenCFG={onOpenCFG}
-            onSuggestTestcase={onSuggestTestcase}
-            onOpenArchitecture={onOpenArchitecture}
-            aiTests={aiTests}
-            selectedEndpoint={selectedEndpoint}
-            hasGeneratedTests={hasGeneratedTests}
-            isApproved={isApproved}
-            selectedTestIds={selectedTestIds}
-            setSelectedTestIds={setSelectedTestIds}
-            snapshotId={snapshotId}
-            onScenarioChange={load}
-            onError={setError}
-          />
-        </div>
-
-        {/* RIGHT PANE: Execution & Analysis */}
-        <div
-          style={{
-            width: 400,
-            minWidth: 350,
-            background: "var(--color-surface)",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              borderBottom: "1px solid var(--color-border)",
-            }}
-          >
-            <div
-              onClick={() => setRightPaneTab("LIVE")}
-              style={{
-                flex: 1,
-                padding: "12px",
-                textAlign: "center",
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: "pointer",
-                color:
-                  rightPaneTab === "LIVE"
-                    ? "var(--color-primary)"
-                    : "var(--color-text-secondary)",
-                borderBottom:
-                  rightPaneTab === "LIVE"
-                    ? "2px solid var(--color-primary)"
-                    : "2px solid transparent",
-                transition: "all 0.15s",
-              }}
-            >
-              LIVE PROGRESS
-            </div>
-            <div
-              onClick={() => setRightPaneTab("SUMMARY")}
-              style={{
-                flex: 1,
-                padding: "12px",
-                textAlign: "center",
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: "pointer",
-                color:
-                  rightPaneTab === "SUMMARY"
-                    ? "var(--color-info, #3b82f6)"
-                    : "var(--color-text-secondary)",
-                borderBottom:
-                  rightPaneTab === "SUMMARY"
-                    ? "2px solid var(--color-info, #3b82f6)"
-                    : "2px solid transparent",
-                transition: "all 0.15s",
-              }}
-            >
-              SUMMARY
-            </div>
-            <div
-              onClick={() => setRightPaneTab("HISTORY")}
-              style={{
-                flex: 1,
-                padding: "12px",
-                textAlign: "center",
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: "pointer",
-                color:
-                  rightPaneTab === "HISTORY"
-                    ? "var(--color-text)"
-                    : "var(--color-text-secondary)",
-                borderBottom:
-                  rightPaneTab === "HISTORY"
-                    ? "2px solid var(--color-text)"
-                    : "2px solid transparent",
-                transition: "all 0.15s",
-              }}
-            >
-              HISTORY
-            </div>
-          </div>
-
-          <div style={{ flex: 1, overflow: "hidden" }}>
-            {rightPaneTab === "LIVE" && (
-              <IntegrationLiveProgress
-                activeJobId={activeJobId}
-                activeJobType={activeJobType}
-                activeJobStatus={activeJobStatus}
-                error={error}
-                activeLogs={activeLogs}
-                parseProgressSteps={parseProgressSteps}
-              />
-            )}
-            {rightPaneTab === "SUMMARY" && (
-              <div style={{ padding: 24, overflowY: "auto", height: "100%" }}>
-                <h3
-                  style={{ margin: "0 0 16px", fontSize: 16, color: "#e6edf3" }}
+          {selectedEndpointIndex !== null ? (
+            <IntegrationEndpointDetail
+              endpoint={selectedEndpoint}
+              aiTests={aiTests}
+              hasGeneratedTests={hasGeneratedTests}
+              isApproved={isApproved}
+              selectedTestIds={selectedTestIds}
+              setSelectedTestIds={setSelectedTestIds}
+              snapshotId={snapshotId}
+              projectId={projectId}
+              endpoints={endpoints}
+              onOpenCFG={onOpenCFG}
+              onSuggestTestcase={onSuggestTestcase}
+              onOpenArchitecture={onOpenArchitecture}
+              onScenarioChange={load}
+              onError={setError}
+            />
+          ) : (
+            <div className="flex flex-col h-full bg-[var(--color-surface)]">
+              <div
+                style={{
+                  display: "flex",
+                  borderBottom: "1px solid var(--color-border)",
+                }}
+              >
+                <div
+                  onClick={() => setRightPaneTab("LIVE")}
+                  style={{
+                    flex: 1,
+                    padding: "12px",
+                    textAlign: "center",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    color:
+                      rightPaneTab === "LIVE"
+                        ? "var(--color-primary)"
+                        : "var(--color-text-secondary)",
+                    borderBottom:
+                      rightPaneTab === "LIVE"
+                        ? "2px solid var(--color-primary)"
+                        : "2px solid transparent",
+                    transition: "all 0.15s",
+                  }}
                 >
-                  Execution Summary
-                </h3>
-                {!execution ? (
-                  <div style={{ color: "#8b949e", fontSize: 13 }}>
-                    No recent executions found.
-                  </div>
-                ) : (
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 16,
-                    }}
-                  >
+                  LIVE PROGRESS
+                </div>
+                <div
+                  onClick={() => setRightPaneTab("SUMMARY")}
+                  style={{
+                    flex: 1,
+                    padding: "12px",
+                    textAlign: "center",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    color:
+                      rightPaneTab === "SUMMARY"
+                        ? "var(--color-info, #3b82f6)"
+                        : "var(--color-text-secondary)",
+                    borderBottom:
+                      rightPaneTab === "SUMMARY"
+                        ? "2px solid var(--color-info, #3b82f6)"
+                        : "2px solid transparent",
+                    transition: "all 0.15s",
+                  }}
+                >
+                  SUMMARY
+                </div>
+                <div
+                  onClick={() => setRightPaneTab("HISTORY")}
+                  style={{
+                    flex: 1,
+                    padding: "12px",
+                    textAlign: "center",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    color:
+                      rightPaneTab === "HISTORY"
+                        ? "var(--color-text)"
+                        : "var(--color-text-secondary)",
+                    borderBottom:
+                      rightPaneTab === "HISTORY"
+                        ? "2px solid var(--color-text)"
+                        : "2px solid transparent",
+                    transition: "all 0.15s",
+                  }}
+                >
+                  HISTORY
+                </div>
+              </div>
+
+              <div style={{ flex: 1, overflow: "hidden" }}>
+                {rightPaneTab === "LIVE" && (
+                  <IntegrationLiveProgress
+                    activeJobId={activeJobId}
+                    activeJobType={activeJobType}
+                    activeJobStatus={activeJobStatus}
+                    error={error}
+                    activeLogs={activeLogs}
+                    parseProgressSteps={parseProgressSteps}
+                  />
+                )}
+                {rightPaneTab === "SUMMARY" && (
+                  <div style={{ padding: 24, overflowY: "auto", height: "100%" }}>
+                    {/* SCENARIO GENERATION */}
                     <div
                       style={{
                         padding: 16,
                         background: "rgba(255,255,255,.02)",
                         border: "1px solid rgba(255,255,255,.05)",
                         borderRadius: 8,
+                        marginBottom: 24,
                       }}
                     >
                       <div
                         style={{
-                          color:
-                            execution.status === "PASSED"
-                              ? "#22c55e"
-                              : "#f87171",
-                          fontSize: 24,
-                          fontWeight: 700,
-                          marginBottom: 8,
-                        }}
-                      >
-                        {execution.status}
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
                           color: "#8b949e",
-                          fontSize: 13,
+                          fontSize: 12,
+                          textTransform: "uppercase",
+                          fontWeight: 600,
+                          marginBottom: 12,
+                          display: "flex",
+                          justifyContent: "space-between"
                         }}
                       >
-                        <span>
-                          Passed:{" "}
-                          <strong style={{ color: "#e6edf3" }}>
-                            {summary?.passedTests || 0}
-                          </strong>
+                        <MetricProvenancePopover provenance={summary?.provenance?.scenarioCount}>
+                          <span>Test Generation</span>
+                        </MetricProvenancePopover>
+                      </div>
+                      
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#8b949e", marginBottom: 8 }}>
+                        <span>Status</span>
+                        <span style={{ 
+                          color: !generation?.hasAnalysis ? "#8b949e" : (!generation?.hasGeneratedTests ? "#fbbf24" : "#22c55e"),
+                          fontWeight: "bold" 
+                        }}>
+                          {!generation?.hasAnalysis ? "NOT GENERATED" : (!generation?.hasGeneratedTests ? "NO SCENARIOS" : "READY")}
                         </span>
-                        <span>
-                          Failed:{" "}
-                          <strong style={{ color: "#e6edf3" }}>
-                            {summary?.failedTests || 0}
-                          </strong>
-                        </span>
-                        <span>
-                          Total:{" "}
-                          <strong style={{ color: "#e6edf3" }}>
-                            {summary?.totalTests || 0}
-                          </strong>
-                        </span>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#8b949e", marginBottom: 8 }}>
+                        <span>Targeted APIs</span>
+                        <span style={{ color: "#e6edf3", fontWeight: "bold" }}>{generation?.targetedApis || 0}</span>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#8b949e" }}>
+                        <span>Generated Scenarios</span>
+                        <span style={{ color: "#e6edf3", fontWeight: "bold" }}>{generation?.generatedScenarios || 0}</span>
                       </div>
                     </div>
-                    {summary?.codeCoverage && (
-                      <div
-                        style={{
-                          padding: 16,
-                          background: "rgba(255,255,255,.02)",
-                          border: "1px solid rgba(255,255,255,.05)",
-                          borderRadius: 8,
-                        }}
-                      >
-                        <div
-                          style={{
-                            color: "#8b949e",
-                            fontSize: 12,
-                            textTransform: "uppercase",
-                            fontWeight: 600,
-                            marginBottom: 12,
-                          }}
-                        >
-                          Code Coverage
-                        </div>
-                        <div
-                          style={{
-                            display: "grid",
-                            gridTemplateColumns: "1fr 1fr",
-                            gap: 12,
-                            fontSize: 13,
-                          }}
-                        >
-                          <div>
-                            Statements:{" "}
-                            <strong
-                              style={{
-                                color:
-                                  summary.codeCoverage.statement > 80
-                                    ? "#22c55e"
-                                    : "#fbbf24",
-                              }}
-                            >
-                              {Number(summary.codeCoverage.statement).toFixed(
-                                1,
-                              )}
-                              %
-                            </strong>
-                          </div>
-                          <div>
-                            Branches:{" "}
-                            <strong
-                              style={{
-                                color:
-                                  summary.codeCoverage.branch > 80
-                                    ? "#22c55e"
-                                    : "#fbbf24",
-                              }}
-                            >
-                              {Number(summary.codeCoverage.branch).toFixed(1)}%
-                            </strong>
-                          </div>
-                          <div>
-                            Functions:{" "}
-                            <strong
-                              style={{
-                                color:
-                                  summary.codeCoverage.function > 80
-                                    ? "#22c55e"
-                                    : "#fbbf24",
-                              }}
-                            >
-                              {Number(summary.codeCoverage.function).toFixed(1)}
-                              %
-                            </strong>
-                          </div>
-                          <div>
-                            Lines:{" "}
-                            <strong
-                              style={{
-                                color:
-                                  summary.codeCoverage.line > 80
-                                    ? "#22c55e"
-                                    : "#fbbf24",
-                              }}
-                            >
-                              {Number(summary.codeCoverage.line).toFixed(1)}%
-                            </strong>
-                          </div>
-                        </div>
+
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+                      <MetricProvenancePopover provenance={summary?.provenance?.execution}>
+                        <h3 style={{ margin: 0, fontSize: 16, color: "#e6edf3" }}>
+                          Execution Summary
+                        </h3>
+                      </MetricProvenancePopover>
+                    </div>
+                    {!execution ? (
+                      <div style={{ color: "#8b949e", fontSize: 13 }}>
+                        No recent executions found.
                       </div>
+                    ) : (
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 16,
+                      }}
+                    >
+                      {(() => {
+                        const { semanticState, executionJobId, testRunId } = summary || {};
+                        let title = "Unknown Status";
+                        let description = "";
+                        let color = "#8b949e";
+                        
+                        if (semanticState === "RUNNING") {
+                          title = "Running";
+                          description = "Execution is currently in progress.";
+                          color = "var(--color-primary)";
+                        } else if (semanticState === "CANCELED") {
+                          title = "Canceled";
+                          description = "Execution was canceled by the user.";
+                          color = "var(--color-warning)";
+                        } else if (semanticState === "TESTS_FAILED") {
+                          title = "Tests Failed";
+                          description = "Execution completed, but some tests failed.";
+                          color = "#f87171";
+                        } else if (semanticState === "FAILED_BEFORE_TEST_EXECUTION") {
+                          title = "Infrastructure Failure";
+                          description = workspace?.jobs?.execute?.errorMessage || "Test runner did not complete.";
+                          color = "#f87171";
+                        } else if (semanticState === "NO_TESTS_EXECUTED") {
+                          title = "No Tests Executed";
+                          description = "Pipeline completed but no tests were executed.";
+                          color = "var(--color-warning)";
+                        } else if (semanticState === "SKIPPED") {
+                          title = "Skipped";
+                          description = "Tests were skipped.";
+                          color = "var(--color-warning)";
+                        } else if (semanticState === "SUCCESS") {
+                          title = "Success";
+                          description = "All tests passed successfully.";
+                          color = "#22c55e";
+                        } else {
+                          title = semanticState || "No Status";
+                        }
+
+                        return (
+                          <div
+                            style={{
+                              padding: 16,
+                              background: "rgba(255,255,255,.02)",
+                              border: "1px solid rgba(255,255,255,.05)",
+                              borderRadius: 8,
+                            }}
+                          >
+                            <div
+                              style={{
+                                color,
+                                fontSize: 20,
+                                fontWeight: 700,
+                                marginBottom: 4,
+                              }}
+                            >
+                              {title}
+                            </div>
+                            <div style={{ color: "#8b949e", fontSize: 13, marginBottom: 16, lineHeight: 1.4 }}>
+                              {description}
+                            </div>
+                            
+                            <div
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                color: "#8b949e",
+                                fontSize: 13,
+                              }}
+                            >
+                              <span>
+                                Passed:{" "}
+                                <strong style={{ color: "#e6edf3" }}>
+                                  {summary?.passedTests || 0}
+                                </strong>
+                              </span>
+                              <span>
+                                Failed:{" "}
+                                <strong style={{ color: "#e6edf3" }}>
+                                  {summary?.failedTests || 0}
+                                </strong>
+                              </span>
+                              <span>
+                                Skipped:{" "}
+                                <strong style={{ color: "#e6edf3" }}>
+                                  {summary?.skippedTests || 0}
+                                </strong>
+                              </span>
+                              <span>
+                                Total:{" "}
+                                <strong style={{ color: "#e6edf3" }}>
+                                  {summary?.totalTests || 0}
+                                </strong>
+                              </span>
+                            </div>
+
+                            <div style={{ marginTop: 16, borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 12, fontSize: 11, color: "var(--color-text-muted)" }}>
+                              <strong>Evidence Linkage:</strong>
+                              <ul style={{ paddingLeft: 16, margin: "4px 0 0 0" }}>
+                                {executionJobId && <li>Job ID: <code style={{ color: "var(--color-primary)" }}>{executionJobId}</code></li>}
+                                {testRunId && <li>TestRun ID: <code style={{ color: "var(--color-primary)" }}>{testRunId}</code></li>}
+                                {workspace?.jobs?.execute?.createdAt && <li>Started At: {new Date(workspace.jobs.execute.createdAt).toLocaleString()}</li>}
+                                {summary?.durationMs > 0 && <li>Duration: {summary.durationMs}ms</li>}
+                              </ul>
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {/* API ENDPOINT COVERAGE */}
+                      {(() => {
+                        const prov = summary?.provenance?.apiCoverage;
+                        return (
+                          <div
+                            style={{
+                              padding: 16,
+                              background: "rgba(255,255,255,.02)",
+                              border: "1px solid rgba(255,255,255,.05)",
+                              borderRadius: 8,
+                            }}
+                          >
+                            <div
+                              style={{
+                                color: "#8b949e",
+                                fontSize: 12,
+                                textTransform: "uppercase",
+                                fontWeight: 600,
+                                marginBottom: 12,
+                                display: "flex",
+                                justifyContent: "space-between"
+                              }}
+                            >
+                              <MetricProvenancePopover provenance={prov}>
+                                <span>API Endpoint Coverage</span>
+                              </MetricProvenancePopover>
+                            </div>
+                            <div
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                fontSize: 13,
+                              }}
+                            >
+                              <div style={{ color: "#e6edf3" }}>
+                                <strong>{summary?.testedApis || 0}</strong> / {summary?.discoveredApis || 0} endpoints tested
+                              </div>
+                              <div style={{ color: summary?.testedApis > 0 ? "#22c55e" : "#fbbf24", fontWeight: "bold", fontSize: 16 }}>
+                                {summary?.discoveredApis > 0 ? Math.round(((summary?.testedApis || 0) / summary.discoveredApis) * 100) : 0}%
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                      
+                      {/* COVERAGE SEMANTICS */}
+                      {(() => {
+                        const cov = summary?.codeCoverage;
+                        if (!cov) {
+                          return (
+                            <div
+                              style={{
+                                padding: 16,
+                                background: "rgba(255,255,255,.02)",
+                                border: "1px solid rgba(255,255,255,.05)",
+                                borderRadius: 8,
+                                color: "#8b949e",
+                                fontSize: 13
+                              }}
+                            >
+                              <div style={{ color: "#e6edf3", fontWeight: 600, marginBottom: 4 }}>Coverage Not Collected</div>
+                              Coverage data is unavailable for this execution.
+                            </div>
+                          );
+                        }
+
+                        const renderMetric = (label, value) => {
+                          const num = Number(value);
+                          const isZero = num === 0;
+                          const color = isZero ? "#f87171" : num > 80 ? "#22c55e" : "#fbbf24";
+                          return (
+                            <div>
+                              {label}:{" "}
+                              <strong style={{ color }}>
+                                {num.toFixed(1)}%
+                              </strong>
+                            </div>
+                          );
+                        };
+
+                        return (
+                          <div
+                            style={{
+                              padding: 16,
+                              background: "rgba(255,255,255,.02)",
+                              border: "1px solid rgba(255,255,255,.05)",
+                              borderRadius: 8,
+                            }}
+                          >
+                            <div
+                              style={{
+                                color: "#8b949e",
+                                fontSize: 12,
+                                textTransform: "uppercase",
+                                fontWeight: 600,
+                                marginBottom: 12,
+                                display: "flex",
+                                justifyContent: "space-between"
+                              }}
+                            >
+                              <MetricProvenancePopover provenance={summary?.provenance?.codeCoverage}>
+                                <span>Code Coverage</span>
+                              </MetricProvenancePopover>
+                              <span style={{ fontSize: 10, textTransform: "none", color: "var(--color-text-muted)" }}>Source: TestRun Artifacts</span>
+                            </div>
+                            <div
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns: "1fr 1fr",
+                                gap: 12,
+                                fontSize: 13,
+                              }}
+                            >
+                              {renderMetric("Statements", cov.statement)}
+                              {renderMetric("Branches", cov.branch)}
+                              {renderMetric("Functions", cov.function)}
+                              {renderMetric("Lines", cov.line)}
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
                     )}
                   </div>
                 )}
+                {rightPaneTab === "HISTORY" && (
+                  <IntegrationHistoryPane snapshotId={snapshotId} />
+                )}
               </div>
-            )}
-            {rightPaneTab === "HISTORY" && (
-              <IntegrationHistoryPane snapshotId={snapshotId} />
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

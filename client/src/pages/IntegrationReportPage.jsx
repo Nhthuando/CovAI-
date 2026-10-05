@@ -4,6 +4,7 @@ import { fetchIntegrationReport } from '../services/report.service';
 import { ArrowLeft, Database, BarChart2, AlertCircle, FileText, Activity } from 'lucide-react';
 import { format } from 'date-fns';
 import IntegrationGuidancePanel from '../components/dashboard/integration/IntegrationGuidancePanel';
+import MetricProvenancePopover from '../components/dashboard/integration/MetricProvenancePopover';
 
 export default function IntegrationReportPage() {
   const { projectId } = useParams();
@@ -88,25 +89,33 @@ export default function IntegrationReportPage() {
         {/* Overview Row */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="bg-[var(--surface-card)] border border-[var(--border-main)] rounded-lg p-6">
-            <p className="text-sm text-[var(--text-secondary)] mb-1">Total Scenarios</p>
+            <MetricProvenancePopover provenance={report.overview?.provenance?.scenarioCount}>
+              <p className="text-sm text-[var(--text-secondary)] mb-1">Total Scenarios</p>
+            </MetricProvenancePopover>
             <p className="text-2xl font-bold text-white">
               {report.overview ? report.overview.totalScenarios : 'N/A'}
             </p>
           </div>
           <div className="bg-[var(--surface-card)] border border-[var(--border-main)] rounded-lg p-6">
-            <p className="text-sm text-[var(--text-secondary)] mb-1">Modified Scenarios</p>
+            <MetricProvenancePopover provenance={report.overview?.provenance?.scenarioCount}>
+              <p className="text-sm text-[var(--text-secondary)] mb-1">Modified Scenarios</p>
+            </MetricProvenancePopover>
             <p className="text-2xl font-bold text-white">
               {report.overview ? report.overview.modifiedScenarios : 'N/A'}
             </p>
           </div>
           <div className="bg-[var(--surface-card)] border border-[var(--border-main)] rounded-lg p-6">
-            <p className="text-sm text-[var(--text-secondary)] mb-1">Unmodified AI Scenarios</p>
+            <MetricProvenancePopover provenance={report.overview?.provenance?.scenarioCount}>
+              <p className="text-sm text-[var(--text-secondary)] mb-1">Unmodified AI Scenarios</p>
+            </MetricProvenancePopover>
             <p className="text-2xl font-bold text-white">
               {report.overview ? report.overview.unmodifiedAiScenarios : 'N/A'}
             </p>
           </div>
           <div className="bg-[var(--surface-card)] border border-[var(--border-main)] rounded-lg p-6">
-            <p className="text-sm text-[var(--text-secondary)] mb-1">Pass Rate</p>
+            <MetricProvenancePopover provenance={report.latestExecution?.provenance}>
+              <p className="text-sm text-[var(--text-secondary)] mb-1">Pass Rate</p>
+            </MetricProvenancePopover>
             <p className="text-2xl font-bold text-white">
               {report.latestExecution
                 ? (report.latestExecution.totalTests > 0
@@ -121,9 +130,11 @@ export default function IntegrationReportPage() {
           
           {/* Latest Execution */}
           <div className="bg-[var(--surface-card)] border border-[var(--border-main)] rounded-lg p-6">
-            <h2 className="text-lg font-semibold mb-4 flex items-center border-b border-[var(--border-main)] pb-2">
-              <Activity className="mr-2" size={18} /> Latest Execution
-            </h2>
+            <MetricProvenancePopover provenance={report.latestExecution?.provenance}>
+              <h2 className="text-lg font-semibold mb-4 flex items-center border-b border-[var(--border-main)] pb-2">
+                <Activity className="mr-2" size={18} /> Latest Execution
+              </h2>
+            </MetricProvenancePopover>
             {!report.latestExecution ? (
               <p className="text-[var(--text-secondary)] text-sm italic">No Integration Test execution has been recorded for this snapshot.</p>
             ) : (
@@ -156,9 +167,11 @@ export default function IntegrationReportPage() {
 
           {/* API Endpoint Coverage */}
           <div className="bg-[var(--surface-card)] border border-[var(--border-main)] rounded-lg p-6">
-            <h2 className="text-lg font-semibold mb-2 flex items-center border-b border-[var(--border-main)] pb-2">
-              <Database className="mr-2" size={18} /> API Endpoint Coverage
-            </h2>
+            <MetricProvenancePopover provenance={report.apiCoverage?.provenance}>
+              <h2 className="text-lg font-semibold mb-2 flex items-center border-b border-[var(--border-main)] pb-2">
+                <Database className="mr-2" size={18} /> API Endpoint Coverage
+              </h2>
+            </MetricProvenancePopover>
             <p className="text-xs text-[var(--text-secondary)] mb-4 leading-tight">
               Static mapping of discovered Express routes to AI tests. (Not runtime coverage).
             </p>
@@ -190,9 +203,11 @@ export default function IntegrationReportPage() {
 
           {/* Project Code Coverage */}
           <div className="bg-[var(--surface-card)] border border-[var(--border-main)] rounded-lg p-6">
-            <h2 className="text-lg font-semibold mb-2 flex items-center border-b border-[var(--border-main)] pb-2">
-              <BarChart2 className="mr-2" size={18} /> Project Code Coverage
-            </h2>
+            <MetricProvenancePopover provenance={report.projectCodeCoverage?.provenance}>
+              <h2 className="text-lg font-semibold mb-2 flex items-center border-b border-[var(--border-main)] pb-2">
+                <BarChart2 className="mr-2" size={18} /> Project Code Coverage
+              </h2>
+            </MetricProvenancePopover>
             {!report.projectCodeCoverage ? (
               <p className="text-[var(--text-secondary)] text-sm italic">No coverage parser results recorded for this snapshot.</p>
             ) : (
