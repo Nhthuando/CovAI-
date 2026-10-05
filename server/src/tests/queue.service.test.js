@@ -445,4 +445,36 @@ describe('addSupertestCoveragePipeline - FlowProducer-based pipeline with correc
         // Verify Supertest now executes
         expect(mockProcessSupertestCoverageJob).toHaveBeenCalledWith('super-1');
     });
+
+    test('11. Worker processes SYSTEM_TEST_ANALYSIS via processSystemTestAnalysisJob', async () => {
+        const worker = globalThis.__TEST_QUEUE_HANDLER__;
+        await worker({
+            data: {
+                type: 'SYSTEM_TEST_ANALYSIS',
+                jobId: 'system-job-99',
+            },
+        });
+        expect(mockProcessSystemTestAnalysisJob).toHaveBeenCalledWith('system-job-99');
+    });
+
+    test('12. Worker redirects legacy E2E job types to processSystemTestAnalysisJob', async () => {
+        const worker = globalThis.__TEST_QUEUE_HANDLER__;
+        const legacyTypes = [
+            'CYPRESS_SYSTEM_TEST',
+            'CYPRESS_SYSTEM_COVERAGE',
+            'PLAYWRIGHT_SYSTEM_TEST',
+            'PLAYWRIGHT_SYSTEM_COVERAGE',
+        ];
+
+        for (const type of legacyTypes) {
+            jest.clearAllMocks();
+            await worker({
+                data: {
+                    type,
+                    jobId: `legacy-${type}`,
+                },
+            });
+            expect(mockProcessSystemTestAnalysisJob).toHaveBeenCalledWith(`legacy-${type}`);
+        }
+    });
 });

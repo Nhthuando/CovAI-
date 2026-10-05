@@ -44,7 +44,7 @@ describe("languageDetector", () => {
       expect(result.isSupported).toBe(false);
       expect(result.primaryLanguage).toBe("Python");
       expect(result.reason).toContain(
-        "CovAI chỉ hỗ trợ các dự án có ngôn ngữ chính là JavaScript hoặc TypeScript",
+        "CovAI only supports projects whose primary language is JavaScript or TypeScript",
       );
     });
 
@@ -58,7 +58,7 @@ describe("languageDetector", () => {
       expect(result.isSupported).toBe(false);
       expect(result.primaryLanguage).toBe("Java");
       expect(result.reason).toContain(
-        "CovAI chỉ hỗ trợ các dự án có ngôn ngữ chính là JavaScript hoặc TypeScript",
+        "CovAI only supports projects whose primary language is JavaScript or TypeScript",
       );
     });
 

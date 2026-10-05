@@ -63,8 +63,8 @@ describe('supertestRunner.service', () => {
         await expect(runSupertest('job1', tempDir, null, [path.join(tempDir, '..', 'outside.test.js')])).rejects.toThrow('outside the project root');
     });
 
-    test('throws when the Docker runner reports a failed test run', async () => {
-        dockerRunner.run = jest.fn().mockResolvedValue({ success: false, exitCode: 1, stdout: 'failed', stderr: '' });
+    test('throws when the Docker runner reports an unexpected failure', async () => {
+        dockerRunner.run = jest.fn().mockResolvedValue({ success: false, exitCode: null, stdout: 'failed', stderr: '' });
 
         const result = await runSupertest('job1', tempDir, null, [path.join(tempDir, 'src', 'api.test.js')]);
         expect(result.exitCode).toBe(1);

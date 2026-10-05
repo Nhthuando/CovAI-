@@ -31,3 +31,10 @@ dist-ssr
 
 .env
 .env.*
+
+AGENTS.md
+
+.agents
+.specify
+specs/
+

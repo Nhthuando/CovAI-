@@ -14,13 +14,19 @@ import {
     getFileCoverage,
     suggestUnitTestcase,
     getCoverageTestSuites,
-    getIntegrationHistory
+    getIntegrationHistory,
+    getSystemTestSummary,
+    getSystemTestEvidence,
+    saveAiSystemTest,
 } from "../controllers/coverage.controller.js";
 
 const router = express.Router();
 
 // GET /api/coverage/:snapshotId/summary — lấy kết quả coverage summary
 router.get("/:snapshotId/summary", authMiddleware, getCoverageSummary);
+router.get("/:snapshotId/system/summary", authMiddleware, getSystemTestSummary);
+router.get("/:snapshotId/system/scenarios/:scenarioId/evidence", authMiddleware, getSystemTestEvidence);
+router.post("/:snapshotId/system/save-ai-test", authMiddleware, saveAiSystemTest);
 router.get("/:snapshotId/frameworks", authMiddleware, getCoverageFrameworks);
 
 // SCRUM-155: GET /api/coverage/:snapshotId/files — lấy danh sách CoverageFile

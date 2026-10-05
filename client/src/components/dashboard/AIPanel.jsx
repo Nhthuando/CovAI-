@@ -322,10 +322,10 @@ function TestSuggestionCard({
                 color: "var(--color-success)",
                 border: "1px solid var(--color-border)",
               }}
-              title="Tự động áp dụng test case cho cả Jest và Vitest"
+              title="Automatically apply test cases for both Jest and Vitest"
             >
               <Sparkles size={11} />
-              <span>Apply all</span>
+              <span>Apply Both</span>
             </button>
           )}
         </div>
@@ -372,7 +372,7 @@ function TestSuggestionCard({
             border: "1px solid var(--color-border)",
           }}
         >
-          {current.isExisting ? "File có sẵn" : "File mới"}
+          {current.isExisting ? "Existing file" : "New file"}
         </span>
       </div>
 
@@ -401,14 +401,14 @@ function TestSuggestionCard({
               border: "none",
               cursor: current.isApplying ? "wait" : "pointer",
             }}
-            title={`Ghi test case ${current.framework?.toUpperCase()} vào ${current.targetTestFile}`}
+            title={`Write ${current.framework?.toUpperCase()} test case to ${current.targetTestFile}`}
           >
             {current.isApplying ? (
               <Loader2 size={13} className="animate-spin" />
             ) : (
               <Check size={13} />
             )}
-            <span>Apply vào {current.targetTestFile}</span>
+            <span>Apply to {current.targetTestFile}</span>
           </motion.button>
         ) : (
           <>
@@ -421,7 +421,7 @@ function TestSuggestionCard({
               }}
             >
               <Check size={13} />
-              <span>Đã apply ({current.framework?.toUpperCase()})</span>
+              <span>Applied ({current.framework?.toUpperCase()})</span>
             </div>
 
             <motion.button
@@ -437,14 +437,14 @@ function TestSuggestionCard({
                 border: "1px solid var(--color-border)",
                 cursor: current.isUndoing ? "wait" : "pointer",
               }}
-              title="Hoàn tác file test về trạng thái trước khi Apply"
+              title="Revert test file to previous state before Apply"
             >
               {current.isUndoing ? (
                 <Loader2 size={13} className="animate-spin" />
               ) : (
                 <RotateCcw size={13} />
               )}
-              <span>Undo (Hoàn tác)</span>
+              <span>Undo</span>
             </motion.button>
 
             {onRunAnalysis && (
@@ -460,7 +460,7 @@ function TestSuggestionCard({
                   border: "1px solid var(--color-border)",
                   cursor: "pointer",
                 }}
-                title="Chạy lại Unit Test Coverage để xác nhận độ bao phủ tăng"
+                title="Re-run Unit Test Coverage to verify increased coverage"
               >
                 <span>Run Analysis ↵</span>
               </motion.button>
@@ -793,8 +793,7 @@ function ChatMessage({
                 lineHeight: 1.6,
               }}
             >
-              Bạn đã vượt quá giới hạn lượt chat miễn phí hôm nay để đảm bảo
-              chất lượng máy chủ.
+              You have reached today's free AI chat limit to ensure service stability.
             </p>
             <p
               style={{
@@ -804,7 +803,7 @@ function ChatMessage({
                 fontStyle: "italic",
               }}
             >
-              Hãy quay lại vào ngày mai nhé! Cảm ơn bạn đã sử dụng hệ thống.
+              Please come back tomorrow! Thank you for using the system.
             </p>
           </div>
         </div>
@@ -2054,7 +2053,7 @@ export default function AIPanel({
       showToast({
         type: "warning",
         title: "No Project",
-        message: "Vui lòng chọn hoặc tạo một dự án trước khi sử dụng AI.",
+        message: "Please select or create a project before using AI.",
       });
       return;
     }
@@ -2065,9 +2064,9 @@ export default function AIPanel({
       id: getNextId(),
       role: "user",
       content: isTest
-        ? `✨ Hãy gợi ý test case bổ sung cho file test \`${filePath}\``
-        : `✨ Hãy gợi ý test case Jest & Vitest cho file \`${filePath}\``,
-      timestamp: new Date().toLocaleTimeString("vi-VN", {
+        ? `✨ Please suggest additional test cases for test file \`${filePath}\``
+        : `✨ Please suggest Jest & Vitest test cases for file \`${filePath}\``,
+      timestamp: new Date().toLocaleTimeString("en-US", {
         hour: "2-digit",
         minute: "2-digit",
       }),
@@ -2081,7 +2080,7 @@ export default function AIPanel({
       const data = res?.data;
 
       if (!data) {
-        throw new Error("Không nhận được dữ liệu gợi ý test case từ server.");
+        throw new Error("Did not receive test case suggestions from server.");
       }
 
       const suggestionsList =
@@ -2114,38 +2113,38 @@ export default function AIPanel({
       let summaryText = "";
       if (hasMultiple) {
         summaryText =
-          `Tôi đã phân tích file **\`${data.sourceFile || filePath}\`** và đề xuất bộ test cho cả **Jest** và **Vitest**:\n\n` +
+          `I analyzed file **\`${data.sourceFile || filePath}\`** and proposed test suites for both **Jest** and **Vitest**:\n\n` +
           suggestionsList
             .map(
               (s) =>
-                `- **${s.framework?.toUpperCase()}**: file \`${s.targetTestFile}\` (${s.isExisting ? "Đã có sẵn - sẽ cập nhật" : "File mới"})`,
+                `- **${s.framework?.toUpperCase()}**: file \`${s.targetTestFile}\` (${s.isExisting ? "Existing file - will update" : "New file"})`,
             )
             .join("\n") +
-          `\n- **Dòng chưa cover**: ${data.uncoveredLines?.length ? data.uncoveredLines.join(", ") : "100% dòng đã được kiểm thử"}\n` +
-          `- **Lỗi assertion**: ${data.failedLines?.length ? data.failedLines.join(", ") : "0 lỗi"}\n\n` +
-          `Bạn có thể chuyển đổi giữa các tab **JEST** và **VITEST** bên dưới để xem mã test và bấm **Apply** vào từng file test tương ứng (hoặc bấm **Apply cả 2**)!`;
+          `\n- **Uncovered lines**: ${data.uncoveredLines?.length ? data.uncoveredLines.join(", ") : "100% lines covered"}\n` +
+          `- **Assertion errors**: ${data.failedLines?.length ? data.failedLines.join(", ") : "0 errors"}\n\n` +
+          `You can switch between **JEST** and **VITEST** tabs below to review the test code and click **Apply** (or click **Apply Both**)!`;
       } else {
         const single = suggestionsList[0];
         summaryText = isTest
-          ? `Tôi đã phân tích và đề xuất bổ sung test case cho file test **\`${single.targetTestFile}\`** (${single.framework?.toUpperCase()}):\n\n` +
+          ? `I analyzed and proposed additional test cases for test file **\`${single.targetTestFile}\`** (${single.framework?.toUpperCase()}):\n\n` +
             (single.sourceFile && single.sourceFile !== single.targetTestFile
-              ? `- **File mã nguồn tương ứng**: \`${single.sourceFile}\`\n`
+              ? `- **Corresponding source file**: \`${single.sourceFile}\`\n`
               : "") +
-            `- **Dòng chưa cover trong mã nguồn**: ${data.uncoveredLines?.length ? data.uncoveredLines.join(", ") : "100% dòng đã được kiểm thử"}\n` +
-            `- **Lỗi assertion**: ${data.failedLines?.length ? data.failedLines.join(", ") : "0 lỗi"}\n` +
-            `- **File test**: \`${single.targetTestFile}\` (${single.isExisting ? "Đã có sẵn - sẽ cập nhật test case" : "File mới"})\n\n` +
+            `- **Uncovered lines in source**: ${data.uncoveredLines?.length ? data.uncoveredLines.join(", ") : "100% lines covered"}\n` +
+            `- **Assertion errors**: ${data.failedLines?.length ? data.failedLines.join(", ") : "0 errors"}\n` +
+            `- **Test file**: \`${single.targetTestFile}\` (${single.isExisting ? "Existing file - will update test cases" : "New file"})\n\n` +
             `${single.explanation}`
-          : `Tôi đã phân tích file **\`${single.sourceFile}\`** (${single.framework?.toUpperCase()}):\n\n` +
-            `- **Dòng chưa cover**: ${data.uncoveredLines?.length ? data.uncoveredLines.join(", ") : "100% dòng đã được kiểm thử"}\n` +
-            `- **Lỗi assertion**: ${data.failedLines?.length ? data.failedLines.join(", ") : "0 lỗi"}\n` +
-            `- **File test đích**: \`${single.targetTestFile}\` (${single.isExisting ? "Đã có sẵn - sẽ nối thêm" : "File mới"})\n\n` +
+          : `I analyzed file **\`${single.sourceFile}\`** (${single.framework?.toUpperCase()}):\n\n` +
+            `- **Uncovered lines**: ${data.uncoveredLines?.length ? data.uncoveredLines.join(", ") : "100% lines covered"}\n` +
+            `- **Assertion errors**: ${data.failedLines?.length ? data.failedLines.join(", ") : "0 errors"}\n` +
+            `- **Target test file**: \`${single.targetTestFile}\` (${single.isExisting ? "Existing file - will append" : "New file"})\n\n` +
             `${single.explanation}`;
       }
 
       const assistantMsg = {
         id: getNextId(),
         role: "assistant",
-        timestamp: new Date().toLocaleTimeString("vi-VN", {
+        timestamp: new Date().toLocaleTimeString("en-US", {
           hour: "2-digit",
           minute: "2-digit",
         }),
@@ -2162,11 +2161,11 @@ export default function AIPanel({
           id: getNextId(),
           role: "assistant",
           type: "error",
-          timestamp: new Date().toLocaleTimeString("vi-VN", {
+          timestamp: new Date().toLocaleTimeString("en-US", {
             hour: "2-digit",
             minute: "2-digit",
           }),
-          content: `❌ Lỗi khi gợi ý testcase cho \`${filePath}\`: ${err.message || "Không thể kết nối API AI."}`,
+          content: `❌ Error suggesting test cases for \`${filePath}\`: ${err.message || "Unable to connect to AI API."}`,
         },
       ]);
     } finally {
@@ -2260,7 +2259,7 @@ export default function AIPanel({
       showToast({
         type: "success",
         title: "Test Applied",
-        message: `Đã áp dụng test case ${suggestion.framework?.toUpperCase()} vào ${suggestion.targetTestFile}`,
+        message: `Applied ${suggestion.framework?.toUpperCase()} test case to ${suggestion.targetTestFile}`,
       });
 
       onOpenFile?.(suggestion.targetTestFile);
@@ -2268,7 +2267,7 @@ export default function AIPanel({
       showToast({
         type: "error",
         title: "Apply Failed",
-        message: err.message || "Không thể áp dụng test case vào file.",
+        message: err.message || "Unable to apply test case to file.",
       });
       setMessages((prev) =>
         prev.map((m) => {
@@ -2350,7 +2349,7 @@ export default function AIPanel({
       showToast({
         type: "info",
         title: "Undone",
-        message: `Đã hoàn tác file ${suggestion.targetTestFile} về trạng thái trước đó.`,
+        message: `Reverted file ${suggestion.targetTestFile} to previous state.`,
       });
 
       onOpenFile?.(suggestion.targetTestFile);
@@ -2358,7 +2357,7 @@ export default function AIPanel({
       showToast({
         type: "error",
         title: "Undo Failed",
-        message: err.message || "Không thể hoàn tác file test.",
+        message: err.message || "Unable to revert test file.",
       });
       setMessages((prev) =>
         prev.map((m) => {

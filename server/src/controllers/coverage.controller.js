@@ -2,8 +2,8 @@ import fs from "fs";
 import path from "path";
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
-import { createInstallDepsJob, createRunTestsJob, createSupertestCoverageJob, createVitestCoverageJob, createCypressSystemCoverageJob, createPlaywrightSystemCoverageJob } from "../services/job.service.js";
-import { jobQueue, addSupertestCoveragePipeline } from "../services/queue.service.js";
+import { createInstallDepsJob, createRunTestsJob, createSupertestCoverageJob, createVitestCoverageJob, createSystemTestAnalysisJob } from "../services/job.service.js";
+import { jobQueue, addSupertestCoveragePipeline, addJobToQueue } from "../services/queue.service.js";
 import { processCoverageJob } from "../services/coverageRunner.service.js";
 import { detectSupertest } from "../services/supertestDetection.service.js";
 import { detectCoverageFrameworks, selectCoverageFramework } from "../services/coverageFramework.service.js";
@@ -77,13 +77,16 @@ export const runCoverageByType = async (req, res) => {
                 job = await createSupertestCoverageJob({ projectId: snapshot.projectId, snapshotId, userId });
                 await addSupertestCoveragePipeline(installJob.id, job.id);
                 jobs = [installJob, job];
-            } else if (framework === "playwright") {
-                job = await createPlaywrightSystemCoverageJob({ projectId: snapshot.projectId, snapshotId, userId });
-                await addJobToQueue("PLAYWRIGHT_SYSTEM_COVERAGE", job.id);
-                jobs = [job];
             } else {
-                job = await createCypressSystemCoverageJob({ projectId: snapshot.projectId, snapshotId, userId });
-                await addJobToQueue("CYPRESS_SYSTEM_COVERAGE", job.id);
+                const runner = framework === "cypress" ? "cypress" : "playwright";
+                job = await createSystemTestAnalysisJob({
+                    projectId: snapshot.projectId,
+                    snapshotId,
+                    userId,
+                    runner,
+                    executionMode: req.body?.executionMode || "full",
+                });
+                await addJobToQueue("SYSTEM_TEST_ANALYSIS", job.id);
                 jobs = [job];
             }
         }
@@ -265,8 +268,12 @@ export const runCoverage = async (req, res) => {
         }
 
         const fs = await import("fs");
-        const packageJsonPath = `${snapshot.rootDir}/package.json`;
-        if (!fs.existsSync(packageJsonPath)) {
+        const path = await import("path");
+        const candidateDirs = ["", "server", "backend", "api", "client", "frontend", "web", "app"];
+        const hasPackageJson = candidateDirs.some((cand) =>
+            fs.existsSync(cand ? path.join(snapshot.rootDir, cand, "package.json") : path.join(snapshot.rootDir, "package.json"))
+        );
+        if (!hasPackageJson) {
             return res.status(422).json({ success: false, message: "Invalid Node.js project: package.json was not found in the uploaded project." });
         }
 
@@ -325,9 +332,13 @@ export const runSupertestCoverage = async (req, res) => {
         if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
         if (!snapshot.rootDir) return res.status(409).json({ success: false, message: "Snapshot is not ready to run tests." });
 
-        const packageJsonPath = `${snapshot.rootDir}/package.json`;
         const fs = await import("fs");
-        if (!fs.existsSync(packageJsonPath)) {
+        const path = await import("path");
+        const candidateDirs = ["", "server", "backend", "api", "client", "frontend", "web", "app"];
+        const hasPackageJson = candidateDirs.some((cand) =>
+            fs.existsSync(cand ? path.join(snapshot.rootDir, cand, "package.json") : path.join(snapshot.rootDir, "package.json"))
+        );
+        if (!hasPackageJson) {
             return res.status(422).json({ success: false, message: "Invalid Node.js project: package.json was not found in the uploaded project." });
         }
 
@@ -1121,3 +1132,288 @@ export const getScenario = async (req, res) => {
         return res.status(500).json({ success: false, message: error.message });
     }
 };
+
+/**
+ * GET /api/coverage/:snapshotId/system/summary
+ * Returns System (E2E) Test summary isolated from Unit test data.
+ * Does NOT read CoverageSummary or CoverageFile from Unit Tests.
+ */
+export const getSystemTestEvidence = async (req, res) => {
+    try {
+        const snapshot = await findOwnedSnapshot(req.params.snapshotId, req.user?.id);
+        if (!snapshot) return res.status(404).json({success:false,message:'Snapshot not found'});
+        const scenario = await prisma.testScenario.findFirst({where:{id:req.params.scenarioId,testRun:{snapshotId:snapshot.id}}});
+        if (!scenario?.screenshotPath || !scenario.screenshotPath.startsWith('.covai-system-test/evidence/')) return res.status(404).json({success:false,message:'Evidence not found'});
+        const {containedPath} = await import('../services/fullSystemLifecycle.service.js');
+        const file=containedPath(snapshot.rootDir,scenario.screenshotPath);
+        if (!fs.existsSync(file)) return res.status(404).json({success:false,message:'Evidence not found'});
+        res.set({'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'});
+        return res.type('png').sendFile(file, {dotfiles:'allow'});
+    } catch(error) {return res.status(error.statusCode || 500).json({success:false,message:'Unable to load evidence'});}
+};
+
+export const getSystemTestSummary = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({ success: false, message: "Unauthorized." });
+        }
+
+        const { snapshotId } = req.params;
+        if (!snapshotId || typeof snapshotId !== "string" || snapshotId.trim().length === 0) {
+            return res.status(400).json({ success: false, message: "snapshotId không hợp lệ." });
+        }
+
+        const snapshot = await prisma.projectSnapshot.findUnique({
+            where: { id: snapshotId },
+            select: {
+                id: true,
+                projectId: true,
+                rootDir: true,
+                project: { select: { ownerId: true, name: true } },
+            },
+        });
+
+        if (!snapshot) {
+            return res.status(404).json({ success: false, message: "Snapshot không tồn tại." });
+        }
+
+        if (snapshot.project.ownerId !== userId) {
+            return res.status(403).json({ success: false, message: "Bạn không có quyền truy cập snapshot này." });
+        }
+
+        // Query TestRun for E2E types only: PLAYWRIGHT, CYPRESS
+        const testRuns = await prisma.testRun.findMany({
+            where: {
+                snapshotId,
+                type: { in: ["PLAYWRIGHT", "CYPRESS"] },
+            },
+            include: {
+                scenarios: true,
+            },
+            orderBy: { createdAt: "desc" },
+        });
+
+        // Query latest AI Test for this snapshot
+        const latestAiTestRecord = prisma.aiTest?.findFirst
+            ? await prisma.aiTest.findFirst({
+                where: {
+                    snapshotId,
+                    mode: "PLAYWRIGHT_E2E",
+                },
+                orderBy: { createdAt: "desc" },
+                select: {
+                    id: true,
+                    status: true,
+                    filePath: true,
+                    content: true,
+                    metaJson: true,
+                    createdAt: true,
+                },
+            })
+            : null;
+
+        let latestAiTest = null;
+        if (latestAiTestRecord) {
+            let meta = null;
+            try {
+                meta = typeof latestAiTestRecord.metaJson === "string"
+                    ? JSON.parse(latestAiTestRecord.metaJson)
+                    : latestAiTestRecord.metaJson;
+            } catch (_) {}
+            latestAiTest = {
+                id: latestAiTestRecord.id,
+                status: latestAiTestRecord.status,
+                filePath: latestAiTestRecord.filePath,
+                content: latestAiTestRecord.content,
+                meta,
+                createdAt: latestAiTestRecord.createdAt,
+            };
+        }
+
+        if (!testRuns || testRuns.length === 0) {
+            return res.status(200).json({
+                success: true,
+                data: {
+                    hasRun: false,
+                    e2eTests: 0,
+                    passed: 0,
+                    failed: 0,
+                    flaky: 0,
+                    coverageAvailable: false,
+                    featureCoverage: null,
+                    files: [],
+                    testRuns: [],
+                    scenarios: [],
+                    latestAiTest,
+                },
+            });
+        }
+
+        const latestRun = testRuns[0];
+
+        // Parse scenarios: use DB records if available, otherwise check report files on disk
+        let scenarios = [];
+        if (latestRun.scenarios && latestRun.scenarios.length > 0) {
+            scenarios = latestRun.scenarios.map((s) => ({
+                id: s.id,
+                title: s.title,
+                file: s.testFile || "",
+                durationMs: s.durationMs || 0,
+                status: s.status,
+                failureMessages: s.failureMessages || [],
+                hasEvidence: Boolean(s.screenshotPath),
+            }));
+        } else if (snapshot.rootDir && fs.existsSync(snapshot.rootDir)) {
+            const reportCandidates = [
+                path.join(snapshot.rootDir, ".covai-system-test", `${latestRun.type.toLowerCase()}-results.json`),
+            ];
+
+            for (const reportPath of reportCandidates) {
+                if (fs.existsSync(reportPath)) {
+                    try {
+                        const modifiedAt = fs.statSync(reportPath).mtimeMs;
+                        if (!latestRun.startedAt || !latestRun.finishedAt ||
+                            modifiedAt < new Date(latestRun.startedAt).getTime() ||
+                            modifiedAt > new Date(latestRun.finishedAt).getTime()) continue;
+                        const content = fs.readFileSync(reportPath, "utf8");
+                        const reportData = JSON.parse(content);
+                        if (reportData.suites) {
+                            const collectPlaywrightSpecs = (suite, parentFile = "") => {
+                                const currentFile = suite.file || parentFile;
+                                for (const spec of (suite.specs || [])) {
+                                    const testObj = (spec.tests || [])[0];
+                                    const result = (testObj?.results || [])[0];
+                                    let status = result?.status || (spec.ok ? "passed" : "failed");
+                                    if (testObj?.status === "flaky" || (testObj?.results?.length > 1 && testObj.results.some(r => r.status === "passed"))) {
+                                        status = "flaky";
+                                    }
+                                    const failureMessages = [];
+                                    if (result?.error?.message) failureMessages.push(result.error.message);
+                                    if (Array.isArray(result?.errors)) {
+                                        for (const err of result.errors) {
+                                            if (err?.message && !failureMessages.includes(err.message)) failureMessages.push(err.message);
+                                        }
+                                    }
+                                    scenarios.push({
+                                        id: spec.id || `${currentFile}-${spec.title}`,
+                                        title: spec.title,
+                                        file: currentFile ? path.relative(snapshot.rootDir, currentFile).replace(/\\/g, "/") : "",
+                                        durationMs: result?.duration || 0,
+                                        status,
+                                        failureMessages,
+                                    });
+                                }
+                                for (const child of (suite.suites || [])) {
+                                    collectPlaywrightSpecs(child, currentFile);
+                                }
+                            };
+                            for (const s of (reportData.suites || [])) {
+                                collectPlaywrightSpecs(s);
+                            }
+                        }
+                        if (scenarios.length > 0) break;
+                    } catch (_) { }
+                }
+            }
+        }
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                hasRun: true,
+                runner: latestRun.type.toLowerCase(),
+                e2eTests: latestRun.totalTests,
+                passed: latestRun.passedTests,
+                failed: latestRun.failedTests,
+                flaky: latestRun.flakyTests || 0,
+                coverageAvailable: false,
+                featureCoverage: null,
+                files: [],
+                testRuns: testRuns.map(run => ({...run, scenarios: run.scenarios?.map(({screenshotPath, ...scenario}) => ({...scenario,hasEvidence:Boolean(screenshotPath)}))})),
+                scenarios,
+                latestRun: {...latestRun, scenarios: undefined},
+                executionMode: latestRun.executionMode || "frontend",
+                latestAiTest,
+            },
+        });
+    } catch (error) {
+        console.error("[getSystemTestSummary] Error:", error);
+        return res.status(500).json({ success: false, message: "Server error." });
+    }
+};
+
+/**
+ * POST /api/coverage/:snapshotId/system/save-ai-test
+ * Manually saves an AI-generated Playwright test to the codebase even if dry-run timed out.
+ */
+export const saveAiSystemTest = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
+
+        const { snapshotId } = req.params;
+        if (!snapshotId) return res.status(400).json({ success: false, message: "snapshotId is required." });
+
+        const snapshot = await prisma.projectSnapshot.findUnique({
+            where: { id: snapshotId },
+            include: { project: true },
+        });
+
+        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
+        if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
+
+        const aiTest = await prisma.aiTest.findFirst({
+            where: {
+                snapshotId,
+                mode: "PLAYWRIGHT_E2E",
+            },
+            orderBy: { createdAt: "desc" },
+        });
+
+        if (!aiTest) {
+            return res.status(404).json({ success: false, message: "No AI test found for this snapshot." });
+        }
+        if (aiTest.status !== 'VERIFIED') return res.status(409).json({success:false,message:'Only tests that pass full-system verification can be saved. Regenerate to repair this candidate.'});
+
+        const rootDir = snapshot.rootDir;
+        const targetFilePath = aiTest.filePath;
+        const fullTargetPath = path.join(rootDir, targetFilePath);
+
+        fs.mkdirSync(path.dirname(fullTargetPath), { recursive: true });
+        fs.writeFileSync(fullTargetPath, aiTest.content, "utf8");
+
+        let meta = {};
+        try {
+            meta = typeof aiTest.metaJson === "string" ? JSON.parse(aiTest.metaJson) : (aiTest.metaJson || {});
+        } catch (_) {}
+
+        meta.dryRun = "MANUALLY_SAVED";
+        meta.savedAt = new Date().toISOString();
+
+        const updatedAiTest = await prisma.aiTest.update({
+            where: { id: aiTest.id },
+            data: {
+                status: "VERIFIED",
+                metaJson: JSON.stringify(meta),
+            },
+        });
+
+        return res.status(200).json({
+            success: true,
+            message: `Successfully saved test to ${targetFilePath}`,
+            data: {
+                id: updatedAiTest.id,
+                status: updatedAiTest.status,
+                filePath: updatedAiTest.filePath,
+                content: updatedAiTest.content,
+                meta,
+                createdAt: updatedAiTest.createdAt,
+            },
+        });
+    } catch (error) {
+        console.error("[saveAiSystemTest] Error:", error);
+        return res.status(500).json({ success: false, message: error.message || "Server error while saving AI test." });
+    }
+};
+

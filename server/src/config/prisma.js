@@ -12,6 +12,9 @@ if (process.env.DATABASE_URL) {
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 30000,
     });
+    pool.on("error", (err) => {
+        console.error("[PG Pool Error - non-fatal]", err.message);
+    });
     const adapter = new PrismaPg(pool);
     prismaClient = new PrismaClient({ adapter });
 }

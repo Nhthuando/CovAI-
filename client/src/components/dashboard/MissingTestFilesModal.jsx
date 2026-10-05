@@ -91,19 +91,19 @@ const MissingTestFilesModal = ({
             }}
           >
             <p style={{ margin: "0 0 16px 0" }}>
-              Dự án{" "}
+              Project{" "}
               <strong style={{ color: "var(--color-text)" }}>
                 {projectName}
               </strong>{" "}
-              chưa có file test (Jest).
+              has no test files (Jest).
             </p>
             <p style={{ margin: 0 }}>
-              Quá trình phân tích Code Coverage cần có test files để chạy thành
-              công. Bạn có muốn AI tự động sinh Test Code cho dự án{" "}
+              Code coverage analysis requires test files to execute successfully.
+              Would you like AI to automatically generate test code for project{" "}
               <strong style={{ color: "var(--color-text)" }}>
                 {projectName}
-              </strong>{" "}
-              không?
+              </strong>
+              ?
             </p>
           </div>
 
@@ -174,7 +174,7 @@ const MissingTestFilesModal = ({
                 marginTop: "8px",
               }}
             >
-              Bỏ qua
+              Skip for now
             </button>
           </div>
         </motion.div>

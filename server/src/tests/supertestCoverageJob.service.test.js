@@ -15,7 +15,13 @@ const parseCoverageSummary = jest.fn();
 const storeCoverageOutputs = jest.fn();
 const parseCoverageFilesForSnapshot = jest.fn();
 const parseCoverageFunctionsForSnapshot = jest.fn();
+const mockAiTestFindMany = jest.fn();
 
+await jest.unstable_mockModule('../config/prisma.js', () => ({
+    default: {
+        aiTest: { findMany: mockAiTestFindMany },
+    },
+}));
 await jest.unstable_mockModule('../services/job.service.js', () => ({
     markJobRunning, markJobSuccess, markJobFailed, updateJobProgress, getJobById, addJobLog,
 }));
@@ -51,6 +57,12 @@ describe('supertestCoverageJob.service', () => {
         updateJobProgress.mockResolvedValue(undefined);
         addJobLog.mockResolvedValue(undefined);
         saveJobOutput.mockResolvedValue(undefined);
+        mockAiTestFindMany.mockResolvedValue([
+            {
+                filePath: 'api.test.js',
+                metaJson: { framework: 'SUPERTEST', status: 'APPROVED' },
+            },
+        ]);
         rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'supertest-job-'));
         fs.writeFileSync(path.join(rootDir, 'package.json'), JSON.stringify({ devDependencies: { supertest: '^7.0.0' } }));
         fs.writeFileSync(path.join(rootDir, 'api.test.js'), "import request from 'supertest';");

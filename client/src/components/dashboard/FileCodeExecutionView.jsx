@@ -203,7 +203,7 @@ export default function FileCodeExecutionView({
         >
           {/* Statement & Line summary */}
           <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
-            Bao phủ câu lệnh:{" "}
+            Statement Coverage:{" "}
             <b
               style={{
                 color:
@@ -221,7 +221,7 @@ export default function FileCodeExecutionView({
             </b>
             {executableLines > 0 && (
               <span style={{ marginLeft: 6, color: "var(--color-text-muted)" }}>
-                ({coveredLines}/{executableLines} dòng)
+                ({coveredLines}/{executableLines} lines)
               </span>
             )}
           </span>
@@ -238,7 +238,7 @@ export default function FileCodeExecutionView({
                 border: "1px solid rgba(239, 68, 68, 0.3)",
               }}
             >
-              ⚑ {missedLines} dòng chưa chạy
+              ⚑ {missedLines} lines unexecuted
             </span>
           ) : executableLines > 0 ? (
             <span
@@ -252,7 +252,7 @@ export default function FileCodeExecutionView({
                 border: "1px solid rgba(34, 197, 94, 0.3)",
               }}
             >
-              ✓ 100% Bao phủ
+              ✓ 100% Covered
             </span>
           ) : null}
 
@@ -284,7 +284,7 @@ export default function FileCodeExecutionView({
                 fontWeight: filterMode === "all" ? 700 : 500,
               }}
             >
-              Tất cả ({codeLines.length})
+              All ({codeLines.length})
             </button>
             <button
               onClick={() => setFilterMode("covered")}
@@ -302,7 +302,7 @@ export default function FileCodeExecutionView({
                 fontWeight: filterMode === "covered" ? 700 : 500,
               }}
             >
-              Đã chạy ({coveredLines})
+              Executed ({coveredLines})
             </button>
             {missedLines > 0 && (
               <button
@@ -321,7 +321,7 @@ export default function FileCodeExecutionView({
                   fontWeight: filterMode === "missed" ? 700 : 500,
                 }}
               >
-                Chưa chạy ({missedLines})
+                Unexecuted ({missedLines})
               </button>
             )}
           </div>
@@ -339,7 +339,7 @@ export default function FileCodeExecutionView({
                 cursor: "pointer",
               }}
             >
-              Mở trong Editor
+              Open in Editor
             </button>
           )}
         </div>
@@ -360,8 +360,8 @@ export default function FileCodeExecutionView({
         {visibleLineEntries.length === 0 ? (
           <div style={{ padding: 24, textAlign: "center", color: "#6e7681" }}>
             {codeLines.length === 0
-              ? "Chưa có nội dung mã nguồn của file này."
-              : "Không có dòng nào phù hợp với bộ lọc đã chọn."}
+              ? "No source content available for this file."
+              : "No lines match the selected filter."}
           </div>
         ) : (
           visibleLineEntries.map(
@@ -406,11 +406,11 @@ export default function FileCodeExecutionView({
                   className="hover:bg-white/[0.04]"
                   title={
                     error
-                      ? `Lỗi: ${error}`
+                      ? `Error: ${error}`
                       : reason
                         ? reason
                         : isCovered
-                          ? `Đã thực thi ${hits} lần`
+                          ? `Executed ${hits} times`
                           : ""
                   }
                 >
@@ -517,7 +517,7 @@ export default function FileCodeExecutionView({
                             fontSize: 10,
                             cursor: "pointer",
                           }}
-                          title="AI gợi ý test case bao phủ dòng này"
+                          title="AI suggested test case covering this line"
                         >
                           <Sparkles size={10} />
                           <span>Suggest</span>

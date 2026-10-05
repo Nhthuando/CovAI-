@@ -22,3 +22,31 @@ describe("aiPromptBuilder framework selection", () => {
             .toContain("using the **Vitest** framework");
     });
 });
+
+describe("buildPlaywrightPrompt", () => {
+    it('includes component controls and prohibits mocks in full system mode',async()=>{
+        const {buildPlaywrightPrompt}=await import('../services/aiPromptBuilder.service.js');
+        const prompt=buildPlaywrightPrompt({sourceCode:[{path:'src/components/TodoItem.jsx',content:'row editor controls'}]},{executionMode:'full'});
+        expect(prompt).toContain('row editor controls');
+        expect(prompt).toContain('NEVER mock APIs');
+        expect(prompt).toContain('page.reload()');
+        expect(prompt).not.toContain('mock them using');
+    });
+    it("constructs Playwright prompt with strict anti-flakiness and selector rules", async () => {
+        const { buildPlaywrightPrompt } = await import("../services/aiPromptBuilder.service.js");
+        const payload = {
+            sourceCode: [
+                { path: "src/App.jsx", content: "export default function App() { return <h1>Hello</h1>; }" },
+                { path: "src/routes.js", content: "export const routes = ['/', '/about'];" },
+            ],
+        };
+        const prompt = buildPlaywrightPrompt(payload);
+        expect(prompt).toContain("Senior QA Automation Engineer");
+        expect(prompt).toContain("Playwright");
+        expect(prompt).toContain("src/App.jsx");
+        expect(prompt).toContain("NEVER use `page.waitForTimeout()`");
+        expect(prompt).toContain("http://localhost:4173");
+        expect(prompt).toContain("tests/e2e/ai-generated.spec.js");
+    });
+});
+

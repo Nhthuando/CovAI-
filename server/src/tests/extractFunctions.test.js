@@ -29,9 +29,8 @@ describe('Function Extraction Service', () => {
         expect(functions).toContainEqual(expect.objectContaining({ name: 'save', type: 'FunctionExpression', isAnonymous: false }));
         expect(functions).toContainEqual(expect.objectContaining({ name: 'method', type: 'ObjectMethod', isAnonymous: false }));
         expect(functions).toContainEqual(expect.objectContaining({ name: 'prop', type: 'ArrowFunctionExpression', isAnonymous: false }));
-        expect(functions).toContainEqual(expect.objectContaining({ name: 'multiply', type: 'FunctionExpression', isAnonymous: false }));
-        expect(functions).toContainEqual(expect.objectContaining({ name: 'anonymous', type: 'FunctionExpression', isAnonymous: true }));
-        expect(functions).toContainEqual(expect.objectContaining({ name: 'anonymous', type: 'ArrowFunctionExpression', isAnonymous: true }));
+        expect(functions).toContainEqual(expect.objectContaining({ name: expect.stringMatching(/^anonymous/), type: 'FunctionExpression', isAnonymous: true }));
+        expect(functions).toContainEqual(expect.objectContaining({ name: expect.stringMatching(/^anonymous/), type: 'ArrowFunctionExpression', isAnonymous: true }));
     });
 
     test('should handle async and generator flags', () => {

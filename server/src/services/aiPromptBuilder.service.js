@@ -216,3 +216,91 @@ export const buildFinalPrompt = (payload, options = {}) => {
     
     return finalPrompt;
 };
+
+/**
+ * Builds AI prompt specifically for generating Playwright E2E system tests
+ * per Phase 5 of the system test implementation plan.
+ *
+ * @param {Object} payload - Project context payload containing sourceCode, etc.
+ * @returns {string} The constructed prompt for Gemini
+ */
+export const buildPlaywrightPrompt = (payload = {}, { executionMode = "frontend" } = {}) => {
+    const sourceCode = payload.sourceCode || [];
+
+    // Filter relevant page, router, layout, and UI files
+    const isPageRouteFile = (filePath) => {
+        const lower = String(filePath).toLowerCase();
+        return (
+            lower.includes("app.") ||
+            lower.includes("route") ||
+            lower.includes("router") ||
+            lower.includes("page") ||
+            lower.includes("view") ||
+            lower.includes("nav") ||
+            lower.includes("header") ||
+            lower.includes("layout") ||
+            lower.includes("component") ||
+            lower.includes("index.html") ||
+            lower.endsWith("/index.jsx") ||
+            lower.endsWith("/index.tsx") ||
+            lower.endsWith("/index.js")
+        );
+    };
+
+    let selectedFiles = sourceCode.filter((f) => isPageRouteFile(f.path));
+    if (selectedFiles.length === 0) {
+        selectedFiles = sourceCode.slice(0, 8);
+    } else {
+        selectedFiles = selectedFiles.slice(0, 10);
+    }
+
+    let prompt = "You are a Senior QA Automation Engineer writing end-to-end (E2E) system tests using **Playwright** for a web application.\n\n";
+    prompt += "### Application Source Code & Routes\n\n";
+
+    if (selectedFiles.length > 0) {
+        selectedFiles.forEach((file) => {
+            prompt += `#### File: ${file.path}\n`;
+            prompt += "```javascript\n";
+            const lines = (file.content || "").split("\n").slice(0, 200);
+            prompt += lines.join("\n") + "\n";
+            prompt += "```\n\n";
+        });
+    } else {
+        prompt += "No specific page source files found. Write general E2E smoke tests for the root web application.\n\n";
+    }
+
+    prompt += "### E2E Testing Instructions & Strict Safety Rules\n\n";
+    prompt += "1. **Framework & Structure**:\n";
+    prompt += "   - Use modern ESM Playwright syntax: `import { test, expect } from '@playwright/test';`.\n";
+    prompt += "   - Target application running at `http://localhost:4173` (use relative URLs e.g. `await page.goto('/')`).\n";
+    prompt += "2. **Test Scenarios Scope (Demo-Safe)**:\n";
+    prompt += "   - Focus on accessible public user flows: homepage loading, header/navbar navigation, public form interactions, button clicks, and 404/not-found handling.\n";
+    prompt += "   - Do NOT require complicated multi-factor authentication or private database fixtures.\n";
+    prompt += executionMode === "full"
+      ? "   - FULL SYSTEM: frontend, real backend and a fresh disposable database are running. NEVER mock APIs, route requests, replay HAR or replace fetch. Test real CRUD user flows and verify persistence with page.reload(). Use unique task titles and clean up records you create. Database starts empty. Do not simulate connection failures. Use page.goto('/') and actual UI selectors from source.\n"
+      : "   - If the frontend calls backend API endpoints (e.g. `/api/...`), mock them using `await page.route('**/api/**', async (route) => { ... })` so tests run reliably without a live database.\n";
+    prompt += "3. **STRICT RULES (CRITICAL)**:\n";
+    prompt += "   - **FORBIDDEN**: NEVER use `page.waitForTimeout()`. You MUST rely on auto-waiting locators and web-first assertions.\n";
+    prompt += "   - Prefer accessible locators: `page.getByRole(...)`, `page.getByText(...)`, `page.getByPlaceholder(...)`, `page.getByLabel(...)`.\n";
+      prompt += "   - Every action locator must identify exactly one element. NEVER click an unscoped page.getByRole('button') when the UI has several buttons. For an unnamed submit button, scope to the form: page.locator('form').getByRole('button'), or page.locator('form button[type=\"submit\"]'). Use actual labels/placeholders in the supplied source, not invented names.\n";
+    prompt += "   - Use assertions like `await expect(page.getByRole('heading')).toBeVisible()` or `await expect(page).toHaveTitle(...)`.\n";
+    prompt += "   - Scope row actions to the actual row container in the component source, never a broad div with hasText. Hover that row before clicking controls hidden by opacity/group-hover. After entering edit mode, the title span may disappear: switch to a form/input locator rather than reusing a row filter requiring the old visible text.\n";
+    prompt += "   - Keep timeouts reasonable (e.g. within 10-15 seconds).\n";
+    prompt += "4. **Output Format**:\n";
+    prompt += "   You MUST return a JSON object with a `tests` array containing the generated Playwright test file.\n";
+    prompt += "   Format:\n";
+    prompt += "```json\n";
+    prompt += "{\n";
+    prompt += "  \"tests\": [\n";
+    prompt += "    {\n";
+    prompt += "      \"filePath\": \"tests/e2e/ai-generated.spec.js\",\n";
+    prompt += "      \"content\": \"import { test, expect } from '@playwright/test';\\n\\ntest.describe('Application E2E Tests', () => {\\n  test('homepage smoke test', async ({ page }) => {\\n    await page.goto('/');\\n    await expect(page).toHaveURL(/.*\\\\//);\\n  });\\n});\"\n";
+    prompt += "    }\n";
+    prompt += "  ]\n";
+    prompt += "}\n";
+    prompt += "```\n\n";
+    prompt += "Do not include any commentary outside the markdown code block.";
+
+    return prompt;
+};
+

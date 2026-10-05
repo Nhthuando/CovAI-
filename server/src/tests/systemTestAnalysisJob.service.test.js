@@ -45,12 +45,62 @@ describe("processSystemTestAnalysisJob", () => {
     expect(lifecycle.markJobSuccess).toHaveBeenCalledWith("job-1", expect.objectContaining({ exitCode: 0, coverageAvailable: false }));
   });
 
-  it("stores a valid failed report and marks the job failed once", async () => {
+  it("stores a valid report with test failures and still marks the job success", async () => {
     runSystemTests.mockResolvedValue({ success: false, exitCode: 1 });
     parseSystemTestResult.mockReturnValue({ ...testRun, passedTests: 1, failedTests: 1, status: "FAILED" });
+    await expect(processSystemTestAnalysisJob("job-1")).resolves.toMatchObject({
+      runner: "playwright",
+      exitCode: 1,
+      coverageAvailable: false,
+    });
+    expect(prismaMock.testRun.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ snapshotId: "snapshot-1", type: "PLAYWRIGHT", passedTests: 1, failedTests: 1, status: "FAILED" }),
+    });
+    expect(lifecycle.markJobSuccess).toHaveBeenCalledWith("job-1", expect.objectContaining({ exitCode: 1 }));
+    expect(lifecycle.markJobFailed).not.toHaveBeenCalled();
+  });
+
+  it("marks the job failed once when infrastructure execution crashes", async () => {
+    runSystemTests.mockRejectedValue(new Error("Docker daemon crash"));
     lifecycle.getJobById.mockResolvedValueOnce(job).mockResolvedValueOnce(job);
-    await expect(processSystemTestAnalysisJob("job-1")).rejects.toThrow("System tests failed");
-    expect(prismaMock.testRun.create).toHaveBeenCalled();
+    await expect(processSystemTestAnalysisJob("job-1")).rejects.toThrow("Docker daemon crash");
+    expect(prismaMock.testRun.create).not.toHaveBeenCalled();
     expect(lifecycle.markJobFailed).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists flaky tests and nested test scenarios into TestRun and completes job", async () => {
+    parseSystemTestResult.mockReturnValue({
+      totalTests: 3,
+      passedTests: 2,
+      failedTests: 0,
+      flakyTests: 1,
+      skippedTests: 0,
+      durationMs: 1500,
+      status: "PASSED",
+      startedAt: new Date(),
+      finishedAt: new Date(),
+      scenarios: [
+        { title: "scenario 1", suiteName: "auth.spec.js", status: "passed", durationMs: 400, failureMessages: [], testFile: "auth.spec.js" },
+        { title: "scenario 2", suiteName: "auth.spec.js", status: "flaky", durationMs: 1100, failureMessages: ["flaky error"], testFile: "auth.spec.js" },
+      ],
+    });
+    await expect(processSystemTestAnalysisJob("job-1")).resolves.toMatchObject({
+      runner: "playwright",
+      coverageAvailable: false,
+    });
+    expect(prismaMock.testRun.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        snapshotId: "snapshot-1",
+        type: "PLAYWRIGHT",
+        flakyTests: 1,
+        scenarios: {
+          create: expect.arrayContaining([
+            expect.objectContaining({ title: "scenario 1", status: "passed" }),
+            expect.objectContaining({ title: "scenario 2", status: "flaky" }),
+          ]),
+        },
+      }),
+    });
+    expect(lifecycle.markJobSuccess).toHaveBeenCalledWith("job-1", expect.objectContaining({ coverageAvailable: false }));
   });
 });

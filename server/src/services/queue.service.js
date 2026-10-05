@@ -16,10 +16,6 @@ import { processSecurityAnalysisJob } from './securityScanJob.service.js';
 import { processRunVitestJob } from "./runVitestJob.service.js";
 import { processSystemTestAnalysisJob } from "./systemTestAnalysisJob.service.js";
 import { processVitestCoverageJob } from './vitestCoverageJob.service.js';
-import { processCypressSystemCoverageJob } from './cypressSystemCoverageJob.service.js';
-import { processCypressSystemTestJob } from './runCypressSystemTestJob.service.js';
-import { processRunPlaywrightJob } from './runPlaywrightJob.service.js';
-import { processPlaywrightSystemCoverageJob } from './playwrightSystemCoverageJob.service.js';
 import {
   getJobById,
   markJobRunning,
@@ -40,6 +36,24 @@ const connection = new IORedis(
 
 export const jobQueue = new Queue('covai-jobs', { connection });
 export const flowProducer = new FlowProducer({ connection });
+
+if (typeof connection?.on === 'function') {
+  connection.on('error', (err) => {
+    console.error('[Redis Connection Error]', err.message);
+  });
+}
+
+if (typeof jobQueue?.on === 'function') {
+  jobQueue.on('error', (err) => {
+    console.error('[BullMQ Queue Error]', err.message);
+  });
+}
+
+if (typeof flowProducer?.on === 'function') {
+  flowProducer.on('error', (err) => {
+    console.error('[BullMQ FlowProducer Error]', err.message);
+  });
+}
 
 // Initialize Worker
 const worker = new Worker(
@@ -163,23 +177,15 @@ const worker = new Worker(
         case "RUN_VITEST_TESTS":
           await processRunVitestJob(jobId);
           break;
-        case "SYSTEM_TEST_ANALYSIS":
-          await processSystemTestAnalysisJob(jobId);
-          break;
         case 'VITEST_COVERAGE':
           await processVitestCoverageJob(jobId);
           break;
+        case "SYSTEM_TEST_ANALYSIS":
         case 'CYPRESS_SYSTEM_TEST':
-          await processCypressSystemTestJob(jobId);
-          break;
         case 'CYPRESS_SYSTEM_COVERAGE':
-          await processCypressSystemCoverageJob(jobId);
-          break;
         case 'PLAYWRIGHT_SYSTEM_TEST':
-          await processRunPlaywrightJob(jobId);
-          break;
         case 'PLAYWRIGHT_SYSTEM_COVERAGE':
-          await processPlaywrightSystemCoverageJob(jobId);
+          await processSystemTestAnalysisJob(jobId);
           break;
         default:
           throw new Error(`Unknown job type: ${type}`);
@@ -200,6 +206,12 @@ const worker = new Worker(
           `[Queue] Không thể markJobFailed cho Job ${jobId}:`,
           fallbackError,
         );
+        try {
+          await prisma.job.update({
+            where: { id: jobId },
+            data: { status: 'FAILED', errorMessage: error.message || 'Job execution failed', finishedAt: new Date() },
+          });
+        } catch (_) {}
       }
       throw error; // Let BullMQ know it failed
     }
@@ -211,6 +223,10 @@ worker.on('failed', (job, err) => {
   console.error(
     `[Queue] BullMQ báo Job ${job?.data?.jobId} failed với lỗi: ${err.message}`,
   );
+});
+
+worker.on('error', (err) => {
+  console.error('[BullMQ Worker Error]', err.message);
 });
 
 export const addJobToQueue = async (type, jobId, customData = {}, jobOptions = {}) => {

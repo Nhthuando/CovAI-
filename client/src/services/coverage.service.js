@@ -43,6 +43,17 @@ export async function getCoverageSummary(snapshotId) {
     return handleResponse(res);
 }
 
+export async function getSystemCoverageSummary(snapshotId) {
+    const res = await fetch(
+        `${BASE_URL}/coverage/${snapshotId}/system/summary`,
+        {
+            headers: getAuthHeaders(),
+        }
+    );
+
+    return handleResponse(res);
+}
+
 export async function getCoverageFiles(
     snapshotId,
     {
@@ -93,15 +104,21 @@ export async function getCoverageFrameworks(snapshotId) {
     return handleResponse(res);
 }
 
-export async function runCoverageByType(snapshotId, coverageType, framework) {
+export async function runCoverageByType(snapshotId, coverageType, framework, executionMode) {
     const headers = getAuthHeaders();
     const options = {
         method: "POST",
-        headers: framework ? { ...headers, "Content-Type": "application/json" } : headers,
-        body: framework ? JSON.stringify({ framework }) : undefined,
+        headers: framework || executionMode ? { ...headers, "Content-Type": "application/json" } : headers,
+        body: framework || executionMode ? JSON.stringify({ framework, executionMode }) : undefined,
     };
     const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/${coverageType}/run`, options);
     return handleResponse(res);
+}
+
+export async function getSystemTestEvidence(snapshotId, scenarioId, signal) {
+    const response = await fetch(`${BASE_URL}/coverage/${snapshotId}/system/scenarios/${scenarioId}/evidence`, {headers:getAuthHeaders(),signal});
+    if (!response.ok) throw new Error('Evidence could not be loaded');
+    return response.blob();
 }
 
 export async function getFileCoverage(snapshotId, filePath) {
@@ -166,6 +183,14 @@ export async function getCoverageTestSuites(snapshotId, type = "unit") {
 
 export async function getIntegrationWorkspace(snapshotId) {
     const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/workspace`, {
+        headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
+}
+
+export async function saveAiSystemTest(snapshotId) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/system/save-ai-test`, {
+        method: "POST",
         headers: getAuthHeaders(),
     });
     return handleResponse(res);
