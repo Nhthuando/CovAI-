@@ -69,11 +69,14 @@ export const aggregateCoverageReports = async (rootDir, snapshotId) => {
         }
     }
 
-    const calcPct = (c, t) => t === 0 ? 100 : parseFloat(((c / t) * 100).toFixed(2));
+    const calcPct = (c, t) => t === 0 ? (c === 0 ? 0 : 100) : parseFloat(((c / t) * 100).toFixed(2));
     
     const linesPct = calcPct(globalTotal.lines.covered, globalTotal.lines.total);
     const funcsPct = calcPct(globalTotal.functions.covered, globalTotal.functions.total);
-    const branchesPct = calcPct(globalTotal.branches.covered, globalTotal.branches.total);
+    let branchesPct = calcPct(globalTotal.branches.covered, globalTotal.branches.total);
+    if ((globalTotal.branches.covered === 0 || globalTotal.branches.total === 0) && (linesPct === 0 || globalTotal.lines.covered === 0)) {
+        branchesPct = 0;
+    }
     const stmtsPct = calcPct(globalTotal.statements.covered, globalTotal.statements.total);
 
     const summary = await prisma.coverageSummary.upsert({

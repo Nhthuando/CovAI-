@@ -2,5 +2,6 @@
   "watch": ["src"],
   "ignore": ["storage/*", "node_modules"],
   "ext": "js,json,ts",
-  "exec": "node index.js"
+  "exec": "node index.js",
+  "legacyWatch": true
 }

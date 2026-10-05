@@ -1210,11 +1210,19 @@ export default function CoverageTypeDashboard({
 
   const getPctVal = (covVal, rawMetric) => {
     if (rawMetric) {
+      const total = Number(rawMetric.total || 0);
+      const covered = Number(rawMetric.covered || 0);
+      if (total === 0 && covered === 0) {
+        return 0;
+      }
       if (rawMetric.pct != null && !isNaN(Number(rawMetric.pct))) {
+        if (total === 0 && covered === 0) {
+          return 0;
+        }
         return Number(rawMetric.pct);
       }
-      if (rawMetric.total && rawMetric.total > 0) {
-        return (Number(rawMetric.covered || 0) / Number(rawMetric.total)) * 100;
+      if (total > 0) {
+        return (covered / total) * 100;
       }
     }
     const parsedCov = covVal != null && covVal !== "" ? Number(covVal) : null;
@@ -1225,9 +1233,17 @@ export default function CoverageTypeDashboard({
   };
 
   const statPct = getPctVal(cov.statements, rawTotals?.statements);
-  const branchPct = getPctVal(cov.branches, rawTotals?.branches);
+  let branchPct = getPctVal(cov.branches, rawTotals?.branches);
   const funcPct = getPctVal(cov.functions, rawTotals?.functions);
   const linePct = getPctVal(cov.lines, rawTotals?.lines);
+
+  // If 0% statements or lines are covered, branch coverage cannot be 100%
+  const branchesCovered = Number(rawTotals?.branches?.covered || 0);
+  const stmtsCovered = Number(rawTotals?.statements?.covered || 0);
+  const linesCovered = Number(rawTotals?.lines?.covered || 0);
+  if (branchesCovered === 0 && (statPct === 0 || linePct === 0 || (stmtsCovered === 0 && linesCovered === 0))) {
+    branchPct = 0;
+  }
 
   const selectedFiles = useMemo(() => {
     let nonTestFiles = files.filter((f) => !isTestFile(f.filePath));
@@ -1974,9 +1990,12 @@ export default function CoverageTypeDashboard({
             }}
           >
             {config.focus.map((label, i) => {
-              const metricVal = Number(values[i] || 0);
-              const color = getCoverageColor(metricVal, isLight);
+              let metricVal = Number(values[i] || 0);
               const rawInfo = i === 0 ? rawTotals?.statements : i === 1 ? rawTotals?.branches : i === 2 ? rawTotals?.functions : rawTotals?.lines;
+              if (i === 1 && (Number(rawInfo?.covered || 0) === 0) && (Number(values[0] || 0) === 0 || Number(values[3] || 0) === 0)) {
+                metricVal = 0;
+              }
+              const color = getCoverageColor(metricVal, isLight);
               const MetricIcon = i === 0 ? FileCode : i === 1 ? GitBranch : i === 2 ? Cpu : Layers;
 
               if (type === "unit") {
@@ -2065,8 +2084,10 @@ export default function CoverageTypeDashboard({
                           marginBottom: 4,
                         }}
                       >
-                        {rawInfo?.total ? (
-                          <span>{rawInfo.covered} / {rawInfo.total} {label.toLowerCase()}</span>
+                        {rawInfo?.total != null && rawInfo.total > 0 ? (
+                          <span>{rawInfo.covered || 0} / {rawInfo.total} {label.toLowerCase()}</span>
+                        ) : rawInfo?.total === 0 ? (
+                          <span>0 / 0 {label.toLowerCase()}</span>
                         ) : (
                           <span>Calculated {label.toLowerCase()}</span>
                         )}
@@ -2281,7 +2302,7 @@ export default function CoverageTypeDashboard({
                         >
                           {pct(pctNum)}
                         </span>
-                        {item.raw?.total ? (
+                        {item.raw?.total != null && item.raw.total > 0 ? (
                           <span
                             style={{
                               fontSize: 12,
@@ -2289,7 +2310,17 @@ export default function CoverageTypeDashboard({
                               fontFamily: "var(--font-mono, monospace)",
                             }}
                           >
-                            ({item.raw.covered} / {item.raw.total} covered)
+                            ({item.raw.covered || 0} / {item.raw.total} covered)
+                          </span>
+                        ) : item.raw?.total === 0 ? (
+                          <span
+                            style={{
+                              fontSize: 12,
+                              color: isLight ? "#64748b" : "#94a3b8",
+                              fontFamily: "var(--font-mono, monospace)",
+                            }}
+                          >
+                            (0 / 0 covered)
                           </span>
                         ) : null}
                       </div>

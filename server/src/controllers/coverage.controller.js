@@ -327,10 +327,12 @@ export const getCoverageSummary = async (req, res) => {
                                     linesTotal += data.lines?.total || 0;
                                 }
 
-                                const stmtsPct = stmtsTotal > 0 ? Number(((stmtsCovered / stmtsTotal) * 100).toFixed(1)) : 100;
-                                const branchesPct = branchesTotal > 0 ? Number(((branchesCovered / branchesTotal) * 100).toFixed(1)) : 100;
-                                const funcsPct = funcsTotal > 0 ? Number(((funcsCovered / funcsTotal) * 100).toFixed(1)) : 100;
-                                const linesPct = linesTotal > 0 ? Number(((linesCovered / linesTotal) * 100).toFixed(1)) : 100;
+                                const stmtsPct = stmtsTotal > 0 ? Number(((stmtsCovered / stmtsTotal) * 100).toFixed(1)) : 0;
+                                const linesPct = linesTotal > 0 ? Number(((linesCovered / linesTotal) * 100).toFixed(1)) : 0;
+                                const funcsPct = funcsTotal > 0 ? Number(((funcsCovered / funcsTotal) * 100).toFixed(1)) : 0;
+                                const branchesPct = branchesTotal > 0
+                                    ? Number(((branchesCovered / branchesTotal) * 100).toFixed(1))
+                                    : (linesCovered > 0 && linesPct === 100 ? 100 : 0);
 
                                 rawTotals = {
                                     statements: { total: stmtsTotal, covered: stmtsCovered, pct: stmtsPct },
@@ -346,16 +348,21 @@ export const getCoverageSummary = async (req, res) => {
                                     lines: linesPct,
                                 };
                             } else if (raw.total) {
+                                let rawBranchesPct = raw.total.branches?.pct ?? 0;
+                                if ((raw.total.branches?.covered === 0 || raw.total.branches?.total === 0) &&
+                                    (raw.total.statements?.pct === 0 || raw.total.lines?.pct === 0 || (raw.total.lines?.covered || 0) === 0)) {
+                                    rawBranchesPct = 0;
+                                }
                                 rawTotals = {
                                     statements: raw.total.statements || null,
-                                    branches: raw.total.branches || null,
+                                    branches: raw.total.branches ? { ...raw.total.branches, pct: rawBranchesPct } : null,
                                     functions: raw.total.functions || null,
                                     lines: raw.total.lines || null,
                                 };
                                 if ((!coverage.statements && !coverage.lines) && raw.total.statements?.pct != null) {
                                     coverage = {
                                         statements: raw.total.statements.pct ?? 0,
-                                        branches: raw.total.branches.pct ?? 0,
+                                        branches: rawBranchesPct,
                                         functions: raw.total.functions.pct ?? 0,
                                         lines: raw.total.lines.pct ?? 0,
                                     };
@@ -384,10 +391,12 @@ export const getCoverageSummary = async (req, res) => {
                                     linesTotal += data.lines?.total || 0;
                                 }
 
-                                const stmtsPct = stmtsTotal > 0 ? Number(((stmtsCovered / stmtsTotal) * 100).toFixed(1)) : 100;
-                                const branchesPct = branchesTotal > 0 ? Number(((branchesCovered / branchesTotal) * 100).toFixed(1)) : 100;
-                                const funcsPct = funcsTotal > 0 ? Number(((funcsCovered / funcsTotal) * 100).toFixed(1)) : 100;
-                                const linesPct = linesTotal > 0 ? Number(((linesCovered / linesTotal) * 100).toFixed(1)) : 100;
+                                const stmtsPct = stmtsTotal > 0 ? Number(((stmtsCovered / stmtsTotal) * 100).toFixed(1)) : 0;
+                                const linesPct = linesTotal > 0 ? Number(((linesCovered / linesTotal) * 100).toFixed(1)) : 0;
+                                const funcsPct = funcsTotal > 0 ? Number(((funcsCovered / funcsTotal) * 100).toFixed(1)) : 0;
+                                const branchesPct = branchesTotal > 0
+                                    ? Number(((branchesCovered / branchesTotal) * 100).toFixed(1))
+                                    : (linesCovered > 0 && linesPct === 100 ? 100 : 0);
 
                                 rawTotals = {
                                     statements: { total: stmtsTotal, covered: stmtsCovered, pct: stmtsPct },
@@ -403,17 +412,27 @@ export const getCoverageSummary = async (req, res) => {
                                     lines: linesPct,
                                 };
                             } else if (raw.total) {
+                                let rawBranchesPct = raw.total.branches?.pct ?? 0;
+                                if ((raw.total.branches?.covered === 0 || raw.total.branches?.total === 0) &&
+                                    (raw.total.statements?.pct === 0 || raw.total.lines?.pct === 0 || (raw.total.lines?.covered || 0) === 0)) {
+                                    rawBranchesPct = 0;
+                                }
                                 rawTotals = {
                                     statements: raw.total.statements || null,
-                                    branches: raw.total.branches || null,
+                                    branches: raw.total.branches ? { ...raw.total.branches, pct: rawBranchesPct } : null,
                                     functions: raw.total.functions || null,
                                     lines: raw.total.lines || null,
                                 };
                             }
                         } else if (raw.total) {
+                            let rawBranchesPct = raw.total.branches?.pct ?? 0;
+                            if ((raw.total.branches?.covered === 0 || raw.total.branches?.total === 0) &&
+                                (raw.total.statements?.pct === 0 || raw.total.lines?.pct === 0 || (raw.total.lines?.covered || 0) === 0)) {
+                                rawBranchesPct = 0;
+                            }
                             rawTotals = {
                                 statements: raw.total.statements || null,
-                                branches: raw.total.branches || null,
+                                branches: raw.total.branches ? { ...raw.total.branches, pct: rawBranchesPct } : null,
                                 functions: raw.total.functions || null,
                                 lines: raw.total.lines || null,
                             };

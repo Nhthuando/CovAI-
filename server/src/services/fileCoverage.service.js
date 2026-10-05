@@ -19,7 +19,20 @@ export const cleanRelativePath = (rootDir, targetPath) => {
     let norm = normalizePath(targetPath);
     if (rootDir) {
         const normRoot = normalizePath(rootDir);
-        if (norm.startsWith(normRoot)) norm = norm.slice(normRoot.length);
+        if (norm.startsWith(normRoot)) return norm.slice(normRoot.length).replace(/^\/+/, "");
+        const rootStorageIdx = normRoot.indexOf("storage/projects/");
+        const targetStorageIdx = norm.indexOf("storage/projects/");
+        if (rootStorageIdx !== -1 && targetStorageIdx !== -1) {
+            const rootSub = normRoot.slice(rootStorageIdx);
+            const targetSub = norm.slice(targetStorageIdx);
+            if (targetSub.startsWith(rootSub)) {
+                return targetSub.slice(rootSub.length).replace(/^\/+/, "");
+            }
+        }
+        const testMatch = norm.match(/(?:tests?|__tests__|src)\/[^:\s\r\n]+\.(?:test|spec)\.[cm]?[jt]sx?/);
+        if (testMatch) {
+            return testMatch[0];
+        }
     }
     norm = norm.replace(/^[a-zA-Z]:[\\/]/, "");
     norm = norm.replace(/^.*?\/storage\/projects\/[^/]+\/[^/]+\/[^/]+\/repo\//i, "");
@@ -504,14 +517,45 @@ export const findAssociatedTestFile = (rootDir, rawSourceFilePath, framework = n
 
                     // Match subproject prefix only in monorepos / multi-package repositories
                     if (subprojectPrefix) {
-                        if (rel.startsWith(subprojectPrefix)) score += 100;
-                        else score -= 100;
+                        if (rel.startsWith(subprojectPrefix)) score += 10;
+                        else score -= 500;
                     }
 
                     // Match file extension (.ts with .ts vs .js with .js)
                     const testExt = path.extname(rel);
-                    if ((ext === ".ts" || ext === ".tsx") && (testExt === ".ts" || testExt === ".tsx")) score += 30;
-                    else if ((ext === ".js" || ext === ".jsx") && (testExt === ".js" || testExt === ".jsx")) score += 30;
+                    if ((ext === ".ts" || ext === ".tsx") && (testExt === ".ts" || testExt === ".tsx")) score += 10;
+                    else if ((ext === ".js" || ext === ".jsx") && (testExt === ".js" || testExt === ".jsx")) score += 10;
+
+                    // Generic base names (index, app, main, config, server) require matching parent directory
+                    const isGenericName = ["index", "app", "main", "config", "server", "default", "constants"].includes(baseName.toLowerCase());
+                    const testBaseName = path.basename(rel, testExt).replace(/\.(test|spec|steps?)$/i, "");
+                    const cleanDirParts = (dirName && dirName !== "." && dirName !== "src")
+                        ? dirName.replace(/^(?:.*?\/)?src\/?/, "").split("/").filter(Boolean)
+                        : [];
+
+                    let dirMatched = false;
+                    for (const dp of cleanDirParts) {
+                        if (rel.includes("/" + dp + "/") || rel.includes("/" + dp + ".")) {
+                            score += 60;
+                            dirMatched = true;
+                            break;
+                        }
+                    }
+
+                    // For generic names like index.js, if directory does NOT match, heavily penalize so e.g. models/index.js never matches config/index.test.js
+                    if (isGenericName && !dirMatched) {
+                        score -= 300;
+                    }
+
+                    // Unit test files must align with the target module name
+                    const isNameMatch = (testBaseName === baseName) ||
+                        testBaseName.startsWith(baseName) ||
+                        testBaseName.endsWith(baseName) ||
+                        testBaseName.includes(baseName);
+
+                    if (!isNameMatch) {
+                        continue;
+                    }
 
                     // Direct import/require match - highest confidence!
                     const hasDirectImport = (
@@ -524,29 +568,17 @@ export const findAssociatedTestFile = (rootDir, rawSourceFilePath, framework = n
                         content.includes('from "' + baseName)
                     );
 
-                    if (hasDirectImport) {
-                        score += 160;
-                    } else if (content.includes(baseName)) {
-                        score += 50;
+                    if (hasDirectImport && (!isGenericName || dirMatched)) {
+                        score += 180;
+                    } else if (content.includes(baseName) && (testBaseName === baseName || dirMatched)) {
+                        score += 40;
                     }
 
                     // File name matching
-                    const testBaseName = path.basename(rel, testExt).replace(/\.(test|spec|steps?)$/i, "");
                     if (testBaseName === baseName) {
-                        score += 120;
+                        score += (isGenericName && !dirMatched) ? 10 : 160;
                     } else if (testBaseName.startsWith(baseName) || testBaseName.endsWith(baseName) || testBaseName.includes(baseName)) {
-                        score += 80;
-                    }
-
-                    // Directory similarity (e.g. clients/ or handlers/)
-                    if (dirName && dirName !== "." && dirName !== "src") {
-                        const cleanDirParts = dirName.replace(/^src\/?/, "").split("/").filter(Boolean);
-                        for (const dp of cleanDirParts) {
-                            if (rel.includes("/" + dp + "/") || rel.includes("/" + dp)) {
-                                score += 40;
-                                break;
-                            }
-                        }
+                        score += (isGenericName && !dirMatched) ? 5 : 60;
                     }
 
                     // Penalize placeholder/stub files
@@ -554,7 +586,7 @@ export const findAssociatedTestFile = (rootDir, rawSourceFilePath, framework = n
                         score -= 60;
                     }
 
-                    if (score > bestScore && score > 0) {
+                    if (score > bestScore && score >= 120) {
                         bestScore = score;
                         bestImportMatch = { full, rel, content };
                     }
@@ -564,7 +596,7 @@ export const findAssociatedTestFile = (rootDir, rawSourceFilePath, framework = n
     };
     try { scanDir(rootDir); } catch { }
 
-    if (bestImportMatch) {
+    if (bestImportMatch && bestScore >= 120) {
         return {
             found: true,
             filePath: bestImportMatch.rel,
@@ -859,7 +891,7 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
     const lineCoverage = extractLineCoverage(matchedFileCoverage, assertionFailures);
 
     // Summary calculation
-    const calcPct = (covered, total) => total > 0 ? Number(((covered / total) * 100).toFixed(1)) : 100;
+    const calcPct = (covered, total) => total > 0 ? Number(((covered / total) * 100).toFixed(1)) : (covered === 0 ? 0 : 100);
     const rawStmtsTotal = Object.keys(matchedFileCoverage.s || {}).length;
     const rawStmtsCovered = Object.values(matchedFileCoverage.s || {}).filter(c => c > 0).length;
     const rawFuncsTotal = Object.keys(matchedFileCoverage.f || {}).length;
@@ -910,10 +942,6 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
         });
     } catch (_) { }
 
-    const branchesTotal = officialSummary?.branches?.total ?? rawBranchesTotal;
-    const branchesCovered = officialSummary?.branches?.covered ?? rawBranchesCovered;
-    const branchesPct = officialSummary?.branches?.pct ?? (dbCoverageFile?.branchesPct ?? calcPct(branchesCovered, branchesTotal));
-
     const stmtsTotal = officialSummary?.statements?.total ?? rawStmtsTotal;
     const stmtsCovered = officialSummary?.statements?.covered ?? rawStmtsCovered;
     const stmtsPct = officialSummary?.statements?.pct ?? (dbCoverageFile?.stmtsPct ?? calcPct(stmtsCovered, stmtsTotal));
@@ -921,6 +949,13 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
     const linesTotal = officialSummary?.lines?.total ?? (lineCoverage.coveredLines.length + lineCoverage.uncoveredLines.length);
     const linesCovered = officialSummary?.lines?.covered ?? lineCoverage.coveredLines.length;
     const linesPct = officialSummary?.lines?.pct ?? (dbCoverageFile?.linesPct ?? calcPct(linesCovered, linesTotal));
+
+    const branchesTotal = officialSummary?.branches?.total ?? rawBranchesTotal;
+    const branchesCovered = officialSummary?.branches?.covered ?? rawBranchesCovered;
+    let branchesPct = officialSummary?.branches?.pct ?? (dbCoverageFile?.branchesPct ?? calcPct(branchesCovered, branchesTotal));
+    if ((branchesTotal === 0 || branchesCovered === 0) && (stmtsCovered === 0 || linesCovered === 0)) {
+        branchesPct = 0;
+    }
 
     const funcsTotal = officialSummary?.functions?.total ?? rawFuncsTotal;
     const funcsCovered = officialSummary?.functions?.covered ?? rawFuncsCovered;

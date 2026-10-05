@@ -89,6 +89,8 @@ jest.unstable_mockModule('../services/fileCoverage.service.js', () => ({
 const mockSuggestUnitTestcases = jest.fn();
 jest.unstable_mockModule('../services/unitTestSuggestion.service.js', () => ({
     suggestUnitTestcases: mockSuggestUnitTestcases,
+    computeRelativeImportPath: jest.fn(() => '../src/test'),
+    generateFallbackUnitTests: jest.fn(() => ({ suggestedTestCode: '', fullUpdatedContent: '' })),
 }));
 
 const {

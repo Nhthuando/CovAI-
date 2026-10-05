@@ -21,7 +21,8 @@ import { detectTestingFrameworks, classifyTestFile } from "../utils/testingFrame
 import prisma from "../config/prisma.js";
 import { resolveProjectRoot, hasSourceCodeFiles, ensureMinimalPackageJson } from "../utils/projectRootResolver.js";
 import { extractFunctions } from "./cyclomaticFunctionExtractor.service.js";
-import { cleanStoragePath, cleanStorageText } from "../utils/pathSanitizer.js";
+import { parseJavaScriptCode } from "./babelParser.service.js";
+import { sanitizeAllProjectTestFiles, cleanAndDeduplicateTestContent, healImportPathsInTestCode } from "./testSanitizer.service.js";
 
 const INSTALL_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const JEST_TIMEOUT_MS = 10 * 60 * 1000;   // 10 minutes (prevents premature timeouts on large suites)
@@ -616,6 +617,108 @@ export const findLogicSourceFiles = (rootDir) => {
 
 /**
  * Generate 0% baseline coverage artifacts (coverage-summary.json and coverage-final.json)
+/**
+ * Extract branches (if, ternary, logical, switch, catch) from source code
+ * using AST traversal with regex fallback.
+ */
+export const extractBranches = (content) => {
+    const branches = [];
+    try {
+        const parsed = parseJavaScriptCode(content);
+        if (parsed?.success && parsed.ast) {
+            const walk = (node) => {
+                if (!node || typeof node !== "object") return;
+                if (node.type === "IfStatement") {
+                    branches.push({
+                        type: "if",
+                        line: node.loc?.start?.line || 1,
+                        locations: [
+                            node.consequent?.loc || { start: {}, end: {} },
+                            node.alternate?.loc || { start: {}, end: {} }
+                        ]
+                    });
+                } else if (node.type === "ConditionalExpression") {
+                    branches.push({
+                        type: "cond-expr",
+                        line: node.loc?.start?.line || 1,
+                        locations: [
+                            node.consequent?.loc || { start: {}, end: {} },
+                            node.alternate?.loc || { start: {}, end: {} }
+                        ]
+                    });
+                } else if (node.type === "LogicalExpression" && (node.operator === "&&" || node.operator === "||" || node.operator === "??")) {
+                    branches.push({
+                        type: "binary-expr",
+                        line: node.loc?.start?.line || 1,
+                        locations: [
+                            node.left?.loc || { start: {}, end: {} },
+                            node.right?.loc || { start: {}, end: {} }
+                        ]
+                    });
+                } else if (node.type === "SwitchCase") {
+                    branches.push({
+                        type: "switch",
+                        line: node.loc?.start?.line || 1,
+                        locations: [node.loc || { start: {}, end: {} }]
+                    });
+                } else if (node.type === "CatchClause") {
+                    branches.push({
+                        type: "catch",
+                        line: node.loc?.start?.line || 1,
+                        locations: [node.loc || { start: {}, end: {} }]
+                    });
+                }
+
+                for (const key of Object.keys(node)) {
+                    if (key === "loc" || key === "comments" || key === "leadingComments" || key === "trailingComments") continue;
+                    const child = node[key];
+                    if (Array.isArray(child)) {
+                        for (let k = 0; k < child.length; k++) walk(child[k]);
+                    } else if (child && typeof child === "object") {
+                        walk(child);
+                    }
+                }
+            };
+            walk(parsed.ast);
+        }
+    } catch (_) { }
+
+    if (branches.length === 0 && typeof content === "string") {
+        const lines = content.split("\n");
+        lines.forEach((line, idx) => {
+            const lineNo = idx + 1;
+            const ifMatches = line.match(/\bif\s*\(/g);
+            if (ifMatches) {
+                ifMatches.forEach(() => {
+                    branches.push({ type: "if", line: lineNo, locations: [{}, {}] });
+                });
+            }
+            const ternaryMatches = line.match(/[^?:]\?[^?:]/g);
+            if (ternaryMatches) {
+                ternaryMatches.forEach(() => {
+                    branches.push({ type: "cond-expr", line: lineNo, locations: [{}, {}] });
+                });
+            }
+            const logicalMatches = line.match(/(&&|\|\||\?\?)/g);
+            if (logicalMatches) {
+                logicalMatches.forEach(() => {
+                    branches.push({ type: "binary-expr", line: lineNo, locations: [{}, {}] });
+                });
+            }
+            const caseMatches = line.match(/\b(case\s+[^:]+|default)\s*:/g);
+            if (caseMatches) {
+                caseMatches.forEach(() => {
+                    branches.push({ type: "switch", line: lineNo, locations: [{}] });
+                });
+            }
+        });
+    }
+
+    return branches;
+};
+
+/**
+ * Generate 0% baseline coverage artifacts (coverage-summary.json and coverage-final.json)
  * for logic files in projects that have no test files yet.
  */
 export const generateBaselineCoverage = (rootDir, logicFiles, coverageDir) => {
@@ -628,7 +731,7 @@ export const generateBaselineCoverage = (rootDir, logicFiles, coverageDir) => {
             lines: { total: 0, covered: 0, skipped: 0, pct: 0 },
             statements: { total: 0, covered: 0, skipped: 0, pct: 0 },
             functions: { total: 0, covered: 0, skipped: 0, pct: 0 },
-            branches: { total: 0, covered: 0, skipped: 0, pct: 100 }
+            branches: { total: 0, covered: 0, skipped: 0, pct: 0 }
         }
     };
     const coverageFinal = {};
@@ -663,18 +766,27 @@ export const generateBaselineCoverage = (rootDir, logicFiles, coverageDir) => {
             }
         }
 
+        let branchList = [];
+        try {
+            branchList = extractBranches(content) || [];
+        } catch {
+            branchList = [];
+        }
+
         const totalFuncs = funcs.length;
         const totalStmts = totalLines;
+        const totalBranches = branchList.reduce((sum, br) => sum + (br.locations?.length || 1), 0);
 
         summaryData.total.lines.total += totalLines;
         summaryData.total.statements.total += totalStmts;
         summaryData.total.functions.total += totalFuncs;
+        summaryData.total.branches.total += totalBranches;
 
         const fileSummary = {
             lines: { total: totalLines, covered: 0, skipped: 0, pct: 0 },
             statements: { total: totalStmts, covered: 0, skipped: 0, pct: 0 },
             functions: { total: totalFuncs, covered: 0, skipped: 0, pct: 0 },
-            branches: { total: 0, covered: 0, skipped: 0, pct: 100 }
+            branches: { total: totalBranches, covered: 0, skipped: 0, pct: 0 }
         };
 
         summaryData[file.absolutePath] = fileSummary;
@@ -706,6 +818,16 @@ export const generateBaselineCoverage = (rootDir, logicFiles, coverageDir) => {
                 line: sLine
             };
             f[String(i)] = 0;
+        });
+
+        branchList.forEach((br, i) => {
+            branchMap[String(i)] = {
+                line: br.line || 1,
+                type: br.type || "if",
+                loc: { start: { line: br.line || 1, column: 0 }, end: { line: br.line || 1, column: 0 } },
+                locations: br.locations || [{ start: {}, end: {} }, { start: {}, end: {} }]
+            };
+            b[String(i)] = (br.locations || [1, 2]).map(() => 0);
         });
 
         const fileFinalEntry = {
@@ -790,14 +912,14 @@ export const healAllTestFiles = (rootDir, specificFiles = []) => {
             if (healed.includes("normalizeParentRef") && (healed.includes("import(") || healed.includes("test.skip"))) {
                 healed = healed.replace(
                     /(?:describe\s*\(\s*['"]Internal helpers and edge cases['"][\s\S]*?\n\s*\}\s*\);?)/g,
-                    `describe('Internal helpers and edge cases', () => {\n    test('normalizeParentRef handles diverse input formats', async () => {\n      let captured: any;\n      if (typeof mockQuickBooksInstance !== 'undefined' && mockQuickBooksInstance.createAccount) {\n        mockQuickBooksInstance.createAccount.mockImplementation((payload: any, cb: any) => {\n          captured = payload;\n          cb(null, { Id: '12', ...payload });\n        });\n      }\n      await createQuickbooksAccount({ name: 'Acc1', type: 'Expense', parent_id: '123' });\n      expect(captured?.ParentRef).toEqual({ value: '123' });\n      await createQuickbooksAccount({ name: 'Acc2', type: 'Expense', parent_id: { value: 123 } as any });\n      expect(captured?.ParentRef).toEqual({ value: '123' });\n      captured = null;\n      await createQuickbooksAccount({ name: 'Acc3', type: 'Expense', parent_id: null as any });\n      expect(captured?.ParentRef).toBeUndefined();\n    });\n\n    test('normalizeAccountPayload handles optional and edge case parameters', async () => {\n      let captured: any;\n      if (typeof mockQuickBooksInstance !== 'undefined' && mockQuickBooksInstance.createAccount) {\n        mockQuickBooksInstance.createAccount.mockImplementation((payload: any, cb: any) => {\n          captured = payload;\n          cb(null, { Id: '14', ...payload });\n        });\n      }\n      const res = await createQuickbooksAccount({ name: 'Acc4', type: 'Expense', sub_type: 'Other', description: 'Desc' });\n      expect(res.isError).toBe(false);\n      expect(captured?.Description).toBe('Desc');\n    });\n  });`
+                    `describe('Internal helpers and edge cases', () => {\n    test('normalizeParentRef handles diverse input formats', async () => {\n      let captured;\n      if (typeof mockQuickBooksInstance !== 'undefined' && mockQuickBooksInstance.createAccount) {\n        mockQuickBooksInstance.createAccount.mockImplementation((payload, cb) => {\n          captured = payload;\n          cb(null, { Id: '12', ...payload });\n        });\n      }\n      await createQuickbooksAccount({ name: 'Acc1', type: 'Expense', parent_id: '123' });\n      expect(captured?.ParentRef).toEqual({ value: '123' });\n      await createQuickbooksAccount({ name: 'Acc2', type: 'Expense', parent_id: { value: 123 } });\n      expect(captured?.ParentRef).toEqual({ value: '123' });\n      captured = null;\n      await createQuickbooksAccount({ name: 'Acc3', type: 'Expense', parent_id: null });\n      expect(captured?.ParentRef).toBeUndefined();\n    });\n\n    test('normalizeAccountPayload handles optional and edge case parameters', async () => {\n      let captured;\n      if (typeof mockQuickBooksInstance !== 'undefined' && mockQuickBooksInstance.createAccount) {\n        mockQuickBooksInstance.createAccount.mockImplementation((payload, cb) => {\n          captured = payload;\n          cb(null, { Id: '14', ...payload });\n        });\n      }\n      const res = await createQuickbooksAccount({ name: 'Acc4', type: 'Expense', sub_type: 'Other', description: 'Desc' });\n      expect(res.isError).toBe(false);\n      expect(captured?.Description).toBe('Desc');\n    });\n  });`
                 );
             }
 
             // 3. Heal ESM require('fs') and saveTokensToEnv assertion in quickbooks-client tests
             if (healed.includes("saveTokensToEnv")) {
                 healed = healed.replace(/jest\.spyOn\s*\(\s*require\s*\(\s*['"]fs['"]\s*\)\s*,\s*['"]writeFileSync['"]\s*\)\.mockImplementation\([^)]*\);?/g, "");
-                healed = healed.replace(/expect\s*\(\s*\(\s*\)\s*=>\s*client\.saveTokensToEnv\(\)\s*\)\.toThrow\([^)]*\);?/g, "expect(() => (client as any).saveTokensToEnv()).not.toThrow();");
+                healed = healed.replace(/expect\s*\(\s*\(\s*\)\s*=>\s*client\.saveTokensToEnv\(\)\s*\)\.toThrow\([^)]*\);?/g, "expect(() => client.saveTokensToEnv()).not.toThrow();");
             }
 
             // 4. Unskip any test.skip / it.skip so active tests execute and record real coverage
@@ -806,6 +928,10 @@ export const healAllTestFiles = (rootDir, specificFiles = []) => {
             healed = healed.replace(/\bxit\s*\(/g, "it(");
             healed = healed.replace(/\bxtest\s*\(/g, "test(");
             healed = healed.replace(/\bxdescribe\s*\(/g, "describe(");
+
+            // 5. Clean up any invalid TypeScript syntax or duplicate declarations
+            healed = cleanAndDeduplicateTestContent(healed);
+            healed = healImportPathsInTestCode(healed, relP, rootDir);
 
             if (healed !== content) {
                 fs.writeFileSync(fullP, healed, "utf8");
@@ -954,6 +1080,11 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
     if (!fs.existsSync(covDir)) {
         try { fs.mkdirSync(covDir, { recursive: true }); } catch { }
     }
+
+    // Clean up any broken placeholder lines or invalid TypeScript syntax across test files before running Jest
+    try {
+        sanitizeAllProjectTestFiles(rootDir);
+    } catch { }
 
     // Partition test files by package
     let filesToRun = specificFiles;
@@ -1849,17 +1980,17 @@ export const mergeCoverageSummaries = (sum1 = {}, sum2 = {}, options = {}) => {
             const covered = Math.max(m1.covered || 0, m2.covered || 0);
             const total = Math.max(m1.total || 0, m2.total || 0);
             const skipped = Math.max(m1.skipped || 0, m2.skipped || 0);
-            const pct = total > 0 ? Number(((covered / total) * 100).toFixed(1)) : 100;
+            const pct = total > 0 ? Number(((covered / total) * 100).toFixed(1)) : (covered === 0 ? 0 : 100);
             combined[metric] = { total, covered, skipped, pct };
         }
         merged[key] = combined;
     }
 
     const total = {
-        lines: { total: 0, covered: 0, skipped: 0, pct: 100 },
-        statements: { total: 0, covered: 0, skipped: 0, pct: 100 },
-        functions: { total: 0, covered: 0, skipped: 0, pct: 100 },
-        branches: { total: 0, covered: 0, skipped: 0, pct: 100 },
+        lines: { total: 0, covered: 0, skipped: 0, pct: 0 },
+        statements: { total: 0, covered: 0, skipped: 0, pct: 0 },
+        functions: { total: 0, covered: 0, skipped: 0, pct: 0 },
+        branches: { total: 0, covered: 0, skipped: 0, pct: 0 },
     };
 
     // Extract path-matched threshold exceptions from Jest's coverageThreshold (if any)
@@ -1911,7 +2042,7 @@ export const mergeCoverageSummaries = (sum1 = {}, sum2 = {}, options = {}) => {
     for (const metric of ["lines", "statements", "functions", "branches"]) {
         total[metric].pct = total[metric].total > 0
             ? Number(((total[metric].covered / total[metric].total) * 100).toFixed(1))
-            : 100;
+            : (total[metric].covered === 0 ? 0 : 100);
     }
     merged.total = total;
     return merged;
@@ -2083,8 +2214,9 @@ export const processRunTestsJob = async (jobId) => {
         const hasJest = jestFiles.length > 0;
         const runBoth = hasVitest && hasJest;
 
-        // Auto-heal any broken import paths in test files (e.g. leaked storage/projects prefixes)
+        // Auto-heal any broken import paths and sanitize test files across project
         healAllTestFiles(rootDir, [...jestFiles, ...vitestFiles]);
+        sanitizeAllProjectTestFiles(rootDir);
 
         await addJobLog(
             jobId,
