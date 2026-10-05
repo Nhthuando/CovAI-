@@ -917,8 +917,9 @@ export default function CoverageTypeDashboard({
     });
   }, [snapshotId, saveSuggestions]);
 
-  // Compute all pending suggestions across all files
+  // Compute all pending suggestions across all files - strictly for Unit Tests
   const allPendingSuggestions = useMemo(() => {
+    if (type !== "unit") return [];
     const list = [];
     Object.entries(inlineSuggestions).forEach(([fPath, sugs]) => {
       (sugs || []).forEach((s) => {
@@ -928,7 +929,7 @@ export default function CoverageTypeDashboard({
       });
     });
     return list;
-  }, [inlineSuggestions]);
+  }, [inlineSuggestions, type]);
 
   const filesWithPendingSuggestions = useMemo(() => {
     const set = new Set();
@@ -1130,17 +1131,21 @@ export default function CoverageTypeDashboard({
   );
 
   const run = async () => {
-    if (type !== "unit") return; // Button only operates on Unit Test Coverage
     if (!snapshotId || running) return;
     setRunning(true);
     setRunProgress(8);
-    setRunStep("Initializing unit test analysis environment...");
+    const initialStep = type === "system"
+      ? "Initializing E2E system testing environment..."
+      : type === "integration"
+        ? "Initializing API integration test environment..."
+        : "Initializing unit test analysis environment...";
+    setRunStep(initialStep);
     setError("");
-    startAnalysis({ snapshotId, projectId, type: "unit" });
+    startAnalysis({ snapshotId, projectId, type });
     try {
       let response;
       try {
-        response = await runCoverageByType(snapshotId, "unit");
+        response = await runCoverageByType(snapshotId, type);
       } catch (err) {
         if (err.message && (err.message.includes("already queued") || err.message.includes("running") || err.message.includes("409"))) {
           const projJobs = await getProjectJobsApi(projectId).catch(() => ({ jobs: [] }));
@@ -1154,7 +1159,7 @@ export default function CoverageTypeDashboard({
           throw err;
         }
       }
-      const fw = response.data?.framework || (type === "unit" ? "jest & vitest" : "");
+      const fw = response.data?.framework || (type === "unit" ? "jest & vitest" : type === "system" ? "playwright · cypress" : "supertest");
       setActiveFramework(fw);
       const jobs = response.data?.jobs || (response.data?.job ? [response.data.job] : []);
       if (jobs.length === 0) throw new Error("Backend did not return test run jobs.");
@@ -1163,19 +1168,43 @@ export default function CoverageTypeDashboard({
           startAnalysis({ snapshotId, projectId, type, jobId: j.id });
           await waitForJob(j.id, (prog) => {
             setRunProgress(prog);
-            let s = "Preparing dependencies & Docker environment...";
-            if (prog <= 20) {
-              s = "Preparing dependencies & Docker environment...";
-            } else if (prog <= 45) {
-              s = "Running Jest unit test suites & generating coverage...";
-            } else if (prog <= 65) {
-              s = "Running Vitest unit test suites & generating coverage...";
-            } else if (prog <= 85) {
-              s = "Merging multi-framework coverage & analyzing AST functions...";
-            } else if (prog < 100) {
-              s = "Saving analysis results & syncing data...";
+            let s = "Preparing execution environment...";
+            if (type === "system") {
+              if (prog <= 25) {
+                s = "Preparing Playwright & Cypress browser drivers...";
+              } else if (prog <= 65) {
+                s = "Executing E2E user journeys & browser automation...";
+              } else if (prog <= 85) {
+                s = "Collecting system coverage & session recordings...";
+              } else if (prog < 100) {
+                s = "Calculating end-to-end feature coverage metrics...";
+              } else {
+                s = "System test execution completed!";
+              }
+            } else if (type === "integration") {
+              if (prog <= 25) {
+                s = "Preparing Supertest integration test suite...";
+              } else if (prog <= 70) {
+                s = "Executing HTTP route endpoints & assertions...";
+              } else if (prog < 100) {
+                s = "Calculating API integration coverage metrics...";
+              } else {
+                s = "Integration test execution completed!";
+              }
             } else {
-              s = "Test analysis completed!";
+              if (prog <= 20) {
+                s = "Preparing dependencies & Docker environment...";
+              } else if (prog <= 45) {
+                s = "Running Jest unit test suites & generating coverage...";
+              } else if (prog <= 65) {
+                s = "Running Vitest unit test suites & generating coverage...";
+              } else if (prog <= 85) {
+                s = "Merging multi-framework coverage & analyzing AST functions...";
+              } else if (prog < 100) {
+                s = "Saving analysis results & syncing data...";
+              } else {
+                s = "Test analysis completed!";
+              }
             }
             setRunStep(s);
             updateAnalysisProgress(prog, s);
@@ -1183,7 +1212,7 @@ export default function CoverageTypeDashboard({
         }
       }
       setRunProgress(100);
-      setRunStep("Analysis completed successfully!");
+      setRunStep(type === "system" ? "System test completed successfully!" : "Analysis completed successfully!");
       completeAnalysis(true);
       invalidateCoverageQueries(snapshotId);
       await refetchCoverage();
@@ -1248,7 +1277,15 @@ export default function CoverageTypeDashboard({
   const selectedFiles = useMemo(() => {
     let nonTestFiles = files.filter((f) => !isTestFile(f.filePath));
     if (type === "unit") {
-      nonTestFiles = nonTestFiles.filter((f) => !isFrontendFile(f.filePath));
+      nonTestFiles = nonTestFiles.filter((f) => {
+        if (isFrontendFile(f.filePath)) return false;
+        const norm = (f.filePath || "").replace(/\\/g, "/").toLowerCase();
+        const isRouteOrEntry = /(^|\/)(routes?|endpoints?)(\/|\.|$)/i.test(norm) ||
+          /\.(route|routes)\.[cm]?[jt]sx?$/i.test(norm) ||
+          /(^|\/)(app|server)\.[cm]?[jt]sx?$/i.test(norm) ||
+          /^(src\/)?(index|main)\.[cm]?[jt]sx?$/i.test(norm.replace(/^\.?\//, ""));
+        return !isRouteOrEntry;
+      });
     }
     return type === "integration" ? nonTestFiles.filter(apiFile) : nonTestFiles;
   }, [files, type]);
@@ -1479,9 +1516,18 @@ export default function CoverageTypeDashboard({
       selectedFiles.length
     : 0;
 
-  const isLatestRunFailed = summary?.latestRunStatus === "failed" || coverageData?.latestRunStatus === "failed";
-  const hasPartialFailures = summary?.latestRunStatus === "passed_with_failures" || coverageData?.latestRunStatus === "passed_with_failures" || summary?.hasTestFailures;
-  const lastSuccessfulCov = summary?.lastSuccessfulCoverage || coverageData?.lastSuccessfulCoverage;
+  const isLatestRunFailed = Boolean(
+    (summary?.latestRunStatus === "failed" || coverageData?.latestRunStatus === "failed") &&
+    (type === "unit"
+      ? true
+      : (summary?.latestRunError || relevantRuns.some((r) => r?.status === "FAILED")))
+  );
+  const hasPartialFailures = type === "unit"
+    ? (summary?.latestRunStatus === "passed_with_failures" || coverageData?.latestRunStatus === "passed_with_failures" || summary?.hasTestFailures)
+    : (totals.failed > 0);
+  const lastSuccessfulCov = type === "unit"
+    ? (summary?.lastSuccessfulCoverage || coverageData?.lastSuccessfulCoverage)
+    : (summary?.lastSuccessfulCoverage?.statements > 0 ? summary.lastSuccessfulCoverage : null);
   const latestRunErr = summary?.latestRunError || coverageData?.latestRunError;
   const failedSuiteName = cleanDisplayPath(summary?.failedSuite || coverageData?.failedSuite);
 
@@ -1622,36 +1668,38 @@ export default function CoverageTypeDashboard({
               {generating ? "Generating..." : "Generate AI Tests"}
             </button>
           )}
-          <button
-            onClick={handleBulkSuggestTest}
-            disabled={loading || running || isBulkSuggesting}
-            style={{
-              background: isLight
-                ? (isBulkSuggesting ? "#ede9fe" : "#ffffff")
-                : (isBulkSuggesting ? "rgba(168, 85, 247, 0.25)" : "rgba(168, 85, 247, 0.12)"),
-              border: isLight
-                ? "1px solid #c4b5fd"
-                : "1px solid rgba(168, 85, 247, 0.35)",
-              color: isLight ? "#6d28d9" : "#d8b4fe",
-              boxShadow: isLight
-                ? "0 1px 2px rgba(109, 40, 217, 0.08)"
-                : "0 1px 4px rgba(0, 0, 0, 0.2)",
-              borderRadius: 8,
-              padding: "8px 14px",
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              fontWeight: 650,
-              fontSize: 12.5,
-              cursor: isBulkSuggesting ? "wait" : "pointer",
-              transition: "all 0.15s ease",
-            }}
-            title="Generate unit test assertions and coverage specs for uncovered functions"
-          >
-            <FlaskConical size={14} className={isLight ? "text-purple-600" : "text-purple-400"} />
-            <span>{isBulkSuggesting ? "Generating test cases..." : "Suggest Unit Tests"}</span>
-          </button>
-          {allPendingSuggestions.length > 0 && (
+          {type === "unit" && (
+            <button
+              onClick={handleBulkSuggestTest}
+              disabled={loading || running || isBulkSuggesting}
+              style={{
+                background: isLight
+                  ? (isBulkSuggesting ? "#ede9fe" : "#ffffff")
+                  : (isBulkSuggesting ? "rgba(168, 85, 247, 0.25)" : "rgba(168, 85, 247, 0.12)"),
+                border: isLight
+                  ? "1px solid #c4b5fd"
+                  : "1px solid rgba(168, 85, 247, 0.35)",
+                color: isLight ? "#6d28d9" : "#d8b4fe",
+                boxShadow: isLight
+                  ? "0 1px 2px rgba(109, 40, 217, 0.08)"
+                  : "0 1px 4px rgba(0, 0, 0, 0.2)",
+                borderRadius: 8,
+                padding: "8px 14px",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                fontWeight: 650,
+                fontSize: 12.5,
+                cursor: isBulkSuggesting ? "wait" : "pointer",
+                transition: "all 0.15s ease",
+              }}
+              title="Generate unit test assertions and coverage specs for uncovered functions"
+            >
+              <FlaskConical size={14} className={isLight ? "text-purple-600" : "text-purple-400"} />
+              <span>{isBulkSuggesting ? "Generating test cases..." : "Suggest Unit Tests"}</span>
+            </button>
+          )}
+          {type === "unit" && allPendingSuggestions.length > 0 && (
             <button
               onClick={handleApplyAllGlobal}
               disabled={loading || running || isBulkApplying}
@@ -1743,10 +1791,74 @@ export default function CoverageTypeDashboard({
               {running ? `Running (${Math.max(5, Math.min(100, Math.round(runProgress)))}%)...` : "Run Analysis Unit"}
             </button>
           )}
+          {type === "system" && (
+            <button
+              onClick={run}
+              disabled={!snapshotId || running}
+              style={{
+                background: running
+                  ? (isLight ? "#fce7f3" : "rgba(236, 72, 153, 0.2)")
+                  : (isLight ? "#db2777" : "#ec4899"),
+                border: running
+                  ? (isLight ? "1px solid #fbcfe8" : "1px solid rgba(236, 72, 153, 0.4)")
+                  : (isLight ? "1px solid #be185d" : "1px solid #db2777"),
+                color: running
+                  ? (isLight ? "#9d174d" : "#fbcfe8")
+                  : "#ffffff",
+                boxShadow: running
+                  ? "none"
+                  : (isLight ? "0 2px 6px rgba(219, 39, 119, 0.25)" : "0 2px 10px rgba(236, 72, 153, 0.35)"),
+                borderRadius: 8,
+                padding: "8px 16px",
+                fontWeight: 700,
+                fontSize: 12.5,
+                cursor: running ? "wait" : "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                transition: "all 0.15s ease",
+              }}
+              title="Run System Test Analysis (Playwright / Cypress)"
+            >
+              {running ? `Running (${Math.max(5, Math.min(100, Math.round(runProgress)))}%)...` : "Run System Test"}
+            </button>
+          )}
+          {type === "integration" && (
+            <button
+              onClick={run}
+              disabled={!snapshotId || running}
+              style={{
+                background: running
+                  ? (isLight ? "#e0f2fe" : "rgba(14, 165, 233, 0.2)")
+                  : (isLight ? "#0284c7" : "#0ea5e9"),
+                border: running
+                  ? (isLight ? "1px solid #bae6fd" : "1px solid rgba(14, 165, 233, 0.4)")
+                  : (isLight ? "1px solid #0369a1" : "1px solid #0284c7"),
+                color: running
+                  ? (isLight ? "#0369a1" : "#bae6fd")
+                  : "#ffffff",
+                boxShadow: running
+                  ? "none"
+                  : (isLight ? "0 2px 6px rgba(14, 165, 233, 0.25)" : "0 2px 10px rgba(14, 165, 233, 0.35)"),
+                borderRadius: 8,
+                padding: "8px 16px",
+                fontWeight: 700,
+                fontSize: 12.5,
+                cursor: running ? "wait" : "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                transition: "all 0.15s ease",
+              }}
+              title="Run Integration Test Analysis (Supertest)"
+            >
+              {running ? `Running (${Math.max(5, Math.min(100, Math.round(runProgress)))}%)...` : "Run Integration Test"}
+            </button>
+          )}
         </div>
       </div>
 
-      {(bulkSuggestMessage || allPendingSuggestions.length > 0) && (
+      {type === "unit" && (bulkSuggestMessage || allPendingSuggestions.length > 0) && (
         <div
           style={{
             padding: "12px 18px",
@@ -3850,7 +3962,7 @@ export default function CoverageTypeDashboard({
                       ? `${filteredSourceFiles.length} of ${displayFiles.length} files`
                       : `${displayFiles.length} files analyzed`}
                   </span>
-                  {allPendingSuggestions.length > 0 && (
+                  {type === "unit" && allPendingSuggestions.length > 0 && (
                     <button
                       onClick={handleApplyAllGlobal}
                       disabled={isBulkApplying}
@@ -3880,7 +3992,11 @@ export default function CoverageTypeDashboard({
                 <div
                   style={{ padding: 30, textAlign: "center", color: isLight ? "#64748b" : "#6e7681" }}
                 >
-                  No data available. Click Run Analysis Unit to start.
+                  {type === "system"
+                    ? "No E2E test data available. Click Run System Test to start."
+                    : type === "integration"
+                      ? "No integration test data available. Click Run Integration Test to start."
+                      : "No data available. Click Run Analysis Unit to start."}
                 </div>
               ) : (
                 <div>
@@ -4160,8 +4276,8 @@ export default function CoverageTypeDashboard({
                               gap: 16,
                             }}
                           >
-                            {/* Inline Suggestions Section (only when not in FileCodeExecutionView, which embeds suggestions in TestFileViewerPanel) */}
-                            {(fileSuggestions.length > 0 || isSuggesting) && activeMetricView !== "statements" && (
+                            {/* Inline Suggestions Section (only for unit test, when not in FileCodeExecutionView) */}
+                            {type === "unit" && (fileSuggestions.length > 0 || isSuggesting) && activeMetricView !== "statements" && (
                               <InlineTestSuggestions
                                 filePath={file.filePath}
                                 suggestions={fileSuggestions}
@@ -4200,7 +4316,7 @@ export default function CoverageTypeDashboard({
                                   filePath={file.filePath}
                                   fileCoverage={fileDetails}
                                   onOpenFile={onOpenFile}
-                                  onSuggestTestcase={() => handleSuggestTestcaseInline(file.filePath)}
+                                  onSuggestTestcase={type === "unit" ? () => handleSuggestTestcaseInline(file.filePath) : undefined}
                                 />
                               ) : activeMetricView === "functions" ? (
                                 <FileFunctionCallGraphView
@@ -4208,7 +4324,7 @@ export default function CoverageTypeDashboard({
                                   fileCoverage={fileDetails}
                                   testSuites={testSuites}
                                   onOpenFile={onOpenFile}
-                                  onSuggestTestcase={() => handleSuggestTestcaseInline(file.filePath)}
+                                  onSuggestTestcase={type === "unit" ? () => handleSuggestTestcaseInline(file.filePath) : undefined}
                                 />
                               ) : (
                                 <FileCodeExecutionView
@@ -4222,13 +4338,13 @@ export default function CoverageTypeDashboard({
                                     invalidateCoverageQueries(snapshotId);
                                     await refetchCoverage();
                                   }}
-                                  onSuggestTestcase={() => handleSuggestTestcaseInline(file.filePath)}
-                                  suggestions={fileSuggestions}
-                                  isLoadingSuggestions={isSuggesting}
-                                  applyingSuggestionIds={applyingSuggestionIds}
-                                  onApplySuggestion={(sug) => handleApplySuggestionInline(file.filePath, sug)}
-                                  onApplyAllSuggestions={(sugs) => handleApplyAllInline(file.filePath, sugs)}
-                                  onRejectSuggestion={(sugId) => handleRejectInline(file.filePath, sugId)}
+                                  onSuggestTestcase={type === "unit" ? () => handleSuggestTestcaseInline(file.filePath) : undefined}
+                                  suggestions={type === "unit" ? fileSuggestions : []}
+                                  isLoadingSuggestions={type === "unit" ? isSuggesting : false}
+                                  applyingSuggestionIds={type === "unit" ? applyingSuggestionIds : new Set()}
+                                  onApplySuggestion={type === "unit" ? (sug) => handleApplySuggestionInline(file.filePath, sug) : undefined}
+                                  onApplyAllSuggestions={type === "unit" ? (sugs) => handleApplyAllInline(file.filePath, sugs) : undefined}
+                                  onRejectSuggestion={type === "unit" ? (sugId) => handleRejectInline(file.filePath, sugId) : undefined}
                                   onUpdateSuggestionCode={(sugId, newCode) =>
                                     handleUpdateSuggestionCode(file.filePath, sugId, newCode)
                                   }

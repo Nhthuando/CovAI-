@@ -105,14 +105,16 @@ export default function ProjectSelectionPage() {
 
   const handleConfirmDelete = async () => {
     if (!projectToDelete) return;
+    const targetProject = projectToDelete;
     try {
       setIsDeleting(true);
-      await deleteProjectApi(projectToDelete.id);
+      await deleteProjectApi(targetProject.id);
       queryClient.invalidateQueries({ queryKey: ["projects"] });
-      setProjects((prev) => prev.filter((p) => p.id !== projectToDelete.id));
+      setProjects((prev) => prev.filter((p) => p.id !== targetProject.id));
       setProjectToDelete(null);
     } catch (err) {
       console.error("Failed to delete project", err);
+      alert(err.message || "Failed to delete project");
     } finally {
       setIsDeleting(false);
     }

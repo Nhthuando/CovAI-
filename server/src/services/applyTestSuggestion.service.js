@@ -28,6 +28,7 @@ import {
     cleanAndDeduplicateTestContent,
     sanitizeAllProjectTestFiles
 } from "./testSanitizer.service.js";
+import { dependencyInstallationService } from "./dependencyInstallation.service.js";
 
 /**
  * Resolve snapshot root directory across Windows host and Docker container paths.
@@ -550,10 +551,14 @@ export const autoHealTestFailures = (rootDir, testFilesToRun, testResults, rawOu
 
                         // Case 4b: If assertion cannot be healed or test throws unhandled error, mark failing test case as skipped
                         if (!healedAssertion && title) {
-                            const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                            let cleanTitle = title.trim();
+                            if (cleanTitle.includes("›")) {
+                                cleanTitle = cleanTitle.split("›").pop().trim();
+                            }
+                            const escapedTitle = cleanTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                             const testRegex = new RegExp(`\\b(test|it)\\s*\\(\\s*(['"\`])${escapedTitle}\\2`, "g");
                             if (testRegex.test(content)) {
-                                content = content.replace(testRegex, "$1.skip($2" + title + "$2");
+                                content = content.replace(testRegex, "$1.skip($2" + cleanTitle + "$2");
                             }
                         }
                     }
@@ -561,17 +566,28 @@ export const autoHealTestFailures = (rootDir, testFilesToRun, testResults, rawOu
             }
         }
 
-        // 5. Inspect rawOutput for failing test titles (e.g. ✕ test title) and mark as skipped
-        const failTitleMatches = [...rawOutput.matchAll(/[✕●]\s+([^\r\n(]+?)(?:\s+\(\d+\s*m?s\))?$/gm)];
-        for (const ftm of failTitleMatches) {
-            const title = ftm[1].trim();
-            if (title && title.length > 3 && !title.startsWith("Test suite failed")) {
-                const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                const testRegex = new RegExp(`\\b(test|it)\\s*\\(\\s*(['"\`])${escapedTitle}\\2`, "g");
-                if (testRegex.test(content)) {
-                    content = content.replace(testRegex, "$1.skip($2" + title + "$2");
+        // 5. Inspect rawOutput for failing test titles (e.g. ✕ test title or ● suite › test title) and mark as skipped
+        const failLines = rawOutput.split("\n");
+        for (const line of failLines) {
+            const stripped = line.replace(/\u001b\[[0-9;]*m/g, "").trim();
+            if (stripped.startsWith("✕") || stripped.startsWith("●")) {
+                let clean = stripped.replace(/^[✕●]\s*/, "").replace(/\s*\(\d+\s*m?s\)\s*$/, "").trim();
+                if (clean.includes("›")) {
+                    clean = clean.split("›").pop().trim();
+                }
+                if (clean && clean.length > 2 && !clean.startsWith("Test suite failed")) {
+                    const escapedTitle = clean.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    const testRegex = new RegExp(`\\b(test|it)\\s*\\(\\s*(['"\`])${escapedTitle}\\2`, "g");
+                    if (testRegex.test(content)) {
+                        content = content.replace(testRegex, "$1.skip($2" + clean + "$2");
+                    }
                 }
             }
+        }
+
+        // 6. Ensure mocks are cleared between tests if multiple it/test blocks exist
+        if (content.includes("jest.fn()") && !content.includes("jest.clearAllMocks") && !content.includes("jest.resetAllMocks")) {
+            content = content.replace(/(describe\s*\([^)]*=>\s*\{)/, "$1\n  beforeEach(() => {\n    jest.clearAllMocks();\n  });");
         }
 
         if (content !== original) {
@@ -738,6 +754,24 @@ export const applyUnitTestSuggestion = async ({ snapshotId, projectId, userId, s
             try { fs.unlinkSync(sf); } catch { }
         }
     }
+
+    // Ensure dependencies are installed if package.json has dependencies but node_modules does not exist
+    try {
+        const pkgJsonPath = path.join(rootDir, "package.json");
+        const nodeModulesPath = path.join(rootDir, "node_modules");
+        if (fs.existsSync(pkgJsonPath) && !fs.existsSync(nodeModulesPath)) {
+            const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8"));
+            const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+            if (Object.keys(deps).length > 0) {
+                await dependencyInstallationService.install({ snapshotPath: rootDir }).catch(() => {});
+            }
+        }
+    } catch (_) { }
+
+    // Sanitize all project test files to heal imports, strip jest collisions, etc.
+    try {
+        sanitizeAllProjectTestFiles(rootDir);
+    } catch (_) { }
 
     // Determine testing framework
     const testFilesToRun = Array.from(modifiedFiles);

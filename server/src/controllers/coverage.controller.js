@@ -424,6 +424,31 @@ export const getCoverageSummary = async (req, res) => {
                                     lines: raw.total.lines || null,
                                 };
                             }
+                        } else if (typeFilter === "system") {
+                            // System test coverage: strictly derived from Playwright / Cypress, never from Jest or Vitest
+                            rawTotals = null;
+                            coverage = { statements: 0, branches: 0, functions: 0, lines: 0 };
+                            const sysFiles = [
+                                path.join(resolvedRootDir, "coverage", "playwright-coverage-summary.json"),
+                                path.join(resolvedRootDir, "coverage", "cypress-coverage-summary.json")
+                            ];
+                            for (const sf of sysFiles) {
+                                if (fs.existsSync(sf)) {
+                                    try {
+                                        const sysRaw = JSON.parse(fs.readFileSync(sf, "utf8"));
+                                        if (sysRaw?.total) {
+                                            rawTotals = sysRaw.total;
+                                            coverage = {
+                                                statements: sysRaw.total.statements?.pct ?? 0,
+                                                branches: sysRaw.total.branches?.pct ?? 0,
+                                                functions: sysRaw.total.functions?.pct ?? 0,
+                                                lines: sysRaw.total.lines?.pct ?? 0
+                                            };
+                                            break;
+                                        }
+                                    } catch (_) { }
+                                }
+                            }
                         } else if (raw.total) {
                             let rawBranchesPct = raw.total.branches?.pct ?? 0;
                             if ((raw.total.branches?.covered === 0 || raw.total.branches?.total === 0) &&
@@ -442,13 +467,38 @@ export const getCoverageSummary = async (req, res) => {
             }
         }
 
-        // Check latest test run or analysis job to distinguish current run from last successful coverage
+        // If system test and no explicit summary file found, ensure system coverage starts clean at 0%
+        if (typeFilter === "system" && !rawTotals) {
+            coverage = { statements: 0, branches: 0, functions: 0, lines: 0 };
+        }
+
+        // Check latest test run or analysis job filtered strictly by coverage type
+        // Jest and Vitest only belong to unit test; System test only uses Playwright and Cypress
         let latestTestRun = null;
         let latestJob = null;
+        const testTypeCondition = typeFilter === "unit"
+            ? { in: ["JEST", "VITEST"] }
+            : typeFilter === "integration"
+                ? { in: ["SUPERTEST"] }
+                : typeFilter === "system"
+                    ? { in: ["PLAYWRIGHT", "CYPRESS"] }
+                    : undefined;
+
+        const jobTypeCondition = typeFilter === "unit"
+            ? { in: ["RUN_TESTS", "VITEST_COVERAGE"] }
+            : typeFilter === "integration"
+                ? { in: ["SUPERTEST_COVERAGE"] }
+                : typeFilter === "system"
+                    ? { in: ["PLAYWRIGHT_SYSTEM_COVERAGE", "CYPRESS_SYSTEM_COVERAGE"] }
+                    : undefined;
+
         try {
             if (prisma.testRun?.findFirst) {
                 latestTestRun = await prisma.testRun.findFirst({
-                    where: { snapshotId: snapshot.id },
+                    where: {
+                        snapshotId: snapshot.id,
+                        ...(testTypeCondition ? { type: testTypeCondition } : {})
+                    },
                     orderBy: { createdAt: "desc" },
                     include: { scenarios: true }
                 });
@@ -460,7 +510,10 @@ export const getCoverageSummary = async (req, res) => {
         try {
             if (prisma.job?.findFirst) {
                 latestJob = await prisma.job.findFirst({
-                    where: { snapshotId: snapshot.id, type: "RUN_TESTS" },
+                    where: {
+                        snapshotId: snapshot.id,
+                        ...(jobTypeCondition ? { type: jobTypeCondition } : {})
+                    },
                     orderBy: { createdAt: "desc" }
                 });
             }
@@ -485,6 +538,8 @@ export const getCoverageSummary = async (req, res) => {
             latestRunStatus = "passed_with_failures";
         } else if (latestTestRun?.status === "PASSED") {
             latestRunStatus = "passed";
+        } else if (!latestJob && !latestTestRun) {
+            latestRunStatus = "not_run";
         }
 
         const sanitizedTestExecution = latestTestRun ? {
@@ -1736,7 +1791,7 @@ export const updateScenario = async (req, res) => {
     try {
         const { aiTestId, scenarioId } = req.params;
         const { code } = req.body;
-        
+
         if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res))) return;
 
         const updatedTest = await updateScenarioService(aiTestId, decodeURIComponent(scenarioId), code);
@@ -1751,7 +1806,7 @@ export const addScenario = async (req, res) => {
     try {
         const { aiTestId } = req.params;
         const { code, endpoint } = req.body;
-        
+
         if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res))) return;
 
         const updatedTest = await addScenarioService(aiTestId, code, endpoint);
@@ -1765,7 +1820,7 @@ export const addScenario = async (req, res) => {
 export const deleteScenario = async (req, res) => {
     try {
         const { aiTestId, scenarioId } = req.params;
-        
+
         if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res))) return;
 
         const updatedTest = await deleteScenarioService(aiTestId, decodeURIComponent(scenarioId));
@@ -1780,7 +1835,7 @@ export const toggleScenario = async (req, res) => {
     try {
         const { aiTestId, scenarioId } = req.params;
         const { enable } = req.body;
-        
+
         if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res))) return;
 
         const updatedTest = await toggleScenarioService(aiTestId, decodeURIComponent(scenarioId), enable);
@@ -1796,9 +1851,9 @@ export const toggleScenario = async (req, res) => {
 export const regenerateScenario = async (req, res) => {
     try {
         const { snapshotId, aiTestId, scenarioId } = req.params;
-        
+
         if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res, snapshotId))) return;
-        
+
         const snapshot = await prisma.projectSnapshot.findUnique({ where: { id: snapshotId } });
         if (!snapshot) throw new Error("Snapshot not found");
 
@@ -1824,7 +1879,7 @@ import { getScenarioService } from "../services/scenarioManager.service.js";
 export const getScenario = async (req, res) => {
     try {
         const { aiTestId, scenarioId } = req.params;
-        
+
         if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res))) return;
 
         const result = await getScenarioService(aiTestId, decodeURIComponent(scenarioId));

@@ -16,7 +16,7 @@ export const healImportPathsInTestCode = (code, relTestPath = "tests/sample.test
     const testDir = path.dirname(relTestPath.replace(/\\/g, "/"));
 
     return code.replace(
-        /((?:import\s+(?:[\s\S]*?\s+from\s+)?|require\s*\(\s*)['"])([^'"]+)(['"]\s*\)?)/g,
+        /((?:import\s+(?:[\s\S]*?\s+from\s+)?|require\s*\(\s*|jest\.(?:mock|requireActual|requireMock)\s*\(\s*)['"])([^'"]+)(['"]\s*\)?)/g,
         (match, prefix, importTarget, suffix) => {
             if (/storage\/projects\/[^/]+\/[^/]+\/[^/]+\/repo\//i.test(importTarget) || /(?:^|\/)\.\.\/.*repo\//i.test(importTarget)) {
                 const cleanSubpath = importTarget
@@ -31,13 +31,67 @@ export const healImportPathsInTestCode = (code, relTestPath = "tests/sample.test
                 return `${prefix}${cleanImport}${suffix}`;
             }
 
-            // If the import already exists on disk from testDir, leave it completely untouched
-            if (rootDir) {
+            // If rootDir is provided and import starts with '.', check if target is valid or needs healing to src/
+            if (rootDir && importTarget.startsWith(".")) {
                 const testAbsDir = path.resolve(rootDir, testDir);
                 const absTarget = path.resolve(testAbsDir, importTarget);
-                const exts = ["", ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", "/index.js", "/index.ts"];
-                if (exts.some(ext => fs.existsSync(absTarget + ext))) {
+                const exts = ["", ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs"];
+                let targetExists = false;
+                for (const ext of exts) {
+                    const candidate = absTarget + ext;
+                    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+                        targetExists = true;
+                        break;
+                    }
+                }
+                if (!targetExists) {
+                    for (const ext of ["/index.js", "/index.ts", "/index.mjs", "/index.cjs"]) {
+                        const candidate = absTarget + ext;
+                        if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+                            targetExists = true;
+                            break;
+                        }
+                    }
+                }
+                if (targetExists) {
                     return match;
+                }
+
+                // If not found in testDir, check if it points to a source file in src/ or repo root
+                const srcSubDir = testDir.replace(/^tests?\/?/, "src/");
+                const candAbsFromSrc = path.resolve(rootDir, srcSubDir, importTarget);
+                const cleanTarget = importTarget.replace(/^(\.\.\/|\.\/)+/, "").replace(/^\.?\//, "");
+                const candidateAbsList = [
+                    candAbsFromSrc,
+                    path.resolve(rootDir, "src", cleanTarget),
+                    path.resolve(rootDir, cleanTarget)
+                ];
+
+                for (const candAbs of candidateAbsList) {
+                    let foundRel = null;
+                    for (const ext of exts) {
+                        const full = candAbs + ext;
+                        if (fs.existsSync(full) && fs.statSync(full).isFile()) {
+                            foundRel = path.relative(testAbsDir, candAbs).replace(/\\/g, "/");
+                            if (!foundRel.startsWith(".")) foundRel = "./" + foundRel;
+                            break;
+                        }
+                    }
+                    if (!foundRel) {
+                        for (const ext of ["/index.js", "/index.ts", "/index.mjs", "/index.cjs"]) {
+                            const full = candAbs + ext;
+                            if (fs.existsSync(full) && fs.statSync(full).isFile()) {
+                                foundRel = path.relative(testAbsDir, candAbs).replace(/\\/g, "/");
+                                if (!foundRel.startsWith(".")) foundRel = "./" + foundRel;
+                                break;
+                            }
+                        }
+                    }
+                    if (foundRel) {
+                        const hasExt = /\.[cm]?[jt]sx?$/.test(importTarget);
+                        const finalTarget = hasExt ? foundRel : foundRel.replace(/\.[cm]?[jt]sx?$/, "");
+                        return `${prefix}${finalTarget}${suffix}`;
+                    }
                 }
             }
 
@@ -93,7 +147,6 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "") => {
     cleaned = cleaned.replace(/[ \t]*describe\s*\(\s*['"][^'"]*['"]\s*,\s*(?:\(\s*\)|function\s*\(\s*\))\s*=>\s*\{\s*\}\s*\);?\r?\n?/g, "");
 
     // 2. Strip corrupted or invalid TypeScript annotations in JavaScript files that break Babel parser
-    // e.g. parse: jest.fn(((data: any)) => { ... }) -> parse: jest.fn((data) => { ... })
     cleaned = cleaned.replace(/\(\(([a-zA-Z0-9_$,\s]+)(?:\s*:\s*[^)]+)?\)\)/g, "($1)");
     cleaned = cleaned.replace(/\(([a-zA-Z0-9_$]+)\s*:\s*(?:any|string|number|boolean|object|unknown|void|never)\)/g, "($1)");
     cleaned = cleaned.replace(/\(([a-zA-Z0-9_$]+)\s*:\s*(?:any|string|number|boolean|object|unknown|void|never)\s*,/g, "($1,");
@@ -104,6 +157,12 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "") => {
     cleaned = cleaned.replace(/\b(const|let|var)\s+([a-zA-Z0-9_$]+)\s*:\s*any\b/g, "$1 $2");
     cleaned = cleaned.replace(/\(\s*globalThis\s+as\s+any\s*\)/g, "globalThis");
     cleaned = cleaned.replace(/\bas\s+(?:any|jest\.Mock)\b/g, "");
+
+    // Strip redundant declarations of `jest` in CommonJS test files that collide with Jest injected global
+    cleaned = cleaned.replace(/^[ \t]*(?:const|let|var)\s+\{\s*jest\s*\}\s*=\s*(?:require\([^)]+\)|@jest\/globals);?[ \t]*\r?\n?/gm, "");
+    cleaned = cleaned.replace(/^[ \t]*(?:const|let|var)\s+jest\s*=\s*require\([^)]+\);?[ \t]*\r?\n?/gm, "");
+    cleaned = cleaned.replace(/^[ \t]*(const|let|var)\s+\{\s*jest\s*,\s*([^}]+)\}\s*=\s*(require\([^)]+\));?/gm, "$1 { $2 } = $3;");
+    cleaned = cleaned.replace(/^[ \t]*(const|let|var)\s+\{\s*([^}]+),\s*jest\s*\}\s*=\s*(require\([^)]+\));?/gm, "$1 { $2 } = $3;");
 
     // 3. Remove duplicate identical lines of const/let/var/require
     const lines = cleaned.split("\n");
@@ -146,6 +205,10 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "") => {
                 const localName = tok.includes(':')
                     ? tok.split(':')[1].trim()
                     : (tok.includes(' as ') ? tok.split(' as ')[1].trim() : tok);
+                if (localName === 'jest') {
+                    anyDuplicate = true;
+                    continue;
+                }
                 if (topDeclared.has(localName)) {
                     anyDuplicate = true;
                 } else {
@@ -168,6 +231,10 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "") => {
         const simpleMatch = line.match(/^(\s*)(const|let)\s+([a-zA-Z0-9_$]+)\s*(=|\()/);
         if (simpleMatch) {
             const [, indent, kind, varName] = simpleMatch;
+            if (varName === 'jest') {
+                linesAfterDedup[i] = `${indent}// [deduped] ${line.trim()}`;
+                continue;
+            }
             if (topDeclared.has(varName)) {
                 const newName = `${varName}_dedup`;
                 linesAfterDedup[i] = line.replace(new RegExp(`\\b${varName}\\b`), newName);

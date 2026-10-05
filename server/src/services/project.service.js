@@ -908,6 +908,90 @@ export const createCoverageAnalysisJob = async ({
   return { ...runTestsJob, reused: false };
 };
 
+/**
+ * Asynchronously clean up Firebase storage and local disk files in the background.
+ * Uses non-blocking fs.promises.rm and parallel Firebase file deletions
+ * so that it doesn't block the HTTP request or freeze the Node.js event loop.
+ */
+export const cleanupProjectStorageAsync = (projectId, snapshots = []) => {
+  setImmediate(async () => {
+    // 1. Firebase storage cleanup (parallelized)
+    try {
+      const bucket = getBucket();
+      if (bucket) {
+        const deletePromises = [];
+        for (const snap of snapshots) {
+          if (snap?.storagePath) {
+            deletePromises.push(
+              bucket
+                .file(snap.storagePath)
+                .delete()
+                .catch((fbErr) => {
+                  if (fbErr?.code !== 404) {
+                    console.warn(
+                      `[DeleteProject] Failed to delete Firebase file ${snap.storagePath}:`,
+                      fbErr?.message,
+                    );
+                  }
+                }),
+            );
+          }
+        }
+        await Promise.all(deletePromises);
+
+        try {
+          const [files] = await bucket.getFiles({
+            prefix: `projects/${projectId}/`,
+          });
+          if (files && files.length > 0) {
+            await Promise.all(files.map((file) => file.delete().catch(() => {})));
+          }
+        } catch (prefixErr) {
+          console.warn(
+            `[DeleteProject] Failed to cleanup Firebase prefix for ${projectId}:`,
+            prefixErr?.message,
+          );
+        }
+      }
+    } catch (fbCleanupErr) {
+      console.error(
+        "[DeleteProject] Firebase cleanup error:",
+        fbCleanupErr?.message || fbCleanupErr,
+      );
+    }
+
+    // 2. Physical local disk cleanup (asynchronous & non-blocking via fs.promises.rm)
+    try {
+      for (const snap of snapshots) {
+        if (snap?.rootDir) {
+          await fs.promises
+            .rm(snap.rootDir, {
+              recursive: true,
+              force: true,
+              maxRetries: 3,
+              retryDelay: 100,
+            })
+            .catch(() => {});
+        }
+      }
+      const projectStoragePath = path.resolve("storage/projects", projectId);
+      await fs.promises
+        .rm(projectStoragePath, {
+          recursive: true,
+          force: true,
+          maxRetries: 3,
+          retryDelay: 100,
+        })
+        .catch(() => {});
+    } catch (cleanupError) {
+      console.error(
+        "[DeleteProject] Error deleting physical files of project:",
+        cleanupError?.message || cleanupError,
+      );
+    }
+  });
+};
+
 export const deleteProject = async (projectId, userId) => {
   const project = await prisma.project.findUnique({ where: { id: projectId } });
   if (!project) {
@@ -917,78 +1001,48 @@ export const deleteProject = async (projectId, userId) => {
     throw new ServiceError("You are not allowed to delete this project", 403);
   }
 
+  // Pre-fetch snapshots before project deletion so we can clean up files in background
   const snapshots = await prisma.projectSnapshot.findMany({
     where: { projectId },
     select: { rootDir: true, storagePath: true },
   });
 
-  await prisma.$transaction(
-    [
-      prisma.coverageSummary.deleteMany({ where: { snapshot: { projectId } } }),
-      prisma.coverageFile.deleteMany({ where: { snapshot: { projectId } } }),
-      prisma.coverageFunction.deleteMany({
-        where: { snapshot: { projectId } },
-      }),
-      prisma.cyclomatic.deleteMany({ where: { snapshot: { projectId } } }),
-      prisma.cfg.deleteMany({ where: { snapshot: { projectId } } }),
-      prisma.aiContextCache.deleteMany({ where: { snapshot: { projectId } } }),
-      prisma.aiSuggestion.deleteMany({ where: { projectId } }),
-      prisma.aiTest.deleteMany({ where: { projectId } }),
-      prisma.jobLog.deleteMany({ where: { job: { projectId } } }),
-      prisma.jobOutput.deleteMany({ where: { job: { projectId } } }),
-      prisma.job.deleteMany({ where: { projectId } }),
-      prisma.notification.deleteMany({ where: { projectId } }),
-      prisma.projectSnapshot.deleteMany({ where: { projectId } }),
-      prisma.project.delete({ where: { id: projectId } }),
-    ],
-    { timeout: 30000 },
-  );
-
+  // Fast DB deletion:
+  // Primary attempt: Native PostgreSQL ON DELETE CASCADE via prisma.project.delete.
+  // Takes only 1 single SQL query (~10-50ms) instead of 14 separate slow queries.
   try {
-    const bucket = getBucket();
-    for (const snap of snapshots) {
-      if (snap.storagePath) {
-        try {
-          await bucket.file(snap.storagePath).delete();
-        } catch (fbErr) {
-          if (fbErr.code !== 404)
-            console.warn(
-              `[DeleteProject] Failed to delete Firebase file ${snap.storagePath}:`,
-              fbErr.message,
-            );
-        }
-      }
-    }
-    try {
-      const [files] = await bucket.getFiles({
-        prefix: `projects/${projectId}/`,
-      });
-      if (files.length > 0) {
-        await Promise.all(files.map((file) => file.delete().catch(() => {})));
-      }
-    } catch (prefixErr) {
-      console.warn(
-        `[DeleteProject] Failed to cleanup Firebase prefix for ${projectId}:`,
-        prefixErr.message,
-      );
-    }
-  } catch (fbCleanupErr) {
-    console.error("[DeleteProject] Firebase cleanup error:", fbCleanupErr);
+    await prisma.project.delete({ where: { id: projectId } });
+  } catch (error) {
+    console.warn(
+      `[DeleteProject] Direct cascade delete failed for project ${projectId}, falling back to manual cascade transaction:`,
+      error?.message,
+    );
+    await prisma.$transaction(
+      [
+        prisma.coverageSummary.deleteMany({ where: { snapshot: { projectId } } }),
+        prisma.coverageFile.deleteMany({ where: { snapshot: { projectId } } }),
+        prisma.coverageFunction.deleteMany({
+          where: { snapshot: { projectId } },
+        }),
+        prisma.cyclomatic.deleteMany({ where: { snapshot: { projectId } } }),
+        prisma.cfg.deleteMany({ where: { snapshot: { projectId } } }),
+        prisma.aiContextCache.deleteMany({ where: { snapshot: { projectId } } }),
+        prisma.aiSuggestion.deleteMany({ where: { projectId } }),
+        prisma.aiTest.deleteMany({ where: { projectId } }),
+        prisma.jobLog.deleteMany({ where: { job: { projectId } } }),
+        prisma.jobOutput.deleteMany({ where: { job: { projectId } } }),
+        prisma.job.deleteMany({ where: { projectId } }),
+        prisma.notification.deleteMany({ where: { projectId } }),
+        prisma.projectSnapshot.deleteMany({ where: { projectId } }),
+        prisma.project.delete({ where: { id: projectId } }),
+      ],
+      { timeout: 30000 },
+    );
   }
 
-  try {
-    for (const snap of snapshots) {
-      if (snap.rootDir && fs.existsSync(snap.rootDir)) {
-        fs.rmSync(snap.rootDir, { recursive: true, force: true });
-      }
-    }
-    const projectStoragePath = path.resolve("storage/projects", projectId);
-    if (fs.existsSync(projectStoragePath)) {
-      fs.rmSync(projectStoragePath, { recursive: true, force: true });
-    }
-  } catch (cleanupError) {
-    console.error("Error deleting physical files of project:", cleanupError);
-  }
+  // Dispatch background cleanup for cloud storage and disk files.
+  // Returns immediately without blocking the client response!
+  cleanupProjectStorageAsync(projectId, snapshots);
 };
 
 export const getProjectTree = async (projectId, userId) => {

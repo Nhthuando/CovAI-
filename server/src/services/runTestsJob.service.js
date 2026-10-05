@@ -603,6 +603,15 @@ export const findLogicSourceFiles = (rootDir) => {
                 continue;
             }
 
+            // Exclude route/endpoints and server entry files (reserved for integration/system testing, not unit business logic)
+            const isRouteOrEntry = /(^|\/)(routes?|endpoints?)(\/|\.|$)/i.test(lowerRel) ||
+                /\.(route|routes)\.[cm]?[jt]sx?$/i.test(lowerRel) ||
+                /(^|\/)(app|server)\.[cm]?[jt]sx?$/i.test(lowerRel) ||
+                /^(src\/)?(index|main)\.[cm]?[jt]sx?$/i.test(lowerRel.replace(/^\.?\//, ""));
+            if (isRouteOrEntry) {
+                continue;
+            }
+
             logicFiles.push({
                 absolutePath: fullPath,
                 relativePath: relPath,
@@ -1112,6 +1121,8 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
     const rootFiles = packageGroups.has("") ? packageGroups.get("") : (packageGroups.size === 0 ? (specificFiles || []) : []);
     const shouldRunRoot = packageGroups.size === 0 || rootFiles.length > 0;
     let overallExitCode = 0;
+    let overallStdout = "";
+    let overallStderr = "";
 
     const rootJestBin = resolveJestBin(rootDir);
     let jestCmd = `${rootJestBin} --coverage --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=coverage/jest-results.json --forceExit --testTimeout=30000 --maxWorkers=50% --cache`;
@@ -1584,6 +1595,8 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                     NODE_PATH: "/app/node_modules:/usr/local/lib/node_modules:./node_modules",
                 }
             });
+            if (result.stdout) overallStdout += "\n" + result.stdout;
+            if (result.stderr) overallStderr += "\n" + result.stderr;
             if (result.exitCode !== 0 && result.exitCode !== null) {
                 overallExitCode = result.exitCode;
             }
@@ -1725,6 +1738,8 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             }
         }
 
+        if (subResult.stdout) overallStdout += "\n" + subResult.stdout;
+        if (subResult.stderr) overallStderr += "\n" + subResult.stderr;
         if (subResult.exitCode !== 0 && subResult.exitCode !== null) {
             overallExitCode = subResult.exitCode;
         }
@@ -1811,7 +1826,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
     }
 
     await addJobLog(jobId, "INFO", `[SCRUM-140] jest completed (exit ${overallExitCode}).`).catch(() => { });
-    return { exitCode: overallExitCode };
+    return { exitCode: overallExitCode, stdout: overallStdout, stderr: overallStderr };
 };
 
 /**

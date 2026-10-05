@@ -701,25 +701,53 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
     let targetFilePath = filePath;
     if (filePath === "all") {
         try {
-            const candidateFiles = await prisma.coverageFile.findMany({
+            let candidateFiles = await prisma.coverageFile.findMany({
                 where: {
                     snapshotId: snapshot.id,
                     AND: [
+                        { NOT: { filePath: { contains: "coverage/" } } },
+                        { NOT: { filePath: { contains: "node_modules/" } } },
+                        { NOT: { filePath: { contains: ".git/" } } },
                         { NOT: { filePath: { contains: "client/" } } },
                         { NOT: { filePath: { contains: "frontend/" } } },
                         { NOT: { filePath: { endsWith: ".jsx" } } },
                         { NOT: { filePath: { endsWith: ".tsx" } } },
+                        { NOT: { filePath: { contains: "routes/" } } },
+                        { NOT: { filePath: { contains: "endpoints/" } } },
+                        { NOT: { filePath: { endsWith: "app.js" } } },
+                        { NOT: { filePath: { endsWith: "app.ts" } } },
+                        { NOT: { filePath: { endsWith: "server.js" } } },
+                        { NOT: { filePath: { endsWith: "server.ts" } } },
                     ]
                 }
             });
+            candidateFiles = candidateFiles.filter(f => {
+                const norm = (f.filePath || "").replace(/\\/g, "/").toLowerCase();
+                const isRouteOrEntry = /(^|\/)(routes?|endpoints?)(\/|\.|$)/i.test(norm) ||
+                    /\.(route|routes)\.[cm]?[jt]sx?$/i.test(norm) ||
+                    /(^|\/)(app|server)\.[cm]?[jt]sx?$/i.test(norm) ||
+                    /^(src\/)?(index|main)\.[cm]?[jt]sx?$/i.test(norm.replace(/^\.?\//, ""));
+                return !isRouteOrEntry;
+            });
             const uncovered = candidateFiles.find(f => (f.stmtsPct != null && f.stmtsPct < 100) || (f.branchesPct != null && f.branchesPct < 100) || (f.linesPct != null && f.linesPct < 100));
-            targetFilePath = uncovered ? uncovered.filePath : (candidateFiles[0]?.filePath || "backend/src/controllers/product.controller.js");
+            targetFilePath = uncovered ? uncovered.filePath : (candidateFiles[0]?.filePath || "src/services/ai.service.js");
         } catch (_) {
-            targetFilePath = "backend/src/controllers/product.controller.js";
+            targetFilePath = "src/services/ai.service.js";
         }
     }
 
     const isTest = /(^|\/)(tests?|__tests__|spec)\//i.test(targetFilePath) || /\.(test|spec)\.[a-z0-9]+$/i.test(targetFilePath);
+
+    const normTarget = (targetFilePath || "").replace(/\\/g, "/").toLowerCase();
+    const isRouteOrEntry = /(^|\/)(routes?|endpoints?)(\/|\.|$)/i.test(normTarget) ||
+        /\.(route|routes)\.[cm]?[jt]sx?$/i.test(normTarget) ||
+        /(^|\/)(app|server)\.[cm]?[jt]sx?$/i.test(normTarget);
+    if (isRouteOrEntry && !isTest) {
+        throw new ServiceError(
+            `Unit test generation is only available for business logic files (services, controllers, models, utils, middlewares, jobs). Route and server entry files (${targetFilePath}) should be tested via Integration or System tests.`,
+            400
+        );
+    }
 
     let sourceFileToInspect = targetFilePath;
     let sourceCode = "";
