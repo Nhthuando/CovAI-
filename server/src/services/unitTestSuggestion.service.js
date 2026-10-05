@@ -288,25 +288,33 @@ const generateSuggestionForFramework = async ({
     filePath
 }) => {
     const isVitest = framework === "vitest";
-    const cleanSource = sanitizeSourceFilePath(snapshot?.rootDir, sourceFileToInspect);
-    const ext = path.extname(cleanSource) || ".js";
-    const baseName = path.basename(cleanSource, ext).replace(/\.(test|spec)$/i, "");
-    const uncoveredLinesStr = coverageDetails.uncoveredLines.slice(0, 30).join(", ") || "None";
-    const failedLinesStr = coverageDetails.failedLines.map(l => `Line ${l}: ${coverageDetails.lines[l]?.error || "failed assertion"}`).join("\n") || "None";
+    // Extract exported symbols vs unexported functions from sourceCode
+    const exportedSymbols = [];
+    const unexportedFunctions = [];
+    if (sourceCode) {
+        const expMatches = [...sourceCode.matchAll(/export\s+(?:async\s+)?(?:default\s+)?(?:function|const|let|var|class)\s+([a-zA-Z0-9_$]+)/g)];
+        for (const m of expMatches) {
+            if (m[1] && !exportedSymbols.includes(m[1])) exportedSymbols.push(m[1]);
+        }
+        const namedExpMatches = [...sourceCode.matchAll(/export\s+\{([^}]+)\}/g)];
+        for (const m of namedExpMatches) {
+            for (const s of m[1].split(",")) {
+                const clean = s.trim().split(/\s+as\s+/)[0].trim();
+                if (clean && !exportedSymbols.includes(clean)) exportedSymbols.push(clean);
+            }
+        }
+        const fnMatches = [...sourceCode.matchAll(/(?:async\s+)?function\s+([a-zA-Z0-9_$]+)/g)];
+        for (const m of fnMatches) {
+            if (m[1] && !exportedSymbols.includes(m[1]) && !unexportedFunctions.includes(m[1])) {
+                unexportedFunctions.push(m[1]);
+            }
+        }
+    }
 
-    const branchFlow = coverageDetails.branchFlow || [];
-    const uncoveredBranches = branchFlow.filter(b => b.status === "uncovered" || b.status === "partially_covered");
-    const branchDetailsStr = uncoveredBranches.length > 0
-        ? uncoveredBranches.slice(0, 20).map(b => `- Line ${b.line} (${b.type}): condition "${b.condition || 'branch'}" was ${b.status}`).join("\n")
-        : "None";
-
-    const testFileInfo = findExistingTestFile(
-        snapshot.rootDir,
-        isTest ? filePath : cleanSource,
-        framework
-    );
-
-    const cleanImportPath = computeRelativeImportPath(testFileInfo.relativePath, cleanSource, snapshot?.rootDir);
+    const exportedSymbolsStr = exportedSymbols.length > 0 ? exportedSymbols.join(", ") : "All exported module members";
+    const unexportedWarning = unexportedFunctions.length > 0
+        ? `\n- INTERNAL / UNEXPORTED FUNCTIONS (DO NOT IMPORT!): ${unexportedFunctions.join(", ")} are NOT exported. Attempting to \`import { ${unexportedFunctions.join(", ")} }\` will throw fatal TypeError and fail test execution. To cover these functions and their lines/branches, you MUST test them INDIRECTLY by calling the EXPORTED function(s) (${exportedSymbolsStr}) with diverse inputs (e.g. valid/invalid parent_id, null, undefined, edge case objects) that trigger each internal branch.`
+        : "";
 
     const prompt = isTest
         ? `You are an expert ${framework.toUpperCase()} unit testing engineer.
@@ -318,6 +326,7 @@ PROJECT CONTEXT:
 - Test File to update: ${testFileInfo.relativePath}
 - Tested Source File: ${cleanSource}
 - Source Module Import Path: "${cleanImportPath}" (e.g. import { ... } from '${cleanImportPath}';)
+- EXPORTED PUBLIC SYMBOLS (ONLY import and call these): ${exportedSymbolsStr}${unexportedWarning}
 - Current Coverage of Source: Lines ${coverageDetails.summary?.linesPct ?? 0}%, Branches ${coverageDetails.summary?.branchesPct ?? 0}%
 - Uncovered Lines in Source: ${uncoveredLinesStr}
 - Uncovered Branches & Conditions:
@@ -337,29 +346,24 @@ ${testFileInfo.content.slice(0, 25000)}
 \`\`\`
 
 CRITICAL REQUIREMENTS:
-1. PURE JEST / VITEST SYNTAX:
-   - ALWAYS write pure, standard Jest or Vitest unit tests using describe(...), test(...) or it(...), and standard expect(...) assertions.
-   - DO NOT use Cucumber/Gherkin step definitions or step destructuring like ({ given, when, then }) => ... .
-   - Directly instantiate classes and call functions with real arguments (e.g. const machine = new ArcadeMachine(); machine.requireCoins = false;).
-   - If the existing file has defineFeature(...), add a standard describe('${baseName} - Additional Unit Tests', () => { ... }) block outside or alongside existing tests.
-2. TARGET >= 98% TO 100% COVERAGE (STATEMENTS, BRANCHES, FUNCTIONS, LINES):
+1. NEVER USE test.skip / it.skip / describe.skip / xit / xtest:
+   - Every single test MUST be active and runnable using \`test(...)\` or \`it(...)\`.
+   - NEVER skip tests under any circumstances. Tests marked with \`.skip\` produce 0% coverage increase and are strictly forbidden.
+2. ONLY IMPORT EXPORTED SYMBOLS & TEST INTERNAL LOGIC INDIRECTLY:
+   - NEVER try to import unexported internal helper functions (${unexportedFunctions.join(", ")}).
+   - Test internal helper functions and uncovered branches by invoking the EXPORTED public functions (${exportedSymbolsStr}) with parameters crafted to exercise those branches.
+3. REUSE EXISTING TEST MOCKS AND CONVENTIONS:
+   - Carefully inspect the EXISTING TEST CODE in ${testFileInfo.relativePath}.
+   - You MUST reuse the exact same mocks, fixtures, and beforeEach configurations already established. For example, if the file mocks a client with \`mockQuickBooksInstance.createAccount.mockImplementation(...)\`, your tests MUST configure and reuse that exact mock so tests run deterministically and do not time out.
+4. TYPESCRIPT PRIVATE CLASS MEMBERS:
+   - When testing private methods or properties of an exported class in TypeScript, cast the instance to any: \`(client as any).methodName()\` so TypeScript compiles cleanly. Do NOT skip the test.
+5. TARGET >= 98% TO 100% COVERAGE (STATEMENTS, BRANCHES, FUNCTIONS, LINES):
    - You MUST generate exhaustive unit tests targeting 100% (minimum 98%+) coverage across all statements, branches, and functions for ${cleanSource}.
-   - Analyze every function, method, conditional statement (if/else, ternary ? :, switch/case, logical ||, &&, ??), error handling block (try/catch/throw), and null/undefined guard.
    - For every branch condition, generate test cases supplying inputs for BOTH the truthy branch AND the falsy branch.
    - Test default arguments, omitted optional parameters, empty collections, and extreme edge values.
-3. BOUNDARY, TYPE COERCION & ERROR TESTING:
-   - Include tests for edge cases and boundary conditions (null, undefined, 0, negative values, empty strings, invalid types).
-   - In JavaScript, be mindful of operator type coercion: ('10' + 'abc' produces '10abc' string concatenation, NOT NaN). Only assert toBeNaN() if the source implementation explicitly coerces input via Number() or uses numeric operators (-, *, /). Never write assertions that contradict the actual behavior of the source code.
-   - Carefully account for any state initialized in beforeEach(...) (e.g., initial balance, counters, mocks) when computing expected assertion values.
-   - Ensure ALL test() / it() blocks are strictly enclosed inside their proper describe(...) closures. NEVER leave dangling test cases outside describe blocks.
-   - If a function throws errors or rejects promises on invalid input, test that using expect(() => ...).toThrow(...) or expect(promise).rejects.toThrow(...).
-4. HIGH QUALITY & NO PLACEHOLDER ASSERTIONS:
-   - DO NOT write trivial assertions like expect(true).toBe(true) or empty test wrappers.
-   - Every assertion must verify real outputs, state changes, or mock call arguments (e.g. expect(res).toEqual(...), expect(fn).toHaveBeenCalledWith(...)).
-5. MOCKING & ISOLATION:
-   - Mock all external I/O, database models, HTTP requests, or external libraries using ${isVitest ? "vi.fn() / vi.mock()" : "jest.fn() / jest.mock()"} so tests run quickly and deterministically in isolation.
-6. INTEGRATION INTO EXISTING TEST FILE:
-   - Seamlessly merge new test blocks into ${testFileInfo.relativePath} without duplicating existing imports or test names.
+6. NO PLACEHOLDER ASSERTIONS:
+   - DO NOT write trivial assertions like expect(true).toBe(true).
+   - Every assertion must verify real outputs, state changes, or mock call arguments.
 7. Format your output strictly in JSON:
 {
   "explanation": "Summary of the added test cases and which branches are covered",
@@ -375,6 +379,7 @@ PROJECT CONTEXT:
 - Source File: ${cleanSource}
 - Target Test File: ${testFileInfo.relativePath} (Existing file: ${testFileInfo.found ? "YES" : "NO"})
 - Source Module Import Path: "${cleanImportPath}" (MUST import from: '${cleanImportPath}'; DO NOT guess other folders!)
+- EXPORTED PUBLIC SYMBOLS (ONLY import and call these): ${exportedSymbolsStr}${unexportedWarning}
 - Current Coverage: Lines ${coverageDetails.summary?.linesPct ?? 0}%, Branches ${coverageDetails.summary?.branchesPct ?? 0}%
 - Uncovered Lines: ${uncoveredLinesStr}
 - Uncovered Branches & Conditions:
@@ -394,32 +399,24 @@ ${testFileInfo.content.slice(0, 25000)}
 ` : ""}
 
 CRITICAL REQUIREMENTS:
-1. PURE JEST / VITEST SYNTAX:
-   - ALWAYS write pure, standard Jest or Vitest unit tests using describe(...), test(...) or it(...), and standard expect(...) assertions.
-   - DO NOT use Cucumber/Gherkin step definitions or step destructuring like ({ given, when, then }) => ... .
-   - Directly instantiate classes and call functions with real arguments (e.g. const machine = new ArcadeMachine(); machine.requireCoins = false;).
-   - If the existing file has defineFeature(...), add a standard describe('${baseName} - Additional Unit Tests', () => { ... }) block.
-2. TARGET >= 98% TO 100% EXHAUSTIVE COVERAGE:
+1. NEVER USE test.skip / it.skip / describe.skip / xit / xtest:
+   - Every single test MUST be active and runnable using \`test(...)\` or \`it(...)\`.
+   - NEVER skip tests under any circumstances. Tests marked with \`.skip\` produce 0% coverage increase and are strictly forbidden.
+2. ONLY IMPORT EXPORTED SYMBOLS & TEST INTERNAL LOGIC INDIRECTLY:
+   - NEVER try to import unexported internal helper functions (${unexportedFunctions.join(", ")}).
+   - Test internal helper functions and uncovered branches by invoking the EXPORTED public functions (${exportedSymbolsStr}) with parameters crafted to exercise those branches.
+3. REUSE EXISTING TEST MOCKS AND CONVENTIONS:
+   - Carefully inspect the EXISTING TEST CODE in ${testFileInfo.relativePath}.
+   - Re-use the existing mock implementations, fixtures, and beforeEach blocks. Do NOT leave mock functions unconfigured or create mock mismatches that cause timeouts.
+4. TYPESCRIPT PRIVATE CLASS MEMBERS:
+   - When testing private methods or properties of an exported class in TypeScript, cast the instance to any: \`(client as any).methodName()\` so TypeScript compiles cleanly. Do NOT skip the test.
+5. TARGET >= 98% TO 100% EXHAUSTIVE COVERAGE:
    - Analyze every function, line, and branch in the source code.
-   - You MUST generate tests achieving at least 98% to 100% statement, branch, and function coverage.
    - For every branch condition (if/else, switch, ternary, ||, &&, ??), craft test inputs executing both the true branch and false branch.
-3. BOUNDARY, TYPE COERCION & ERROR TESTING:
-   - Test edge cases: null, undefined, 0, negative values, empty collections, extreme boundary numbers, invalid types.
-   - In JavaScript, be mindful of operator type coercion: ('10' + 'abc' produces '10abc', NOT NaN). Only assert toBeNaN() if source code explicitly coerces via Number() or uses numeric operators (-, *, /).
-   - Carefully account for any state initialized in beforeEach(...) when computing expected assertion values.
-   - Ensure all test() / it() blocks are strictly enclosed inside their proper describe(...) closures.
-   - Test all error paths: verify throwing exceptions with expect(() => fn(...)).toThrow(...) or expect(asyncFn(...)).rejects.toThrow(...).
-4. REAL ASSERTIONS, NO TRIVIAL PLACEHOLDERS:
-   - DO NOT write placeholder assertions like expect(true).toBe(true) or generic dummy tests.
+6. REAL ASSERTIONS, NO TRIVIAL PLACEHOLDERS:
+   - DO NOT write placeholder assertions like expect(true).toBe(true).
    - Assert exact return values, transformed objects, or mock invocations.
-5. MOCKING & ISOLATION:
-   - Mock external dependencies, databases, filesystem, and network calls using ${isVitest ? "vi.fn() / vi.mock()" : "jest.fn() / jest.mock()"}.
-6. IMPORTS & SYNTAX:
-   - Always import from the source file using the EXACT module path '${cleanImportPath}'.
-   - ${isVitest ? "Use Vitest syntax: import { describe, test, it, expect, vi } from 'vitest';" : "Use Jest syntax. If using jest.fn() with ESM, import { jest } from '@jest/globals'."}
-7. If this is an EXISTING test file, output the updated full file content with the new test cases seamlessly merged into the existing structure, preserving existing tests.
-8. If this is a NEW test file, output the complete test file including required imports and test blocks.
-9. Format your output strictly in JSON:
+7. Format your output strictly in JSON:
 {
   "explanation": "Summary of the added test cases and which branches are covered",
   "suggestedTestCode": "// only the new test code blocks",
@@ -441,6 +438,21 @@ CRITICAL REQUIREMENTS:
         }
     } catch (aiErr) {
         console.warn(`[unitTestSuggestion] AI Generation fallback triggered (${framework}): ${aiErr.message}`);
+    }
+
+    // Sanitize any test.skip / it.skip from AI output immediately
+    if (aiResult) {
+        const unskipCode = (str) => {
+            if (!str) return str;
+            return str
+                .replace(/\b(test|it)\.skip\s*\(/g, "$1(")
+                .replace(/\bdescribe\.skip\s*\(/g, "describe(")
+                .replace(/\bxit\s*\(/g, "it(")
+                .replace(/\bxtest\s*\(/g, "test(")
+                .replace(/\bxdescribe\s*\(/g, "describe(");
+        };
+        if (aiResult.suggestedTestCode) aiResult.suggestedTestCode = unskipCode(aiResult.suggestedTestCode);
+        if (aiResult.fullUpdatedContent) aiResult.fullUpdatedContent = unskipCode(aiResult.fullUpdatedContent);
     }
 
     if (!aiResult || !aiResult.fullUpdatedContent) {

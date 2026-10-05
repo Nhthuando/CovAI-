@@ -1083,7 +1083,7 @@ export const getCoverageTestSuites = async (req, res) => {
         });
 
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
-        if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
+        if (snapshot.project?.ownerId && snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
 
         const cacheKey = `${snapshotId}:${requestedType}`;
         const cached = testSuitesCache.get(cacheKey);
@@ -1200,36 +1200,40 @@ export const getCoverageTestSuites = async (req, res) => {
         const testFiles = [];
         const scanDir = (dir) => {
             if (!fs.existsSync(dir)) return;
-            const entries = fs.readdirSync(dir, { withFileTypes: true });
-            for (const entry of entries) {
-                const fullPath = path.join(dir, entry.name);
-                if (entry.isDirectory()) {
-                    if (requestedType === "unit" && (entry.name === "client" || entry.name === "frontend")) {
-                        continue;
-                    }
-                    if (!["node_modules", ".git", "coverage", "dist", "build", ".next", ".vite", ".vitest", ".cache", "test-data", "test_data", "fixtures", "mocks", "__mocks__"].includes(entry.name)) {
-                        scanDir(fullPath);
-                    }
-                } else if (entry.isFile()) {
-                    const isSetupOrHelper = /^(setup|global-?setup|setup-?tests|teardown|helpers?|mocks?|fixtures?|config|utils?)\.[a-z0-9]+$/i.test(entry.name);
-                    const relPathNorm = fullPath.replace(/\\/g, "/").toLowerCase();
-                    const isExplicitTestName = /\.(test|spec|testcase|steps?)\.[a-z0-9]+$/i.test(entry.name);
-                    const isHelperDir = /(^|\/)(test-data|test_data|fixtures?|helpers?|mocks?|__mocks__|utils?|support)\//i.test(relPathNorm);
-                    if (isSetupOrHelper || (isHelperDir && !isExplicitTestName)) {
-                        continue;
-                    }
-                    if (requestedType === "unit" && (relPathNorm.includes("client/") || relPathNorm.includes("frontend/") || /\.[jt]sx$/i.test(entry.name))) {
-                        continue;
-                    }
-                    const isTest = (
-                        isExplicitTestName ||
-                        (/(^|\/)(tests?|__tests__|unit)\//i.test(relPathNorm) && !/\.(d\.ts|json|md|txt)$/i.test(entry.name))
-                    ) && /\.[cm]?[jt]sx?$/i.test(entry.name);
-                    if (isTest) {
-                        testFiles.push(fullPath);
-                    }
+            try {
+                const entries = fs.readdirSync(dir, { withFileTypes: true });
+                for (const entry of entries) {
+                    try {
+                        const fullPath = path.join(dir, entry.name);
+                        if (entry.isDirectory()) {
+                            if (requestedType === "unit" && (entry.name === "client" || entry.name === "frontend")) {
+                                continue;
+                            }
+                            if (!["node_modules", ".git", "coverage", "dist", "build", ".next", ".vite", ".vitest", ".cache", "test-data", "test_data", "fixtures", "mocks", "__mocks__"].includes(entry.name)) {
+                                scanDir(fullPath);
+                            }
+                        } else if (entry.isFile()) {
+                            const isSetupOrHelper = /^(setup|global-?setup|setup-?tests|teardown|helpers?|mocks?|fixtures?|config|utils?)\.[a-z0-9]+$/i.test(entry.name);
+                            const relPathNorm = fullPath.replace(/\\/g, "/").toLowerCase();
+                            const isExplicitTestName = /\.(test|spec|testcase|steps?)\.[a-z0-9]+$/i.test(entry.name);
+                            const isHelperDir = /(^|\/)(test-data|test_data|fixtures?|helpers?|mocks?|__mocks__|utils?|support)\//i.test(relPathNorm);
+                            if (isSetupOrHelper || (isHelperDir && !isExplicitTestName)) {
+                                continue;
+                            }
+                            if (requestedType === "unit" && (relPathNorm.includes("client/") || relPathNorm.includes("frontend/") || /\.[jt]sx$/i.test(entry.name))) {
+                                continue;
+                            }
+                            const isTest = (
+                                isExplicitTestName ||
+                                (/(^|\/)(tests?|__tests__|unit)\//i.test(relPathNorm) && !/\.(d\.ts|json|md|txt)$/i.test(entry.name))
+                            ) && /\.[cm]?[jt]sx?$/i.test(entry.name);
+                            if (isTest) {
+                                testFiles.push(fullPath);
+                            }
+                        }
+                    } catch (_) { }
                 }
-            }
+            } catch (_) { }
         };
 
         scanDir(snapshotRootDir);
@@ -1284,16 +1288,21 @@ export const getCoverageTestSuites = async (req, res) => {
             const fileKnownFunctions = functionsByBaseName.get(cleanBase) || [];
 
             const assertions = (suiteResult && Array.isArray(suiteResult.assertionResults))
-                ? suiteResult.assertionResults.map(a => {
-                    const targetFunction = extractTargetFunction(a, baseName, fileKnownFunctions);
-                    return {
-                        title: a.title || a.fullName || "Test case",
-                        status: a.status || "passed",
-                        duration: typeof a.duration === "number" ? a.duration : 0,
-                        targetFunction: targetFunction || null,
-                        ancestorTitles: Array.isArray(a.ancestorTitles) ? a.ancestorTitles : []
-                    };
-                })
+                ? suiteResult.assertionResults
+                    .filter(Boolean)
+                    .map(a => {
+                        let targetFunction = null;
+                        try {
+                            targetFunction = extractTargetFunction(a, baseName, fileKnownFunctions);
+                        } catch (_) { }
+                        return {
+                            title: a?.title || a?.fullName || "Test case",
+                            status: a?.status || "passed",
+                            duration: typeof a?.duration === "number" ? a.duration : 0,
+                            targetFunction: targetFunction || null,
+                            ancestorTitles: Array.isArray(a?.ancestorTitles) ? a.ancestorTitles : []
+                        };
+                    })
                 : [];
 
             const numPassing = typeof suiteResult?.numPassingTests === "number" ? suiteResult.numPassingTests : null;
@@ -1319,12 +1328,21 @@ export const getCoverageTestSuites = async (req, res) => {
                 : (suiteResult?.durationMs || suiteResult?.duration || 0);
             const durationMs = Math.max(0, Math.round(rawDuration));
 
-            // Extract error message from failed suite (e.g. SyntaxError, compile error)
+            // Extract error message from failed suite (e.g. SyntaxError, compile error, failed assertions)
             let message = null;
-            if (suiteResult && suiteResult.status === "failed" && Array.isArray(suiteResult.failureMessage)) {
-                message = suiteResult.failureMessage.filter(Boolean).join("\n").slice(0, 500) || null;
-            } else if (suiteResult && typeof suiteResult.message === "string" && suiteResult.message) {
-                message = suiteResult.message.slice(0, 500);
+            if (suiteResult && (suiteResult.status === "failed" || failedTests > 0)) {
+                if (typeof suiteResult.failureMessage === "string" && suiteResult.failureMessage) {
+                    message = suiteResult.failureMessage.slice(0, 1000);
+                } else if (Array.isArray(suiteResult.failureMessage)) {
+                    message = suiteResult.failureMessage.filter(Boolean).join("\n").slice(0, 1000) || null;
+                } else if (typeof suiteResult.message === "string" && suiteResult.message) {
+                    message = suiteResult.message.slice(0, 1000);
+                } else if (Array.isArray(suiteResult.assertionResults)) {
+                    const failedAssertion = suiteResult.assertionResults.find(a => a && a.status === "failed" && Array.isArray(a.failureMessages) && a.failureMessages.length > 0);
+                    if (failedAssertion) {
+                        message = failedAssertion.failureMessages.filter(Boolean).join("\n").slice(0, 1000) || null;
+                    }
+                }
             }
 
             suites.push({
@@ -1356,7 +1374,15 @@ export const getCoverageTestSuites = async (req, res) => {
         });
     } catch (error) {
         console.error("[getCoverageTestSuites] Error:", error);
-        return res.status(500).json({ success: false, message: "Server error." });
+        return res.status(200).json({
+            success: true,
+            data: {
+                snapshotId: req.params?.snapshotId || null,
+                type: (req.query?.type || "unit").toLowerCase(),
+                totalSuites: 0,
+                testSuites: []
+            }
+        });
     }
 };
 

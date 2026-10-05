@@ -4,8 +4,8 @@ import { addJobLog } from "./job.service.js";
 import { dockerRunner } from "./dockerRunner.service.js";
 import { classifyTestFile } from "../utils/testingFrameworkDetector.js";
 
-const INSTALL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes for npm install
-const VITEST_TIMEOUT_MS = 2.5 * 60 * 1000; // 2.5 minutes for testing
+const INSTALL_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes for npm install
+const VITEST_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes for testing
 
 /**
  * Install dependencies
@@ -91,7 +91,7 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
     }
 
     const fileCount = Array.isArray(specificFiles) && specificFiles.length > 0 ? specificFiles.length : 50;
-    const effectiveTimeout = Math.min(4 * 60 * 1000, Math.max(VITEST_TIMEOUT_MS, fileCount * 4 * 1000));
+    const effectiveTimeout = Math.min(15 * 60 * 1000, Math.max(VITEST_TIMEOUT_MS, fileCount * 15 * 1000));
 
     // 2. Determine execution mode:
     // If backend/ has vitest.config.* or package.json, run directly in backend/

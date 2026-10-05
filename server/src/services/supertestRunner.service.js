@@ -5,7 +5,7 @@ import { addJobLog } from "./job.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 
-const SUPERTEST_TIMEOUT_MS = 5 * 60 * 1000;
+const SUPERTEST_TIMEOUT_MS = 10 * 60 * 1000;
 
 const quoteForShell = (value) => `'${value.replaceAll("'", "'\\''")}'`;
 

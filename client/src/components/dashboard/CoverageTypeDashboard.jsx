@@ -40,6 +40,7 @@ import {
 import {
   useCoverageDashboard,
   invalidateCoverageQueries,
+  updateCoverageFilesData,
 } from "../../hooks/useCoverageQuery.js";
 import { getJobDetailApi, cancelJobApi, getProjectJobsApi } from "../../services/job.service.js";
 import { queryClient } from "../../lib/queryClient.js";
@@ -713,16 +714,32 @@ export default function CoverageTypeDashboard({
           };
         });
 
-        const oldCov = resultData?.previousCoverage || resultData?.oldCoverage;
-        if (oldCov && resultData?.newCoverage) {
+        const fileResult = resultData?.perFileResults?.[filePath];
+        const currentFile = selectedFiles.find((f) => f.filePath === filePath);
+        const currentFileCov = currentFile ? {
+          statements: currentFile.stmtsPct || 0,
+          branches: currentFile.branchesPct || 0,
+          functions: currentFile.funcsPct || 0,
+          lines: currentFile.linesPct || 0,
+        } : null;
+
+        const oldCov = fileResult?.oldCoverage || currentFileCov || resultData?.previousCoverage;
+        const newCov = fileResult?.newCoverage || currentFileCov || resultData?.newCoverage;
+
+        if (oldCov && newCov) {
           setApplyResultsByFile((prev) => ({
             ...prev,
             [filePath]: {
               ...resultData,
               oldCoverage: oldCov,
-              newCoverage: resultData.newCoverage,
+              newCoverage: newCov,
+              isPassed,
             },
           }));
+        }
+
+        if (resultData?.perFileResults) {
+          updateCoverageFilesData(snapshotId, type, projectId, resultData.perFileResults);
         }
 
         // Invalidate cached query data and refetch new verified coverage from test runner
@@ -819,16 +836,32 @@ export default function CoverageTypeDashboard({
           };
         });
 
-        const oldCov = resultData?.previousCoverage || resultData?.oldCoverage;
-        if (oldCov && resultData?.newCoverage) {
+        const fileResult = resultData?.perFileResults?.[filePath];
+        const currentFile = selectedFiles.find((f) => f.filePath === filePath);
+        const currentFileCov = currentFile ? {
+          statements: currentFile.stmtsPct || 0,
+          branches: currentFile.branchesPct || 0,
+          functions: currentFile.funcsPct || 0,
+          lines: currentFile.linesPct || 0,
+        } : null;
+
+        const oldCov = fileResult?.oldCoverage || currentFileCov || resultData?.previousCoverage;
+        const newCov = fileResult?.newCoverage || currentFileCov || resultData?.newCoverage;
+
+        if (oldCov && newCov) {
           setApplyResultsByFile((prev) => ({
             ...prev,
             [filePath]: {
               ...resultData,
               oldCoverage: oldCov,
-              newCoverage: resultData.newCoverage,
+              newCoverage: newCov,
+              isPassed,
             },
           }));
+        }
+
+        if (resultData?.perFileResults) {
+          updateCoverageFilesData(snapshotId, type, projectId, resultData.perFileResults);
         }
 
         invalidateCoverageQueries(snapshotId);
@@ -965,31 +998,57 @@ export default function CoverageTypeDashboard({
       setInlineSuggestions((prev) => {
         const next = { ...prev };
         Object.keys(next).forEach((fPath) => {
-          next[fPath] = (next[fPath] || []).map((s) =>
-            allSugIds.includes(s.suggestionId || s.id)
-              ? {
-                  ...s,
-                  status: isPassed ? "PASSED" : "FAILED",
-                  testRunError: resultData?.testRunError || resultData?.errorDetail || resultData?.message || null,
-                }
-              : s
-          );
+          next[fPath] = (next[fPath] || []).map((s) => {
+            const sid = s.suggestionId || s.id;
+            if (allSugIds.includes(sid)) {
+              const matchedApplied = (resultData?.appliedSuggestions || []).find(
+                (a) => (a.suggestionId || a.id) === sid
+              );
+              const itemPassed = matchedApplied
+                ? matchedApplied.status === "PASSED"
+                : isPassed;
+              return {
+                ...s,
+                status: itemPassed ? "PASSED" : "FAILED",
+                testRunError: !itemPassed
+                  ? (matchedApplied?.error || resultData?.testRunError || resultData?.errorDetail || resultData?.message || null)
+                  : null,
+              };
+            }
+            return s;
+          });
         });
         return next;
       });
 
-      const oldCov = resultData?.previousCoverage || resultData?.oldCoverage;
-      if (oldCov && resultData?.newCoverage) {
-        filesWithPendingSuggestions.forEach((fPath) => {
+      filesWithPendingSuggestions.forEach((fPath) => {
+        const fileResult = resultData?.perFileResults?.[fPath];
+        const currentFile = selectedFiles.find((f) => f.filePath === fPath);
+        const currentFileCov = currentFile ? {
+          statements: currentFile.stmtsPct || 0,
+          branches: currentFile.branchesPct || 0,
+          functions: currentFile.funcsPct || 0,
+          lines: currentFile.linesPct || 0,
+        } : null;
+
+        const oldCov = fileResult?.oldCoverage || currentFileCov || resultData?.previousCoverage;
+        const newCov = fileResult?.newCoverage || currentFileCov || resultData?.newCoverage;
+
+        if (oldCov && newCov) {
           setApplyResultsByFile((prev) => ({
             ...prev,
             [fPath]: {
               ...resultData,
               oldCoverage: oldCov,
-              newCoverage: resultData.newCoverage,
+              newCoverage: newCov,
+              isPassed,
             },
           }));
-        });
+        }
+      });
+
+      if (resultData?.perFileResults) {
+        updateCoverageFilesData(snapshotId, type, projectId, resultData.perFileResults);
       }
 
       setBulkSuggestMessage(

@@ -10,7 +10,8 @@ import {
     Layers,
     ArrowRight,
     FileCode,
-    Zap
+    Zap,
+    AlertCircle
 } from "lucide-react";
 
 /**
@@ -415,61 +416,76 @@ export default function InlineTestSuggestions({
             )}
 
             {/* Before / After Coverage comparison banner if recent apply occurred */}
-            {lastApplyResult && lastApplyResult.oldCoverage && lastApplyResult.newCoverage && (
-                <div
-                    style={{
-                        padding: "10px 14px",
-                        background: "rgba(34, 197, 94, 0.1)",
-                        border: "1px solid rgba(34, 197, 94, 0.3)",
-                        borderRadius: 6,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        fontSize: 12,
-                        color: "#4ade80",
-                    }}
-                >
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <CheckCircle2 size={15} />
-                        <span style={{ fontWeight: 600 }}>Coverage verified from test runner:</span>
+            {lastApplyResult && lastApplyResult.oldCoverage && lastApplyResult.newCoverage && (() => {
+                const isFail = lastApplyResult.status === "FAILED" || lastApplyResult.isPassed === false;
+                const oldCov = lastApplyResult.oldCoverage;
+                const newCov = lastApplyResult.newCoverage;
+
+                const renderMetric = (label, oldVal, newVal) => {
+                    const o = Number(oldVal ?? 0);
+                    const n = Number(newVal ?? 0);
+                    const diff = Math.round((n - o) * 10) / 10;
+                    const increased = diff > 0;
+
+                    return (
+                        <div key={label}>
+                            <span style={{ color: "#94a3b8", marginRight: 4 }}>{label}:</span>
+                            {increased ? (
+                                <>
+                                    <span style={{ textDecoration: "line-through", color: "#94a3b8", marginRight: 4 }}>
+                                        {o}%
+                                    </span>
+                                    <ArrowRight size={11} style={{ display: "inline", margin: "0 2px" }} />
+                                    <span style={{ fontWeight: 700, color: "#86efac" }}>
+                                        {n}%
+                                    </span>
+                                    <span style={{ fontSize: 10, fontWeight: 700, color: "#86efac", marginLeft: 4 }}>
+                                        (+{diff}%)
+                                    </span>
+                                </>
+                            ) : (
+                                <>
+                                    <span style={{ fontWeight: 600, color: "#e2e8f0" }}>
+                                        {n}%
+                                    </span>
+                                    <span style={{ fontSize: 10, color: "#94a3b8", marginLeft: 4 }}>
+                                        (unchanged)
+                                    </span>
+                                </>
+                            )}
+                        </div>
+                    );
+                };
+
+                return (
+                    <div
+                        style={{
+                            padding: "10px 14px",
+                            background: isFail ? "rgba(239, 68, 68, 0.1)" : "rgba(34, 197, 94, 0.1)",
+                            border: isFail ? "1px solid rgba(239, 68, 68, 0.3)" : "1px solid rgba(34, 197, 94, 0.3)",
+                            borderRadius: 6,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            fontSize: 12,
+                            color: isFail ? "#f87171" : "#4ade80",
+                        }}
+                    >
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            {isFail ? <AlertCircle size={15} /> : <CheckCircle2 size={15} />}
+                            <span style={{ fontWeight: 600 }}>
+                                {isFail ? "Test runner reported failures:" : "Coverage verified from test runner:"}
+                            </span>
+                        </div>
+
+                        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                            {renderMetric("Statements", oldCov.statements, newCov.statements)}
+                            {renderMetric("Branches", oldCov.branches, newCov.branches)}
+                            {renderMetric("Lines", oldCov.lines, newCov.lines)}
+                        </div>
                     </div>
-
-                    <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                        <div>
-                            <span style={{ color: "#94a3b8", marginRight: 4 }}>Statements:</span>
-                            <span style={{ textDecoration: "line-through", color: "#94a3b8", marginRight: 4 }}>
-                                {lastApplyResult.oldCoverage.statements}%
-                            </span>
-                            <ArrowRight size={11} style={{ display: "inline", margin: "0 2px" }} />
-                            <span style={{ fontWeight: 700, color: "#86efac" }}>
-                                {lastApplyResult.newCoverage.statements}%
-                            </span>
-                        </div>
-
-                        <div>
-                            <span style={{ color: "#94a3b8", marginRight: 4 }}>Branches:</span>
-                            <span style={{ textDecoration: "line-through", color: "#94a3b8", marginRight: 4 }}>
-                                {lastApplyResult.oldCoverage.branches}%
-                            </span>
-                            <ArrowRight size={11} style={{ display: "inline", margin: "0 2px" }} />
-                            <span style={{ fontWeight: 700, color: "#86efac" }}>
-                                {lastApplyResult.newCoverage.branches}%
-                            </span>
-                        </div>
-
-                        <div>
-                            <span style={{ color: "#94a3b8", marginRight: 4 }}>Lines:</span>
-                            <span style={{ textDecoration: "line-through", color: "#94a3b8", marginRight: 4 }}>
-                                {lastApplyResult.oldCoverage.lines}%
-                            </span>
-                            <ArrowRight size={11} style={{ display: "inline", margin: "0 2px" }} />
-                            <span style={{ fontWeight: 700, color: "#86efac" }}>
-                                {lastApplyResult.newCoverage.lines}%
-                            </span>
-                        </div>
-                    </div>
-                </div>
-            )}
+                );
+            })()}
 
             {/* List of Suggestions */}
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>

@@ -136,7 +136,13 @@ export const dockerRunner = {
 
       timer = setTimeout(async () => {
         timedOut = true;
-        child.kill("SIGKILL");
+        if (process.platform === "win32" && child?.pid) {
+          try {
+            spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"]);
+          } catch { }
+        } else {
+          try { child?.kill("SIGKILL"); } catch { }
+        }
         if (jobId) {
           await addJobLog(jobId, "ERROR", `[DockerRunner] Execution timed out (${timeoutMs}ms)`).catch(() => { });
         }

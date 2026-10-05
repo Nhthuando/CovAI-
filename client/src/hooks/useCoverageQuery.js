@@ -154,6 +154,55 @@ export function invalidateCoverageQueries(snapshotId = null) {
 }
 
 /**
+ * Optimistically updates the CoverageFile percentages in query data for affected source files
+ * so the dashboard table updates immediately without waiting for a full re-fetch.
+ */
+export function updateCoverageFilesData(snapshotId, type, projectId, perFileResults) {
+  if (!snapshotId || !perFileResults || typeof perFileResults !== "object") return;
+
+  queryClient.setQueriesData(
+    {
+      predicate: (query) => {
+        const key = query.queryKey;
+        return Array.isArray(key) && key[0] === "coverageDashboard" && key[1] === snapshotId;
+      }
+    },
+    (oldData) => {
+      if (!oldData || !Array.isArray(oldData.files)) return oldData;
+      const updatedFiles = oldData.files.map((file) => {
+        let matchRes = perFileResults[file.filePath];
+        if (!matchRes) {
+          const normFile = (file.filePath || "").replace(/\\/g, "/");
+          for (const [k, v] of Object.entries(perFileResults)) {
+            const normK = k.replace(/\\/g, "/");
+            if (normK === normFile || normK.endsWith("/" + normFile) || normFile.endsWith("/" + normK)) {
+              matchRes = v;
+              break;
+            }
+          }
+        }
+
+        if (matchRes && matchRes.newCoverage) {
+          return {
+            ...file,
+            linesPct: matchRes.newCoverage.lines,
+            branchesPct: matchRes.newCoverage.branches,
+            funcsPct: matchRes.newCoverage.functions,
+            stmtsPct: matchRes.newCoverage.statements,
+          };
+        }
+        return file;
+      });
+
+      return {
+        ...oldData,
+        files: updatedFiles,
+      };
+    }
+  );
+}
+
+/**
  * React Query hook for Project list.
  */
 export function useProjectsQuery() {
