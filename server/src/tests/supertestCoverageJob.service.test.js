@@ -26,6 +26,18 @@ await jest.unstable_mockModule('../services/coverageStorage.service.js', () => (
 await jest.unstable_mockModule('../services/coverageFileParser.service.js', () => ({ parseCoverageFilesForSnapshot }));
 await jest.unstable_mockModule('../services/coverageFunctionParser.service.js', () => ({ parseCoverageFunctionsForSnapshot }));
 
+const mockPrisma = {
+    aiTest: {
+        findMany: jest.fn()
+    },
+    testRun: {
+        create: jest.fn()
+    }
+};
+await jest.unstable_mockModule('../config/prisma.js', () => ({
+    default: mockPrisma
+}));
+
 const { processSupertestCoverageJob } = await import('../services/supertestCoverageJob.service.js');
 
 describe('supertestCoverageJob.service', () => {
@@ -55,6 +67,10 @@ describe('supertestCoverageJob.service', () => {
         fs.mkdirSync(path.join(rootDir, 'coverage'));
         fs.writeFileSync(path.join(rootDir, 'coverage', 'coverage-summary.json'), JSON.stringify({ total: {} }));
         fs.writeFileSync(path.join(rootDir, 'coverage', 'coverage-final.json'), JSON.stringify({}));
+        mockPrisma.aiTest.findMany.mockResolvedValue([
+            { filePath: 'api.test.js', metaJson: JSON.stringify({ framework: 'SUPERTEST', status: 'APPROVED' }) }
+        ]);
+        mockPrisma.testRun.create.mockResolvedValue({});
     });
 
     afterEach(() => fs.rmSync(rootDir, { recursive: true, force: true }));

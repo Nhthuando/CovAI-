@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   XCircle,
 } from "lucide-react";
+import MetricProvenancePopover from "./MetricProvenancePopover.jsx";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
@@ -96,9 +97,21 @@ export default function IntegrationHistoryPane({ snapshotId }) {
                   className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-3.5"
                 >
                   <div className="flex items-center justify-between mb-2">
-                    <span className="font-semibold text-xs text-[var(--color-text)]">
-                      Test Run
-                    </span>
+                    <MetricProvenancePopover provenance={{
+                      source: "TestRunner Report",
+                      metric: "Historical Test Run",
+                      formula: "Direct database row from execution",
+                      scope: "Integration Tests",
+                      snapshotId: tr.snapshotId,
+                      jobId: tr.jobId,
+                      testRunId: tr.id,
+                      timestamp: tr.createdAt,
+                      limitation: "Represents an isolated test run that may not reflect the overall pipeline status."
+                    }}>
+                      <span className="font-semibold text-xs text-[var(--color-text)]">
+                        Test Run
+                      </span>
+                    </MetricProvenancePopover>
                     <span
                       className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${
                         tr.status === "PASSED"
@@ -135,9 +148,21 @@ export default function IntegrationHistoryPane({ snapshotId }) {
                   className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-3.5"
                 >
                   <div className="flex items-center justify-between mb-2">
-                    <span className="font-semibold text-xs text-[var(--color-text)]">
-                      {job.type}
-                    </span>
+                    <MetricProvenancePopover provenance={{
+                      source: "Pipeline Queue",
+                      metric: "Historical Pipeline Job",
+                      formula: "Direct database row from queue system",
+                      scope: "Job Execution",
+                      snapshotId: job.snapshotId,
+                      jobId: job.id,
+                      testRunId: null,
+                      timestamp: job.createdAt,
+                      limitation: "Pipeline jobs might fail before generating tests or metrics."
+                    }}>
+                      <span className="font-semibold text-xs text-[var(--color-text)]">
+                        {job.type}
+                      </span>
+                    </MetricProvenancePopover>
                     <span
                       className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${
                         job.status === "SUCCESS"

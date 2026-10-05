@@ -14,7 +14,7 @@ export default function IntegrationTestDashboard(props) {
       setShowConfirm(false);
       return res; // Return job data so IntegrationWorkspace can capture job ID immediately
     } catch (err) {
-      if (err.status === 409) {
+      if (err.status === 409 || err.code === 'USER_MODIFICATIONS_EXIST') {
         setShowConfirm(true);
       } else {
         throw err;

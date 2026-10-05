@@ -11,6 +11,7 @@ const controller = {
   getFileContent: (_req, res) => res.status(200).json({ success: true, data: {} }),
   getStructureAnalysis: (_req, res) => res.status(200).json({ success: true, data: { schemaVersion: 1 } }),
   uploadZip: (_req, res) => res.status(200).json({ success: true }),
+  validateArchive: (_req, res) => res.status(200).json({ success: true }),
   runCoverageAnalysis: (_req, res) => res.status(201).json({ success: true, data: { job: { type: "RUN_TESTS" } } }),
   runStructureAnalysis: (_req, res) => res.status(201).json({ success: true, needsTests: false, reused: false, job: { type: "ANALYSIS" }, data: { job: { type: "ANALYSIS" } } }),
   buildCfg: (_req, res) => res.status(200).json({ success: true }),

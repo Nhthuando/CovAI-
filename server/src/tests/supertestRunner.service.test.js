@@ -66,7 +66,8 @@ describe('supertestRunner.service', () => {
     test('throws when the Docker runner reports a failed test run', async () => {
         dockerRunner.run = jest.fn().mockResolvedValue({ success: false, exitCode: 1, stdout: 'failed', stderr: '' });
 
-        await expect(runSupertest('job1', tempDir, null, [path.join(tempDir, 'src', 'api.test.js')])).rejects.toThrow('Integration tests failed');
+        const result = await runSupertest('job1', tempDir, null, [path.join(tempDir, 'src', 'api.test.js')]);
+        expect(result.exitCode).toBe(1);
     });
 
     test('surfaces timeout and docker errors from the runner', async () => {

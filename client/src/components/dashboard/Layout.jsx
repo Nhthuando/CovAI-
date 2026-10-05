@@ -144,6 +144,7 @@ function LayoutInner() {
   const [showQualityDashboard, setShowQualityDashboard] = useState(false);
   const [cfgInitialContext, setCfgInitialContext] = useState(null);
   const [archInitialContext, setArchInitialContext] = useState(null);
+  const [integrationInitialContext, setIntegrationInitialContext] = useState(null);
 
   useEffect(() => {
     if (activeActivity !== "architecture") {
@@ -901,6 +902,8 @@ function LayoutInner() {
                   onOpenCFG={handleOpenCFG}
                   onSuggestTestcase={handleSuggestTestcase}
                   onOpenArchitecture={handleOpenArchitecture}
+                  initialContext={integrationInitialContext}
+                  onContextChange={setIntegrationInitialContext}
                 />
               ) : (
                 <SystemTestDashboard
