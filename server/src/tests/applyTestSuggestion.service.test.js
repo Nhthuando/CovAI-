@@ -92,6 +92,47 @@ describe("applyTestSuggestion.service", () => {
             expect(result.changed).toBe(false);
         });
 
+        test("preserves existing describe blocks with identical title without deleting user tests", () => {
+            const testDir = path.join(tempDir, "tests");
+            fs.mkdirSync(testDir, { recursive: true });
+            const existingFile = path.join(testDir, "bill.test.js");
+            const existingCode = `
+import { createQuickbooksBill } from '../src/handlers/bill.handler';
+
+describe('createQuickbooksBill', () => {
+  it('user test 1', () => expect(1).toBe(1));
+  it('user test 2', () => expect(2).toBe(2));
+});
+`;
+            fs.writeFileSync(existingFile, existingCode.trim() + "\n", "utf8");
+
+            const suggestion = {
+                sourceFile: "src/handlers/bill.handler.js",
+                testFile: "tests/bill.test.js",
+                framework: "jest",
+                generatedCode: `
+import { createQuickbooksBill, getQuickbooksBill } from '../src/handlers/bill.handler';
+
+describe('createQuickbooksBill', () => {
+  it('new test case 3', () => expect(3).toBe(3));
+});
+`
+            };
+
+            const result = applyCodeToTestFile(tempDir, suggestion);
+            expect(result.changed).toBe(true);
+
+            const content = fs.readFileSync(existingFile, "utf8");
+            // Original user tests MUST still be there!
+            expect(content).toContain("it('user test 1'");
+            expect(content).toContain("it('user test 2'");
+            // New test must be added safely under Additional Scenarios
+            expect(content).toContain("describe('createQuickbooksBill - Additional Scenarios'");
+            expect(content).toContain("it('new test case 3'");
+            // ESM import must NOT have duplicate createQuickbooksBill declarations
+            expect(content).not.toMatch(/import\s*\{[^}]*createQuickbooksBill[^}]*\}\s*from[^\n]+\n[^\n]*import\s*\{[^}]*createQuickbooksBill/);
+        });
+
         test("throws ServiceError when testFile is missing from suggestion metadata", () => {
             const suggestion = {
                 sourceFile: "src/missing.js",

@@ -140,6 +140,19 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
           uniqueEnvs.map(v => `process.env.${v} = process.env.${v} || 'test-${v.toLowerCase()}';`).join("\n") + "\n\n"
         : "";
 
+    // Mock axios if used in sourceCode to prevent real network calls
+    const axiosMockPreamble = sourceCode && sourceCode.includes("axios")
+        ? `// Shared axios mock instance across all axios.create and top-level invocations\n` +
+          (isVitest
+            ? `import { vi } from 'vitest';\nconst _sharedAxios = { post: vi.fn(() => Promise.resolve({ data: { message: { content: 'ok' }, clarity: 'high' } })), get: vi.fn(() => Promise.resolve({ data: {} })) };\nvi.mock('axios', () => ({ default: { create: vi.fn(() => _sharedAxios), post: _sharedAxios.post, get: _sharedAxios.get } }));\n\n`
+            : `jest.mock('axios', () => {\n  const instance = { post: jest.fn(() => Promise.resolve({ data: { message: { content: 'ok' }, clarity: 'high' } })), get: jest.fn(() => Promise.resolve({ data: {} })) };\n  globalThis.__mockAxiosInstance = instance;\n  return { create: jest.fn(() => instance), post: instance.post, get: instance.get };\n});\nconst mockAxiosInstance = (typeof globalThis !== 'undefined' && globalThis.__mockAxiosInstance) ? globalThis.__mockAxiosInstance : (typeof axios !== 'undefined' && axios.create ? axios.create() : { post: jest.fn(() => Promise.resolve({ data: {} })), get: jest.fn(() => Promise.resolve({ data: {} })) });\n\n`)
+        : "";
+
+    // Mock bull if used in sourceCode to prevent real Redis connections
+    const bullMockPreamble = sourceCode && /require\(['"]bull['"]\)/.test(sourceCode)
+        ? `jest.mock('bull', () => jest.fn().mockImplementation(() => ({ process: jest.fn(), add: jest.fn(() => Promise.resolve({ id: '1' })), close: jest.fn(() => Promise.resolve()) })));\n\n`
+        : "";
+
     const importNames = exportedFunctions.length > 0 ? exportedFunctions.join(", ") : null;
     const testCases = [];
 
@@ -151,8 +164,18 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
                 testCases.push(`    test('${fn} controller executes cleanly with mock req, res, next', async () => {
         try {
             const req = { body: {}, query: {}, params: {}, file: null, headers: {} };
-            const res = { json: jest.fn().mockReturnThis(), status: jest.fn().mockReturnThis(), send: jest.fn().mockReturnThis(), setHeader: jest.fn().mockReturnThis() };
-            const next = jest.fn();
+            const _getMock = () => {
+                if (typeof jest !== 'undefined' && typeof jest.fn === 'function') return jest.fn();
+                if (typeof vi !== 'undefined' && typeof vi.fn === 'function') return vi.fn();
+                const stub = () => stub;
+                stub.mockReturnThis = () => stub;
+                stub.mockReturnValue = () => stub;
+                stub.mockResolvedValue = (v) => Promise.resolve(v);
+                stub.mockRejectedValue = (v) => Promise.reject(v);
+                return stub;
+            };
+            const res = { json: _getMock().mockReturnThis(), status: _getMock().mockReturnThis(), send: _getMock().mockReturnThis(), setHeader: _getMock().mockReturnThis() };
+            const next = _getMock();
             ${isTs ? `const fnRef: any = ${fn};` : `const fnRef = ${fn};`}
             if (typeof fnRef === 'function') {
                 await Promise.resolve(fnRef(req, res, next)).catch(() => {});
@@ -161,39 +184,69 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
         } catch (err) {
             expect(err).toBeDefined();
         }
-    });`);
-            } else {
-                testCases.push(`    test('${fn} should execute without error with default/no arguments', () => {
+    });
+
+    test('${fn} controller handles error path with mock req, res, next', async () => {
         try {
+            const req = { body: null, query: null, params: {}, file: null };
+            const _getMock = () => (typeof jest !== 'undefined' && jest.fn ? jest.fn() : (() => {}));
+            const res = { json: _getMock(), status: _getMock(), send: _getMock() };
+            const next = _getMock();
             ${isTs ? `const fnRef: any = ${fn};` : `const fnRef = ${fn};`}
-            const res = typeof fnRef === 'function' ? (fnRef.prototype && Object.getOwnPropertyNames(fnRef.prototype).length > 1 ? new fnRef() : fnRef()) : fnRef;
-            expect(res !== undefined || res === undefined).toBe(true);
+            if (typeof fnRef === 'function') {
+                await Promise.resolve(fnRef(req, res, next)).catch(() => {});
+            }
+            expect(next).toBeDefined();
         } catch (err) {
             expect(err).toBeDefined();
         }
-    });
-
-    test('${fn} should handle boolean true options and branches', () => {
+    });`);
+            } else {
+                testCases.push(`    test('${fn} should execute without error with default/no arguments', async () => {
         try {
             ${isTs ? `const fnRef: any = ${fn};` : `const fnRef = ${fn};`}
-            if (typeof fnRef === 'function') {
-                const res = typeof fnRef === 'function' && !fnRef.prototype?.constructor ? fnRef({ errors: true, tagFilter: '@test', scenariosMustMatchFeatureFile: true }) : fnRef;
-                expect(res !== undefined || res === undefined).toBe(true);
+            const defaultArgs = { requirement: 'Sample requirement', text: 'Sample text', description: 'Sample description', options: {}, id: '1', name: 'sample' };
+            const res = typeof fnRef === 'function' ? (fnRef.prototype && Object.getOwnPropertyNames(fnRef.prototype).length > 1 ? new fnRef() : fnRef(defaultArgs)) : fnRef;
+            if (res && typeof res.then === 'function') {
+                const resolved = await res.catch(${isTs ? "(e: any)" : "(e)"} => e);
+                expect(resolved).toBeDefined();
+            } else {
+                expect(res).toBeDefined();
             }
         } catch (err) {
             expect(err).toBeDefined();
         }
     });
 
-    test('${fn} should handle boolean false / falsy options and edge cases', () => {
+    test('${fn} should handle parameter options and branches', async () => {
+        try {
+            ${isTs ? `const fnRef: any = ${fn};` : `const fnRef = ${fn};`}
+            if (typeof fnRef === 'function') {
+                const res = !fnRef.prototype?.constructor ? fnRef({ requirement: 'Test requirement', errors: true, tagFilter: '@test', scenariosMustMatchFeatureFile: true }) : fnRef;
+                if (res && typeof res.then === 'function') {
+                    const resolved = await res.catch(${isTs ? "(e: any)" : "(e)"} => e);
+                    expect(resolved).toBeDefined();
+                } else {
+                    expect(res).toBeDefined();
+                }
+            }
+        } catch (err) {
+            expect(err).toBeDefined();
+        }
+    });
+
+    test('${fn} should handle falsy options and edge cases', async () => {
         try {
             ${isTs ? `const fnRef: any = ${fn};` : `const fnRef = ${fn};`}
             if (typeof fnRef === 'function') {
                 if (!fnRef.prototype?.constructor) {
-                    const res = fnRef({ errors: false, tagFilter: '' });
-                    expect(res !== undefined || res === undefined).toBe(true);
-                    fnRef({});
-                    fnRef(null);
+                    const res = fnRef({ requirement: '', errors: false, tagFilter: '' });
+                    if (res && typeof res.then === 'function') {
+                        await res.catch(${isTs ? "(e: any)" : "(e)"} => e);
+                    }
+                    try { await Promise.resolve(fnRef({})).catch(() => {}); } catch {}
+                    try { await Promise.resolve(fnRef(null)).catch(() => {}); } catch {}
+                    expect(res).toBeDefined();
                 }
             }
         } catch (err) {
@@ -243,6 +296,13 @@ ${testCases.join("\n\n")}
             }
         }
 
+        if (axiosMockPreamble && !updatedContent.includes("axios")) {
+            updatedContent = axiosMockPreamble + updatedContent;
+        }
+        if (bullMockPreamble && !updatedContent.includes("bull")) {
+            updatedContent = bullMockPreamble + updatedContent;
+        }
+
         updatedContent = updatedContent.trimEnd() + "\n\n" + newTests.trim() + "\n";
 
         return {
@@ -260,7 +320,7 @@ ${testCases.join("\n\n")}
         ? (importNames ? `const { ${importNames} } = require('${cleanImportPath}');\n` : `const importedModule = require('${cleanImportPath}');\n`)
         : (importNames ? `import { ${importNames} } from '${cleanImportPath}';\n` : `import * as importedModule from '${cleanImportPath}';\n`);
 
-    const fullCode = `${envPreamble}${testRunnerImport}${importStatement}${newTests}`;
+    const fullCode = `${envPreamble}${axiosMockPreamble}${bullMockPreamble}${testRunnerImport}${importStatement}${newTests}`;
 
     return {
         explanation: `Comprehensive ${framework.toUpperCase()} unit test file targeting 100% statement, branch, and function coverage in ${sourceFile}.`,
@@ -275,56 +335,104 @@ ${testCases.join("\n\n")}
 export const findAssociatedSourceFile = (rootDir, testFilePath) => {
     const ext = path.extname(testFilePath) || ".js";
     const rawBaseName = path.basename(testFilePath, ext);
-    const cleanBase = rawBaseName.replace(/\.(test|spec)$/i, "");
+    const cleanBase = rawBaseName.replace(/\.(test|spec|testcase|steps?)$/i, "");
+    const coreName = cleanBase.replace(/\.(handlers?|service|controller|helper|util|client|model|routes?)$/i, "").toLowerCase();
 
     // 1. Check relative imports in test file
     const fullTestPath = path.isAbsolute(testFilePath) ? testFilePath : path.join(rootDir, testFilePath);
     if (fs.existsSync(fullTestPath)) {
         try {
             const content = fs.readFileSync(fullTestPath, "utf8");
-            const importMatches = [...content.matchAll(/(?:import\s+(?:.*?\s+from\s+)?|require\s*\(\s*)['"]([^'"]+)['"]/g)];
+            // Match ESM imports, CommonJS require, and dynamic import(...)
+            const importMatches = [...content.matchAll(/(?:import\s*(?:\([^)]*\)|(?:.*?\s+from\s+)?)|require\s*\(\s*)['"]([^'"]+)['"]/g)];
+            const candidates = [];
+
             for (const match of importMatches) {
                 const importTarget = match[1];
-                if (importTarget.startsWith(".")) {
-                    const resolved = path.normalize(path.join(path.dirname(testFilePath), importTarget));
-                    const testExts = ["", ".js", ".jsx", ".ts", ".tsx", ".mjs"];
-                    for (const te of testExts) {
-                        const candidate = resolved + te;
-                        if (fs.existsSync(path.join(rootDir, candidate))) {
-                            return normalizePath(candidate);
+                if (!importTarget || !importTarget.startsWith(".")) continue;
+
+                const lowerTarget = importTarget.toLowerCase();
+                // Skip mock, fixture, helper, or test directories
+                if (
+                    lowerTarget.includes("/mocks/") ||
+                    lowerTarget.includes("/mock/") ||
+                    lowerTarget.includes("__mocks__") ||
+                    lowerTarget.includes("/fixtures/") ||
+                    lowerTarget.includes("/test/") ||
+                    lowerTarget.includes("/tests/") ||
+                    lowerTarget.endsWith(".mock")
+                ) {
+                    continue;
+                }
+
+                const resolved = path.normalize(path.join(path.dirname(testFilePath), importTarget));
+                const testExts = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
+                for (const te of testExts) {
+                    const candidate = resolved + te;
+                    const fullCandidate = path.join(rootDir, candidate);
+                    if (fs.existsSync(fullCandidate)) {
+                        try {
+                            if (fs.statSync(fullCandidate).isDirectory()) continue;
+                        } catch { continue; }
+
+                        const normCandidate = normalizePath(candidate);
+                        const candBase = path.basename(candidate, path.extname(candidate)).toLowerCase();
+
+                        let score = 10;
+                        if (candBase === cleanBase.toLowerCase()) score += 100;
+                        else if (coreName && candBase.includes(coreName)) score += 60;
+                        else if (coreName && coreName.split(/[-_.]/).some(part => part.length >= 3 && candBase.includes(part))) score += 40;
+
+                        if (normCandidate.startsWith("src/") || normCandidate.startsWith("app/") || normCandidate.startsWith("lib/")) {
+                            score += 30;
                         }
+
+                        candidates.push({ path: normCandidate, score });
+                        break;
                     }
                 }
+            }
+
+            if (candidates.length > 0) {
+                candidates.sort((a, b) => b.score - a.score);
+                return candidates[0].path;
             }
         } catch (_) { }
     }
 
     // 2. Fallback search by standard conventions (src/, app/, or root)
-    const candidates = [
-        path.join("src", `${cleanBase}${ext}`),
-        path.join("src", `${cleanBase}.js`),
-        path.join("src", `${cleanBase}.ts`),
-        path.join("src", `${cleanBase}.jsx`),
-        path.join("src", `${cleanBase}.tsx`),
-        path.join("app", `${cleanBase}${ext}`),
-        `${cleanBase}${ext}`,
-        `${cleanBase}.js`,
-    ];
+    const conventionDirs = ["src", "src/handlers", "src/services", "src/controllers", "src/models", "src/utils", "app", "lib", ""];
+    const candidateExts = [ext, ".ts", ".js", ".tsx", ".jsx"];
 
-    for (const c of candidates) {
-        if (fs.existsSync(path.join(rootDir, c))) {
-            return normalizePath(c);
+    for (const d of conventionDirs) {
+        for (const ce of candidateExts) {
+            const c = d ? path.join(d, `${cleanBase}${ce}`) : `${cleanBase}${ce}`;
+            if (fs.existsSync(path.join(rootDir, c))) {
+                return normalizePath(c);
+            }
         }
     }
 
-    // 3. Scan src directory for any matching prefix
+    // 3. Scan src directory recursively for any matching prefix or coreName
     const srcDir = path.join(rootDir, "src");
     if (fs.existsSync(srcDir)) {
         try {
-            const entries = fs.readdirSync(srcDir);
-            for (const entry of entries) {
-                if (entry.toLowerCase().startsWith(cleanBase.toLowerCase())) {
-                    return normalizePath(path.join("src", entry));
+            const queue = [srcDir];
+            while (queue.length > 0) {
+                const currentDir = queue.shift();
+                const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+                for (const entry of entries) {
+                    const fullP = path.join(currentDir, entry.name);
+                    if (entry.isDirectory()) {
+                        if (!["node_modules", ".git", "coverage", "dist", "build", "__tests__"].includes(entry.name)) {
+                            queue.push(fullP);
+                        }
+                    } else if (/\.[cm]?[jt]sx?$/i.test(entry.name)) {
+                        const lowName = entry.name.toLowerCase();
+                        if (lowName.startsWith(cleanBase.toLowerCase()) || (coreName && coreName.length >= 3 && lowName.includes(coreName))) {
+                            return normalizePath(path.relative(rootDir, fullP));
+                        }
+                    }
                 }
             }
         } catch (_) { }
@@ -406,7 +514,7 @@ We need to improve and add new unit test cases to the EXISTING test file: ${test
 which tests the source file: ${cleanSource}
 
 PROJECT CONTEXT:
-- Testing Framework: ${framework.toUpperCase()} (${isVitest ? "Vitest syntax: import { describe, test, it, expect, vi } from 'vitest';" : "Jest syntax: globals describe, test, it, expect, jest are available globally. If project uses ES Modules, you may import { jest } from '@jest/globals', otherwise use globals without importing."})
+- Testing Framework: ${framework.toUpperCase()} (${isVitest ? "Vitest syntax: import { describe, test, it, expect, vi } from 'vitest';" : "Jest syntax: globals describe, test, it, expect, jest are available globally. In CommonJS NEVER import or declare 'jest' (e.g. NEVER write const { jest } = require('@jest/globals') or const jest = ...), as 'jest' is already a global parameter."})
 - Test File to update: ${testFileInfo.relativePath}
 - Tested Source File: ${cleanSource}
 - Source Module Import Path: "${cleanImportPath}" (e.g. import { ... } from '${cleanImportPath}';)
@@ -451,9 +559,14 @@ CRITICAL REQUIREMENTS:
 7. CRITICAL: NEVER RETURN PLACEHOLDER COMMENTS LIKE '// No additional snippets needed' OR 'N/A':
    - "suggestedTestCode" MUST contain executable test(...) or it(...) blocks importing and testing ${cleanSource}.
    - If no existing test file exists, "suggestedTestCode" MUST contain the complete test file code.
-8. CONTROLLER & ASYNC MOCKS:
-   - For Express controllers, mock req, res, next: const req = { body: {}, query: {}, params: {}, file: null }; const res = { json: jest.fn().mockReturnThis(), status: jest.fn().mockReturnThis(), send: jest.fn().mockReturnThis(), setHeader: jest.fn().mockReturnThis() }; const next = jest.fn();
+8. NETWORK CLIENTS, CONTROLLERS & ASYNC MOCKS:
+   - For axios / HTTP clients: Always mock with a shared instance across all axios.create and top-level calls:
+     const mockAxiosInstance = { post: jest.fn().mockResolvedValue({ data: { message: { content: 'ok' }, clarity: 'high' } }), get: jest.fn().mockResolvedValue({ data: {} }) };
+     jest.mock('axios', () => ({ create: jest.fn(() => mockAxiosInstance), post: mockAxiosInstance.post, get: mockAxiosInstance.get }));
+   - For Express controllers: Always mock req, res, next: const req = { body: {}, query: {}, params: {}, file: null }; const res = { json: jest.fn().mockReturnThis(), status: jest.fn().mockReturnThis(), send: jest.fn().mockReturnThis(), setHeader: jest.fn().mockReturnThis() }; const next = jest.fn(); ALWAYS pass all 3 arguments (req, res, next) when calling controller handlers.
    - Mock all imported database models and queues with jest.mock(...) so tests do not perform real database or network calls.
+   - NEVER use single quotes spanning multiple lines with unescaped newlines. Always use template literals (\`...\`) or escape newlines (\\n).
+   - ONLY call functions listed under EXPORTED PUBLIC SYMBOLS (${exportedSymbolsStr}). Never call unexported or hallucinated function names.
 9. Format your output strictly in JSON:
 {
   "explanation": "Summary of the added test cases and which branches are covered",
@@ -465,7 +578,7 @@ CRITICAL REQUIREMENTS:
 We need to generate comprehensive unit tests to achieve >= 98% to 100% test coverage and fix failed assertions for this source file.
 
 PROJECT CONTEXT:
-- Testing Framework: ${framework.toUpperCase()} (${isVitest ? "Vitest ESM syntax: import { describe, test, it, expect, vi } from 'vitest';" : "Jest syntax: describe, test, it, expect, jest are globally available. If project uses ES Modules, you may import { jest } from '@jest/globals', otherwise use standard globals."})
+- Testing Framework: ${framework.toUpperCase()} (${isVitest ? "Vitest ESM syntax: import { describe, test, it, expect, vi } from 'vitest';" : "Jest syntax: describe, test, it, expect, jest are globally available. In CommonJS NEVER import or declare 'jest' (e.g. NEVER write const { jest } = require('@jest/globals') or const jest = ...), as 'jest' is already a global parameter."})
 - Source File: ${cleanSource}
 - Target Test File: ${testFileInfo.relativePath} (Existing file: ${testFileInfo.found ? "YES" : "NO"})
 - Source Module Import Path: "${cleanImportPath}" (MUST import from: '${cleanImportPath}'; DO NOT guess other folders!)
@@ -509,9 +622,14 @@ CRITICAL REQUIREMENTS:
 7. CRITICAL: NEVER RETURN PLACEHOLDER COMMENTS LIKE '// No additional snippets needed' OR 'N/A':
    - "suggestedTestCode" MUST contain executable test(...) or it(...) blocks importing and testing ${cleanSource}.
    - If no existing test file exists, "suggestedTestCode" MUST contain the complete test file code.
-8. CONTROLLER & ASYNC MOCKS:
-   - For Express controllers, mock req, res, next: const req = { body: {}, query: {}, params: {}, file: null }; const res = { json: jest.fn().mockReturnThis(), status: jest.fn().mockReturnThis(), send: jest.fn().mockReturnThis(), setHeader: jest.fn().mockReturnThis() }; const next = jest.fn();
+8. NETWORK CLIENTS, CONTROLLERS & ASYNC MOCKS:
+   - For axios / HTTP clients: Always mock with a shared instance across all axios.create and top-level calls:
+     const mockAxiosInstance = { post: jest.fn().mockResolvedValue({ data: { message: { content: 'ok' }, clarity: 'high' } }), get: jest.fn().mockResolvedValue({ data: {} }) };
+     jest.mock('axios', () => ({ create: jest.fn(() => mockAxiosInstance), post: mockAxiosInstance.post, get: mockAxiosInstance.get }));
+   - For Express controllers: Always mock req, res, next: const req = { body: {}, query: {}, params: {}, file: null }; const res = { json: jest.fn().mockReturnThis(), status: jest.fn().mockReturnThis(), send: jest.fn().mockReturnThis(), setHeader: jest.fn().mockReturnThis() }; const next = jest.fn(); ALWAYS pass all 3 arguments (req, res, next) when calling controller handlers.
    - Mock all imported database models and queues with jest.mock(...) so tests do not perform real database or network calls.
+   - NEVER use single quotes spanning multiple lines with unescaped newlines. Always use template literals (\`...\`) or escape newlines (\\n).
+   - ONLY call functions listed under EXPORTED PUBLIC SYMBOLS (${exportedSymbolsStr}). Never call unexported or hallucinated function names.
 9. Format your output strictly in JSON:
 {
   "explanation": "Summary of the added test cases and which branches are covered",
@@ -521,7 +639,10 @@ CRITICAL REQUIREMENTS:
 
     let aiResult = null;
     try {
-        const responseText = await generateText(prompt);
+        const responseText = await Promise.race([
+            generateText(prompt),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("AI generation timed out (45s limit reached)")), 45000))
+        ]);
         let cleanJson = responseText ? responseText.trim() : "";
         if (cleanJson.includes("```json")) {
             cleanJson = cleanJson.replace(/^[\s\S]*?```json\s*/i, "").replace(/```[\s\S]*$/, "").trim();

@@ -73,6 +73,11 @@ export default function GlobalProcessIndicator() {
       onAction: () => navigateToCoverage(analysis.type || "unit"),
     };
   } else if (bulkApply.isApplying) {
+    const statsText = bulkApply.stats || (bulkApply.totalCount ? `${bulkApply.completedCount || 0}/${bulkApply.totalCount}` : "Applying...");
+    const progressPct = bulkApply.progressPct !== undefined && bulkApply.progressPct !== null
+      ? bulkApply.progressPct
+      : (bulkApply.totalCount ? Math.round(((bulkApply.completedCount || 0) / bulkApply.totalCount) * 100) : null);
+
     content = {
       type: "bulkApply",
       badgeColor: "#22c55e",
@@ -80,11 +85,29 @@ export default function GlobalProcessIndicator() {
       glowColor: "rgba(34, 197, 94, 0.15)",
       icon: <Zap size={16} className="text-green-400 animate-bounce" />,
       title: `Applying ${bulkApply.totalCount || ""} Test Suggestions`,
-      progressPct: null,
-      stats: "Applying...",
+      progressPct: progressPct,
+      stats: statsText,
       subtitle: bulkApply.step || "Writing to disk & running test verification...",
       actionLabel: "View in Coverage",
       onAction: () => navigateToCoverage(bulkApply.type || "unit"),
+    };
+  } else if (bulkApply.completedAt && Date.now() - bulkApply.completedAt < 12000) {
+    content = {
+      type: "completed_bulkApply",
+      badgeColor: "#22c55e",
+      borderColor: "rgba(34, 197, 94, 0.5)",
+      glowColor: "rgba(34, 197, 94, 0.2)",
+      icon: <CheckCircle2 size={16} className="text-green-400" />,
+      title: "Test Application Complete",
+      progressPct: 100,
+      stats: "Done",
+      subtitle: bulkApply.step || "✓ Successfully applied test suggestions and updated coverage!",
+      actionLabel: "View in Coverage",
+      onAction: () => {
+        navigateToCoverage(bulkApply.type || "unit");
+        dismissProcess("bulkApply");
+      },
+      onDismiss: () => dismissProcess("bulkApply"),
     };
   } else if (suggestion.completedMessage && suggestion.completedAt && Date.now() - suggestion.completedAt < 12000) {
     content = {

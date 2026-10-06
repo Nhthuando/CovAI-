@@ -58,6 +58,7 @@ jest.unstable_mockModule('../services/job.service.js', () => ({
     markJobFailed: jest.fn().mockResolvedValue({}),
     updateJobProgress: jest.fn().mockResolvedValue({}),
     cancelJob: jest.fn().mockResolvedValue({}),
+    STALE_JOB_TIMEOUT_MS: 15 * 60 * 1000,
 }));
 
 const mockAddJobToQueue = jest.fn();

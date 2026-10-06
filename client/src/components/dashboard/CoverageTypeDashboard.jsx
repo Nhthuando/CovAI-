@@ -405,9 +405,21 @@ export function PaginationControl({
 
 async function waitForJob(jobId, onProgress) {
   let lastProgress = 8;
-  for (let attempt = 0; attempt < 180; attempt += 1) {
-    const response = await getJobDetailApi(jobId);
-    const job = response?.job;
+  let consecutiveErrors = 0;
+  // Allow up to 15 minutes (600 attempts * 1500ms = 900s) for large test suites to complete
+  for (let attempt = 0; attempt < 600; attempt += 1) {
+    let job = null;
+    try {
+      const response = await getJobDetailApi(jobId);
+      job = response?.job;
+      consecutiveErrors = 0;
+    } catch (pollErr) {
+      consecutiveErrors += 1;
+      if (consecutiveErrors > 15) {
+        throw new Error(pollErr?.message || "Failed to communicate with job service.");
+      }
+    }
+
     if (job) {
       const prog = typeof job.progress === "number" ? Math.max(lastProgress, job.progress) : lastProgress;
       lastProgress = prog;
@@ -415,22 +427,27 @@ async function waitForJob(jobId, onProgress) {
         onProgress(prog, job.status);
       }
     }
+
     if (job?.status === "SUCCESS") {
       if (onProgress) onProgress(100, "SUCCESS");
       return;
     }
-    if (["FAILED", "CANCELED"].includes(job?.status))
+
+    if (["FAILED", "CANCELED"].includes(job?.status)) {
       throw new Error(
         job?.errorMessage ||
           job?.error ||
           `${job.status}: coverage analysis failed.`,
       );
+    }
+
     await new Promise((resolve) => setTimeout(resolve, 1500));
   }
+
   try {
     await cancelJobApi(jobId);
   } catch (_) { }
-  throw new Error("Coverage analysis timed out. The job was automatically paused/canceled to unblock the project.");
+  throw new Error("Coverage analysis timed out after 15 minutes. The job was automatically paused/canceled to unblock the project.");
 }
 
 export const invalidateDashboardCache = (snapshotId) => {
@@ -565,10 +582,17 @@ export default function CoverageTypeDashboard({
   }, [processes.analysis, snapshotId]);
 
   // Ensure file coverage data is always available in cache when a file is viewed/expanded
+  const fileCoverageCacheRef = useRef({});
+  useEffect(() => {
+    fileCoverageCacheRef.current = fileCoverageCache;
+  }, [fileCoverageCache]);
+
   const ensureFileCoverage = useCallback(
     async (filePath, force = false) => {
       if (!snapshotId || !filePath) return null;
-      if (!force && fileCoverageCache[filePath]?.data) return fileCoverageCache[filePath].data;
+      if (!force && fileCoverageCacheRef.current[filePath]?.data) {
+        return fileCoverageCacheRef.current[filePath].data;
+      }
 
       setFileCoverageCache((prev) => ({
         ...prev,
@@ -596,7 +620,7 @@ export default function CoverageTypeDashboard({
         return null;
       }
     },
-    [snapshotId, fileCoverageCache],
+    [snapshotId],
   );
 
   const toggleExpandFile = useCallback(
@@ -617,14 +641,16 @@ export default function CoverageTypeDashboard({
     [ensureFileCoverage],
   );
 
-  // Trigger inline suggestion generation directly below the source file without opening separate screen
+  // Trigger inline suggestion generation directly below the source file
   const handleSuggestTestcaseInline = useCallback(
-    async (filePath) => {
+    async (filePath, autoExpand = true) => {
       if (!snapshotId || !filePath) return;
-      // Auto-expand this file so the suggestion displays immediately inline
-      setExpandedFiles((prev) => new Set(prev).add(filePath));
-      // Pre-load coverage data so execution view displays smoothly without error
-      ensureFileCoverage(filePath);
+      if (autoExpand) {
+        // Auto-expand this file so the suggestion displays immediately inline
+        setExpandedFiles((prev) => new Set(prev).add(filePath));
+        // Pre-load coverage data so execution view displays smoothly without error
+        ensureFileCoverage(filePath);
+      }
 
       setLoadingSuggestions((prev) => ({ ...prev, [filePath]: true }));
       try {
@@ -653,17 +679,17 @@ export default function CoverageTypeDashboard({
         setLoadingSuggestions((prev) => ({ ...prev, [filePath]: false }));
       }
     },
-    [snapshotId, projectId, activeFramework, ensureFileCoverage, saveSuggestions],
+    [snapshotId, projectId, activeFramework, ensureFileCoverage],
   );
 
-  // Auto-fetch file coverage details for any expanded file if missing from cache
+  // Auto-fetch file coverage details ONLY for expanded files (lazy loaded on user click)
   useEffect(() => {
     expandedFiles.forEach((fPath) => {
-      if (!fileCoverageCache[fPath]) {
+      if (!fileCoverageCacheRef.current[fPath]?.data && !fileCoverageCacheRef.current[fPath]?.loading) {
         ensureFileCoverage(fPath);
       }
     });
-  }, [expandedFiles, fileCoverageCache, ensureFileCoverage]);
+  }, [expandedFiles, ensureFileCoverage]);
 
 
   // Apply single suggestion inline, execute runner, update real coverage
@@ -705,19 +731,36 @@ export default function CoverageTypeDashboard({
         const testStatus = resultData?.testStatus || resultData?.status;
         const isPassed = testStatus === "PASSED" || resultData?.success === true;
 
+        const appliedMap = new Map();
+        if (Array.isArray(resultData?.appliedSuggestions)) {
+          for (const item of resultData.appliedSuggestions) {
+            appliedMap.set(item.suggestionId || item.id, item);
+          }
+        }
+
         setInlineSuggestions((prev) => {
           const fileSugs = prev[filePath] || [];
           return {
             ...prev,
-            [filePath]: fileSugs.map((s) =>
-              (s.suggestionId === sugId || s.id === sugId)
-                ? {
+            [filePath]: fileSugs.map((s) => {
+              const matchedItem = appliedMap.get(s.suggestionId || s.id);
+              if (matchedItem) {
+                const itemPassed = matchedItem.status === "PASSED";
+                return {
+                  ...s,
+                  status: matchedItem.status || (isPassed ? "PASSED" : "FAILED"),
+                  testRunError: matchedItem.error || (itemPassed ? null : (resultData?.errorDetail || resultData?.message || null)),
+                };
+              }
+              if (s.suggestionId === sugId || s.id === sugId) {
+                return {
                   ...s,
                   status: isPassed ? "PASSED" : "FAILED",
-                  testRunError: resultData?.testRunError || resultData?.errorDetail || resultData?.message || null,
-                }
-                : s,
-            ),
+                  testRunError: isPassed ? null : (resultData?.testRunError || resultData?.errorDetail || resultData?.message || null),
+                };
+              }
+              return s;
+            }),
           };
         });
 
@@ -827,19 +870,36 @@ export default function CoverageTypeDashboard({
         const testStatus = resultData?.testStatus || resultData?.status;
         const isPassed = testStatus === "PASSED" || resultData?.success === true;
 
+        const appliedMap = new Map();
+        if (Array.isArray(resultData?.appliedSuggestions)) {
+          for (const item of resultData.appliedSuggestions) {
+            appliedMap.set(item.suggestionId || item.id, item);
+          }
+        }
+
         setInlineSuggestions((prev) => {
           const fileSugs = prev[filePath] || [];
           return {
             ...prev,
-            [filePath]: fileSugs.map((s) =>
-              sugIds.includes(s.suggestionId || s.id)
-                ? {
+            [filePath]: fileSugs.map((s) => {
+              const matchedItem = appliedMap.get(s.suggestionId || s.id);
+              if (matchedItem) {
+                const itemPassed = matchedItem.status === "PASSED";
+                return {
+                  ...s,
+                  status: matchedItem.status || (isPassed ? "PASSED" : "FAILED"),
+                  testRunError: matchedItem.error || (itemPassed ? null : (resultData?.errorDetail || resultData?.message || null)),
+                };
+              }
+              if (sugIds.includes(s.suggestionId || s.id)) {
+                return {
                   ...s,
                   status: isPassed ? "PASSED" : "FAILED",
-                  testRunError: resultData?.testRunError || resultData?.errorDetail || resultData?.message || null,
-                }
-                : s,
-            ),
+                  testRunError: isPassed ? null : (resultData?.testRunError || resultData?.errorDetail || resultData?.message || null),
+                };
+              }
+              return s;
+            }),
           };
         });
 
@@ -996,18 +1056,20 @@ export default function CoverageTypeDashboard({
   const [isBulkApplying, setIsBulkApplying] = useState(false);
   const [bulkApplyStep, setBulkApplyStep] = useState("");
 
-  // Apply all suggestions across all files simultaneously
+  // Apply all suggestions across all files with real-time step progress (1/N, 2/N...)
   const handleApplyAllGlobal = useCallback(async () => {
     if (!snapshotId || allPendingSuggestions.length === 0 || isBulkApplying) return;
 
     setIsBulkApplying(true);
-    const stepMsg = `Applying ${allPendingSuggestions.length} test suggestions across ${filesWithPendingSuggestions.length} files...`;
-    setBulkApplyStep(stepMsg);
+    const totalFiles = filesWithPendingSuggestions.length;
+    const totalSugs = allPendingSuggestions.length;
+    const initialStep = `[0/${totalFiles}] Applying ${totalSugs} suggestions across ${totalFiles} files...`;
+    setBulkApplyStep(initialStep);
     startBulkApply({
       snapshotId,
       projectId,
-      totalCount: allPendingSuggestions.length,
-      step: stepMsg,
+      totalCount: totalFiles,
+      step: initialStep,
     });
 
     const allSugIds = allPendingSuggestions.map((s) => s.suggestionId || s.id);
@@ -1027,94 +1089,138 @@ export default function CoverageTypeDashboard({
       return next;
     });
 
+    let completedCount = 0;
+    let anyPassedGlobal = false;
+    let lastResultData = null;
+
     try {
-      const runnerStep = "Executing test suites to verify coverage increase...";
-      setBulkApplyStep(runnerStep);
-      updateBulkApplyStep(runnerStep);
+      for (let i = 0; i < totalFiles; i++) {
+        const fPath = filesWithPendingSuggestions[i];
+        const fileSugs = allPendingSuggestions.filter((s) => (s.sourceFile || s.filePath) === fPath);
+        if (!fileSugs || fileSugs.length === 0) continue;
 
-      const cleanedSuggestions = allPendingSuggestions.map((s) => ({
-        suggestionId: s.suggestionId || s.id,
-        sourceFile: s.sourceFile,
-        testFile: s.testFile || s.targetTestFile,
-        generatedCode: s.generatedCode || s.suggestedTestCode,
-        suggestedTestCode: s.suggestedTestCode || s.generatedCode,
-        framework: s.framework,
-        targetLines: s.targetLines,
-        targetBranches: s.targetBranches,
-      }));
+        completedCount++;
+        const currentStats = `${completedCount}/${totalFiles}`;
+        const progressPct = Math.round((completedCount / totalFiles) * 100);
+        const displayFile = cleanDisplayPath(fPath);
+        const runnerStep = `[${currentStats}] Executing tests for ${displayFile}...`;
 
-      const res = await applyUnitTestSuggestion(snapshotId, {
-        suggestions: cleanedSuggestions,
-        projectId,
-      });
-
-      const resultData = res?.data || res;
-      const testStatus = resultData?.testStatus || resultData?.status;
-      const isPassed = testStatus === "PASSED" || resultData?.success === true;
-
-      setInlineSuggestions((prev) => {
-        const next = { ...prev };
-        Object.keys(next).forEach((fPath) => {
-          next[fPath] = (next[fPath] || []).map((s) => {
-            const sid = s.suggestionId || s.id;
-            if (allSugIds.includes(sid)) {
-              const matchedApplied = (resultData?.appliedSuggestions || []).find(
-                (a) => (a.suggestionId || a.id) === sid
-              );
-              const itemPassed = matchedApplied
-                ? matchedApplied.status === "PASSED"
-                : isPassed;
-              return {
-                ...s,
-                status: itemPassed ? "PASSED" : "FAILED",
-                testRunError: !itemPassed
-                  ? (matchedApplied?.error || resultData?.testRunError || resultData?.errorDetail || resultData?.message || null)
-                  : null,
-              };
-            }
-            return s;
-          });
+        setBulkApplyStep(runnerStep);
+        updateBulkApplyStep({
+          step: runnerStep,
+          completedCount,
+          totalCount: totalFiles,
+          stats: currentStats,
+          progressPct,
+          currentFile: fPath,
         });
-        return next;
-      });
 
-      filesWithPendingSuggestions.forEach((fPath) => {
-        const fileResult = resultData?.perFileResults?.[fPath];
-        const currentFile = selectedFiles.find((f) => f.filePath === fPath);
-        const currentFileCov = currentFile ? {
-          statements: currentFile.stmtsPct || 0,
-          branches: currentFile.branchesPct || 0,
-          functions: currentFile.funcsPct || 0,
-          lines: currentFile.linesPct || 0,
-        } : null;
+        const cleanedSuggestions = fileSugs.map((s) => ({
+          suggestionId: s.suggestionId || s.id,
+          sourceFile: s.sourceFile || fPath,
+          testFile: s.testFile || s.targetTestFile,
+          generatedCode: s.generatedCode || s.suggestedTestCode,
+          suggestedTestCode: s.suggestedTestCode || s.generatedCode,
+          fullUpdatedContent: s.fullUpdatedContent,
+          framework: s.framework,
+          targetLines: s.targetLines,
+          targetBranches: s.targetBranches,
+        }));
 
-        const oldCov = fileResult?.oldCoverage || currentFileCov || resultData?.previousCoverage;
-        const newCov = fileResult?.newCoverage || currentFileCov || resultData?.newCoverage;
+        const thisFileSugIds = fileSugs.map((s) => s.suggestionId || s.id);
 
-        if (oldCov && newCov) {
-          setApplyResultsByFile((prev) => ({
-            ...prev,
-            [fPath]: {
-              ...resultData,
-              oldCoverage: oldCov,
-              newCoverage: newCov,
-              isPassed,
-            },
-          }));
+        try {
+          const res = await applyUnitTestSuggestion(snapshotId, {
+            suggestions: cleanedSuggestions,
+            projectId,
+          });
+
+          const resultData = res?.data || res;
+          lastResultData = resultData;
+          const testStatus = resultData?.testStatus || resultData?.status;
+          const isPassed = testStatus === "PASSED" || resultData?.success === true;
+          if (isPassed) anyPassedGlobal = true;
+
+          setInlineSuggestions((prev) => {
+            const next = { ...prev };
+            const list = next[fPath] || [];
+            next[fPath] = list.map((s) => {
+              const sid = s.suggestionId || s.id;
+              if (thisFileSugIds.includes(sid)) {
+                const matchedApplied = (resultData?.appliedSuggestions || []).find(
+                  (a) => (a.suggestionId || a.id) === sid
+                );
+                const itemPassed = matchedApplied
+                  ? matchedApplied.status === "PASSED"
+                  : isPassed;
+                return {
+                  ...s,
+                  status: itemPassed ? "PASSED" : "FAILED",
+                  testRunError: !itemPassed
+                    ? (matchedApplied?.error || resultData?.testRunError || resultData?.errorDetail || resultData?.message || null)
+                    : null,
+                };
+              }
+              return s;
+            });
+            return next;
+          });
+
+          const fileResult = resultData?.perFileResults?.[fPath];
+          const currentFile = selectedFiles.find((f) => f.filePath === fPath);
+          const currentFileCov = currentFile ? {
+            statements: currentFile.stmtsPct || 0,
+            branches: currentFile.branchesPct || 0,
+            functions: currentFile.funcsPct || 0,
+            lines: currentFile.linesPct || 0,
+          } : null;
+
+          const oldCov = fileResult?.oldCoverage || currentFileCov || resultData?.previousCoverage;
+          const newCov = fileResult?.newCoverage || currentFileCov || resultData?.newCoverage;
+
+          if (oldCov && newCov) {
+            setApplyResultsByFile((prev) => ({
+              ...prev,
+              [fPath]: {
+                ...resultData,
+                oldCoverage: oldCov,
+                newCoverage: newCov,
+                isPassed,
+              },
+            }));
+          }
+
+          if (resultData?.perFileResults) {
+            updateCoverageFilesData(snapshotId, type, projectId, resultData.perFileResults);
+          }
+        } catch (fileErr) {
+          console.warn(`[handleApplyAllGlobal] Failed applying for ${fPath}:`, fileErr);
+          setInlineSuggestions((prev) => {
+            const next = { ...prev };
+            const list = next[fPath] || [];
+            next[fPath] = list.map((s) => {
+              const sid = s.suggestionId || s.id;
+              if (thisFileSugIds.includes(sid)) {
+                return {
+                  ...s,
+                  status: "FAILED",
+                  testRunError: fileErr.message || "Failed to apply suggestion",
+                };
+              }
+              return s;
+            });
+            return next;
+          });
         }
-      });
-
-      if (resultData?.perFileResults) {
-        updateCoverageFilesData(snapshotId, type, projectId, resultData.perFileResults);
       }
 
       setBulkSuggestMessage(
-        isPassed
-          ? `✓ Successfully applied ${allPendingSuggestions.length} test suggestions across ${filesWithPendingSuggestions.length} files! Coverage updated.`
-          : `Applied ${allPendingSuggestions.length} suggestions (Runner reported some failures).`
+        anyPassedGlobal
+          ? `✓ Successfully applied test suggestions across ${totalFiles} files! Coverage updated.`
+          : `Applied suggestions (Test runner reported some failures).`
       );
 
-      completeBulkApply(resultData);
+      completeBulkApply(lastResultData);
       invalidateCoverageQueries(snapshotId);
       await refetchCoverage();
 
@@ -1508,20 +1614,24 @@ export default function CoverageTypeDashboard({
         initialMessage: startMsg,
       });
 
-      // Expand all files that need improvement simultaneously so user can review all at once
-      setExpandedFiles(new Set(needImprovementFiles.map((f) => f.filePath)));
-      needImprovementFiles.forEach((f) => ensureFileCoverage(f.filePath));
+      // Expand only the first file to give an immediate preview without lagging the DOM with 200 editors
+      if (needImprovementFiles.length > 0) {
+        setExpandedFiles(new Set([needImprovementFiles[0].filePath]));
+        ensureFileCoverage(needImprovementFiles[0].filePath);
+      }
 
       try {
         let completed = 0;
-        const BATCH_SIZE = 2;
+        const BATCH_SIZE = 4;
         for (let i = 0; i < needImprovementFiles.length; i += BATCH_SIZE) {
           const batch = needImprovementFiles.slice(i, i + BATCH_SIZE);
           await Promise.all(
             batch.map(async (fileObj) => {
-              const resSugs = await handleSuggestTestcaseInline(fileObj.filePath);
+              // Pass autoExpand = false during bulk run so DOM doesn't mount 200 code editors simultaneously
+              const resSugs = await handleSuggestTestcaseInline(fileObj.filePath, false);
               completed += 1;
-              const msg = `Generating inline test suggestions for ${needImprovementFiles.length} files (${completed}/${needImprovementFiles.length})...`;
+              const pctDone = Math.round((completed / needImprovementFiles.length) * 100);
+              const msg = `Generating test suggestions: ${completed}/${needImprovementFiles.length} files (${pctDone}%)...`;
               setBulkSuggestMessage(msg);
               updateSuggestionProgress({
                 snapshotId,
@@ -1535,7 +1645,7 @@ export default function CoverageTypeDashboard({
             })
           );
         }
-        const doneMsg = `✓ Generated inline test suggestions under ${needImprovementFiles.length} files. You can edit code and click Apply directly in the dropdown.`;
+        const doneMsg = `✓ Generated test suggestions for ${needImprovementFiles.length} files. Click any file to view and edit, or click 'Apply All' to run.`;
         setBulkSuggestMessage(doneMsg);
         completeSuggestion(doneMsg);
       } catch (err) {
@@ -4263,6 +4373,31 @@ export default function CoverageTypeDashboard({
                               gap: 6,
                             }}
                           >
+                            {fileSuggestions.length > 0 && !isExpanded && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleExpandFile(file.filePath);
+                                }}
+                                style={{
+                                  padding: "3px 6px",
+                                  borderRadius: 5,
+                                  background: isLight ? "#f5f3ff" : "rgba(168, 85, 247, 0.18)",
+                                  border: isLight ? "1px solid #ddd6fe" : "1px solid rgba(168, 85, 247, 0.35)",
+                                  color: isLight ? "#6d28d9" : "#d8b4fe",
+                                  fontSize: 10,
+                                  fontWeight: 700,
+                                  cursor: "pointer",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 3,
+                                }}
+                                title="Click to view generated test suggestions"
+                              >
+                                <Sparkles size={10} />
+                                <span>{fileSuggestions.length}</span>
+                              </button>
+                            )}
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();

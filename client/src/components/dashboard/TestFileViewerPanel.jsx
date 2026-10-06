@@ -725,7 +725,21 @@ export default function TestFileViewerPanel({
 
                 {onApplyAllSuggestions && suggestions.filter((s) => s.status !== "REJECTED" && s.status !== "PASSED").length > 1 && (
                   <button
-                    onClick={() => onApplyAllSuggestions(suggestions.filter((s) => s.status !== "REJECTED"))}
+                    onClick={() => {
+                      const sugsToApply = suggestions
+                        .filter((s) => s.status !== "REJECTED")
+                        .map((s) => {
+                          const sid = s.suggestionId || s.id;
+                          const code = editedCodes[sid] !== undefined ? editedCodes[sid] : (s.generatedCode || s.suggestedTestCode || s.code);
+                          return {
+                            ...s,
+                            generatedCode: code,
+                            suggestedTestCode: code,
+                            fullUpdatedContent: s.fullUpdatedContent,
+                          };
+                        });
+                      onApplyAllSuggestions(sugsToApply);
+                    }}
                     style={{
                       display: "flex",
                       alignItems: "center",
@@ -936,7 +950,7 @@ export default function TestFileViewerPanel({
 
                       {/* Single Apply Button */}
                       <button
-                        onClick={() => onApplySuggestion?.({ ...sug, generatedCode: currentCode, code: currentCode })}
+                        onClick={() => onApplySuggestion?.({ ...sug, generatedCode: currentCode, suggestedTestCode: currentCode, code: currentCode, fullUpdatedContent: sug.fullUpdatedContent })}
                         disabled={isApplying || sug.status === "PASSED"}
                         style={{
                           display: "flex",

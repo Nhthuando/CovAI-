@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
-import { createInstallDepsJob, createRunTestsJob, createSupertestCoverageJob, createVitestCoverageJob, createCypressSystemCoverageJob, createPlaywrightSystemCoverageJob, cancelJob } from "../services/job.service.js";
+import { createInstallDepsJob, createRunTestsJob, createSupertestCoverageJob, createVitestCoverageJob, createCypressSystemCoverageJob, createPlaywrightSystemCoverageJob, cancelJob, STALE_JOB_TIMEOUT_MS } from "../services/job.service.js";
 import { jobQueue, addJobToQueue, addSupertestCoveragePipeline } from "../services/queue.service.js";
 import { processCoverageJob } from "../services/coverageRunner.service.js";
 import { detectSupertest } from "../services/supertestDetection.service.js";
@@ -145,8 +145,11 @@ export const runCoverageByType = async (req, res) => {
             if (activeUnitJob) {
                 const startTime = activeUnitJob.startedAt || activeUnitJob.createdAt;
                 const elapsedMs = startTime ? Date.now() - new Date(startTime).getTime() : 0;
-                // If it's been active for > 5 minutes, cancel it and start fresh
-                if (elapsedMs > 5 * 60 * 1000) {
+                // If it is stuck in QUEUED for > 2m (orphaned by crash/restart) or running > 15m timeout, cancel and recreate
+                const isOrphanedQueued = activeUnitJob.status === "QUEUED" && elapsedMs > 2 * 60 * 1000;
+                const isStaleRunning = activeUnitJob.status === "RUNNING" && elapsedMs > (STALE_JOB_TIMEOUT_MS || 15 * 60 * 1000);
+
+                if (isOrphanedQueued || isStaleRunning) {
                     await cancelJob(activeUnitJob.id).catch(() => { });
                     job = await createRunTestsJob({
                         projectId: snapshot.projectId,
@@ -157,6 +160,10 @@ export const runCoverageByType = async (req, res) => {
                     await addJobToQueue("RUN_TESTS", job.id);
                 } else {
                     job = activeUnitJob;
+                    if (job.status === "QUEUED") {
+                        // Ensure queued job is properly enqueued in BullMQ in case it was missed
+                        await addJobToQueue("RUN_TESTS", job.id).catch(() => { });
+                    }
                 }
             } else {
                 job = await createRunTestsJob({

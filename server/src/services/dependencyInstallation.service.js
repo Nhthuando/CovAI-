@@ -42,7 +42,7 @@ export const dependencyInstallationService = {
     try {
       const result = await dockerRunner.run({
         snapshotPath,
-        command: "npm install",
+        command: "npm install --ignore-scripts --no-audit --no-fund",
       });
 
       return {

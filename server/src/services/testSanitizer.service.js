@@ -2,6 +2,13 @@ import fs from "fs";
 import path from "path";
 import { normalizePath } from "./fileCoverage.service.js";
 
+const RESERVED_KEYWORDS = new Set([
+    "jest", "require", "describe", "test", "it", "expect", "beforeEach", "afterEach",
+    "beforeAll", "afterAll", "global", "globalThis", "process", "module", "exports",
+    "console", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "Buffer",
+    "window", "document", "undefined", "null", "NaN", "Infinity", "eval", "arguments"
+]);
+
 /**
  * Normalizes and heals any import specifiers in test files that inadvertently reference
  * temporary storage paths (e.g. '../storage/projects/.../repo/src/foo')
@@ -61,10 +68,13 @@ export const healImportPathsInTestCode = (code, relTestPath = "tests/sample.test
                 const srcSubDir = testDir.replace(/^tests?\/?/, "src/");
                 const candAbsFromSrc = path.resolve(rootDir, srcSubDir, importTarget);
                 const cleanTarget = importTarget.replace(/^(\.\.\/|\.\/)+/, "").replace(/^\.?\//, "");
+                const cleanPkgTarget = cleanTarget.replace(/^(?:backend|frontend|server|client|api)\//, "");
                 const candidateAbsList = [
                     candAbsFromSrc,
                     path.resolve(rootDir, "src", cleanTarget),
-                    path.resolve(rootDir, cleanTarget)
+                    path.resolve(rootDir, cleanTarget),
+                    path.resolve(rootDir, "src", cleanPkgTarget),
+                    path.resolve(rootDir, cleanPkgTarget)
                 ];
 
                 for (const candAbs of candidateAbsList) {
@@ -97,7 +107,7 @@ export const healImportPathsInTestCode = (code, relTestPath = "tests/sample.test
 
             // Case 2: relative path pointing to src/...
             // Recalculate relative path to ensure the exact correct number of '../' for testDir depth
-            const srcMatch = importTarget.match(/^(?:\.\.\/|\.\/)*(src\/.*)$/);
+            const srcMatch = importTarget.match(/^(?:\.\.\/|\.\/)*(?:(?:backend|frontend|server|client|api)\/)?(src\/.*)$/);
             if (srcMatch) {
                 const cleanSrcPath = srcMatch[1];
                 let packagePrefix = "";
@@ -123,13 +133,102 @@ export const healImportPathsInTestCode = (code, relTestPath = "tests/sample.test
 };
 
 /**
+ * Converts unescaped multiline single- or double-quoted strings into template literals
+ * to avoid Babel "SyntaxError: Unterminated string constant" when LLMs generate multiline strings.
+ */
+export const healMultilineStrings = (code) => {
+    if (!code) return "";
+    const lines = code.split("\n");
+    const result = [];
+    let inMultilineQuote = false;
+    let quoteChar = null;
+    let buffer = [];
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+
+        if (inMultilineQuote) {
+            buffer.push(line);
+            let closed = false;
+            let escaped = false;
+            for (let c = 0; c < line.length; c++) {
+                const ch = line[c];
+                if (ch === "\\") {
+                    escaped = !escaped;
+                } else {
+                    if (ch === quoteChar && !escaped) {
+                        closed = true;
+                        break;
+                    }
+                    escaped = false;
+                }
+            }
+            if (closed) {
+                const joined = buffer.join("\n");
+                const fixed = joined.replace(
+                    new RegExp(`(${quoteChar === "'" ? "'" : '"'})([\\s\\S]*?)(${quoteChar === "'" ? "'" : '"'})`),
+                    "`$2`"
+                );
+                result.push(fixed);
+                inMultilineQuote = false;
+                buffer = [];
+            }
+            continue;
+        }
+
+        let inStr = null;
+        let escaped = false;
+        for (let c = 0; c < line.length; c++) {
+            const ch = line[c];
+            if (ch === "\\") {
+                escaped = !escaped;
+                continue;
+            }
+            if (!inStr) {
+                if (ch === "'" || ch === '"' || ch === "`") {
+                    inStr = ch;
+                }
+            } else if (inStr === ch && !escaped) {
+                inStr = null;
+            }
+            escaped = false;
+        }
+
+        if (inStr && (inStr === "'" || inStr === '"') && !line.endsWith("\\")) {
+            inMultilineQuote = true;
+            quoteChar = inStr;
+            buffer = [line];
+        } else {
+            result.push(line);
+        }
+    }
+
+    if (buffer.length > 0) {
+        result.push(...buffer);
+    }
+
+    return result.join("\n");
+};
+
+/**
  * Sanitizes and cleans up test file content to eliminate syntax errors,
  * non-code text (e.g. "N/A - This is a new test file."), invalid TypeScript syntax in JS files,
  * duplicate identifier declarations, and duplicate identical describe blocks.
  */
-export const cleanAndDeduplicateTestContent = (content, rawOutput = "") => {
+export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath = "") => {
     if (!content) return "";
     let cleaned = content;
+
+    // Detect if this file is TypeScript
+    const isExplicitTsFile = Boolean(filePath && /\.[cm]?tsx?$/i.test(filePath));
+    const isExplicitJsFile = Boolean(filePath && /\.[cm]?jsx?$/i.test(filePath));
+    const hasTsConstructs = /^\s*import\s+type\b/m.test(content) ||
+        /\b(?:interface\s+[A-Z]|type\s+[A-Z][a-zA-Z0-9_$]*\s*=|enum\s+[A-Z])\b/.test(content);
+
+    const isTsFile = isExplicitTsFile || (!isExplicitJsFile && hasTsConstructs);
+
+    // 0. Heal multiline strings with unescaped literal newlines
+    cleaned = healMultilineStrings(cleaned);
 
     // 1. Remove non-code placeholder AI blocks (e.g. describe('AI Suggested Unit Tests', () => { N/A - See fullUpdatedContent });)
     cleaned = cleaned.replace(/[ \t]*describe\s*\(\s*['"]AI Suggested Unit Tests['"][\s\S]*?\n[ \t]*\}\s*\);?/g, (match) => {
@@ -143,31 +242,101 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "") => {
     });
     cleaned = cleaned.replace(/^[ \t]*N\/A(?:\s*-[^\n]*)?\r?\n?/gm, "");
     cleaned = cleaned.replace(/^[ \t]*\/\/\s*(?:No additional|See full|Test cases are fully integrated|The full content is provided|Handled via)[^\n]*\r?\n?/gm, "");
-    cleaned = cleaned.replace(/[ \t]*describe\s*\(\s*['"][^'"]*['"]\s*,\s*(?:\(\s*\)|function\s*\(\s*\))\s*=>\s*\{\s*(?:\/\/[^\n]*\r?\n\s*)*\}\s*\);?\r?\n?/g, "");
-    cleaned = cleaned.replace(/[ \t]*describe\s*\(\s*['"][^'"]*['"]\s*,\s*(?:\(\s*\)|function\s*\(\s*\))\s*=>\s*\{\s*\}\s*\);?\r?\n?/g, "");
+    cleaned = cleaned.replace(/[ \t]*describe\s*\(\s*['"]AI Suggested Unit Tests['"]\s*,\s*(?:\(\s*\)|function\s*\(\s*\))\s*=>\s*\{\s*(?:\/\/[^\n]*\r?\n\s*)*\}\s*\);?\r?\n?/g, "");
+    cleaned = cleaned.replace(/[ \t]*describe\s*\(\s*['"]AI Suggested Unit Tests['"]\s*,\s*(?:\(\s*\)|function\s*\(\s*\))\s*=>\s*\{\s*\}\s*\);?\r?\n?/g, "");
 
-    // 2. Strip corrupted or invalid TypeScript annotations in JavaScript files that break Babel parser
-    cleaned = cleaned.replace(/\(\(([a-zA-Z0-9_$,\s]+)(?:\s*:\s*[^)]+)?\)\)/g, "($1)");
-    cleaned = cleaned.replace(/\(([a-zA-Z0-9_$]+)\s*:\s*(?:any|string|number|boolean|object|unknown|void|never)\)/g, "($1)");
-    cleaned = cleaned.replace(/\(([a-zA-Z0-9_$]+)\s*:\s*(?:any|string|number|boolean|object|unknown|void|never)\s*,/g, "($1,");
-    cleaned = cleaned.replace(/,\s*([a-zA-Z0-9_$]+)\s*:\s*(?:any|string|number|boolean|object|unknown|void|never)\s*\)/g, ", $1)");
-    cleaned = cleaned.replace(/,\s*([a-zA-Z0-9_$]+)\s*:\s*(?:any|string|number|boolean|object|unknown|void|never)\s*,/g, ", $1,");
-    cleaned = cleaned.replace(/catch\s*\(\s*([a-zA-Z0-9_$]+)\s*:\s*(?:any|Error|unknown)\s*\)/g, "catch ($1)");
-    cleaned = cleaned.replace(/formatError\s*:\s*jest\.fn\s*\(\s*\(?\s*([a-zA-Z0-9_]+)\s*:\s*any\s*\)?\s*=>/g, "formatError: jest.fn(($1) =>");
-    cleaned = cleaned.replace(/\b(const|let|var)\s+([a-zA-Z0-9_$]+)\s*:\s*any\b/g, "$1 $2");
-    cleaned = cleaned.replace(/\(\s*globalThis\s+as\s+any\s*\)/g, "globalThis");
-    cleaned = cleaned.replace(/\bas\s+(?:any|jest\.Mock)\b/g, "");
+    // Heal orphaned test blocks that start with title string without `test(` or `it(`
+    cleaned = cleaned.replace(/^[ \t]*(['"][^'"]+['"]\s*,\s*(?:async\s*)?\(\s*\)\s*=>\s*\{)/gm, "    test($1");
 
-    // Strip redundant declarations of `jest` in CommonJS test files that collide with Jest injected global
-    cleaned = cleaned.replace(/^[ \t]*(?:const|let|var)\s+\{\s*jest\s*\}\s*=\s*(?:require\([^)]+\)|@jest\/globals);?[ \t]*\r?\n?/gm, "");
-    cleaned = cleaned.replace(/^[ \t]*(?:const|let|var)\s+jest\s*=\s*require\([^)]+\);?[ \t]*\r?\n?/gm, "");
-    cleaned = cleaned.replace(/^[ \t]*(const|let|var)\s+\{\s*jest\s*,\s*([^}]+)\}\s*=\s*(require\([^)]+\));?/gm, "$1 { $2 } = $3;");
-    cleaned = cleaned.replace(/^[ \t]*(const|let|var)\s+\{\s*([^}]+),\s*jest\s*\}\s*=\s*(require\([^)]+\));?/gm, "$1 { $2 } = $3;");
+    // Heal unquoted test runner keyword comparisons (e.g. expect(...).toEqual(test) -> expect(...).toEqual("test"))
+    cleaned = cleaned.replace(/\.(toEqual|toBe)\(\s*(test|it|describe)\s*\)/g, '.$1("$2")');
 
-    // 3. Remove duplicate identical lines of const/let/var/require
+    // 1.2. Remove orphaned object mock property lines cut from broken multi-line mocks
+    // e.g. "create: jest.fn(() => ({ post: jest.fn() })) \n }));"
+    const orphanMockRegex = /^[ \t]*[a-zA-Z0-9_$]+\s*:\s*(?:jest|vi)\.fn\b[\s\S]*?\r?\n[ \t]*\}\s*\)\s*\);?[ \t]*\r?\n?/gm;
+    cleaned = cleaned.replace(orphanMockRegex, (match, offset, str) => {
+        const before = str.slice(0, offset).replace(/\/\/[^\n]*\n/g, '').trimEnd();
+        if (/(?:jest|vi)\.mock\s*\([^;{]+=>\s*\(\s*\{$/.test(before) || /=>\s*\(\s*\{$/.test(before)) {
+            return match;
+        }
+        return '';
+    });
+
+    // Remove orphan closing brackets like "}));" or "});" that have no matching open brackets
+    cleaned = cleaned.replace(/^[ \t]*(?:\}\s*\)\s*\);|\)\s*\);)[ \t]*\r?\n?/gm, (match, offset, str) => {
+        const before = str.slice(0, offset);
+        let openP = 0;
+        let openB = 0;
+        let inS = null;
+        for (let i = 0; i < before.length; i++) {
+            const ch = before[i];
+            if (ch === '"' || ch === "'" || ch === '`') {
+                if (!inS) inS = ch;
+                else if (inS === ch && before[i - 1] !== '\\') inS = null;
+            } else if (!inS) {
+                if (ch === '(') openP++;
+                else if (ch === ')') openP = Math.max(0, openP - 1);
+                else if (ch === '{') openB++;
+                else if (ch === '}') openB = Math.max(0, openB - 1);
+            }
+        }
+        if (openP === 0 && openB === 0) {
+            return '';
+        }
+        return match;
+    });
+
+    // 2. Strip corrupted or invalid TypeScript annotations in JavaScript files ONLY that break Babel parser
+    if (!isTsFile) {
+        cleaned = cleaned.replace(/\(\(([a-zA-Z0-9_$,\s]+)(?:\s*:\s*[^)]+)?\)\)/g, "($1)");
+        cleaned = cleaned.replace(/\(([a-zA-Z0-9_$]+)\s*:\s*(?:any|string|number|boolean|object|unknown|void|never)\s*(?:\[\s*\])*\)/g, "($1)");
+        cleaned = cleaned.replace(/\(([a-zA-Z0-9_$]+)\s*:\s*(?:any|string|number|boolean|object|unknown|void|never)\s*(?:\[\s*\])*\s*,/g, "($1,");
+        cleaned = cleaned.replace(/,\s*([a-zA-Z0-9_$]+)\s*:\s*(?:any|string|number|boolean|object|unknown|void|never)\s*(?:\[\s*\])*\s*\)/g, ", $1)");
+        cleaned = cleaned.replace(/,\s*([a-zA-Z0-9_$]+)\s*:\s*(?:any|string|number|boolean|object|unknown|void|never)\s*(?:\[\s*\])*\s*,/g, ", $1,");
+        cleaned = cleaned.replace(/catch\s*\(\s*([a-zA-Z0-9_$]+)\s*:\s*(?:any|Error|unknown)\s*\)/g, "catch ($1)");
+        cleaned = cleaned.replace(/formatError\s*:\s*jest\.fn\s*\(\s*\(?\s*([a-zA-Z0-9_]+)\s*:\s*any\s*\)?\s*=>/g, "formatError: jest.fn(($1) =>");
+        cleaned = cleaned.replace(/\b(const|let|var)\s+([a-zA-Z0-9_$]+)\s*:\s*(?:any|string|number|boolean|object|unknown)\s*(?:\[\s*\])*\s*=/g, "$1 $2 =");
+        cleaned = cleaned.replace(/\(\s*globalThis\s+as\s+any\s*\)/g, "globalThis");
+        cleaned = cleaned.replace(/\bas\s+(?:any|jest\.Mock|unknown)(?:\s*\[\s*\])*(?:\b|(?=[^a-zA-Z0-9_$]))/g, "");
+    }
+
+    // 2.5. Remove illegal redeclarations of `jest` in CommonJS / Jest test files
+    // In Jest's CommonJS environment, `jest` is injected as a formal parameter:
+    // (function (module, exports, require, __dirname, __filename, jest) { ... })
+    // Declaring `const { jest } = require(...)` or `const jest = ...` at module scope causes:
+    // "SyntaxError: Identifier 'jest' has already been declared".
+    cleaned = cleaned.replace(
+        /^[ \t]*(const|let|var)\s+\{([^}]+)\}\s*=\s*require\s*\(([^)]+)\);?[ \t]*\r?$/gm,
+        (match, kind, inner, mod) => {
+            const tokens = inner.split(',').map(t => t.trim()).filter(Boolean);
+            const hasJestToken = tokens.some(t => {
+                const name = t.includes(':') ? t.split(':')[0].trim() : (t.includes(' as ') ? t.split(' as ')[0].trim() : t);
+                return name === 'jest';
+            });
+            if (!hasJestToken) return match;
+
+            const remainingTokens = tokens.filter(t => {
+                const name = t.includes(':') ? t.split(':')[0].trim() : (t.includes(' as ') ? t.split(' as ')[0].trim() : t);
+                return name !== 'jest';
+            });
+
+            if (remainingTokens.length === 0) {
+                return "";
+            }
+            return `${kind} { ${remainingTokens.join(', ')} } = require(${mod});`;
+        }
+    );
+
+    cleaned = cleaned.replace(
+        /^[ \t]*(const|let)\s+jest\s*=\s*require\s*\(['"](?:@jest\/globals|jest)['"]\);?[ \t]*\r?\n?/gm,
+        ""
+    );
+
+    // 3. Remove duplicate identical lines of const/let/var/require/import
     const lines = cleaned.split("\n");
-    const seenImportOrRequire = new Set();
+    const seenTopLevelRequireOrImport = new Set();
     const finalLines = [];
+    let importBraceDepth = 0;
 
     for (const line of lines) {
         const trimmed = line.trim();
@@ -177,86 +346,135 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "") => {
         );
 
         if (isRequireOrImport) {
-            if (seenImportOrRequire.has(trimmed)) {
+            if (importBraceDepth === 0) {
+                if (seenTopLevelRequireOrImport.has(trimmed)) {
+                    continue;
+                }
+                seenTopLevelRequireOrImport.add(trimmed);
+            } else if (seenTopLevelRequireOrImport.has(trimmed)) {
+                // If it was already declared at module scope (braceDepth === 0),
+                // declaring it again inside a nested scope is redundant.
                 continue;
             }
-            seenImportOrRequire.add(trimmed);
         }
         finalLines.push(line);
+
+        const strippedForBraces = line.replace(/\/\/.*$/, "").replace(/(['"`])(?:(?!\1)[^\\]|\\.)*\1/g, "");
+        for (let c = 0; c < strippedForBraces.length; c++) {
+            const ch = strippedForBraces[c];
+            if (ch === '{') importBraceDepth++;
+            else if (ch === '}') importBraceDepth = Math.max(0, importBraceDepth - 1);
+        }
     }
     cleaned = finalLines.join("\n");
 
-    // 4. Fix duplicate declarations of identifiers reported by Jest or detected in content
+    // 4. Fix duplicate declarations of top-level identifiers (at module scope, braceDepth === 0)
     const linesAfterDedup = cleaned.split("\n");
     const topDeclared = new Map();
+    let braceDepth = 0;
 
     for (let i = 0; i < linesAfterDedup.length; i++) {
         const line = linesAfterDedup[i];
+        const trimmedLine = line.trim();
 
-        // Destructuring: const/let/var { a, b } = require(...) or = ...
-        const destructuringMatch = line.match(/^(\s*)(const|let|var)\s+\{([^}]+)\}\s*=\s*(.+)$/);
-        if (destructuringMatch) {
-            const [, indent, kind, inner, rest] = destructuringMatch;
-            const rawTokens = inner.split(',').map(t => t.trim()).filter(Boolean);
-            const remainingTokens = [];
-            let anyDuplicate = false;
+        // Only consider top-level declarations (braceDepth === 0)
+        if (braceDepth === 0) {
+            if (trimmedLine.startsWith("import ")) {
+                // Named imports: import { a, b } from '...'
+                const importNamedMatch = trimmedLine.match(/^import\s+\{([^}]+)\}\s+from\s+(.+)$/);
+                if (importNamedMatch) {
+                    const [, inner, rest] = importNamedMatch;
+                    const rawTokens = inner.split(',').map(t => t.trim()).filter(Boolean);
+                    const remainingTokens = [];
+                    let anyDuplicate = false;
 
-            for (const tok of rawTokens) {
-                const localName = tok.includes(':')
-                    ? tok.split(':')[1].trim()
-                    : (tok.includes(' as ') ? tok.split(' as ')[1].trim() : tok);
-                if (localName === 'jest') {
-                    anyDuplicate = true;
-                    continue;
-                }
-                if (topDeclared.has(localName)) {
-                    anyDuplicate = true;
+                    for (const tok of rawTokens) {
+                        const localName = tok.includes(' as ') ? tok.split(' as ')[1].trim() : tok;
+                        if (topDeclared.has(localName)) {
+                            anyDuplicate = true;
+                        } else {
+                            topDeclared.set(localName, i);
+                            remainingTokens.push(tok);
+                        }
+                    }
+
+                    if (anyDuplicate) {
+                        if (remainingTokens.length === 0) {
+                            linesAfterDedup[i] = `// [deduped] ${line.trim()}`;
+                        } else {
+                            linesAfterDedup[i] = `import { ${remainingTokens.join(', ')} } from ${rest}`;
+                        }
+                    }
                 } else {
-                    topDeclared.set(localName, i);
-                    remainingTokens.push(tok);
+                    // Default or namespace import: import foo from '...' or import * as foo from '...'
+                    const defaultImportMatch = trimmedLine.match(/^import\s+(?:\*\s+as\s+)?([a-zA-Z0-9_$]+)\s+from\s+/);
+                    if (defaultImportMatch) {
+                        const varName = defaultImportMatch[1];
+                        if (topDeclared.has(varName)) {
+                            linesAfterDedup[i] = `// [deduped] ${line.trim()}`;
+                        } else {
+                            topDeclared.set(varName, i);
+                        }
+                    }
+                }
+            } else if (trimmedLine.startsWith("const ") || trimmedLine.startsWith("let ") || trimmedLine.startsWith("var ")) {
+                // Destructuring: const { a, b } = require(...) or = ...
+                const destructuringMatch = trimmedLine.match(/^(const|let|var)\s+\{([^}]+)\}\s*=\s*(.+)$/);
+                if (destructuringMatch) {
+                    const [, kind, inner, rest] = destructuringMatch;
+                    const rawTokens = inner.split(',').map(t => t.trim()).filter(Boolean);
+                    const remainingTokens = [];
+                    let anyDuplicate = false;
+
+                    for (const tok of rawTokens) {
+                        const localName = tok.includes(':')
+                            ? tok.split(':')[1].trim()
+                            : (tok.includes(' as ') ? tok.split(' as ')[1].trim() : tok);
+                        if (topDeclared.has(localName)) {
+                            anyDuplicate = true;
+                        } else {
+                            topDeclared.set(localName, i);
+                            remainingTokens.push(tok);
+                        }
+                    }
+
+                    if (anyDuplicate) {
+                        if (remainingTokens.length === 0) {
+                            linesAfterDedup[i] = `// [deduped] ${line.trim()}`;
+                        } else {
+                            linesAfterDedup[i] = `${kind} { ${remainingTokens.join(', ')} } = ${rest}`;
+                        }
+                    }
+                } else {
+                    // Simple declaration: const foo = ... or let foo = ... or var foo = ...
+                    const simpleMatch = trimmedLine.match(/^(const|let|var)\s+([a-zA-Z0-9_$]+)\s*(=|\()/);
+                    if (simpleMatch) {
+                        const [, , varName] = simpleMatch;
+                        if (topDeclared.has(varName)) {
+                            linesAfterDedup[i] = `// [deduped] ${line.trim()}`;
+                        } else {
+                            topDeclared.set(varName, i);
+                        }
+                    }
                 }
             }
-
-            if (anyDuplicate) {
-                if (remainingTokens.length === 0) {
-                    linesAfterDedup[i] = `${indent}// [deduped] ${line.trim()}`;
-                } else {
-                    linesAfterDedup[i] = `${indent}${kind} { ${remainingTokens.join(', ')} } = ${rest}`;
-                }
-            }
-            continue;
         }
 
-        // Simple declaration: const foo = ... or let foo = ...
-        const simpleMatch = line.match(/^(\s*)(const|let)\s+([a-zA-Z0-9_$]+)\s*(=|\()/);
-        if (simpleMatch) {
-            const [, indent, kind, varName] = simpleMatch;
-            if (varName === 'jest') {
-                linesAfterDedup[i] = `${indent}// [deduped] ${line.trim()}`;
-                continue;
-            }
-            if (topDeclared.has(varName)) {
-                const newName = `${varName}_dedup`;
-                linesAfterDedup[i] = line.replace(new RegExp(`\\b${varName}\\b`), newName);
-                for (let j = i + 1; j < linesAfterDedup.length; j++) {
-                    linesAfterDedup[j] = linesAfterDedup[j].replace(new RegExp(`\\b${varName}\\b`, 'g'), newName);
-                }
-            } else {
-                topDeclared.set(varName, i);
-            }
+        // Update braceDepth for tracking module scope, ignoring braces in comments or strings
+        const strippedForBraces = line.replace(/\/\/.*$/, "").replace(/(['"`])(?:(?!\1)[^\\]|\\.)*\1/g, "");
+        for (let c = 0; c < strippedForBraces.length; c++) {
+            const ch = strippedForBraces[c];
+            if (ch === '{') braceDepth++;
+            else if (ch === '}') braceDepth = Math.max(0, braceDepth - 1);
         }
     }
     cleaned = linesAfterDedup.join("\n");
 
-    // 5. Remove duplicate identical describe blocks
-    const describeBlocks = [...cleaned.matchAll(/(?:describe\s*\(\s*(['"][^'"]+['"])\s*,\s*(?:\(\s*\)|function\s*\(\s*\))\s*=>\s*\{[\s\S]*?\n\}\s*\);?)/g)];
-    const seenDescribeTitles = new Set();
-    for (const d of describeBlocks) {
-        const title = d[1];
-        if (seenDescribeTitles.has(title)) {
-            cleaned = cleaned.replace(d[0], "");
-        } else {
-            seenDescribeTitles.add(title);
+    // 5. Remove duplicate identical describe blocks for AI Suggested Unit Tests
+    const aiDescribeBlocks = [...cleaned.matchAll(/(?:describe\s*\(\s*['"]AI Suggested Unit Tests['"]\s*,\s*(?:\(\s*\)|function\s*\(\s*\))\s*=>\s*\{[\s\S]*?\n\}\s*\);?)/g)];
+    if (aiDescribeBlocks.length > 1) {
+        for (let i = 1; i < aiDescribeBlocks.length; i++) {
+            cleaned = cleaned.replace(aiDescribeBlocks[i][0], "");
         }
     }
 
@@ -294,6 +512,101 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "") => {
         const [s, e] = mockIntervalsToRemove[k];
         cleaned = cleaned.slice(0, s) + cleaned.slice(e);
     }
+
+    // 7. Ensure safe global `jest` definition if rawOutput explicitly reports ReferenceError: jest is not defined
+    if (rawOutput && rawOutput.includes("ReferenceError: jest is not defined")) {
+        if (!cleaned.includes("var jest =") && !cleaned.includes("const jest =") && !cleaned.includes("let jest =") && !cleaned.includes("import { jest") && !cleaned.includes("import {jest")) {
+            const jestPolyfill =
+                "var jest = (typeof globalThis !== 'undefined' && globalThis.jest) ? globalThis.jest : (typeof global !== 'undefined' && global.jest ? global.jest : (typeof vi !== 'undefined' ? vi : undefined));\n" +
+                "if (typeof jest === 'undefined' || !jest) {\n" +
+                "  var _createMockFn = function(impl) { var f = typeof impl === 'function' ? function() { return impl.apply(this, arguments); } : function() {}; f.mock = { calls: [], instances: [], results: [] }; f.mockReturnValue = function(v) { return _createMockFn(function() { return v; }); }; f.mockResolvedValue = function(v) { return _createMockFn(function() { return Promise.resolve(v); }); }; f.mockRejectedValue = function(v) { return _createMockFn(function() { return Promise.reject(v); }); }; f.mockImplementation = function(fn) { return _createMockFn(fn); }; f.mockReturnThis = function() { return f; }; f.mockClear = function() { return f; }; f.mockReset = function() { return f; }; return f; };\n" +
+                "  jest = { fn: _createMockFn, mock: function() {}, unmock: function() {}, spyOn: function(o, m) { return _createMockFn(o ? o[m] : null); }, clearAllMocks: function() {}, resetAllMocks: function() {}, resetModules: function() {}, restoreAllMocks: function() {}, isolateModules: function(fn) { if (typeof fn === 'function') fn(); } };\n" +
+                "}\n";
+            cleaned = jestPolyfill + cleaned;
+        }
+    }
+
+    // 8. If rawOutput reports "Identifier 'jest' has already been declared", ensure all lexical jest bindings are replaced with var
+    if (rawOutput && rawOutput.includes("Identifier 'jest' has already been declared")) {
+        cleaned = cleaned.replace(/^[ \t]*(?:const|let)\s+jest\s*=/gm, "var jest =");
+        cleaned = cleaned.replace(
+            /^[ \t]*(?:const|let)\s+\{([^}]+)\}\s*=\s*(.+)$/gm,
+            (match, inner, rest) => {
+                const tokens = inner.split(',').map(t => t.trim()).filter(Boolean);
+                const remaining = tokens.filter(t => {
+                    const name = t.includes(':') ? t.split(':')[0].trim() : (t.includes(' as ') ? t.split(' as ')[0].trim() : t);
+                    return name !== 'jest';
+                });
+                if (remaining.length === tokens.length) return match;
+                if (remaining.length === 0) return `// [sanitized] ${match.trim()}`;
+                return `const { ${remaining.join(', ')} } = ${rest}`;
+            }
+        );
+    }
+
+    // 9. If rawOutput reports ReferenceError: <varName> is not defined, check if <varName> is required in the file and provide it
+    if (rawOutput && rawOutput.includes("ReferenceError:")) {
+        const refMatches = [...rawOutput.matchAll(/ReferenceError:\s*(\w+)\s+is not defined/g)];
+        for (const rm of refMatches) {
+            const varName = rm[1];
+            if (RESERVED_KEYWORDS.has(varName)) continue;
+
+            const reqMatch = cleaned.match(new RegExp(`(?:const|let|var)\\s+${varName}\\s*=\\s*require\\s*\\(([^)]+)\\)`));
+            if (reqMatch) {
+                const modSpec = reqMatch[1];
+                cleaned = cleaned.replace(
+                    /(test|it)\s*\(\s*(['"`][^'"`]+['"`])\s*,\s*((?:async\s*)?\(\s*\)\s*=>\s*\{)([\s\S]*?)\n\s*\}\s*\);?/g,
+                    (testBlock, testKeyword, testTitle, testHeader, testBody) => {
+                        const usesVar = new RegExp(`\\b${varName}\\b`).test(testBody);
+                        const definesVar = new RegExp(`(?:const|let|var)\\s+${varName}\\b`).test(testBody);
+                        if (usesVar && !definesVar) {
+                            const firstUseIdx = testBody.search(new RegExp(`\\b${varName}\\b`));
+                            if (firstUseIdx !== -1) {
+                                const lineStart = testBody.lastIndexOf('\n', firstUseIdx);
+                                const insertPos = lineStart === -1 ? 0 : lineStart + 1;
+                                const newBody = testBody.slice(0, insertPos) + `    const ${varName} = require(${modSpec});\n` + testBody.slice(insertPos);
+                                return `${testKeyword}(${testTitle}, ${testHeader}${newBody}\n});`;
+                            }
+                            return `${testKeyword}(${testTitle}, ${testHeader}\n    const ${varName} = require(${modSpec});${testBody}\n});`;
+                        }
+                        return testBlock;
+                    }
+                );
+            }
+        }
+    }
+
+    // 10. Heal and standardize axios mock to provide a shared mock instance across all axios.create() calls
+    if (cleaned.includes("axios") && cleaned.includes("create: jest.fn")) {
+        cleaned = cleaned.replace(
+            /jest\.mock\(['"]axios['"],\s*\(\)\s*=>\s*\(\{\s*create:\s*(?:jest|vi)\.fn\(\(\)\s*=>\s*\(\{\s*post:\s*(?:jest|vi)\.fn\(\)\s*\}\)\)\s*\}\)\);/g,
+            `jest.mock('axios', () => {
+  const instance = {
+    post: jest.fn(() => Promise.resolve({ data: {} })),
+    get: jest.fn(() => Promise.resolve({ data: {} }))
+  };
+  globalThis.__mockAxiosInstance = instance;
+  return {
+    create: jest.fn(() => instance),
+    post: instance.post,
+    get: instance.get
+  };
+});`
+        );
+    }
+
+    if (cleaned.includes("mockAxiosInstance") && !/^(?:const|let|var)\s+mockAxiosInstance\b/m.test(cleaned)) {
+        cleaned = cleaned.replace(
+            /^[ \t]*\/\/\s*\[deduped\]\s*const\s+mockAxiosInstance\s*=\s*(.+)$/m,
+            "const mockAxiosInstance = (typeof globalThis !== 'undefined' && globalThis.__mockAxiosInstance) ? globalThis.__mockAxiosInstance : $1;"
+        );
+        if (!/^(?:const|let|var)\s+mockAxiosInstance\b/m.test(cleaned)) {
+            cleaned = "const mockAxiosInstance = (typeof globalThis !== 'undefined' && globalThis.__mockAxiosInstance) ? globalThis.__mockAxiosInstance : (typeof axios !== 'undefined' && axios.create ? axios.create() : { post: jest.fn(() => Promise.resolve({ data: {} })), get: jest.fn(() => Promise.resolve({ data: {} })) });\n" + cleaned;
+        }
+    }
+
+    // 11. Normalize redundant monorepo prefixes (../../backend/src/... -> ../../src/...)
+    cleaned = cleaned.replace(/require\(['"](?:\.\.\/)+(?:backend|frontend|server|client|api)\/src\/([^'"]+)['"]\)/g, "require('../../src/$1')");
 
     return cleaned;
 };
@@ -338,7 +651,7 @@ export const sanitizeAllProjectTestFiles = (rootDir) => {
         try {
             const original = fs.readFileSync(tf, "utf8");
             const relFromRoot = normalizePath(path.relative(rootDir, tf));
-            let cleaned = cleanAndDeduplicateTestContent(original);
+            let cleaned = cleanAndDeduplicateTestContent(original, "", tf);
             cleaned = healImportPathsInTestCode(cleaned, relFromRoot, rootDir);
             if (cleaned !== original) {
                 fs.writeFileSync(tf, cleaned, "utf8");

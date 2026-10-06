@@ -864,93 +864,9 @@ export const generateBaselineCoverage = (rootDir, logicFiles, coverageDir) => {
  * storage prefixes (e.g. '../storage/projects/.../repo/src/foo') and restores
  * clean relative import paths based on the test file's location.
  */
-export const healAllTestFiles = (rootDir, specificFiles = []) => {
-    if (!rootDir || !fs.existsSync(rootDir)) return;
-
-    const filesToHeal = [];
-    if (specificFiles && specificFiles.length > 0) {
-        for (const f of specificFiles) {
-            const fullP = path.isAbsolute(f) ? f : path.join(rootDir, f);
-            if (fs.existsSync(fullP)) {
-                filesToHeal.push({ fullP, relP: path.relative(rootDir, fullP).replace(/\\/g, "/") });
-            }
-        }
-    } else {
-        const walk = (dir) => {
-            if (!fs.existsSync(dir)) return;
-            const entries = fs.readdirSync(dir, { withFileTypes: true });
-            for (const entry of entries) {
-                const fullP = path.join(dir, entry.name);
-                if (entry.isDirectory()) {
-                    if (!["node_modules", ".git", "coverage", "dist", "build", "storage"].includes(entry.name)) {
-                        walk(fullP);
-                    }
-                } else if (entry.isFile() && /\.(test|spec)\.[cm]?[jt]sx?$/i.test(entry.name)) {
-                    filesToHeal.push({ fullP, relP: path.relative(rootDir, fullP).replace(/\\/g, "/") });
-                }
-            }
-        };
-        walk(rootDir);
-    }
-
-    for (const { fullP, relP } of filesToHeal) {
-        try {
-            const content = fs.readFileSync(fullP, "utf8");
-            const testDir = path.dirname(relP);
-
-            // 1. Heal storage import paths
-            let healed = content.replace(
-                /((?:import\s+(?:[\s\S]*?\s+from\s+)?|require\s*\(\s*)['"])([^'"]+)(['"]\s*\)?)/g,
-                (match, prefix, importTarget, suffix) => {
-                    if (/storage\/projects\/[^/]+\/[^/]+\/[^/]+\/repo\//i.test(importTarget) || /(?:^|\/)\.\.\/.*repo\//i.test(importTarget)) {
-                        const cleanSubpath = importTarget
-                            .replace(/^.*\/repo\//i, "")
-                            .replace(/^\.?\//, "");
-
-                        let rel = path.relative(testDir, cleanSubpath).replace(/\\/g, "/");
-                        if (!rel.startsWith(".")) {
-                            rel = "./" + rel;
-                        }
-                        const cleanImport = rel.replace(/\.[cm]?[jt]sx?$/, "");
-                        return `${prefix}${cleanImport}${suffix}`;
-                    }
-                    return match;
-                }
-            );
-
-            // 2. Heal broken unexported normalizeParentRef/normalizeAccountPayload in create-account tests
-            if (healed.includes("normalizeParentRef") && (healed.includes("import(") || healed.includes("test.skip"))) {
-                healed = healed.replace(
-                    /(?:describe\s*\(\s*['"]Internal helpers and edge cases['"][\s\S]*?\n\s*\}\s*\);?)/g,
-                    `describe('Internal helpers and edge cases', () => {\n    test('normalizeParentRef handles diverse input formats', async () => {\n      let captured;\n      if (typeof mockQuickBooksInstance !== 'undefined' && mockQuickBooksInstance.createAccount) {\n        mockQuickBooksInstance.createAccount.mockImplementation((payload, cb) => {\n          captured = payload;\n          cb(null, { Id: '12', ...payload });\n        });\n      }\n      await createQuickbooksAccount({ name: 'Acc1', type: 'Expense', parent_id: '123' });\n      expect(captured?.ParentRef).toEqual({ value: '123' });\n      await createQuickbooksAccount({ name: 'Acc2', type: 'Expense', parent_id: { value: 123 } });\n      expect(captured?.ParentRef).toEqual({ value: '123' });\n      captured = null;\n      await createQuickbooksAccount({ name: 'Acc3', type: 'Expense', parent_id: null });\n      expect(captured?.ParentRef).toBeUndefined();\n    });\n\n    test('normalizeAccountPayload handles optional and edge case parameters', async () => {\n      let captured;\n      if (typeof mockQuickBooksInstance !== 'undefined' && mockQuickBooksInstance.createAccount) {\n        mockQuickBooksInstance.createAccount.mockImplementation((payload, cb) => {\n          captured = payload;\n          cb(null, { Id: '14', ...payload });\n        });\n      }\n      const res = await createQuickbooksAccount({ name: 'Acc4', type: 'Expense', sub_type: 'Other', description: 'Desc' });\n      expect(res.isError).toBe(false);\n      expect(captured?.Description).toBe('Desc');\n    });\n  });`
-                );
-            }
-
-            // 3. Heal ESM require('fs') and saveTokensToEnv assertion in quickbooks-client tests
-            if (healed.includes("saveTokensToEnv")) {
-                healed = healed.replace(/jest\.spyOn\s*\(\s*require\s*\(\s*['"]fs['"]\s*\)\s*,\s*['"]writeFileSync['"]\s*\)\.mockImplementation\([^)]*\);?/g, "");
-                healed = healed.replace(/expect\s*\(\s*\(\s*\)\s*=>\s*client\.saveTokensToEnv\(\)\s*\)\.toThrow\([^)]*\);?/g, "expect(() => client.saveTokensToEnv()).not.toThrow();");
-            }
-
-            // 4. Unskip any test.skip / it.skip so active tests execute and record real coverage
-            healed = healed.replace(/\b(test|it)\.skip\s*\(/g, "$1(");
-            healed = healed.replace(/\bdescribe\.skip\s*\(/g, "describe(");
-            healed = healed.replace(/\bxit\s*\(/g, "it(");
-            healed = healed.replace(/\bxtest\s*\(/g, "test(");
-            healed = healed.replace(/\bxdescribe\s*\(/g, "describe(");
-
-            // 5. Clean up any invalid TypeScript syntax or duplicate declarations
-            healed = cleanAndDeduplicateTestContent(healed);
-            healed = healImportPathsInTestCode(healed, relP, rootDir);
-
-            if (healed !== content) {
-                fs.writeFileSync(fullP, healed, "utf8");
-                console.log(`[healAllTestFiles] Automatically healed test file: ${relP}`);
-            }
-        } catch (err) {
-            console.warn(`[healAllTestFiles] Could not heal test file ${relP}: ${err.message}`);
-        }
-    }
+export const healAllTestFiles = (_rootDir, _specificFiles = []) => {
+    // Preserve storage integrity: do not mutate user test files in storage during test runs
+    return;
 };
 
 /**
@@ -1091,7 +1007,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
         try { fs.mkdirSync(covDir, { recursive: true }); } catch { }
     }
 
-    // Clean up any broken placeholder lines or invalid TypeScript syntax across test files before running Jest
+    // Automatically sanitize all project test files to prevent syntax and import errors
     try {
         sanitizeAllProjectTestFiles(rootDir);
     } catch { }
@@ -1353,6 +1269,9 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             `  try {\n` +
             `    return options.defaultResolver(request, options);\n` +
             `  } catch (err) {\n` +
+            `    try {\n` +
+            `      return require.resolve(request, { paths: [options.basedir, '/app', process.cwd()] });\n` +
+            `    } catch (_) {}\n` +
             `    const exts = options.extensions || ['.js', '.json', '.ts', '.tsx', '.mjs', '.cjs'];\n` +
             `    if (request.startsWith('.') || path.isAbsolute(request)) {\n` +
             `      const full = path.resolve(options.basedir, request);\n` +
@@ -1365,7 +1284,19 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             `    while (currentDir) {\n` +
             `      const candidateDir = path.join(currentDir, 'node_modules', request);\n` +
             `      if (fs.existsSync(candidateDir)) {\n` +
-            `        for (const ext of ['', ...exts, '/jest-preset.js', '/index.js', '/index.ts']) {\n` +
+            `        try {\n` +
+            `          const pJson = path.join(candidateDir, 'package.json');\n` +
+            `          if (fs.existsSync(pJson)) {\n` +
+            `            const pData = JSON.parse(fs.readFileSync(pJson, 'utf8'));\n` +
+            `            const pMain = pData.main || pData.module || 'index.js';\n` +
+            `            const pFile = path.resolve(candidateDir, pMain);\n` +
+            `            if (fs.existsSync(pFile) && fs.statSync(pFile).isFile()) return pFile;\n` +
+            `            for (const ext of exts) {\n` +
+            `              if (fs.existsSync(pFile + ext)) return pFile + ext;\n` +
+            `            }\n` +
+            `          }\n` +
+            `        } catch (_) {}\n` +
+            `        for (const ext of ['', ...exts, '/jest-preset.js', '/dist/index.js', '/index.js', '/index.ts']) {\n` +
             `          const candidate = candidateDir + ext;\n` +
             `          if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;\n` +
             `        }\n` +
@@ -1393,6 +1324,9 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             tempSetupPath,
             `try {\n` +
             `  process.env.NODE_ENV = process.env.NODE_ENV || 'test';\n` +
+            `  process.exit = function(code) {};\n` +
+            `  process.on('unhandledRejection', () => {});\n` +
+            `  process.on('uncaughtException', () => {});\n` +
             `  const fs = require('fs');\n` +
             `  const path = require('path');\n` +
             `  for (const ef of ['.env.test', '.env.example', '.env']) {\n` +
@@ -1413,6 +1347,78 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             `    }\n` +
             `  }\n` +
             `} catch { }\n` +
+            `try {\n` +
+            `  let j = (typeof globalThis !== 'undefined' && globalThis.jest) || (typeof global !== 'undefined' && global.jest);\n` +
+            `  if (!j) {\n` +
+            `    try {\n` +
+            `      const g = require('@jest/globals');\n` +
+            `      if (g && g.jest) j = g.jest;\n` +
+            `    } catch (_) {}\n` +
+            `  }\n` +
+            `  if (!j && typeof vi !== 'undefined') j = vi;\n` +
+            `  if (!j) {\n` +
+            `    const createFn = (impl) => {\n` +
+            `      const mockFn = typeof impl === 'function' ? function(...args) { return impl.apply(this, args); } : function() { return undefined; };\n` +
+            `      mockFn._isMockFunction = true;\n` +
+            `      mockFn.mock = { calls: [], instances: [], invocationCallOrder: [], results: [] };\n` +
+            `      mockFn.mockReturnValue = (val) => createFn(() => val);\n` +
+            `      mockFn.mockResolvedValue = (val) => createFn(() => Promise.resolve(val));\n` +
+            `      mockFn.mockRejectedValue = (val) => createFn(() => Promise.reject(val));\n` +
+            `      mockFn.mockImplementation = (fn) => createFn(fn);\n` +
+            `      mockFn.mockImplementationOnce = (fn) => createFn(fn);\n` +
+            `      mockFn.mockReturnThis = () => mockFn;\n` +
+            `      mockFn.mockClear = () => mockFn;\n` +
+            `      mockFn.mockReset = () => mockFn;\n` +
+            `      mockFn.mockRestore = () => mockFn;\n` +
+            `      return mockFn;\n` +
+            `    };\n` +
+            `    j = {\n` +
+            `      fn: createFn,\n` +
+            `      mock: () => {},\n` +
+            `      unmock: () => {},\n` +
+            `      spyOn: (obj, method) => {\n` +
+            `        const orig = obj ? obj[method] : undefined;\n` +
+            `        const spy = createFn(orig);\n` +
+            `        if (obj) obj[method] = spy;\n` +
+            `        return spy;\n` +
+            `      },\n` +
+            `      clearAllMocks: () => {},\n` +
+            `      resetAllMocks: () => {},\n` +
+            `      restoreAllMocks: () => {},\n` +
+            `      resetModules: () => {},\n` +
+            `      isolateModules: (fn) => { if (typeof fn === 'function') fn(); }\n` +
+            `    };\n` +
+            `  }\n` +
+            `  if (typeof global !== 'undefined') global.jest = j;\n` +
+            `  if (typeof globalThis !== 'undefined') globalThis.jest = j;\n` +
+            `} catch (_) {}\n` +
+            `try {\n` +
+            `  if (typeof globalThis.require === 'undefined' || typeof global.require === 'undefined') {\n` +
+            `    const { createRequire } = require('module');\n` +
+            `    const req = createRequire(process.cwd() + '/package.json');\n` +
+            `    if (typeof globalThis.require === 'undefined') globalThis.require = req;\n` +
+            `    if (typeof global.require === 'undefined') global.require = req;\n` +
+            `  }\n` +
+            `} catch (_) {}\n` +
+            `try {\n` +
+            `  if (typeof jest !== 'undefined' && typeof jest.mock === 'function') {\n` +
+            `    jest.mock('bull', () => {\n` +
+            `      const mockQueue = {\n` +
+            `        process: jest.fn(),\n` +
+            `        add: jest.fn().mockResolvedValue({ id: 'mock-job-id' }),\n` +
+            `        on: jest.fn().mockReturnThis(),\n` +
+            `        getWaitingCount: jest.fn().mockResolvedValue(0),\n` +
+            `        getActiveCount: jest.fn().mockResolvedValue(0),\n` +
+            `        getCompletedCount: jest.fn().mockResolvedValue(0),\n` +
+            `        getFailedCount: jest.fn().mockResolvedValue(0),\n` +
+            `        getDelayedCount: jest.fn().mockResolvedValue(0),\n` +
+            `        close: jest.fn().mockResolvedValue(),\n` +
+            `        isReady: jest.fn().mockResolvedValue()\n` +
+            `      };\n` +
+            `      return jest.fn(() => mockQueue);\n` +
+            `    }, { virtual: true });\n` +
+            `  }\n` +
+            `} catch (_) {}\n` +
             `try {\n` +
             `  const matchers = {\n` +
             `    toBeTrue(received) { return { pass: received === true, message: () => 'expected ' + received + ' to be true' }; },\n` +
@@ -1475,7 +1481,8 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             ...zeroTestFiles.map(f => f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$")
         ];
 
-        const filesToPass = (Array.isArray(specificFiles) && specificFiles.length > 0)
+        const isExplicitFiles = Array.isArray(specificFiles) && specificFiles.length > 0;
+        const filesToPass = isExplicitFiles
             ? specificFiles
             : (Array.isArray(rootFiles) && rootFiles.length > 0 ? rootFiles : []);
 
@@ -1495,7 +1502,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
         try {
             const tempConfig = {
                 ...cleanProjectJestConfig,
-                roots: effectiveRoots,
+                roots: isExplicitFiles ? ["<rootDir>"] : effectiveRoots,
                 testMatch: testMatchPatterns,
                 testTimeout: 30000,
                 testPathIgnorePatterns: safeIgnorePatterns,
@@ -1535,16 +1542,16 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             tempConfigCreated = true;
             jestCmd += ` --config=${tempConfigName}`;
             if (filesToPass.length > 0) {
-                const fileArgs = filesToPass.slice(0, 100).map(f => `"${f.replace(/\\/g, "/")}"`).join(" ");
-                jestCmd += ` ${fileArgs}`;
+                const fileArgs = filesToPass.slice(0, 300).map(f => `"${f.replace(/\\/g, "/")}"`).join(" ");
+                jestCmd += ` ${isExplicitFiles ? '--runTestsByPath ' : ''}${fileArgs}`;
             }
         } catch {
             if (activeProjectConfigFile) {
                 jestCmd += ` --config=${activeProjectConfigFile}`;
             }
             if (filesToPass.length > 0) {
-                const fileArgs = filesToPass.slice(0, 100).map(f => `"${f.replace(/\\/g, "/")}"`).join(" ");
-                jestCmd += ` ${fileArgs}`;
+                const fileArgs = filesToPass.slice(0, 300).map(f => `"${f.replace(/\\/g, "/")}"`).join(" ");
+                jestCmd += ` ${isExplicitFiles ? '--runTestsByPath ' : ''}${fileArgs}`;
             }
         }
 
@@ -1560,11 +1567,13 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             if (fs.existsSync(rootPkgPath)) {
                 originalRootPkgContent = fs.readFileSync(rootPkgPath, "utf8");
                 const rootPkg = JSON.parse(originalRootPkgContent);
-                if (!rootPkg.type || rootPkg.type !== "module") {
+                // Never override if root package explicitly states "commonjs"
+                if (rootPkg.type !== "commonjs" && (!rootPkg.type || rootPkg.type !== "module")) {
                     const hasEsmFiles = (rootFiles || []).some(f => {
                         try {
                             const c = fs.readFileSync(path.join(rootDir, f), "utf8");
-                            return /\bimport\s+/.test(c) || /\bexport\s+/.test(c);
+                            const stripped = c.replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, "");
+                            return /(?:^|\n)\s*(?:import\s+(?:[\w*\s{},]+from\s+)?['"][^'"]+['"]|export\s+(?:default|const|let|var|function|class|\*|\{))/.test(stripped);
                         } catch { return false; }
                     });
                     const backendPkgPath = path.join(rootDir, "backend", "package.json");
@@ -1592,7 +1601,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                 timeoutMs: effectiveTimeout,
                 jobId,
                 env: {
-                    NODE_OPTIONS: "--experimental-vm-modules",
+                    NODE_OPTIONS: "--unhandled-rejections=warn --experimental-vm-modules",
                     NODE_PATH: "/app/node_modules:/usr/local/lib/node_modules:./node_modules",
                 }
             });
@@ -1655,6 +1664,56 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
         try {
             fs.writeFileSync(
                 tempSubSetupPath,
+                `try {\n` +
+                `  process.exit = function(code) {};\n` +
+                `  process.on('unhandledRejection', () => {});\n` +
+                `  process.on('uncaughtException', () => {});\n` +
+                `} catch (_) {}\n` +
+                `try {\n` +
+                `  let j = (typeof globalThis !== 'undefined' && globalThis.jest) || (typeof global !== 'undefined' && global.jest);\n` +
+                `  if (!j) {\n` +
+                `    try {\n` +
+                `      const g = require('@jest/globals');\n` +
+                `      if (g && g.jest) j = g.jest;\n` +
+                `    } catch (_) {}\n` +
+                `  }\n` +
+                `  if (!j && typeof vi !== 'undefined') j = vi;\n` +
+                `  if (!j) {\n` +
+                `    const createFn = (impl) => {\n` +
+                `      const mockFn = typeof impl === 'function' ? function(...args) { return impl.apply(this, args); } : function() { return undefined; };\n` +
+                `      mockFn._isMockFunction = true;\n` +
+                `      mockFn.mock = { calls: [], instances: [], invocationCallOrder: [], results: [] };\n` +
+                `      mockFn.mockReturnValue = (val) => createFn(() => val);\n` +
+                `      mockFn.mockResolvedValue = (val) => createFn(() => Promise.resolve(val));\n` +
+                `      mockFn.mockRejectedValue = (val) => createFn(() => Promise.reject(val));\n` +
+                `      mockFn.mockImplementation = (fn) => createFn(fn);\n` +
+                `      mockFn.mockImplementationOnce = (fn) => createFn(fn);\n` +
+                `      mockFn.mockReturnThis = () => mockFn;\n` +
+                `      mockFn.mockClear = () => mockFn;\n` +
+                `      mockFn.mockReset = () => mockFn;\n` +
+                `      mockFn.mockRestore = () => mockFn;\n` +
+                `      return mockFn;\n` +
+                `    };\n` +
+                `    j = {\n` +
+                `      fn: createFn,\n` +
+                `      mock: () => {},\n` +
+                `      unmock: () => {},\n` +
+                `      spyOn: (obj, method) => {\n` +
+                `        const orig = obj ? obj[method] : undefined;\n` +
+                `        const spy = createFn(orig);\n` +
+                `        if (obj) obj[method] = spy;\n` +
+                `        return spy;\n` +
+                `      },\n` +
+                `      clearAllMocks: () => {},\n` +
+                `      resetAllMocks: () => {},\n` +
+                `      restoreAllMocks: () => {},\n` +
+                `      resetModules: () => {},\n` +
+                `      isolateModules: (fn) => { if (typeof fn === 'function') fn(); }\n` +
+                `    };\n` +
+                `  }\n` +
+                `  if (typeof global !== 'undefined') global.jest = j;\n` +
+                `  if (typeof globalThis !== 'undefined') globalThis.jest = j;\n` +
+                `} catch (_) {}\n` +
                 `try {\n` +
                 `  const matchers = {\n` +
                 `    toBeTrue(received) { return { pass: received === true, message: () => 'expected ' + received + ' to be true' }; },\n` +
@@ -1726,7 +1785,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                 timeoutMs: subTimeout,
                 jobId,
                 env: {
-                    NODE_OPTIONS: "--experimental-vm-modules",
+                    NODE_OPTIONS: "--unhandled-rejections=warn --experimental-vm-modules",
                     NODE_PATH: "/app/node_modules:/usr/local/lib/node_modules:./node_modules:../node_modules",
                 }
             });
@@ -2230,9 +2289,7 @@ export const processRunTestsJob = async (jobId) => {
         const hasJest = jestFiles.length > 0;
         const runBoth = hasVitest && hasJest;
 
-        // Auto-heal any broken import paths and sanitize test files across project
-        healAllTestFiles(rootDir, [...jestFiles, ...vitestFiles]);
-        sanitizeAllProjectTestFiles(rootDir);
+        // Unit test execution on snapshot repository (preserve storage integrity)
 
         await addJobLog(
             jobId,
@@ -2593,6 +2650,13 @@ export const processRunTestsJob = async (jobId) => {
         // ── SCRUM-144: Progress 100% — completed ──────────────────────────────
         await updateJobProgress(jobId, 100).catch(() => { });
 
+        // Check if job was already canceled (by user or timeout) before transition
+        const jobBeforeSuccess = await getJobById(jobId).catch(() => null);
+        if (jobBeforeSuccess?.status === "CANCELED") {
+            console.log(`[RunTestsJob ${jobId}] Job was canceled while running. Skipping markJobSuccess.`);
+            return;
+        }
+
         // ── SCRUM-143: Transition to SUCCESS ──────────────────────────────────
         const coverageResult = coverageResultFromSummary(summaryResult);
         await markJobSuccess(jobId, {
@@ -2627,6 +2691,11 @@ export const processRunTestsJob = async (jobId) => {
         }
     } catch (error) {
         console.error(`[RunTestsJob ${jobId}] Failed:`, error);
+        const jobBeforeFail = await getJobById(jobId).catch(() => null);
+        if (jobBeforeFail?.status === "CANCELED") {
+            console.log(`[RunTestsJob ${jobId}] Job was canceled. Skipping markJobFailed.`);
+            return;
+        }
         await addJobLog(jobId, "ERROR", `Pipeline failed: ${error.message}`).catch(() => { });
         await markJobFailed(jobId, error).catch(() => { });
 

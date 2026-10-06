@@ -37,6 +37,10 @@ const initialProcesses = {
     projectId: null,
     type: "unit",
     totalCount: 0,
+    completedCount: 0,
+    currentFile: "",
+    stats: "Applying...",
+    progressPct: null,
     step: "",
     completedAt: null,
     result: null,
@@ -265,14 +269,19 @@ export function RunningProcessProvider({ children }) {
   }, []);
 
   // Methods for Bulk Apply Process
-  const startBulkApply = useCallback(({ snapshotId, projectId, totalCount = 0, step = "" }) => {
+  const startBulkApply = useCallback(({ snapshotId, projectId, totalCount = 0, step = "", type = "unit" }) => {
     setProcesses((prev) => ({
       ...prev,
       bulkApply: {
         isApplying: true,
         snapshotId,
         projectId,
+        type,
         totalCount,
+        completedCount: 0,
+        currentFile: "",
+        stats: totalCount > 0 ? `0/${totalCount}` : "Applying...",
+        progressPct: 0,
         step: step || `Applying ${totalCount} test suggestions across files...`,
         completedAt: null,
         result: null,
@@ -280,14 +289,29 @@ export function RunningProcessProvider({ children }) {
     }));
   }, []);
 
-  const updateBulkApplyStep = useCallback((step) => {
-    setProcesses((prev) => ({
-      ...prev,
-      bulkApply: {
-        ...prev.bulkApply,
-        step: step || prev.bulkApply.step,
-      },
-    }));
+  const updateBulkApplyStep = useCallback((stepOrUpdate) => {
+    setProcesses((prev) => {
+      const update = typeof stepOrUpdate === "string" ? { step: stepOrUpdate } : (stepOrUpdate || {});
+      const completedCount = update.completedCount !== undefined ? update.completedCount : prev.bulkApply.completedCount;
+      const totalCount = update.totalCount !== undefined ? update.totalCount : prev.bulkApply.totalCount;
+      const stats = update.stats || (totalCount > 0 ? `${completedCount}/${totalCount}` : prev.bulkApply.stats);
+      const progressPct = update.progressPct !== undefined
+        ? update.progressPct
+        : (totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : prev.bulkApply.progressPct);
+
+      return {
+        ...prev,
+        bulkApply: {
+          ...prev.bulkApply,
+          ...update,
+          completedCount,
+          totalCount,
+          stats,
+          progressPct,
+          step: update.step || prev.bulkApply.step,
+        },
+      };
+    });
   }, []);
 
   const completeBulkApply = useCallback((result = null) => {
@@ -298,6 +322,8 @@ export function RunningProcessProvider({ children }) {
         isApplying: false,
         completedAt: Date.now(),
         result,
+        progressPct: 100,
+        stats: "Done",
       },
     }));
   }, []);
@@ -419,6 +445,7 @@ const sanitizeCachedSuggestions = (sugsMap) => {
 
   const recentlyCompleted = Boolean(
     (processes.suggestion.completedMessage && processes.suggestion.completedAt && (Date.now() - processes.suggestion.completedAt < 12000)) ||
+    (processes.bulkApply.completedAt && (Date.now() - processes.bulkApply.completedAt < 12000)) ||
     (processes.analysis.completedAt && !processes.analysis.error && (Date.now() - processes.analysis.completedAt < 8000)) ||
     (processes.analysis.error && processes.analysis.completedAt && (Date.now() - processes.analysis.completedAt < 12000))
   );

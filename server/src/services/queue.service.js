@@ -264,7 +264,7 @@ export const addJobToQueue = async (type, jobId, customData = {}, jobOptions = {
 
   try {
     const dedupeKey = `${type}-${jobId}`.replace(/[^A-Za-z0-9_-]/g, '-');
-    await jobQueue.add(type, { type, jobId, ...customData }, { jobId: dedupeKey, ...jobOptions });
+    await jobQueue.add(type, { type, jobId, ...customData }, { jobId: dedupeKey, removeOnComplete: true, removeOnFail: true, ...jobOptions });
     console.log(`[Queue] Queued Job ${jobId} (Type: ${type}) with dedupe key ${dedupeKey}.`);
   } catch (redisErr) {
     if (process.env.NODE_ENV !== 'test') {
