@@ -61,7 +61,7 @@ function loadStoredProcesses() {
 
 export function RunningProcessProvider({ children }) {
   const [processes, setProcesses] = useState(loadStoredProcesses);
-  const [suggestionsCache, setSuggestionsCache] = useState({});
+  const suggestionsCacheRef = useRef({});
   const pollingRef = useRef(null);
 
   // Sync processes to sessionStorage
@@ -318,22 +318,47 @@ export function RunningProcessProvider({ children }) {
     });
   }, []);
 
+const sanitizeCachedSuggestions = (sugsMap) => {
+  if (!sugsMap || typeof sugsMap !== "object") return {};
+  const cleaned = {};
+  for (const [key, val] of Object.entries(sugsMap)) {
+    if (Array.isArray(val)) {
+      cleaned[key] = val.map((sug) => {
+        if (sug && sug.status === "APPLYING") {
+          return {
+            ...sug,
+            status: sug.testRunError ? "FAILED" : "GENERATED",
+          };
+        }
+        return sug;
+      });
+    } else {
+      cleaned[key] = val;
+    }
+  }
+  return cleaned;
+};
+
   // Suggestions Cache Management (Persisted in sessionStorage by snapshotId)
   const getSuggestions = useCallback((snapshotId) => {
     if (!snapshotId) return {};
-    if (suggestionsCache[snapshotId]) return suggestionsCache[snapshotId];
+    if (suggestionsCacheRef.current[snapshotId]) {
+      return sanitizeCachedSuggestions(suggestionsCacheRef.current[snapshotId]);
+    }
     try {
       const raw = sessionStorage.getItem(`${SUGGESTIONS_STORAGE_PREFIX}${snapshotId}`);
       if (raw) {
-        return JSON.parse(raw);
+        const parsed = JSON.parse(raw);
+        suggestionsCacheRef.current[snapshotId] = parsed;
+        return sanitizeCachedSuggestions(parsed);
       }
     } catch (_) { }
     return {};
-  }, [suggestionsCache]);
+  }, []);
 
   const saveSuggestions = useCallback((snapshotId, sugsMap) => {
     if (!snapshotId) return;
-    setSuggestionsCache((prev) => ({ ...prev, [snapshotId]: sugsMap }));
+    suggestionsCacheRef.current[snapshotId] = sugsMap;
     try {
       sessionStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${snapshotId}`, JSON.stringify(sugsMap));
     } catch (_) { }
@@ -341,35 +366,48 @@ export function RunningProcessProvider({ children }) {
 
   const saveFileSuggestions = useCallback((snapshotId, filePath, fileSugs) => {
     if (!snapshotId || !filePath) return;
-    setSuggestionsCache((prev) => {
-      const current = prev[snapshotId] || {};
-      const updated = {
-        ...current,
-        [filePath]: fileSugs,
-      };
-      try {
-        sessionStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${snapshotId}`, JSON.stringify(updated));
-      } catch (_) { }
-      return { ...prev, [snapshotId]: updated };
-    });
+    const current = suggestionsCacheRef.current[snapshotId] || {};
+    const updated = {
+      ...current,
+      [filePath]: fileSugs,
+    };
+    suggestionsCacheRef.current[snapshotId] = updated;
+    try {
+      sessionStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${snapshotId}`, JSON.stringify(updated));
+    } catch (_) { }
   }, []);
 
   const updateSingleSuggestionCode = useCallback((snapshotId, filePath, sugId, newCode) => {
     if (!snapshotId || !filePath) return;
-    setSuggestionsCache((prev) => {
-      const current = prev[snapshotId] || {};
-      const fileList = current[filePath] || [];
-      const updatedList = fileList.map((s) =>
-        (s.suggestionId === sugId || s.id === sugId)
-          ? { ...s, generatedCode: newCode, suggestedTestCode: newCode, status: "EDITED" }
-          : s
-      );
-      const updated = { ...current, [filePath]: updatedList };
-      try {
-        sessionStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${snapshotId}`, JSON.stringify(updated));
-      } catch (_) { }
-      return { ...prev, [snapshotId]: updated };
+    const current = suggestionsCacheRef.current[snapshotId] || {};
+    const fileList = current[filePath] || [];
+    const updatedList = fileList.map((s) =>
+      (s.suggestionId === sugId || s.id === sugId)
+        ? { ...s, generatedCode: newCode, suggestedTestCode: newCode, status: "EDITED" }
+        : s
+    );
+    const updated = { ...current, [filePath]: updatedList };
+    suggestionsCacheRef.current[snapshotId] = updated;
+    try {
+      sessionStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${snapshotId}`, JSON.stringify(updated));
+    } catch (_) { }
+  }, []);
+
+  const removeFileSuggestions = useCallback((snapshotId, filePath) => {
+    if (!snapshotId || !filePath) return;
+    const current = suggestionsCacheRef.current[snapshotId] || {};
+    const updated = { ...current };
+    delete updated[filePath];
+    // Also delete any path variant
+    Object.keys(updated).forEach((k) => {
+      if (k.endsWith(filePath) || filePath.endsWith(k)) {
+        delete updated[k];
+      }
     });
+    suggestionsCacheRef.current[snapshotId] = updated;
+    try {
+      sessionStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${snapshotId}`, JSON.stringify(updated));
+    } catch (_) { }
   }, []);
 
   // Computed summary
@@ -402,6 +440,7 @@ export function RunningProcessProvider({ children }) {
     getSuggestions,
     saveSuggestions,
     saveFileSuggestions,
+    removeFileSuggestions,
     updateSingleSuggestionCode,
   };
 

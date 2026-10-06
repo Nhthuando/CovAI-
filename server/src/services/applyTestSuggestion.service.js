@@ -18,17 +18,24 @@ import { getFileCoverageDetails, normalizePath, findAssociatedTestFile, cleanRel
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 import { parseJavaScriptCode } from "./babelParser.service.js";
 import { computeRelativeImportPath, generateFallbackUnitTests } from "./unitTestSuggestion.service.js";
-export {
-    healImportPathsInTestCode,
-    cleanAndDeduplicateTestContent,
-    sanitizeAllProjectTestFiles
-} from "./testSanitizer.service.js";
 import {
     healImportPathsInTestCode,
     cleanAndDeduplicateTestContent,
     sanitizeAllProjectTestFiles
 } from "./testSanitizer.service.js";
+export {
+    healImportPathsInTestCode,
+    cleanAndDeduplicateTestContent,
+    sanitizeAllProjectTestFiles
+};
 import { dependencyInstallationService } from "./dependencyInstallation.service.js";
+
+const RESERVED_KEYWORDS = new Set([
+    "jest", "require", "describe", "test", "it", "expect", "beforeEach", "afterEach",
+    "beforeAll", "afterAll", "global", "globalThis", "process", "module", "exports",
+    "console", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "Buffer",
+    "window", "document", "undefined", "null", "NaN", "Infinity", "eval", "arguments"
+]);
 
 /**
  * Resolve snapshot root directory across Windows host and Docker container paths.
@@ -375,8 +382,8 @@ export const applyCodeToTestFile = (rootDir, suggestion) => {
     let newContent = "";
     if (hasValidFullContent && isPlaceholderOrFallback) {
         newContent = sanitizeSuggestedTestCode(fullContentProvided.trimEnd() + "\n", originalContent);
-    } else if (hasValidFullContent && (!sanitizedCodeToAdd || sanitizedCodeToAdd.length < 50 || sanitizedCodeToAdd.startsWith("//"))) {
-        newContent = sanitizeSuggestedTestCode(fullContentProvided.trimEnd() + "\n", originalContent);
+    } else if (!fileExisted || !originalContent.trim()) {
+        newContent = sanitizeSuggestedTestCode((hasValidFullContent ? fullContentProvided : sanitizedCodeToAdd).trimEnd() + "\n", originalContent);
     } else {
         newContent = insertCodeIntoTestFile(originalContent, sanitizedCodeToAdd);
     }
@@ -490,8 +497,12 @@ export const autoHealTestFailures = (rootDir, testFilesToRun, testResults, rawOu
         const refMatches = [...rawOutput.matchAll(/ReferenceError:\s*(\w+)\s+is not defined/g)];
         for (const rm of refMatches) {
             const varName = rm[1];
-            if (!content.includes(`const ${varName} =`) && !content.includes(`let ${varName} =`) && !content.includes(`var ${varName} =`)) {
-                content = `var ${varName} = (typeof globalThis['${varName}'] !== 'undefined' ? globalThis['${varName}'] : { getAccount: jest.fn(), updateAccount: jest.fn(), createAccount: jest.fn() });\n` + content;
+            if (!RESERVED_KEYWORDS.has(varName) &&
+                !content.includes(`const ${varName} =`) &&
+                !content.includes(`let ${varName} =`) &&
+                !content.includes(`var ${varName} =`) &&
+                !content.includes(`function ${varName}`)) {
+                content = `var ${varName} = (typeof globalThis['${varName}'] !== 'undefined' ? globalThis['${varName}'] : (typeof jest !== 'undefined' ? jest.fn() : {}));\n` + content;
             }
         }
 
@@ -827,7 +838,12 @@ export const applyUnitTestSuggestion = async ({ snapshotId, projectId, userId, s
 
     // Auto-heal test failures if any tests failed to run or assertions mismatched
     if (isRealFailure) {
-        const healed = autoHealTestFailures(rootDir, testFilesToRun, testResults, rawOutput);
+        let healed = false;
+        try {
+            healed = autoHealTestFailures(rootDir, testFilesToRun, testResults, rawOutput);
+        } catch (healErr) {
+            console.error("[applyUnitTestSuggestion] autoHealTestFailures warning:", healErr);
+        }
         if (healed) {
             try {
                 if (isVitest) {

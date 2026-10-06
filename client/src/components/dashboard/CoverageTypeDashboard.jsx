@@ -486,6 +486,7 @@ export default function CoverageTypeDashboard({
     getSuggestions,
     saveSuggestions,
     saveFileSuggestions,
+    removeFileSuggestions,
   } = useRunningProcess();
 
   const [running, setRunning] = useState(false);
@@ -525,22 +526,28 @@ export default function CoverageTypeDashboard({
   const [applyProgressSteps, setApplyProgressSteps] = useState({});
 
   // Restore cached suggestions if snapshotId changes
+  const lastRestoredSnapshotRef = useRef(snapshotId);
   useEffect(() => {
-    if (snapshotId) {
+    if (snapshotId && snapshotId !== lastRestoredSnapshotRef.current) {
+      lastRestoredSnapshotRef.current = snapshotId;
       const cached = getSuggestions(snapshotId);
       if (cached && Object.keys(cached).length > 0) {
-        setInlineSuggestions((prev) => ({
-          ...cached,
-          ...prev,
-        }));
+        setInlineSuggestions(cached);
+      } else {
+        setInlineSuggestions({});
       }
     }
   }, [snapshotId, getSuggestions]);
 
-  // Synchronize cached suggestions whenever inlineSuggestions changes (avoids calling setState during render phase)
+  // Synchronize cached suggestions whenever inlineSuggestions changes (guarded by serialized hash)
+  const lastSavedJsonRef = useRef("");
   useEffect(() => {
-    if (snapshotId && inlineSuggestions && Object.keys(inlineSuggestions).length > 0) {
-      saveSuggestions(snapshotId, inlineSuggestions);
+    if (snapshotId && inlineSuggestions) {
+      const serialized = JSON.stringify(inlineSuggestions);
+      if (serialized !== lastSavedJsonRef.current) {
+        lastSavedJsonRef.current = serialized;
+        saveSuggestions(snapshotId, inlineSuggestions);
+      }
     }
   }, [snapshotId, inlineSuggestions, saveSuggestions]);
 
@@ -871,6 +878,17 @@ export default function CoverageTypeDashboard({
         await ensureFileCoverage(filePath, true);
       } catch (err) {
         console.error("Failed to apply all suggestions:", err);
+        setInlineSuggestions((prev) => {
+          const fileSugs = prev[filePath] || [];
+          return {
+            ...prev,
+            [filePath]: fileSugs.map((s) =>
+              sugIds.includes(s.suggestionId || s.id)
+                ? { ...s, status: "FAILED", testRunError: err.message || "Failed to apply suggestions" }
+                : s,
+            ),
+          };
+        });
       } finally {
         setApplyingSuggestionIds((prev) => {
           const next = new Set(prev);
@@ -887,20 +905,58 @@ export default function CoverageTypeDashboard({
     [snapshotId, projectId, refetchCoverage, ensureFileCoverage],
   );
 
-  // Reject a suggestion
-  const handleRejectInline = useCallback((filePath, sugId) => {
-    setInlineSuggestions((prev) => {
-      const fileSugs = prev[filePath] || [];
-      return {
-        ...prev,
-        [filePath]: fileSugs.map((s) =>
-          (s.suggestionId === sugId || s.id === sugId)
-            ? { ...s, status: "REJECTED" }
-            : s,
-        ),
-      };
-    });
-  }, []);
+  // Reject a suggestion and remove it from inline suggestions list
+  const handleRejectInline = useCallback(
+    (filePath, sugId) => {
+      setInlineSuggestions((prev) => {
+        const fileSugs = prev[filePath] || [];
+        const remaining = fileSugs.filter(
+          (s) => (s.suggestionId || s.id) !== sugId,
+        );
+        const next = { ...prev };
+        if (remaining.length > 0) {
+          next[filePath] = remaining;
+        } else {
+          delete next[filePath];
+          Object.keys(next).forEach((k) => {
+            if (k.endsWith(filePath) || filePath.endsWith(k)) {
+              delete next[k];
+            }
+          });
+          if (snapshotId) {
+            removeFileSuggestions(snapshotId, filePath);
+          }
+        }
+        return next;
+      });
+    },
+    [snapshotId, removeFileSuggestions],
+  );
+
+  // Dismiss / clear all suggestions for a specific file and keep test file intact
+  const handleDismissFileSuggestions = useCallback(
+    (filePath) => {
+      setInlineSuggestions((prev) => {
+        const next = { ...prev };
+        delete next[filePath];
+        Object.keys(next).forEach((k) => {
+          if (k.endsWith(filePath) || filePath.endsWith(k)) {
+            delete next[k];
+          }
+        });
+        return next;
+      });
+      setApplyResultsByFile((prev) => {
+        const next = { ...prev };
+        delete next[filePath];
+        return next;
+      });
+      if (snapshotId) {
+        removeFileSuggestions(snapshotId, filePath);
+      }
+    },
+    [snapshotId, removeFileSuggestions],
+  );
 
   // Update code for a specific suggestion in a file (from direct line editing)
   const handleUpdateSuggestionCode = useCallback((filePath, sugId, newCode) => {
@@ -1067,6 +1123,17 @@ export default function CoverageTypeDashboard({
       console.error("Failed to apply all suggestions globally:", err);
       setBulkSuggestMessage(`Error applying suggestions: ${err.message}`);
       completeBulkApply({ error: err.message });
+      setInlineSuggestions((prev) => {
+        const next = { ...prev };
+        Object.keys(next).forEach((fPath) => {
+          next[fPath] = (next[fPath] || []).map((s) =>
+            allSugIds.includes(s.suggestionId || s.id)
+              ? { ...s, status: "FAILED", testRunError: err.message || "Failed to apply suggestions" }
+              : s
+          );
+        });
+        return next;
+      });
     } finally {
       setIsBulkApplying(false);
       setBulkApplyStep("");
@@ -4285,6 +4352,7 @@ export default function CoverageTypeDashboard({
                                 onApply={(sug) => handleApplySuggestionInline(file.filePath, sug)}
                                 onApplyAll={(sugs) => handleApplyAllInline(file.filePath, sugs)}
                                 onReject={(sugId) => handleRejectInline(file.filePath, sugId)}
+                                onDismiss={(fPath) => handleDismissFileSuggestions(fPath)}
                                 onUpdateSuggestionCode={(sugId, newCode) =>
                                   handleUpdateSuggestionCode(file.filePath, sugId, newCode)
                                 }

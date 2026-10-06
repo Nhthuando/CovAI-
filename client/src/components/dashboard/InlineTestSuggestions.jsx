@@ -249,6 +249,7 @@ export default function InlineTestSuggestions({
     onApply,
     onApplyAll,
     onReject,
+    onDismiss,
     onUpdateSuggestionCode,
     applyingIds = new Set(),
     lastApplyResult = null,
@@ -286,6 +287,9 @@ export default function InlineTestSuggestions({
     }
 
     const activeSuggestions = suggestions.filter((s) => s.status !== "REJECTED");
+    if (activeSuggestions.length === 0) {
+        return null;
+    }
     const canApplyAll = activeSuggestions.length > 1 && !activeSuggestions.every((s) => s.status === "PASSED");
 
     const handleCodeChange = (sugId, newCode) => {
@@ -363,37 +367,64 @@ export default function InlineTestSuggestions({
                     </span>
                 </div>
 
-                {canApplyAll && onApplyAll && (
-                    <button
-                        onClick={() => {
-                            const prepared = activeSuggestions.map((s) => {
-                                const id = s.suggestionId || s.id;
-                                const code = editedCode[id] ?? (s.generatedCode || s.suggestedTestCode || "");
-                                return { ...s, generatedCode: code, suggestedTestCode: code };
-                            });
-                            onApplyAll(prepared);
-                        }}
-                        style={{
-                            padding: "5px 12px",
-                            background: "linear-gradient(135deg, #0284c7 0%, #0369a1 100%)",
-                            border: "1px solid rgba(56, 189, 248, 0.5)",
-                            borderRadius: 6,
-                            color: "#ffffff",
-                            fontSize: 11,
-                            fontWeight: 600,
-                            cursor: "pointer",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 6,
-                            boxShadow: "0 2px 8px rgba(2, 132, 199, 0.25)",
-                            transition: "all 0.15s ease",
-                        }}
-                        className="hover:opacity-90"
-                    >
-                        <Layers size={13} />
-                        Apply All for this file ({activeSuggestions.length})
-                    </button>
-                )}
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    {onDismiss && (
+                        <button
+                            onClick={() => onDismiss(filePath)}
+                            style={{
+                                padding: "5px 10px",
+                                background: "rgba(255, 255, 255, 0.05)",
+                                border: "1px solid rgba(255, 255, 255, 0.12)",
+                                borderRadius: 5,
+                                color: "#94a3b8",
+                                fontSize: 11,
+                                fontWeight: 600,
+                                cursor: "pointer",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 4,
+                                transition: "all 0.15s ease",
+                            }}
+                            className="hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/30"
+                            title="Dismiss suggestions and keep test file"
+                        >
+                            <X size={12} />
+                            <span>Dismiss</span>
+                        </button>
+                    )}
+
+                    {canApplyAll && onApplyAll && (
+                        <button
+                            onClick={() => {
+                                const prepared = activeSuggestions.map((s) => {
+                                    const id = s.suggestionId || s.id;
+                                    const code = editedCode[id] ?? (s.generatedCode || s.suggestedTestCode || "");
+                                    return { ...s, generatedCode: code, suggestedTestCode: code };
+                                });
+                                onApplyAll(prepared);
+                            }}
+                            style={{
+                                padding: "5px 12px",
+                                background: "linear-gradient(135deg, #0284c7 0%, #0369a1 100%)",
+                                border: "1px solid rgba(56, 189, 248, 0.5)",
+                                borderRadius: 6,
+                                color: "#ffffff",
+                                fontSize: 11,
+                                fontWeight: 600,
+                                cursor: "pointer",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 6,
+                                boxShadow: "0 2px 8px rgba(2, 132, 199, 0.25)",
+                                transition: "all 0.15s ease",
+                            }}
+                            className="hover:opacity-90"
+                        >
+                            <Layers size={13} />
+                            Apply All for this file ({activeSuggestions.length})
+                        </button>
+                    )}
+                </div>
             </div>
 
             {/* Progress notification banner if currently applying */}
@@ -492,8 +523,8 @@ export default function InlineTestSuggestions({
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 {suggestions.map((sug, idx) => {
                     const sugId = sug.suggestionId || sug.id || `sug-${idx}`;
-                    const isApplying = applyingIds.has ? applyingIds.has(sugId) : applyingIds === sugId;
-                    const status = isApplying ? "APPLYING" : sug.status || "GENERATED";
+                    const isApplying = Boolean(applyingIds?.has ? applyingIds.has(sugId) : applyingIds === sugId);
+                    const status = isApplying ? "APPLYING" : (sug.status === "APPLYING" ? (sug.testRunError ? "FAILED" : "GENERATED") : (sug.status || "GENERATED"));
                     const badge = getStatusBadge(status);
 
                     const originalCode = sug.originalGeneratedCode || sug.suggestedTestCode || sug.generatedCode || "";

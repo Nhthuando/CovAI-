@@ -336,7 +336,7 @@ export default function TestFileViewerPanel({
                 {isFound ? `✓ Test Linked (${framework})` : "⚠ No test file"}
               </span>
 
-              {suggestions.length > 0 && (
+              {suggestions.filter((s) => s.status !== "REJECTED").length > 0 && (
                 <span
                   style={{
                     fontSize: 10,
@@ -348,7 +348,7 @@ export default function TestFileViewerPanel({
                     border: isLight ? "1px solid #ddd6fe" : "1px solid rgba(168, 85, 247, 0.35)",
                   }}
                 >
-                  ✨ {suggestions.length} suggestion{suggestions.length > 1 ? "s" : ""}
+                  ✨ {suggestions.filter((s) => s.status !== "REJECTED").length} suggestion{suggestions.filter((s) => s.status !== "REJECTED").length > 1 ? "s" : ""}
                 </span>
               )}
             </div>
@@ -527,7 +527,7 @@ export default function TestFileViewerPanel({
             </button>
           )}
 
-          {suggestions.length > 0 && (
+          {suggestions.filter((s) => s.status !== "REJECTED").length > 0 && (
             <button
               onClick={() => setViewMode("suggestions")}
               style={{
@@ -544,7 +544,7 @@ export default function TestFileViewerPanel({
               }}
             >
               <Sparkles size={11} className={isLight ? "text-purple-600" : "text-purple-400"} />
-              <span>Suggested Tests ({suggestions.length})</span>
+              <span>Suggested Tests ({suggestions.filter((s) => s.status !== "REJECTED").length})</span>
             </button>
           )}
         </div>
@@ -698,28 +698,54 @@ export default function TestFileViewerPanel({
                 </div>
               </div>
 
-              {onApplyAllSuggestions && suggestions.filter((s) => s.status !== "REJECTED" && s.status !== "PASSED").length > 1 && (
-                <button
-                  onClick={() => onApplyAllSuggestions(suggestions.filter((s) => s.status !== "REJECTED"))}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    padding: "6px 12px",
-                    borderRadius: 6,
-                    fontSize: 11,
-                    fontWeight: 700,
-                    background: "linear-gradient(135deg, #059669 0%, #047857 100%)",
-                    color: "#ffffff",
-                    border: "none",
-                    cursor: "pointer",
-                    boxShadow: "0 2px 8px rgba(5, 150, 105, 0.3)",
-                  }}
-                >
-                  <Layers size={13} />
-                  <span>Apply all to project ({suggestions.filter((s) => s.status !== "REJECTED").length})</span>
-                </button>
-              )}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                {isFound && (
+                  <button
+                    onClick={() => setViewMode("code")}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 4,
+                      padding: "5px 10px",
+                      borderRadius: 6,
+                      fontSize: 11,
+                      fontWeight: 600,
+                      background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.08)",
+                      border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.15)",
+                      color: isLight ? "#475569" : "#cbd5e1",
+                      cursor: "pointer",
+                      transition: "all 0.15s ease",
+                    }}
+                    title="Switch to viewing the linked test file"
+                  >
+                    <Eye size={12} />
+                    <span>View Linked Test File</span>
+                  </button>
+                )}
+
+                {onApplyAllSuggestions && suggestions.filter((s) => s.status !== "REJECTED" && s.status !== "PASSED").length > 1 && (
+                  <button
+                    onClick={() => onApplyAllSuggestions(suggestions.filter((s) => s.status !== "REJECTED"))}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "6px 12px",
+                      borderRadius: 6,
+                      fontSize: 11,
+                      fontWeight: 700,
+                      background: "linear-gradient(135deg, #059669 0%, #047857 100%)",
+                      color: "#ffffff",
+                      border: "none",
+                      cursor: "pointer",
+                      boxShadow: "0 2px 8px rgba(5, 150, 105, 0.3)",
+                    }}
+                  >
+                    <Layers size={13} />
+                    <span>Apply all to project ({suggestions.filter((s) => s.status !== "REJECTED").length})</span>
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Active apply progress banner */}
@@ -769,7 +795,7 @@ export default function TestFileViewerPanel({
             )}
 
             {/* List of suggestion cards */}
-            {suggestions.map((sug, idx) => {
+            {suggestions.filter((s) => s.status !== "REJECTED").map((sug, idx) => {
               const sugId = sug.suggestionId || sug.id || idx;
               const isApplying = applyingSuggestionIds.has(sugId);
               const currentCode = editedCodes[sugId] !== undefined

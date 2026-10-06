@@ -23,6 +23,7 @@ import { resolveProjectRoot, hasSourceCodeFiles, ensureMinimalPackageJson } from
 import { extractFunctions } from "./cyclomaticFunctionExtractor.service.js";
 import { parseJavaScriptCode } from "./babelParser.service.js";
 import { sanitizeAllProjectTestFiles, cleanAndDeduplicateTestContent, healImportPathsInTestCode } from "./testSanitizer.service.js";
+import { cleanStoragePath, cleanStorageText } from "../utils/pathSanitizer.js";
 
 const INSTALL_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const JEST_TIMEOUT_MS = 10 * 60 * 1000;   // 10 minutes (prevents premature timeouts on large suites)
