@@ -995,14 +995,15 @@ export default function TestFileViewerPanel({
                         color: isLight ? "#94a3b8" : "#475569",
                         fontSize: 11,
                         fontFamily: "var(--font-mono, monospace)",
-                        lineHeight: 1.6,
+                        lineHeight: "19px",
                         userSelect: "none",
                         borderRight: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.06)",
-                        minWidth: 32,
+                        minWidth: 34,
+                        boxSizing: "border-box",
                       }}
                     >
                       {lines.map((_, i) => (
-                        <div key={i}>{i + 1}</div>
+                        <div key={i} style={{ height: "19px", lineHeight: "19px" }}>{i + 1}</div>
                       ))}
                     </div>
 
@@ -1014,23 +1015,23 @@ export default function TestFileViewerPanel({
                         setEditedCodes((prev) => ({ ...prev, [sugId]: val }));
                         onUpdateSuggestionCode?.(sugId, val);
                       }}
-                      rows={Math.max(lines.length, 4)}
                       style={{
                         flex: 1,
                         margin: 0,
-                        padding: "10px 12px",
+                        padding: "10px 12px 14px 12px",
                         fontSize: 11,
                         fontFamily: "var(--font-mono, monospace)",
-                        lineHeight: 1.6,
+                        lineHeight: "19px",
+                        height: `${Math.max(lines.length, 4) * 19 + 24}px`,
                         color: isLight ? "#0f172a" : "#e6edf3",
                         background: "transparent",
                         border: "none",
                         outline: "none",
-                        resize: "vertical",
-                        minHeight: 100,
-                        maxHeight: 380,
+                        resize: "none",
                         whiteSpace: "pre",
                         overflowX: "auto",
+                        overflowY: "hidden",
+                        boxSizing: "border-box",
                       }}
                       spellCheck={false}
                       placeholder="Enter unit test code here..."

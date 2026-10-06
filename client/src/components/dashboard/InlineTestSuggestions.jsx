@@ -216,7 +216,6 @@ function InlineCodeEditor({ code, originalCode, onChange, onReset }) {
                     ref={textareaRef}
                     value={code}
                     onChange={(e) => onChange(e.target.value)}
-                    rows={Math.min(26, Math.max(6, lines.length + 1))}
                     style={{
                         flex: 1,
                         background: "transparent",
@@ -224,12 +223,14 @@ function InlineCodeEditor({ code, originalCode, onChange, onReset }) {
                         fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
                         fontSize: 12,
                         lineHeight: "20px",
-                        padding: "8px 12px",
+                        height: `${Math.max(6, lines.length) * 20 + 20}px`,
+                        padding: "8px 12px 12px 12px",
                         border: "none",
                         outline: "none",
-                        resize: "vertical",
+                        resize: "none",
                         whiteSpace: "pre",
                         overflowX: "auto",
+                        overflowY: "hidden",
                         boxSizing: "border-box",
                         width: "100%",
                     }}
