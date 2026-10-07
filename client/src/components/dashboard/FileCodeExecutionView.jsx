@@ -960,6 +960,7 @@ export default function FileCodeExecutionView({
       onUpdateSuggestionCode={onUpdateSuggestionCode}
       lastApplyResult={lastApplyResult}
       progressStep={progressStep}
+      onSuggestMissingTest={() => onSuggestTestcase?.(filePath)}
       onOpenFile={onOpenFile}
       onTestFileSaved={async (savedPath) => {
         if (onFileSaved) await onFileSaved(savedPath);
