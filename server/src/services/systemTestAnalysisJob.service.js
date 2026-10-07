@@ -11,14 +11,12 @@ import {
   updateJobProgress,
 } from "./job.service.js";
 import { saveJobOutput } from "./jobOutput.service.js";
-import { parseCoverageSummary } from "./coverageSummaryParser.service.js";
-import { parseCoverageFilesForSnapshot } from "./coverageFileParser.service.js";
-import { parseCoverageFunctionsForSnapshot } from "./coverageFunctionParser.service.js";
 import { storeCoverageOutputs } from "./coverageStorage.service.js";
 import { resolveSystemTestExecution } from "./systemTestDetection.service.js";
 import { runSystemTests } from "./systemTestRunner.service.js";
 import { parseSystemTestResult } from "./systemTestResultParser.service.js";
-import { formatScenariosForPrisma } from "./testResultParser.service.js";
+import { storeScenarioScreenshot } from "./systemTestEvidence.service.js";
+import crypto from "node:crypto";
 
 const readPayload = (payloadJson) => {
   if (!payloadJson) return {};
@@ -32,57 +30,26 @@ const readPayload = (payloadJson) => {
 
 const testTypeFor = (runner) => (runner === "playwright" ? "PLAYWRIGHT" : "CYPRESS");
 
-const persistCoverageIfPresent = async ({ job, coverageDir, jobId }) => {
+const persistCoverageIfPresent = async ({ job, coverageDir, jobId, startedAt }) => {
   const summaryPath = path.join(coverageDir, "coverage-summary.json");
   const finalPath = path.join(coverageDir, "coverage-final.json");
-  const lcovPath = path.join(coverageDir, "lcov.info");
-  const present = [summaryPath, finalPath, lcovPath].filter((file) => fs.existsSync(file));
-  if (present.length === 0) return { coverageAvailable: false, coverageStorage: null };
-
-  if (!fs.existsSync(summaryPath) || !fs.existsSync(finalPath)) {
-    throw new ServiceError(
-      "System test coverage is incomplete: coverage-summary.json and coverage-final.json are both required.",
-      422,
-    );
+  // Never feed E2E artifacts into the shared Unit/Integration coverage tables.
+  if ([summaryPath, finalPath].every((file) => fs.existsSync(file) && fs.statSync(file).mtimeMs >= startedAt.getTime())) {
+    try {
+      let coverageStorage = null;
+      try {
+        coverageStorage = await storeCoverageOutputs(job.snapshotId, job.projectId, coverageDir);
+      } catch (error) {
+        await addJobLog(jobId, "WARN", `E2E coverage upload failed: ${error.message}`);
+      }
+      await addJobLog(jobId, "INFO", "Fresh E2E coverage artifacts preserved separately from Unit test metrics.");
+      return { coverageAvailable: false, coverageStorage };
+    } catch (error) {
+      await addJobLog(jobId, "WARN", `E2E coverage processing failed: ${error.message}`);
+    }
   }
-
-  let coverageReport;
-  try {
-    coverageReport = JSON.parse(fs.readFileSync(finalPath, "utf8"));
-  } catch (error) {
-    throw new ServiceError(`System test coverage-final.json is invalid: ${error.message}`, 422);
-  }
-
-  await parseCoverageSummary(coverageDir, job.snapshotId);
-  await parseCoverageFilesForSnapshot({
-    projectId: job.projectId,
-    snapshotId: job.snapshotId,
-    userId: job.userId,
-    coverageReport,
-  });
-
-  // A valid Istanbul report can contain no functions (for example, a JSON-only
-  // fixture). That should not invalidate an otherwise usable coverage run.
-  try {
-    await parseCoverageFunctionsForSnapshot({
-      projectId: job.projectId,
-      snapshotId: job.snapshotId,
-      userId: job.userId,
-      coverageReport,
-    });
-  } catch (error) {
-    if (!/No function coverage records found/.test(error.message)) throw error;
-    await addJobLog(jobId, "WARN", "Coverage report contains no function records.");
-  }
-
-  let coverageStorage = null;
-  try {
-    coverageStorage = await storeCoverageOutputs(job.snapshotId, job.projectId, coverageDir);
-  } catch (error) {
-    await addJobLog(jobId, "WARN", `Coverage files were persisted locally but upload failed: ${error.message}`);
-  }
-
-  return { coverageAvailable: true, coverageStorage };
+  await addJobLog(jobId, "INFO", "Black-box E2E: scenario results are available; source coverage is not measured.");
+  return { coverageAvailable: false, coverageStorage: null };
 };
 
 const failOnce = async (jobId, error) => {
@@ -94,55 +61,133 @@ const failOnce = async (jobId, error) => {
   }
 };
 
+const broadcastJobProgress = async (jobId, { progress, stage, message, status = "RUNNING", userId = null, runner = null }) => {
+  try {
+    if (progress !== undefined) {
+      await updateJobProgress(jobId, progress).catch(() => {});
+    }
+    if (message) {
+      await addJobLog(jobId, "INFO", message).catch(() => {});
+    }
+    if (global.io) {
+      const payload = {
+        jobId,
+        progress,
+        stage: stage || message,
+        message,
+        status,
+        runner,
+        updatedAt: new Date().toISOString(),
+      };
+      if (userId) {
+        global.io.to(`user:${userId}`).emit("job:progress", payload);
+      }
+    }
+  } catch (err) {
+    console.warn(`[broadcastJobProgress] Error for job ${jobId}:`, err.message);
+  }
+};
+
 export const processSystemTestAnalysisJob = async (jobId) => {
+  let jobOwnerId = null;
   try {
     await markJobRunning(jobId);
     const job = await getJobById(jobId);
     if (!job.snapshotId || !job.snapshot?.rootDir || !job.userId) {
       throw new ServiceError("System test job requires a ready snapshot and owner.", 422);
     }
+    jobOwnerId = job.userId;
 
     await saveJobOutput(jobId, { stdout: "", stderr: "" });
-    await updateJobProgress(jobId, 10);
     const payload = readPayload(job.payloadJson);
+    const executionMode=payload.executionMode || "full";
+    if (executionMode !== 'full') throw new ServiceError("System Test supports full-system execution only",400);
     const execution = resolveSystemTestExecution({
       rootDir: job.snapshot.rootDir,
       runner: payload.runner ?? null,
     });
-    await addJobLog(jobId, "INFO", `Selected ${execution.runner} system-test runner.`);
 
-    await updateJobProgress(jobId, 25);
+    await broadcastJobProgress(jobId, {
+      progress: 10,
+      stage: "Starting AUT server...",
+      message: `Selected ${execution.runner} system-test runner. Starting AUT server...`,
+      userId: job.userId,
+      runner: execution.runner,
+    });
+
     const startedAt = new Date();
     const executionResult = await runSystemTests({
       jobId,
       rootDir: job.snapshot.rootDir,
       execution,
+      executionMode,
+      onReady: () => broadcastJobProgress(jobId, {
+        progress: 25,
+        stage: `Executing ${execution.runner === "playwright" ? "Playwright" : "Cypress"} tests...`,
+        message: `Executing ${execution.runner} tests...`,
+        userId: job.userId,
+        runner: execution.runner,
+      }),
     });
     const finishedAt = new Date();
 
-    await updateJobProgress(jobId, 70);
+    await broadcastJobProgress(jobId, {
+      progress: 70,
+      stage: "Parsing results...",
+      message: "Parsing system test execution results and scenarios...",
+      userId: job.userId,
+      runner: execution.runner,
+    });
+
     const testRun = parseSystemTestResult({
       runner: execution.runner,
-      resultPath: execution.reportPath,
+      resultPath: executionResult.reportPath || execution.reportPath,
       startedAt,
       finishedAt,
     });
-    const { scenarios, ...testRunData } = testRun;
-    const formattedScenarios = formatScenariosForPrisma(scenarios);
-    const dataPayload = {
-      snapshotId: job.snapshotId,
-      type: testTypeFor(execution.runner),
-      ...testRunData,
-    };
-    if (formattedScenarios) {
-      dataPayload.scenarios = formattedScenarios;
+    if (executionResult.exitCode !== 0 && testRun.status === "PASSED") {
+      throw new ServiceError(`System test runner exited with code ${executionResult.exitCode} despite a passing report`, 422);
     }
-    await prisma.testRun.create({ data: dataPayload });
+    const { scenarios = [], ...testRunData } = testRun;
+    const mappingFile = executionResult.reportPath && path.join(path.dirname(executionResult.reportPath), 'source-map.json');
+    const sourceMap = mappingFile && fs.existsSync(mappingFile) ? JSON.parse(fs.readFileSync(mappingFile, 'utf8')) : {};
+    await prisma.testRun.create({
+      data: {
+        snapshotId: job.snapshotId,
+        type: testTypeFor(execution.runner),
+        executionMode,
+        ...testRunData,
+        ...(scenarios.length > 0
+          ? {
+              scenarios: {
+                create: scenarios.map((s) => ({
+                  title: s.title,
+                  suiteName: s.suiteName || null,
+                  status: s.status,
+                  durationMs: s.durationMs || null,
+                  failureMessages: s.failureMessages || [],
+                  testFile: sourceMap[path.basename(s.testFile || '')] || s.testFile || null,
+                  screenshotPath: storeScenarioScreenshot({ rootDir: job.snapshot.rootDir, source: s.screenshotSource, runKey: crypto.randomUUID() }),
+                })),
+              },
+            }
+          : {}),
+      },
+    });
 
-    await updateJobProgress(jobId, 85);
+    await broadcastJobProgress(jobId, {
+      progress: 85,
+      stage: "Processing coverage...",
+      message: "Processing Istanbul & V8 coverage reports...",
+      userId: job.userId,
+      runner: execution.runner,
+    });
+
     const coverage = await persistCoverageIfPresent({
       job,
       coverageDir: execution.coverageDir,
+      startedAt,
+      rootDir: job.snapshot.rootDir,
       jobId,
     });
     const result = {
@@ -152,12 +197,30 @@ export const processSystemTestAnalysisJob = async (jobId) => {
       ...coverage,
     };
 
-    if (!executionResult.success || testRun.status === "FAILED") {
-      throw new ServiceError("System tests failed", 422);
+    if (testRun.status === "FAILED") {
+      await addJobLog(
+        jobId,
+        "WARN",
+        `System tests finished with ${testRun.failedTests} failed, ${testRun.flakyTests || 0} flaky, ${testRun.passedTests} passed test(s).`,
+      );
+    } else {
+      await addJobLog(
+        jobId,
+        "INFO",
+        `System tests finished successfully: ${testRun.passedTests} passed, ${testRun.flakyTests || 0} flaky test(s).`,
+      );
     }
 
     await markJobSuccess(jobId, result);
-    await addJobLog(jobId, "INFO", "System test analysis completed.");
+    await broadcastJobProgress(jobId, {
+      progress: 100,
+      stage: "Completed",
+      message: "System test analysis completed.",
+      status: "SUCCESS",
+      userId: job.userId,
+      runner: execution.runner,
+    });
+
     return result;
   } catch (error) {
     try {
@@ -165,6 +228,13 @@ export const processSystemTestAnalysisJob = async (jobId) => {
     } catch {
       // Preserve the original execution error when log persistence is unavailable.
     }
+    await broadcastJobProgress(jobId, {
+      progress: 100,
+      stage: "Failed",
+      message: `System test analysis failed: ${error.message}`,
+      status: "FAILED",
+      userId: jobOwnerId,
+    });
     await failOnce(jobId, error);
     throw error;
   }

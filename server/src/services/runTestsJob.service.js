@@ -1616,6 +1616,36 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                 if (modResError) {
                     await addJobLog(jobId, "ERROR", `[MODULE_RESOLUTION] Test file: "${cleanStoragePath(modResError.testFile)}", missing module: "${modResError.missingModule}", resolved path: "${cleanStoragePath(modResError.expectedSourcePath || modResError.pathResolving)}", workingDirectory: "${cleanStoragePath(modResError.workingDirectory)}"`).catch(() => { });
                 }
+
+                // Attempt auto-healing of failing test files and re-run once
+                try {
+                    const { autoHealTestFailures } = await import("./applyTestSuggestion.service.js");
+                    const jestResultsPath = path.join(covDir, "jest-results.json");
+                    const rootTestResults = path.join(rootDir, "test-results.json");
+                    let parsedResults = null;
+                    const resultsFile = fs.existsSync(jestResultsPath) ? jestResultsPath : (fs.existsSync(rootTestResults) ? rootTestResults : null);
+                    if (resultsFile) {
+                        try { parsedResults = JSON.parse(fs.readFileSync(resultsFile, "utf8")); } catch { }
+                    }
+                    const healed = autoHealTestFailures(rootDir, filesToPass, parsedResults, outputText);
+                    if (healed) {
+                        await addJobLog(jobId, "INFO", "[SCRUM-140] Auto-healed test runner failures. Re-running Jest suite...").catch(() => { });
+                        const retryResult = await dockerRunner.run({
+                            snapshotPath: rootDir,
+                            command: jestCmd,
+                            timeoutMs: effectiveTimeout,
+                            jobId,
+                            env: {
+                                NODE_OPTIONS: "--unhandled-rejections=warn --experimental-vm-modules",
+                                NODE_PATH: "/app/node_modules:/usr/local/lib/node_modules:./node_modules",
+                            }
+                        });
+                        result = retryResult;
+                        if (retryResult.stdout) overallStdout += "\n" + retryResult.stdout;
+                        if (retryResult.stderr) overallStderr += "\n" + retryResult.stderr;
+                        overallExitCode = retryResult.exitCode || 0;
+                    }
+                } catch { }
             }
         } finally {
             if (rootPkgModified && originalRootPkgContent) {

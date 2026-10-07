@@ -22,16 +22,25 @@ const SCRIPT_NAMES = {
 const quoteForShell = (value) => `"${String(value).replace(/"/g, '\\"')}"`;
 
 const readPackageJson = (rootDir) => {
-  const packagePath = path.join(rootDir, "package.json");
-  if (!fs.existsSync(packagePath)) {
-    throw new ServiceError("System tests require a package.json file", 422);
+  const candidates = [
+    path.join(rootDir, "package.json"),
+    path.join(rootDir, "client", "package.json"),
+    path.join(rootDir, "server", "package.json"),
+    path.join(rootDir, "frontend", "package.json"),
+    path.join(rootDir, "backend", "package.json"),
+  ];
+
+  for (const packagePath of candidates) {
+    if (fs.existsSync(packagePath)) {
+      try {
+        return JSON.parse(fs.readFileSync(packagePath, "utf8"));
+      } catch (error) {
+        throw new ServiceError(`Unable to read package.json at ${packagePath}: ${error.message}`, 422);
+      }
+    }
   }
 
-  try {
-    return JSON.parse(fs.readFileSync(packagePath, "utf8"));
-  } catch (error) {
-    throw new ServiceError(`Unable to read package.json: ${error.message}`, 422);
-  }
+  throw new ServiceError("System tests require a package.json file", 422);
 };
 
 const findConfig = (rootDir, names) => {
@@ -48,55 +57,120 @@ const findExplicitScript = (scripts, runner) => {
   return null;
 };
 
+const COMMON_TEST_DIRS = {
+  playwright: ["tests/e2e", "e2e", "tests/system", "tests"],
+  cypress: ["cypress/e2e", "cypress"],
+};
+
+export const findTestDirectory = (rootDir, runner = "playwright") => {
+  const preferred = COMMON_TEST_DIRS[runner] || COMMON_TEST_DIRS.playwright;
+  for (const candidate of preferred) {
+    const fullPath = path.join(rootDir, candidate);
+    if (fs.existsSync(fullPath)) {
+      try {
+        if (fs.statSync(fullPath).isDirectory()) {
+          return candidate;
+        }
+      } catch {
+        // ignore access errors
+      }
+    }
+  }
+  return null;
+};
+
 const hasPlaywrightWebServer = (configPath) =>
   Boolean(configPath && /\bwebServer\b/.test(fs.readFileSync(configPath, "utf8")));
 
-const buildCommand = ({ runner, command, configPath, rootDir }) => {
+const buildCommand = ({ runner, command, configPath, rootDir, testDirectory }) => {
   const reportDirectory = path.join(rootDir, ".covai-system-test");
   const reportPath = path.join(reportDirectory, `${runner}-results.json`);
   const relativeReportPath = path.relative(rootDir, reportPath).replace(/\\/g, "/");
-  const reporterArgs = runner === "playwright" ? "--reporter=json" : "--reporter json";
-  const base = command
-    ? `${command} -- ${reporterArgs}`
-    : `npx playwright test --config ${quoteForShell(path.relative(rootDir, configPath))} ${reporterArgs}`;
+  const retryArg = runner === "playwright" && !(command || "").includes("--retries") ? " --retries=1" : "";
+  const reporterArgs = runner === "playwright" ? `--reporter=json${retryArg}` : "--reporter json";
+
+  let base;
+  if (command) {
+    base = `${command} -- ${reporterArgs}`;
+  } else if (runner === "playwright") {
+    const configArg = configPath
+      ? ` --config ${quoteForShell(path.relative(rootDir, configPath).replace(/\\/g, "/"))}`
+      : "";
+    base = `npx playwright test${configArg} ${reporterArgs}`;
+  } else {
+    const configArg = configPath
+      ? ` --config-file ${quoteForShell(path.relative(rootDir, configPath).replace(/\\/g, "/"))}`
+      : "";
+    base = `npx cypress run${configArg} ${reporterArgs}`;
+  }
 
   return {
     command: `${base} > ${quoteForShell(relativeReportPath)}`,
     configPath: configPath ? path.relative(rootDir, configPath).replace(/\\/g, "/") : null,
+    testDirectory: testDirectory || null,
     reportPath,
     reportDirectory,
     coverageDir: path.join(rootDir, "coverage"),
   };
 };
 
-const detectCandidates = (rootDir) => {
+const detectAtRoot = (rootDir) => {
   const pkg = readPackageJson(rootDir);
   const dependencies = { ...pkg.dependencies, ...pkg.devDependencies };
   const scripts = pkg.scripts || {};
   const candidates = [];
 
-  if (dependencies["@playwright/test"]) {
-    const configPath = findConfig(rootDir, PLAYWRIGHT_CONFIGS);
+  const hasPlaywrightPkg = Boolean(dependencies["@playwright/test"] || dependencies.playwright);
+  const playwrightConfig = findConfig(rootDir, PLAYWRIGHT_CONFIGS);
+  const playwrightTestDir = findTestDirectory(rootDir, "playwright");
+  const hasPlaywrightFiles = Boolean(
+    playwrightTestDir &&
+      fs.existsSync(path.join(rootDir, playwrightTestDir)) &&
+      playwrightTestDir !== "tests"
+  );
+
+  if (hasPlaywrightPkg || playwrightConfig || hasPlaywrightFiles) {
     const script = findExplicitScript(scripts, "playwright");
-    if (script || hasPlaywrightWebServer(configPath)) {
-      candidates.push({
-        runner: "playwright",
-        command: script?.command || null,
-        configPath,
-      });
-    }
+    candidates.push({
+      runner: "playwright",
+      command: script?.command || null,
+      configPath: playwrightConfig,
+    });
   }
 
-  // Cypress has no configuration field that starts the application. To avoid
-  // guessing a server command, it is executable only through a nominated script.
-  if (dependencies.cypress) {
-    const configPath = findConfig(rootDir, CYPRESS_CONFIGS);
+  const hasCypressPkg = Boolean(dependencies.cypress);
+  const cypressConfig = findConfig(rootDir, CYPRESS_CONFIGS);
+  const cypressTestDir = findTestDirectory(rootDir, "cypress");
+  const hasCypressFiles = Boolean(
+    cypressTestDir &&
+      fs.existsSync(path.join(rootDir, cypressTestDir)) &&
+      fs.readdirSync(path.join(rootDir, cypressTestDir)).some((f) => /\.(cy|spec|test)\.(js|ts)$/.test(f))
+  );
+
+  if (hasCypressPkg || cypressConfig || hasCypressFiles) {
     const script = findExplicitScript(scripts, "cypress");
-    if (script) {
-      candidates.push({ runner: "cypress", command: script.command, configPath });
-    }
+    candidates.push({
+      runner: "cypress",
+      command: script?.command || null,
+      configPath: cypressConfig,
+    });
   }
 
+  return candidates;
+};
+
+const detectCandidates = (rootDir) => {
+  const roots = ["", "client", "frontend", "web", "server", "backend"];
+  const candidates = [];
+  for (const directory of roots) {
+    const candidateRoot = path.join(rootDir, directory);
+    if (!fs.existsSync(path.join(candidateRoot, "package.json"))) continue;
+    for (const candidate of detectAtRoot(candidateRoot)) {
+      if (!candidates.some((item) => item.runner === candidate.runner)) {
+        candidates.push({ ...candidate, rootDir: candidateRoot });
+      }
+    }
+  }
   return candidates;
 };
 
@@ -113,18 +187,28 @@ export const resolveSystemTestExecution = ({ rootDir, runner = null }) => {
   if (runner) {
     selected = candidates.find((candidate) => candidate.runner === runner);
     if (!selected) {
-      throw new ServiceError(
-        `No executable ${runner} configuration was found. Configure an explicit E2E script or Playwright webServer.`,
-        422,
-      );
+      const testDir = findTestDirectory(rootDir, runner);
+      if (testDir && testDir !== "tests") {
+        selected = { runner, command: null, configPath: null };
+      } else {
+        throw new ServiceError(
+          `No executable ${runner} configuration was found. Configure an explicit E2E script or install ${runner}.`,
+          422,
+        );
+      }
     }
   } else if (candidates.length === 1) {
     [selected] = candidates;
   } else if (candidates.length === 0) {
-    throw new ServiceError(
-      "No executable Playwright or Cypress configuration was found. CovAI will not guess an application start command.",
-      422,
-    );
+    const testDir = findTestDirectory(rootDir, "playwright");
+    if (testDir && testDir !== "tests") {
+      selected = { runner: "playwright", command: null, configPath: null };
+    } else {
+      throw new ServiceError(
+        "No executable Playwright or Cypress configuration was found. CovAI will not guess an application start command.",
+        422,
+      );
+    }
   } else {
     throw new ServiceError(
       "Multiple E2E runners are configured. Select playwright or cypress explicitly.",
@@ -132,8 +216,12 @@ export const resolveSystemTestExecution = ({ rootDir, runner = null }) => {
     );
   }
 
+  const executionRoot = selected.rootDir || rootDir;
+  const testDirectory = findTestDirectory(executionRoot, selected.runner);
+
   return {
     runner: selected.runner,
-    ...buildCommand({ ...selected, rootDir }),
+    rootDir: executionRoot,
+    ...buildCommand({ ...selected, rootDir: executionRoot, testDirectory }),
   };
 };

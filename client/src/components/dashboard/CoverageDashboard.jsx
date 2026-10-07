@@ -5,6 +5,7 @@ import {
   getCoverageFiles,
   runSupertestCoverage,
   getTestExecution,
+  runCoverageByType,
 } from "../../services/coverage.service.js";
 
 async function handleResponse(res) {
@@ -835,19 +836,19 @@ const CoverageDashboard = ({ snapshotId, projectId, onOpenFile }) => {
     */
   };
 
-  // MOCK handler: System Test
+  // Handler: System Test
   const handleRunSystemTest = async () => {
     if (!snapshotId || isRunningSystemTest) return;
-    // Mock validate: only allow running if playwright/cypress present
-    // Framework not detected yet so show demo message
-    setError(
-      "System Test only supports Playwright or Cypress. Current framework is not supported.",
-    );
-    return;
-    /*
     setIsRunningSystemTest(true);
-    setTimeout(() => { setIsRunningSystemTest(false); }, 1200);
-    */
+    setError(null);
+    try {
+      await runCoverageByType(snapshotId, "system");
+      await fetchData();
+    } catch (err) {
+      setError(err.message || "Unable to run System Test.");
+    } finally {
+      setIsRunningSystemTest(false);
+    }
   };
 
   // Reset page when sort changes

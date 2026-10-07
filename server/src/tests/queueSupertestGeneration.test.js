@@ -72,6 +72,7 @@ describe('queueSupertestGeneration F-03 Dirty-State Detection', () => {
   it('C. userEdited=true -> 409 without force', async () => {
     prisma.aiTest.findMany.mockResolvedValue([{
       metaJson: JSON.stringify({
+        framework: 'SUPERTEST',
         requests: [{ testName: 'T1', userEdited: true, enabled: true }]
       })
     }]);
@@ -86,6 +87,7 @@ describe('queueSupertestGeneration F-03 Dirty-State Detection', () => {
   it('D. isManuallyAdded=true -> 409 without force', async () => {
     prisma.aiTest.findMany.mockResolvedValue([{
       metaJson: JSON.stringify({
+        framework: 'SUPERTEST',
         requests: [{ testName: 'T1', isManuallyAdded: true, enabled: true }]
       })
     }]);
@@ -99,6 +101,7 @@ describe('queueSupertestGeneration F-03 Dirty-State Detection', () => {
   it('E. enabled=false -> 409 without force', async () => {
     prisma.aiTest.findMany.mockResolvedValue([{
       metaJson: JSON.stringify({
+        framework: 'SUPERTEST',
         requests: [{ testName: 'T1', enabled: false }]
       })
     }]);
@@ -112,6 +115,7 @@ describe('queueSupertestGeneration F-03 Dirty-State Detection', () => {
   it('F. userModified=true -> 409 without force', async () => {
     prisma.aiTest.findMany.mockResolvedValue([{
       metaJson: JSON.stringify({
+        framework: 'SUPERTEST',
         userModified: true,
         requests: [{ testName: 'T1', enabled: true }]
       })
@@ -126,6 +130,7 @@ describe('queueSupertestGeneration F-03 Dirty-State Detection', () => {
   it('H. Mixed AI + user modifications -> 409 without force', async () => {
     prisma.aiTest.findMany.mockResolvedValue([{
       metaJson: JSON.stringify({
+        framework: 'SUPERTEST',
         requests: [
             { testName: 'T1', userEdited: false, enabled: true },
             { testName: 'T2', userEdited: true, enabled: true }

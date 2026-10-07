@@ -186,11 +186,59 @@ export const getIntegrationAnalytics = async (projectId) => {
         if (isTested) testedApis++;
     });
 
+    const apiProvenance = {
+        source: "Endpoint Analysis",
+        metric: "API Endpoint Coverage",
+        formula: "testedApis / discoveredApis",
+        scope: "Express Routes",
+        snapshotId,
+        timestamp: new Date().toISOString(),
+        limitation: "Static mapping; does not guarantee runtime execution."
+    };
+
     report.apiCoverage = {
         discoveredApis: discoveredEndpoints.length,
         testedApis,
         uncoveredApis: discoveredEndpoints.length - testedApis,
-        coveragePercentage: discoveredEndpoints.length > 0 ? (testedApis / discoveredEndpoints.length) * 100 : 0
+        coveragePercentage: discoveredEndpoints.length > 0 ? (testedApis / discoveredEndpoints.length) * 100 : 0,
+        provenance: apiProvenance
+    };
+
+    if (report.latestExecution) {
+        report.latestExecution.provenance = {
+            source: "TestRunner Report",
+            metric: "Execution Results",
+            formula: "Direct pass/fail counts from test runner",
+            scope: "Integration Tests",
+            snapshotId,
+            testRunId: report.latestExecution.testRunId,
+            timestamp: report.latestExecution.timestamp,
+            limitation: "Represents an isolated test run that may not reflect overall pipeline status."
+        };
+    }
+
+    if (report.projectCodeCoverage) {
+        report.projectCodeCoverage.provenance = {
+            source: "Coverage Parser",
+            metric: "Project Statement Coverage",
+            formula: "Executed Statements / Total Statements",
+            scope: "V8/Istanbul Code Coverage",
+            snapshotId,
+            timestamp: report.projectCodeCoverage.timestamp,
+            limitation: report.projectCodeCoverage.warning
+        };
+    }
+
+    report.overview.provenance = {
+        scenarioCount: {
+            source: "AI Test Generator / AST Parser",
+            metric: "Scenario Generation",
+            formula: "Count of explicitly mapped test scenarios",
+            scope: "Integration Scenarios",
+            snapshotId,
+            timestamp: new Date().toISOString(),
+            limitation: "Modified scenarios indicate user edits, but may also include regeneration effects."
+        }
     };
 
     return report;

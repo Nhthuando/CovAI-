@@ -1,4 +1,4 @@
-import { cleanAndDeduplicateTestContent, healImportPathsInTestCode } from "../services/testSanitizer.service.js";
+import { cleanAndDeduplicateTestContent, healImportPathsInTestCode, healMultilineStrings } from "../services/testSanitizer.service.js";
 import { findAssociatedTestFile } from "../services/fileCoverage.service.js";
 import { parseJavaScriptCode } from "../services/babelParser.service.js";
 
@@ -213,6 +213,124 @@ describe('test', () => {
             const rawOutput = "SyntaxError: Identifier 'jest' has already been declared";
             const sanitized = cleanAndDeduplicateTestContent(code, rawOutput);
             expect(sanitized).toContain("var jest = require('./my-custom-jest');");
+        });
+
+        test("removes orphan mock property fragments and orphan closing brackets", () => {
+            const code = `
+const path = require('path');
+
+create: jest.fn(() => ({ post: jest.fn() }))
+  }));
+
+describe('test suite', () => {
+    test('works', () => {
+        expect(1).toBe(1);
+    });
+});
+`;
+            const sanitized = cleanAndDeduplicateTestContent(code);
+            expect(sanitized).not.toContain("create: jest.fn");
+            expect(sanitized).not.toContain("}));");
+            expect(sanitized).toContain("expect(1).toBe(1);");
+
+            const ast = parseJavaScriptCode(sanitized);
+            expect(ast).not.toBeNull();
+        });
+
+        test("transforms axios mock into shared mock instance with globalThis.__mockAxiosInstance", () => {
+            const code = `
+const axios = require('axios');
+jest.mock('axios', () => ({
+  create: jest.fn(() => ({
+    post: jest.fn()
+  }))
+}));
+
+// [deduped] const mockAxiosInstance = axios.create();
+
+describe('axios service', () => {
+    test('calls post', async () => {
+        expect(mockAxiosInstance).toBeDefined();
+    });
+});
+`;
+            const sanitized = cleanAndDeduplicateTestContent(code);
+            expect(sanitized).toContain("globalThis.__mockAxiosInstance = instance;");
+            expect(sanitized).toContain("const mockAxiosInstance = (typeof globalThis !== 'undefined' && globalThis.__mockAxiosInstance)");
+            expect(sanitized).not.toContain("typeof axios");
+            const ast = parseJavaScriptCode(sanitized);
+            expect(ast).not.toBeNull();
+        });
+
+        test("heals legacy mockAxiosInstance declarations containing typeof axios to prevent TDZ ReferenceError", () => {
+            const code = `const mockAxiosInstance = (typeof globalThis !== 'undefined' && globalThis.__mockAxiosInstance) ? globalThis.__mockAxiosInstance : (typeof axios !== 'undefined' && axios.create ? axios.create() : { post: jest.fn(() => Promise.resolve({ data: {} })), get: jest.fn(() => Promise.resolve({ data: {} })) });
+const { chatWithAI } = require('../../src/services/ai.service');
+const axios = require('axios');
+describe('ai', () => { test('ok', () => expect(true).toBe(true)); });
+`;
+            const sanitized = cleanAndDeduplicateTestContent(code);
+            expect(sanitized).not.toContain("typeof axios");
+            expect(sanitized).toContain("const ax = require('axios')");
+            const ast = parseJavaScriptCode(sanitized);
+            expect(ast).not.toBeNull();
+        });
+
+        test("heals unclosed object literals inside tests that encounter statements before closing brace", () => {
+            const code = `
+const { analyzeRequirementById } = require('../../src/services/analysis.service');
+const { models } = require('../../src/models');
+const { analyzeText } = require('../../src/services/ai.service');
+describe('analysis', () => {
+  it('analyzes successfully', async () => {
+    const mockRequirement = { 
+        id: 1, 
+        text: 'System must log in', 
+    expect(mockRequirement.update).toHaveBeenCalledWith(expect.objectContaining({ status: 'analyzed' }));
+    expect(result.requirement).toEqual(mockRequirement);
+  });
+});
+`;
+            const sanitized = cleanAndDeduplicateTestContent(code);
+            expect(sanitized).toContain("update: jest.fn()");
+            expect(sanitized).toContain("};");
+            expect(sanitized).toContain("models.Requirement.findByPk.mockResolvedValue(mockRequirement)");
+            expect(sanitized).toContain("analyzeRequirementById");
+            const ast = parseJavaScriptCode(sanitized);
+            expect(ast).not.toBeNull();
+        });
+
+        test("normalizes redundant monorepo prefixes in require calls", () => {
+            const code = `
+const aiService = require('../../backend/src/services/ai.service');
+describe('monorepo path', () => {
+    test('uses normalized path', () => {
+        expect(aiService).toBeDefined();
+    });
+});
+`;
+            const sanitized = cleanAndDeduplicateTestContent(code);
+            expect(sanitized).toContain("require('../../src/services/ai.service')");
+            expect(sanitized).not.toContain("../../backend/src/");
+        });
+    });
+
+    describe("healMultilineStrings", () => {
+        test("converts multiline single-quoted strings with unescaped newlines into template literals", () => {
+            const input = "const msg = 'First line\nSecond line\nThird line';";
+            const healed = healMultilineStrings(input);
+            expect(healed).toBe("const msg = `First line\nSecond line\nThird line`;");
+        });
+
+        test("converts multiline double-quoted strings with unescaped newlines into template literals", () => {
+            const input = 'const msg = "Review:\n- Point 1\n- Point 2";';
+            const healed = healMultilineStrings(input);
+            expect(healed).toBe('const msg = `Review:\n- Point 1\n- Point 2`;');
+        });
+
+        test("leaves normal single-line strings untouched", () => {
+            const input = "const a = 'hello world';\nconst b = \"foo bar\";";
+            const healed = healMultilineStrings(input);
+            expect(healed).toBe(input);
         });
     });
 

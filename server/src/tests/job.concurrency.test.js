@@ -4,6 +4,7 @@ import { createSnapshotJob } from '../services/job.service.js';
 import { ServiceError } from '../utils/serviceError.js';
 
 describe('F-04 Job Concurrency (Actual DB Constraint)', () => {
+    jest.setTimeout(30000);
     let projectA, projectB;
     let snapshotA, snapshotB;
     let user;

@@ -15,10 +15,11 @@ const parseCoverageSummary = jest.fn();
 const storeCoverageOutputs = jest.fn();
 const parseCoverageFilesForSnapshot = jest.fn();
 const parseCoverageFunctionsForSnapshot = jest.fn();
+const mockAiTestFindMany = jest.fn();
 
 const mockPrisma = {
     aiTest: {
-        findMany: jest.fn(),
+        findMany: mockAiTestFindMany,
     },
     testRun: {
         create: jest.fn().mockResolvedValue({}),
@@ -37,7 +38,6 @@ await jest.unstable_mockModule('../services/coverageSummaryParser.service.js', (
 await jest.unstable_mockModule('../services/coverageStorage.service.js', () => ({ storeCoverageOutputs }));
 await jest.unstable_mockModule('../services/coverageFileParser.service.js', () => ({ parseCoverageFilesForSnapshot }));
 await jest.unstable_mockModule('../services/coverageFunctionParser.service.js', () => ({ parseCoverageFunctionsForSnapshot }));
-
 const { processSupertestCoverageJob } = await import('../services/supertestCoverageJob.service.js');
 
 describe('supertestCoverageJob.service', () => {
@@ -54,6 +54,12 @@ describe('supertestCoverageJob.service', () => {
         updateJobProgress.mockResolvedValue(undefined);
         addJobLog.mockResolvedValue(undefined);
         saveJobOutput.mockResolvedValue(undefined);
+        mockAiTestFindMany.mockResolvedValue([
+            {
+                filePath: 'api.test.js',
+                metaJson: { framework: 'SUPERTEST', status: 'APPROVED' },
+            },
+        ]);
         rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'supertest-job-'));
         fs.writeFileSync(path.join(rootDir, 'package.json'), JSON.stringify({ devDependencies: { supertest: '^7.0.0' } }));
         fs.writeFileSync(path.join(rootDir, 'api.test.js'), "import request from 'supertest';");
@@ -70,6 +76,10 @@ describe('supertestCoverageJob.service', () => {
         fs.mkdirSync(path.join(rootDir, 'coverage'));
         fs.writeFileSync(path.join(rootDir, 'coverage', 'coverage-summary.json'), JSON.stringify({ total: {} }));
         fs.writeFileSync(path.join(rootDir, 'coverage', 'coverage-final.json'), JSON.stringify({}));
+        mockPrisma.aiTest.findMany.mockResolvedValue([
+            { filePath: 'api.test.js', metaJson: JSON.stringify({ framework: 'SUPERTEST', status: 'APPROVED' }) }
+        ]);
+        mockPrisma.testRun.create.mockResolvedValue({});
     });
 
     afterEach(() => fs.rmSync(rootDir, { recursive: true, force: true }));

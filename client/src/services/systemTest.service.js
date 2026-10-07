@@ -24,17 +24,21 @@ export const getSystemTestFrameworks = async (projectId, snapshotId = null) => {
 };
 
 export const runPlaywrightTests = async (projectId, snapshotId) => {
+  const token = localStorage.getItem("token") || (localStorage.getItem("user") ? JSON.parse(localStorage.getItem("user")).token : null);
   const response = await axios.post(
-    `${API_BASE}/projects/${projectId}/run-playwright`,
-    { snapshotId },
+    `${API_BASE}/coverage/${snapshotId}/system/run`,
+    { framework: "playwright" },
+    { headers: token ? { Authorization: `Bearer ${token}` } : {} }
   );
   return response.data;
 };
 
 export const runCypressTests = async (projectId, snapshotId) => {
+  const token = localStorage.getItem("token") || (localStorage.getItem("user") ? JSON.parse(localStorage.getItem("user")).token : null);
   const response = await axios.post(
-    `${API_BASE}/projects/${projectId}/run-cypress`,
-    { snapshotId },
+    `${API_BASE}/coverage/${snapshotId}/system/run`,
+    { framework: "cypress" },
+    { headers: token ? { Authorization: `Bearer ${token}` } : {} }
   );
   return response.data;
 };
@@ -44,9 +48,12 @@ export const runSystemTestAnalysis = async (
   snapshotId,
   runner = null,
 ) => {
+  const token = localStorage.getItem("token") || (localStorage.getItem("user") ? JSON.parse(localStorage.getItem("user")).token : null);
   const response = await axios.post(
-    `${API_BASE}/projects/${projectId}/system-test-analysis`,
-    { snapshotId, runner },
+    `${API_BASE}/coverage/${snapshotId}/system/run`,
+    { framework: runner },
+    { headers: token ? { Authorization: `Bearer ${token}` } : {} }
   );
   return response.data;
 };
+

@@ -78,4 +78,23 @@ describe("coverage framework detection", () => {
     expect(result.supported.unit).toContain("jest");
     expect(fs.existsSync(path.join(rootDir, "package.json"))).toBe(true);
   });
+
+  test("detects frameworks in monorepo subdirectories when root has no package.json", () => {
+    const clientDir = path.join(rootDir, "client");
+    const serverDir = path.join(rootDir, "server");
+    fs.mkdirSync(clientDir, { recursive: true });
+    fs.mkdirSync(serverDir, { recursive: true });
+
+    fs.writeFileSync(path.join(clientDir, "package.json"), JSON.stringify({
+      devDependencies: { "@playwright/test": "latest" },
+    }));
+    fs.writeFileSync(path.join(serverDir, "package.json"), JSON.stringify({
+      devDependencies: { supertest: "latest", jest: "latest" },
+    }));
+
+    const result = detectCoverageFrameworks(rootDir);
+    expect(result.supported.unit).toEqual(["jest"]);
+    expect(result.supported.integration).toEqual(["supertest"]);
+    expect(result.supported.system).toEqual(["playwright"]);
+  });
 });

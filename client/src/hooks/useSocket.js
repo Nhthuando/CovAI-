@@ -24,9 +24,11 @@ export const useSocket = (userId, onNotification) => {
   useEffect(() => {
     if (!userId) return;
 
-    const socket = io(SOCKET_URL, {
-      /* ... preserve config */
-    });
+    let token = localStorage.getItem("token");
+    try {
+      token ||= JSON.parse(localStorage.getItem("user") || "null")?.token;
+    } catch { /* An expired session reconnects after login. */ }
+    const socket = io(SOCKET_URL, { auth: { token } });
     socketRef.current = socket;
 
     socket.on("connect", () => {

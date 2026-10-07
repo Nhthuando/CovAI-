@@ -80,8 +80,7 @@ export default function FileBranchCFGView({
                       : "bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]"
                   }`}
                 >
-                  {fn.name}(){" "}
-                  {hasBranches ? `(${fn.branches.length} branches)` : ""}
+                  {fn.name}() {hasBranches ? `(${fn.branches.length} branches)` : ""}
                 </button>
               );
             })}

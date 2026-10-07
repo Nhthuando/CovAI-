@@ -9,17 +9,19 @@ export const getIntegrationGuidance = async (projectId) => {
         rules.push({
             id: 'RULE_NO_DATA',
             severity: 'INFO',
-            result: 'No integration test data is available for this project snapshot.',
-            finding: 'The Integration Testing pipeline has not been initialized.',
-            evidence: '0 AiTest, 0 TestRun, and 0 CoverageSummary records found.',
-            evidenceData: {
-                scenarios: 0,
-                testRuns: 0,
-                coverageSummaries: 0
+            finding: 'No Integration Test Data',
+            meaning: 'The Integration Testing pipeline has not been initialized for this project.',
+            evidence: {
+                source: 'Integration Database',
+                snapshotId: analytics.snapshotId || null,
+                details: '0 AiTest, 0 TestRun, and 0 CoverageSummary records found.'
             },
-            recommendedAction: "Run 'Generate Integration Tests' to establish the initial test suite.",
+            calculation: 'Count of records == 0',
+            scope: 'Integration Test Suite',
+            impact: 'API health and test coverage cannot be tracked.',
+            recommendedAction: 'Run Generate Tests to establish the initial test suite.',
             actionType: 'OPEN_GENERATE_MODAL',
-            expectedImpact: 'Populate the workbench and begin tracking API health.'
+            verification: 'After generation, check that scenarios exist in the summary.'
         });
         return { success: true, data: { rules } };
     }
@@ -29,50 +31,75 @@ export const getIntegrationGuidance = async (projectId) => {
         rules.push({
             id: 'RULE_NO_EXECUTION',
             severity: 'WARNING',
-            result: 'Generated integration scenarios have not been executed.',
-            finding: 'Scenarios exist but have not been validated against the active codebase.',
-            evidence: `${analytics.overview.totalScenarios} AiTest scenarios exist; 0 TestRun records found.`,
-            evidenceData: {
-                scenarios: analytics.overview.totalScenarios,
-                testRuns: 0
+            finding: 'No Execution Data',
+            meaning: 'Scenarios exist but have not been executed.',
+            evidence: {
+                source: 'Execution Runner',
+                snapshotId: analytics.snapshotId || null,
+                details: `${analytics.overview.totalScenarios} AiTest scenarios exist; 0 TestRun records found.`
             },
-            recommendedAction: "Click 'Execute Tests' in the Integration Workbench.",
+            calculation: 'Total Scenarios > 0 AND TestRuns == 0',
+            scope: 'Test Runner',
+            impact: 'Scenarios are not validated against the active codebase.',
+            recommendedAction: 'Execute Tests in the Integration Workbench.',
             actionType: 'EXECUTE_TESTS',
-            expectedImpact: 'Establish a baseline integration execution result.'
+            verification: 'After execution, an Execution Summary should appear.'
         });
         return { success: true, data: { rules } };
     }
 
-    // Precedence 3: Evaluate remaining rules deterministically
     const latestRun = analytics.latestExecution;
     
-    // 3.1 RULE_SOME_FAILED
-    if (latestRun && latestRun.failedTests > 0) {
+    // Evaluate semanticState from Phase 6B
+    let semanticState = "NOT_EXECUTED";
+    if (latestRun) {
+       if (latestRun.totalTests === 0) semanticState = "FAILED_BEFORE_TEST_EXECUTION";
+       else if (latestRun.failedTests > 0) semanticState = "TESTS_FAILED";
+       else if (latestRun.passedTests === 0 && latestRun.skippedTests > 0) semanticState = "SKIPPED";
+       else semanticState = "SUCCESS";
+    }
+
+    // 3.1 RULE_INFRASTRUCTURE_FAILURE
+    if (semanticState === "FAILED_BEFORE_TEST_EXECUTION") {
         rules.push({
-            id: 'RULE_SOME_FAILED',
+            id: 'RULE_INFRASTRUCTURE_FAILURE',
             severity: 'ERROR',
-            result: 'Integration tests failed during the latest execution.',
-            finding: 'One or more scenarios did not pass validation.',
-            evidence: `TestRun reports ${latestRun.failedTests} failed tests out of ${latestRun.totalTests} total.`,
-            evidenceData: { failed: latestRun.failedTests, total: latestRun.totalTests },
-            recommendedAction: "Inspect the failure logs in the History pane and edit the failed scenarios.",
+            finding: 'Infrastructure Failure',
+            meaning: 'The test runner crashed or failed to execute any tests.',
+            evidence: {
+                source: 'Pipeline Job',
+                snapshotId: analytics.snapshotId || null,
+                jobId: latestRun?.jobId || null,
+                details: '0 tests were executed.'
+            },
+            calculation: 'Total Tests Executed == 0',
+            scope: 'Docker / Test Runner',
+            impact: 'Test execution is completely blocked.',
+            recommendedAction: 'Inspect the Job logs and retry the execution.',
             actionType: 'VIEW_HISTORY',
-            expectedImpact: 'Restore test suite stability.'
+            verification: 'After retry, check if tests successfully run.'
         });
     }
 
-    // 3.2 RULE_ALL_PASSED
-    if (latestRun && latestRun.status === 'SUCCESS' && latestRun.totalTests > 0 && latestRun.failedTests === 0) {
+    // 3.2 RULE_SOME_FAILED
+    if (semanticState === "TESTS_FAILED") {
         rules.push({
-            id: 'RULE_ALL_PASSED',
-            severity: 'SUCCESS',
-            result: 'All executed integration tests passed successfully.',
-            finding: 'The latest completed Integration Test execution passed all executed scenarios.',
-            evidence: `TestRun reports ${latestRun.passedTests} passed tests and 0 failed tests.`,
-            evidenceData: { passed: latestRun.passedTests, failed: 0 },
-            recommendedAction: "Review API Endpoint Coverage to identify missing routes.",
-            actionType: 'VIEW_REPORT',
-            expectedImpact: 'Expand validation to remaining API endpoints.'
+            id: 'RULE_SOME_FAILED',
+            severity: 'ERROR',
+            finding: 'Failed Scenarios',
+            meaning: 'One or more integration scenarios did not pass validation.',
+            evidence: {
+                source: 'TestRun Report',
+                snapshotId: analytics.snapshotId || null,
+                testRunId: latestRun.id,
+                details: `${latestRun.failedTests} failed tests out of ${latestRun.totalTests}.`
+            },
+            calculation: `${latestRun.failedTests} / ${latestRun.totalTests}`,
+            scope: 'Integration Scenarios',
+            impact: 'The tested APIs are failing their behavioral assertions.',
+            recommendedAction: 'Open Scenario Review to inspect and fix failed tests.',
+            actionType: 'REVIEW_SCENARIOS',
+            verification: 'After fix and re-execution, Failed count should be 0.'
         });
     }
 
@@ -82,103 +109,86 @@ export const getIntegrationGuidance = async (projectId) => {
         rules.push({
             id: 'RULE_ENDPOINTS_UNCOVERED',
             severity: 'WARNING',
-            result: 'Integration tests map to a partial subset of discovered API endpoints.',
-            finding: `${uncoveredApis} out of ${discoveredApis} endpoints remain completely untested by integration scenarios.`,
-            evidence: `Static mapping identified ${discoveredApis} total endpoints; ${testedApis} have mapped integration scenarios.`,
-            evidenceData: { totalEndpoints: discoveredApis, uncoveredEndpoints: uncoveredApis, testedEndpoints: testedApis },
-            recommendedAction: `Use 'Generate Tests' targeting the ${uncoveredApis} uncovered endpoints.`,
+            finding: `${uncoveredApis} uncovered endpoints`,
+            meaning: `${uncoveredApis} of ${discoveredApis} discovered endpoints currently have no mapped Integration scenario.`,
+            evidence: {
+                source: 'Endpoint Analysis',
+                snapshotId: analytics.snapshotId || null,
+                details: 'Static mapping state'
+            },
+            calculation: `${uncoveredApis} / ${discoveredApis}`,
+            scope: 'API Endpoints',
+            impact: 'These endpoints currently have no Integration scenario.',
+            recommendedAction: 'Generate scenarios for uncovered endpoints.',
             actionType: 'OPEN_GENERATE_MODAL',
-            expectedImpact: 'Increase API Endpoint mapping.'
+            verification: `After generation/re-analysis, check if uncovered endpoints decrease from ${uncoveredApis}.`
         });
     }
 
-    // 3.4 RULE_COVERAGE_DECREASED & RULE_COVERAGE_IMPROVED
-    if (analytics.history && analytics.history.coverage && analytics.history.coverage.length >= 2) {
-        const coverageHistory = analytics.history.coverage;
+    // 3.4 RULE_COVERAGE_MISSING or VALID 0%
+    if (semanticState === "SUCCESS" || semanticState === "TESTS_FAILED") {
+        const coverageHistory = analytics.history?.coverage || [];
         const currentCoverage = coverageHistory[coverageHistory.length - 1];
-        const previousCoverage = coverageHistory[coverageHistory.length - 2];
-
-        if (currentCoverage.stmtsPct < previousCoverage.stmtsPct) {
+        if (!currentCoverage) {
             rules.push({
-                id: 'RULE_COVERAGE_DECREASED',
+                id: 'RULE_COVERAGE_MISSING',
                 severity: 'WARNING',
-                result: 'Project statement coverage has decreased.',
-                finding: 'Comparing the current snapshot against the previous snapshot shows a reduction in coverage.',
-                evidence: `Current coverage is ${currentCoverage.stmtsPct}%; previous snapshot was ${previousCoverage.stmtsPct}%.`,
-                evidenceData: { currentStmtsPct: currentCoverage.stmtsPct, previousStmtsPct: previousCoverage.stmtsPct },
-                recommendedAction: "Review recently modified files and consider adding coverage.",
-                actionType: 'VIEW_REPORT',
-                expectedImpact: 'Restore or exceed previous coverage levels.'
+                finding: 'Coverage Not Collected',
+                meaning: 'The test execution completed, but Istanbul/V8 coverage parsing failed.',
+                evidence: {
+                    source: 'Coverage Parser',
+                    snapshotId: analytics.snapshotId || null,
+                    testRunId: latestRun?.id || null
+                },
+                calculation: 'CoverageSummary == null',
+                scope: 'Project Code Coverage',
+                impact: 'Code execution visibility is lost.',
+                recommendedAction: 'Check parser logs in History.',
+                actionType: 'VIEW_HISTORY',
+                verification: 'After retry, code coverage metrics should be populated.'
             });
-        }
-
-        if (currentCoverage.stmtsPct > previousCoverage.stmtsPct) {
-            rules.push({
-                id: 'RULE_COVERAGE_IMPROVED',
-                severity: 'INFO',
-                result: 'Project statement coverage has increased.',
-                finding: 'Comparing the current snapshot against the previous snapshot shows an increase in coverage.',
-                evidence: `Current coverage is ${currentCoverage.stmtsPct}%; previous snapshot was ${previousCoverage.stmtsPct}%.`,
-                evidenceData: { currentStmtsPct: currentCoverage.stmtsPct, previousStmtsPct: previousCoverage.stmtsPct },
-                recommendedAction: "Commit the current integration tests to lock in the baseline.",
-                actionType: 'VIEW_REPORT',
-                expectedImpact: 'Maintain the established quality standard.'
+        } else if (currentCoverage.stmtsPct === 0) {
+             rules.push({
+                id: 'RULE_COVERAGE_ZERO',
+                severity: 'WARNING',
+                finding: 'Valid 0% Coverage',
+                meaning: 'Coverage was successfully collected, but no project statements were executed by integration tests.',
+                evidence: {
+                    source: 'Coverage Parser',
+                    snapshotId: analytics.snapshotId || null,
+                    testRunId: latestRun?.id || null,
+                    details: 'Statements: 0%'
+                },
+                calculation: 'Executed Statements == 0',
+                scope: 'Project Code Coverage',
+                impact: 'The tests may be mocking out the entire application or not hitting local logic.',
+                recommendedAction: 'Review the generated scenarios to ensure they make real HTTP calls.',
+                actionType: 'REVIEW_SCENARIOS',
+                verification: 'After editing tests, execute them and expect >0% coverage.'
             });
         }
     }
 
     // 3.5 RULE_SKIPPED_SCENARIOS
-    if (latestRun && latestRun.skippedTests > 0) {
+    if (semanticState === "SKIPPED" || (latestRun && latestRun.skippedTests > 0)) {
         rules.push({
             id: 'RULE_SKIPPED_SCENARIOS',
             severity: 'WARNING',
-            result: 'Scenarios were skipped during execution.',
-            finding: 'Skipped scenarios were not validated in the latest execution.',
-            evidence: `TestRun reports ${latestRun.skippedTests} skipped tests.`,
-            evidenceData: { skipped: latestRun.skippedTests },
-            recommendedAction: "Re-enable skipped scenarios and investigate runtime errors.",
+            finding: 'Skipped Scenarios',
+            meaning: 'Scenarios were disabled and bypassed during the test run.',
+            evidence: {
+                source: 'TestRun Report',
+                snapshotId: analytics.snapshotId || null,
+                testRunId: latestRun.id,
+                details: `${latestRun.skippedTests} skipped tests.`
+            },
+            calculation: `Skipped Tests == ${latestRun.skippedTests}`,
+            scope: 'Integration Scenarios',
+            impact: 'Skipped scenarios provide no validation.',
+            recommendedAction: 'Open Scenario Review filtered to skipped tests to re-enable them.',
             actionType: 'REVIEW_SCENARIOS',
-            expectedImpact: 'Validate scenarios that are currently bypassed.'
+            verification: 'After re-enabling and executing, skipped count should be 0.'
         });
-    }
-
-    // 3.6 RULE_DIMINISHING_RETURNS
-    if (analytics.history && analytics.history.coverage && analytics.history.generations) {
-        const generationJobs = analytics.history.generations; 
-        
-        // Find snapshots with generation jobs
-        const snapshotsWithGenerations = [...new Set(generationJobs.map(g => g.snapshotId))];
-        
-        // Match them to coverage values in order
-        const eligibleCoverages = [];
-        for (const snapId of snapshotsWithGenerations) {
-            const cov = analytics.history.coverage.find(c => c.snapshotId === snapId);
-            if (cov) {
-                eligibleCoverages.push(cov.stmtsPct);
-            }
-        }
-
-        if (eligibleCoverages.length >= 3) {
-            // Get last 3
-            const last3 = eligibleCoverages.slice(-3);
-            const max = Math.max(...last3);
-            const min = Math.min(...last3);
-            const variance = max - min;
-
-            if (variance < 1) {
-                rules.push({
-                    id: 'RULE_DIMINISHING_RETURNS',
-                    severity: 'WARNING',
-                    result: 'Repeated AI test generations yielded minimal coverage change.',
-                    finding: 'Recent generation cycles have not substantially altered project statement coverage.',
-                    evidence: `Coverage changed by <1% across the last 3 snapshots with generation jobs.`,
-                    evidenceData: { variance, last3Coverages: last3 },
-                    recommendedAction: "Manually edit generated scenarios to inject required mocked state or authentication.",
-                    actionType: 'REVIEW_SCENARIOS',
-                    expectedImpact: 'Exercise code branches that generation alone cannot reach.'
-                });
-            }
-        }
     }
 
     // Sort by severity (ERROR -> WARNING -> SUCCESS -> INFO), 

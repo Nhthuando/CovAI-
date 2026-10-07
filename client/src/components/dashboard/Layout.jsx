@@ -145,6 +145,7 @@ function LayoutInner() {
   const [showQualityDashboard, setShowQualityDashboard] = useState(false);
   const [cfgInitialContext, setCfgInitialContext] = useState(null);
   const [archInitialContext, setArchInitialContext] = useState(null);
+  const [integrationInitialContext, setIntegrationInitialContext] = useState(null);
 
   useEffect(() => {
     if (activeActivity !== "architecture") {
@@ -162,7 +163,10 @@ function LayoutInner() {
 
   const handleOpenCFG = (filePath = null, functionName = null) => {
     if (filePath) {
-      setCfgInitialContext({ initialFile: filePath, initialFunc: functionName });
+      setCfgInitialContext({
+        initialFile: filePath,
+        initialFunc: functionName,
+      });
     } else {
       setCfgInitialContext(null);
     }
@@ -792,7 +796,7 @@ function LayoutInner() {
           </motion.div>
         )}
         <AnimatePresence initial={false}>
-          {sidebarOpen && (
+          {sidebarOpen && activeActivity !== "architecture" && (
             <motion.div
               key="sidebar"
               initial={
@@ -868,7 +872,7 @@ function LayoutInner() {
             </motion.div>
           )}
         </AnimatePresence>
-        {!isMobile && sidebarOpen && (
+        {!isMobile && sidebarOpen && activeActivity !== "architecture" && (
           <PanelResizer
             onMouseDown={handleSidebarResize}
             isDragging={isDraggingSidebar}
@@ -940,6 +944,8 @@ function LayoutInner() {
                 onOpenCFG={handleOpenCFG}
                 onSuggestTestcase={handleSuggestTestcase}
                 onOpenArchitecture={handleOpenArchitecture}
+                initialContext={integrationInitialContext}
+                onContextChange={setIntegrationInitialContext}
               />
             </div>
             <div className={coverageType === "system" ? "h-full" : "hidden"}>
@@ -1095,7 +1101,12 @@ function LayoutInner() {
       </AnimatePresence>
       <AnimatePresence>
         {showCFG && (
-          <CFGCalculator project={project} onClose={handleCloseCFG} initialFile={cfgInitialContext?.initialFile} initialFunc={cfgInitialContext?.initialFunc} />
+          <CFGCalculator
+            project={project}
+            onClose={handleCloseCFG}
+            initialFile={cfgInitialContext?.initialFile}
+            initialFunc={cfgInitialContext?.initialFunc}
+          />
         )}
       </AnimatePresence>
       <AnimatePresence>

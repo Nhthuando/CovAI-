@@ -71,7 +71,7 @@ export default function FileFunctionCallGraphView({
 
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
-            Called function:{" "}
+            Called Functions:{" "}
             <b style={{ color: "#38bdf8" }}>
               {coveredFuncs}/{functions.length} (
               {functions.length > 0
@@ -82,7 +82,7 @@ export default function FileFunctionCallGraphView({
           </span>
 
           <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
-            Total calls:{" "}
+            Total Invocations:{" "}
             <b style={{ color: "#22c55e" }}>{totalCalls} calls</b>
           </span>
         </div>

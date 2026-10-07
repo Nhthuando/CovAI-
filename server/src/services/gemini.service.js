@@ -81,18 +81,23 @@ function resolveModelName(requestedModel) {
  * @param {string|null} maybeInstruction - Optional system instruction if model name was provided as 2nd arg
  * @returns {Promise<string>} The generated text response
  */
-export const generateText = async (prompt, modelOrInstruction = null, maybeInstruction = null) => {
+export const generateText = async (prompt, modelOrInstruction = null, maybeInstructionOrConfig = null, maybeConfig = {}) => {
   let modelName = null;
   let systemInstruction = null;
+  let generationConfig = {};
 
   if (typeof modelOrInstruction === "string" && (modelOrInstruction.startsWith("gemini-") || modelOrInstruction.includes("/"))) {
     modelName = modelOrInstruction;
-    systemInstruction = maybeInstruction;
+    systemInstruction = maybeInstructionOrConfig;
+    generationConfig = maybeConfig || {};
   } else {
     systemInstruction = modelOrInstruction;
+    if (maybeInstructionOrConfig && typeof maybeInstructionOrConfig === "object") {
+      generationConfig = maybeInstructionOrConfig;
+    }
   }
 
-  return generateMultimodalText(prompt, [], systemInstruction, modelName);
+  return generateMultimodalText(prompt, [], systemInstruction, modelName, generationConfig);
 };
 
 /**
@@ -100,17 +105,29 @@ export const generateText = async (prompt, modelOrInstruction = null, maybeInstr
  * @param {string} prompt - The prompt to send to the Gemini model
  * @param {Array<{ data: string, mimeType: string }>} images - Optional array of images in base64
  * @param {string|null} systemInstruction - Optional system instruction for the model
- * @param {string|null} modelName - Optional specific model name
+ * @param {string|object|null} modelNameOrConfig - Optional specific model name or generationConfig
+ * @param {object} maybeConfig - Optional generationConfig
  * @returns {Promise<string>} The generated text response
  */
 export const generateMultimodalText = async (
   prompt,
   images = [],
   systemInstruction = null,
-  modelName = null,
+  modelNameOrConfig = null,
+  maybeConfig = {}
 ) => {
   if (!genAI) {
     throw new Error("GEMINI_API_KEY is not configured.");
+  }
+
+  let modelName = null;
+  let generationConfig = {};
+
+  if (typeof modelNameOrConfig === "string") {
+    modelName = modelNameOrConfig;
+    generationConfig = maybeConfig || {};
+  } else if (modelNameOrConfig && typeof modelNameOrConfig === "object") {
+    generationConfig = modelNameOrConfig;
   }
 
   const primaryModelName = resolveModelName(modelName);
@@ -149,6 +166,7 @@ export const generateMultimodalText = async (
         contents: [{ role: "user", parts }],
         generationConfig: {
           maxOutputTokens: 65536,
+          ...generationConfig,
         },
       });
       return result.response.text();
@@ -164,6 +182,7 @@ export const generateMultimodalText = async (
         contents: [{ role: "user", parts }],
         generationConfig: {
           maxOutputTokens: 65536,
+          ...generationConfig,
         },
       });
       return result.response.text();

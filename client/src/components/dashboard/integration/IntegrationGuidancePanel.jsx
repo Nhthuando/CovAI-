@@ -28,14 +28,14 @@ function GuidanceRule({ rule, projectId }) {
   const navigate = useNavigate();
 
   const handleAction = () => {
-    // Basic routing logic for workbench actions
     if (rule.actionType === 'VIEW_REPORT') {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } else {
       if (rule.actionType === 'VIEW_HISTORY') {
         navigate(`/main-editor?projectId=${projectId}&tab=integration-tests&subtab=history`);
+      } else if (rule.actionType === 'REVIEW_SCENARIOS') {
+        navigate(`/main-editor?projectId=${projectId}&tab=integration-tests`);
       } else {
-        // For OPEN_GENERATE_MODAL, EXECUTE_TESTS, REVIEW_SCENARIOS
         navigate(`/main-editor?projectId=${projectId}&tab=integration-tests`);
       }
     }
@@ -49,52 +49,59 @@ function GuidanceRule({ rule, projectId }) {
         </div>
         <div className="flex-grow">
           <div className="flex justify-between items-start">
-            <h3 className="font-semibold text-white text-lg">{rule.result}</h3>
+            <h3 className="font-semibold text-white text-lg">{rule.finding}</h3>
             <span className="text-xs px-2 py-1 rounded bg-[var(--surface-hover)] border border-[var(--border-main)] font-mono text-[var(--text-secondary)]">
               {rule.severity}
             </span>
           </div>
           
-          <p className="text-[var(--text-secondary)] mt-1">{rule.finding}</p>
+          <p className="text-[var(--text-secondary)] font-medium mt-1 mb-3">{rule.meaning}</p>
           
-          <div className="mt-4 p-3 bg-[var(--surface-main)] rounded border border-[var(--border-main)]">
-            <p className="text-sm font-medium text-white mb-1">Evidence:</p>
-            <p className="text-sm text-[var(--text-secondary)]">{rule.evidence}</p>
-            
-            {rule.evidenceData && Object.keys(rule.evidenceData).length > 0 && (
-              <div className="mt-2">
-                <button 
-                  onClick={() => setExpanded(!expanded)}
-                  className="flex items-center text-xs text-[var(--accent-primary)] hover:underline focus:outline-none"
-                >
-                  {expanded ? <ChevronDown size={14} className="mr-1" /> : <ChevronRight size={14} className="mr-1" />}
-                  {expanded ? 'Hide Data' : 'View Data'}
-                </button>
-                {expanded && (
-                  <pre className="mt-2 p-2 bg-[var(--surface-hover)] rounded text-xs font-mono text-[var(--text-secondary)] overflow-x-auto">
-                    {JSON.stringify(rule.evidenceData, null, 2)}
-                  </pre>
-                )}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div className="p-3 bg-[var(--surface-main)] rounded border border-[var(--border-main)]">
+              <p className="text-sm font-semibold text-white mb-1">Evidence</p>
+              <ul className="text-xs text-[var(--text-secondary)] space-y-1">
+                {rule.evidence?.source && <li><strong className="text-[var(--text-muted)]">Source:</strong> {rule.evidence.source}</li>}
+                {rule.evidence?.snapshotId && <li><strong className="text-[var(--text-muted)]">Snapshot:</strong> <span className="font-mono">{rule.evidence.snapshotId.slice(-6)}</span></li>}
+                {rule.evidence?.jobId && <li><strong className="text-[var(--text-muted)]">Job:</strong> <span className="font-mono">{rule.evidence.jobId.slice(-6)}</span></li>}
+                {rule.evidence?.testRunId && <li><strong className="text-[var(--text-muted)]">TestRun:</strong> <span className="font-mono">{rule.evidence.testRunId.slice(-6)}</span></li>}
+                {rule.evidence?.details && <li><strong className="text-[var(--text-muted)]">Details:</strong> {rule.evidence.details}</li>}
+              </ul>
+              {rule.calculation && (
+                 <p className="text-xs text-[var(--text-secondary)] mt-2 pt-2 border-t border-[var(--border-main)]">
+                   <strong className="text-[var(--text-muted)]">Formula:</strong> {rule.calculation}
+                 </p>
+              )}
+              {rule.scope && (
+                 <p className="text-xs text-[var(--text-secondary)] mt-1">
+                   <strong className="text-[var(--text-muted)]">Scope:</strong> {rule.scope}
+                 </p>
+              )}
+            </div>
+
+            <div className="p-3 bg-[var(--surface-main)] rounded border border-[var(--border-main)] flex flex-col justify-between">
+              <div>
+                 <p className="text-sm font-semibold text-white mb-1">Impact & Recommended Action</p>
+                 <p className="text-xs text-red-300 mb-2">{rule.impact}</p>
+                 <p className="text-sm text-[var(--text-secondary)] mb-2">{rule.recommendedAction}</p>
               </div>
-            )}
+              
+              {rule.actionType && (
+                <button 
+                  onClick={handleAction}
+                  className="self-start flex items-center px-4 py-1.5 bg-[var(--accent-primary)] text-white text-xs font-semibold rounded hover:bg-opacity-90 transition-colors"
+                >
+                  {rule.actionType.replace(/_/g, ' ')} <ArrowRight size={14} className="ml-1" />
+                </button>
+              )}
+            </div>
           </div>
 
-          <div className="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <p className="text-sm font-medium text-white">Recommended Action:</p>
-              <p className="text-sm text-[var(--text-secondary)]">{rule.recommendedAction}</p>
-              <p className="text-xs text-[var(--accent-primary)] mt-1 italic">Impact: {rule.expectedImpact}</p>
-            </div>
-            
-            {rule.actionType && (
-              <button 
-                onClick={handleAction}
-                className="flex-shrink-0 flex items-center px-4 py-2 bg-[var(--accent-primary)] text-white text-sm rounded hover:bg-opacity-90 transition-colors"
-              >
-                {rule.actionType.replace(/_/g, ' ')} <ArrowRight size={16} className="ml-2" />
-              </button>
-            )}
-          </div>
+          {rule.verification && (
+             <div className="mt-2 text-xs text-[var(--text-secondary)] flex items-start gap-1">
+               <strong className="text-green-400">Verification:</strong> {rule.verification}
+             </div>
+          )}
         </div>
       </div>
     </div>

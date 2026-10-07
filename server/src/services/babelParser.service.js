@@ -1,84 +1,56 @@
-import { parse } from '@babel/parser';
-import fs from 'fs';
+import { parse } from "@babel/parser";
+import fs from "fs";
 
-/**
- * Reusable Babel parser configuration.
- */
 const parserOptions = {
-    sourceType: "module",
-    plugins: [
-        "jsx",
-        "typescript",
-        "classProperties",
-        "classPrivateMethods",
-        "classPrivateProperties",
-        "optionalChaining",
-        "nullishCoalescingOperator",
-        "dynamicImport",
-        "objectRestSpread",
-        "topLevelAwait"
-    ]
+  sourceType: "unambiguous",
+  plugins: [
+    "jsx",
+    "typescript",
+    "classProperties",
+    "classPrivateMethods",
+    "classPrivateProperties",
+    "optionalChaining",
+    "nullishCoalescingOperator",
+    "dynamicImport",
+    "objectRestSpread",
+    "topLevelAwait",
+  ],
+  errorRecovery: false,
 };
 
-/**
- * Parses a JavaScript code string into an AST.
- * @param {string} codeString - The JavaScript code to parse.
- * @returns {Object} Result object containing success status, AST, or error message.
- */
+const safeError = (error, fallback) => String(error?.message || fallback).replace(/[A-Za-z]:\\[^\n]+/g, "source file").slice(0, 300);
+
 export const parseJavaScriptCode = (codeString) => {
-    try {
-        const ast = parse(codeString, parserOptions);
-        return {
-            success: true,
-            ast
-        };
-    } catch (error) {
-        return {
-            success: false,
-            ast: null,
-            error: error.message
-        };
-    }
+    try { return { success: true, ast: parse(codeString, parserOptions) }; }
+    catch (error) { return { success: false, ast: null, error: safeError(error, "Unable to parse source") }; }
 };
 
-/**
- * Reads a JavaScript file and parses it into an AST.
- * @param {string} filePath - The path to the JavaScript file.
- * @returns {Object} Result object containing success status, AST, or error message.
-        return {
-            success: false,
-            ast: null,
-            error: error.message || 'Failed to parse code'
-        };
-    }
-};
-
-/**
- * Reads a JavaScript file and parses it into a Babel AST.
- * @param {string} filePath - The path to the file.
- * @returns {{success: boolean, ast: object|null, error?: string}}
- */
 export const parseJavaScriptFile = (filePath) => {
-    if (typeof filePath !== 'string') {
-        return { success: false, ast: null, error: 'Invalid file path' };
-    }
+  if (typeof filePath !== "string") {
+    return { success: false, ast: null, error: "Invalid file path" };
+  }
 
-    if (!fs.existsSync(filePath)) {
-        return {
-            success: false,
-            ast: null,
-            error: `File does not exist: ${filePath}`
-        };
-    }
+  if (!fs.existsSync(filePath)) {
+    return {
+      success: false,
+      ast: null,
+      error: `File does not exist: ${filePath}`,
+    };
+  }
 
-    try {
-        const code = fs.readFileSync(filePath, 'utf-8');
-        return parseJavaScriptCode(code);
-    } catch (error) {
-        return {
-            success: false,
-            ast: null,
-            error: `Failed to read file: ${error.message}`
-        };
-    }
+  try {
+    const code = fs.readFileSync(filePath, "utf-8");
+    const lineCount = code ? code.split(/\r?\n/).length : 0;
+    return {
+      ...parseJavaScriptCode(code),
+      lineCount,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      ast: null,
+      lineCount: 0,
+      error: `Failed to read file: ${safeError(error, "Unable to read source")}`,
+    };
+  }
 };

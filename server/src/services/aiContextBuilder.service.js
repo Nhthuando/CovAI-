@@ -11,7 +11,15 @@ function collectFiles(dir, isMatch, rootDir = dir) {
         if (!fs.existsSync(dir)) return results;
         const items = fs.readdirSync(dir);
         for (const item of items) {
-            if (item === "node_modules" || item === ".git") continue;
+            if (
+                item === "node_modules" ||
+                item === ".git" ||
+                item === "coverage" ||
+                item === "dist" ||
+                item === "build" ||
+                item === ".covai-temp" ||
+                item === "test-results"
+            ) continue;
 
             const itemPath = path.join(dir, item);
             const stat = fs.statSync(itemPath);

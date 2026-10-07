@@ -1118,6 +1118,24 @@ export default function Editor({
             </div>
           )}
 
+          {snapshotId && !isCurrentTestFile && (
+            <button
+              type="button"
+              onClick={() => onSuggestTestcase?.(activeTabId)}
+              className="flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-semibold"
+              style={{
+                background: "rgba(168, 85, 247, 0.15)",
+                color: "#c084fc",
+                border: "1px solid rgba(168, 85, 247, 0.35)",
+                cursor: "pointer",
+                transition: "all 0.15s ease",
+              }}
+              title="Request AI Agent to suggest Jest/Vitest testcase in chat"
+            >
+              <Sparkles size={12} style={{ color: "#c084fc" }} />
+              <span>Suggest testcase</span>
+            </button>
+          )}
           {saveError && (
             <span style={{ color: "var(--color-danger)", fontSize: 11 }}>
               {saveError}
@@ -1173,9 +1191,11 @@ export default function Editor({
             />
             <span>
               Applied test case to file{" "}
-              <strong>{appliedNotification.targetTestFile}</strong>. Please review
-              the draft code and click <strong>Run Analysis Unit</strong> to confirm tests
-              pass and coverage increases.
+              <strong style={{ color: "var(--color-text)" }}>
+                {appliedNotification.targetTestFile}
+              </strong>
+              . Review the draft code and click <strong>Run Analysis Unit</strong> to
+              confirm tests pass and coverage increases.
             </span>
           </div>
           <div className="flex items-center gap-2">

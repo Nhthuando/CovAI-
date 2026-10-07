@@ -15,7 +15,6 @@ import {
 import { checkAndIncrementQuota } from "../services/aiQuota.service.js";
 import { getAiTestById, listAiTests } from "../services/aiTest.service.js";
 import { detectAndSaveProject as detectAndSavePlaywright } from "../services/playwrightDetection.service.js";
-import { createPlaywrightSystemCoverageJob } from "../services/job.service.js";
 import { detectSystemTestFrameworks } from "../services/systemTestFrameworkDetection.service.js";
 import prisma from "../config/prisma.js";
 import {
@@ -45,6 +44,7 @@ import {
   restoreProjectCheckpoint,
 } from "../services/project.service.js";
 import { createBuildCfgJob } from "../services/job.service.js";
+import { getArchitectureAiSummary } from "../services/architectureAiSummary.service.js";
 import { addJobToQueue } from "../services/queue.service.js";
 import { analysisJobResponse } from "../services/analysisResponse.service.js";
 import { detectProjectFrameworks } from "../services/frameworkDetection.service.js";
@@ -370,6 +370,34 @@ class ProjectController {
       return res.status(500).json({
         success: false,
         message: "Failed to start architecture analysis",
+      });
+    }
+  }
+
+  /**
+   * POST /projects/:id/architecture/ai-summary
+   */
+  async getArchitectureAiSummary(req, res) {
+    try {
+      const { snapshotId, filePath, force } = req.body;
+      const data = await getArchitectureAiSummary({
+        projectId: req.params.id,
+        snapshotId,
+        filePath,
+        userId: req.user.id,
+        force: Boolean(force),
+      });
+      return res.status(200).json({ success: true, data });
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+      console.error(error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to generate architecture AI summary",
       });
     }
   }
@@ -1409,6 +1437,7 @@ class ProjectController {
         snapshotId,
         userId: req.user.id,
         mode: req.body.mode || "SKELETON",
+        executionMode: req.body.executionMode || "full",
       });
 
       addJobToQueue("AI_TESTS", job.id).catch((err) => {
@@ -1994,6 +2023,12 @@ The user is working on project: ${project.name}.
           .json({ success: false, message: error.message });
       }
 
+      if (error.status) {
+        return res
+          .status(error.status)
+          .json({ success: false, message: error.message, code: error.code });
+      }
+
       return res.status(500).json({
         success: false,
         message: "Internal server error",
@@ -2269,7 +2304,7 @@ The user is working on project: ${project.name}.
       const userId = req.user?.id;
 
       if (!snapshotId) {
-        throw new AppError("snapshotId is required", 400);
+        throw new ServiceError("snapshotId is required", 400);
       }
 
       const job = await createPlaywrightSystemCoverageJob({
@@ -2303,3 +2338,4 @@ The user is working on project: ${project.name}.
 }
 
 export default new ProjectController();
+

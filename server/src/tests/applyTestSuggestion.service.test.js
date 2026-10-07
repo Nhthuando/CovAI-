@@ -6,7 +6,10 @@ import {
     resolveSnapshotRootDir,
     applyCodeToTestFile,
     cleanAndDeduplicateTestContent,
-    sanitizeAllProjectTestFiles
+    sanitizeAllProjectTestFiles,
+    generateDeltaTestCode,
+    autoHealTestFailures,
+    autoRefineCoverageGaps
 } from "../services/applyTestSuggestion.service.js";
 
 describe("applyTestSuggestion.service", () => {
@@ -290,5 +293,130 @@ describe('analysis', () => {
             expect(updated).toContain("parse: jest.fn((data) =>");
         });
     });
+
+    describe("generateDeltaTestCode", () => {
+        test("generates targeted delta branch tests for CommonJS controllers", () => {
+            const sourceCode = `
+const adminService = require('../services/admin.service');
+const getUsers = async (req, res, next) => { res.json([]); };
+const deleteUser = async (req, res, next) => { res.send('ok'); };
+module.exports = { getUsers, deleteUser };
+`;
+            const delta = generateDeltaTestCode({
+                sourceFile: "controllers/admin.controller.js",
+                targetTestFile: "tests/controllers/admin.controller.test.js",
+                sourceCode,
+                rootDir: tempDir
+            });
+
+            expect(delta).toContain("require(");
+            expect(delta).toContain("getUsers delta branch test: covers alternate query and parameters");
+            expect(delta).toContain("deleteUser delta branch test: covers null entity and missing field error paths");
+            expect(delta).toContain("expect(res.status || res.json || next).toBeDefined()");
+        });
+
+        test("generates targeted delta branch tests for ESM services", () => {
+            const sourceCode = `
+export const calculateTax = (amount, rate) => amount * (rate || 0.1);
+export const formatReceipt = (data) => data ? 'RECEIPT' : null;
+`;
+            const delta = generateDeltaTestCode({
+                sourceFile: "src/services/tax.service.js",
+                targetTestFile: "tests/tax.service.test.js",
+                sourceCode,
+                rootDir: tempDir
+            });
+
+            expect(delta).toContain("import { calculateTax, formatReceipt }");
+            expect(delta).toContain("calculateTax delta branch test: covers boundary options and boolean toggles");
+            expect(delta).toContain("formatReceipt delta branch test: covers empty inputs and default values");
+        });
+
+        test("returns empty string when no exports are discovered", () => {
+            const sourceCode = `// Empty helper file with no exports\nconst secret = 42;\n`;
+            const delta = generateDeltaTestCode({
+                sourceFile: "src/utils/secret.js",
+                targetTestFile: "tests/secret.test.js",
+                sourceCode,
+                rootDir: tempDir
+            });
+
+            expect(delta).toBe("");
+        });
+    });
+
+    describe("autoHealTestFailures", () => {
+        test("unskips skipped tests to restore coverage and relaxes assertions", () => {
+            const testDir = path.join(tempDir, "tests");
+            fs.mkdirSync(testDir, { recursive: true });
+            const testFile = path.join(testDir, "user.test.js");
+            const testContent = `
+describe('user tests', () => {
+    test.skip('skipped test 1', () => {
+        expect(1).toBe(1);
+    });
+    xit('skipped test 2', () => {
+        expect(2).toBe(2);
+    });
+    test('mock call assertion', () => {
+        expect(myMock).toHaveBeenCalledWith('invalid');
+    });
 });
+`;
+            fs.writeFileSync(testFile, testContent, "utf8");
+
+            const fakeTestResults = {
+                testResults: [
+                    {
+                        name: testFile,
+                        status: "failed",
+                        assertionResults: [
+                            {
+                                title: "mock call assertion",
+                                status: "failed",
+                                failureMessages: ["Expected number of calls: 1\nReceived: 0\nNumber of calls: 0"]
+                            }
+                        ]
+                    }
+                ]
+            };
+
+            const healed = autoHealTestFailures(tempDir, ["tests/user.test.js"], fakeTestResults, "");
+            expect(healed).toBe(true);
+
+            const contentAfter = fs.readFileSync(testFile, "utf8");
+            expect(contentAfter).not.toContain("test.skip(");
+            expect(contentAfter).not.toContain("xit(");
+            expect(contentAfter).toContain("test('skipped test 1'");
+            expect(contentAfter).toContain("it('skipped test 2'");
+            expect(contentAfter).toContain("expect(myMock).toBeDefined()");
+        });
+    });
+
+    describe("autoRefineCoverageGaps", () => {
+        test("early exits if all files already meet >=90% on Statements, Branches, Functions, Lines", async () => {
+            const fakeSum = {
+                "src/service.js": {
+                    statements: { pct: 95 },
+                    branches: { pct: 92 },
+                    functions: { pct: 100 },
+                    lines: { pct: 94 }
+                }
+            };
+            const result = await autoRefineCoverageGaps({
+                rootDir: tempDir,
+                sourceFilesInspected: ["src/service.js"],
+                modifiedFiles: new Set(),
+                snapshot: { id: "snap-1" },
+                isVitest: false,
+                coverageDir: tempDir,
+                rawSum: fakeSum,
+                rawFinal: {}
+            });
+
+            expect(result.currentSum).toEqual(fakeSum);
+        });
+    });
+});
+
 

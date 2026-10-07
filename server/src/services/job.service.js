@@ -195,17 +195,20 @@ export const createSystemTestAnalysisJob = ({
   snapshotId,
   userId,
   runner = null,
+  executionMode = "full",
 }) => {
+  if (executionMode !== "full") throw new ServiceError("System Test supports full-system execution only.",400);
   if (runner !== null && !["playwright", "cypress"].includes(runner)) {
     throw new ServiceError("runner must be playwright or cypress", 400);
   }
+  if (runner === 'cypress') throw new ServiceError('Full-system execution currently requires Playwright.',422);
 
   return createSnapshotJob({
     projectId,
     snapshotId,
     userId,
     type: "SYSTEM_TEST_ANALYSIS",
-    payloadJson: { snapshotId, runner },
+    payloadJson: { snapshotId, runner, executionMode },
   });
 };
 
@@ -213,14 +216,21 @@ export const createVitestCoverageJob = createTypedJob("VITEST_COVERAGE");
 
 /** Creates a queued Supertest integration-coverage job for a snapshot. */
 export const createSupertestCoverageJob = createTypedJob("SUPERTEST_COVERAGE");
-export const createCypressSystemCoverageJob = createTypedJob("CYPRESS_SYSTEM_COVERAGE");
-export const createCypressSystemTestJob = createTypedJob("CYPRESS_SYSTEM_TEST");
+/** @deprecated Use createSystemTestAnalysisJob instead */
+export const createCypressSystemCoverageJob = ({ projectId, snapshotId, userId }) =>
+  createSystemTestAnalysisJob({ projectId, snapshotId, userId, runner: "cypress" });
+
+/** @deprecated Use createSystemTestAnalysisJob instead */
+export const createCypressSystemTestJob = ({ projectId, snapshotId, userId }) =>
+  createSystemTestAnalysisJob({ projectId, snapshotId, userId, runner: "cypress" });
 export const createBuildCfgJob = createTypedJob("BUILD_CFG");
 export const createPerformanceAnalysisJob = createTypedJob("PERFORMANCE_ANALYSIS");
 export const createAiSuggestJob = createTypedJob("AI_SUGGEST");
 export const createCodeHygieneJob = createTypedJob("CODE_HYGIENE");
 
-export const createAiTestsJob = async ({ projectId, snapshotId, userId, mode = "SKELETON" }) => {
+export const createAiTestsJob = async ({ projectId, snapshotId, userId, mode = "SKELETON", executionMode = "full" }) => {
+  if (["PLAYWRIGHT_E2E","PLAYWRIGHT"].includes(mode) && executionMode !== "full") throw new ServiceError("System Test generation requires full-system execution.",400);
+  if (!["frontend", "full"].includes(executionMode)) throw new ServiceError("Invalid executionMode", 400);
   const existing = await prisma.job.findFirst({
     where: {
       projectId,
@@ -240,7 +250,7 @@ export const createAiTestsJob = async ({ projectId, snapshotId, userId, mode = "
     snapshotId,
     userId,
     type: "AI_TESTS",
-    payloadJson: { snapshotId, mode },
+    payloadJson: { snapshotId, mode, executionMode },
   });
 };
 
@@ -756,13 +766,13 @@ export const createPlaywrightJob = async ({ projectId, snapshotId, userId, testD
   return job;
 };
 
+/** @deprecated Use createSystemTestAnalysisJob instead */
 export const createPlaywrightSystemCoverageJob = async ({ projectId, snapshotId, userId, testDirectory }) => {
-  return createSnapshotJob({
+  return createSystemTestAnalysisJob({
     projectId,
     snapshotId,
     userId,
-    type: "PLAYWRIGHT_SYSTEM_COVERAGE",
-    payloadJson: { snapshotId, testDirectory }
+    runner: "playwright",
   });
 };
 

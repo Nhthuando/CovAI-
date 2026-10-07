@@ -95,14 +95,15 @@ const MissingTestFilesModal = ({
               <strong style={{ color: "var(--color-text)" }}>
                 {projectName}
               </strong>{" "}
-              does not have test files yet (Jest).
+              has no test files (Jest).
             </p>
             <p style={{ margin: 0 }}>
-              Code Coverage analysis requires test files to execute
-              successfully. Would you like AI to automatically generate Test Code for project{" "}
+              Code coverage analysis requires test files to execute successfully.
+              Would you like AI to automatically generate test code for project{" "}
               <strong style={{ color: "var(--color-text)" }}>
                 {projectName}
-              </strong>?
+              </strong>
+              ?
             </p>
           </div>
 
@@ -173,7 +174,7 @@ const MissingTestFilesModal = ({
                 marginTop: "8px",
               }}
             >
-              Skip
+              Skip for now
             </button>
           </div>
         </motion.div>

@@ -128,7 +128,7 @@ export default function FunctionExecutionFlow({
               color: "#8b949e",
             }}
           >
-            Total functions: <b style={{ color: "#e6edf3" }}>{totalFns} functions</b>
+            Total Functions: <b style={{ color: "#e6edf3" }}>{totalFns}</b>
           </div>
 
           <div
@@ -157,8 +157,8 @@ export default function FunctionExecutionFlow({
               color: "#8b949e",
             }}
           >
-            Total call hits:{" "}
-            <b style={{ color: "#22c55e" }}>{totalHits} hits</b>
+            Total Invocations:{" "}
+            <b style={{ color: "#22c55e" }}>{totalHits} calls</b>
           </div>
 
           {uncalledFns > 0 && (
@@ -202,7 +202,7 @@ export default function FunctionExecutionFlow({
           >
             <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <BarChart3 size={13} style={{ color: "#38bdf8" }} />
-              Call count distribution across methods
+              Call distribution across methods
             </span>
             <span>Total: {totalHits} calls</span>
           </div>
@@ -244,7 +244,7 @@ export default function FunctionExecutionFlow({
                       background: color,
                       borderRight: "1px solid rgba(0,0,0,0.5)",
                     }}
-                    title={`${fn.displayName}(): ${fn.hit} call hits (${pctWidth}%)`}
+                    title={`${fn.displayName}(): ${fn.hit} calls (${pctWidth}%)`}
                   />
                 );
               })}
@@ -394,7 +394,7 @@ export default function FunctionExecutionFlow({
             color: "#8b949e",
           }}
         >
-          Loading method execution map data...
+          Loading function execution flow data...
         </div>
       )}
 
@@ -410,7 +410,7 @@ export default function FunctionExecutionFlow({
         >
           {cleanedFunctions.length === 0
             ? "No function data available. Click 'Run Analysis Unit' to analyze Jest/Vitest."
-            : "No matching functions found for the filter."}
+            : "No functions match the selected filter."}
         </div>
       )}
 
@@ -551,7 +551,7 @@ export default function FunctionExecutionFlow({
                   >
                     <div>
                       <div style={{ fontSize: 10, color: "#8b949e" }}>
-                        Execution Hits
+                        Invocations
                       </div>
                       <div
                         style={{
@@ -567,7 +567,7 @@ export default function FunctionExecutionFlow({
 
                     <div style={{ textAlign: "right" }}>
                       <div style={{ fontSize: 10, color: "#8b949e" }}>
-                        Line Location
+                        Line Position
                       </div>
                       <div
                         style={{

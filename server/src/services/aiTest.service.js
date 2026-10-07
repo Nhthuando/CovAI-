@@ -58,8 +58,14 @@ export const queueSupertestGeneration = async ({ projectId, snapshotId, userId, 
 
   // 2.8 Pre-flight Dirty Check (F-03)
   if (!force) {
-    const existingTests = await db.aiTest.findMany({
-      where: { snapshotId: resolvedSnapshotId, mode: "SUPERTEST" }
+    const allTests = await db.aiTest.findMany({
+      where: { snapshotId: resolvedSnapshotId }
+    });
+    const existingTests = allTests.filter(t => {
+      if (!t.metaJson) return false;
+      try {
+        return JSON.parse(t.metaJson).framework === "SUPERTEST";
+      } catch { return false; }
     });
     
     let hasEdits = false;

@@ -40,6 +40,10 @@ router.post(
 );
 router.post("/:id/run-analysis", projectController.runCoverageAnalysis);
 router.post("/:id/structure-analysis", projectController.runStructureAnalysis);
+router.post(
+  "/:id/architecture/ai-summary",
+  projectController.getArchitectureAiSummary,
+);
 router.post("/:id/quality-analysis", runQualityAnalysis);
 router.get("/:id/quality-report", fetchQualityReport);
 router.post("/:id/cfg/build", projectController.buildCfg);
@@ -120,26 +124,6 @@ router.post(
   "/:id/playwright-detection",
   authMiddleware,
   projectController.detectPlaywrightFramework.bind(projectController),
-);
-router.post(
-  "/:id/playwright-test",
-  authMiddleware,
-  projectController.runPlaywrightSystemTests.bind(projectController),
-);
-router.post(
-  "/:id/cypress-system-test",
-  authMiddleware,
-  projectController.runCypressSystemTests.bind(projectController),
-);
-router.post(
-  "/:id/cypress-coverage",
-  authMiddleware,
-  projectController.runCypressCoverage.bind(projectController),
-);
-router.post(
-  "/:id/playwright-coverage",
-  authMiddleware,
-  projectController.runPlaywrightCoverage.bind(projectController),
 );
 router.get(
   "/:id/system-test/frameworks",

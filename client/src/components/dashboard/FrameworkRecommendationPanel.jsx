@@ -95,7 +95,7 @@ export default function FrameworkRecommendationPanel({ projectId, snapshotId }) 
           </div>
           {data.selection?.requiresInstallation && (
             <p style={{ color: "#fbbf24", fontSize: 10, lineHeight: 1.45, marginTop: 8 }}>
-              Selected framework must be installed before running tests.
+              The selected framework needs to be installed before running tests.
             </p>
           )}
           {data.explanation?.[0] && <p style={{ color: "#6e7681", fontSize: 10, lineHeight: 1.45, marginTop: 8 }}>{data.explanation[0]}</p>}

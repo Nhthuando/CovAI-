@@ -16,10 +16,6 @@ import { processSecurityAnalysisJob } from './securityScanJob.service.js';
 import { processRunVitestJob } from "./runVitestJob.service.js";
 import { processSystemTestAnalysisJob } from "./systemTestAnalysisJob.service.js";
 import { processVitestCoverageJob } from './vitestCoverageJob.service.js';
-import { processCypressSystemCoverageJob } from './cypressSystemCoverageJob.service.js';
-import { processCypressSystemTestJob } from './runCypressSystemTestJob.service.js';
-import { processRunPlaywrightJob } from './runPlaywrightJob.service.js';
-import { processPlaywrightSystemCoverageJob } from './playwrightSystemCoverageJob.service.js';
 import {
   getJobById,
   markJobRunning,
@@ -73,11 +69,30 @@ if (connection && typeof connection.on === 'function') {
 export const jobQueue = new Queue('covai-jobs', { connection });
 export const flowProducer = new FlowProducer({ connection });
 
-if (jobQueue && typeof jobQueue.on === 'function') {
-  jobQueue.on('error', () => { isRedisConnected = false; });
+if (typeof connection?.on === 'function') {
+  connection.on('error', (err) => {
+    isRedisConnected = false;
+    if (process.env.NODE_ENV !== 'test') {
+      console.warn(`[Redis Connection Error] ${err.message}`);
+    }
+  });
 }
-if (flowProducer && typeof flowProducer.on === 'function') {
-  flowProducer.on('error', () => {});
+
+if (typeof jobQueue?.on === 'function') {
+  jobQueue.on('error', (err) => {
+    isRedisConnected = false;
+    if (process.env.NODE_ENV !== 'test') {
+      console.warn(`[BullMQ Queue Error] ${err.message}`);
+    }
+  });
+}
+
+if (typeof flowProducer?.on === 'function') {
+  flowProducer.on('error', (err) => {
+    if (process.env.NODE_ENV !== 'test') {
+      console.warn(`[BullMQ FlowProducer Error] ${err.message}`);
+    }
+  });
 }
 
 export const executeJobDirectly = async (type, jobId, customData = {}) => {
@@ -192,23 +207,15 @@ export const executeJobDirectly = async (type, jobId, customData = {}) => {
       case 'RUN_VITEST_TESTS':
         await processRunVitestJob(jobId);
         break;
-      case 'SYSTEM_TEST_ANALYSIS':
-        await processSystemTestAnalysisJob(jobId);
-        break;
       case 'VITEST_COVERAGE':
         await processVitestCoverageJob(jobId);
         break;
+      case 'SYSTEM_TEST_ANALYSIS':
       case 'CYPRESS_SYSTEM_TEST':
-        await processCypressSystemTestJob(jobId);
-        break;
       case 'CYPRESS_SYSTEM_COVERAGE':
-        await processCypressSystemCoverageJob(jobId);
-        break;
       case 'PLAYWRIGHT_SYSTEM_TEST':
-        await processRunPlaywrightJob(jobId);
-        break;
       case 'PLAYWRIGHT_SYSTEM_COVERAGE':
-        await processPlaywrightSystemCoverageJob(jobId);
+        await processSystemTestAnalysisJob(jobId);
         break;
       default:
         console.warn(`[DirectExecutor] Unknown job type: ${type}`);
@@ -221,6 +228,7 @@ export const executeJobDirectly = async (type, jobId, customData = {}) => {
         await markJobFailed(jobId, error);
       }
     } catch (_) { }
+    throw error;
   }
 };
 
@@ -234,10 +242,30 @@ const worker = new Worker(
     try {
       console.log(`[Queue] job.data = ${JSON.stringify({ type, jobId, ...customData })}`);
       await executeJobDirectly(type, jobId, customData);
-      console.log(`[Queue] Job ${jobId} completed (Type: ${type})`);
+      console.log(`[Queue] Completed Job ${jobId} (Type: ${type})`);
     } catch (error) {
       console.error(`[Queue] Error processing Job ${jobId} (Type: ${type}):`, error);
-      throw error;
+      // Fallback to mark job failed if the handler didn't do it itself
+      try {
+        const dbJob = await getJobById(jobId);
+        if (dbJob && dbJob.status === 'RUNNING') {
+          await markJobFailed(jobId, error);
+        } else if (dbJob && dbJob.status === 'QUEUED') {
+          await markQueuedJobFailed(jobId, error);
+        }
+      } catch (fallbackError) {
+        console.error(
+          `[Queue] Unable to markJobFailed for Job ${jobId}:`,
+          fallbackError,
+        );
+        try {
+          await prisma.job.update({
+            where: { id: jobId },
+            data: { status: 'FAILED', errorMessage: error.message || 'Job execution failed', finishedAt: new Date() },
+          });
+        } catch (_) {}
+      }
+      throw error; // Let BullMQ know it failed
     }
   },
   { connection },
@@ -251,7 +279,7 @@ worker.on('failed', (job, err) => {
 
 worker.on('error', (err) => {
   if (process.env.NODE_ENV !== 'test') {
-    console.error(`[Queue Worker] Error: ${err.message}`);
+    console.error('[BullMQ Worker Error]', err.message);
   }
 });
 

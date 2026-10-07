@@ -383,7 +383,7 @@ function TestSuggestionCard({
               title="Automatically apply test cases for both Jest and Vitest"
             >
               <Sparkles size={11} />
-              <span>Apply all</span>
+              <span>Apply Both</span>
             </button>
           )}
         </div>
@@ -495,7 +495,7 @@ function TestSuggestionCard({
                 border: "1px solid var(--color-border)",
                 cursor: current.isUndoing ? "wait" : "pointer",
               }}
-              title="Revert test file to state before Apply"
+              title="Revert test file to previous state before Apply"
             >
               {current.isUndoing ? (
                 <Loader2 size={13} className="animate-spin" />
@@ -1128,8 +1128,7 @@ function ChatMessage({
                 lineHeight: 1.6,
               }}
             >
-              You have exceeded the free chat limit today to ensure
-              server quality.
+              You have reached today's free AI chat limit to ensure service stability.
             </p>
             <p
               style={{
@@ -1139,7 +1138,7 @@ function ChatMessage({
                 fontStyle: "italic",
               }}
             >
-              Please return tomorrow! Thank you for using the platform.
+              Please come back tomorrow! Thank you for using the system.
             </p>
           </div>
         </div>
@@ -2427,7 +2426,7 @@ export default function AIPanel({
       content: isTest
         ? `✨ Please suggest additional test cases for test file \`${filePath}\``
         : `✨ Please suggest Jest & Vitest test cases for file \`${filePath}\``,
-      timestamp: new Date().toLocaleTimeString("vi-VN", {
+      timestamp: new Date().toLocaleTimeString("en-US", {
         hour: "2-digit",
         minute: "2-digit",
       }),
@@ -2441,14 +2440,14 @@ export default function AIPanel({
       const data = res?.data;
 
       if (!data) {
-        throw new Error("No test case suggestion data received from server.");
+        throw new Error("Did not receive test case suggestions from server.");
       }
 
       if (data.isFullyCovered) {
         const assistantMsg = {
           id: getNextId(),
           role: "assistant",
-          timestamp: new Date().toLocaleTimeString("vi-VN", {
+          timestamp: new Date().toLocaleTimeString("en-US", {
             hour: "2-digit",
             minute: "2-digit",
           }),
@@ -2524,7 +2523,7 @@ export default function AIPanel({
       const assistantMsg = {
         id: getNextId(),
         role: "assistant",
-        timestamp: new Date().toLocaleTimeString("vi-VN", {
+        timestamp: new Date().toLocaleTimeString("en-US", {
           hour: "2-digit",
           minute: "2-digit",
         }),
@@ -2541,11 +2540,11 @@ export default function AIPanel({
           id: getNextId(),
           role: "assistant",
           type: "error",
-          timestamp: new Date().toLocaleTimeString("vi-VN", {
+          timestamp: new Date().toLocaleTimeString("en-US", {
             hour: "2-digit",
             minute: "2-digit",
           }),
-          content: `❌ Error suggesting testcases for \`${filePath}\`: ${err.message || "Unable to connect to AI API."}`,
+          content: `❌ Error suggesting test cases for \`${filePath}\`: ${err.message || "Unable to connect to AI API."}`,
         },
       ]);
     } finally {

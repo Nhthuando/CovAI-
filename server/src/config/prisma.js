@@ -13,12 +13,10 @@ if (process.env.DATABASE_URL) {
         connectionTimeoutMillis: 25000,
         allowExitOnIdle: true,
     });
-
     pool.on("error", (err) => {
-        // Neon automatically terminates idle connections; handle here to prevent unhandled errors or stale pool clients
-        console.warn("[pg-pool] Handled idle client termination:", err.message);
+        // Neon / PostgreSQL idle connections; handle here to prevent unhandled errors or stale pool clients
+        console.warn("[pg-pool] Handled non-fatal pool client error:", err.message);
     });
-
     const adapter = new PrismaPg(pool);
     prismaClient = new PrismaClient({ adapter });
 }
