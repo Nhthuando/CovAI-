@@ -440,7 +440,20 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
 
                     if (anyDuplicate) {
                         if (remainingTokens.length === 0) {
-                            linesAfterDedup[i] = `// [deduped] ${line.trim()}`;
+                            let depth = 0;
+                            for (let j = i; j < lines.length; j++) {
+                                const curLine = lines[j];
+                                linesAfterDedup[j] = `// [deduped] ${curLine.trim()}`;
+                                const stripped = curLine.replace(/\/\/.*$/, "").replace(/(['"`])(?:(?!\1)[^\\]|\\.)*\1/g, "");
+                                for (const ch of stripped) {
+                                    if (ch === '{' || ch === '(' || ch === '[') depth++;
+                                    else if (ch === '}' || ch === ')' || ch === ']') depth--;
+                                }
+                                if (depth <= 0 && (stripped.includes(';') || j > i)) {
+                                    i = j;
+                                    break;
+                                }
+                            }
                         } else {
                             linesAfterDedup[i] = `${kind} { ${remainingTokens.join(', ')} } = ${rest}`;
                         }
@@ -451,7 +464,20 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
                     if (simpleMatch) {
                         const [, , varName] = simpleMatch;
                         if (topDeclared.has(varName)) {
-                            linesAfterDedup[i] = `// [deduped] ${line.trim()}`;
+                            let depth = 0;
+                            for (let j = i; j < lines.length; j++) {
+                                const curLine = lines[j];
+                                linesAfterDedup[j] = `// [deduped] ${curLine.trim()}`;
+                                const stripped = curLine.replace(/\/\/.*$/, "").replace(/(['"`])(?:(?!\1)[^\\]|\\.)*\1/g, "");
+                                for (const ch of stripped) {
+                                    if (ch === '{' || ch === '(' || ch === '[') depth++;
+                                    else if (ch === '}' || ch === ')' || ch === ']') depth--;
+                                }
+                                if (depth <= 0 && (stripped.includes(';') || j > i)) {
+                                    i = j;
+                                    break;
+                                }
+                            }
                         } else {
                             topDeclared.set(varName, i);
                         }
@@ -603,21 +629,27 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     }
 
     // 10. Heal and standardize axios mock to provide a shared mock instance across all axios.create() calls
-    if (cleaned.includes("axios") && (cleaned.includes("create: jest.fn") || cleaned.includes("create: vi.fn") || cleaned.includes("create: ("))) {
+    if (cleaned.includes("axios") && (cleaned.includes("jest.mock('axios'") || cleaned.includes('jest.mock("axios"') || cleaned.includes("create: jest.fn") || cleaned.includes("create: vi.fn") || cleaned.includes("create: ("))) {
         cleaned = cleaned.replace(
-            /jest\.mock\(['"]axios['"],\s*(?:\(\)\s*=>\s*\{[\s\S]*?return\s*\{[\s\S]*?create:[\s\S]*?\};\s*\}|\(\)\s*=>\s*\(\{\s*create:[\s\S]*?\}\))\s*\);?/g,
+            /jest\.mock\(['"]axios['"],\s*(?:(?:\(\)\s*=>\s*\{[\s\S]*?return\s*\{[\s\S]*?create:[\s\S]*?\};\s*\}|\(\)\s*=>\s*\(\{\s*create:[\s\S]*?\}\))\s*\);?|[\s\S]*?(?=\r?\n[ \t]*(?:const\s+mockAxios|const\s+axios|const\s+\{chatWithAi\}|const\s+\{analyzeText\}|describe\b)))/g,
             `jest.mock('axios', () => {
   const instance = {
     post: jest.fn(() => Promise.resolve({ data: {} })),
-    get: jest.fn(() => Promise.resolve({ data: {} }))
+    get: jest.fn(() => Promise.resolve({ data: {} })),
+    put: jest.fn(() => Promise.resolve({ data: {} })),
+    delete: jest.fn(() => Promise.resolve({ data: {} })),
+    patch: jest.fn(() => Promise.resolve({ data: {} }))
   };
   globalThis.__mockAxiosInstance = instance;
   return {
     create: jest.fn(() => instance),
     post: instance.post,
-    get: instance.get
+    get: instance.get,
+    put: instance.put,
+    delete: instance.delete,
+    patch: instance.patch
   };
-});`
+});\n\n`
         );
     }
 
@@ -637,14 +669,18 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
         }
     }
 
+    // 10b. Heal orphaned multi-line blocks left behind by broken [deduped]
+    cleaned = cleaned.replace(/\/\/\s*\[deduped\]\s*(?:const|let|var)\s+[a-zA-Z0-9_$]+\s*=\s*\{[\s\S]*?\}\s*;?/g, "");
+    cleaned = cleaned.replace(/\/\/\s*\[deduped\]\s*(?:const|let|var)\s+[a-zA-Z0-9_$]+\s*=\s*\([\s\S]*?\)\s*;?/g, "");
+
     // 11. Normalize redundant monorepo prefixes (../../backend/src/... -> ../../src/...)
     cleaned = cleaned.replace(/require\(['"](?:\.\.\/)+(?:backend|frontend|server|client|api)\/src\/([^'"]+)['"]\)/g, "require('../../src/$1')");
 
-    // 12. Heal truncated or cut-off jest.mock blocks that are missing closing braces before another jest.mock or describe
+    // 12. Heal truncated or cut-off jest.mock blocks that are missing closing braces before another jest.mock or describe or top-level declaration
     cleaned = cleaned.replace(
-        /jest\.mock\s*\(\s*['"][^'"]+['"]\s*,\s*(?:\(\)\s*=>\s*)?\(\{\s*(?:models:\s*\{\s*)?[a-zA-Z0-9_$]+:\s*\{[\s\S]*?(?=\r?\n[ \t]*(?:jest\.mock|describe)\b)/g,
-        (match) => {
-            if (match.includes("models")) {
+        /jest\.mock\s*\(\s*['"]([^'"]+)['"]\s*,\s*(?:\(\)\s*=>\s*)?(?:\{|\(\{\s*)(?:models:\s*\{\s*)?[a-zA-Z0-9_$]+:\s*\{?[\s\S]*?(?=\r?\n[ \t]*(?:jest\.mock|describe|const\s+mockAxios|const\s+axios)\b)/g,
+        (match, modName) => {
+            if (modName.includes("models")) {
                 return `jest.mock('../../src/models', () => ({
   models: {
     Requirement: {
@@ -661,6 +697,20 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     }
   }
 }));\n\n`;
+            }
+            if (modName === "axios") {
+                return `jest.mock('axios', () => {
+  const instance = {
+    post: jest.fn(() => Promise.resolve({ data: {} })),
+    get: jest.fn(() => Promise.resolve({ data: {} }))
+  };
+  globalThis.__mockAxiosInstance = instance;
+  return {
+    create: jest.fn(() => instance),
+    post: instance.post,
+    get: instance.get
+  };
+});\n\n`;
             }
             return "";
         }

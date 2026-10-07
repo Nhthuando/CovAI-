@@ -320,20 +320,14 @@ export const insertCodeIntoTestFile = (originalContent, codeToAdd, targetTestFil
         }
     }
 
-    // Place new imports and requires after existing imports/requires, never inside describe blocks
+    // Place new imports and requires safely before test/describe blocks, never inside jest.mock or function blocks
     if (importOrRequireLines.length > 0) {
-        const lastTopMatch = [...result.matchAll(/^(?:import|const|let|var|jest\.mock)\s+.*;?$/gm)].pop();
-        if (lastTopMatch && lastTopMatch.index !== undefined) {
-            const insertPos = lastTopMatch.index + lastTopMatch[0].length;
-            result = result.slice(0, insertPos) + "\n" + importOrRequireLines.join("\n") + result.slice(insertPos);
+        const firstTestHookMatch = result.match(/\r?\n[ \t]*(?:describe|test|it|beforeEach|beforeAll|afterEach|afterAll)\s*\(/);
+        if (firstTestHookMatch && firstTestHookMatch.index !== undefined) {
+            const insertPos = firstTestHookMatch.index;
+            result = result.slice(0, insertPos) + "\n" + importOrRequireLines.join("\n") + "\n" + result.slice(insertPos);
         } else {
-            const envMatch = result.match(/(?:process\.env\.[A-Z0-9_]+\s*=[^;]+;\s*\n)+/);
-            if (envMatch && envMatch.index !== undefined) {
-                const insertPos = envMatch.index + envMatch[0].length;
-                result = result.slice(0, insertPos) + "\n" + importOrRequireLines.join("\n") + "\n" + result.slice(insertPos);
-            } else {
-                result = importOrRequireLines.join("\n") + "\n\n" + result;
-            }
+            result = result.trimEnd() + "\n\n" + importOrRequireLines.join("\n") + "\n";
         }
     }
 
