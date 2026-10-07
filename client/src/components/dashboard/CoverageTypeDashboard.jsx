@@ -3899,33 +3899,6 @@ export default function CoverageTypeDashboard({
                               Open test
                             </button>
 
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onSuggestTestcase?.(suite.filePath);
-                              }}
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 4,
-                                padding: "4px 8px",
-                                borderRadius: 5,
-                                background: isLight ? "#f3e8ff" : "rgba(168, 85, 247, 0.15)",
-                                border: isLight ? "1px solid #d8b4fe" : "1px solid rgba(168, 85, 247, 0.35)",
-                                color: isLight ? "#7e22ce" : "#c084fc",
-                                fontSize: 11,
-                                fontWeight: 650,
-                                cursor: "pointer",
-                                transition: "all 0.15s ease",
-                                whiteSpace: "nowrap",
-                              }}
-                              className="hover:opacity-90"
-                              title={`Ask AI Agent to suggest additional test cases for ${suite.fileName}`}
-                            >
-                              <Sparkles size={11} />
-                              <span>Suggest test</span>
-                            </button>
-
                             {((suite.assertions && suite.assertions.length > 0) || suite.message) && (
                               <button
                                 onClick={() =>
