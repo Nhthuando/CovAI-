@@ -26,6 +26,26 @@ export const getStatus = async (req, res) => {
     const status = await GitService.getStatus(projectId, req.user?.id);
     return res.status(200).json({ success: true, data: status });
   } catch (error) {
+    if (error instanceof ServiceError && error.statusCode === 404) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          isGitHubProject: false,
+          hasGit: false,
+          isReady: false,
+          branch: null,
+          tracking: null,
+          ahead: 0,
+          behind: 0,
+          staged: [],
+          unstaged: [],
+          untracked: [],
+          clean: true,
+          repoUrl: null,
+          message: error.message || "Project not found or not ready.",
+        },
+      });
+    }
     return handleError(res, error, "Failed to get git status");
   }
 };

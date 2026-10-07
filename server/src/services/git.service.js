@@ -234,8 +234,31 @@ export class GitService {
    * GET Git status (staged, unstaged, untracked, branch)
    */
   static async getStatus(projectId, userId) {
-    const { rootDir, project, snapshot, isGitHubProject } =
-      await this.getRepoPath(projectId, userId);
+    let repoInfo;
+    try {
+      repoInfo = await this.getRepoPath(projectId, userId);
+    } catch (err) {
+      if (err instanceof ServiceError && err.statusCode === 404) {
+        return {
+          isGitHubProject: false,
+          hasGit: false,
+          isReady: false,
+          branch: null,
+          tracking: null,
+          ahead: 0,
+          behind: 0,
+          staged: [],
+          unstaged: [],
+          untracked: [],
+          clean: true,
+          repoUrl: null,
+          message: err.message || "Project snapshot not ready or not found.",
+        };
+      }
+      throw err;
+    }
+
+    const { rootDir, project, snapshot, isGitHubProject } = repoInfo;
 
     if (!isGitHubProject) {
       return {

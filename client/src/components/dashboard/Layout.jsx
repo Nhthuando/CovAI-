@@ -306,6 +306,11 @@ function LayoutInner() {
             loadedProjects[0]
             : loadedProjects[0];
           setProject(targetProj);
+          if (targetProj && searchParams.get("projectId") !== targetProj.id) {
+            const newParams = new URLSearchParams(location.search);
+            newParams.set("projectId", targetProj.id);
+            navigate(`${location.pathname}?${newParams.toString()}`, { replace: true });
+          }
           let lastError = null;
           for (let attempt = 1; attempt <= retries; attempt++) {
             try {
@@ -448,6 +453,9 @@ function LayoutInner() {
     setTabs([]);
     setActiveFileId(null);
     setActiveTabId(null);
+    const newParams = new URLSearchParams(location.search);
+    newParams.set("projectId", projectId);
+    navigate(`${location.pathname}?${newParams.toString()}`);
     loadData(projectId);
   };
 
@@ -456,12 +464,16 @@ function LayoutInner() {
       const { deleteProjectApi } =
         await import("../../services/project.service");
       await deleteProjectApi(projectId);
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
       showToast({ type: "success", title: "Project deleted" });
       if (project?.id === projectId) {
         setFileTree([]);
         setTabs([]);
         setActiveFileId(null);
         setActiveTabId(null);
+        const newParams = new URLSearchParams(location.search);
+        newParams.delete("projectId");
+        navigate(`${location.pathname}?${newParams.toString()}`, { replace: true });
         loadData();
       } else {
         setProjects((prev) => prev.filter((p) => p.id !== projectId));
