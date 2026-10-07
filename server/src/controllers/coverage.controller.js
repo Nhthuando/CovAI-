@@ -11,6 +11,7 @@ import { buildIntegrationWorkspace, getIntegrationHistoryService } from "../serv
 
 import { getFileCoverageDetails } from "../services/fileCoverage.service.js";
 import { suggestUnitTestcases } from "../services/unitTestSuggestion.service.js";
+import { applyUnitTestSuggestion } from "../services/applyTestSuggestion.service.js";
 import { classifyTestFile } from "../utils/testingFrameworkDetector.js";
 import { resolveProjectRoot, hasSourceCodeFiles, ensureMinimalPackageJson } from "../utils/projectRootResolver.js";
 import { findLogicSourceFiles } from "../services/runTestsJob.service.js";
