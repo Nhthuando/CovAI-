@@ -1980,7 +1980,7 @@ export const getSystemTestSummary = async (req, res) => {
             },
         });
 
-        const latestAiTest = await prisma.aiTest.findFirst({
+        const latestAiTestRecord = await prisma.aiTest.findFirst({
             where: {
                 snapshotId,
                 mode: "PLAYWRIGHT_E2E",
@@ -1996,12 +1996,21 @@ export const getSystemTestSummary = async (req, res) => {
             },
         });
 
-        if (testRuns.length === 0) {
+        let latestAiTest = null;
+        if (latestAiTestRecord) {
+            latestAiTest = {
+                id: latestAiTestRecord.id,
+                filePath: latestAiTestRecord.filePath,
+                status: latestAiTestRecord.status,
+                createdAt: latestAiTestRecord.createdAt,
+            };
+        }
+
+        if (!testRuns || testRuns.length === 0) {
             return res.status(200).json({
                 success: true,
                 data: {
                     hasRun: false,
-                    runner: null,
                     e2eTests: 0,
                     passed: 0,
                     failed: 0,
@@ -2011,8 +2020,6 @@ export const getSystemTestSummary = async (req, res) => {
                     files: [],
                     testRuns: [],
                     scenarios: [],
-                    latestRun: null,
-                    executionMode: "frontend",
                     latestAiTest,
                 },
             });

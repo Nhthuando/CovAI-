@@ -403,9 +403,6 @@ describe('coverage controller empty-state behavior', () => {
                 success: true,
                 data: {
                     hasRun: false,
-                    runner: null,
-                    latestRun: null,
-                    executionMode: "frontend",
                     e2eTests: 0,
                     passed: 0,
                     failed: 0,
