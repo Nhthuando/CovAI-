@@ -20,8 +20,9 @@ export default function SystemTestEvidence({snapshotId, scenarioId, title}) {
   useEffect(()=>{
     if(!open) return;
     const dialog=dialogRef.current;
+    const trigger=triggerRef.current;
     dialog?.showModal();
-    return ()=>{if(dialog?.open) dialog.close();triggerRef.current?.focus();};
+    return ()=>{if(dialog?.open) dialog.close();trigger?.focus();};
   },[open]);
   if(error) return <div role="status" style={{fontSize:11,color:'#8b949e'}}>Evidence unavailable <button onClick={event=>{event.stopPropagation();setError('');setRequestKey(value=>value+1);}}>Retry</button></div>;
   if(!url) return <div style={{fontSize:11,color:'#8b949e'}}>Loading evidence…</div>;

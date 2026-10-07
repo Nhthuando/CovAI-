@@ -6,6 +6,7 @@ import {generateText} from './gemini.service.js';
 import {runSystemTests} from './systemTestRunner.service.js';
 import {validateGeneratedTestCode} from '../validators/aiTestCode.validator.js';
 import {validateFullSystemTest} from './systemTestEvidence.service.js';
+import {parseTestFileDetails} from '../utils/testFileParser.js';
 import {ServiceError} from '../utils/serviceError.js';
 
 export const extractSystemTestCode = response => {
@@ -163,3 +164,352 @@ export const generateVerifiedSystemTests = async ({rootDir,jobId,onProgress=asyn
     if(fs.existsSync(file)) fs.unlinkSync(file);
   }
 };
+
+/**
+ * Ensures system test configuration file exists (Playwright or Cypress).
+ * Creates default configuration if not present.
+ *
+ * @param {Object} options
+ * @param {string} options.rootDir
+ * @param {'playwright' | 'cypress'} options.framework
+ * @param {number} [options.autPort=3000]
+ * @returns {{ configCreated: boolean, configPath: string }}
+ */
+export const ensureSystemTestConfig = ({
+  rootDir,
+  framework = 'playwright',
+  autPort = 3000,
+}) => {
+  const normFramework = String(framework).toLowerCase();
+
+  if (normFramework === 'cypress') {
+    const candidateFiles = [
+      'cypress.config.js',
+      'cypress.config.ts',
+      'cypress.config.mjs',
+      'cypress.config.cjs',
+    ];
+    for (const f of candidateFiles) {
+      const full = path.join(rootDir, f);
+      if (fs.existsSync(full)) {
+        return { configCreated: false, configPath: f };
+      }
+    }
+
+    const configPath = 'cypress.config.js';
+    const configContent = `const { defineConfig } = require('cypress');
+
+module.exports = defineConfig({
+  e2e: {
+    baseUrl: process.env.AUT_URL || 'http://localhost:${autPort}',
+    specPattern: 'cypress/e2e/**/*.{cy,spec}.{js,jsx,ts,tsx}',
+    supportFile: false,
+    video: false,
+    screenshotOnRunFailure: true,
+  },
+});
+`;
+    fs.writeFileSync(path.join(rootDir, configPath), configContent, 'utf8');
+    fs.mkdirSync(path.join(rootDir, 'cypress', 'e2e'), { recursive: true });
+    return { configCreated: true, configPath };
+  }
+
+  // Playwright default
+  const candidateFiles = [
+    'playwright.config.js',
+    'playwright.config.ts',
+    'playwright.config.mjs',
+    'playwright.config.cjs',
+  ];
+  for (const f of candidateFiles) {
+    const full = path.join(rootDir, f);
+    if (fs.existsSync(full)) {
+      return { configCreated: false, configPath: f };
+    }
+  }
+
+  const configPath = 'playwright.config.mjs';
+  const configContent = `import { defineConfig, devices } from '@playwright/test';
+
+export default defineConfig({
+  testDir: './tests/e2e',
+  timeout: 30000,
+  expect: {
+    timeout: 5000,
+  },
+  fullyParallel: true,
+  forbidOnly: !!process.env.CI,
+  retries: process.env.CI ? 2 : 0,
+  workers: process.env.CI ? 1 : undefined,
+  reporter: [['list'], ['json', { outputFile: 'test-results/results.json' }]],
+  use: {
+    baseURL: process.env.AUT_URL || 'http://localhost:${autPort}',
+    trace: 'on-first-retry',
+    screenshot: 'only-on-failure',
+  },
+  projects: [
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
+    },
+  ],
+});
+`;
+  fs.writeFileSync(path.join(rootDir, configPath), configContent, 'utf8');
+  fs.mkdirSync(path.join(rootDir, 'tests', 'e2e'), { recursive: true });
+  return { configCreated: true, configPath };
+};
+
+/**
+ * Builds the AI prompt for generating cold-start E2E tests for Playwright or Cypress.
+ *
+ * @param {Object} options
+ * @param {Object} options.context - Harvested application context
+ * @param {'playwright' | 'cypress'} options.framework
+ * @param {string[]} [options.targetRoutes]
+ * @returns {string} The prompt for Gemini AI
+ */
+export const buildColdStartSystemPrompt = ({
+  context,
+  framework = 'playwright',
+  targetRoutes = [],
+}) => {
+  const normFramework = String(framework).toLowerCase();
+  const routesToTest =
+    Array.isArray(targetRoutes) && targetRoutes.length > 0
+      ? targetRoutes
+      : context.routes || ['/'];
+  const uiActions = context.uiActions || [];
+  const clientApiCalls = context.clientApiCalls || [];
+  const backendEndpoints = context.backendEndpoints || [];
+
+  if (normFramework === 'cypress') {
+    return `You are generating automated End-to-End (E2E) system tests using Cypress for this application.
+Repository content and route information:
+Discovered Routes: ${JSON.stringify(routesToTest)}
+Discovered UI Actions (buttons, inputs): ${JSON.stringify(uiActions.slice(0, 15))}
+Client API Calls: ${JSON.stringify(clientApiCalls.slice(0, 15))}
+Backend Endpoints: ${JSON.stringify(backendEndpoints.slice(0, 15))}
+
+INSTRUCTIONS:
+1. Return a JSON object with format: {"content": "complete Cypress JavaScript test code"}.
+2. Use Cypress syntax: describe('...', () => { it('...', () => { ... }) }).
+3. Tests MUST be independent and not share state across scenarios.
+4. Generate the following scenario categories:
+   - Smoke Test: Visit '/' with cy.visit('/'), assert body or main element is visible (e.g. cy.get('body').should('be.visible')).
+   - Route Navigation Tests: For discovered routes, visit them or click navigation links, and assert URL updates (e.g. cy.url().should('include', '...')).
+   - User Interaction Tests: Fill inputs and click buttons found in UI components, asserting that inputs take values or submit is triggered.
+5. Do NOT import child_process or use eval/process.exit.
+6. Provide clear, descriptive English scenario titles.
+7. Return only valid JavaScript syntax.`;
+  }
+
+  return `You are generating automated End-to-End (E2E) system tests using Playwright for this application.
+Repository content and route information:
+Discovered Routes: ${JSON.stringify(routesToTest)}
+Discovered UI Actions (buttons, inputs): ${JSON.stringify(uiActions.slice(0, 15))}
+Client API Calls: ${JSON.stringify(clientApiCalls.slice(0, 15))}
+Backend Endpoints: ${JSON.stringify(backendEndpoints.slice(0, 15))}
+
+INSTRUCTIONS:
+1. Return a JSON object with format: {"content": "complete Playwright JavaScript test code"}.
+2. Only import { test, expect } from '@playwright/test'.
+3. Use test.describe('...', () => { test('...', async ({ page }) => { ... }) }).
+4. Tests MUST be independent and not share state across scenarios.
+5. Generate the following scenario categories:
+   - Smoke Test: Visit '/' with await page.goto('/'), assert title or body is visible (await expect(page.locator('body')).toBeVisible()).
+   - Route Navigation Tests: For discovered routes, navigate with await page.goto(route) and assert page loads without crash (await expect(page).toHaveURL(...)).
+   - User Interaction Tests: Locate input fields and buttons from discovered UI components, perform fill/click actions, and assert responsive UI.
+6. Do NOT import child_process or use eval/process.exit.
+7. Provide clear, descriptive English scenario titles with web-first assertions (await expect(...)).
+8. Return only valid JavaScript syntax.`;
+};
+
+/**
+ * Generates fallback cold-start test code if AI is unavailable or returns malformed code.
+ */
+export const generateFallbackColdStartTest = ({
+  framework = 'playwright',
+  routes = ['/'],
+  uiActions = [],
+}) => {
+  const normFramework = String(framework).toLowerCase();
+  const safeRoutes = routes.filter((r) => typeof r === 'string' && r.startsWith('/')).slice(0, 5);
+  if (!safeRoutes.includes('/')) safeRoutes.unshift('/');
+
+  if (normFramework === 'cypress') {
+    const navTests = safeRoutes
+      .map(
+        (r) => `  it('Navigate to ${r} successfully', () => {
+    cy.visit('${r}');
+    cy.url().should('include', '${r === '/' ? '' : r}');
+  });`,
+      )
+      .join('\n\n');
+
+    let actionTest = `  it('Inspects interactive UI controls', () => {
+    cy.visit('/');
+    cy.get('body').should('be.visible');
+  });`;
+
+    if (uiActions.length > 0 && uiActions[0].buttons?.length > 0) {
+      actionTest = `  it('Verifies interactive buttons on ${uiActions[0].component}', () => {
+    cy.visit('/');
+    cy.get('body').then(($body) => {
+      if ($body.find('button').length > 0) {
+        cy.get('button').first().should('be.visible');
+      }
+    });
+  });`;
+    }
+
+    return `describe('Cold-Start Automated E2E Suite (Cypress)', () => {
+  it('Smoke Test: Application root loads successfully', () => {
+    cy.visit('/');
+    cy.get('body').should('be.visible');
+  });
+
+${navTests}
+
+${actionTest}
+});
+`;
+  }
+
+  // Playwright fallback
+  const navTests = safeRoutes
+    .map(
+      (r) => `  test('Navigate to ${r} successfully', async ({ page }) => {
+    await page.goto('${r}');
+    await expect(page.locator('body')).toBeVisible();
+  });`,
+    )
+    .join('\n\n');
+
+  let actionTest = `  test('Inspects interactive UI controls', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('body')).toBeVisible();
+  });`;
+
+  if (uiActions.length > 0 && uiActions[0].buttons?.length > 0) {
+    actionTest = `  test('Verifies interactive buttons on ${uiActions[0].component}', async ({ page }) => {
+    await page.goto('/');
+    const button = page.locator('button').first();
+    if (await button.count() > 0) {
+      await expect(button).toBeVisible();
+    }
+  });`;
+  }
+
+  return `import { test, expect } from '@playwright/test';
+
+test.describe('Cold-Start Automated E2E Suite (Playwright)', () => {
+  test('Smoke Test: Application root loads successfully', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('body')).toBeVisible();
+  });
+
+${navTests}
+
+${actionTest}
+});
+`;
+};
+
+/**
+ * Generates cold-start E2E tests for a project with zero test files.
+ *
+ * @param {Object} options
+ * @param {string} options.rootDir - Snapshot repository directory
+ * @param {'playwright' | 'cypress'} [options.framework='playwright']
+ * @param {string[]} [options.targetRoutes=[]]
+ * @param {number} [options.autPort=3000]
+ * @param {Function} [options.onProgress]
+ * @param {Object} [options.dependencies]
+ * @returns {Promise<Object>} Metadata and details of created test file
+ */
+export const generateColdStartSystemTests = async ({
+  rootDir,
+  framework = 'playwright',
+  targetRoutes = [],
+  autPort = 3000,
+  onProgress = async () => {},
+  dependencies = {},
+}) => {
+  const normFramework = String(framework).toLowerCase() === 'cypress' ? 'cypress' : 'playwright';
+  const collect = dependencies.collect || collectSystemGenerationContext;
+  const generate = dependencies.generate || generateText;
+
+  await onProgress(10, 'Harvesting application routes, components, and API endpoints');
+  const context = collect(rootDir);
+
+  await onProgress(25, `Ensuring ${normFramework} configuration`);
+  const configInfo = ensureSystemTestConfig({ rootDir, framework: normFramework, autPort });
+
+  await onProgress(40, `Generating cold-start ${normFramework} tests using AI`);
+  const prompt = buildColdStartSystemPrompt({ context, framework: normFramework, targetRoutes });
+
+  let code = '';
+  try {
+    const responseSchema = {
+      type: 'OBJECT',
+      properties: { content: { type: 'STRING' } },
+      required: ['content'],
+    };
+    const response = await generate(prompt, null, {
+      responseMimeType: 'application/json',
+      responseSchema,
+      temperature: 0.2,
+      maxOutputTokens: 16000,
+    });
+    code = extractSystemTestCode(response);
+  } catch (error) {
+    console.warn(`[generateColdStartSystemTests] AI generation fallback used: ${error.message}`);
+    code = generateFallbackColdStartTest({
+      framework: normFramework,
+      routes: targetRoutes.length > 0 ? targetRoutes : context.routes,
+      uiActions: context.uiActions,
+    });
+  }
+
+  await onProgress(70, 'Validating test syntax and AST safety');
+  try {
+    validateGeneratedTestCode(code);
+  } catch (err) {
+    console.warn(`[generateColdStartSystemTests] AST validation failed, applying fallback: ${err.message}`);
+    code = generateFallbackColdStartTest({
+      framework: normFramework,
+      routes: targetRoutes.length > 0 ? targetRoutes : context.routes,
+      uiActions: context.uiActions,
+    });
+    validateGeneratedTestCode(code);
+  }
+
+  await onProgress(85, 'Saving generated test files');
+  const relFilePath =
+    normFramework === 'cypress'
+      ? 'cypress/e2e/covai-generated.cy.js'
+      : 'tests/e2e/covai-generated.spec.js';
+  const fullFilePath = path.join(rootDir, relFilePath);
+  fs.mkdirSync(path.dirname(fullFilePath), { recursive: true });
+  fs.writeFileSync(fullFilePath, code, 'utf8');
+
+  // Parse extracted suites and scenarios using testFileParser
+  const details = parseTestFileDetails(rootDir, relFilePath, normFramework.toUpperCase());
+
+  await onProgress(100, 'Cold-start test generation completed');
+
+  return {
+    framework: normFramework.toUpperCase(),
+    filePath: relFilePath,
+    fullPath: fullFilePath,
+    configCreated: configInfo.configCreated,
+    configPath: configInfo.configPath,
+    suiteCount: details.suiteCount,
+    scenarioCount: details.scenarioCount,
+    suites: details.suites,
+    scenarios: details.scenarios,
+    code,
+  };
+};
+

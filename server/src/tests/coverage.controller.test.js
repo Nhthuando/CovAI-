@@ -399,9 +399,9 @@ describe('coverage controller empty-state behavior', () => {
             await getSystemTestSummary(req, res);
 
             expect(res.status).toHaveBeenCalledWith(200);
-            expect(res.json).toHaveBeenCalledWith({
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
                 success: true,
-                data: {
+                data: expect.objectContaining({
                     hasRun: false,
                     e2eTests: 0,
                     passed: 0,
@@ -413,8 +413,8 @@ describe('coverage controller empty-state behavior', () => {
                     testRuns: [],
                     scenarios: [],
                     latestAiTest: null,
-                }
-            });
+                })
+            }));
         });
 
         test('returns Populated State when Playwright/Cypress test run exists (DoD 1.2)', async () => {

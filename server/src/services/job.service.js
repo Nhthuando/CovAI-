@@ -195,20 +195,29 @@ export const createSystemTestAnalysisJob = ({
   snapshotId,
   userId,
   runner = null,
-  executionMode = "full",
+  executionMode = "frontend",
+  testFile = null,
 }) => {
-  if (executionMode !== "full") throw new ServiceError("System Test supports full-system execution only.",400);
-  if (runner !== null && !["playwright", "cypress"].includes(runner)) {
+  const normalizedMode = String(executionMode || "frontend").toLowerCase().trim();
+  if (!["full", "frontend"].includes(normalizedMode)) {
+    throw new ServiceError("executionMode must be frontend or full", 400);
+  }
+  if (runner !== null && !["playwright", "cypress"].includes(String(runner).toLowerCase().trim())) {
     throw new ServiceError("runner must be playwright or cypress", 400);
   }
-  if (runner === 'cypress') throw new ServiceError('Full-system execution currently requires Playwright.',422);
+  const normalizedRunner = runner ? String(runner).toLowerCase().trim() : null;
 
   return createSnapshotJob({
     projectId,
     snapshotId,
     userId,
     type: "SYSTEM_TEST_ANALYSIS",
-    payloadJson: { snapshotId, runner, executionMode },
+    payloadJson: {
+      snapshotId,
+      runner: normalizedRunner,
+      executionMode: normalizedMode,
+      testFile: testFile ? String(testFile).trim() : null,
+    },
   });
 };
 

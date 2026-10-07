@@ -17,8 +17,15 @@ import {
     getCoverageTestSuites,
     getIntegrationHistory,
     getSystemTestSummary,
+    getSystemTestScenarios,
     getSystemTestEvidence,
+    runSystemTestCoverage,
     saveAiSystemTest,
+    generateColdStartSystemTestsController,
+    getSystemTestFileContent,
+    updateSystemTestFileContent,
+    runSingleSystemTest,
+    optimizeSystemTestController,
 } from "../controllers/coverage.controller.js";
 
 const router = express.Router();
@@ -26,9 +33,18 @@ const router = express.Router();
 // GET /api/coverage/:snapshotId/summary — fetch coverage summary result
 router.get("/:snapshotId/summary", authMiddleware, getCoverageSummary);
 router.get("/:snapshotId/system/summary", authMiddleware, getSystemTestSummary);
+router.get("/:snapshotId/system/scenarios", authMiddleware, getSystemTestScenarios);
 router.get("/:snapshotId/system/scenarios/:scenarioId/evidence", authMiddleware, getSystemTestEvidence);
+router.post("/:snapshotId/system/run", authMiddleware, runSystemTestCoverage);
 router.post("/:snapshotId/system/save-ai-test", authMiddleware, saveAiSystemTest);
+router.post("/:snapshotId/system/generate-tests", authMiddleware, generateColdStartSystemTestsController);
 router.get("/:snapshotId/frameworks", authMiddleware, getCoverageFrameworks);
+
+// Phase 5: Test Editor & AI Coverage Booster
+router.get("/:snapshotId/system/tests/content", authMiddleware, getSystemTestFileContent);
+router.put("/:snapshotId/system/tests/content", authMiddleware, updateSystemTestFileContent);
+router.post("/:snapshotId/system/tests/run-single", authMiddleware, runSingleSystemTest);
+router.post("/:snapshotId/system/optimize-test", authMiddleware, optimizeSystemTestController);
 
 // GET /api/coverage/:snapshotId/files — fetch CoverageFile list
 // Query: ?sortBy=filePath|linesPct|branchesPct|funcsPct|stmtsPct&order=asc|desc&page=1&limit=50
