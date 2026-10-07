@@ -52,8 +52,12 @@ function loadStoredProcesses() {
     const raw = sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return initialProcesses;
     const parsed = JSON.parse(raw);
+    const loadedAnalysis = { ...initialProcesses.analysis, ...(parsed.analysis || {}) };
+    if (loadedAnalysis.isRunning && !loadedAnalysis.jobId) {
+      loadedAnalysis.isRunning = false;
+    }
     return {
-      analysis: { ...initialProcesses.analysis, ...(parsed.analysis || {}) },
+      analysis: loadedAnalysis,
       suggestion: { ...initialProcesses.suggestion, ...(parsed.suggestion || {}) },
       bulkApply: { ...initialProcesses.bulkApply, ...(parsed.bulkApply || {}) },
     };

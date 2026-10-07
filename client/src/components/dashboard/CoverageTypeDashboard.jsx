@@ -757,6 +757,9 @@ export default function CoverageTypeDashboard({
       if (processes.analysis.step) {
         setRunStep(processes.analysis.step);
       }
+    } else if (!processes.analysis.isRunning && !activeJobIdRef.current) {
+      setRunning(false);
+      setRunningStatus("");
     }
   }, [processes.analysis, snapshotId]);
 
@@ -1524,7 +1527,7 @@ export default function CoverageTypeDashboard({
     }
   }, [snapshotId, type, loadSystemSummary, refetchCoverage]);
   const run = async () => {
-    if (!snapshotId || running) return;
+    if (!snapshotId || (running && activeJobIdRef.current)) return;
     setRunning(true);
     setRunProgress(8);
     const initialStep = type === "system"
@@ -1559,6 +1562,7 @@ export default function CoverageTypeDashboard({
       if (jobs.length === 0) throw new Error("Backend did not return test run jobs.");
       for (const j of jobs) {
         if (j?.id) {
+          activeJobIdRef.current = j.id;
           startAnalysis({ snapshotId, projectId, type, jobId: j.id });
           if (type === "system") {
             await waitForJobWithProgress(j.id, "Starting AUT server...");
@@ -1608,14 +1612,14 @@ export default function CoverageTypeDashboard({
     } catch (runError) {
       setError(runError.message || "Analysis process failed.");
       completeAnalysis(false, runError.message);
-    }
- finally {
+    } finally {
+      activeJobIdRef.current = null;
       setTimeout(() => {
         setRunning(false);
         setRunningStatus("");
         setRunProgress(0);
         setRunStep("");
-      }, 1800);
+      }, 1200);
     }
   };
 
@@ -1808,6 +1812,12 @@ export default function CoverageTypeDashboard({
     }
 
     if (type === "unit") {
+      if (!sourceFiles || sourceFiles.length === 0) {
+        setBulkSuggestMessage("No source files found to generate suggestions. Please run analysis first.");
+        setTimeout(() => setBulkSuggestMessage(""), 5000);
+        return;
+      }
+
       const needImprovementFiles = (sourceFiles || []).filter((sf) => {
         const linesPct = sf.linesPct ?? 100;
         const branchesPct = sf.branchesPct ?? 100;
@@ -1816,7 +1826,7 @@ export default function CoverageTypeDashboard({
       });
 
       if (needImprovementFiles.length === 0) {
-        setBulkSuggestMessage("All source files have reached 100% test coverage!");
+        setBulkSuggestMessage("All analyzed source files have reached 100% test coverage!");
         setTimeout(() => setBulkSuggestMessage(""), 5000);
         return;
       }
@@ -1831,6 +1841,13 @@ export default function CoverageTypeDashboard({
         totalFiles: needImprovementFiles.length,
         initialMessage: startMsg,
       });
+
+      // Also notify external suggest handler if available (e.g. AIPanel in Layout)
+      if (onSuggestTestcase) {
+        try {
+          onSuggestTestcase(null, { isBulk: true, snapshotId, projectId });
+        } catch (_) {}
+      }
 
       // Expand only the first file to give an immediate preview without lagging the DOM with 200 editors
       if (needImprovementFiles.length > 0) {
@@ -2131,32 +2148,36 @@ export default function CoverageTypeDashboard({
               </button>
               <button
                 onClick={load}
-                disabled={loading || running || isGenerating}
-                style={buttonStyle(isLight ? "#64748b" : "#8b949e")}
+                disabled={isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current)) || isGenerating}
+                style={{
+                  ...buttonStyle(isLight ? "#64748b" : "#8b949e"),
+                  opacity: (isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current)) || isGenerating) ? 0.6 : 1,
+                  cursor: (isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current)) || isGenerating) ? "wait" : "pointer",
+                }}
               >
-                Refresh
+                {isCoverageQueryFetching ? "Refreshing..." : "Refresh"}
               </button>
               <button
                 onClick={run}
-                disabled={!snapshotId || running || isGenerating}
+                disabled={!snapshotId || (running && Boolean(activeJobIdRef.current)) || isGenerating}
                 style={{
-                  background: running
+                  background: (running && Boolean(activeJobIdRef.current))
                     ? (isLight ? "#fce7f3" : "rgba(236, 72, 153, 0.2)")
                     : (isLight ? "#db2777" : "#ec4899"),
-                  border: running
+                  border: (running && Boolean(activeJobIdRef.current))
                     ? (isLight ? "1px solid #fbcfe8" : "1px solid rgba(236, 72, 153, 0.4)")
                     : (isLight ? "1px solid #be185d" : "1px solid #db2777"),
-                  color: running
+                  color: (running && Boolean(activeJobIdRef.current))
                     ? (isLight ? "#9d174d" : "#fbcfe8")
                     : "#ffffff",
-                  boxShadow: running
+                  boxShadow: (running && Boolean(activeJobIdRef.current))
                     ? "none"
                     : (isLight ? "0 2px 6px rgba(219, 39, 119, 0.25)" : "0 2px 10px rgba(236, 72, 153, 0.35)"),
                   borderRadius: 8,
                   padding: "8px 16px",
                   fontWeight: 700,
                   fontSize: 12.5,
-                  cursor: running ? "wait" : "pointer",
+                  cursor: (running && Boolean(activeJobIdRef.current)) ? "wait" : "pointer",
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
@@ -2164,64 +2185,67 @@ export default function CoverageTypeDashboard({
                 }}
                 title="Run System Test Analysis (Playwright / Cypress)"
               >
-                {running ? `Running (${Math.max(5, Math.min(100, Math.round(runProgress)))}%)...` : "Run System Test"}
+                {(running && Boolean(activeJobIdRef.current)) ? `Running (${Math.max(5, Math.min(100, Math.round(runProgress)))}%)...` : "Run System Test"}
               </button>
             </>
           ) : type === "unit" ? (
             <>
-              {onSuggestTestcase && (
-                <button
-                  onClick={() => onSuggestTestcase(null)}
-                  disabled={loading || running}
-                  style={{
-                    background: isLight ? "#f5f3ff" : "rgba(168, 85, 247, 0.15)",
-                    border: isLight ? "1px solid #ddd6fe" : "1px solid rgba(168, 85, 247, 0.4)",
-                    color: isLight ? "#7c3aed" : "#c084fc",
-                    borderRadius: 8,
-                    padding: "8px 14px",
-                    fontWeight: 700,
-                    fontSize: 12.5,
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    transition: "all 0.15s ease",
-                  }}
-                  className="hover:opacity-90"
-                  title="Ask AI Agent to suggest test cases for all files with missing branch/function coverage"
-                >
-                  <Sparkles size={14} />
-                  <span>Suggest Test Cases (All Files)</span>
-                </button>
-              )}
+              <button
+                onClick={handleBulkSuggestTest}
+                disabled={(running && Boolean(activeJobIdRef.current)) || isBulkSuggesting}
+                style={{
+                  background: isLight ? "#f5f3ff" : "rgba(168, 85, 247, 0.15)",
+                  border: isLight ? "1px solid #ddd6fe" : "1px solid rgba(168, 85, 247, 0.4)",
+                  color: isLight ? "#7c3aed" : "#c084fc",
+                  borderRadius: 8,
+                  padding: "8px 14px",
+                  fontWeight: 700,
+                  fontSize: 12.5,
+                  cursor: (isBulkSuggesting || (running && activeJobIdRef.current)) ? "wait" : "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  transition: "all 0.15s ease",
+                  opacity: ((running && Boolean(activeJobIdRef.current)) || isBulkSuggesting) ? 0.6 : 1,
+                }}
+                className="hover:opacity-90"
+                title="Generate inline test suggestions for all files with missing branch/function coverage"
+              >
+                <Sparkles size={14} className={isBulkSuggesting ? "animate-spin" : ""} />
+                <span>{isBulkSuggesting ? "Suggesting..." : "Suggest Test Cases (All Files)"}</span>
+              </button>
               <button
                 onClick={load}
-                disabled={loading || running}
-                style={buttonStyle(isLight ? "#64748b" : "#8b949e")}
+                disabled={isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current))}
+                style={{
+                  ...buttonStyle(isLight ? "#64748b" : "#8b949e"),
+                  opacity: (isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current))) ? 0.6 : 1,
+                  cursor: (isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current))) ? "wait" : "pointer",
+                }}
               >
-                Refresh
+                {isCoverageQueryFetching ? "Refreshing..." : "Refresh"}
               </button>
               <button
                 onClick={run}
-                disabled={!snapshotId || running}
+                disabled={!snapshotId || (running && Boolean(activeJobIdRef.current))}
                 style={{
-                  background: running
+                  background: (running && Boolean(activeJobIdRef.current))
                     ? (isLight ? "#e0e7ff" : "rgba(99, 102, 241, 0.2)")
                     : (isLight ? "#4f46e5" : "#6366f1"),
-                  border: running
+                  border: (running && Boolean(activeJobIdRef.current))
                     ? (isLight ? "1px solid #c7d2fe" : "1px solid rgba(99, 102, 241, 0.4)")
                     : (isLight ? "1px solid #4338ca" : "1px solid #4f46e5"),
-                  color: running
+                  color: (running && Boolean(activeJobIdRef.current))
                     ? (isLight ? "#4338ca" : "#c7d2fe")
                     : "#ffffff",
-                  boxShadow: running
+                  boxShadow: (running && Boolean(activeJobIdRef.current))
                     ? "none"
                     : (isLight ? "0 2px 6px rgba(79, 70, 229, 0.25)" : "0 2px 10px rgba(99, 102, 241, 0.35)"),
                   borderRadius: 8,
                   padding: "8px 16px",
                   fontWeight: 700,
                   fontSize: 12.5,
-                  cursor: running ? "wait" : "pointer",
+                  cursor: (running && Boolean(activeJobIdRef.current)) ? "wait" : "pointer",
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
@@ -2229,7 +2253,7 @@ export default function CoverageTypeDashboard({
                 }}
                 title="Run Unit Test Analysis (Jest / Vitest)"
               >
-                {running ? `Running (${Math.max(5, Math.min(100, Math.round(runProgress)))}%)...` : "Run Analysis Unit"}
+                {(running && Boolean(activeJobIdRef.current)) ? `Running (${Math.max(5, Math.min(100, Math.round(runProgress)))}%)...` : "Run Analysis Unit"}
               </button>
             </>
           ) : (
@@ -2241,7 +2265,7 @@ export default function CoverageTypeDashboard({
                     try { await onGenerate(type); }
                     catch (err) { setGenerateError(err.message || "Generation failed."); }
                   }}
-                  disabled={loading || running || generating}
+                  disabled={loading || (running && Boolean(activeJobIdRef.current)) || generating}
                   style={buttonStyle("#67e8f9")}
                 >
                   {generating ? "Generating..." : "Generate AI Tests"}
@@ -2249,32 +2273,36 @@ export default function CoverageTypeDashboard({
               )}
               <button
                 onClick={load}
-                disabled={loading || running}
-                style={buttonStyle(isLight ? "#64748b" : "#8b949e")}
+                disabled={isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current))}
+                style={{
+                  ...buttonStyle(isLight ? "#64748b" : "#8b949e"),
+                  opacity: (isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current))) ? 0.6 : 1,
+                  cursor: (isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current))) ? "wait" : "pointer",
+                }}
               >
-                Refresh
+                {isCoverageQueryFetching ? "Refreshing..." : "Refresh"}
               </button>
               <button
                 onClick={run}
-                disabled={!snapshotId || running}
+                disabled={!snapshotId || (running && Boolean(activeJobIdRef.current))}
                 style={{
-                  background: running
+                  background: (running && Boolean(activeJobIdRef.current))
                     ? (isLight ? "#e0f2fe" : "rgba(14, 165, 233, 0.2)")
                     : (isLight ? "#0284c7" : "#0ea5e9"),
-                  border: running
+                  border: (running && Boolean(activeJobIdRef.current))
                     ? (isLight ? "1px solid #bae6fd" : "1px solid rgba(14, 165, 233, 0.4)")
                     : (isLight ? "1px solid #0369a1" : "1px solid #0284c7"),
-                  color: running
+                  color: (running && Boolean(activeJobIdRef.current))
                     ? (isLight ? "#0369a1" : "#bae6fd")
                     : "#ffffff",
-                  boxShadow: running
+                  boxShadow: (running && Boolean(activeJobIdRef.current))
                     ? "none"
                     : (isLight ? "0 2px 6px rgba(14, 165, 233, 0.25)" : "0 2px 10px rgba(14, 165, 233, 0.35)"),
                   borderRadius: 8,
                   padding: "8px 16px",
                   fontWeight: 700,
                   fontSize: 12.5,
-                  cursor: running ? "wait" : "pointer",
+                  cursor: (running && Boolean(activeJobIdRef.current)) ? "wait" : "pointer",
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
@@ -2282,7 +2310,7 @@ export default function CoverageTypeDashboard({
                 }}
                 title="Run Integration Test Analysis (Supertest)"
               >
-                {running ? `Running (${Math.max(5, Math.min(100, Math.round(runProgress)))}%)...` : "Run Integration Test"}
+                {(running && Boolean(activeJobIdRef.current)) ? `Running (${Math.max(5, Math.min(100, Math.round(runProgress)))}%)...` : "Run Integration Test"}
               </button>
             </>
           )}
@@ -5267,7 +5295,13 @@ export default function CoverageTypeDashboard({
                                   filePath={file.filePath}
                                   fileCoverage={fileDetails}
                                   onOpenFile={onOpenFile}
-                                  onSuggestTestcase={type === "unit" ? () => handleSuggestTestcaseInline(file.filePath) : undefined}
+                                  onSuggestTestcase={(target) => {
+                                    if (type === "unit") {
+                                      handleSuggestTestcaseInline(target || file.filePath);
+                                    } else {
+                                      onSuggestTestcase?.(target || file.filePath);
+                                    }
+                                  }}
                                 />
                               ) : activeMetricView === "functions" ? (
                                 <FileFunctionCallGraphView
@@ -5275,7 +5309,13 @@ export default function CoverageTypeDashboard({
                                   fileCoverage={fileDetails}
                                   testSuites={testSuites}
                                   onOpenFile={onOpenFile}
-                                  onSuggestTestcase={type === "unit" ? () => handleSuggestTestcaseInline(file.filePath) : undefined}
+                                  onSuggestTestcase={(target) => {
+                                    if (type === "unit") {
+                                      handleSuggestTestcaseInline(target || file.filePath);
+                                    } else {
+                                      onSuggestTestcase?.(target || file.filePath);
+                                    }
+                                  }}
                                 />
                               ) : (
                                 <FileCodeExecutionView
@@ -5289,7 +5329,13 @@ export default function CoverageTypeDashboard({
                                     invalidateCoverageQueries(snapshotId);
                                     await refetchCoverage();
                                   }}
-                                  onSuggestTestcase={type === "unit" ? () => handleSuggestTestcaseInline(file.filePath) : undefined}
+                                  onSuggestTestcase={(target) => {
+                                    if (type === "unit") {
+                                      handleSuggestTestcaseInline(target || file.filePath);
+                                    } else {
+                                      onSuggestTestcase?.(target || file.filePath);
+                                    }
+                                  }}
                                   suggestions={type === "unit" ? fileSuggestions : []}
                                   isLoadingSuggestions={type === "unit" ? isSuggesting : false}
                                   applyingSuggestionIds={type === "unit" ? applyingSuggestionIds : new Set()}
