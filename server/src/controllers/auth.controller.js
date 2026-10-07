@@ -105,7 +105,9 @@ export const getGithubRepositories = async (req, res) => {
         {
           headers: {
             Authorization: `token ${accessToken}`,
+            Authorization: `Bearer ${accessToken}`,
             Accept: "application/vnd.github.v3+json",
+            "User-Agent": "CovAI-App",
           },
         },
       );
@@ -182,6 +184,7 @@ export const oAuthGithub = async (req, res) => {
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json",
+          "User-Agent": "CovAI-App",
         },
         body: JSON.stringify({
           client_id: process.env.GITHUB_CLIENT_ID,
@@ -192,22 +195,49 @@ export const oAuthGithub = async (req, res) => {
     );
     const tokenData = await tokenResponse.json();
     const accessToken = tokenData.access_token;
-    if (!accessToken)
-      return res.status(400).json({ message: "Không thể lấy access token!" });
+    if (!accessToken) {
+      console.error("GitHub access token exchange failed:", tokenData);
+      return res.status(400).json({
+        message:
+          tokenData.error_description ||
+          tokenData.error ||
+          "Không thể lấy access token từ GitHub!",
+      });
+    }
+
     const [userDetail, emailResponse] = await Promise.all([
       fetch("https://api.github.com/user", {
-        headers: { Authorization: `Bearer ${accessToken}` },
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/vnd.github.v3+json",
+          "User-Agent": "CovAI-App",
+        },
       }),
       fetch("https://api.github.com/user/emails", {
-        headers: { Authorization: `Bearer ${accessToken}` },
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/vnd.github.v3+json",
+          "User-Agent": "CovAI-App",
+        },
       }),
     ]);
 
     const userData = await userDetail.json();
     const emails = await emailResponse.json();
 
-    const primaryEmail = emails.find((e) => e.primary)?.email ?? null;
+    const primaryEmail = Array.isArray(emails)
+      ? emails.find((e) => e.primary)?.email ||
+        emails[0]?.email ||
+        userData.email
+      : userData.email;
+
     if (!primaryEmail) {
+      console.error(
+        "Could not obtain primary email. GitHub user:",
+        userData,
+        "emails:",
+        emails,
+      );
       return res
         .status(400)
         .json({ message: "Không lấy được email từ GitHub!" });

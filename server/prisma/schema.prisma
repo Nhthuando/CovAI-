@@ -53,6 +53,11 @@ model Project {
   playwrightCommand    String?
   playwrightConfigPath String?
   playwrightTestDir    String?
+  hasCypress           Boolean           @default(false)
+  cypressCommand       String?
+  cypressConfigPath    String?
+  cypressTestDir       String?
+  cypressVersion       String?
   aiSuggestions        AiSuggestion[]
   aiTests              AiTest[]
   jobs                 Job[]
@@ -86,6 +91,11 @@ model ProjectSnapshot {
   playwrightCommand           String?
   playwrightConfigPath        String?
   playwrightTestDir           String?
+  hasCypress                  Boolean                   @default(false)
+  cypressCommand              String?
+  cypressConfigPath           String?
+  cypressTestDir              String?
+  cypressVersion              String?
   frameworkRecommendationJson String?
   selectedTestingFramework    String?
   aiContextCache              AiContextCache?
@@ -314,39 +324,66 @@ model AiTestResult {
 }
 
 model TestRun {
-  id           String          @id @default(cuid())
-  snapshotId   String
-  type         TestType
-  executionMode String         @default("frontend")
-  totalTests   Int
-  passedTests  Int
-  failedTests  Int
-  flakyTests   Int             @default(0)
-  skippedTests Int
-  durationMs   Float
-  status       String
-  startedAt    DateTime
-  finishedAt   DateTime
-  createdAt    DateTime        @default(now())
-  snapshot     ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
-  scenarios    TestScenario[]
+  id                    String           @id @default(cuid())
+  snapshotId            String
+  type                  TestType
+  executionMode         String           @default("frontend")
+  totalTests            Int
+  passedTests           Int
+  failedTests           Int
+  flakyTests            Int              @default(0)
+  skippedTests          Int
+  durationMs            Float
+  status                String
+  startedAt             DateTime
+  finishedAt            DateTime
+  coverageLinesPct      Float?
+  coverageBranchesPct   Float?
+  coverageStatementsPct Float?
+  coverageFunctionsPct  Float?
+  createdAt             DateTime         @default(now())
+  snapshot              ProjectSnapshot  @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  scenarios             TestScenario[]
+  testFiles             SystemTestFile[]
 
   @@index([snapshotId])
 }
 
 model TestScenario {
-  id              String   @id @default(cuid())
-  testRunId       String
-  title           String
-  suiteName       String?
-  status          String
-  durationMs      Float?
-  failureMessages String[]
-  testFile        String?
-  screenshotPath  String?
-  createdAt       DateTime @default(now())
-  testRun         TestRun  @relation(fields: [testRunId], references: [id], onDelete: Cascade)
+  id                  String   @id @default(cuid())
+  testRunId           String
+  title               String
+  suiteName           String?
+  status              String
+  durationMs          Float?
+  failureMessages     String[]
+  testFile            String?
+  screenshotPath      String?
+  failureStep         String?
+  failureCodeSnippet  String?
+  failureCategory     String?
+  domSnapshot         String?
+  coverageLinesPct    Float?
+  coverageBranchesPct Float?
+  createdAt           DateTime @default(now())
+  testRun             TestRun  @relation(fields: [testRunId], references: [id], onDelete: Cascade)
 
+  @@index([testRunId])
+}
+
+model SystemTestFile {
+  id               String   @id @default(cuid())
+  testRunId        String
+  filePath         String
+  suiteCount       Int      @default(0)
+  scenarioCount    Int      @default(0)
+  status           String   @default("PASSED")
+  durationMs       Float?
+  coverageLinesPct Float?
+  createdAt        DateTime @default(now())
+  testRun          TestRun  @relation(fields: [testRunId], references: [id], onDelete: Cascade)
+
+  @@unique([testRunId, filePath])
   @@index([testRunId])
 }
 

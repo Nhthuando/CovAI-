@@ -1,5 +1,6 @@
 import fs from "fs";
 import { ServiceError } from "../utils/serviceError.js";
+import { analyzeFailureBreakpoint } from "./failureBreakpointAnalyzer.service.js";
 
 const readReport = (resultPath) => {
   if (!fs.existsSync(resultPath)) {
@@ -7,15 +8,24 @@ const readReport = (resultPath) => {
   }
 
   try {
-    const content = fs.readFileSync(resultPath, "utf8").trim();
-    if (!content) throw new Error("report is empty");
-    return JSON.parse(content);
+    const raw = fs.readFileSync(resultPath, "utf8").trim();
+    if (!raw) throw new Error("report is empty");
+    try {
+      return JSON.parse(raw);
+    } catch {
+      const firstBrace = raw.indexOf("{");
+      const lastBrace = raw.lastIndexOf("}");
+      if (firstBrace >= 0 && lastBrace > firstBrace) {
+        return JSON.parse(raw.slice(firstBrace, lastBrace + 1));
+      }
+      throw new Error("No JSON structure found in output");
+    }
   } catch (error) {
     throw new ServiceError(`System test report is invalid: ${error.message}`, 422);
   }
 };
 
-const normalisePlaywright = (report, startedAt, finishedAt) => {
+const normalisePlaywright = (report, startedAt, finishedAt, rootDir = null) => {
   if (report.errors?.length) {
     throw new ServiceError(`Playwright execution failed: ${report.errors.map((error) => error.message || String(error)).join("; ")}`, 422);
   }
@@ -56,6 +66,23 @@ const normalisePlaywright = (report, startedAt, finishedAt) => {
           }
         }
 
+        const lastResult = results.at(-1);
+        let breakpoint = {
+          failureStep: null,
+          failureCategory: null,
+          failureCodeSnippet: null,
+          domSnapshot: null,
+        };
+        if (statusStr === "failed" || statusStr === "flaky") {
+          breakpoint = analyzeFailureBreakpoint({
+            message: lastResult?.error?.message || failureMessages.join("\n"),
+            stack: lastResult?.error?.stack || "",
+            snippet: lastResult?.error?.snippet || null,
+            testFile: currentFile || spec.file || null,
+            rootDir,
+          });
+        }
+
         scenarios.push({
           title: spec.title || "Unnamed Test",
           suiteName: suite.title || null,
@@ -64,6 +91,10 @@ const normalisePlaywright = (report, startedAt, finishedAt) => {
           failureMessages,
           testFile: currentFile || spec.file || null,
           screenshotSource: (results.at(-1)?.attachments?.find(attachment => attachment.name === "evidence" && attachment.contentType === "image/png" && attachment.path) || results.at(-1)?.attachments?.find(attachment => attachment.contentType === "image/png" && attachment.path))?.path || null,
+          failureStep: breakpoint.failureStep,
+          failureCategory: breakpoint.failureCategory,
+          failureCodeSnippet: breakpoint.failureCodeSnippet,
+          domSnapshot: breakpoint.domSnapshot,
         });
       }
     }
@@ -138,12 +169,15 @@ const normalisePlaywright = (report, startedAt, finishedAt) => {
     totalTests = Math.max(totalTests, passedTests + failedTests + flakyTests + skippedTests);
   }
 
+  const stabilityScorePct = totalTests > 0 ? Number(((passedTests / totalTests) * 100).toFixed(1)) : 0;
+
   return {
     totalTests,
     passedTests,
     failedTests,
     flakyTests,
     skippedTests,
+    stabilityScorePct,
     durationMs: Number(stats.duration) || Math.max(0, finishedAt - startedAt),
     status: (failedTests > 0 || runnerErrors.length > 0) ? "FAILED" : "PASSED",
     startedAt,
@@ -152,7 +186,7 @@ const normalisePlaywright = (report, startedAt, finishedAt) => {
   };
 };
 
-const normaliseCypress = (report, startedAt, finishedAt) => {
+const normaliseCypress = (report, startedAt, finishedAt, rootDir = null) => {
   const stats = report.stats || report;
   const totalTests = Number(stats.tests ?? stats.total ?? 0);
   if (!Number.isFinite(totalTests)) {
@@ -176,6 +210,21 @@ const normaliseCypress = (report, startedAt, finishedAt) => {
         else if (t.state === "pending" || t.state === "skipped") status = "skipped";
         else if (t.flaky || (t.attempts && t.attempts.length > 1 && t.state === "passed")) status = "flaky";
 
+        let breakpoint = {
+          failureStep: null,
+          failureCategory: null,
+          failureCodeSnippet: null,
+          domSnapshot: null,
+        };
+        if (status === "failed" || status === "flaky") {
+          breakpoint = analyzeFailureBreakpoint({
+            message: t.displayError || (t.attempts && t.attempts[0]?.error?.message) || "",
+            stack: t.stack || (t.attempts && t.attempts[0]?.error?.stack) || "",
+            testFile,
+            rootDir,
+          });
+        }
+
         scenarios.push({
           title,
           suiteName: Array.isArray(t.title) && t.title.length > 1 ? t.title[0] : null,
@@ -183,10 +232,16 @@ const normaliseCypress = (report, startedAt, finishedAt) => {
           durationMs: t.duration || 0,
           failureMessages: t.displayError ? [t.displayError] : [],
           testFile,
+          failureStep: breakpoint.failureStep,
+          failureCategory: breakpoint.failureCategory,
+          failureCodeSnippet: breakpoint.failureCodeSnippet,
+          domSnapshot: breakpoint.domSnapshot,
         });
       }
     }
   }
+
+  const stabilityScorePct = totalTests > 0 ? Number(((passedTests / totalTests) * 100).toFixed(1)) : 0;
 
   return {
     totalTests,
@@ -194,6 +249,7 @@ const normaliseCypress = (report, startedAt, finishedAt) => {
     failedTests,
     flakyTests,
     skippedTests,
+    stabilityScorePct,
     durationMs: Number(stats.duration) || Math.max(0, finishedAt - startedAt),
     status: failedTests > 0 ? "FAILED" : "PASSED",
     startedAt,
@@ -202,7 +258,7 @@ const normaliseCypress = (report, startedAt, finishedAt) => {
   };
 };
 
-export const parseSystemTestResult = ({ runner, resultPath, startedAt, finishedAt }) => {
+export const parseSystemTestResult = ({ runner, resultPath, startedAt, finishedAt, rootDir = null }) => {
   if (!["playwright", "cypress"].includes(runner)) {
     throw new ServiceError("Unsupported system test runner", 400);
   }
@@ -213,6 +269,6 @@ export const parseSystemTestResult = ({ runner, resultPath, startedAt, finishedA
   }
   const report = readReport(resultPath);
   return runner === "playwright"
-    ? normalisePlaywright(report, start, finish)
-    : normaliseCypress(report, start, finish);
+    ? normalisePlaywright(report, start, finish, rootDir)
+    : normaliseCypress(report, start, finish, rootDir);
 };

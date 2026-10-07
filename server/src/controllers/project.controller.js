@@ -13,8 +13,10 @@ import {
 } from "../services/gemini.service.js";
 import { checkAndIncrementQuota } from "../services/aiQuota.service.js";
 import { getAiTestById, listAiTests } from "../services/aiTest.service.js";
-import { detectAndSaveProject as detectAndSavePlaywright } from "../services/playwrightDetection.service.js";
-import { detectSystemTestFrameworks } from "../services/systemTestFrameworkDetection.service.js";
+import {
+  detectSystemTestFrameworks,
+  detectSystemTestFrameworksForSnapshot,
+} from "../services/systemTestFrameworkDetection.service.js";
 import prisma from "../config/prisma.js";
 import {
   ServiceError,
@@ -1209,8 +1211,11 @@ class ProjectController {
         });
       }
 
-      // Detect system test frameworks
-      const detection = await detectSystemTestFrameworks(snapshot.rootDir);
+      // Detect system test frameworks and sync flags to snapshot
+      const detection = await detectSystemTestFrameworksForSnapshot(
+        snapshot.id,
+        snapshot,
+      );
 
       return res.status(200).json({ success: true, data: detection });
     } catch (error) {
