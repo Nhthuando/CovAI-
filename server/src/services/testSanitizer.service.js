@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { normalizePath } from "./fileCoverage.service.js";
+import { parseJavaScriptCode } from "./babelParser.service.js";
 
 const RESERVED_KEYWORDS = new Set([
     "jest", "require", "describe", "test", "it", "expect", "beforeEach", "afterEach",
@@ -176,6 +177,12 @@ export const healMultilineStrings = (code) => {
             continue;
         }
 
+        const trimmed = line.trim();
+        if (trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")) {
+            result.push(line);
+            continue;
+        }
+
         let inStr = null;
         let escaped = false;
         for (let c = 0; c < line.length; c++) {
@@ -185,6 +192,12 @@ export const healMultilineStrings = (code) => {
                 continue;
             }
             if (!inStr) {
+                if (ch === "/" && line[c + 1] === "/") {
+                    break;
+                }
+                if (ch === "'" && c > 0 && /[a-zA-Z0-9_]/.test(line[c - 1]) && c < line.length - 1 && /[a-zA-Z0-9_]/.test(line[c + 1])) {
+                    continue;
+                }
                 if (ch === "'" || ch === '"' || ch === "`") {
                     inStr = ch;
                 }
@@ -441,8 +454,8 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
                     if (anyDuplicate) {
                         if (remainingTokens.length === 0) {
                             let depth = 0;
-                            for (let j = i; j < lines.length; j++) {
-                                const curLine = lines[j];
+                            for (let j = i; j < linesAfterDedup.length; j++) {
+                                const curLine = linesAfterDedup[j];
                                 linesAfterDedup[j] = `// [deduped] ${curLine.trim()}`;
                                 const stripped = curLine.replace(/\/\/.*$/, "").replace(/(['"`])(?:(?!\1)[^\\]|\\.)*\1/g, "");
                                 for (const ch of stripped) {
@@ -465,8 +478,8 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
                         const [, , varName] = simpleMatch;
                         if (topDeclared.has(varName)) {
                             let depth = 0;
-                            for (let j = i; j < lines.length; j++) {
-                                const curLine = lines[j];
+                            for (let j = i; j < linesAfterDedup.length; j++) {
+                                const curLine = linesAfterDedup[j];
                                 linesAfterDedup[j] = `// [deduped] ${curLine.trim()}`;
                                 const stripped = curLine.replace(/\/\/.*$/, "").replace(/(['"`])(?:(?!\1)[^\\]|\\.)*\1/g, "");
                                 for (const ch of stripped) {
@@ -670,8 +683,8 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     }
 
     // 10b. Heal orphaned multi-line blocks left behind by broken [deduped]
-    cleaned = cleaned.replace(/\/\/\s*\[deduped\]\s*(?:const|let|var)\s+[a-zA-Z0-9_$]+\s*=\s*\{[\s\S]*?\}\s*;?/g, "");
-    cleaned = cleaned.replace(/\/\/\s*\[deduped\]\s*(?:const|let|var)\s+[a-zA-Z0-9_$]+\s*=\s*\([\s\S]*?\)\s*;?/g, "");
+    cleaned = cleaned.replace(/\/\/\s*\[deduped\]\s*(?:const|let|var)\s+[a-zA-Z0-9_$]+\s*=\s*\{[^}\n]*\r?\n[\s\S]*?\}\s*;?/g, "");
+    cleaned = cleaned.replace(/\/\/\s*\[deduped\]\s*(?:const|let|var)\s+[a-zA-Z0-9_$]+\s*=\s*\([^\)\n]*\r?\n[\s\S]*?\)\s*;?/g, "");
 
     // 11. Normalize redundant monorepo prefixes (../../backend/src/... -> ../../src/...)
     cleaned = cleaned.replace(/require\(['"](?:\.\.\/)+(?:backend|frontend|server|client|api)\/src\/([^'"]+)['"]\)/g, "require('../../src/$1')");
