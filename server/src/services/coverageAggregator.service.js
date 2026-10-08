@@ -23,12 +23,12 @@ const findCoverageFiles = (dir, fileList = []) => {
 
 export const aggregateCoverageReports = async (rootDir, snapshotId) => {
     if (!rootDir || !snapshotId) {
-        throw new ServiceError("Thiếu rootDir hoặc snapshotId", 400);
+        throw new ServiceError("Missing rootDir or snapshotId", 400);
     }
 
     const files = findCoverageFiles(rootDir);
     if (files.length === 0) {
-        throw new Error("Không tìm thấy file coverage nào trong dự án.");
+        throw new Error("No coverage files found in project.");
     }
 
     let globalTotal = {
@@ -69,11 +69,14 @@ export const aggregateCoverageReports = async (rootDir, snapshotId) => {
         }
     }
 
-    const calcPct = (c, t) => t === 0 ? 100 : parseFloat(((c / t) * 100).toFixed(2));
+    const calcPct = (c, t) => t === 0 ? (c === 0 ? 0 : 100) : parseFloat(((c / t) * 100).toFixed(2));
     
     const linesPct = calcPct(globalTotal.lines.covered, globalTotal.lines.total);
     const funcsPct = calcPct(globalTotal.functions.covered, globalTotal.functions.total);
-    const branchesPct = calcPct(globalTotal.branches.covered, globalTotal.branches.total);
+    let branchesPct = calcPct(globalTotal.branches.covered, globalTotal.branches.total);
+    if ((globalTotal.branches.covered === 0 || globalTotal.branches.total === 0) && (linesPct === 0 || globalTotal.lines.covered === 0)) {
+        branchesPct = 0;
+    }
     const stmtsPct = calcPct(globalTotal.statements.covered, globalTotal.statements.total);
 
     const summary = await prisma.coverageSummary.upsert({
@@ -84,14 +87,23 @@ export const aggregateCoverageReports = async (rootDir, snapshotId) => {
 
     await prisma.coverageFile.deleteMany({ where: { snapshotId } });
     
+    const parsePct = (val, fallback) => {
+        if (typeof val === "number" && !isNaN(val)) return val;
+        if (typeof val === "string") {
+            const p = parseFloat(val);
+            if (!isNaN(p)) return p;
+        }
+        return typeof fallback === "number" && !isNaN(fallback) ? fallback : 0;
+    };
+
     const fileInserts = Object.entries(allFiles).map(([filePath, data]) => {
         return {
             snapshotId,
             filePath: filePath.replace(rootDir + path.sep, ''), 
-            linesPct: data.lines?.pct ?? calcPct(data.lines?.covered, data.lines?.total),
-            branchesPct: data.branches?.pct ?? calcPct(data.branches?.covered, data.branches?.total),
-            funcsPct: data.functions?.pct ?? calcPct(data.functions?.covered, data.functions?.total),
-            stmtsPct: data.statements?.pct ?? data.lines?.pct ?? calcPct(data.lines?.covered, data.lines?.total)
+            linesPct: parsePct(data.lines?.pct, calcPct(data.lines?.covered, data.lines?.total)),
+            branchesPct: parsePct(data.branches?.pct, calcPct(data.branches?.covered, data.branches?.total)),
+            funcsPct: parsePct(data.functions?.pct, calcPct(data.functions?.covered, data.functions?.total)),
+            stmtsPct: parsePct(data.statements?.pct ?? data.lines?.pct, calcPct(data.statements?.covered ?? data.lines?.covered, data.statements?.total ?? data.lines?.total))
         };
     });
 

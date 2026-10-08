@@ -4,6 +4,7 @@ import prisma from "../config/prisma.js";
 import { detectJest } from "../utils/jestDetector.js";
 import { buildCfgForSnapshot } from "../services/buildCfg.service.js";
 import { detectLanguageFromDirectory } from "../utils/languageDetector.js";
+import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 
 export const cloneGitHubRepositoryByUrl = async (req, res) => {
   try {
@@ -48,7 +49,8 @@ export const cloneGitHubRepositoryByUrl = async (req, res) => {
       });
     }
 
-    const detection = detectJest(cloneResult.localPath);
+    const resolvedRootDir = resolveProjectRoot(cloneResult.localPath) || cloneResult.localPath;
+    const detection = detectJest(resolvedRootDir);
 
     const snapshot = await prisma.projectSnapshot.create({
       data: {
@@ -56,7 +58,7 @@ export const cloneGitHubRepositoryByUrl = async (req, res) => {
         source: "GITHUB",
         commitSha: cloneResult.commitSha,
         storagePath: cloneResult.localPath,
-        rootDir: cloneResult.localPath,
+        rootDir: resolvedRootDir,
         hasJest: detection.hasJest,
         jestConfigPath: detection.configPath,
         jestCommand: detection.jestCommand,
@@ -137,7 +139,8 @@ export const importGitHubRepository = async (req, res) => {
       });
     }
 
-    const detection = detectJest(cloneResult.localPath);
+    const resolvedRootDir = resolveProjectRoot(cloneResult.localPath) || cloneResult.localPath;
+    const detection = detectJest(resolvedRootDir);
 
     const snapshot = await prisma.projectSnapshot.create({
       data: {
@@ -145,7 +148,7 @@ export const importGitHubRepository = async (req, res) => {
         source: "GITHUB",
         commitSha: cloneResult.commitSha,
         storagePath: cloneResult.localPath,
-        rootDir: cloneResult.localPath,
+        rootDir: resolvedRootDir,
         hasJest: detection.hasJest,
         jestConfigPath: detection.configPath,
         jestCommand: detection.jestCommand,

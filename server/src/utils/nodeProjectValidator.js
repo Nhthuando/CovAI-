@@ -6,7 +6,7 @@ import {
   createExtractorFromFile,
 } from "node-unrar-js";
 import { ServiceError } from "./serviceError.js";
-import { resolveProjectRoot } from "./projectRootResolver.js";
+import { resolveProjectRoot, hasSourceCodeFiles, ensureMinimalPackageJson } from "./projectRootResolver.js";
 import { detectJest } from "./jestDetector.js";
 import { detectSupertest } from "../services/supertestDetection.service.js";
 
@@ -53,7 +53,7 @@ export const validateArchiveContainsPackageJson = async (source, filename) => {
   return true;
 };
 
-export const validateNodeProject = async (rootDir) => {
+export const validateNodeProject = async (rootDir, options = {}) => {
   if (!rootDir || typeof rootDir !== "string" || rootDir.trim().length === 0) {
     throw new ServiceError(
       "Invalid Node.js project: project root was not found.",
@@ -61,10 +61,25 @@ export const validateNodeProject = async (rootDir) => {
     );
   }
 
+  const isFile = (p) => {
+    try {
+      if (!fs.existsSync(p)) return false;
+      return typeof fs.statSync === "function" ? fs.statSync(p).isFile() : true;
+    } catch {
+      return false;
+    }
+  };
+
   const resolvedRootDir = resolveProjectRoot(rootDir);
   const packageJsonPath = path.join(resolvedRootDir, "package.json");
-  const packageJsonExists =
-    fs.existsSync(packageJsonPath) && fs.statSync(packageJsonPath).isFile();
+  let packageJsonExists = isFile(packageJsonPath);
+
+  if (!packageJsonExists && options.autoCreate) {
+    if (hasSourceCodeFiles(resolvedRootDir) || hasSourceCodeFiles(rootDir)) {
+      ensureMinimalPackageJson(resolvedRootDir);
+      packageJsonExists = isFile(packageJsonPath);
+    }
+  }
 
   const jestInfo = detectJest(resolvedRootDir);
   const supertestInfo = await detectSupertest(resolvedRootDir);

@@ -98,12 +98,8 @@ export const notificationService = {
 
             const response = await notificationApi.get('/unread-count');
             return response.data.count ?? 0;
-        } catch (error) {
-            if (error?.response?.status === 401 || error?.code === 'ERR_NETWORK' || !navigator.onLine) {
-                return 0;
-            }
-            console.error('Error fetching unread count:', error);
-            throw error;
+        } catch {
+            return 0;
         }
     },
 

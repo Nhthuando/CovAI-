@@ -14,7 +14,7 @@ import { ServiceError } from "../utils/serviceError.js";
 import { storeCoverageOutputs } from "./coverageStorage.service.js";
 import { parseCoverageSummary } from "./coverageSummaryParser.service.js";
 
-const RUN_TESTS_TIMEOUT_MS = 5 * 60 * 1000; // 5 phút
+const RUN_TESTS_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 
 const assertStringField = (value, fieldName) => {
     if (!value || typeof value !== "string" || value.trim().length === 0) {
@@ -27,9 +27,9 @@ const assertStringField = (value, fieldName) => {
 /**
  * RUN_TESTS pipeline — SCRUM-107..SCRUM-112:
  *  1. markJobRunning
- *  2. spawn jest --coverage với reporters json-summary, json, lcov
+ *  2. spawn jest --coverage with reporters json-summary, json, lcov
  *  3. Capture stdout/stderr (SCRUM-111)
- *  4. Timeout 5 phút (SCRUM-112)
+ *  4. Timeout 5 minutes (SCRUM-112)
  *  5. Parse coverage-summary.json → DB (SCRUM-108)
  *  6. Parse coverage-final.json → DB (SCRUM-109)
  *  7. Verify lcov.info (SCRUM-110)
@@ -38,7 +38,7 @@ const assertStringField = (value, fieldName) => {
 export const processCoverageJob = async (jobId) => {
     assertStringField(jobId, "jobId");
 
-    // ── Chuyển sang RUNNING ───────────────────────────────────────────────
+    // ── Transition to RUNNING ──────────────────────────────────────────────
     try {
         await markJobRunning(jobId);
     } catch (error) {
@@ -47,24 +47,24 @@ export const processCoverageJob = async (jobId) => {
             error.message === "Only queued jobs can start" ||
             error.message === "Cannot start a canceled job"
         ) {
-            console.log(`[CoverageRunner ${jobId}] Bỏ qua: ${error.message}`);
+            console.log(`[CoverageRunner ${jobId}] Skipped: ${error.message}`);
             return;
         }
-        console.error(`[CoverageRunner ${jobId}] Lỗi khi chuyển RUNNING:`, error);
+        console.error(`[CoverageRunner ${jobId}] Error transitioning to RUNNING:`, error);
         return;
     }
 
-    // ── Lấy thông tin Job + Snapshot ─────────────────────────────────────
+    // ── Fetch Job + Snapshot info ────────────────────────────────────────
     let job;
     try {
         job = await getJobById(jobId);
     } catch (error) {
-        console.error(`[CoverageRunner ${jobId}] Không lấy được Job:`, error);
+        console.error(`[CoverageRunner ${jobId}] Unable to fetch Job:`, error);
         return;
     }
 
     if (!job.snapshot?.rootDir) {
-        const msg = "Snapshot chưa có rootDir — INGEST job chưa hoàn thành.";
+        const msg = "Snapshot does not have rootDir — INGEST job pending.";
         console.error(`[CoverageRunner ${jobId}] ${msg}`);
         await markJobFailed(jobId, new Error(msg));
         return;
@@ -74,10 +74,10 @@ export const processCoverageJob = async (jobId) => {
     const snapshotId = job.snapshotId;
     const coverageDir = path.join(rootDir, "coverage");
 
-    // Khởi tạo output
+    // Initialize output
     await saveJobOutput(jobId, { stdout: "", stderr: "" }).catch(() => { });
     await updateJobProgress(jobId, 10);
-    await addJobLog(jobId, "INFO", `Bắt đầu jest --coverage tại: ${rootDir}`);
+    await addJobLog(jobId, "INFO", `Starting jest --coverage at: ${rootDir}`);
 
     // ── SCRUM-107: Spawn jest --coverage ──────────────────────────────────
     const jestArgs = [
@@ -89,7 +89,7 @@ export const processCoverageJob = async (jobId) => {
         "--testTimeout=30000",
     ];
 
-    // Nếu snapshot có jestConfigPath thì truyền vào
+    // If snapshot has jestConfigPath, pass it in
     if (job.snapshot.jestConfigPath) {
         jestArgs.push(`--config=${job.snapshot.jestConfigPath}`);
     }
@@ -107,7 +107,7 @@ export const processCoverageJob = async (jobId) => {
         const timer = setTimeout(async () => {
             timedOut = true;
             child.kill("SIGKILL");
-            const msg = `jest --coverage vượt quá timeout ${RUN_TESTS_TIMEOUT_MS / 1000}s`;
+            const msg = `jest --coverage exceeded timeout ${RUN_TESTS_TIMEOUT_MS / 1000}s`;
             console.error(`[CoverageRunner ${jobId}] ${msg}`);
             await addJobLog(jobId, "ERROR", msg);
             await markJobFailed(jobId, new Error(msg)).catch(() => { });
@@ -128,15 +128,15 @@ export const processCoverageJob = async (jobId) => {
             await appendJobOutput(jobId, { stderr: text }).catch(() => { });
         });
 
-        // Khi jest kết thúc
+        // When jest exits
         child.on("close", async (code) => {
             clearTimeout(timer);
             if (timedOut) return;
 
-            // Jest trả exit code 1 khi có test fail, nhưng vẫn sinh coverage
-            // Chỉ coi là lỗi nếu exit code >= 2 (lỗi cấu hình/không chạy được)
+            // Jest exits with code 1 when tests fail, but coverage is still generated.
+            // Only treat as an error if exit code >= 2 (configuration/execution error)
             if (code !== null && code >= 2) {
-                const msg = `jest kết thúc với exit code ${code} (lỗi nghiêm trọng)`;
+                const msg = `jest exited with code ${code} (fatal error)`;
                 await addJobLog(jobId, "ERROR", msg);
                 await markJobFailed(jobId, new Error(msg));
                 console.error(`[CoverageRunner ${jobId}] ${msg}`);
@@ -144,7 +144,7 @@ export const processCoverageJob = async (jobId) => {
             }
 
             await updateJobProgress(jobId, 70);
-            await addJobLog(jobId, "INFO", `jest kết thúc (exit ${code}), đang parse coverage...`);
+            await addJobLog(jobId, "INFO", `jest finished (exit ${code}), parsing coverage...`);
 
             try {
                 // SCRUM-85: Parse coverage-summary.json → DB (lines/branches/functions/statements)
@@ -157,11 +157,11 @@ export const processCoverageJob = async (jobId) => {
                 // Verify lcov.info
                 const lcovPath = path.join(coverageDir, "lcov.info");
                 const hasLcov = fs.existsSync(lcovPath);
-                await addJobLog(jobId, "INFO", `lcov.info: ${hasLcov ? "có" : "không tìm thấy"}`);
+                await addJobLog(jobId, "INFO", `lcov.info: ${hasLcov ? "found" : "not found"}`);
 
                 await updateJobProgress(jobId, 85);
 
-                // SCRUM-84: Upload coverage files lên Firebase Storage
+                // SCRUM-84: Upload coverage files to Firebase Storage
                 let storageResult = {};
                 try {
                     storageResult = await storeCoverageOutputs(
@@ -169,10 +169,10 @@ export const processCoverageJob = async (jobId) => {
                         job.projectId,
                         coverageDir
                     );
-                    await addJobLog(jobId, "INFO", `Đã upload coverage files lên Firebase: ${storageResult.baseStoragePath}`);
+                    await addJobLog(jobId, "INFO", `Uploaded coverage files to Firebase: ${storageResult.baseStoragePath}`);
                 } catch (storageErr) {
-                    console.warn(`[CoverageRunner ${jobId}] Cảnh báo: không thể upload coverage files:`, storageErr.message);
-                    await addJobLog(jobId, "WARN", `Không thể upload coverage files: ${storageErr.message}`);
+                    console.warn(`[CoverageRunner ${jobId}] Warning: unable to upload coverage files:`, storageErr.message);
+                    await addJobLog(jobId, "WARN", `Unable to upload coverage files: ${storageErr.message}`);
                 }
 
                 await updateJobProgress(jobId, 95);
@@ -190,11 +190,11 @@ export const processCoverageJob = async (jobId) => {
                     storageBasePath: storageResult.baseStoragePath ?? null,
                 });
 
-                console.log(`[CoverageRunner ${jobId}] Pipeline hoàn thành thành công.`);
+                console.log(`[CoverageRunner ${jobId}] Pipeline completed successfully.`);
 
             } catch (parseError) {
-                console.error(`[CoverageRunner ${jobId}] Lỗi parse coverage:`, parseError);
-                await addJobLog(jobId, "ERROR", `Lỗi parse coverage: ${parseError.message}`);
+                console.error(`[CoverageRunner ${jobId}] Coverage parsing error:`, parseError);
+                await addJobLog(jobId, "ERROR", `Coverage parsing error: ${parseError.message}`);
                 await markJobFailed(jobId, parseError).catch(() => { });
             }
 

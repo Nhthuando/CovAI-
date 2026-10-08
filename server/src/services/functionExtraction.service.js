@@ -90,6 +90,92 @@ const functionName = (functionPath) => {
   return assignmentName(assignment?.node) || "anonymous";
 };
 
+const inferContextualName = (functionPath) => {
+  const parent = functionPath.parentPath;
+  if (!parent) return null;
+
+  // 1. Array pattern in VariableDeclarator: const [cart, setCart] = useState(() => ...)
+  // Or named hook initializer: const memoized = useMemo(() => ...)
+  if (parent.isCallExpression()) {
+    const callee = parent.node.callee;
+    const calleeName =
+      callee.type === "Identifier"
+        ? callee.name
+        : callee.type === "MemberExpression"
+          ? callee.property?.name
+          : null;
+
+    const grandParent = parent.parentPath;
+    if (grandParent?.isVariableDeclarator()) {
+      const idNode = grandParent.node.id;
+      // const [cart, setCart] = useState(...)
+      if (idNode?.type === "ArrayPattern" && idNode.elements?.[0]?.name) {
+        return `${idNode.elements[0].name} (useState)`;
+      }
+      if (idNode?.type === "Identifier") {
+        if (calleeName === "useCallback") return idNode.name;
+        if (calleeName) return `${idNode.name} (${calleeName})`;
+        return idNode.name;
+      }
+    }
+
+    // Direct React hooks: useEffect(() => ...), useLayoutEffect(() => ...)
+    if (calleeName === "useEffect" || calleeName === "useLayoutEffect") {
+      return `${calleeName} callback`;
+    }
+
+    // State setter: setCart((prev) => ...)
+    if (calleeName && /^set[A-Z]/.test(calleeName)) {
+      return `${calleeName} updater`;
+    }
+
+    // Array / Collection methods: foods.map, prev.filter, cart.reduce, find
+    if (parent.node.callee?.type === "MemberExpression") {
+      const obj = parent.node.callee.object?.name || "";
+      const method = parent.node.callee.property?.name || "";
+      if (
+        [
+          "map",
+          "filter",
+          "find",
+          "reduce",
+          "forEach",
+          "some",
+          "every",
+          "flatMap",
+          "sort",
+        ].includes(method)
+      ) {
+        return obj ? `${obj}.${method} callback` : `${method} callback`;
+      }
+    }
+
+    if (
+      calleeName &&
+      calleeName !== "setTimeout" &&
+      calleeName !== "setInterval"
+    ) {
+      return `${calleeName} callback`;
+    }
+  }
+
+  // 2. JSX Attributes: onClick={() => ...}, onClose={() => ...}
+  if (parent.isJSXExpressionContainer()) {
+    const jsxAttr = parent.parentPath;
+    if (jsxAttr?.isJSXAttribute()) {
+      const attrName = jsxAttr.node.name?.name;
+      if (attrName) return `${attrName} handler`;
+    }
+  }
+
+  // 3. Export default
+  if (parent.isExportDefaultDeclaration()) {
+    return "default export";
+  }
+
+  return null;
+};
+
 const isExported = (functionPath) => {
   if (
     functionPath.findParent(
@@ -109,11 +195,10 @@ const getFunctionMetadata = (functionPath, type, filePath) => {
   const isArrow =
     type === "ArrowFunctionExpression" ||
     functionPath.isArrowFunctionExpression?.();
-  const displayName = isAnonymous
-    ? isArrow
-      ? "arrow function"
-      : "anonymous"
-    : name;
+  const contextualName = isAnonymous ? inferContextualName(functionPath) : null;
+  const displayName = !isAnonymous
+    ? name
+    : contextualName || (isArrow ? "arrow function" : "anonymous");
   let controlFlow = { nodes: [], edges: [] };
   try {
     controlFlow = buildCFG(node).graphJson;

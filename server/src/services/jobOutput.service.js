@@ -77,3 +77,5 @@ export const getOutputByJob = async (jobId) => {
     const out = await prisma.jobOutput.findUnique({ where: { jobId } });
     return out || { jobId, stdout: null, stderr: null };
 };
+
+export const getJobOutput = getOutputByJob;

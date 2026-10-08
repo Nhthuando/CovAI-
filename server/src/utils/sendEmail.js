@@ -10,7 +10,7 @@ const transporter = nodemailer.createTransport({
 
 export const sendEmail = async ({ email, subject, message, html }) => {
     if (!email || !subject) {
-        throw new Error("Thiếu các trường bắt buộc: email, subject");
+        throw new Error("Missing required fields: email, subject");
     }
 
     const mailOptions = {

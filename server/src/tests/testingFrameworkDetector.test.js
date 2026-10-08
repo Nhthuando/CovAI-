@@ -46,6 +46,17 @@ describe("testing framework detector", () => {
         expect(detectTestingFrameworks(root)).toMatchObject({ frameworkType: "none", errors: ["Unable to parse package.json"] });
     });
 
+    it("detects unit test files in nested tests/ directory with global BDD functions", () => {
+        const root = fixture({
+            "package.json": JSON.stringify({ name: "my-project" }),
+            "tests/unit/controllers/auth.controller.test.js": "describe('Auth', () => { it('works', () => { expect(true).toBe(true); }); });",
+        });
+        const result = detectTestingFrameworks(root);
+        expect(result.testFiles).toHaveLength(1);
+        expect(result.testFiles[0].path).toBe("tests/unit/controllers/auth.controller.test.js");
+        expect(result.detectedFrameworks.length).toBeGreaterThan(0);
+    });
+
     it("keeps the legacy Jest result and exposes normalized detection", () => {
         const root = fixture({ "package.json": JSON.stringify({ scripts: { test: "jest" }, devDependencies: { jest: "^29" } }) });
         expect(detectJest(root)).toMatchObject({ hasJest: true, jestCommand: "jest", testingFrameworks: { frameworkType: "single", detectedFrameworks: ["jest"] } });

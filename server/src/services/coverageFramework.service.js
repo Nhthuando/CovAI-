@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { resolveProjectRoot, hasSourceCodeFiles, ensureMinimalPackageJson } from "../utils/projectRootResolver.js";
 
 export const COVERAGE_FRAMEWORKS = Object.freeze({
   unit: ["jest", "vitest"],
@@ -29,6 +30,15 @@ const CONFIG_FILES = Object.freeze({
 });
 
 export function detectCoverageFrameworks(rootDir) {
+  let effectiveDir = rootDir;
+  let packagePath = path.join(effectiveDir, "package.json");
+  if (!fs.existsSync(packagePath)) {
+    const resolved = resolveProjectRoot(rootDir);
+    if (resolved && fs.existsSync(path.join(resolved, "package.json"))) {
+      effectiveDir = resolved;
+    }
+  }
+
   const candidateDirs = ["", "client", "server", "frontend", "backend", "web", "api", "app", "ui"];
   let foundAnyPkg = false;
   const dependencies = {};
@@ -36,11 +46,11 @@ export function detectCoverageFrameworks(rootDir) {
   let testScriptFramework = null;
 
   for (const cand of candidateDirs) {
-    const dir = cand ? path.join(rootDir, cand) : rootDir;
-    const packagePath = path.join(dir, "package.json");
-    if (fs.existsSync(packagePath)) {
+    const dir = cand ? path.join(rootDir, cand) : effectiveDir;
+    const pkgPath = path.join(dir, "package.json");
+    if (fs.existsSync(pkgPath)) {
       try {
-        const pkg = JSON.parse(fs.readFileSync(packagePath, "utf8"));
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
         foundAnyPkg = true;
         Object.assign(dependencies, pkg.dependencies || {}, pkg.devDependencies || {});
         scripts += " " + Object.values(pkg.scripts || {}).join(" ").toLowerCase();
@@ -61,9 +71,14 @@ export function detectCoverageFrameworks(rootDir) {
   }
 
   if (!foundAnyPkg) {
-    const error = new Error("Invalid Node.js project: package.json was not found in the uploaded project.");
-    error.statusCode = 422;
-    throw error;
+    if (hasSourceCodeFiles(effectiveDir) || hasSourceCodeFiles(rootDir)) {
+      ensureMinimalPackageJson(effectiveDir);
+      foundAnyPkg = true;
+    } else {
+      const error = new Error("Invalid Node.js project: package.json was not found in the uploaded project.");
+      error.statusCode = 422;
+      throw error;
+    }
   }
 
   const all = [];
@@ -72,10 +87,81 @@ export function detectCoverageFrameworks(rootDir) {
     const installed = packageNames.some((name) => Object.prototype.hasOwnProperty.call(dependencies, name));
     const configured = (CONFIG_FILES[framework] || []).some((name) => {
       if (fs.existsSync(path.join(rootDir, name))) return true;
+      if (effectiveDir && fs.existsSync(path.join(effectiveDir, name))) return true;
       return candidateDirs.some((cand) => cand && fs.existsSync(path.join(rootDir, cand, name)));
     });
     const scripted = new RegExp(`(^|[^a-z])${framework}([^a-z]|$)`).test(scripts);
     if (installed || configured || scripted) all.push(framework);
+  }
+
+  // Scan test files for framework indicators as well
+  const scanTestFiles = (dir) => {
+    if (!fs.existsSync(dir)) return;
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const full = path.join(dir, entry.name);
+        const normPath = full.replace(/\\/g, "/").toLowerCase();
+        const relPath = path.relative(rootDir, full).replace(/\\/g, "/").toLowerCase();
+
+        if (entry.isDirectory()) {
+          if (!["node_modules", ".git", "coverage", "dist", "build", ".next", ".vite", ".vitest"].includes(entry.name)) {
+            scanTestFiles(full);
+          }
+        } else if (entry.isFile()) {
+          const isSetupOrHelper = /^(setup|global-?setup|setup-?tests|teardown|helpers?|mocks?|fixtures?|config|utils?)\.[a-z0-9]+$/i.test(entry.name);
+          const isTestFile = !isSetupOrHelper && (
+            /\.(test|spec|testcase)\.[a-z0-9]+$/i.test(entry.name) ||
+            /(?:^|\/)(tests?|__tests__|specs?|unit)\//i.test(relPath)
+          ) && /\.[cm]?[jt]sx?$/i.test(entry.name);
+
+          if (!isTestFile) continue;
+
+          let content = "";
+          try {
+            const buf = Buffer.alloc(1024);
+            const fd = fs.openSync(full, "r");
+            const bytesRead = fs.readSync(fd, buf, 0, 1024, 0);
+            fs.closeSync(fd);
+            content = buf.toString("utf8", 0, bytesRead).toLowerCase();
+          } catch (_) { }
+
+          if (relPath.includes("vitest") || content.includes("vitest") || content.includes("vi.")) {
+            if (!all.includes("vitest")) all.push("vitest");
+          }
+          if (relPath.includes("jest") || content.includes("@jest/") || content.includes("jest.")) {
+            if (!all.includes("jest")) all.push("jest");
+          }
+          if (relPath.includes("supertest") || content.includes("supertest") || content.includes("request(app)")) {
+            if (!all.includes("supertest")) all.push("supertest");
+          }
+          if (relPath.includes("playwright") || content.includes("@playwright/test") || content.includes("page.goto")) {
+            if (!all.includes("playwright")) all.push("playwright");
+          }
+          if (relPath.includes("cypress") || content.includes("cypress")) {
+            if (!all.includes("cypress")) all.push("cypress");
+          }
+
+          // Default unit fallback for test files: if it's a test file and not exclusively e2e/system (playwright/cypress),
+          // ensure unit test frameworks (vitest, jest) are included if neither is present.
+          const isE2EOnly = (relPath.includes("playwright") || relPath.includes("cypress")) && !relPath.includes("unit");
+          if (!isE2EOnly) {
+            if (!all.includes("vitest") && !all.includes("jest")) {
+              if (testScriptFramework) {
+                all.push(testScriptFramework);
+              } else {
+                all.push("vitest", "jest");
+              }
+            }
+          }
+        }
+      }
+    } catch (_) { }
+  };
+
+  scanTestFiles(effectiveDir);
+  if (effectiveDir !== rootDir) {
+    scanTestFiles(rootDir);
   }
 
   // Detect Playwright / Cypress from standard test file locations (e.g. AI-generated tests)
@@ -105,9 +191,25 @@ export function detectCoverageFrameworks(rootDir) {
     all.push("cypress");
   }
 
+  // Default unit test fallback: if no unit test framework was detected,
+  // allow unit test analysis (defaulting to "jest") so that projects without
+  // tests yet can run analysis, view logic files, and suggest unit tests.
+  if (!all.includes("jest") && !all.includes("vitest")) {
+    if (testScriptFramework) {
+      all.push(testScriptFramework);
+    } else if (all.length === 0) {
+      all.push("jest");
+    }
+  }
+
   const supported = Object.fromEntries(
     Object.entries(COVERAGE_FRAMEWORKS).map(([type, names]) => [type, names.filter((name) => all.includes(name))]),
   );
+
+  if ((!supported.unit || supported.unit.length === 0) && all.length === 0) {
+    supported.unit = ["jest"];
+  }
+
   return { all, supported, unsupported: all.filter((name) => !Object.values(COVERAGE_FRAMEWORKS).flat().includes(name)), testScriptFramework };
 }
 
@@ -135,7 +237,12 @@ export function selectCoverageFramework(detection, type, requestedFramework = nu
   const framework = supported[0];
   if (framework) return framework;
 
-  // 4. For system coverage: if requested or no framework in package.json, default to playwright
+  // 4. Default to jest for unit coverage if no explicit unsupported framework was detected
+  if (type === "unit" && (!detection.all || detection.all.length === 0)) {
+    return "jest";
+  }
+
+  // 5. For system coverage: if requested or no framework in package.json, default to playwright
   // (CovAI provides zero-config Playwright runner for AI-generated and saved E2E tests)
   if (type === "system") {
     if (requestedFramework && ["playwright", "cypress"].includes(requestedFramework.toLowerCase())) {

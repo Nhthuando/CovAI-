@@ -18,6 +18,9 @@ import {
   TestTube2,
   Layers,
   Workflow,
+  FileDiff,
+  Eye,
+  Play,
   Paperclip,
   Image as ImageIcon,
   X,
@@ -50,6 +53,61 @@ import {
 } from "../../services/coverage.service";
 import { getProjectJobsApi } from "../../services/job.service";
 import { useToast } from "./ToastContext";
+import DiffReviewModal from "./DiffReviewModal";
+
+/* ── Clean and Normalize Path Utilities ─────────────────── */
+export function cleanFilePath(pathStr = "") {
+  if (!pathStr) return "";
+  let clean = String(pathStr).replace(/\\/g, "/");
+  clean = clean.replace(/^.*\/repo\//, "");
+  clean = clean.replace(/^\/+/, "");
+  return clean;
+}
+
+export function shortenDirPath(filePath = "") {
+  const clean = cleanFilePath(filePath);
+  const parts = clean.split("/");
+  if (parts.length <= 1) return "";
+  const dirParts = parts.slice(0, -1);
+  return `.../${dirParts.join("/")}`;
+}
+
+export function getFileName(filePath = "") {
+  const clean = cleanFilePath(filePath);
+  return clean.split("/").pop() || clean;
+}
+
+function getIdeFileIcon(fileName = "") {
+  const lower = fileName.toLowerCase();
+  if (lower.endsWith(".jsx") || lower.endsWith(".tsx")) {
+    return (
+      <span className="text-cyan-400 font-bold text-xs select-none flex items-center justify-center w-4 h-4">
+        ⚛
+      </span>
+    );
+  }
+  if (lower.endsWith(".ts")) {
+    return (
+      <span
+        className="text-[9px] font-bold px-1 py-0.2 rounded font-mono select-none"
+        style={{ background: "rgba(56, 189, 248, 0.2)", color: "#38bdf8" }}
+      >
+        TS
+      </span>
+    );
+  }
+  if (lower.endsWith(".js") || lower.endsWith(".mjs")) {
+    return (
+      <span
+        className="text-[9px] font-bold px-1 py-0.2 rounded font-mono select-none"
+        style={{ background: "rgba(251, 191, 36, 0.2)", color: "#fbbf24" }}
+      >
+        JS
+      </span>
+    );
+  }
+  return <TestTube2 size={13} className="text-purple-400 flex-shrink-0" />;
+}
 
 /* ── Flatten File Tree Utility ──────────────────────────── */
 function flattenFiles(nodes) {
@@ -401,7 +459,7 @@ function TestSuggestionCard({
               border: "none",
               cursor: current.isApplying ? "wait" : "pointer",
             }}
-            title={`Write ${current.framework?.toUpperCase()} test case to ${current.targetTestFile}`}
+            title={`Write ${current.framework?.toUpperCase()} test cases to ${current.targetTestFile}`}
           >
             {current.isApplying ? (
               <Loader2 size={13} className="animate-spin" />
@@ -460,14 +518,287 @@ function TestSuggestionCard({
                   border: "1px solid var(--color-border)",
                   cursor: "pointer",
                 }}
-                title="Re-run Unit Test Coverage to verify increased coverage"
+                title="Re-run Unit Test Coverage to confirm coverage increase"
               >
-                <span>Run Analysis ↵</span>
+                <span>Run Analysis Unit ↵</span>
               </motion.button>
             )}
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ── IDE-like Multi-File Changes Widget (like Cursor / Antigravity IDE) ── */
+function IdeChangesWidget({
+  ideChanges,
+  onReviewFile,
+  onReviewAll,
+  onApplyFile,
+  onUndoFile,
+  onApplyAll,
+  onRunAnalysis,
+}) {
+  const [expanded, setExpanded] = useState(true);
+
+  if (!ideChanges || !Array.isArray(ideChanges.files) || ideChanges.files.length === 0) {
+    return null;
+  }
+
+  const files = ideChanges.files;
+  const totalFiles = files.length;
+  const totalAdded =
+    ideChanges.totalAdded ||
+    files.reduce((sum, f) => sum + (f.linesAdded || 0), 0);
+  const totalDeleted = ideChanges.totalDeleted || 0;
+  const allApplied = files.every((f) => f.applied);
+  const anyApplied = files.some((f) => f.applied);
+  const anyApplying = files.some((f) => f.isApplying);
+
+  return (
+    <div
+      className="mt-3.5 rounded-xl overflow-hidden shadow-xl select-text"
+      style={{
+        background: "#161b22",
+        border: "1px solid rgba(255, 255, 255, 0.12)",
+      }}
+    >
+      {/* ── IDE Widget Top Header (matches media_1790509595152.png) ── */}
+      <div
+        className="flex items-center justify-between px-3.5 py-2.5 cursor-pointer select-none"
+        style={{
+          background: "rgba(255, 255, 255, 0.03)",
+          borderBottom: expanded
+            ? "1px solid rgba(255, 255, 255, 0.08)"
+            : "none",
+        }}
+        onClick={() => setExpanded(!expanded)}
+      >
+        {/* Left: File count & additions/deletions stats */}
+        <div className="flex items-center gap-2">
+          <span className="text-slate-400 text-xs flex items-center">
+            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          </span>
+          <span className="text-xs font-semibold text-white">
+            {totalFiles} file{totalFiles > 1 ? "s" : ""} changed
+          </span>
+          <div className="flex items-center gap-1 font-mono text-[11px] font-semibold">
+            <span style={{ color: "#4ade80" }}>+{totalAdded}</span>
+            <span style={{ color: "#f87171" }}>-{totalDeleted}</span>
+          </div>
+        </div>
+
+        {/* Right: Review & Apply All Buttons */}
+        <div
+          className="flex items-center gap-2"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Review Button */}
+          <button
+            type="button"
+            onClick={onReviewAll}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-slate-200 hover:text-white transition-all cursor-pointer"
+            style={{
+              background: "rgba(255, 255, 255, 0.08)",
+              border: "1px solid rgba(255, 255, 255, 0.15)",
+            }}
+            title="Open Review & Diff for comprehensive comparison"
+          >
+            <FileDiff size={12} className="text-purple-400" />
+            <span>Review</span>
+          </button>
+
+          {/* Quick Apply All Button */}
+          {!allApplied ? (
+            <button
+              type="button"
+              disabled={anyApplying}
+              onClick={onApplyAll}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold text-white transition-all cursor-pointer"
+              style={{
+                background: "linear-gradient(135deg, #7c3aed, #9333ea)",
+                boxShadow: "0 0 10px rgba(124, 58, 237, 0.35)",
+              }}
+              title="Apply all suggested test files"
+            >
+              {anyApplying ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <Sparkles size={12} />
+              )}
+              <span>Apply all</span>
+            </button>
+          ) : (
+            <div
+              className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold"
+              style={{
+                background: "rgba(34, 197, 94, 0.15)",
+                color: "#4ade80",
+                border: "1px solid rgba(34, 197, 94, 0.3)",
+              }}
+            >
+              <Check size={12} />
+              <span>All Applied</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── File List (Collapsible) ── */}
+      {expanded && (
+        <div className="divide-y divide-white/5">
+          {files.map((file, idx) => {
+            const isApplied = file.applied;
+            const isApplying = file.isApplying;
+            const isUndoing = file.isUndoing;
+            const fileName = getFileName(file.targetTestFile);
+            const dirPath = shortenDirPath(file.targetTestFile);
+
+            return (
+              <div
+                key={file.targetTestFile || idx}
+                className="flex items-center justify-between px-3.5 py-2 hover:bg-white/[0.02] transition-colors group text-xs"
+              >
+                {/* File info */}
+                <div
+                  className="flex items-center gap-2 min-w-0 cursor-pointer flex-1 mr-2"
+                  onClick={() => onReviewFile?.(file, idx)}
+                  title={`Click to review diff of ${file.targetTestFile}`}
+                >
+                  {getIdeFileIcon(fileName)}
+                  <span className="font-semibold text-[#e6edf3] truncate hover:text-purple-300 transition-colors">
+                    {fileName}
+                  </span>
+                  {dirPath && (
+                    <span className="text-[11px] text-slate-500 font-mono truncate hidden sm:inline">
+                      {dirPath}
+                    </span>
+                  )}
+                  <span
+                    className="text-[10px] font-mono px-1 py-0.2 rounded font-semibold ml-1 flex-shrink-0"
+                    style={{
+                      background: "rgba(34, 197, 94, 0.12)",
+                      color: "#4ade80",
+                    }}
+                  >
+                    +{file.linesAdded || 0}
+                  </span>
+                  {file.framework && (
+                    <span
+                      className="text-[9.5px] uppercase font-bold px-1.5 py-0.2 rounded flex-shrink-0"
+                      style={{
+                        background:
+                          file.framework === "vitest"
+                            ? "rgba(245, 158, 11, 0.15)"
+                            : "rgba(124, 58, 237, 0.15)",
+                        color:
+                          file.framework === "vitest" ? "#fbbf24" : "#c084fc",
+                        border:
+                          file.framework === "vitest"
+                            ? "1px solid rgba(245, 158, 11, 0.3)"
+                            : "1px solid rgba(124, 58, 237, 0.3)",
+                      }}
+                    >
+                      {file.framework}
+                    </span>
+                  )}
+                </div>
+
+                {/* File actions */}
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  {/* Review individual file */}
+                  <button
+                    type="button"
+                    onClick={() => onReviewFile?.(file, idx)}
+                    className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+                    title="View Diff details for this file"
+                  >
+                    <Eye size={12} />
+                    <span className="hidden sm:inline">Review</span>
+                  </button>
+
+                  {/* Apply individual file */}
+                  {!isApplied ? (
+                    <button
+                      type="button"
+                      disabled={isApplying}
+                      onClick={() => onApplyFile?.(file)}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-semibold text-white transition-all cursor-pointer"
+                      style={{
+                        background:
+                          file.framework === "vitest" ? "#d97706" : "#7c3aed",
+                      }}
+                      title={`Apply testcases to ${file.targetTestFile}`}
+                    >
+                      {isApplying ? (
+                        <Loader2 size={11} className="animate-spin" />
+                      ) : (
+                        <Check size={11} />
+                      )}
+                      <span>Apply</span>
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      <span
+                        className="flex items-center gap-1 px-2 py-0.5 rounded text-[10.5px] font-medium"
+                        style={{
+                          background: "rgba(34, 197, 94, 0.15)",
+                          color: "#4ade80",
+                        }}
+                      >
+                        <Check size={11} />
+                        <span>Applied</span>
+                      </span>
+                      <button
+                        type="button"
+                        disabled={isUndoing}
+                        onClick={() => onUndoFile?.(file)}
+                        className="p-1 rounded text-slate-400 hover:text-red-400 hover:bg-white/5 transition-colors cursor-pointer"
+                        title="Undo this file"
+                      >
+                        {isUndoing ? (
+                          <Loader2 size={11} className="animate-spin" />
+                        ) : (
+                          <RotateCcw size={11} />
+                        )}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── Bottom Bar: Run Analysis button if any applied ── */}
+      {anyApplied && onRunAnalysis && (
+        <div
+          className="flex items-center justify-between px-3.5 py-2.5 flex-wrap gap-2"
+          style={{
+            background: "rgba(124, 58, 237, 0.08)",
+            borderTop: "1px solid rgba(124, 58, 237, 0.2)",
+          }}
+        >
+          <div className="text-[11px] text-purple-300 font-medium">
+            💡 Test files have been written to the project. Re-run analysis to verify coverage increase:
+          </div>
+          <button
+            type="button"
+            onClick={onRunAnalysis}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-all ml-auto cursor-pointer"
+            style={{
+              background: "linear-gradient(135deg, #7c3aed, #a855f7)",
+              boxShadow: "0 0 12px rgba(124, 58, 237, 0.4)",
+            }}
+            title="Re-run Analysis Unit"
+          >
+            <Play size={11} className="fill-white" />
+            <span>Run Analysis Unit ↵</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -666,6 +997,10 @@ function ChatMessage({
   onUndoSuggestion,
   onApplyAllSuggestions,
   onRunAnalysis,
+  onOpenReviewModal,
+  onApplyIdeFile,
+  onUndoIdeFile,
+  onApplyAllIdeChanges,
 }) {
   const isUser = msg.role === "user";
   const [hovered, setHovered] = useState(false);
@@ -920,16 +1255,32 @@ function ChatMessage({
 
           {msg.code && <CodeBlock code={msg.code} />}
 
-          {/* AI Unit Test Suggestion Card (supports Jest & Vitest) */}
-          {(msg.testSuggestions?.length > 0 || msg.testSuggestion) && (
-            <TestSuggestionCard
-              msg={msg}
-              onApplySuggestion={onApplySuggestion}
-              onUndoSuggestion={onUndoSuggestion}
-              onApplyAllSuggestions={onApplyAllSuggestions}
+          {/* IDE Multi-File Changes Widget */}
+          {msg.ideChanges && (
+            <IdeChangesWidget
+              ideChanges={msg.ideChanges}
+              onReviewFile={(file, idx) =>
+                onOpenReviewModal?.(msg.ideChanges.files, idx)
+              }
+              onReviewAll={() => onOpenReviewModal?.(msg.ideChanges.files, 0)}
+              onApplyFile={onApplyIdeFile}
+              onUndoFile={onUndoIdeFile}
+              onApplyAll={() => onApplyAllIdeChanges?.(msg.ideChanges)}
               onRunAnalysis={onRunAnalysis}
             />
           )}
+
+          {/* AI Unit Test Suggestion Card (supports Jest & Vitest fallback) */}
+          {!msg.ideChanges &&
+            (msg.testSuggestions?.length > 0 || msg.testSuggestion) && (
+              <TestSuggestionCard
+                msg={msg}
+                onApplySuggestion={onApplySuggestion}
+                onUndoSuggestion={onUndoSuggestion}
+                onApplyAllSuggestions={onApplyAllSuggestions}
+                onRunAnalysis={onRunAnalysis}
+              />
+            )}
 
           {/* Hover Actions (Copy / Retry) */}
           {!isUser && hovered && (
@@ -1862,11 +2213,20 @@ export default function AIPanel({
   const [isTyping, setIsTyping] = useState(false);
   const [selectedModel, setSelectedModel] = useState(AI_MODELS[0]);
   const [generateExpanded, setGenerateExpanded] = useState(false);
+  const [reviewModalOpen, setReviewModalOpen] = useState(false);
+  const [reviewFiles, setReviewFiles] = useState([]);
+  const [reviewIndex, setReviewIndex] = useState(0);
   const [hasAnalysis, setHasAnalysis] = useState(false);
   const bottomRef = useRef(null);
   const messageIdRef = useRef(10);
   const getNextId = () => ++messageIdRef.current;
   const { showToast } = useToast();
+
+  const handleOpenReviewModal = (files, initialIndex = 0) => {
+    setReviewFiles(files || []);
+    setReviewIndex(initialIndex || 0);
+    setReviewModalOpen(true);
+  };
 
   useEffect(() => {
     if (!snapshotId) return;
@@ -2083,6 +2443,25 @@ export default function AIPanel({
         throw new Error("Did not receive test case suggestions from server.");
       }
 
+      if (data.isFullyCovered) {
+        const assistantMsg = {
+          id: getNextId(),
+          role: "assistant",
+          timestamp: new Date().toLocaleTimeString("en-US", {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          content:
+            `✅ **File \`${data.sourceFile || filePath}\` has reached 100% test coverage!**\n\n` +
+            (data.targetTestFile ? `- **File test**: \`${data.targetTestFile}\` (${(data.framework || "jest").toUpperCase()})\n` : "") +
+            `- **Coverage**: 100% Statements, 100% Branches, 100% Lines\n` +
+            `- **Assertion errors**: 0 errors\n\n` +
+            `💬 *Note: This file has passed 100% and reached maximum coverage. No additional testcases needed!*`,
+        };
+        setMessages((m) => [...m, assistantMsg]);
+        return;
+      }
+
       const suggestionsList =
         Array.isArray(data.suggestions) && data.suggestions.length > 0
           ? data.suggestions.map((s, idx) => ({
@@ -2113,7 +2492,7 @@ export default function AIPanel({
       let summaryText = "";
       if (hasMultiple) {
         summaryText =
-          `I analyzed file **\`${data.sourceFile || filePath}\`** and proposed test suites for both **Jest** and **Vitest**:\n\n` +
+          `I analyzed file **\`${data.sourceFile || filePath}\`** and suggested tests for both **Jest** and **Vitest**:\n\n` +
           suggestionsList
             .map(
               (s) =>
@@ -2122,11 +2501,11 @@ export default function AIPanel({
             .join("\n") +
           `\n- **Uncovered lines**: ${data.uncoveredLines?.length ? data.uncoveredLines.join(", ") : "100% lines covered"}\n` +
           `- **Assertion errors**: ${data.failedLines?.length ? data.failedLines.join(", ") : "0 errors"}\n\n` +
-          `You can switch between **JEST** and **VITEST** tabs below to review the test code and click **Apply** (or click **Apply Both**)!`;
+          `You can toggle between **JEST** and **VITEST** tabs below to review test code and click **Apply** to write to test files (or click **Apply both**)!`;
       } else {
         const single = suggestionsList[0];
         summaryText = isTest
-          ? `I analyzed and proposed additional test cases for test file **\`${single.targetTestFile}\`** (${single.framework?.toUpperCase()}):\n\n` +
+          ? `I analyzed and suggested additional test cases for test file **\`${single.targetTestFile}\`** (${single.framework?.toUpperCase()}):\n\n` +
             (single.sourceFile && single.sourceFile !== single.targetTestFile
               ? `- **Corresponding source file**: \`${single.sourceFile}\`\n`
               : "") +
@@ -2173,12 +2552,462 @@ export default function AIPanel({
     }
   };
 
+  const handleApplyIdeFile = async (file, specificSuggestion = null) => {
+    if (!projectId || !file) return;
+    const target = specificSuggestion || file;
+    const targetPath = target.targetTestFile || file.targetTestFile;
+
+    // Set isApplying in messages
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (!m.ideChanges) return m;
+        const updated = m.ideChanges.files.map((f) =>
+          f.targetTestFile === file.targetTestFile ? { ...f, isApplying: true } : f
+        );
+        return { ...m, ideChanges: { ...m.ideChanges, files: updated } };
+      })
+    );
+
+    try {
+      const contentToWrite =
+        target.fullUpdatedContent || target.suggestedTestCode;
+
+      if (file.isExisting) {
+        await updateFileContentApi(projectId, targetPath, contentToWrite);
+      } else {
+        await createProjectFileApi(projectId, targetPath, contentToWrite);
+      }
+
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (!m.ideChanges) return m;
+          const updated = m.ideChanges.files.map((f) =>
+            f.targetTestFile === file.targetTestFile
+              ? { ...f, applied: true, isApplying: false }
+              : f
+          );
+          return { ...m, ideChanges: { ...m.ideChanges, files: updated } };
+        })
+      );
+
+      // Update modal state if open
+      setReviewFiles((prev) =>
+        prev.map((f) =>
+          f.targetTestFile === file.targetTestFile ? { ...f, applied: true } : f
+        )
+      );
+
+      showToast({
+        type: "success",
+        title: "Test Applied",
+        message: `Applied testcases to ${targetPath}`,
+      });
+      // Do not redirect view away so user stays in current context
+    } catch (err) {
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (!m.ideChanges) return m;
+          const updated = m.ideChanges.files.map((f) =>
+            f.targetTestFile === file.targetTestFile ? { ...f, isApplying: false } : f
+          );
+          return { ...m, ideChanges: { ...m.ideChanges, files: updated } };
+        })
+      );
+
+      showToast({
+        type: "error",
+        title: "Apply Failed",
+        message: err.message || "Unable to write test file.",
+      });
+    }
+  };
+
+  const handleUndoIdeFile = async (file) => {
+    if (!projectId || !file) return;
+    const targetPath = file.targetTestFile;
+    const orig = file.originalContent ?? "";
+
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (!m.ideChanges) return m;
+        const updated = m.ideChanges.files.map((f) =>
+          f.targetTestFile === targetPath ? { ...f, isUndoing: true } : f
+        );
+        return { ...m, ideChanges: { ...m.ideChanges, files: updated } };
+      })
+    );
+
+    try {
+      await updateFileContentApi(projectId, targetPath, orig);
+
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (!m.ideChanges) return m;
+          const updated = m.ideChanges.files.map((f) =>
+            f.targetTestFile === targetPath
+              ? { ...f, applied: false, isUndoing: false }
+              : f
+          );
+          return { ...m, ideChanges: { ...m.ideChanges, files: updated } };
+        })
+      );
+
+      setReviewFiles((prev) =>
+        prev.map((f) =>
+          f.targetTestFile === targetPath ? { ...f, applied: false } : f
+        )
+      );
+
+      showToast({
+        type: "info",
+        title: "Reverted",
+        message: `Reverted file ${targetPath}`,
+      });
+    } catch (err) {
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (!m.ideChanges) return m;
+          const updated = m.ideChanges.files.map((f) =>
+            f.targetTestFile === targetPath ? { ...f, isUndoing: false } : f
+          );
+          return { ...m, ideChanges: { ...m.ideChanges, files: updated } };
+        })
+      );
+
+      showToast({
+        type: "error",
+        title: "Undo Failed",
+        message: err.message || "Unable to revert file.",
+      });
+    }
+  };
+
+  const handleApplyAllIdeChanges = async (ideChanges) => {
+    const list = ideChanges?.files || reviewFiles;
+    if (!Array.isArray(list)) return;
+    for (const f of list) {
+      if (!f.applied) {
+        await handleApplyIdeFile(f);
+      }
+    }
+  };
+
+  const handleSuggestBulk = async (arg1, arg2) => {
+    if (!projectId) {
+      showToast({
+        type: "warning",
+        title: "No Project",
+        message: "Please select or create a project before using AI.",
+      });
+      return;
+    }
+
+    let options = {};
+    if (typeof arg1 === "object" && !Array.isArray(arg1) && arg1 !== null) {
+      options = arg1;
+    } else {
+      options = {
+        uncoveredFiles: Array.isArray(arg1) ? arg1 : [],
+        hasUncovered: arg2 !== false,
+      };
+    }
+
+    const {
+      allSuitesSummary,
+      testSuites = [],
+      uncoveredFiles = [],
+      totalCount = allSuitesSummary?.total || testSuites.length || uncoveredFiles.length || 10,
+    } = options;
+
+    const passed100 =
+      allSuitesSummary?.passed100Files ||
+      allSuitesSummary?.passed100Suites ||
+      [];
+    const needImprovement =
+      allSuitesSummary?.needImprovementFiles ||
+      allSuitesSummary?.needImprovementSuites ||
+      (Array.isArray(uncoveredFiles) && uncoveredFiles.length > 0
+        ? uncoveredFiles.map((f) => ({
+          filePath: f,
+          fileName: f.split("/").pop(),
+          reason: "Has not reached 100% coverage",
+        }))
+        : []);
+
+    const testCountDisplay = options.totalTestSuitesCount || 20;
+
+    // Send single user prompt message
+    const userMsg = {
+      id: getNextId(),
+      role: "user",
+      content: `✨ Analyze overall project coverage and suggest testcases (${totalCount} source files · ${testCountDisplay} test files)`,
+      timestamp: new Date().toLocaleTimeString("vi-VN", {
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+    };
+
+    // Temporary loading status message (will be replaced once suggestions are generated)
+    const loadingId = getNextId();
+    const loadingMsg = {
+      id: loadingId,
+      role: "assistant",
+      isLoading: true,
+      content: `⚡ **Analyzing comprehensive coverage...**\n\nThe system is cross-referencing **Source File Coverage** against **${testCountDisplay} Jest & Vitest test files** to detect missing branches and generate testcase code...`,
+      timestamp: new Date().toLocaleTimeString("vi-VN", {
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+    };
+
+    setMessages((m) => [...m, userMsg, loadingMsg]);
+    setIsTyping(true);
+
+    try {
+      const effectiveSnapshotId = options.snapshotId || snapshotId;
+      const effectiveProjectId = options.projectId || projectId;
+      const fileChanges = [];
+
+      // 1. Filter out files that are already 100% or have 0 uncovered lines
+      const candidateFiles = needImprovement.filter((item) => {
+        const bPct = item.branchesPct ?? 100;
+        const sPct = item.stmtsPct ?? 100;
+        const lPct = item.linesPct ?? 100;
+        const hasUncovered = item.uncoveredLines && item.uncoveredLines.length > 0;
+        return bPct < 100 || sPct < 100 || lPct < 100 || hasUncovered;
+      });
+
+      // 2. Sort files so that lowest coverage files (branches/stmts) are prioritized first
+      candidateFiles.sort((a, b) => {
+        const aMin = Math.min(a.branchesPct ?? 100, a.stmtsPct ?? 100, a.linesPct ?? 100);
+        const bMin = Math.min(b.branchesPct ?? 100, b.stmtsPct ?? 100, b.linesPct ?? 100);
+        return aMin - bMin;
+      });
+
+      // 3. For fast response on large projects, cap bulk generation to top 10 most critical files
+      const targetFiles = candidateFiles.slice(0, 10);
+      let completedCount = 0;
+      const totalTargets = targetFiles.length;
+
+      const updateProgressUi = (recentFile) => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === loadingId
+              ? {
+                ...m,
+                content: `⚡ **Analyzing comprehensive coverage... (${completedCount}/${totalTargets} files completed)**\n\n` +
+                  (recentFile ? `↳ Just processed: \`${cleanFilePath(recentFile)}\`\n` : "") +
+                  `The system is running concurrently to detect missing conditional branches and synthesize testcases...`,
+                ideChanges: fileChanges.length > 0 ? {
+                  totalFiles: fileChanges.length,
+                  totalAdded: fileChanges.reduce((sum, f) => sum + (f.linesAdded || 0), 0),
+                  totalDeleted: 0,
+                  files: [...fileChanges],
+                } : null,
+              }
+              : m
+          )
+        );
+      };
+
+      // 4. Concurrent worker pool with concurrency = 3
+      const CONCURRENCY = 3;
+      let currentIndex = 0;
+
+      const worker = async () => {
+        while (currentIndex < targetFiles.length) {
+          const item = targetFiles[currentIndex++];
+          try {
+            const targetPath = item.filePath || item.sourceFile;
+            const primaryFw = item.framework || item.matchingTests?.[0]?.framework || null;
+            const res = await suggestUnitTestcase(
+              effectiveSnapshotId,
+              targetPath,
+              effectiveProjectId,
+              primaryFw
+            );
+            const data = res?.data || res;
+            if (data && !data.isFullyCovered) {
+              const suggestionsList =
+                Array.isArray(data.suggestions) && data.suggestions.length > 0
+                  ? data.suggestions
+                  : [data];
+
+              const primary = suggestionsList[0];
+              const cleanSource = cleanFilePath(primary.sourceFile || targetPath);
+              const cleanTargetTest = cleanFilePath(
+                primary.targetTestFile || primary.filePath,
+              );
+
+              let originalContent = primary.existingContent || "";
+              if (!originalContent && primary.isExisting) {
+                try {
+                  const prevRes = await getFileContentApi(
+                    effectiveProjectId,
+                    cleanTargetTest,
+                  );
+                  originalContent = prevRes?.data?.content || "";
+                } catch (_) { }
+              }
+
+              const fullUpdatedContent =
+                primary.fullUpdatedContent || primary.suggestedTestCode || "";
+              const origLines = (originalContent || "").split("\n").length;
+              const updatedLines = (fullUpdatedContent || "").split("\n").length;
+              const linesAdded =
+                Math.max(1, updatedLines - origLines) ||
+                (primary.suggestedTestCode || "").split("\n").length;
+
+              fileChanges.push({
+                id: `fc-${item.filePath || item.sourceFile}`,
+                sourceFile: cleanSource,
+                targetTestFile: cleanTargetTest,
+                fileName: getFileName(cleanTargetTest),
+                framework: primary.framework || "vitest",
+                isExisting: primary.isExisting ?? true,
+                originalContent,
+                fullUpdatedContent,
+                suggestedTestCode: primary.suggestedTestCode || fullUpdatedContent,
+                linesAdded,
+                linesDeleted: 0,
+                explanation:
+                  primary.explanation ||
+                  "Add test cases for uncovered branches.",
+                uncoveredLines: data.uncoveredLines || [],
+                failedLines: data.failedLines || [],
+                suggestions: suggestionsList.map((s, sIdx) => ({
+                  ...s,
+                  id: s.framework || `sug-${sIdx}`,
+                  sourceFile: cleanFilePath(s.sourceFile || cleanSource),
+                  targetTestFile: cleanFilePath(s.targetTestFile || cleanTargetTest),
+                  originalContent: s.existingContent || originalContent,
+                  fullUpdatedContent: s.fullUpdatedContent || s.suggestedTestCode,
+                  linesAdded,
+                  applied: false,
+                  isApplying: false,
+                  isUndoing: false,
+                })),
+                applied: false,
+                isApplying: false,
+                isUndoing: false,
+              });
+            }
+          } catch (itemErr) {
+            console.warn(
+              `[handleSuggestBulk] Error suggesting for ${item.filePath}:`,
+              itemErr,
+            );
+          } finally {
+            completedCount++;
+            updateProgressUi(item.filePath || item.sourceFile);
+          }
+        }
+      };
+
+      if (targetFiles.length > 0) {
+        const workers = Array.from(
+          { length: Math.min(CONCURRENCY, targetFiles.length) },
+          () => worker()
+        );
+        await Promise.all(workers);
+      }
+
+      const totalAdded = fileChanges.reduce(
+        (sum, f) => sum + (f.linesAdded || 0),
+        0,
+      );
+      const totalDeleted = 0;
+
+      // 1. Overview Markdown content
+      let overviewContent = `### 📊 Coverage Analysis Report (${totalCount} source files · ${testCountDisplay} Jest & Vitest test files)\n\n`;
+
+      if (passed100.length > 0) {
+        overviewContent += `#### ✅ Source files reaching 100% comprehensive coverage (${passed100.length}/${totalCount} files) — No further suggestions needed:\n`;
+        overviewContent += passed100
+          .map((s, idx) => {
+            const testList = s.matchingTests?.length
+              ? s.matchingTests
+                .map(
+                  (t) =>
+                    `\`${cleanFilePath(t.filePath)}\` (${(t.framework || "test").toUpperCase()})`,
+                )
+                .join(", ")
+              : s.primaryTestFile
+                ? `\`${cleanFilePath(s.primaryTestFile)}\``
+                : "Test suite present";
+            return `${idx + 1}. \`${cleanFilePath(s.filePath)}\` (Lines: ${s.linesPct ?? 100}% · Branches: ${s.branchesPct ?? 100}% · Funcs: ${s.funcsPct ?? 100}% · Stmts: ${s.stmtsPct ?? 100}%)\n   ↳ Linked test file: ${testList} *(Reached 100% coverage - No suggestions needed)*`;
+          })
+          .join("\n");
+        overviewContent += "\n\n";
+      }
+
+      if (fileChanges.length > 0) {
+        overviewContent += `#### ⚡ Proposed Test Code Updates (${fileChanges.length} test files):\n`;
+        overviewContent += `Complete testcases covering missing branches have been generated. You can click **Review** to inspect detailed code diffs before applying, or click **Apply all** to update all test files in the project.`;
+      } else {
+        overviewContent +=
+          `🎉 **Excellent! All ${totalCount} source files and ${testCountDisplay} Jest & Vitest test files have reached 100% coverage!**\n\n` +
+          `- All test cases executed successfully (0 assertion errors).\n` +
+          `- Source code has reached 100% coverage (Statements, Branches, Lines, Functions).\n\n` +
+          `💬 *Note: All files have reached 100% coverage so no further testcase suggestions are needed.*`;
+      }
+
+      const finalAssistantMsg = {
+        id: loadingId,
+        role: "assistant",
+        isLoading: false,
+        timestamp: new Date().toLocaleTimeString("vi-VN", {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        content: overviewContent,
+        ideChanges:
+          fileChanges.length > 0
+            ? {
+              totalFiles: fileChanges.length,
+              totalAdded,
+              totalDeleted,
+              files: fileChanges,
+            }
+            : null,
+      };
+
+      setMessages((prev) =>
+        prev.map((m) => (m.id === loadingId ? finalAssistantMsg : m)),
+      );
+    } catch (err) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === loadingId
+            ? {
+              id: loadingId,
+              role: "assistant",
+              type: "error",
+              isLoading: false,
+              timestamp: new Date().toLocaleTimeString("vi-VN", {
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+              content: `❌ Error auto-generating testcases: ${err.message || "Unable to connect to AI API."}`,
+            }
+            : m,
+        ),
+      );
+    } finally {
+      setIsTyping(false);
+    }
+  };
+
   // Watch for external suggest trigger (e.g. from Coverage table or Editor)
   useEffect(() => {
-    if (!pendingAiSuggestion || !pendingAiSuggestion.filePath) return;
-    const targetFile = pendingAiSuggestion.filePath;
+    if (!pendingAiSuggestion) return;
+    const { filePath, isBulk } = pendingAiSuggestion;
     onClearPendingSuggestion?.();
-    handleSuggestForFile(targetFile);
+    if (isBulk) {
+      handleSuggestBulk(pendingAiSuggestion);
+    } else if (filePath) {
+      handleSuggestForFile(filePath);
+    }
   }, [pendingAiSuggestion]);
 
   const handleApplySuggestion = async (msgId, suggestion) => {
@@ -2261,8 +3090,7 @@ export default function AIPanel({
         title: "Test Applied",
         message: `Applied ${suggestion.framework?.toUpperCase()} test case to ${suggestion.targetTestFile}`,
       });
-
-      onOpenFile?.(suggestion.targetTestFile);
+      // Stays in current view without redirecting
     } catch (err) {
       showToast({
         type: "error",
@@ -2351,8 +3179,7 @@ export default function AIPanel({
         title: "Undone",
         message: `Reverted file ${suggestion.targetTestFile} to previous state.`,
       });
-
-      onOpenFile?.(suggestion.targetTestFile);
+      // Stays in current view without redirecting
     } catch (err) {
       showToast({
         type: "error",
@@ -3412,6 +4239,13 @@ export default function AIPanel({
               onUndoSuggestion={handleUndoSuggestion}
               onApplyAllSuggestions={handleApplyAllSuggestions}
               onRunAnalysis={onRunAnalysis}
+              onOpenReviewModal={(files, idx) =>
+                handleOpenReviewModal(files, idx)
+              }
+              onApplyIdeFile={handleApplyIdeFile}
+              onUndoIdeFile={handleUndoIdeFile}
+              onApplyAllIdeChanges={handleApplyAllIdeChanges}
+              onOpenFile={onOpenFile}
               onRetry={
                 index === messages.length - 1 && msg.role === "assistant"
                   ? () => {
@@ -3443,6 +4277,18 @@ export default function AIPanel({
         setSelectedModel={setSelectedModel}
         fileTree={internalTree}
         projectId={projectId}
+      />
+
+      {/* ── Monaco Code Review Diff Modal ────────────────── */}
+      <DiffReviewModal
+        isOpen={reviewModalOpen}
+        onClose={() => setReviewModalOpen(false)}
+        files={reviewFiles}
+        initialFileIndex={reviewIndex}
+        onApplyFile={handleApplyIdeFile}
+        onUndoFile={handleUndoIdeFile}
+        onApplyAll={() => handleApplyAllIdeChanges({ files: reviewFiles })}
+        onRunAnalysis={onRunAnalysis}
       />
     </motion.div>
   );

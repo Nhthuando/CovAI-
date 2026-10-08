@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
+import { queryClient } from "../lib/queryClient";
 import {
   FolderGit2,
   Plus,
@@ -58,8 +59,15 @@ export default function ProjectSelectionPage() {
   const fetchProjects = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await getProjectsApi();
-      setProjects(res?.projects || []);
+      const data = await queryClient.fetchQuery({
+        queryKey: ["projects"],
+        queryFn: async () => {
+          const res = await getProjectsApi();
+          return res?.projects || [];
+        },
+        staleTime: 5 * 60 * 1000,
+      });
+      setProjects(data || []);
     } catch (err) {
       console.error("Failed to load projects", err);
     } finally {
@@ -97,13 +105,16 @@ export default function ProjectSelectionPage() {
 
   const handleConfirmDelete = async () => {
     if (!projectToDelete) return;
+    const targetProject = projectToDelete;
     try {
       setIsDeleting(true);
-      await deleteProjectApi(projectToDelete.id);
-      setProjects((prev) => prev.filter((p) => p.id !== projectToDelete.id));
+      await deleteProjectApi(targetProject.id);
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      setProjects((prev) => prev.filter((p) => p.id !== targetProject.id));
       setProjectToDelete(null);
     } catch (err) {
       console.error("Failed to delete project", err);
+      alert(err.message || "Failed to delete project");
     } finally {
       setIsDeleting(false);
     }

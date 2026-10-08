@@ -22,18 +22,18 @@ export const resetPasswordEmailHtml = (name, resetUrl) => `
 
         <!-- Body -->
         <tr><td style="padding:40px 40px 20px;">
-        <p style="font-size:22px;font-weight:700;color:#f0f6fc;margin:0 0 16px;">Đặt lại mật khẩu</p>
+        <p style="font-size:22px;font-weight:700;color:#f0f6fc;margin:0 0 16px;">Reset Password</p>
         <p style="font-size:15px;color:#8b949e;margin:0 0 24px;line-height:1.6;">
-            Xin chào <strong style="color:#c9d1d9;">${name}</strong>,<br><br>
-            Chúng tôi nhận được yêu cầu đặt lại mật khẩu cho tài khoản TestCovAI của bạn. 
-            Nhấn vào nút bên dưới để tiến hành đổi mật khẩu mới.
+            Hello <strong style="color:#c9d1d9;">${name}</strong>,<br><br>
+            We received a request to reset your TestCovAI password. 
+            Click the button below to set a new password.
         </p>
 
         <!-- Button -->
         <table width="100%" cellpadding="0" cellspacing="0">
             <tr><td align="center" style="padding:16px 0 32px;">
             <a href="${resetUrl}" style="display:inline-block;background:linear-gradient(135deg, #7C3AED 0%, #06B6D4 100%);background-color:#7C3AED;color:#ffffff;font-size:15px;font-weight:600;padding:14px 36px;border-radius:10px;text-decoration:none;box-shadow:0 8px 16px rgba(124,58,237,0.3);">
-                Đặt lại mật khẩu
+                Reset Password
             </a>
             </td></tr>
         </table>
@@ -41,7 +41,7 @@ export const resetPasswordEmailHtml = (name, resetUrl) => `
         <!-- Fallback URL -->
         <table width="100%" cellpadding="0" cellspacing="0">
             <tr><td style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:16px;">
-            <p style="font-size:13px;color:#8b949e;margin:0 0 8px;">Hoặc sao chép đường dẫn này vào trình duyệt:</p>
+            <p style="font-size:13px;color:#8b949e;margin:0 0 8px;">Or copy this URL into your browser:</p>
             <p style="font-size:13px;color:#7C3AED;word-break:break-all;margin:0;font-family:monospace;line-height:1.5;">${resetUrl}</p>
             </td></tr>
         </table>
@@ -50,8 +50,8 @@ export const resetPasswordEmailHtml = (name, resetUrl) => `
         <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:32px;">
             <tr><td style="padding-top:24px;border-top:1px solid rgba(255,255,255,0.05);">
             <p style="font-size:13px;color:#6e7681;line-height:1.6;margin:0;">
-                Link này sẽ hết hạn sau <strong style="color:#8b949e;">1 phút</strong>. 
-                Nếu bạn không yêu cầu đặt lại mật khẩu, hãy bỏ qua email này — tài khoản của bạn vẫn an toàn.
+                This link will expire in <strong style="color:#8b949e;">1 minute</strong>. 
+                If you did not request a password reset, please ignore this email — your account remains safe.
             </p>
             </td></tr>
         </table>  
@@ -60,7 +60,7 @@ export const resetPasswordEmailHtml = (name, resetUrl) => `
         <!-- Footer -->
         <tr><td style="background:rgba(255,255,255,0.02);padding:24px 40px;text-align:center;border-top:1px solid rgba(255,255,255,0.05);">
         <p style="font-size:12px;color:#6e7681;margin:0;">
-            © 2026 TestCovAI · Hệ thống quản lý Test Coverage thông minh.
+            © 2026 TestCovAI · Intelligent Test Coverage Management System.
         </p>
         </td></tr>
 

@@ -6,7 +6,7 @@ const JWT_TTL = "15m";
 
 export const register = async (name, email, password) => {
   const existEmail = await prisma.user.findUnique({ where: { email } });
-  if (existEmail) throw new Error("Tài khoản đã tồn tại!");
+  if (existEmail) throw new Error("Account already exists!");
 
   const hashedPass = await bcrypt.hash(password, 10);
   const user = await prisma.user.create({
@@ -31,7 +31,7 @@ export const register = async (name, email, password) => {
   });
 
   return {
-    message: "Đăng ký thành công!",
+    message: "Registration successful!",
     accessToken,
     refreshToken,
     userName: name,
@@ -41,10 +41,10 @@ export const register = async (name, email, password) => {
 
 export const login = async (email, password) => {
   const user = await prisma.user.findUnique({ where: { email } });
-  if (!user) throw new Error("Email hoặc mật khẩu không chính xác!");
+  if (!user) throw new Error("Incorrect email or password!");
 
   const checkPass = await bcrypt.compare(password, user.passwordHash);
-  if (!checkPass) throw new Error("Email hoặc mật khẩu không chính xác!");
+  if (!checkPass) throw new Error("Incorrect email or password!");
 
   const accessToken = jwt.sign(
     { userId: user.id, userEmail: user.email, userName: user.name },
@@ -64,7 +64,7 @@ export const login = async (email, password) => {
   });
 
   return {
-    message: "Đăng nhập thành công!",
+    message: "Login successful!",
     accessToken,
     refreshToken,
     name: user.name,

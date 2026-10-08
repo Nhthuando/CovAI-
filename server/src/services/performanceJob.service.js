@@ -1,5 +1,4 @@
 import { createCodeHygieneJob, getJobById, markJobFailed, markJobRunning, markJobSuccess, updateJobProgress } from './job.service.js';
-import { addJobToQueue } from './queue.service.js';
 import { runPerformancePipelineStage } from './performancePipelineStage.service.js';
 
 /** Dedicated automatic pipeline job; no caller-facing trigger exists. */
@@ -19,6 +18,7 @@ export const processPerformanceAnalysisJob = async (jobId) => {
             snapshotId: job.snapshotId,
             userId: job.userId
         });
+        const { addJobToQueue } = await import('./queue.service.js');
         await addJobToQueue('CODE_HYGIENE', hygieneJob.id);
     } catch (error) {
         console.error(`[PerformanceAnalysisJob ${jobId}] Failed:`, error);

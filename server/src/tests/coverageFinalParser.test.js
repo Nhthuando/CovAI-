@@ -1,4 +1,5 @@
 import { jest } from "@jest/globals";
+import path from "path";
 
 const prismaMock = {
     coverageFunction: {
@@ -36,8 +37,9 @@ describe("coverageFinalParser", () => {
     });
 
     it("should parse coverage-final.json and upsert functions", async () => {
+        const mockFilePath = path.join(process.cwd(), "src/test.js").replace(/\\/g, "/");
         const mockCoverage = {
-            "/app/src/test.js": {
+            [mockFilePath]: {
                 fnMap: {
                     "1": {
                         name: "testFunc",
@@ -57,14 +59,14 @@ describe("coverageFinalParser", () => {
             where: {
                 snapshotId_filePath_functionName_startLine: {
                     snapshotId,
-                    filePath: "app/src/test.js",
+                    filePath: "src/test.js",
                     functionName: "testFunc",
                     startLine: 1
                 }
             },
             create: {
                 snapshotId,
-                filePath: "app/src/test.js",
+                filePath: "src/test.js",
                 functionName: "testFunc",
                 startLine: 1,
                 endLine: 5,

@@ -6,7 +6,7 @@ import { scanLocalVulnerabilities, scanAiVulnerabilities } from "./securityScann
 import fs from "fs";
 import path from "path";
 
-// Đọc source code từ thư mục
+// Read source code from directory
 const loadSourceFiles = (rootDir) => {
     if (!rootDir || !fs.existsSync(rootDir)) return [];
     const results = [];
@@ -36,28 +36,28 @@ export const processSecurityAnalysisJob = async (jobId) => {
         await updateJobStatus({ jobId, status: "RUNNING", progress: 10 });
         const job = await getJobById(jobId);
         
-        await addJobLog(jobId, "INFO", "Đang nạp mã nguồn từ Snapshot...");
+        await addJobLog(jobId, "INFO", "Loading source code from Snapshot...");
         const snapshot = await prisma.projectSnapshot.findUnique({ where: { id: job.snapshotId } });
         const sourceFiles = loadSourceFiles(snapshot?.rootDir);
         
         await updateJobStatus({ jobId, progress: 30 });
         
-        // 1. Quét Local
-        await addJobLog(jobId, "INFO", "Đang quét Secrets và Dangerous APIs (Local Regex)...");
+        // 1. Local scan
+        await addJobLog(jobId, "INFO", "Scanning Secrets and Dangerous APIs (Local Regex)...");
         const localFindings = scanLocalVulnerabilities(sourceFiles);
         
         await updateJobStatus({ jobId, progress: 50 });
         
-        // 2. Quét AI
-        await addJobLog(jobId, "INFO", "Đang phân tích các lỗ hổng logic bằng AI (Insecure Patterns)...");
+        // 2. AI scan
+        await addJobLog(jobId, "INFO", "Analyzing logic vulnerabilities with AI (Insecure Patterns)...");
         const aiFindings = await scanAiVulnerabilities(sourceFiles);
         
         await updateJobStatus({ jobId, progress: 80 });
         
-        // 3. Gộp & Lưu vào Database
+        // 3. Merge & save to Database
         const allFindings = [...localFindings, ...aiFindings];
         
-        // Xóa dữ liệu cũ nếu có
+        // Remove stale data if present
         await prisma.vulnerability.deleteMany({ where: { snapshotId: job.snapshotId } });
         
         if (allFindings.length > 0) {
@@ -71,14 +71,14 @@ export const processSecurityAnalysisJob = async (jobId) => {
                     description: f.description || ""
                 }))
             });
-            await addJobLog(jobId, "INFO", `Đã lưu ${allFindings.length} lỗ hổng bảo mật.`);
+            await addJobLog(jobId, "INFO", `Saved ${allFindings.length} security findings.`);
         } else {
-            await addJobLog(jobId, "INFO", "Xin chúc mừng! Không phát hiện lỗ hổng bảo mật nào.");
+            await addJobLog(jobId, "INFO", "Congratulations! No security vulnerabilities detected.");
         }
 
         await updateJobStatus({ jobId, status: "SUCCESS", progress: 100 });
     } catch (error) {
-        await addJobLog(jobId, "ERROR", `Quá trình quét thất bại: ${error.message}`);
+        await addJobLog(jobId, "ERROR", `Scan process failed: ${error.message}`);
         await updateJobStatus({ jobId, status: "FAILED", errorMessage: error.message }).catch(() => {});
     }
 };

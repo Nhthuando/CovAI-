@@ -13,31 +13,51 @@ import {
     approveIntegrationTests,
     getFileCoverage,
     suggestUnitTestcase,
+    applySuggestion,
     getCoverageTestSuites,
     getIntegrationHistory,
     getSystemTestSummary,
+    getSystemTestScenarios,
     getSystemTestEvidence,
+    runSystemTestCoverage,
     saveAiSystemTest,
+    generateColdStartSystemTestsController,
+    getSystemTestFileContent,
+    updateSystemTestFileContent,
+    runSingleSystemTest,
+    optimizeSystemTestController,
 } from "../controllers/coverage.controller.js";
 
 const router = express.Router();
 
-// GET /api/coverage/:snapshotId/summary — lấy kết quả coverage summary
+// GET /api/coverage/:snapshotId/summary — fetch coverage summary result
 router.get("/:snapshotId/summary", authMiddleware, getCoverageSummary);
 router.get("/:snapshotId/system/summary", authMiddleware, getSystemTestSummary);
+router.get("/:snapshotId/system/scenarios", authMiddleware, getSystemTestScenarios);
 router.get("/:snapshotId/system/scenarios/:scenarioId/evidence", authMiddleware, getSystemTestEvidence);
+router.post("/:snapshotId/system/run", authMiddleware, runSystemTestCoverage);
 router.post("/:snapshotId/system/save-ai-test", authMiddleware, saveAiSystemTest);
+router.post("/:snapshotId/system/generate-tests", authMiddleware, generateColdStartSystemTestsController);
 router.get("/:snapshotId/frameworks", authMiddleware, getCoverageFrameworks);
 
-// SCRUM-155: GET /api/coverage/:snapshotId/files — lấy danh sách CoverageFile
+// Phase 5: Test Editor & AI Coverage Booster
+router.get("/:snapshotId/system/tests/content", authMiddleware, getSystemTestFileContent);
+router.put("/:snapshotId/system/tests/content", authMiddleware, updateSystemTestFileContent);
+router.post("/:snapshotId/system/tests/run-single", authMiddleware, runSingleSystemTest);
+router.post("/:snapshotId/system/optimize-test", authMiddleware, optimizeSystemTestController);
+
+// GET /api/coverage/:snapshotId/files — fetch CoverageFile list
 // Query: ?sortBy=filePath|linesPct|branchesPct|funcsPct|stmtsPct&order=asc|desc&page=1&limit=50
 router.get("/:snapshotId/files", authMiddleware, getCoverageFiles);
 
-// GET /api/coverage/:snapshotId/file-coverage — lấy line-by-line coverage & assertion failures
+// GET /api/coverage/:snapshotId/file-coverage — fetch line-by-line coverage & assertion failures
 router.get("/:snapshotId/file-coverage", authMiddleware, getFileCoverage);
 
-// POST /api/coverage/:snapshotId/suggest-testcase — đề xuất unit testcase bằng AI cho file nguồn
+// POST /api/coverage/:snapshotId/suggest-testcase — suggest AI unit testcases for source file
 router.post("/:snapshotId/suggest-testcase", authMiddleware, suggestUnitTestcase);
+
+// POST /api/coverage/:snapshotId/apply-suggestion — write testcase to disk, rerun test, collect new coverage
+router.post("/:snapshotId/apply-suggestion", authMiddleware, applySuggestion);
 
 // POST /api/coverage/:snapshotId/run — trigger pipeline INSTALL_DEPS → RUN_TESTS
 router.post("/:snapshotId/run", authMiddleware, runCoverage);
@@ -45,7 +65,7 @@ router.post("/:snapshotId/run", authMiddleware, runCoverage);
 router.post("/:snapshotId/supertest/run", authMiddleware, runSupertestCoverage);
 router.post("/:snapshotId/:coverageType/run", authMiddleware, runCoverageByType);
 
-// SCRUM-160: GET /api/coverage/:snapshotId/functions — lấy danh sách CoverageFunction
+// GET /api/coverage/:snapshotId/functions — fetch CoverageFunction list
 // Query: ?filePath=<filter>&sortBy=functionName|filePath|hit|startLine&order=asc|desc&page=1&limit=50
 router.get("/:snapshotId/functions", authMiddleware, getCoverageFunctions);
 

@@ -16,7 +16,7 @@ export function calculateComplexityFromAst(astNode) {
                 node.type === 'CatchClause' ||
                 node.type === 'SwitchCase'
             ) {
-                // SwitchCase chỉ tính nếu không phải default
+                // SwitchCase only counts if not default
                 if (node.type === 'SwitchCase' && node.test === null) return;
                 decisionPoints++;
             }

@@ -49,14 +49,55 @@ async function executeWithRetry(apiCall, maxRetries = 3) {
   }
 }
 
+const VALID_MODELS = ["gemini-3.1-flash-lite-preview", "gemini-2.5-flash"];
+const exhaustedModels = new Set();
+
+/**
+ * Marks a model as quota-exhausted for the remainder of this process session.
+ */
+export function markModelExhausted(modelName) {
+  if (modelName) exhaustedModels.add(modelName);
+}
+
+/**
+ * Normalizes model names, replacing deprecated or quota-exhausted models
+ * with the currently active and verified models.
+ */
+function resolveModelName(requestedModel) {
+  const preferred = (requestedModel && requestedModel.trim()) || process.env.GEMINI_MODEL || "gemini-3.1-flash-lite-preview";
+  if (VALID_MODELS.includes(preferred) && !exhaustedModels.has(preferred)) {
+    return preferred;
+  }
+  for (const m of VALID_MODELS) {
+    if (!exhaustedModels.has(m)) return m;
+  }
+  return "gemini-3.1-flash-lite-preview";
+}
+
 /**
  * Send prompts & Receive responses
  * @param {string} prompt - The prompt to send to the Gemini model
- * @param {string|null} systemInstruction - Optional system instruction for the model
+ * @param {string|null} modelOrInstruction - Optional model name (e.g., 'gemini-2.5-flash') or system instruction
+ * @param {string|null} maybeInstruction - Optional system instruction if model name was provided as 2nd arg
  * @returns {Promise<string>} The generated text response
  */
-export const generateText = async (prompt, systemInstruction = null, generationConfig = {}) => {
-  return generateMultimodalText(prompt, [], systemInstruction, generationConfig);
+export const generateText = async (prompt, modelOrInstruction = null, maybeInstructionOrConfig = null, maybeConfig = {}) => {
+  let modelName = null;
+  let systemInstruction = null;
+  let generationConfig = {};
+
+  if (typeof modelOrInstruction === "string" && (modelOrInstruction.startsWith("gemini-") || modelOrInstruction.includes("/"))) {
+    modelName = modelOrInstruction;
+    systemInstruction = maybeInstructionOrConfig;
+    generationConfig = maybeConfig || {};
+  } else {
+    systemInstruction = modelOrInstruction;
+    if (maybeInstructionOrConfig && typeof maybeInstructionOrConfig === "object") {
+      generationConfig = maybeInstructionOrConfig;
+    }
+  }
+
+  return generateMultimodalText(prompt, [], systemInstruction, modelName, generationConfig);
 };
 
 /**
@@ -64,24 +105,40 @@ export const generateText = async (prompt, systemInstruction = null, generationC
  * @param {string} prompt - The prompt to send to the Gemini model
  * @param {Array<{ data: string, mimeType: string }>} images - Optional array of images in base64
  * @param {string|null} systemInstruction - Optional system instruction for the model
+ * @param {string|object|null} modelNameOrConfig - Optional specific model name or generationConfig
+ * @param {object} maybeConfig - Optional generationConfig
  * @returns {Promise<string>} The generated text response
  */
 export const generateMultimodalText = async (
   prompt,
   images = [],
   systemInstruction = null,
-  generationConfig = {},
+  modelNameOrConfig = null,
+  maybeConfig = {}
 ) => {
   if (!genAI) {
     throw new Error("GEMINI_API_KEY is not configured.");
   }
 
-  const modelOptions = { model: "gemini-3.5-flash-lite" };
-  if (systemInstruction) {
-    modelOptions.systemInstruction = systemInstruction;
+  let modelName = null;
+  let generationConfig = {};
+
+  if (typeof modelNameOrConfig === "string") {
+    modelName = modelNameOrConfig;
+    generationConfig = maybeConfig || {};
+  } else if (modelNameOrConfig && typeof modelNameOrConfig === "object") {
+    generationConfig = modelNameOrConfig;
   }
 
-  const model = genAI.getGenerativeModel(modelOptions);
+  const primaryModelName = resolveModelName(modelName);
+  
+  const createModelInstance = (mName) => {
+    const modelOptions = { model: mName };
+    if (systemInstruction) {
+      modelOptions.systemInstruction = systemInstruction;
+    }
+    return genAI.getGenerativeModel(modelOptions);
+  };
 
   const parts = [];
 
@@ -103,14 +160,33 @@ export const generateMultimodalText = async (
   parts.push({ text: prompt });
 
   const apiCall = async () => {
-    const result = await model.generateContent({
-      contents: [{ role: "user", parts }],
-      generationConfig: {
-        maxOutputTokens: 65536,
-        ...generationConfig,
-      },
-    });
-    return result.response.text();
+    try {
+      const model = createModelInstance(primaryModelName);
+      const result = await model.generateContent({
+        contents: [{ role: "user", parts }],
+        generationConfig: {
+          maxOutputTokens: 65536,
+          ...generationConfig,
+        },
+      });
+      return result.response.text();
+    } catch (primaryErr) {
+      if (primaryErr.message && (primaryErr.message.includes("Quota exceeded") || primaryErr.message.includes("429"))) {
+        markModelExhausted(primaryModelName);
+      }
+      // If primary model failed with 404, rate limit, or model error, try secondary fallback model
+      const fallbackModel = primaryModelName === "gemini-3.1-flash-lite-preview" ? "gemini-2.5-flash" : "gemini-3.1-flash-lite-preview";
+      console.warn(`[Gemini API] Primary model ${primaryModelName} error: ${primaryErr.message}. Attempting fallback with ${fallbackModel}...`);
+      const model = createModelInstance(fallbackModel);
+      const result = await model.generateContent({
+        contents: [{ role: "user", parts }],
+        generationConfig: {
+          maxOutputTokens: 65536,
+          ...generationConfig,
+        },
+      });
+      return result.response.text();
+    }
   };
 
   return executeWithRetry(apiCall);

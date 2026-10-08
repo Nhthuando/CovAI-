@@ -6,7 +6,7 @@ const router = express.Router();
 
 /**
  * Admin-only middleware.
- * Kiểm tra email của user có nằm trong ADMIN_EMAILS env không.
+ * Check if user email is present in ADMIN_EMAILS env.
  * ADMIN_EMAILS format: "admin1@example.com,admin2@example.com"
  */
 const adminOnly = (req, res, next) => {
@@ -16,7 +16,7 @@ const adminOnly = (req, res, next) => {
   if (!userEmail || !adminEmails.includes(userEmail)) {
     return res.status(403).json({
       success: false,
-      message: "Bạn không có quyền truy cập chức năng này.",
+      message: "You are not authorized to access this feature.",
     });
   }
   next();

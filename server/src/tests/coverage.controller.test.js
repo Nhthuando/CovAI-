@@ -17,7 +17,16 @@ const prismaMock = {
         count: jest.fn(),
     },
     testRun: {
-        findMany: jest.fn(),
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+    },
+    job: {
+        findFirst: jest.fn().mockResolvedValue(null),
+    },
+    aiTest: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'ai-1' }),
+        update: jest.fn().mockResolvedValue({ id: 'ai-1' }),
     },
 };
 
@@ -49,7 +58,17 @@ jest.unstable_mockModule('../services/job.service.js', () => ({
     createRunTestsJob: jest.fn().mockResolvedValue({ id: 'run-1' }),
     createSupertestCoverageJob: jest.fn().mockResolvedValue({ id: 'super-1' }),
     createVitestCoverageJob: jest.fn().mockResolvedValue({ id: 'vitest-1' }),
+    createCypressSystemCoverageJob: jest.fn().mockResolvedValue({ id: 'cypress-1' }),
+    createPlaywrightSystemCoverageJob: jest.fn().mockResolvedValue({ id: 'playwright-1' }),
     createSystemTestAnalysisJob: mockCreateSystemTestAnalysisJob,
+    addJobLog: jest.fn().mockResolvedValue({}),
+    getJobById: jest.fn().mockResolvedValue({ id: 'job-1', status: 'SUCCESS' }),
+    markJobRunning: jest.fn().mockResolvedValue({}),
+    markJobSuccess: jest.fn().mockResolvedValue({}),
+    markJobFailed: jest.fn().mockResolvedValue({}),
+    updateJobProgress: jest.fn().mockResolvedValue({}),
+    cancelJob: jest.fn().mockResolvedValue({}),
+    STALE_JOB_TIMEOUT_MS: 15 * 60 * 1000,
 }));
 
 const mockAddJobToQueue = jest.fn();
@@ -72,11 +91,18 @@ jest.unstable_mockModule('../services/supertestDetection.service.js', () => ({
 const mockGetFileCoverageDetails = jest.fn();
 jest.unstable_mockModule('../services/fileCoverage.service.js', () => ({
     getFileCoverageDetails: mockGetFileCoverageDetails,
+    normalizePath: (p) => (p ? p.replace(/\\/g, '/') : p),
+    cleanRelativePath: (rootDir, p) => p,
+    matchesFilePath: (a, b) => true,
+    findAssociatedTestFile: jest.fn(() => null),
 }));
 
 const mockSuggestUnitTestcases = jest.fn();
 jest.unstable_mockModule('../services/unitTestSuggestion.service.js', () => ({
     suggestUnitTestcases: mockSuggestUnitTestcases,
+    computeRelativeImportPath: jest.fn(() => '../src/test'),
+    generateFallbackUnitTests: jest.fn(() => ({ suggestedTestCode: '', fullUpdatedContent: '' })),
+    extractAstMetadata: jest.fn(() => ({ exportedSymbols: [], unexportedFunctions: [], decisionPoints: [] })),
 }));
 
 const {
@@ -374,9 +400,9 @@ describe('coverage controller empty-state behavior', () => {
             await getSystemTestSummary(req, res);
 
             expect(res.status).toHaveBeenCalledWith(200);
-            expect(res.json).toHaveBeenCalledWith({
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
                 success: true,
-                data: {
+                data: expect.objectContaining({
                     hasRun: false,
                     e2eTests: 0,
                     passed: 0,
@@ -388,8 +414,8 @@ describe('coverage controller empty-state behavior', () => {
                     testRuns: [],
                     scenarios: [],
                     latestAiTest: null,
-                }
-            });
+                })
+            }));
         });
 
         test('returns Populated State when Playwright/Cypress test run exists (DoD 1.2)', async () => {

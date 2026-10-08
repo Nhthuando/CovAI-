@@ -138,13 +138,20 @@ const detectAtRoot = (rootDir) => {
     });
   }
 
-  const hasCypressPkg = Boolean(dependencies.cypress);
+  const hasCypressPkg = Boolean(
+    dependencies.cypress ||
+      Object.keys(dependencies).some(
+        (k) => k === "cypress" || k.startsWith("@cypress/"),
+      ),
+  );
   const cypressConfig = findConfig(rootDir, CYPRESS_CONFIGS);
   const cypressTestDir = findTestDirectory(rootDir, "cypress");
   const hasCypressFiles = Boolean(
     cypressTestDir &&
       fs.existsSync(path.join(rootDir, cypressTestDir)) &&
-      fs.readdirSync(path.join(rootDir, cypressTestDir)).some((f) => /\.(cy|spec|test)\.(js|ts)$/.test(f))
+      fs
+        .readdirSync(path.join(rootDir, cypressTestDir))
+        .some((f) => /\.(cy|spec|test)\.[cm]?[jt]sx?$/i.test(f)),
   );
 
   if (hasCypressPkg || cypressConfig || hasCypressFiles) {

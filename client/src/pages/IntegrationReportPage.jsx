@@ -6,10 +6,28 @@ import { format } from 'date-fns';
 import IntegrationGuidancePanel from '../components/dashboard/integration/IntegrationGuidancePanel';
 import MetricProvenancePopover from '../components/dashboard/integration/MetricProvenancePopover';
 
+const formatDate = (val) => {
+  if (!val) return '';
+  try {
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return String(val);
+    return d.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    });
+  } catch {
+    return String(val);
+  }
+};
+
 export default function IntegrationReportPage() {
   const { projectId } = useParams();
   const navigate = useNavigate();
-  
+
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -49,7 +67,7 @@ export default function IntegrationReportPage() {
           <AlertCircle size={48} className="mx-auto text-[var(--error)] mb-4" />
           <h2 className="text-xl font-semibold mb-2">Error Loading Report</h2>
           <p className="text-[var(--text-secondary)] mb-6">{error}</p>
-          <button 
+          <button
             onClick={loadData}
             className="px-4 py-2 bg-[var(--accent-primary)] text-white rounded hover:bg-opacity-90"
           >
@@ -65,11 +83,11 @@ export default function IntegrationReportPage() {
   return (
     <div className="min-h-screen bg-[var(--surface-main)] text-[var(--text-primary)] p-8 overflow-y-auto">
       <div className="max-w-6xl mx-auto space-y-8">
-        
+
         {/* Header */}
         <header className="flex items-center justify-between">
           <div>
-            <button 
+            <button
               onClick={() => navigate(`/main-editor?projectId=${projectId}&tab=integration-tests`)}
               className="flex items-center text-[var(--text-secondary)] hover:text-[var(--accent-primary)] mb-4 text-sm"
             >
@@ -80,7 +98,7 @@ export default function IntegrationReportPage() {
             </h1>
             {report.overview?.snapshotId && (
               <p className="text-[var(--text-secondary)] mt-1">
-                Context: Snapshot <span className="font-mono">{report.overview.snapshotId.substring(0,8)}</span>
+                Context: Snapshot <span className="font-mono">{report.overview.snapshotId.substring(0, 8)}</span>
               </p>
             )}
           </div>
@@ -127,7 +145,7 @@ export default function IntegrationReportPage() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-          
+
           {/* Latest Execution */}
           <div className="bg-[var(--surface-card)] border border-[var(--border-main)] rounded-lg p-6">
             <MetricProvenancePopover provenance={report.latestExecution?.provenance}>
@@ -175,7 +193,7 @@ export default function IntegrationReportPage() {
             <p className="text-xs text-[var(--text-secondary)] mb-4 leading-tight">
               Static mapping of discovered Express routes to AI tests. (Not runtime coverage).
             </p>
-            
+
             {!report.apiCoverage ? (
               <p className="text-[var(--text-secondary)] text-sm italic">Coverage data not available.</p>
             ) : (
@@ -216,7 +234,7 @@ export default function IntegrationReportPage() {
                   <AlertCircle size={12} className="inline mr-1 flex-shrink-0" />
                   {report.projectCodeCoverage.warning}
                 </p>
-                
+
                 <div className="flex justify-between items-end">
                   <span className="text-3xl font-bold text-white">{report.projectCodeCoverage.stmtsPct}%</span>
                   <span className="text-[var(--text-secondary)] text-sm">Statements</span>
@@ -225,7 +243,7 @@ export default function IntegrationReportPage() {
                   <div className="bg-green-500 h-full" style={{ width: `${report.projectCodeCoverage.stmtsPct}%` }}></div>
                 </div>
                 <div className="text-xs text-[var(--text-secondary)] text-right">
-                  Recorded: {format(new Date(report.projectCodeCoverage.timestamp), 'MMM d, HH:mm:ss')}
+                  Recorded: {formatDate(report.projectCodeCoverage.timestamp)}
                 </div>
               </div>
             )}
@@ -236,7 +254,7 @@ export default function IntegrationReportPage() {
 
         {/* History Tables */}
         <div className="space-y-8 pb-8">
-          
+
           {/* Execution History */}
           <section className="bg-[var(--surface-card)] border border-[var(--border-main)] rounded-lg p-6">
             <h2 className="text-lg font-semibold mb-4 border-b border-[var(--border-main)] pb-2">Execution History</h2>
@@ -257,8 +275,8 @@ export default function IntegrationReportPage() {
                   <tbody>
                     {report.history.executions.slice().reverse().map((run) => (
                       <tr key={run.testRunId} className="border-b border-[var(--border-main)] hover:bg-[var(--surface-hover)]">
-                        <td className="px-4 py-3 font-mono text-xs">{format(new Date(run.timestamp), 'MMM d, HH:mm:ss')}</td>
-                        <td className="px-4 py-3 font-mono text-xs">{run.snapshotId.substring(0,8)}</td>
+                        <td className="px-4 py-3 font-mono text-xs">{formatDate(run.timestamp)}</td>
+                        <td className="px-4 py-3 font-mono text-xs">{run.snapshotId.substring(0, 8)}</td>
                         <td className="px-4 py-3">
                           <span className={`px-2 py-1 rounded text-xs font-medium ${run.status === 'SUCCESS' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
                             {run.status}
@@ -294,8 +312,8 @@ export default function IntegrationReportPage() {
                   <tbody>
                     {report.history.coverage.slice().reverse().map((cov, idx) => (
                       <tr key={idx} className="border-b border-[var(--border-main)] hover:bg-[var(--surface-hover)]">
-                        <td className="px-4 py-3 font-mono text-xs">{format(new Date(cov.timestamp), 'MMM d, HH:mm:ss')}</td>
-                        <td className="px-4 py-3 font-mono text-xs">{cov.snapshotId.substring(0,8)}</td>
+                        <td className="px-4 py-3 font-mono text-xs">{formatDate(cov.timestamp)}</td>
+                        <td className="px-4 py-3 font-mono text-xs">{cov.snapshotId.substring(0, 8)}</td>
                         <td className="px-4 py-3 font-mono">
                           <div className="flex items-center">
                             <span className="w-12">{cov.stmtsPct}%</span>
@@ -331,13 +349,12 @@ export default function IntegrationReportPage() {
                   <tbody>
                     {report.history.generations.slice().reverse().map((gen) => (
                       <tr key={gen.jobId} className="border-b border-[var(--border-main)] hover:bg-[var(--surface-hover)]">
-                        <td className="px-4 py-3 font-mono text-xs">{format(new Date(gen.timestamp), 'MMM d, HH:mm:ss')}</td>
-                        <td className="px-4 py-3 font-mono text-xs">{gen.snapshotId.substring(0,8)}</td>
+                        <td className="px-4 py-3 font-mono text-xs">{formatDate(gen.timestamp)}</td>
+                        <td className="px-4 py-3 font-mono text-xs">{gen.snapshotId.substring(0, 8)}</td>
                         <td className="px-4 py-3">
-                          <span className={`px-2 py-1 rounded text-xs font-medium ${
-                            gen.status === 'SUCCESS' ? 'bg-green-500/20 text-green-400' : 
+                          <span className={`px-2 py-1 rounded text-xs font-medium ${gen.status === 'SUCCESS' ? 'bg-green-500/20 text-green-400' :
                             gen.status === 'FAILED' ? 'bg-red-500/20 text-red-400' : 'bg-yellow-500/20 text-yellow-400'
-                          }`}>
+                            }`}>
                             {gen.status}
                           </span>
                         </td>

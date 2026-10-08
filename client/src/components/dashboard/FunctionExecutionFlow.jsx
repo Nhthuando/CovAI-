@@ -409,7 +409,7 @@ export default function FunctionExecutionFlow({
           }}
         >
           {cleanedFunctions.length === 0
-            ? "No function data available. Click 'Run Analysis' to analyze Jest/Vitest."
+            ? "No function data available. Click 'Run Analysis Unit' to analyze Jest/Vitest."
             : "No functions match the selected filter."}
         </div>
       )}
@@ -631,7 +631,7 @@ export default function FunctionExecutionFlow({
                       fontSize: 11,
                       cursor: "pointer",
                     }}
-                    title="Open source file at function"
+                    title="Open source file at function definition"
                   >
                     <Code2 size={12} />
                     <span>Open code</span>
@@ -654,7 +654,7 @@ export default function FunctionExecutionFlow({
                           fontWeight: 600,
                           cursor: "pointer",
                         }}
-                        title="View Control Flow Graph (CFG) of this function"
+                        title="View Control Flow Graph (CFG) for this function"
                       >
                         <Network size={12} />
                         <span>View CFG</span>

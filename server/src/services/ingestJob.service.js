@@ -34,12 +34,12 @@ export const processIngestJob = async (jobId) => {
       error.message === "Cannot start a canceled job"
     ) {
       console.log(
-        `[Job ${jobId}] Bỏ qua vì Job không tồn tại hoặc không thể bắt đầu.`,
+        `[Job ${jobId}] Skipped because Job does not exist or cannot start.`,
       );
       return;
     }
     console.error(
-      `[Job ${jobId}] Lỗi khi chuyển công việc sang RUNNING:`,
+      `[Job ${jobId}] Error transitioning job to RUNNING:`,
       error,
     );
     return;
@@ -49,20 +49,20 @@ export const processIngestJob = async (jobId) => {
   try {
     job = await getJobById(jobId);
   } catch (error) {
-    console.error(`[Job ${jobId}] Lỗi khi lấy Job:`, error);
+    console.error(`[Job ${jobId}] Error retrieving Job:`, error);
     return;
   }
 
   if (!job.snapshot) {
     console.error(
-      `[Job ${jobId}] Lỗi dữ liệu: Không tìm thấy Snapshot đính kèm.`,
+      `[Job ${jobId}] Data error: Associated Snapshot not found.`,
     );
     await markJobFailed(jobId, new ServiceError("Snapshot not found", 400));
     return;
   }
 
   if (!job.snapshot.storagePath) {
-    console.error(`[Job ${jobId}] Lỗi dữ liệu: Snapshot không có storagePath.`);
+    console.error(`[Job ${jobId}] Data error: Snapshot has no storagePath.`);
     await markJobFailed(
       jobId,
       new ServiceError("Snapshot storagePath is missing", 400),
@@ -97,7 +97,7 @@ export const processIngestJob = async (jobId) => {
     const langCheck = detectLanguageFromDirectory(resolvedRootDir);
     if (!langCheck.isSupported) {
       console.error(
-        `[Job ${jobId}] Dự án không được hỗ trợ: ${langCheck.reason}`,
+        `[Job ${jobId}] Unsupported project: ${langCheck.reason}`,
       );
       throw new ServiceError(langCheck.reason, 400);
     }
@@ -128,14 +128,14 @@ export const processIngestJob = async (jobId) => {
     await markJobSuccess(jobId, { rootDir: resolvedRootDir });
 
     console.log(
-      `[Job ${jobId}] Pipeline ingest hoàn thành: ${resolvedRootDir}`,
+      `[Job ${jobId}] Ingest pipeline completed: ${resolvedRootDir}`,
     );
   } catch (error) {
-    console.error(`[Job ${jobId}] Lỗi pipeline ingest:`, error);
+    console.error(`[Job ${jobId}] Ingest pipeline error:`, error);
     try {
       await markJobFailed(jobId, error);
     } catch (markError) {
-      console.error(`[Job ${jobId}] Không thể đánh dấu FAILED:`, markError);
+      console.error(`[Job ${jobId}] Unable to mark FAILED:`, markError);
     }
   }
 };
@@ -152,7 +152,7 @@ export const processUploadAndIngestJob = async (
     await markJobRunning(jobId);
   } catch (error) {
     console.error(
-      `[Job ${jobId}] Lỗi khi chuyển công việc sang RUNNING:`,
+      `[Job ${jobId}] Error transitioning job to RUNNING:`,
       error,
     );
     return;
@@ -162,7 +162,7 @@ export const processUploadAndIngestJob = async (
   try {
     job = await getJobById(jobId);
   } catch (error) {
-    console.error(`[Job ${jobId}] Lỗi khi lấy Job:`, error);
+    console.error(`[Job ${jobId}] Error retrieving Job:`, error);
     return;
   }
 
@@ -223,7 +223,7 @@ export const processUploadAndIngestJob = async (
     const langCheck = detectLanguageFromDirectory(resolvedRootDir);
     if (!langCheck.isSupported) {
       console.error(
-        `[Job ${jobId}] Dự án không được hỗ trợ: ${langCheck.reason}`,
+        `[Job ${jobId}] Unsupported project: ${langCheck.reason}`,
       );
       throw new ServiceError(langCheck.reason, 400);
     }
@@ -251,14 +251,14 @@ export const processUploadAndIngestJob = async (
     await markJobSuccess(jobId, { rootDir: resolvedRootDir });
 
     console.log(
-      `[Job ${jobId}] Pipeline upload & ingest hoàn thành: ${resolvedRootDir}`,
+      `[Job ${jobId}] Upload & ingest pipeline completed: ${resolvedRootDir}`,
     );
   } catch (error) {
-    console.error(`[Job ${jobId}] Lỗi pipeline upload & ingest:`, error);
+    console.error(`[Job ${jobId}] Upload & ingest pipeline error:`, error);
     try {
       await markJobFailed(jobId, error);
     } catch (markError) {
-      console.error(`[Job ${jobId}] Không thể đánh dấu FAILED:`, markError);
+      console.error(`[Job ${jobId}] Unable to mark FAILED:`, markError);
     }
   }
 };

@@ -2,7 +2,7 @@ import request from "supertest";
 import express from "express";
 import { jest } from "@jest/globals";
 
-// ---------------- MOCK SERVICE (PHẢI đặt trước import router) ----------------
+// ---------------- MOCK SERVICE (MUST be before router import) ----------------
 const notificationServiceMock = {
     getUserNotifications: jest.fn(),
     getUnreadCount: jest.fn(),
@@ -11,7 +11,7 @@ const notificationServiceMock = {
     createNotification: jest.fn(),
 };
 
-// IMPORTANT: dùng factory inline KHÔNG reference outside variable
+// IMPORTANT: use inline factory, DO NOT reference outside variables
 jest.unstable_mockModule("../services/notification.service.js", () => ({
     notificationService: notificationServiceMock,
 }));

@@ -70,18 +70,20 @@ export async function detectMissingTests(projectId) {
                 results.tests.integration.files.push(relativePath);
                 results.tests.integration.framework = "SUPERTEST";
             }
-        } else if (/\.(test|spec)\.(js|ts|jsx|tsx)$/.test(fileName)) {
-            if (content.includes("vitest") || content.includes("vi.")) {
-                if (!results.tests.unit.files.includes(relativePath)) {
+        } else if (/\.(test|spec|testcase)\.[a-z0-9]+$/i.test(fileName) || /(?:^|\/)(tests?|__tests__|specs?|unit)\//i.test(relativePath.replace(/\\/g, "/"))) {
+            const normRel = relativePath.replace(/\\/g, "/");
+            const isHelper = /^(setup|global-?setup|setup-?tests|teardown|helpers?|mocks?|fixtures?|config|utils?)\.[a-z0-9]+$/i.test(fileName);
+            if (!isHelper && /\.[cm]?[jt]sx?$/i.test(fileName)) {
+                if (!results.tests.unit.files.includes(normRel)) {
                     results.tests.unit.detected = true;
-                    results.tests.unit.files.push(relativePath);
-                    results.tests.unit.framework = "VITEST";
-                }
-            } else if (content.includes("jest") || content.includes("@jest/globals")) {
-                if (!results.tests.unit.files.includes(relativePath)) {
-                    results.tests.unit.detected = true;
-                    results.tests.unit.files.push(relativePath);
-                    results.tests.unit.framework = "JEST";
+                    results.tests.unit.files.push(normRel);
+                    if (content.includes("vitest") || content.includes("vi.")) {
+                        results.tests.unit.framework = "VITEST";
+                    } else if (content.includes("jest") || content.includes("@jest/")) {
+                        results.tests.unit.framework = "JEST";
+                    } else {
+                        results.tests.unit.framework = results.availableFrameworks.includes("VITEST") ? "VITEST" : "JEST";
+                    }
                 }
             }
         }

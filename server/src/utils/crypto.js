@@ -5,23 +5,23 @@ const IV_LENGTH = 16;
 const TAG_LENGTH = 16;
 
 /**
- * Lấy encryption key từ env.
- * ENCRYPTION_KEY phải là chuỗi hex 64 ký tự (32 bytes).
+ * Get encryption key from env.
+ * ENCRYPTION_KEY must be a 64-char hex string (32 bytes).
  */
 function getKey() {
   const key = process.env.ENCRYPTION_KEY;
   if (!key || key.length !== 64) {
     throw new Error(
-      "ENCRYPTION_KEY phải được cấu hình trong .env (64 hex chars / 32 bytes)."
+      "ENCRYPTION_KEY must be configured in .env (64 hex chars / 32 bytes)."
     );
   }
   return Buffer.from(key, "hex");
 }
 
 /**
- * Encrypt một chuỗi plaintext.
+ * Encrypt plaintext string.
  * @param {string} plaintext
- * @returns {string} Chuỗi encrypted dạng: iv:encrypted:authTag (hex)
+ * @returns {string} Encrypted string: iv:encrypted:authTag (hex)
  */
 export function encrypt(plaintext) {
   const key = getKey();
@@ -36,8 +36,8 @@ export function encrypt(plaintext) {
 }
 
 /**
- * Decrypt một chuỗi đã encrypt.
- * @param {string} encryptedText Dạng: iv:encrypted:authTag (hex)
+ * Decrypt encrypted string.
+ * @param {string} encryptedText Format: iv:encrypted:authTag (hex)
  * @returns {string} Plaintext
  */
 export function decrypt(encryptedText) {

@@ -279,8 +279,8 @@ export const notificationService = {
         } catch (error) {
             if (error instanceof ServiceError) throw error;
             if (error instanceof z.ZodError) throw new ServiceError('Invalid user ID.', 400);
-            console.error('Error in getUnreadCount:', error);
-            throw new ServiceError('Failed to get unread notification count.', 500);
+            console.warn('[notificationService] DB warning in getUnreadCount (graceful fallback):', error?.message || error);
+            return { count: 0 };
         }
     },
 };

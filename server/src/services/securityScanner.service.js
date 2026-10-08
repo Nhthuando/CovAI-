@@ -1,6 +1,6 @@
 import { generateText } from "./gemini.service.js";
 
-// Regex phát hiện cơ bản
+// Basic detection regex
 const SECRET_PATTERN = /(api_key|apikey|secret|password|passwd|pwd|token)\s*[:=]\s*["']([^"']{8,})["']/i;
 const DANGEROUS_API_PATTERN = /(eval\(|exec\(|execSync\(|setTimeout\(\s*["'])/;
 
@@ -15,7 +15,7 @@ export const scanLocalVulnerabilities = (sourceFiles) => {
                     severity: "CRITICAL",
                     file: file.path,
                     line: idx + 1,
-                    description: "Phát hiện thông tin nhạy cảm (Hardcoded secret/password)."
+                    description: "Sensitive data detected (Hardcoded secret/password)."
                 });
             } else if (DANGEROUS_API_PATTERN.test(line)) {
                 findings.push({
@@ -23,7 +23,7 @@ export const scanLocalVulnerabilities = (sourceFiles) => {
                     severity: "HIGH",
                     file: file.path,
                     line: idx + 1,
-                    description: "Phát hiện sử dụng hàm nguy hiểm (eval, exec,...)."
+                    description: "Dangerous function usage detected (eval, exec,...)."
                 });
             }
         });
