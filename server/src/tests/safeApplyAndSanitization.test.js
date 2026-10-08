@@ -392,6 +392,54 @@ describe('Client', () => {
                 const contentAfter = fs.readFileSync(secretFile, "utf8");
                 expect(contentAfter).toBe(initialContent);
             });
+
+            test("allows applyCodeToTestFile when rootDir is a valid project repo inside storage (e.g. storage/projects/p1/github/123/repo)", () => {
+                const repoDir = path.join(tempDir, "storage", "projects", "p1", "github", "123", "repo");
+                fs.mkdirSync(path.join(repoDir, "tests"), { recursive: true });
+
+                const suggestion = {
+                    sourceFile: "src/auth.js",
+                    testFile: "tests/auth.test.js",
+                    generatedCode: "describe('auth in storage repo', () => { test('works', () => { expect(1).toBe(1); }); });"
+                };
+
+                const result = applyCodeToTestFile(repoDir, suggestion);
+                expect(result.changed).toBe(true);
+                expect(result.targetTestFile).toBe("tests/auth.test.js");
+                expect(fs.existsSync(path.join(repoDir, "tests/auth.test.js"))).toBe(true);
+                expect(fs.readFileSync(path.join(repoDir, "tests/auth.test.js"), "utf8")).toContain("auth in storage repo");
+            });
+
+            test("allows applyCodeToTestFile when testFile is an absolute path within the storage repo", () => {
+                const repoDir = path.join(tempDir, "storage", "projects", "p1", "github", "123", "repo");
+                const absTestFile = path.join(repoDir, "tests", "abs-auth.test.js");
+
+                const suggestion = {
+                    sourceFile: "src/auth.js",
+                    testFile: absTestFile,
+                    generatedCode: "describe('abs test in storage repo', () => { test('ok', () => {}); });"
+                };
+
+                const result = applyCodeToTestFile(repoDir, suggestion);
+                expect(result.changed).toBe(true);
+                expect(result.targetTestFile).toBe("tests/abs-auth.test.js");
+                expect(fs.existsSync(absTestFile)).toBe(true);
+            });
+
+            test("rejects applyCodeToTestFile when rootDir is a raw storage directory", () => {
+                const rawStorageDir = path.join(tempDir, "storage", "projects", "fake-raw");
+                fs.mkdirSync(rawStorageDir, { recursive: true });
+
+                const suggestion = {
+                    sourceFile: "src/auth.js",
+                    testFile: "tests/auth.test.js",
+                    generatedCode: "test('fail', () => {});"
+                };
+
+                expect(() => applyCodeToTestFile(rawStorageDir, suggestion)).toThrow(
+                    /Strict Storage Guard|forbidden/i
+                );
+            });
         });
     });
 });

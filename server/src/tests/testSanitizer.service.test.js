@@ -1,4 +1,5 @@
 import { cleanAndDeduplicateTestContent, healImportPathsInTestCode, healMultilineStrings, healMismatchedQuotes } from "../services/testSanitizer.service.js";
+import { relaxToHaveBeenCalled } from "../services/applyTestSuggestion.service.js";
 import { findAssociatedTestFile } from "../services/fileCoverage.service.js";
 import { parseJavaScriptCode } from "../services/babelParser.service.js";
 
@@ -421,6 +422,43 @@ describe('contract', () => {
             expect(cleaned).toContain("};\nconst { getQuickbooksGeneralLedger }");
             const ast = parseJavaScriptCode(cleaned);
             expect(ast.success).toBe(true);
+        });
+
+        test("heals stray closing parentheses after statement terminators like toBeDefined(););", () => {
+            const brokenInput = `
+describe('controller tests', () => {
+  it('TC-BRANCH-04: should handle request with file upload', async () => {
+    expect(streamUpload).toBeDefined();
+    expect(res.status).toBeDefined();
+    expect(res.json).toBeDefined(););
+  });
+
+  it('TC-BRANCH-06: should handle request with avatar string', async () => {
+    expect(streamUpload).not.toHaveBeenCalled();
+    expect(res.status).toBeDefined();
+    expect(res.json).toBeDefined(););
+  });
+});
+`;
+            const cleaned = cleanAndDeduplicateTestContent(brokenInput);
+            expect(cleaned).not.toContain(";);");
+            expect(cleaned).toContain("expect(res.json).toBeDefined();");
+            const ast = parseJavaScriptCode(cleaned);
+            expect(ast.success).toBe(true);
+        });
+
+        test("relaxToHaveBeenCalled handles nested arguments without leaving trailing parentheses or syntax errors", () => {
+            const inputWithNestedArgs = `
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ imageUrl: 'http://cloudinary.com/image.jpg' }));
+    expect(streamUpload).toHaveBeenCalledWith(expect.anything());
+    expect(res.status).toHaveBeenCalled();
+`;
+            const relaxed = relaxToHaveBeenCalled(inputWithNestedArgs);
+            expect(relaxed).not.toContain("toHaveBeenCalled");
+            expect(relaxed).not.toContain(";);");
+            expect(relaxed).toContain("expect(res.json).toBeDefined();");
+            expect(relaxed).toContain("expect(streamUpload).toBeDefined();");
+            expect(relaxed).toContain("expect(res.status).toBeDefined();");
         });
     });
 
