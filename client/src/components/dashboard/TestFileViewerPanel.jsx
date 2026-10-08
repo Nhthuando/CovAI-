@@ -101,6 +101,8 @@ const getStatusBadge = (status, isLight) => {
 export default function TestFileViewerPanel({
   sourceFilePath,
   testFile,
+  linkedTestFiles = [],
+  onSelectTestFile,
   projectId,
   snapshotId,
   suggestions = [],
@@ -333,7 +335,11 @@ export default function TestFileViewerPanel({
                       : "1px solid rgba(245, 158, 11, 0.3)",
                 }}
               >
-                {isFound ? `✓ Test Linked (${framework})` : "⚠ No test file"}
+                {isFound
+                  ? testFile?.relationType === "DIRECT_IMPORT"
+                    ? `✓ Linked via Import (${framework})`
+                    : `✓ Test Linked (${framework})`
+                  : "⚠ No test file"}
               </span>
 
               {suggestions.filter((s) => s.status !== "REJECTED").length > 0 && (
@@ -493,6 +499,92 @@ export default function TestFileViewerPanel({
           )}
         </div>
       </div>
+
+      {/* ── Linked Test Suites Tabs Bar (when multiple tests touch this module) ──── */}
+      {linkedTestFiles.length > 1 && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "6px 14px",
+            background: isLight ? "#f8fafc" : "rgba(0, 0, 0, 0.3)",
+            borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
+            overflowX: "auto",
+          }}
+        >
+          <span
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              color: isLight ? "#64748b" : "#94a3b8",
+              textTransform: "uppercase",
+              letterSpacing: 0.5,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Linked Tests:
+          </span>
+          {linkedTestFiles.map((tf) => {
+            const isSelected = tf.filePath === testFilePath;
+            return (
+              <button
+                key={tf.filePath}
+                onClick={() => onSelectTestFile?.(tf.filePath)}
+                style={{
+                  padding: "3px 8px",
+                  borderRadius: 5,
+                  fontSize: 11,
+                  fontFamily: "var(--font-mono, monospace)",
+                  fontWeight: isSelected ? 700 : 500,
+                  border: isSelected
+                    ? isLight
+                      ? "1px solid #c7d2fe"
+                      : "1px solid rgba(129, 140, 248, 0.4)"
+                    : "1px solid transparent",
+                  background: isSelected
+                    ? isLight
+                      ? "#eef2ff"
+                      : "rgba(99, 102, 241, 0.2)"
+                    : isLight
+                    ? "#ffffff"
+                    : "rgba(255, 255, 255, 0.04)",
+                  color: isSelected
+                    ? isLight
+                      ? "#4338ca"
+                      : "#818cf8"
+                    : isLight
+                    ? "#475569"
+                    : "#94a3b8",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 5,
+                  whiteSpace: "nowrap",
+                }}
+                title={tf.filePath}
+              >
+                <FlaskConical size={11} />
+                <span>{tf.fileName}</span>
+                {tf.relationType === "DIRECT_IMPORT" && (
+                  <span
+                    style={{
+                      fontSize: 9,
+                      padding: "0 4px",
+                      borderRadius: 3,
+                      background: isLight ? "#dbeafe" : "rgba(59, 130, 246, 0.2)",
+                      color: isLight ? "#1d4ed8" : "#93c5fd",
+                      fontWeight: 600,
+                    }}
+                  >
+                    Import
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* ── Sub Navigation Tabs (when suggestions or editor active) ──── */}
       {(suggestions.length > 0 || isFound) && (

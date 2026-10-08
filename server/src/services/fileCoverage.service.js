@@ -4,6 +4,7 @@ import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { cleanStorageText, cleanStoragePath } from "../utils/pathSanitizer.js";
 import { analyzeSourceAst, mapCoverageGaps } from "./businessLogicAstAnalyzer.service.js";
+import { findTestsImportingSource, countTestCases } from "./testDependencyResolver.service.js";
 
 /**
  * Normalizes file paths across Windows/Linux, stripping leading slashes and dot-slashes.
@@ -551,11 +552,79 @@ export const extractFunctionFlow = (fileCoverageData, sourceCode = "") => {
 };
 
 /**
- * Searches the project root directory for an existing or suggested test file associated with a source file.
+ * Calculates quantitative priority score for a linked test file according to Section 2.4:
+ * Score(tj, bi) = S_relation + S_name + S_count + S_location
+ *
+ * @param {Object} item - Linked test candidate
+ * @param {string} baseName - Source base name (without extension)
+ * @param {string} dirName - Source directory relative to root
+ * @returns {number} Score
  */
-export const findAssociatedTestFile = (rootDir, rawSourceFilePath, framework = null) => {
+export const calculateTraceabilityScore = (item, baseName = "", dirName = "") => {
+    let score = 0;
+
+    // 1. S_relation (Điểm loại liên kết)
+    switch (item.relationType) {
+        case "DIRECT_IMPORT":
+            score += 1000;
+            break;
+        case "EXECUTION_TRACE":
+            score += 800;
+            break;
+        case "TRANSITIVE":
+        case "TRANSITIVE_DEPENDENCY":
+            score += 600;
+            break;
+        case "NAME_CONVENTION":
+            score += 100;
+            break;
+        default:
+            score += 0;
+            break;
+    }
+
+    // 2. S_name (Điểm tương đồng tên gọi)
+    if (baseName && item.fileName) {
+        const lowerBase = baseName.toLowerCase();
+        const lowerFile = item.fileName.toLowerCase();
+        if (lowerFile.includes(lowerBase)) {
+            score += 500;
+        }
+    }
+
+    // 3. S_count (Điểm số lượng test case)
+    score += (Number(item.testCount) || 0) * 10;
+
+    // 4. S_location (Điểm vị trí thư mục)
+    if (dirName && dirName !== "." && dirName !== "src" && item.filePath) {
+        const cleanDirParts = dirName.replace(/^(?:.*?\/)?src\/?/, "").split("/").filter(Boolean);
+        const normFilePath = normalizePath(item.filePath);
+        const matchesLocation = cleanDirParts.some(dp =>
+            normFilePath.includes("/" + dp + "/") || normFilePath.includes("/" + dp + ".")
+        );
+        if (matchesLocation) {
+            score += 200;
+        }
+    }
+
+    return score;
+};
+
+/**
+ * Discovers all test files associated with a source file, combining:
+ * 1. Static AST dependency resolution (DIRECT_IMPORT) - test files that import/require this source
+ * 2. Smart naming & directory structure matching (NAME_CONVENTION)
+ * 3. Conventional candidate test paths
+ *
+ * @param {string} rootDir
+ * @param {string} rawSourceFilePath
+ * @param {string} [framework=null]
+ * @returns {{ primaryTestFile: Object, linkedTestFiles: Array<Object>, suggestedNewTestPath: string, hasExecutingTests: boolean }}
+ */
+export const findAllAssociatedTestFiles = (rootDir, rawSourceFilePath, framework = null) => {
     if (!rootDir || !fs.existsSync(rootDir) || !rawSourceFilePath) {
-        return { found: false, filePath: null, fileName: null, suggestedFilePath: null, testCode: "", framework: "jest" };
+        const empty = { found: false, filePath: null, fileName: null, suggestedFilePath: null, testCode: "", framework: "jest", relationType: "NONE" };
+        return { primaryTestFile: empty, linkedTestFiles: [], suggestedNewTestPath: null, hasExecutingTests: false };
     }
 
     const normSource = cleanRelativePath(rootDir, rawSourceFilePath);
@@ -564,13 +633,21 @@ export const findAssociatedTestFile = (rootDir, rawSourceFilePath, framework = n
         const fullTest = path.join(rootDir, normSource);
         const exists = fs.existsSync(fullTest);
         const testCode = exists ? fs.readFileSync(fullTest, "utf8") : "";
-        return {
+        const primary = {
             found: exists,
             filePath: normSource,
             fileName: path.basename(normSource),
             suggestedFilePath: normSource,
             testCode,
-            framework: testCode.includes("vitest") ? "vitest" : (framework || "jest")
+            framework: testCode.includes("vitest") ? "vitest" : (framework || "jest"),
+            relationType: "SELF",
+            isPrimary: true
+        };
+        return {
+            primaryTestFile: primary,
+            linkedTestFiles: exists ? [primary] : [],
+            suggestedNewTestPath: normSource,
+            hasExecutingTests: exists
         };
     }
 
@@ -582,7 +659,41 @@ export const findAssociatedTestFile = (rootDir, rawSourceFilePath, framework = n
     const isMultiPackage = ["packages", "apps", "services", "examples", "modules"].includes(parts[0]);
     const subprojectPrefix = isMultiPackage && parts.length > 2 ? parts.slice(0, 2).join("/") : "";
 
-    // 1. Scan existing test files in project with smart import & naming scoring
+    // Calculate default new test path
+    let defaultNewTestPath = normalizePath(path.join("tests", `${baseName}.test${ext}`));
+    const hasTestsUnit = fs.existsSync(path.join(rootDir, "tests", "unit"));
+    if (dirName.includes("src")) {
+        const subRel = dirName.replace(/^src\/?/, "");
+        defaultNewTestPath = hasTestsUnit
+            ? normalizePath(`tests/unit/${subRel}/${baseName}.test${ext}`.replace(/\/+/g, "/"))
+            : normalizePath(dirName.replace("src", "tests") + `/${baseName}.test${ext}`);
+    } else if (hasTestsUnit) {
+        defaultNewTestPath = normalizePath(`tests/unit/${baseName}.test${ext}`);
+    }
+
+    const linkedMap = new Map();
+
+    // 1. TẦNG 1: STATIC AST DEPENDENCY RESOLUTION (DIRECT_IMPORT)
+    // Find all test files in the project that actually import or require this source file
+    try {
+        const astImports = findTestsImportingSource(rootDir, normSource);
+        for (const match of astImports) {
+            linkedMap.set(match.filePath, {
+                found: true,
+                filePath: match.filePath,
+                fileName: match.fileName,
+                suggestedFilePath: match.filePath,
+                relationType: "DIRECT_IMPORT",
+                confidence: 1.0,
+                testCode: match.testCode,
+                testCount: match.testCount,
+                framework: match.framework || (framework || "jest"),
+                isPrimary: false
+            });
+        }
+    } catch (_) { }
+
+    // 2. TẦNG 2: SCAN EXISTING TEST FILES (NAMING & TEXT HEURISTICS)
     let bestImportMatch = null;
     let bestScore = -999;
 
@@ -599,26 +710,21 @@ export const findAssociatedTestFile = (rootDir, rawSourceFilePath, framework = n
                 try {
                     const rel = normalizePath(path.relative(rootDir, full));
                     let score = 0;
-
                     const content = fs.readFileSync(full, "utf8");
 
-                    // If caller specifically requested vitest, skip files that lack vitest syntax
                     if (framework === "vitest" && !content.includes("vitest")) {
                         continue;
                     }
 
-                    // Match subproject prefix only in monorepos / multi-package repositories
                     if (subprojectPrefix) {
                         if (rel.startsWith(subprojectPrefix)) score += 10;
                         else score -= 500;
                     }
 
-                    // Match file extension (.ts with .ts vs .js with .js)
                     const testExt = path.extname(rel);
                     if ((ext === ".ts" || ext === ".tsx") && (testExt === ".ts" || testExt === ".tsx")) score += 10;
                     else if ((ext === ".js" || ext === ".jsx") && (testExt === ".js" || testExt === ".jsx")) score += 10;
 
-                    // Generic base names (index, app, main, config, server) require matching parent directory
                     const isGenericName = ["index", "app", "main", "config", "server", "default", "constants"].includes(baseName.toLowerCase());
                     const testBaseName = path.basename(rel, testExt).replace(/\.(test|spec|steps?)$/i, "");
                     const cleanDirParts = (dirName && dirName !== "." && dirName !== "src")
@@ -634,31 +740,22 @@ export const findAssociatedTestFile = (rootDir, rawSourceFilePath, framework = n
                         }
                     }
 
-                    // For generic names like index.js, if directory does NOT match, heavily penalize so e.g. models/index.js never matches config/index.test.js
                     if (isGenericName && !dirMatched) {
                         score -= 300;
                     }
 
-                    // Unit test files must align with the target module name
+                    // Direct import/require match - checks actual import/require statements
+                    const escapedBase = baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    const hasDirectImport = new RegExp(`(?:import|require|jest\\.mock|unstable_mockModule)\\s*\\(?\\s*['"][^'"]*\\b${escapedBase}(?:\\.[a-z0-9]+)?['"]`).test(content);
+
                     const isNameMatch = (testBaseName === baseName) ||
                         testBaseName.startsWith(baseName) ||
                         testBaseName.endsWith(baseName) ||
                         testBaseName.includes(baseName);
 
-                    if (!isNameMatch) {
+                    if (!hasDirectImport && !isNameMatch) {
                         continue;
                     }
-
-                    // Direct import/require match - highest confidence!
-                    const hasDirectImport = (
-                        content.includes("/" + baseName + "'") ||
-                        content.includes("/" + baseName + '"') ||
-                        content.includes("./" + baseName) ||
-                        content.includes("/" + baseName + ".") ||
-                        content.includes("/" + baseName + "/") ||
-                        content.includes("from '" + baseName) ||
-                        content.includes('from "' + baseName)
-                    );
 
                     if (hasDirectImport && (!isGenericName || dirMatched)) {
                         score += 180;
@@ -666,16 +763,29 @@ export const findAssociatedTestFile = (rootDir, rawSourceFilePath, framework = n
                         score += 40;
                     }
 
-                    // File name matching
                     if (testBaseName === baseName) {
                         score += (isGenericName && !dirMatched) ? 10 : 160;
-                    } else if (testBaseName.startsWith(baseName) || testBaseName.endsWith(baseName) || testBaseName.includes(baseName)) {
+                    } else if (isNameMatch) {
                         score += (isGenericName && !dirMatched) ? 5 : 60;
                     }
 
-                    // Penalize placeholder/stub files
                     if (content.length < 80 || content.includes("// No additional snippets needed")) {
                         score -= 60;
+                    }
+
+                    if (score >= 120 && !linkedMap.has(rel)) {
+                        linkedMap.set(rel, {
+                            found: true,
+                            filePath: rel,
+                            fileName: path.basename(rel),
+                            suggestedFilePath: rel,
+                            relationType: hasDirectImport ? "DIRECT_IMPORT" : "NAME_CONVENTION",
+                            confidence: hasDirectImport ? 0.95 : 0.8,
+                            testCode: content,
+                            testCount: countTestCases(content),
+                            framework: content.includes("vitest") ? "vitest" : (framework || "jest"),
+                            isPrimary: false
+                        });
                     }
 
                     if (score > bestScore && score >= 120) {
@@ -688,134 +798,128 @@ export const findAssociatedTestFile = (rootDir, rawSourceFilePath, framework = n
     };
     try { scanDir(rootDir); } catch { }
 
-    if (bestImportMatch && bestScore >= 120) {
+    // 3. TẦNG 3: CANDIDATE PATH CHECK (VITEST & CONVENTIONAL)
+    if (linkedMap.size === 0) {
+        if (framework === "vitest") {
+            const vitestCandidates = [
+                path.join("tests", `${baseName}.vitest.test${ext}`),
+                path.join("tests", `${baseName}.vitest${ext}`),
+                path.join("tests", `${baseName}.spec${ext}`),
+                path.join("tests", `vitest.test${ext}`),
+                path.join("tests", `vitest.spec${ext}`),
+                path.join(dirName, `${baseName}.vitest.test${ext}`),
+                path.join(dirName, `${baseName}.spec${ext}`),
+                path.join(dirName, "__tests__", `${baseName}.vitest.test${ext}`),
+                path.join("tests", `${baseName}.test${ext}`)
+            ];
+            for (const cand of vitestCandidates) {
+                const fullP = path.join(rootDir, cand);
+                if (fs.existsSync(fullP)) {
+                    const content = fs.readFileSync(fullP, "utf8");
+                    const rel = normalizePath(cand);
+                    linkedMap.set(rel, {
+                        found: true,
+                        filePath: rel,
+                        fileName: path.basename(rel),
+                        suggestedFilePath: rel,
+                        relationType: "NAME_CONVENTION",
+                        confidence: 0.85,
+                        testCode: content,
+                        testCount: countTestCases(content),
+                        framework: "vitest",
+                        isPrimary: false
+                    });
+                    break;
+                }
+            }
+        } else {
+            const candidates = [
+                path.join("tests", `${baseName}.test${ext}`),
+                path.join("tests", `${baseName}.spec${ext}`),
+                path.join("tests", dirName, `${baseName}.test${ext}`),
+                path.join(dirName, `${baseName}.test${ext}`),
+                path.join(dirName, `${baseName}.spec${ext}`),
+                path.join(dirName, `${baseName}.steps${ext}`),
+                path.join(dirName, "__tests__", `${baseName}.test${ext}`),
+                path.join(dirName, "__tests__", `${baseName}.spec${ext}`),
+                path.join("specs", `${baseName}.test${ext}`),
+                path.join("specs", `${baseName}.steps${ext}`),
+                path.join("specs", "step-definitions", `${baseName}.steps${ext}`)
+            ];
+            if (dirName.includes("src")) {
+                candidates.push(
+                    path.join(dirName.replace("src", "specs"), "step-definitions", `${baseName}.steps${ext}`),
+                    path.join(dirName.replace("src", "specs"), `${baseName}.test${ext}`),
+                    path.join(dirName.replace("src", "tests"), `${baseName}.test${ext}`)
+                );
+            }
+            for (const cand of candidates) {
+                const fullP = path.join(rootDir, cand);
+                if (fs.existsSync(fullP)) {
+                    const content = fs.readFileSync(fullP, "utf8");
+                    const rel = normalizePath(cand);
+                    linkedMap.set(rel, {
+                        found: true,
+                        filePath: rel,
+                        fileName: path.basename(rel),
+                        suggestedFilePath: rel,
+                        relationType: "NAME_CONVENTION",
+                        confidence: 0.85,
+                        testCode: content,
+                        testCount: countTestCases(content),
+                        framework: content.includes("vitest") ? "vitest" : "jest",
+                        isPrimary: false
+                    });
+                    break;
+                }
+            }
+        }
+    }
+
+    const linkedList = Array.from(linkedMap.values());
+    if (linkedList.length > 0) {
+        for (const item of linkedList) {
+            item.score = calculateTraceabilityScore(item, baseName, dirName);
+        }
+
+        linkedList.sort((a, b) => (b.score || 0) - (a.score || 0));
+
+        linkedList[0].isPrimary = true;
         return {
-            found: true,
-            filePath: bestImportMatch.rel,
-            fileName: path.basename(bestImportMatch.rel),
-            suggestedFilePath: bestImportMatch.rel,
-            testCode: bestImportMatch.content,
-            framework: bestImportMatch.content.includes("vitest") ? "vitest" : (framework || "jest")
+            primaryTestFile: linkedList[0],
+            linkedTestFiles: linkedList,
+            suggestedNewTestPath: defaultNewTestPath,
+            hasExecutingTests: true
         };
     }
 
-    // 2. Vitest-specific candidate paths
-    if (framework === "vitest") {
-        const vitestCandidates = [
-            path.join("tests", `${baseName}.vitest.test${ext}`),
-            path.join("tests", `${baseName}.vitest${ext}`),
-            path.join("tests", `${baseName}.spec${ext}`),
-            path.join("tests", `vitest.test${ext}`),
-            path.join("tests", `vitest.spec${ext}`),
-            path.join(dirName, `${baseName}.vitest.test${ext}`),
-            path.join(dirName, `${baseName}.spec${ext}`),
-            path.join(dirName, "__tests__", `${baseName}.vitest.test${ext}`),
-        ];
-
-        for (const candidate of vitestCandidates) {
-            const fullPath = path.join(rootDir, candidate);
-            if (fs.existsSync(fullPath)) {
-                const content = fs.readFileSync(fullPath, "utf8");
-                const rel = normalizePath(candidate);
-                return {
-                    found: true,
-                    filePath: rel,
-                    fileName: path.basename(rel),
-                    suggestedFilePath: rel,
-                    testCode: content,
-                    framework: "vitest"
-                };
-            }
-        }
-
-        const genericTestPath = path.join("tests", `${baseName}.test${ext}`);
-        if (fs.existsSync(path.join(rootDir, genericTestPath))) {
-            const content = fs.readFileSync(path.join(rootDir, genericTestPath), "utf8");
-            if (content.includes("vitest") || content.includes("from 'vitest'") || content.includes('from "vitest"')) {
-                const rel = normalizePath(genericTestPath);
-                return {
-                    found: true,
-                    filePath: rel,
-                    fileName: path.basename(rel),
-                    suggestedFilePath: rel,
-                    testCode: content,
-                    framework: "vitest"
-                };
-            }
-        }
-
-        const defaultVitestPath = fs.existsSync(path.join(rootDir, genericTestPath))
-            ? normalizePath(path.join("tests", `${baseName}.vitest.test${ext}`))
-            : normalizePath(path.join("tests", `${baseName}.test${ext}`));
-
-        return {
-            found: false,
-            filePath: null,
-            suggestedFilePath: defaultVitestPath,
-            fileName: path.basename(defaultVitestPath),
-            testCode: "",
-            framework: "vitest"
-        };
-    }
-
-    // 3. Conventional candidate paths (including specs, step-definitions, subpackages)
-    const candidates = [
-        path.join("tests", `${baseName}.test${ext}`),
-        path.join("tests", `${baseName}.spec${ext}`),
-        path.join("tests", dirName, `${baseName}.test${ext}`),
-        path.join(dirName, `${baseName}.test${ext}`),
-        path.join(dirName, `${baseName}.spec${ext}`),
-        path.join(dirName, `${baseName}.steps${ext}`),
-        path.join(dirName, "__tests__", `${baseName}.test${ext}`),
-        path.join(dirName, "__tests__", `${baseName}.spec${ext}`),
-        path.join("specs", `${baseName}.test${ext}`),
-        path.join("specs", `${baseName}.steps${ext}`),
-        path.join("specs", "step-definitions", `${baseName}.steps${ext}`)
-    ];
-
-    if (dirName.includes("src")) {
-        candidates.push(
-            path.join(dirName.replace("src", "specs"), "step-definitions", `${baseName}.steps${ext}`),
-            path.join(dirName.replace("src", "specs"), `${baseName}.test${ext}`),
-            path.join(dirName.replace("src", "tests"), `${baseName}.test${ext}`)
-        );
-    }
-
-    for (const candidate of candidates) {
-        const fullPath = path.join(rootDir, candidate);
-        if (fs.existsSync(fullPath)) {
-            const content = fs.readFileSync(fullPath, "utf8");
-            const rel = normalizePath(candidate);
-            return {
-                found: true,
-                filePath: rel,
-                fileName: path.basename(rel),
-                suggestedFilePath: rel,
-                testCode: content,
-                framework: content.includes("vitest") ? "vitest" : "jest"
-            };
-        }
-    }
-
-    let defaultNewTestPath = normalizePath(path.join("tests", `${baseName}.test${ext}`));
-    const hasTestsUnit = fs.existsSync(path.join(rootDir, "tests", "unit"));
-    if (dirName.includes("src")) {
-        const subRel = dirName.replace(/^src\/?/, "");
-        defaultNewTestPath = hasTestsUnit
-            ? normalizePath(`tests/unit/${subRel}/${baseName}.test${ext}`.replace(/\/+/g, "/"))
-            : normalizePath(dirName.replace("src", "tests") + `/${baseName}.test${ext}`);
-    } else if (hasTestsUnit) {
-        defaultNewTestPath = normalizePath(`tests/unit/${baseName}.test${ext}`);
-    }
-
-    return {
+    const fallback = {
         found: false,
         filePath: null,
-        suggestedFilePath: defaultNewTestPath,
         fileName: path.basename(defaultNewTestPath),
+        suggestedFilePath: defaultNewTestPath,
+        relationType: "NONE",
+        score: 0,
         testCode: "",
-        framework: "jest"
+        testCount: 0,
+        framework: framework === "vitest" ? "vitest" : "jest",
+        isPrimary: true
     };
+
+    return {
+        primaryTestFile: fallback,
+        linkedTestFiles: [],
+        suggestedNewTestPath: defaultNewTestPath,
+        hasExecutingTests: false
+    };
+};
+
+/**
+ * Backward-compatible helper returning the primary associated test file.
+ */
+export const findAssociatedTestFile = (rootDir, rawSourceFilePath, framework = null) => {
+    const result = findAllAssociatedTestFiles(rootDir, rawSourceFilePath, framework);
+    return result.primaryTestFile;
 };
 
 /**
@@ -870,12 +974,16 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
             branches: [],
             functions: [],
             sourceCode: "",
-            testFile: { found: false, filePath: null, fileName: null, suggestedFilePath: null, testCode: "", framework: "jest" }
+            testFile: { found: false, filePath: null, fileName: null, suggestedFilePath: null, testCode: "", framework: "jest", relationType: "NONE" },
+            linkedTestFiles: [],
+            testTraceability: { hasExecutingTests: false, totalLinkedTests: 0, primaryRelation: "NONE", suggestedNewTestPath: null }
         };
     }
 
     const cleanPath = cleanRelativePath(rootDir, targetFilePath);
-    const testFile = findAssociatedTestFile(rootDir, cleanPath);
+    const associatedInfo = findAllAssociatedTestFiles(rootDir, cleanPath);
+    const testFile = associatedInfo.primaryTestFile;
+    const linkedTestFiles = associatedInfo.linkedTestFiles;
 
     const getDiskSourceCode = () => {
         const candidatePaths = [
@@ -944,7 +1052,14 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
             branches: [],
             functions: [],
             sourceCode: getDiskSourceCode(),
-            testFile
+            testFile,
+            linkedTestFiles,
+            testTraceability: {
+                hasExecutingTests: associatedInfo.hasExecutingTests,
+                totalLinkedTests: linkedTestFiles.length,
+                primaryRelation: testFile?.relationType || "NONE",
+                suggestedNewTestPath: associatedInfo.suggestedNewTestPath
+            }
         };
     }
 
@@ -972,7 +1087,14 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
             branches: [],
             functions: [],
             sourceCode: getDiskSourceCode(),
-            testFile
+            testFile,
+            linkedTestFiles,
+            testTraceability: {
+                hasExecutingTests: associatedInfo.hasExecutingTests,
+                totalLinkedTests: linkedTestFiles.length,
+                primaryRelation: testFile?.relationType || "NONE",
+                suggestedNewTestPath: associatedInfo.suggestedNewTestPath
+            }
         };
     }
 
@@ -1175,6 +1297,14 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
         decisionPoints,
         sourceCode,
         testFile,
+        linkedTestFiles,
+        testTraceability: {
+            hasExecutingTests: associatedInfo.hasExecutingTests || (officialSummary?.statements?.covered > 0 || rawStmtsCovered > 0),
+            totalLinkedTests: linkedTestFiles.length,
+            primaryRelation: testFile?.relationType || "NONE",
+            primaryScore: testFile?.score || 0,
+            suggestedNewTestPath: associatedInfo.suggestedNewTestPath
+        },
         rawCoverageData: matchedFileCoverage,
         astMetadata,
         coverageGapAnalysis,

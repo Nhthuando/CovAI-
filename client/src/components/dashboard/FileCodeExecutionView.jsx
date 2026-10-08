@@ -79,8 +79,36 @@ export default function FileCodeExecutionView({
   const statements = fileCoverage?.statements || [];
   const summary = fileCoverage?.summary || {};
   const testFile = fileCoverage?.testFile || null;
-  const hasTestFile = Boolean(testFile?.found);
-  const testFileName = testFile?.fileName || (testFile?.filePath ? testFile.filePath.split("/").pop() : null);
+  const linkedTestFiles = useMemo(() => {
+    if (Array.isArray(fileCoverage?.linkedTestFiles) && fileCoverage.linkedTestFiles.length > 0) {
+      return fileCoverage.linkedTestFiles;
+    }
+    return testFile?.found ? [testFile] : [];
+  }, [fileCoverage?.linkedTestFiles, testFile]);
+
+  const [selectedTestFilePath, setSelectedTestFilePath] = useState(null);
+
+  useEffect(() => {
+    if (linkedTestFiles.length > 0) {
+      setSelectedTestFilePath((prev) => {
+        if (prev && linkedTestFiles.some((f) => f.filePath === prev)) return prev;
+        return linkedTestFiles[0].filePath;
+      });
+    } else {
+      setSelectedTestFilePath(null);
+    }
+  }, [linkedTestFiles]);
+
+  const activeTestFile = useMemo(() => {
+    if (selectedTestFilePath) {
+      const match = linkedTestFiles.find((f) => f.filePath === selectedTestFilePath);
+      if (match) return match;
+    }
+    return linkedTestFiles[0] || testFile || null;
+  }, [linkedTestFiles, selectedTestFilePath, testFile]);
+
+  const hasTestFile = Boolean(activeTestFile?.found);
+  const testFileName = activeTestFile?.fileName || (activeTestFile?.filePath ? activeTestFile.filePath.split("/").pop() : null);
 
   // Layout mode: "split" (Side-by-side Source & Test) | "source" (Source code only) | "test" (Test code only)
   const [layoutMode, setLayoutMode] = useState("split");
@@ -948,7 +976,9 @@ export default function FileCodeExecutionView({
   const renderTestPanel = () => (
     <TestFileViewerPanel
       sourceFilePath={filePath}
-      testFile={testFile}
+      testFile={activeTestFile}
+      linkedTestFiles={linkedTestFiles}
+      onSelectTestFile={(p) => setSelectedTestFilePath(p)}
       projectId={projectId}
       snapshotId={snapshotId}
       suggestions={suggestions}
@@ -1015,23 +1045,53 @@ export default function FileCodeExecutionView({
 
           {/* Test connection status badge */}
           {hasTestFile ? (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 5,
-                padding: "2px 8px",
-                borderRadius: 5,
-                background: isLight ? "#dcfce7" : "rgba(34, 197, 94, 0.15)",
-                border: isLight ? "1px solid #86efac" : "1px solid rgba(34, 197, 94, 0.3)",
-                color: isLight ? "#15803d" : "#4ade80",
-                fontSize: 11,
-                fontWeight: 600,
-              }}
-              title={`Associated Test File: ${testFile?.filePath}`}
-            >
-              <FlaskConical size={12} />
-              <span>Test: {testFileName}</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              {linkedTestFiles.length > 1 ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <FlaskConical size={12} color={isLight ? "#15803d" : "#4ade80"} />
+                  <select
+                    value={activeTestFile?.filePath || ""}
+                    onChange={(e) => setSelectedTestFilePath(e.target.value)}
+                    style={{
+                      padding: "2px 6px",
+                      borderRadius: 5,
+                      background: isLight ? "#dcfce7" : "rgba(34, 197, 94, 0.15)",
+                      border: isLight ? "1px solid #86efac" : "1px solid rgba(34, 197, 94, 0.3)",
+                      color: isLight ? "#15803d" : "#4ade80",
+                      fontSize: 11,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      outline: "none",
+                    }}
+                    title="Switch associated test file"
+                  >
+                    {linkedTestFiles.map((tf) => (
+                      <option key={tf.filePath} value={tf.filePath}>
+                        {tf.fileName} ({tf.relationType === "DIRECT_IMPORT" ? "Import" : "Linked"})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 5,
+                    padding: "2px 8px",
+                    borderRadius: 5,
+                    background: isLight ? "#dcfce7" : "rgba(34, 197, 94, 0.15)",
+                    border: isLight ? "1px solid #86efac" : "1px solid rgba(34, 197, 94, 0.3)",
+                    color: isLight ? "#15803d" : "#4ade80",
+                    fontSize: 11,
+                    fontWeight: 600,
+                  }}
+                  title={`Associated Test File: ${activeTestFile?.filePath} (${activeTestFile?.relationType || "Direct"})`}
+                >
+                  <FlaskConical size={12} />
+                  <span>Test: {testFileName}</span>
+                </div>
+              )}
             </div>
           ) : (
             <div
