@@ -129,8 +129,8 @@ describe('createQuickbooksBill', () => {
             // Original user tests MUST still be there!
             expect(content).toContain("it('user test 1'");
             expect(content).toContain("it('user test 2'");
-            // New test must be added safely under Additional Scenarios
-            expect(content).toContain("describe('createQuickbooksBill - Additional Scenarios'");
+            // New test must be added safely under Additional Coverage
+            expect(content).toContain("describe('createQuickbooksBill - Additional Coverage'");
             expect(content).toContain("it('new test case 3'");
             // ESM import must NOT have duplicate createQuickbooksBill declarations
             expect(content).not.toMatch(/import\s*\{[^}]*createQuickbooksBill[^}]*\}\s*from[^\n]+\n[^\n]*import\s*\{[^}]*createQuickbooksBill/);

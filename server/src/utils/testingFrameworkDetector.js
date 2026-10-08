@@ -99,17 +99,29 @@ const discoverTestFiles = (rootDir, errors, detectedUnitFrameworks = []) => {
             if (!/\.[cm]?[jt]sx?$/i.test(entry.name)) continue;
             if (HELPER_FILE_PATTERN.test(entry.name)) continue;
 
-            const isTestFile = isTestDirectory || TEST_FILE_PATTERN.test(entry.name);
+            const isTestFileName = TEST_FILE_PATTERN.test(entry.name);
+            const isTestFile = isTestDirectory || isTestFileName;
             if (!isTestFile) continue;
 
             const filePath = path.join(directory, entry.name);
+            const relPath = path.relative(rootDir, filePath).split(path.sep).join("/");
+            const lowerRel = relPath.toLowerCase();
+
+            // Exclude fixture, mock, test-data folders and naming conventions unless it is an explicit test file name
+            const isHelperDir = !isTestFileName && /(^|\/)(test-data|test_data|fixtures?|helpers?|mocks?|__mocks__|utils?|support)\//i.test(lowerRel);
+            if (isHelperDir) continue;
+
             let content = "";
             try {
                 content = fs.readFileSync(filePath, "utf8");
             } catch {
                 errors.push(`Unable to read test file: ${path.relative(rootDir, filePath)}`);
             }
-            const relPath = path.relative(rootDir, filePath).split(path.sep).join("/");
+
+            // Exclude non-test files without test blocks (e.g. fixtures/mocks placed in tests/)
+            const hasAnyTest = /\b(test|it|describe|scenario|suite)\s*\(/i.test(content);
+            if (!hasAnyTest && !isTestFileName) continue;
+
             files.push({ path: relPath, framework: classifyTestFile(content, relPath, detectedUnitFrameworks) });
         }
     };

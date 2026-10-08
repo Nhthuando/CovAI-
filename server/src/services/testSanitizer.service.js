@@ -134,16 +134,57 @@ export const healImportPathsInTestCode = (code, relTestPath = "tests/sample.test
 };
 
 /**
+ * Heals mismatched quotes created by LLMs or broken parsers (e.g. it(`title', ...) -> it('title', ...)).
+ */
+export const healMismatchedQuotes = (code) => {
+    if (!code) return "";
+    let healed = code;
+    // 1. Heal test/it/describe titles with mismatched quotes: it(`title', () => ... or it("title', () => ...
+    healed = healed.replace(/\b(test|it|describe)\s*\(\s*`([^'`\r\n]+)'\s*,/g, '$1("$2",');
+    healed = healed.replace(/\b(test|it|describe)\s*\(\s*'([^'`\r\n]+)`\s*,/g, '$1("$2",');
+    healed = healed.replace(/\b(test|it|describe)\s*\(\s*"([^"'\r\n]+)'\s*,/g, '$1("$2",');
+    healed = healed.replace(/\b(test|it|describe)\s*\(\s*'([^"'\r\n]+)"\s*,/g, '$1("$2",');
+    // 2. Heal assertions: expect(...).toBe(`val'); -> expect(...).toBe('val');
+    healed = healed.replace(/\b(toBe|toEqual|toContain)\s*\(\s*`([^'`\r\n]+)'\s*\)/g, "$1('$2')");
+    healed = healed.replace(/\b(toBe|toEqual|toContain)\s*\(\s*'([^'`\r\n]+)`\s*\)/g, "$1('$2')");
+    healed = healed.replace(/\b(toBe|toEqual|toContain)\s*\(\s*"([^"'\r\n]+)'\s*\)/g, "$1('$2')");
+    healed = healed.replace(/\b(toBe|toEqual|toContain)\s*\(\s*'([^"'\r\n]+)"\s*\)/g, "$1('$2')");
+    // 3. Heal mocks: jest.unstable_mockModule(`dotenv', () => -> jest.unstable_mockModule('dotenv', () =>
+    healed = healed.replace(/\b(jest\.unstable_mockModule|jest\.mock|vi\.mock)\s*\(\s*`([^'`\r\n]+)'/g, "$1('$2'");
+    healed = healed.replace(/\b(jest\.unstable_mockModule|jest\.mock|vi\.mock)\s*\(\s*'([^'`\r\n]+)`/g, "$1('$2'");
+    // 4. Heal object properties: url: `path' -> url: 'path'
+    healed = healed.replace(/([a-zA-Z0-9_$]+\s*:\s*)`([^'`\r\n]+)'/g, "$1'$2'");
+    // 5. Heal function calls: fn(`val') -> fn('val')
+    healed = healed.replace(/\b([a-zA-Z0-9_$]+)\s*\(\s*`([^'`\r\n]+)'\s*\)/g, "$1('$2')");
+    // 6. Heal comments where apostrophes were turned into backticks:
+    healed = healed.replace(/(\/\/[^\r\n]*)`([stmdv])\b/g, "$1'$2");
+    return healed;
+};
+
+/**
  * Converts unescaped multiline single- or double-quoted strings into template literals
  * to avoid Babel "SyntaxError: Unterminated string constant" when LLMs generate multiline strings.
  */
 export const healMultilineStrings = (code) => {
     if (!code) return "";
+    code = healMismatchedQuotes(code);
+    // If the code is already valid JavaScript/TypeScript, DO NOT mutate strings!
+    try {
+        const parsed = parseJavaScriptCode(code);
+        if (parsed?.success) {
+            return code;
+        }
+        if (parsed?.error && !parsed.error.toLowerCase().includes("unterminated string") && !parsed.error.toLowerCase().includes("unterminated template")) {
+            return code;
+        }
+    } catch (_) {}
+
     const lines = code.split("\n");
     const result = [];
     let inMultilineQuote = false;
     let quoteChar = null;
     let buffer = [];
+    let inBlockComment = false;
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
@@ -178,38 +219,39 @@ export const healMultilineStrings = (code) => {
         }
 
         const trimmed = line.trim();
-        if (trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")) {
+        if (inBlockComment) {
+            if (line.includes("*/")) inBlockComment = false;
+            result.push(line);
+            continue;
+        }
+        if (trimmed.startsWith("/*")) {
+            if (!line.includes("*/")) inBlockComment = true;
+            result.push(line);
+            continue;
+        }
+        if (trimmed.startsWith("//") || trimmed.startsWith("*")) {
             result.push(line);
             continue;
         }
 
-        let inStr = null;
-        let escaped = false;
-        for (let c = 0; c < line.length; c++) {
-            const ch = line[c];
-            if (ch === "\\") {
-                escaped = !escaped;
-                continue;
+        // Strip line comments, completed strings, and regex literals to safely detect unclosed multiline strings
+        const strippedLine = line
+            .replace(/\/\/.*$/, "")
+            .replace(/(['"`])(?:\\.|(?!\1)[^\\])*\1/g, "")
+            .replace(/\/(?![*\/])(?:\\.|[^\\\/\r\n])+\/[a-z]*/g, "");
+
+        let unmatchedQuote = null;
+        for (let c = 0; c < strippedLine.length; c++) {
+            const ch = strippedLine[c];
+            if (ch === "'" || ch === '"') {
+                unmatchedQuote = ch;
+                break;
             }
-            if (!inStr) {
-                if (ch === "/" && line[c + 1] === "/") {
-                    break;
-                }
-                if (ch === "'" && c > 0 && /[a-zA-Z0-9_]/.test(line[c - 1]) && c < line.length - 1 && /[a-zA-Z0-9_]/.test(line[c + 1])) {
-                    continue;
-                }
-                if (ch === "'" || ch === '"' || ch === "`") {
-                    inStr = ch;
-                }
-            } else if (inStr === ch && !escaped) {
-                inStr = null;
-            }
-            escaped = false;
         }
 
-        if (inStr && (inStr === "'" || inStr === '"') && !line.endsWith("\\")) {
+        if (unmatchedQuote && !line.endsWith("\\")) {
             inMultilineQuote = true;
-            quoteChar = inStr;
+            quoteChar = unmatchedQuote;
             buffer = [line];
         } else {
             result.push(line);
@@ -221,6 +263,19 @@ export const healMultilineStrings = (code) => {
     }
 
     return result.join("\n");
+};
+
+/**
+ * Strips comments, strings, and regex literals from a line of code so that
+ * braces, parentheses, and brackets within strings/comments/regex are not counted.
+ */
+export const stripCodeCommentsAndStrings = (code) => {
+    if (!code) return "";
+    return code
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/\/\/.*$/, "")
+        .replace(/(['"`])(?:\\.|(?!\1)[^\\])*\1/g, "")
+        .replace(/\/(?![*\/])(?:\\.|[^\\\/\r\n])+\/[a-z]*/g, "");
 };
 
 /**
@@ -266,10 +321,11 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
 
     // 1.2. Remove orphaned object mock property lines cut from broken multi-line mocks
     // e.g. "create: jest.fn(() => ({ post: jest.fn() })) \n }));"
-    const orphanMockRegex = /^[ \t]*[a-zA-Z0-9_$]+\s*:\s*(?:jest|vi)\.fn\b[\s\S]*?\r?\n[ \t]*\}\s*\)\s*\);?[ \t]*\r?\n?/gm;
+    // CRITICAL: Must not match across statement boundaries (`;`, `const`, `let`, `var`, `describe`, `};`)
+    const orphanMockRegex = /^[ \t]*[a-zA-Z0-9_$]+\s*:\s*(?:jest|vi)\.fn\b(?:(?!\b(?:const|let|var|function|class|describe|it|test)\b|;|\};)[\s\S])*?\r?\n[ \t]*\}\s*\)\s*\);?[ \t]*\r?\n?/gm;
     cleaned = cleaned.replace(orphanMockRegex, (match, offset, str) => {
         const before = str.slice(0, offset).replace(/\/\/[^\n]*\n/g, '').trimEnd();
-        if (/(?:jest|vi)\.mock\s*\([^;{]+=>\s*\(\s*\{$/.test(before) || /=>\s*\(\s*\{$/.test(before)) {
+        if (/(?:jest|vi)\.mock\s*\([^;{]+=>\s*\(\s*\{$/.test(before) || /=>\s*\(\s*\{$/.test(before) || before.endsWith("{")) {
             return match;
         }
         return '';
@@ -278,20 +334,15 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     // Remove orphan closing brackets like "}));" or "});" that have no matching open brackets
     cleaned = cleaned.replace(/^[ \t]*(?:\}\s*\)\s*\);|\)\s*\);|\}\s*\);)[ \t]*\r?\n?/gm, (match, offset, str) => {
         const before = str.slice(0, offset);
+        const strippedBefore = stripCodeCommentsAndStrings(before);
         let openP = 0;
         let openB = 0;
-        let inS = null;
-        for (let i = 0; i < before.length; i++) {
-            const ch = before[i];
-            if (ch === '"' || ch === "'" || ch === '`') {
-                if (!inS) inS = ch;
-                else if (inS === ch && before[i - 1] !== '\\') inS = null;
-            } else if (!inS) {
-                if (ch === '(') openP++;
-                else if (ch === ')') openP = Math.max(0, openP - 1);
-                else if (ch === '{') openB++;
-                else if (ch === '}') openB = Math.max(0, openB - 1);
-            }
+        for (let i = 0; i < strippedBefore.length; i++) {
+            const ch = strippedBefore[i];
+            if (ch === '(') openP++;
+            else if (ch === ')') openP = Math.max(0, openP - 1);
+            else if (ch === '{') openB++;
+            else if (ch === '}') openB = Math.max(0, openB - 1);
         }
         if (openP === 0 && openB === 0) {
             return '';
@@ -372,7 +423,7 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
         }
         finalLines.push(line);
 
-        const strippedForBraces = line.replace(/\/\/.*$/, "").replace(/(['"`])(?:(?!\1)[^\\]|\\.)*\1/g, "");
+        const strippedForBraces = stripCodeCommentsAndStrings(line);
         for (let c = 0; c < strippedForBraces.length; c++) {
             const ch = strippedForBraces[c];
             if (ch === '{') importBraceDepth++;
@@ -457,7 +508,7 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
                             for (let j = i; j < linesAfterDedup.length; j++) {
                                 const curLine = linesAfterDedup[j];
                                 linesAfterDedup[j] = `// [deduped] ${curLine.trim()}`;
-                                const stripped = curLine.replace(/\/\/.*$/, "").replace(/(['"`])(?:(?!\1)[^\\]|\\.)*\1/g, "");
+                                const stripped = stripCodeCommentsAndStrings(curLine);
                                 for (const ch of stripped) {
                                     if (ch === '{' || ch === '(' || ch === '[') depth++;
                                     else if (ch === '}' || ch === ')' || ch === ']') depth--;
@@ -481,7 +532,7 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
                             for (let j = i; j < linesAfterDedup.length; j++) {
                                 const curLine = linesAfterDedup[j];
                                 linesAfterDedup[j] = `// [deduped] ${curLine.trim()}`;
-                                const stripped = curLine.replace(/\/\/.*$/, "").replace(/(['"`])(?:(?!\1)[^\\]|\\.)*\1/g, "");
+                                const stripped = stripCodeCommentsAndStrings(curLine);
                                 for (const ch of stripped) {
                                     if (ch === '{' || ch === '(' || ch === '[') depth++;
                                     else if (ch === '}' || ch === ')' || ch === ']') depth--;
@@ -500,7 +551,7 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
         }
 
         // Update braceDepth for tracking module scope, ignoring braces in comments or strings
-        const strippedForBraces = line.replace(/\/\/.*$/, "").replace(/(['"`])(?:(?!\1)[^\\]|\\.)*\1/g, "");
+        const strippedForBraces = stripCodeCommentsAndStrings(line);
         for (let c = 0; c < strippedForBraces.length; c++) {
             const ch = strippedForBraces[c];
             if (ch === '{') braceDepth++;
@@ -591,22 +642,33 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
         }
     }
 
-    // 8. If rawOutput reports "Identifier 'jest' has already been declared", ensure all lexical jest bindings are replaced with var
+    // 8. Remove illegal / redundant redeclarations of global `jest`
+    cleaned = cleaned.replace(
+        /^[ \t]*(?:const|let|var)\s+\{([^}]+)\}\s*=\s*(?:require\s*\(['"](?:@jest\/globals|jest)['"]\)|.+)$/gm,
+        (match, inner) => {
+            const tokens = inner.split(',').map(t => t.trim()).filter(Boolean);
+            const hasJestToken = tokens.some(t => {
+                const name = t.includes(':') ? t.split(':')[0].trim() : (t.includes(' as ') ? t.split(' as ')[0].trim() : t);
+                return name === 'jest';
+            });
+            if (!hasJestToken) return match;
+
+            const remaining = tokens.filter(t => {
+                const name = t.includes(':') ? t.split(':')[0].trim() : (t.includes(' as ') ? t.split(' as ')[0].trim() : t);
+                return name !== 'jest';
+            });
+            if (remaining.length === tokens.length) return match;
+            if (remaining.length === 0) return `// [sanitized] ${match.trim()}`;
+            return match.replace(inner, ` ${remaining.join(', ')} `);
+        }
+    );
+    cleaned = cleaned.replace(
+        /^[ \t]*(?:const|let)\s+jest\s*=\s*require\s*\(['"](?:@jest\/globals|jest)['"]\);?[ \t]*\r?$/gm,
+        (match) => `// [sanitized] ${match.trim()}`
+    );
+
     if (rawOutput && rawOutput.includes("Identifier 'jest' has already been declared")) {
         cleaned = cleaned.replace(/^[ \t]*(?:const|let)\s+jest\s*=/gm, "var jest =");
-        cleaned = cleaned.replace(
-            /^[ \t]*(?:const|let)\s+\{([^}]+)\}\s*=\s*(.+)$/gm,
-            (match, inner, rest) => {
-                const tokens = inner.split(',').map(t => t.trim()).filter(Boolean);
-                const remaining = tokens.filter(t => {
-                    const name = t.includes(':') ? t.split(':')[0].trim() : (t.includes(' as ') ? t.split(' as ')[0].trim() : t);
-                    return name !== 'jest';
-                });
-                if (remaining.length === tokens.length) return match;
-                if (remaining.length === 0) return `// [sanitized] ${match.trim()}`;
-                return `const { ${remaining.join(', ')} } = ${rest}`;
-            }
-        );
     }
 
     // 9. If rawOutput reports ReferenceError: <varName> is not defined, check if <varName> is required in the file and provide it
@@ -693,6 +755,15 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     cleaned = cleaned.replace(
         /jest\.mock\s*\(\s*['"]([^'"]+)['"]\s*,\s*(?:\(\)\s*=>\s*)?(?:\{|\(\{\s*)(?:models:\s*\{\s*)?[a-zA-Z0-9_$]+:\s*\{?[\s\S]*?(?=\r?\n[ \t]*(?:jest\.mock|describe|const\s+mockAxios|const\s+axios)\b)/g,
         (match, modName) => {
+            const stripped = stripCodeCommentsAndStrings(match);
+            let pDepth = 0;
+            for (let c = 0; c < stripped.length; c++) {
+                if (stripped[c] === '(') pDepth++;
+                else if (stripped[c] === ')') pDepth = Math.max(0, pDepth - 1);
+            }
+            if (pDepth === 0 && /\)\s*;?\s*$/.test(stripped.trim())) {
+                return match;
+            }
             if (modName.includes("models")) {
                 return `jest.mock('../../src/models', () => ({
   models: {
@@ -763,9 +834,27 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
 
     // 13. Heal unclosed object literals inside test/it/beforeEach blocks that abruptly encounter a block end without closing `};`
     cleaned = cleaned.replace(
-        /((?:(?:const|let|var)\s+)?[a-zA-Z0-9_$]+\s*=\s*\{[^}]*?)(\r?\n[ \t]*\}\s*\);)/g,
+        /((?:(?:const|let|var)\s+)?[a-zA-Z0-9_$]+\s*=\s*\{(?:(?!\b(?:describe|it|test|expect|await|assert)\b)[^};])*?)(\r?\n[ \t]*\}\s*\);)/g,
         (match, objBody, testTail) => {
             return `${objBody}\n    };\n${testTail}`;
+        }
+    );
+
+    // 13a. Heal unclosed top-level object declarations abruptly followed by declarations or describe blocks
+    cleaned = cleaned.replace(
+        /((?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*\{[^\n;]*)(?:\r?\n\s*)+(?=[ \t]*(?:const|let|var|import|describe)\b)/g,
+        (match, objDecl, varName, offset, fullStr) => {
+            const rest = fullStr.slice(offset + match.length);
+            const methods = new Set();
+            const methodMatches = rest.matchAll(new RegExp(`\\b${varName}\\.([a-zA-Z0-9_$]+)\\b`, 'g'));
+            for (const mm of methodMatches) {
+                methods.add(mm[1]);
+            }
+            if (methods.size > 0) {
+                const props = Array.from(methods).map(m => `  ${m}: typeof jest !== 'undefined' ? jest.fn().mockResolvedValue(undefined) : (() => {})`).join(',\n');
+                return `${objDecl}\n${props}\n};\n`;
+            }
+            return `${objDecl}\n};\n`;
         }
     );
 
@@ -996,7 +1085,7 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     }
 
     // 19. Ensure Prisma is safely mocked if imported in tests to prevent database connection failures
-    if ((/from\s+['"][^'"]*\/lib\/prisma(?:\.js)?['"]/.test(cleaned) || /require\(['"][^'"]*\/lib\/prisma(?:\.js)?['"]\)/.test(cleaned) || cleaned.includes("@prisma/client")) && !cleaned.includes("jest.mock('../lib/prisma") && !cleaned.includes('jest.mock("../lib/prisma') && !cleaned.includes("jest.mock('../../lib/prisma") && !cleaned.includes("jest.mock('@prisma/client'")) {
+    if ((/from\s+['"][^'"]*\/(?:lib|config)\/prisma(?:\.js)?['"]/.test(cleaned) || /require\(['"][^'"]*\/(?:lib|config)\/prisma(?:\.js)?['"]\)/.test(cleaned) || cleaned.includes("@prisma/client")) && !cleaned.includes("jest.mock('../lib/prisma") && !cleaned.includes('jest.mock("../lib/prisma') && !cleaned.includes("jest.mock('../../lib/prisma") && !cleaned.includes("jest.mock('../config/prisma") && !cleaned.includes("jest.mock('@prisma/client'")) {
         const prismaMockCode = `
 // Universal Prisma Mock to prevent database connection attempts during tests
 const _createPrismaMockInstance = () => {
@@ -1035,6 +1124,9 @@ jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => __sharedMockPri
 jest.mock('../lib/prisma.js', () => ({ prisma: __sharedMockPrisma, default: __sharedMockPrisma }), { virtual: true });
 jest.mock('../../lib/prisma.js', () => ({ prisma: __sharedMockPrisma, default: __sharedMockPrisma }), { virtual: true });
 jest.mock('../src/lib/prisma.js', () => ({ prisma: __sharedMockPrisma, default: __sharedMockPrisma }), { virtual: true });
+jest.mock('../config/prisma.js', () => ({ prisma: __sharedMockPrisma, default: __sharedMockPrisma }), { virtual: true });
+jest.mock('../../config/prisma.js', () => ({ prisma: __sharedMockPrisma, default: __sharedMockPrisma }), { virtual: true });
+jest.mock('../src/config/prisma.js', () => ({ prisma: __sharedMockPrisma, default: __sharedMockPrisma }), { virtual: true });
 `;
         cleaned = prismaMockCode + cleaned;
     }
@@ -1057,6 +1149,8 @@ jest.mock('../src/lib/prisma.js', () => ({ prisma: __sharedMockPrisma, default: 
  */
 export const sanitizeAllProjectTestFiles = (rootDir) => {
     if (!rootDir || !fs.existsSync(rootDir)) return;
+    const norm = String(rootDir).replace(/\\/g, "/").toLowerCase();
+    if (norm.includes("/storage/")) return; // NEVER touch storage
     const testFiles = [];
     const scanDir = (dir, depth = 0) => {
         if (!fs.existsSync(dir) || depth > 10) return;

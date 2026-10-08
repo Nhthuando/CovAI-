@@ -312,6 +312,21 @@ export const getCoverageSummary = async (req, res) => {
                     const raw = JSON.parse(fs.readFileSync(summaryFile, "utf8"));
                     if (raw) {
                         if (typeFilter === "unit") {
+                            // Extract path-matched threshold exceptions from Jest's coverageThreshold (if any)
+                            const thresholdExceptions = new Set();
+                            try {
+                                const { readProjectJestConfig } = await import("../services/runTestsJob.service.js");
+                                const projectJestConfig = await readProjectJestConfig(resolvedRootDir, snapshot.jestConfigPath);
+                                const coverageThreshold = projectJestConfig?.coverageThreshold;
+                                if (coverageThreshold && typeof coverageThreshold === "object") {
+                                    for (const pattern of Object.keys(coverageThreshold)) {
+                                        if (pattern === "global") continue;
+                                        const normPattern = pattern.replace(/^\.\//, "").replace(/\\/g, "/").toLowerCase();
+                                        thresholdExceptions.add(normPattern);
+                                    }
+                                }
+                            } catch { }
+
                             // Filter out route/server entry files, frontend, test files, and coverage reports
                             const unitFileEntries = Object.entries(raw).filter(([filePath]) => {
                                 if (filePath === "total") return false;
@@ -324,7 +339,8 @@ export const getCoverageSummary = async (req, res) => {
                                     /\.(route|routes)\.[cm]?[jt]sx?$/i.test(norm) ||
                                     /(^|\/)(app|server)\.[cm]?[jt]sx?$/i.test(norm) ||
                                     /^(src\/)?(index|main)\.[cm]?[jt]sx?$/i.test(norm.replace(/^\.?\//, ""));
-                                return !isFrontend && !isTest && !isRouteOrEntry;
+                                const isThresholdException = Array.from(thresholdExceptions).some(exc => norm.endsWith(exc));
+                                return !isFrontend && !isTest && !isRouteOrEntry && !isThresholdException;
                             });
 
                             if (unitFileEntries.length > 0) {

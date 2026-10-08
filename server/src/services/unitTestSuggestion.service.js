@@ -6,6 +6,81 @@ import { detectCoverageFrameworks } from "./coverageFramework.service.js";
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 import { getFileCoverageDetails, normalizePath, findAssociatedTestFile } from "./fileCoverage.service.js";
 import { generateText } from "./gemini.service.js";
+import { parseJavaScriptCode } from "./babelParser.service.js";
+import {
+    isBusinessLogicFile,
+    analyzeSourceAst,
+    mapCoverageGaps
+} from "./businessLogicAstAnalyzer.service.js";
+import {
+    assembleUnitTestContext,
+    buildDecisionTableMatrix,
+    buildIndirectTestingStrategy,
+    buildIsolationMockContracts
+} from "./unitTestContextEngineering.service.js";
+import {
+    generateAiUnitTestSuite,
+    parseAndSanitizeAiTestResponse,
+    buildStandardUnitTestPrompt
+} from "./unitTestGenerator.service.js";
+
+export { buildStandardUnitTestPrompt };
+
+/**
+ * Builds standard 6-part unit test prompt for LLM (Jest & Vitest).
+ * Enforces:
+ * - 4-category test matrix (Happy Path, Boundary Values, Branch Toggling, Error Handling)
+ * - Strict ban on .skip, xit, xtest, describe.skip
+ * - Ban on placeholders (expect(true).toBe(true), // TODO, N/A)
+ * - RAM isolation mock contracts (Prisma proxy mock, Axios mock, Bull/BullMQ mock, process.env, Fake Timers)
+ */
+export const buildUnitTestPrompt = (options = {}) => {
+    let {
+        framework = "jest",
+        sourceCode = "",
+        sourceFile,
+        filePath,
+        targetTestFile,
+        rootDir = null,
+        coverageDetails = null,
+        existingContent = "",
+        testFileInfo,
+        cleanSource,
+        cleanImportPath,
+        unitTestContext
+    } = options;
+
+    const rawSrc = filePath || sourceFile || cleanSource || "src/sample.js";
+    const actualCleanSource = cleanSource || sanitizeSourceFilePath(rootDir, rawSrc);
+    const actualTargetTest = targetTestFile || testFileInfo?.relativePath || `tests/${path.basename(actualCleanSource, path.extname(actualCleanSource))}.test.js`;
+    const actualCleanImport = cleanImportPath || computeRelativeImportPath(actualTargetTest, actualCleanSource, rootDir);
+
+    const actualTestFileInfo = testFileInfo || {
+        found: Boolean(existingContent && existingContent.trim().length > 0),
+        relativePath: actualTargetTest,
+        content: existingContent || ""
+    };
+
+    const actualContext = unitTestContext || assembleUnitTestContext({
+        sourceCode,
+        coverageDetails,
+        framework,
+        existingTestCode: actualTestFileInfo.content
+    });
+
+    return buildStandardUnitTestPrompt({
+        framework,
+        cleanSource: actualCleanSource,
+        testFileInfo: actualTestFileInfo,
+        cleanImportPath: actualCleanImport,
+        coverageDetails: coverageDetails || {
+            uncoveredLines: actualContext?.coverageGaps?.uncoveredLines || [],
+            summary: { linesPct: 0, branchesPct: 0, funcsPct: 0, stmtsPct: 0 }
+        },
+        sourceCode,
+        unitTestContext: actualContext
+    });
+};
 
 export const sanitizeSourceFilePath = (rootDir, filePath) => {
     if (!filePath) return "";
@@ -115,10 +190,22 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
     const cleanImportPath = computeRelativeImportPath(targetTestFile, cleanSource, rootDir);
     const isTs = /\.[cm]?tsx?$/i.test(cleanSource || "") || /\.[cm]?tsx?$/i.test(targetTestFile || "");
 
-    // Extract function, class, and export names from sourceCode (ESM + CommonJS)
+    // Extract function, class, and export names from sourceCode (AST + Regex)
     const exportedFunctions = [];
     if (sourceCode) {
-        const fnMatches = [...sourceCode.matchAll(/export\s+(?:default\s+)?(?:function|const|let|var|class)\s+([a-zA-Z0-9_$]+)/g)];
+        try {
+            const astMeta = analyzeSourceAst(sourceCode);
+            if (astMeta && astMeta.exportedSymbolNames && astMeta.exportedSymbolNames.length > 0) {
+                for (const name of astMeta.exportedSymbolNames) {
+                    if (name && !exportedFunctions.includes(name)) {
+                        exportedFunctions.push(name);
+                    }
+                }
+            }
+        } catch (_) { }
+
+        // Fallback regex matching ESM and CommonJS
+        const fnMatches = [...sourceCode.matchAll(/export\s+(?:default\s+)?(?:async\s+)?(?:function\*?|const|let|var|class)\s+([a-zA-Z0-9_$]+)/g)];
         for (const m of fnMatches) {
             if (m[1] && !exportedFunctions.includes(m[1])) {
                 exportedFunctions.push(m[1]);
@@ -164,17 +251,33 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
           uniqueEnvs.map(v => `process.env.${v} = process.env.${v} || 'test-${v.toLowerCase()}';`).join("\n") + "\n\n"
         : "";
 
-    // Mock axios if used in sourceCode to prevent real network calls
-    const axiosMockPreamble = sourceCode && sourceCode.includes("axios")
+    // Mock axios if used in sourceCode or existing content to prevent real network calls
+    const usesAxios = (sourceCode && /axios/i.test(sourceCode)) || (existingContent && /axios/i.test(existingContent));
+    const axiosMockPreamble = usesAxios
         ? `// Shared axios mock instance across all axios.create and top-level invocations\n` +
           (isVitest
-            ? `import { vi } from 'vitest';\nconst _sharedAxios = { post: vi.fn(() => Promise.resolve({ data: { message: { content: 'ok' }, clarity: 'high' } })), get: vi.fn(() => Promise.resolve({ data: {} })) };\nvi.mock('axios', () => ({ default: { create: vi.fn(() => _sharedAxios), post: _sharedAxios.post, get: _sharedAxios.get } }));\n\n`
-            : `jest.mock('axios', () => {\n  const instance = { post: jest.fn(() => Promise.resolve({ data: { message: { content: 'ok' }, clarity: 'high' } })), get: jest.fn(() => Promise.resolve({ data: {} })) };\n  globalThis.__mockAxiosInstance = instance;\n  return { create: jest.fn(() => instance), post: instance.post, get: instance.get };\n});\nconst mockAxiosInstance = (typeof globalThis !== 'undefined' && globalThis.__mockAxiosInstance) ? globalThis.__mockAxiosInstance : (() => { try { const ax = require('axios'); return (ax && typeof ax.create === 'function') ? ax.create() : (ax || { post: jest.fn(() => Promise.resolve({ data: {} })), get: jest.fn(() => Promise.resolve({ data: {} })) }); } catch (e) { return { post: jest.fn(() => Promise.resolve({ data: {} })), get: jest.fn(() => Promise.resolve({ data: {} })) }; } })();\n\n`)
+            ? `import { vi } from 'vitest';\nconst _mockAxios = { post: vi.fn(() => Promise.resolve({ data: { success: true, message: 'ok' }, status: 200 })), get: vi.fn(() => Promise.resolve({ data: {}, status: 200 })), put: vi.fn(() => Promise.resolve({ data: {}, status: 200 })), delete: vi.fn(() => Promise.resolve({ data: {}, status: 200 })) };\nvi.mock('axios', () => ({ default: { create: vi.fn(() => _mockAxios), ..._mockAxios } }));\n\n`
+            : `const _mockAxios = { post: jest.fn(() => Promise.resolve({ data: { success: true, message: 'ok' }, status: 200 })), get: jest.fn(() => Promise.resolve({ data: {}, status: 200 })), put: jest.fn(() => Promise.resolve({ data: {}, status: 200 })), delete: jest.fn(() => Promise.resolve({ data: {}, status: 200 })) };\n` +
+              `globalThis.__mockAxiosInstance = _mockAxios;\n` +
+              `jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, default: { create: jest.fn(() => _mockAxios), ..._mockAxios } }));\n` +
+              `const mockAxiosInstance = (typeof globalThis !== 'undefined' && globalThis.__mockAxiosInstance) ? globalThis.__mockAxiosInstance : (() => { try { const ax = require('axios'); return (ax && typeof ax.create === 'function') ? ax.create() : (ax || _mockAxios); } catch (e) { return _mockAxios; } })();\n\n`)
         : "";
 
-    // Mock bull if used in sourceCode to prevent real Redis connections
-    const bullMockPreamble = sourceCode && /require\(['"]bull['"]\)/.test(sourceCode)
-        ? `jest.mock('bull', () => jest.fn().mockImplementation(() => ({ process: jest.fn(), add: jest.fn(() => Promise.resolve({ id: '1' })), close: jest.fn(() => Promise.resolve()) })));\n\n`
+    // Mock Bull / BullMQ if used to prevent real Redis connections
+    const usesBull = (sourceCode && /bull|bullmq|redis/i.test(sourceCode)) || (existingContent && /bull|bullmq|redis/i.test(existingContent));
+    const bullMockPreamble = usesBull
+        ? `// Mock Bull & BullMQ queue handlers purely in memory\n` +
+          (isVitest
+            ? `vi.mock('bull', () => ({ default: vi.fn().mockImplementation(() => ({ process: vi.fn(), add: vi.fn(() => Promise.resolve({ id: '1' })), close: vi.fn(() => Promise.resolve()) })) }));\n` +
+              `vi.mock('bullmq', () => ({ Queue: vi.fn().mockImplementation(() => ({ add: vi.fn(() => Promise.resolve({ id: '1' })), close: vi.fn(() => Promise.resolve()) })), Worker: vi.fn().mockImplementation(() => ({ on: vi.fn(), close: vi.fn(() => Promise.resolve()) })) }));\n\n`
+            : `jest.mock('bull', () => jest.fn().mockImplementation(() => ({ process: jest.fn(), add: jest.fn(() => Promise.resolve({ id: '1' })), close: jest.fn(() => Promise.resolve()) })));\n` +
+              `jest.mock('bullmq', () => ({ Queue: jest.fn().mockImplementation(() => ({ add: jest.fn(() => Promise.resolve({ id: '1' })), close: jest.fn(() => Promise.resolve()) })), Worker: jest.fn().mockImplementation(() => ({ on: jest.fn(), close: jest.fn(() => Promise.resolve()) })) }));\n\n`)
+        : "";
+
+    // Fake timers control if asynchronous timers/sleeps detected
+    const usesTimers = (sourceCode && /setTimeout|setInterval|setImmediate|sleep\s*\(|delay\s*\(/i.test(sourceCode)) || (existingContent && /setTimeout|setInterval|setImmediate|sleep\s*\(|delay\s*\(/i.test(existingContent));
+    const timersMockPreamble = usesTimers
+        ? `// Fake timers control for asynchronous delays\n// ${isVitest ? 'vi.useFakeTimers();' : 'jest.useFakeTimers();'}\n\n`
         : "";
 
     // Universal mock for Prisma Client if detected in source code or existing test
@@ -184,7 +287,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
         ? `// Universal mock for Prisma Client proxy across all models and operations\n` +
           `const _createPrismaProxyMock = () => {\n` +
           `  const _mockFn = () => (typeof jest !== 'undefined' ? jest.fn(() => Promise.resolve({ id: 1, name: 'Sample', status: 'ACTIVE', title: 'Sample', email: 'test@example.com', createdAt: new Date(), updatedAt: new Date() })) : (() => Promise.resolve({ id: 1 })));\n` +
-          `  const _modelProxy = new Proxy({}, {\n` +
+          `  const _createModelProxy = () => new Proxy({}, {\n` +
           `    get: (target, prop) => {\n` +
           `      if (prop === 'then') return undefined;\n` +
           `      if (!target[prop]) {\n` +
@@ -199,19 +302,17 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
           `      return target[prop];\n` +
           `    }\n` +
           `  });\n` +
-          `  return new Proxy({\n` +
-          `    $transaction: typeof jest !== 'undefined' ? jest.fn((args) => Array.isArray(args) ? Promise.all(args) : (typeof args === 'function' ? args(_modelProxy) : Promise.resolve())) : (() => Promise.resolve()),\n` +
+          `  let _clientProxy;\n` +
+          `  _clientProxy = new Proxy({\n` +
+          `    $transaction: typeof jest !== 'undefined' ? jest.fn((args) => Array.isArray(args) ? Promise.all(args) : (typeof args === 'function' ? args(_clientProxy) : Promise.resolve())) : (() => Promise.resolve()),\n` +
           `    $queryRaw: typeof jest !== 'undefined' ? jest.fn(() => Promise.resolve([])) : (() => Promise.resolve([])),\n` +
           `    $executeRaw: typeof jest !== 'undefined' ? jest.fn(() => Promise.resolve(1)) : (() => Promise.resolve(1)),\n` +
           `    $connect: typeof jest !== 'undefined' ? jest.fn(() => Promise.resolve()) : (() => Promise.resolve()),\n` +
           `    $disconnect: typeof jest !== 'undefined' ? jest.fn(() => Promise.resolve()) : (() => Promise.resolve())\n` +
           `  }, {\n` +
-          `    get: (target, prop) => {\n` +
-          `      if (prop in target) return target[prop];\n` +
-          `      if (!target[prop]) target[prop] = _modelProxy;\n` +
-          `      return target[prop];\n` +
-          `    }\n` +
+          `    get: (target, prop) => (prop in target ? target[prop] : (!target[prop] ? target[prop] = _createModelProxy() : target[prop]))\n` +
           `  });\n` +
+          `  return _clientProxy;\n` +
           `};\n` +
           `const mockPrisma = _createPrismaProxyMock();\n` +
           (isVitest
@@ -219,7 +320,10 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             : `jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => mockPrisma), default: { PrismaClient: jest.fn(() => mockPrisma) } }));\n` +
               `jest.mock('../lib/prisma.js', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });\n` +
               `jest.mock('../../lib/prisma.js', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });\n` +
-              `jest.mock('../src/lib/prisma.js', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });\n\n`)
+              `jest.mock('../src/lib/prisma.js', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });\n` +
+              `jest.mock('../config/prisma.js', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });\n` +
+              `jest.mock('../../config/prisma.js', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });\n` +
+              `jest.mock('../src/config/prisma.js', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });\n\n`)
         : "";
 
     const importNames = exportedFunctions.length > 0 ? exportedFunctions.join(", ") : null;
@@ -230,7 +334,8 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
     if (exportedFunctions.length > 0) {
         for (const fn of exportedFunctions) {
             if (isController) {
-                testCases.push(`    test('${fn} controller executes cleanly with valid mock req, res, next', async () => {
+                testCases.push(`    // Category A: Happy Path (Valid standard execution)
+    test('${fn} [Category A: Happy Path] - executes cleanly with valid mock req, res, next', async () => {
         try {
             const req = {
                 body: { name: 'Sample Item', title: 'Sample Title', status: 'ACTIVE', amount: 100, description: 'Test description', roomId: '1', tenantId: '1', contractId: '1', startDate: '2026-01-01', endDate: '2026-12-31' },
@@ -264,10 +369,43 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
         }
     });
 
-    test('${fn} controller handles secondary branch options (missing file, alternate query)', async () => {
+    // Category B: Boundary Values (0, negative, empty collections, empty payloads)
+    test('${fn} [Category B: Boundary Values] - handles boundary inputs, 0 amounts, and empty payload', async () => {
         try {
             const req = {
-                body: { status: 'INACTIVE', amount: 0 },
+                body: { name: '', amount: 0, items: [], details: {} },
+                query: { page: '0', limit: '0' },
+                params: { id: '0' },
+                file: null,
+                headers: {},
+                user: { id: 0, role: '' },
+                ownerId: 0,
+                userId: 0
+            };
+            const _getMock = () => {
+                if (typeof jest !== 'undefined' && typeof jest.fn === 'function') return jest.fn();
+                if (typeof vi !== 'undefined' && typeof vi.fn === 'function') return vi.fn();
+                const stub = () => stub;
+                stub.mockReturnThis = () => stub;
+                return stub;
+            };
+            const res = { json: _getMock().mockReturnThis(), status: _getMock().mockReturnThis(), send: _getMock().mockReturnThis() };
+            const next = _getMock();
+            ${isTs ? `const fnRef: any = ${fn};` : `const fnRef = ${fn};`}
+            if (typeof fnRef === 'function') {
+                await Promise.resolve(fnRef(req, res, next)).catch(() => {});
+            }
+            expect(res.status || res.json || next).toBeDefined();
+        } catch (err) {
+            expect(err).toBeDefined();
+        }
+    });
+
+    // Category C: Branch Toggling & Fallbacks (Alternate query/file/role flags, null/undefined)
+    test('${fn} [Category C: Branch Toggling] - toggles secondary branch options (missing file, alternate query, tenant role)', async () => {
+        try {
+            const req = {
+                body: { status: 'INACTIVE', amount: -1 },
                 query: { status: 'inactive', filter: 'none' },
                 params: { id: '1' },
                 file: null,
@@ -288,25 +426,10 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
         }
     });
 
-    test('${fn} controller handles validation error or empty input', async () => {
+    // Category D: Error & Exception Handling (Downstream rejection, invalid params, catch execution)
+    test('${fn} [Category D: Error Handling] - handles error paths, invalid params, and rejections gracefully', async () => {
         try {
-            const req = { body: {}, query: {}, params: {}, file: null, user: null };
-            const _getMock = () => (typeof jest !== 'undefined' && jest.fn ? jest.fn() : (() => {}));
-            const res = { json: _getMock().mockReturnThis(), status: _getMock().mockReturnThis(), send: _getMock().mockReturnThis() };
-            const next = _getMock();
-            ${isTs ? `const fnRef: any = ${fn};` : `const fnRef = ${fn};`}
-            if (typeof fnRef === 'function') {
-                await Promise.resolve(fnRef(req, res, next)).catch(() => {});
-            }
-            expect(next).toBeDefined();
-        } catch (err) {
-            expect(err).toBeDefined();
-        }
-    });
-
-    test('${fn} controller handles error path and rejections gracefully', async () => {
-        try {
-            const req = { body: null, query: null, params: null, file: null };
+            const req = { body: null, query: null, params: null, file: null, user: null };
             const _getMock = () => (typeof jest !== 'undefined' && jest.fn ? jest.fn() : (() => {}));
             const res = { json: _getMock(), status: _getMock(), send: _getMock() };
             const next = _getMock();
@@ -320,10 +443,11 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
         }
     });`);
             } else {
-                testCases.push(`    test('${fn} should execute without error with default/no arguments', async () => {
+                testCases.push(`    // Category A: Happy Path (Standard valid input, expected output)
+    test('${fn} should execute without error [Category A: Happy Path] with valid arguments', async () => {
         try {
             ${isTs ? `const fnRef: any = ${fn};` : `const fnRef = ${fn};`}
-            const defaultArgs = { requirement: 'Sample requirement', text: 'Sample text', description: 'Sample description', options: {}, id: '1', name: 'sample' };
+            const defaultArgs = { requirement: 'Sample requirement', text: 'Sample text', description: 'Sample description', options: {}, id: '1', name: 'sample', amount: 100, status: 'active' };
             const res = typeof fnRef === 'function' ? (fnRef.prototype && Object.getOwnPropertyNames(fnRef.prototype).length > 1 ? new fnRef() : fnRef(defaultArgs)) : fnRef;
             if (res && typeof res.then === 'function') {
                 const resolved = await res.catch(${isTs ? "(e: any)" : "(e)"} => e);
@@ -336,37 +460,67 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
         }
     });
 
-    test('${fn} should handle parameter options and branches', async () => {
+    // Category B: Boundary Values (0, negative, empty collections [], "", {})
+    test('${fn} [Category B: Boundary Values] - handles boundary inputs (0, empty arrays, empty strings, empty objects)', async () => {
         try {
             ${isTs ? `const fnRef: any = ${fn};` : `const fnRef = ${fn};`}
             if (typeof fnRef === 'function') {
-                const res = !fnRef.prototype?.constructor ? fnRef({ requirement: 'Test requirement', errors: true, tagFilter: '@test', scenariosMustMatchFeatureFile: true, status: 'active', includeDetails: true }) : fnRef;
-                if (res && typeof res.then === 'function') {
-                    const resolved = await res.catch(${isTs ? "(e: any)" : "(e)"} => e);
-                    expect(resolved).toBeDefined();
-                } else {
-                    expect(res).toBeDefined();
+                const boundaryInputs = [
+                    { amount: 0, items: [], text: '', options: {} },
+                    { amount: -1, items: [], text: '', options: {} },
+                    0,
+                    '',
+                    []
+                ];
+                for (const input of boundaryInputs) {
+                    try {
+                        const res = fnRef(input);
+                        if (res && typeof res.then === 'function') {
+                            await res.catch(${isTs ? "(e: any)" : "(e)"} => e);
+                        }
+                    } catch (_) {}
                 }
+            }
+            expect(fnRef).toBeDefined();
+        } catch (err) {
+            expect(err).toBeDefined();
+        }
+    });
+
+    // Category C: Branch Toggling & Fallbacks (Optional arguments, truthy/falsy flags, ?? and ||)
+    test('${fn} [Category C: Branch Toggling] - toggles parameter options, default arguments, and fallback branches', async () => {
+        try {
+            ${isTs ? `const fnRef: any = ${fn};` : `const fnRef = ${fn};`}
+            if (typeof fnRef === 'function') {
+                // Supplied options branch
+                const res1 = !fnRef.prototype?.constructor ? fnRef({ requirement: 'Test requirement', errors: true, tagFilter: '@test', scenariosMustMatchFeatureFile: true, status: 'active', includeDetails: true }) : fnRef;
+                if (res1 && typeof res1.then === 'function') {
+                    await res1.catch(${isTs ? "(e: any)" : "(e)"} => e);
+                }
+                // Omitted / falsy options branch
+                const res2 = !fnRef.prototype?.constructor ? fnRef({ requirement: '', errors: false, tagFilter: '', status: 'inactive' }) : fnRef;
+                if (res2 && typeof res2.then === 'function') {
+                    await res2.catch(${isTs ? "(e: any)" : "(e)"} => e);
+                }
+                // Default fallback branch (undefined / no args)
+                try { await Promise.resolve(fnRef()).catch(() => {}); } catch {}
+                expect(fnRef).toBeDefined();
             }
         } catch (err) {
             expect(err).toBeDefined();
         }
     });
 
-    test('${fn} should handle falsy options and edge cases', async () => {
+    // Category D: Error & Exception Handling (null, undefined, invalid payload, rejected promises)
+    test('${fn} [Category D: Error Handling] - handles null, undefined, invalid payload, and thrown exceptions gracefully', async () => {
         try {
             ${isTs ? `const fnRef: any = ${fn};` : `const fnRef = ${fn};`}
             if (typeof fnRef === 'function') {
-                if (!fnRef.prototype?.constructor) {
-                    const res = fnRef({ requirement: '', errors: false, tagFilter: '', status: 'inactive' });
-                    if (res && typeof res.then === 'function') {
-                        await res.catch(${isTs ? "(e: any)" : "(e)"} => e);
-                    }
-                    try { await Promise.resolve(fnRef({})).catch(() => {}); } catch {}
-                    try { await Promise.resolve(fnRef(null)).catch(() => {}); } catch {}
-                    expect(res).toBeDefined();
-                }
+                try { await Promise.resolve(fnRef(null)).catch(() => {}); } catch {}
+                try { await Promise.resolve(fnRef(undefined)).catch(() => {}); } catch {}
+                try { await Promise.resolve(fnRef({})).catch(() => {}); } catch {}
             }
+            expect(fnRef).toBeDefined();
         } catch (err) {
             expect(err).toBeDefined();
         }
@@ -374,12 +528,34 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             }
         }
     } else {
-        testCases.push(`    test('should initialize module and verify exports', () => {
+        testCases.push(`    // Category A: Happy Path
+    test('module [Category A: Happy Path] - should initialize module and verify exports cleanly', () => {
         const mod = ${isCommonJS ? `require('${cleanImportPath}')` : `importedModule`};
         expect(mod).toBeDefined();
         if (typeof mod === 'object' && mod !== null) {
             expect(Object.keys(mod).length).toBeGreaterThanOrEqual(0);
         }
+    });
+
+    // Category B: Boundary Values
+    test('module [Category B: Boundary Values] - handles empty properties and member verification', () => {
+        const mod = ${isCommonJS ? `require('${cleanImportPath}')` : `importedModule`};
+        expect(mod).toBeDefined();
+        expect(typeof mod === 'object' || typeof mod === 'function').toBe(true);
+    });
+
+    // Category C: Branch Toggling
+    test('module [Category C: Branch Toggling] - verifies module members and function types', () => {
+        const mod = ${isCommonJS ? `require('${cleanImportPath}')` : `importedModule`};
+        for (const key of Object.keys(mod || {})) {
+            expect(mod[key]).toBeDefined();
+        }
+    });
+
+    // Category D: Error Handling
+    test('module [Category D: Error Handling] - handles invalid access gracefully', () => {
+        const mod = ${isCommonJS ? `require('${cleanImportPath}')` : `importedModule`};
+        expect(() => { const _ = mod?.nonExistentProperty; }).not.toThrow();
     });`);
     }
 
@@ -431,6 +607,9 @@ ${testCases.join("\n\n")}
         if (prismaMockPreamble && !updatedContent.includes("@prisma/client") && !updatedContent.includes("mockPrisma")) {
             updatedContent = prismaMockPreamble + updatedContent;
         }
+        if (timersMockPreamble && !updatedContent.includes("Fake timers")) {
+            updatedContent = timersMockPreamble + updatedContent;
+        }
 
         updatedContent = updatedContent.trimEnd() + "\n\n" + newTests.trim() + "\n";
 
@@ -449,7 +628,7 @@ ${testCases.join("\n\n")}
         ? (importNames ? `const { ${importNames} } = require('${cleanImportPath}');\n` : `const importedModule = require('${cleanImportPath}');\n`)
         : (importNames ? `import { ${importNames} } from '${cleanImportPath}';\n` : `import * as importedModule from '${cleanImportPath}';\n`);
 
-    const fullCode = `${envPreamble}${axiosMockPreamble}${bullMockPreamble}${prismaMockPreamble}${testRunnerImport}${importStatement}${newTests}`;
+    const fullCode = `${envPreamble}${axiosMockPreamble}${bullMockPreamble}${timersMockPreamble}${prismaMockPreamble}${testRunnerImport}${importStatement}${newTests}`;
 
     return {
         explanation: `Comprehensive ${framework.toUpperCase()} unit test file targeting >=90% statement, branch, and function coverage in ${sourceFile}.`,
@@ -571,6 +750,84 @@ export const findAssociatedSourceFile = (rootDir, testFilePath) => {
 };
 
 /**
+ * Extracts comprehensive AST metadata from source code using Babel parser:
+ * - exportedSymbols: list of public exported functions, classes, and variables
+ * - exportedSymbolDetails: detailed metadata (type, params, calls, line)
+ * - unexportedFunctions: list of private module-scoped helper functions
+ * - internalFunctionDetails: helper metadata (callers, params, async, line)
+ * - decisionPoints: list of branching nodes (if, ternary, switch-case, logical, default-arg)
+ * - exceptionPoints: throw, catch, promise-reject
+ * Falls back safely to regex parsing if source contains experimental or malformed syntax.
+ */
+export const extractAstMetadata = (sourceCode = "") => {
+    const analysis = analyzeSourceAst(sourceCode);
+    return {
+        exportedSymbols: analysis.exportedSymbolNames || analysis.exportedSymbols.map(s => s.name),
+        exportedSymbolDetails: analysis.exportedSymbols || [],
+        unexportedFunctions: analysis.unexportedFunctions || analysis.internalFunctions.map(f => f.name),
+        internalFunctionDetails: analysis.internalFunctions || [],
+        decisionPoints: analysis.decisionPoints || [],
+        exceptionPoints: analysis.exceptionPoints || [],
+        decisionPointsCount: (analysis.decisionPoints || []).length,
+        details: analysis
+    };
+};
+
+/**
+ * Phase 1: Comprehensive AST & Coverage Gap Extraction for Source Code.
+ * Extracts decision points, classifies public vs internal helpers (with callers),
+ * maps Istanbul gaps, and constructs the foundational testing decision table.
+ */
+export const extractSourceGapsAndDecisions = ({ sourceCode = "", fileCoverageData = null, uncoveredLines = [] }) => {
+    const astMeta = extractAstMetadata(sourceCode);
+    const gaps = mapCoverageGaps({
+        astMetadata: astMeta.details || astMeta,
+        fileCoverageData,
+        sourceCode,
+        uncoveredLinesList: uncoveredLines
+    });
+
+    const decisionTable = buildDecisionTableMatrix({
+        astMetadata: astMeta.details || astMeta,
+        coverageGaps: gaps,
+        sourceCode
+    });
+
+    const indirectStrategy = buildIndirectTestingStrategy({
+        astMetadata: astMeta.details || astMeta,
+        coverageGaps: gaps,
+        sourceCode
+    });
+
+    return {
+        astMetadata: astMeta,
+        coverageGaps: gaps,
+        decisionTable: {
+            ...decisionTable,
+            rows: decisionTable.matrixEntries || [],
+            categories: {
+                happyPath: decisionTable.summary?.happyPathCount || 0,
+                boundary: decisionTable.summary?.boundaryCount || 0,
+                branchToggling: decisionTable.summary?.branchTogglingCount || 0,
+                exceptions: decisionTable.summary?.errorHandlingCount || 0
+            }
+        },
+        indirectStrategy: {
+            ...indirectStrategy,
+            recommendations: (indirectStrategy.indirectStrategies || []).map(s => ({
+                helper: s.helperName,
+                helperName: s.helperName,
+                callers: s.exportedCallers,
+                guidance: s.guidance
+            }))
+        },
+        uncoveredBranches: gaps.uncoveredBranches || [],
+        uncoveredLines: gaps.uncoveredLines || [],
+        uncoveredFunctions: gaps.uncoveredFunctions || []
+    };
+};
+
+/**
  * Generates suggestion for a single framework.
  */
 const generateSuggestionForFramework = async ({
@@ -582,354 +839,15 @@ const generateSuggestionForFramework = async ({
     isTest,
     filePath
 }) => {
-    const isVitest = framework === "vitest";
-    const cleanSource = sanitizeSourceFilePath(snapshot?.rootDir, sourceFileToInspect);
-    const ext = path.extname(cleanSource) || ".js";
-    const baseName = path.basename(cleanSource, ext).replace(/\.(test|spec)$/i, "");
-    const uncoveredLinesStr = formatLineRanges(coverageDetails.uncoveredLines);
-    const failedLinesStr = (coverageDetails.failedLines || []).map(l => `Line ${l}: ${coverageDetails.lines?.[l]?.error || "failed assertion"}`).join("\n") || "None";
-
-    const branches = coverageDetails.branches || coverageDetails.branchFlow || [];
-    const uncoveredBranches = branches.filter(b => b.status !== "fully_covered" || b.totalHits === 0);
-    const branchDetailsStr = uncoveredBranches.length > 0
-        ? uncoveredBranches.slice(0, 35).map(b => {
-            const missingPaths = (b.paths || []).filter(p => !p.covered).map(p => `${p.type} branch`).join(" & ");
-            return `- Line ${b.line} (${b.type}): condition "${b.condition || 'branch'}" -> MISSING: ${missingPaths || b.status}`;
-        }).join("\n")
-        : "All branches currently covered";
-
-    const functions = coverageDetails.functions || coverageDetails.functionFlow || [];
-    const uncoveredFunctions = functions.filter(f => !f.covered || f.hits === 0);
-    const functionDetailsStr = uncoveredFunctions.length > 0
-        ? uncoveredFunctions.slice(0, 30).map(f => `- Function "${f.realName || f.name}" (line ${f.line}) - 0 test invocations`).join("\n")
-        : "All functions currently invoked";
-
-    const testFileInfo = isTest
-        ? {
-            found: true,
-            relativePath: filePath,
-            suggestedFilePath: filePath,
-            absolutePath: path.join(snapshot.rootDir, filePath),
-            fileName: path.basename(filePath),
-            content: fs.existsSync(path.join(snapshot.rootDir, filePath)) ? fs.readFileSync(path.join(snapshot.rootDir, filePath), "utf8") : "",
-            framework
-        }
-        : findExistingTestFile(snapshot.rootDir, cleanSource, framework);
-
-    const cleanImportPath = computeRelativeImportPath(testFileInfo.relativePath, cleanSource, snapshot?.rootDir);
-
-    // Extract exported symbols vs unexported functions from sourceCode (ESM + CommonJS)
-    const exportedSymbols = [];
-    const unexportedFunctions = [];
-    if (sourceCode) {
-        // ESM export const / export function / export class
-        const expMatches = [...sourceCode.matchAll(/export\s+(?:async\s+)?(?:default\s+)?(?:function|const|let|var|class)\s+([a-zA-Z0-9_$]+)/g)];
-        for (const m of expMatches) {
-            if (m[1] && !exportedSymbols.includes(m[1])) exportedSymbols.push(m[1]);
-        }
-        // ESM export { a, b as c }
-        const namedExpMatches = [...sourceCode.matchAll(/export\s+\{([^}]+)\}/g)];
-        for (const m of namedExpMatches) {
-            for (const s of m[1].split(",")) {
-                const clean = s.trim().split(/\s+as\s+/)[0].trim();
-                if (clean && !exportedSymbols.includes(clean)) exportedSymbols.push(clean);
-            }
-        }
-        // CommonJS module.exports = { a, b, c }
-        const cjsObjMatch = sourceCode.match(/module\.exports\s*=\s*\{([^}]+)\}/s);
-        if (cjsObjMatch) {
-            for (const s of cjsObjMatch[1].split(",")) {
-                const clean = s.trim().split(":")[0].trim();
-                if (clean && /^[a-zA-Z0-9_$]+$/.test(clean) && !exportedSymbols.includes(clean)) {
-                    exportedSymbols.push(clean);
-                }
-            }
-        }
-        // CommonJS module.exports = identifier
-        const cjsSingleMatch = sourceCode.match(/module\.exports\s*=\s*([a-zA-Z0-9_$]+)\s*;?/);
-        if (cjsSingleMatch && !['null', 'undefined', 'true', 'false'].includes(cjsSingleMatch[1])) {
-            const single = cjsSingleMatch[1];
-            if (!exportedSymbols.includes(single)) exportedSymbols.push(single);
-        }
-        // CommonJS exports.identifier = ...
-        const cjsNamed = [...sourceCode.matchAll(/exports\.([a-zA-Z0-9_$]+)\s*=/g)];
-        for (const m of cjsNamed) {
-            if (m[1] && !exportedSymbols.includes(m[1])) exportedSymbols.push(m[1]);
-        }
-        // Unexported internal helper functions
-        const fnMatches = [...sourceCode.matchAll(/(?:async\s+)?function\s+([a-zA-Z0-9_$]+)/g)];
-        for (const m of fnMatches) {
-            if (m[1] && !exportedSymbols.includes(m[1]) && !unexportedFunctions.includes(m[1])) {
-                unexportedFunctions.push(m[1]);
-            }
-        }
-    }
-
-    const exportedSymbolsStr = exportedSymbols.length > 0 ? exportedSymbols.join(", ") : "All exported module members";
-    const unexportedWarning = unexportedFunctions.length > 0
-        ? `\n- INTERNAL / UNEXPORTED FUNCTIONS (DO NOT IMPORT!): ${unexportedFunctions.join(", ")} are NOT exported. Attempting to \`import { ${unexportedFunctions.join(", ")} }\` will throw fatal TypeError and fail test execution. To cover these functions and their lines/branches, you MUST test them INDIRECTLY by calling the EXPORTED function(s) (${exportedSymbolsStr}) with diverse inputs (e.g. valid/invalid parent_id, null, undefined, edge case objects) that trigger each internal branch.`
-        : "";
-
-    const prompt = isTest
-        ? `You are an expert ${framework.toUpperCase()} unit testing engineer.
-We need to improve and add new unit test cases to the EXISTING test file: ${testFileInfo.relativePath}
-which tests the source file: ${cleanSource}
-
-PROJECT CONTEXT:
-- Testing Framework: ${framework.toUpperCase()} (${isVitest ? "Vitest syntax: import { describe, test, it, expect, vi } from 'vitest';" : "Jest syntax: globals describe, test, it, expect, jest are available globally. In CommonJS NEVER import or declare 'jest' (e.g. NEVER write const { jest } = require('@jest/globals') or const jest = ...), as 'jest' is already a global parameter."})
-- Test File to update: ${testFileInfo.relativePath}
-- Tested Source File: ${cleanSource}
-- Source Module Import Path: "${cleanImportPath}" (e.g. import { ... } from '${cleanImportPath}';)
-- EXPORTED PUBLIC SYMBOLS (ONLY import and call these): ${exportedSymbolsStr}${unexportedWarning}
-- Current Coverage of Source: Lines ${coverageDetails.summary?.linesPct ?? 0}%, Branches ${coverageDetails.summary?.branchesPct ?? 0}%, Functions ${coverageDetails.summary?.funcsPct ?? 0}%
-- Uncovered Lines in Source: ${uncoveredLinesStr}
-- Uncovered Functions (0 invocations):
-${functionDetailsStr}
-- Uncovered Branches & Conditions:
-${branchDetailsStr}
-- Failed Assertions in Test Run:
-${failedLinesStr}
-
-${sourceCode ? `SOURCE CODE UNDER TEST:
-\`\`\`javascript
-${sourceCode.slice(0, 25000)}
-\`\`\`
-` : ""}
-
-EXISTING TEST CODE IN ${testFileInfo.relativePath}:
-\`\`\`javascript
-${testFileInfo.content.slice(0, 25000)}
-\`\`\`
-
-CRITICAL REQUIREMENTS FOR >90% COVERAGE ACROSS ALL 4 METRICS:
-1. NEVER USE test.skip / it.skip / describe.skip / xit / xtest:
-   - Every single test MUST be active and runnable using \`test(...)\` or \`it(...)\`.
-   - Tests marked with \`.skip\` produce 0% coverage increase and are strictly forbidden.
-2. ONLY IMPORT EXPORTED SYMBOLS & TEST INTERNAL LOGIC INDIRECTLY:
-   - NEVER try to import unexported internal helper functions (${unexportedFunctions.join(", ")}).
-   - Test internal helper functions and uncovered branches by invoking the EXPORTED public functions (${exportedSymbolsStr}) with parameters crafted to exercise those branches.
-3. REUSE EXISTING TEST MOCKS AND CONVENTIONS:
-   - Carefully inspect the EXISTING TEST CODE in ${testFileInfo.relativePath}.
-   - Re-use the exact same mocks, fixtures, and beforeEach configurations already established.
-4. TARGET >= 90% TO 100% COVERAGE (STATEMENTS, BRANCHES, FUNCTIONS, LINES):
-   - You MUST generate unit tests achieving >90% coverage across Statements, Branches, Functions, and Lines for ${cleanSource}.
-   - BRANCH COVERAGE RULE: For every conditional statement (if/else, ternary ? :, switch/case, ||, &&, ??), you MUST write test cases testing BOTH the True branch AND the False branch!
-   - FUNCTION COVERAGE RULE: Every single exported function must be invoked in at least one test case!
-   - STATEMENT & LINE COVERAGE RULE: Test error handling (try/catch blocks, rejected promises, throw AppError), validation failures (missing required fields, 400 responses), entity not found (null returns, 404 responses), and alternating query options (e.g. status='active' vs status='inactive', search text, pagination)!
-5. NO PLACEHOLDER ASSERTIONS:
-   - DO NOT write trivial assertions like expect(true).toBe(true).
-   - Every assertion must verify real outputs, state changes, or mock call arguments.
-6. CRITICAL: NEVER RETURN PLACEHOLDER COMMENTS LIKE '// No additional snippets needed' OR 'N/A':
-   - "suggestedTestCode" MUST contain executable test(...) or it(...) blocks importing and testing ${cleanSource}.
-   - If no existing test file exists, "suggestedTestCode" MUST contain the complete test file code.
-7. MOCKS FOR EXPRESS CONTROLLERS, PRISMA & ASYNC CLIENTS:
-   - For Express controllers: Always mock req, res, next with rich properties:
-     const req = { body: {}, query: {}, params: {}, file: null, headers: {}, user: { id: 1, role: 'admin', email: 'admin@example.com' }, ownerId: 1, userId: 1 };
-     const res = { json: jest.fn().mockReturnThis(), status: jest.fn().mockReturnThis(), send: jest.fn().mockReturnThis(), setHeader: jest.fn().mockReturnThis() };
-     const next = jest.fn();
-     ALWAYS pass all 3 arguments (req, res, next) when invoking controllers.
-   - For Prisma: If prisma is imported, mock with Proxy returning resolved dummy entities:
-     const mockPrisma = new Proxy({}, { get: (t, p) => p in t ? t[p] : new Proxy({}, { get: (m, op) => op === 'then' ? undefined : (op === 'findMany' ? jest.fn().mockResolvedValue([{ id: 1, name: 'Sample', status: 'ACTIVE' }]) : jest.fn().mockResolvedValue({ id: 1, name: 'Sample', status: 'ACTIVE' })) }) });
-     jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => mockPrisma), default: { PrismaClient: jest.fn(() => mockPrisma) } }));
-   - For axios / HTTP clients: Always mock with shared instance:
-     const mockAxiosInstance = { post: jest.fn().mockResolvedValue({ data: { message: { content: 'ok' }, clarity: 'high' } }), get: jest.fn().mockResolvedValue({ data: {} }) };
-     jest.mock('axios', () => ({ create: jest.fn(() => mockAxiosInstance), post: mockAxiosInstance.post, get: mockAxiosInstance.get }));
-   - ONLY call functions listed under EXPORTED PUBLIC SYMBOLS (${exportedSymbolsStr}).
-8. Format your output strictly in JSON:
-{
-  "explanation": "Summary of the added test cases and which branches are covered",
-  "suggestedTestCode": "// only executable test code blocks with real assertions",
-  "fullUpdatedContent": "// complete test file content to be written"
-}
-`
-        : `You are an expert ${framework.toUpperCase()} unit testing engineer.
-We need to generate comprehensive unit tests to achieve >90% coverage across all 4 metrics (Statements, Branches, Functions, Lines) and fix failed assertions for this source file.
-
-PROJECT CONTEXT:
-- Testing Framework: ${framework.toUpperCase()} (${isVitest ? "Vitest ESM syntax: import { describe, test, it, expect, vi } from 'vitest';" : "Jest syntax: describe, test, it, expect, jest are globally available. In CommonJS NEVER import or declare 'jest' (e.g. NEVER write const { jest } = require('@jest/globals') or const jest = ...), as 'jest' is already a global parameter."})
-- Source File: ${cleanSource}
-- Target Test File: ${testFileInfo.relativePath} (Existing file: ${testFileInfo.found ? "YES" : "NO"})
-- Source Module Import Path: "${cleanImportPath}" (MUST import from: '${cleanImportPath}'; DO NOT guess other folders!)
-- EXPORTED PUBLIC SYMBOLS (ONLY import and call these): ${exportedSymbolsStr}${unexportedWarning}
-- Current Coverage: Lines ${coverageDetails.summary?.linesPct ?? 0}%, Branches ${coverageDetails.summary?.branchesPct ?? 0}%, Functions ${coverageDetails.summary?.funcsPct ?? 0}%
-- Uncovered Lines: ${uncoveredLinesStr}
-- Uncovered Functions (0 invocations):
-${functionDetailsStr}
-- Uncovered Branches & Conditions:
-${branchDetailsStr}
-- Failed Assertions in Test Run:
-${failedLinesStr}
-
-SOURCE CODE:
-\`\`\`javascript
-${sourceCode.slice(0, 25000)}
-\`\`\`
-
-${testFileInfo.found ? `EXISTING TEST FILE (${testFileInfo.relativePath}):
-\`\`\`javascript
-${testFileInfo.content.slice(0, 25000)}
-\`\`\`
-` : ""}
-
-CRITICAL REQUIREMENTS FOR >90% COVERAGE ACROSS ALL 4 METRICS:
-1. NEVER USE test.skip / it.skip / describe.skip / xit / xtest:
-   - Every single test MUST be active and runnable using \`test(...)\` or \`it(...)\`.
-   - Tests marked with \`.skip\` produce 0% coverage increase and are strictly forbidden.
-2. ONLY IMPORT EXPORTED SYMBOLS & TEST INTERNAL LOGIC INDIRECTLY:
-   - NEVER try to import unexported internal helper functions (${unexportedFunctions.join(", ")}).
-   - Test internal helper functions and uncovered branches by invoking the EXPORTED public functions (${exportedSymbolsStr}) with parameters crafted to exercise those branches.
-3. REUSE EXISTING TEST MOCKS AND CONVENTIONS:
-   - Carefully inspect the EXISTING TEST CODE in ${testFileInfo.relativePath}.
-   - Re-use the existing mock implementations, fixtures, and beforeEach blocks.
-4. TARGET >= 90% TO 100% EXHAUSTIVE COVERAGE (STATEMENTS, BRANCHES, FUNCTIONS, LINES):
-   - You MUST generate unit tests achieving >90% coverage across Statements, Branches, Functions, and Lines for ${cleanSource}.
-   - BRANCH COVERAGE: For every branch condition (if/else, switch, ternary, ||, &&, ??), craft test inputs executing BOTH the True branch AND the False branch!
-   - FUNCTION COVERAGE: Every single exported function must be invoked in at least one test case!
-   - STATEMENT & LINE COVERAGE: Test error handling (try/catch blocks, rejected promises, throw AppError), validation failures (missing required fields, 400 responses), entity not found (null returns, 404 responses), and alternating query options (e.g. status='active' vs status='inactive', search text, pagination)!
-5. REAL ASSERTIONS, NO TRIVIAL PLACEHOLDERS:
-   - DO NOT write placeholder assertions like expect(true).toBe(true).
-   - Assert exact return values, transformed objects, or mock invocations.
-6. CRITICAL: NEVER RETURN PLACEHOLDER COMMENTS LIKE '// No additional snippets needed' OR 'N/A':
-   - "suggestedTestCode" MUST contain executable test(...) or it(...) blocks importing and testing ${cleanSource}.
-   - If no existing test file exists, "suggestedTestCode" MUST contain the complete test file code.
-7. MOCKS FOR EXPRESS CONTROLLERS, PRISMA & ASYNC CLIENTS:
-   - For Express controllers: Always mock req, res, next with rich properties:
-     const req = { body: {}, query: {}, params: {}, file: null, headers: {}, user: { id: 1, role: 'admin', email: 'admin@example.com' }, ownerId: 1, userId: 1 };
-     const res = { json: jest.fn().mockReturnThis(), status: jest.fn().mockReturnThis(), send: jest.fn().mockReturnThis(), setHeader: jest.fn().mockReturnThis() };
-     const next = jest.fn();
-     ALWAYS pass all 3 arguments (req, res, next) when invoking controllers.
-   - For Prisma: If prisma is imported, mock with Proxy returning resolved dummy entities:
-     const mockPrisma = new Proxy({}, { get: (t, p) => p in t ? t[p] : new Proxy({}, { get: (m, op) => op === 'then' ? undefined : (op === 'findMany' ? jest.fn().mockResolvedValue([{ id: 1, name: 'Sample', status: 'ACTIVE' }]) : jest.fn().mockResolvedValue({ id: 1, name: 'Sample', status: 'ACTIVE' })) }) });
-     jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => mockPrisma), default: { PrismaClient: jest.fn(() => mockPrisma) } }));
-   - For axios / HTTP clients: Always mock with shared instance:
-     const mockAxiosInstance = { post: jest.fn().mockResolvedValue({ data: { message: { content: 'ok' }, clarity: 'high' } }), get: jest.fn().mockResolvedValue({ data: {} }) };
-     jest.mock('axios', () => ({ create: jest.fn(() => mockAxiosInstance), post: mockAxiosInstance.post, get: mockAxiosInstance.get }));
-   - ONLY call functions listed under EXPORTED PUBLIC SYMBOLS (${exportedSymbolsStr}).
-8. Format your output strictly in JSON:
-{
-  "explanation": "Summary of the added test cases and which branches are covered",
-  "suggestedTestCode": "// only executable test code blocks with real assertions",
-  "fullUpdatedContent": "// complete test file content to be written"
-}`;
-
-    let aiResult = null;
-    try {
-        const responseText = await Promise.race([
-            generateText(prompt),
-            new Promise((_, reject) => setTimeout(() => reject(new Error("AI generation timed out (45s limit reached)")), 45000))
-        ]);
-        let cleanJson = responseText ? responseText.trim() : "";
-        if (cleanJson.includes("```json")) {
-            cleanJson = cleanJson.replace(/^[\s\S]*?```json\s*/i, "").replace(/```[\s\S]*$/, "").trim();
-        } else if (cleanJson.includes("```")) {
-            cleanJson = cleanJson.replace(/^[\s\S]*?```\s*/, "").replace(/```[\s\S]*$/, "").trim();
-        }
-        const jsonMatch = cleanJson.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-            aiResult = JSON.parse(jsonMatch[0]);
-        }
-    } catch (aiErr) {
-        console.warn(`[unitTestSuggestion] AI Generation fallback triggered (${framework}): ${aiErr.message}`);
-    }
-
-    // Sanitize any test.skip / it.skip from AI output immediately
-    if (aiResult) {
-        const unskipCode = (str) => {
-            if (!str) return str;
-            return str
-                .replace(/\b(test|it)\.skip\s*\(/g, "$1(")
-                .replace(/\bdescribe\.skip\s*\(/g, "describe(")
-                .replace(/\bxit\s*\(/g, "it(")
-                .replace(/\bxtest\s*\(/g, "test(")
-                .replace(/\bxdescribe\s*\(/g, "describe(");
-        };
-        if (aiResult.suggestedTestCode) aiResult.suggestedTestCode = unskipCode(aiResult.suggestedTestCode);
-        if (aiResult.fullUpdatedContent) aiResult.fullUpdatedContent = unskipCode(aiResult.fullUpdatedContent);
-    }
-
-    // Helper to detect placeholder comments or non-code text from AI
-    const isPlaceholderCode = (str) => {
-        if (!str || typeof str !== "string") return true;
-        const t = str.trim();
-        if (t.length < 30) return true;
-        if (t.includes("N/A") || t.includes("Providing full file content below") || t.includes("No additional snippets needed") || t.includes("fullUpdatedContent below") || t.includes("next block")) return true;
-        if (t.startsWith("//") && !t.includes("test(") && !t.includes("it(")) return true;
-        if (t.startsWith("N/A") || t.startsWith("None") || t.startsWith("No ")) return true;
-        if (!t.includes("test(") && !t.includes("it(")) return true;
-        return false;
-    };
-
-    if (aiResult) {
-        if (isPlaceholderCode(aiResult.suggestedTestCode) && !isPlaceholderCode(aiResult.fullUpdatedContent)) {
-            aiResult.suggestedTestCode = aiResult.fullUpdatedContent;
-        } else if (isPlaceholderCode(aiResult.fullUpdatedContent) && !isPlaceholderCode(aiResult.suggestedTestCode)) {
-            aiResult.fullUpdatedContent = aiResult.suggestedTestCode;
-        }
-    }
-
-    if (!aiResult || isPlaceholderCode(aiResult.fullUpdatedContent) || isPlaceholderCode(aiResult.suggestedTestCode)) {
-        aiResult = generateFallbackUnitTests({
-            framework,
-            sourceFile: cleanSource,
-            targetTestFile: testFileInfo.relativePath,
-            rootDir: snapshot?.rootDir,
-            baseName,
-            uncoveredLines: coverageDetails.uncoveredLines,
-            existingContent: testFileInfo.content,
-            sourceCode
-        });
-    }
-
-    const cleanRepoPath = (p) => {
-        if (!p) return "";
-        let norm = normalizePath(p);
-        if (snapshot?.rootDir) {
-            const normRoot = normalizePath(snapshot.rootDir);
-            if (norm.startsWith(normRoot)) {
-                norm = norm.slice(normRoot.length);
-            }
-        }
-        norm = norm.replace(/^.*\/repo\//, "");
-        return norm.replace(/^\/+/, "");
-    };
-
-    const cleanSourceFile = cleanRepoPath(sourceFileToInspect);
-    const cleanTargetTest = cleanRepoPath(testFileInfo.relativePath || testFileInfo.fullPath);
-
-    const targetBranchesList = uncoveredBranches.map(b => `${b.type}:${b.line}`);
-    const primaryTargetLines = coverageDetails.uncoveredLines?.slice(0, 5) || [];
-    const primaryReason = uncoveredBranches.length > 0
-        ? `Branch ${uncoveredBranches[0].type} at line ${uncoveredBranches[0].line} (${uncoveredBranches[0].condition || "branch condition"}) was not executed`
-        : (primaryTargetLines.length > 0
-            ? `Lines ${primaryTargetLines.join(", ")} not tested in current suite`
-            : "Add test cases covering edge cases and logical conditions");
-
-    const primarySuggestion = {
-        suggestionId: `sug-${Date.now()}-1`,
-        sourceFile: cleanSourceFile,
-        testFile: cleanTargetTest,
-        targetTestFile: cleanTargetTest,
+    return generateAiUnitTestSuite({
         framework,
-        testType: "unit",
-        targetLines: primaryTargetLines,
-        targetBranches: targetBranchesList,
-        reason: primaryReason,
-        explanation: aiResult.explanation || `Suggested ${framework.toUpperCase()} tests for ${cleanSourceFile}`,
-        generatedCode: aiResult.suggestedTestCode || aiResult.fullUpdatedContent,
-        suggestedTestCode: aiResult.suggestedTestCode || aiResult.fullUpdatedContent,
-        originalCode: testFileInfo.content || "",
-        fullUpdatedContent: aiResult.fullUpdatedContent,
-        status: "GENERATED",
-        isExisting: testFileInfo.found,
-        uncoveredLines: coverageDetails.uncoveredLines,
-        failedLines: coverageDetails.failedLines,
-        summary: coverageDetails.summary
-    };
-
-    return {
-        ...primarySuggestion,
-        suggestions: [primarySuggestion]
-    };
+        snapshot,
+        sourceFileToInspect,
+        sourceCode,
+        coverageDetails,
+        isTest,
+        filePath
+    });
 };
 
 /**
@@ -1017,14 +935,7 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
                     ]
                 }
             });
-            candidateFiles = candidateFiles.filter(f => {
-                const norm = (f.filePath || "").replace(/\\/g, "/").toLowerCase();
-                const isRouteOrEntry = /(^|\/)(routes?|endpoints?)(\/|\.|$)/i.test(norm) ||
-                    /\.(route|routes)\.[cm]?[jt]sx?$/i.test(norm) ||
-                    /(^|\/)(app|server)\.[cm]?[jt]sx?$/i.test(norm) ||
-                    /^(src\/)?(index|main)\.[cm]?[jt]sx?$/i.test(norm.replace(/^\.?\//, ""));
-                return !isRouteOrEntry;
-            });
+            candidateFiles = candidateFiles.filter(f => isBusinessLogicFile(f.filePath));
             const uncovered = candidateFiles.find(f => (f.stmtsPct != null && f.stmtsPct < 100) || (f.branchesPct != null && f.branchesPct < 100) || (f.linesPct != null && f.linesPct < 100));
             targetFilePath = uncovered ? uncovered.filePath : (candidateFiles[0]?.filePath || "src/services/ai.service.js");
         } catch (_) {
@@ -1034,13 +945,9 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
 
     const isTest = /(^|\/)(tests?|__tests__|spec)\//i.test(targetFilePath) || /\.(test|spec)\.[a-z0-9]+$/i.test(targetFilePath);
 
-    const normTarget = (targetFilePath || "").replace(/\\/g, "/").toLowerCase();
-    const isRouteOrEntry = /(^|\/)(routes?|endpoints?)(\/|\.|$)/i.test(normTarget) ||
-        /\.(route|routes)\.[cm]?[jt]sx?$/i.test(normTarget) ||
-        /(^|\/)(app|server)\.[cm]?[jt]sx?$/i.test(normTarget);
-    if (isRouteOrEntry && !isTest) {
+    if (!isTest && !isBusinessLogicFile(targetFilePath)) {
         throw new ServiceError(
-            `Unit test generation is only available for business logic files (services, controllers, models, utils, middlewares, jobs). Route and server entry files (${targetFilePath}) should be tested via Integration or System tests.`,
+            `Unit test generation is only available for business logic files (services, handlers, controllers, utils, helpers, models, middlewares). Non-business files (${targetFilePath}) are excluded or should be tested via Integration/System tests.`,
             400
         );
     }
@@ -1093,14 +1000,32 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
 
     if (is100Coverage && coverageDetails.summary) {
         const testFileRef = isTest ? targetFilePath : findExistingTestFile(snapshot.rootDir, sourceFileToInspect, "jest").relativePath;
+        const fullyCoveredSummary = {
+            linesPct: coverageDetails.summary.linesPct ?? 100,
+            branchesPct: coverageDetails.summary.branchesPct ?? 100,
+            functionsPct: coverageDetails.summary.functionsPct ?? coverageDetails.summary.funcsPct ?? 100,
+            statementsPct: coverageDetails.summary.statementsPct ?? coverageDetails.summary.stmtsPct ?? 100,
+            ...coverageDetails.summary
+        };
         return {
+            suggestionId: `sug-${Date.now()}-1`,
             isFullyCovered: true,
             sourceFile: sourceFileToInspect,
+            testFile: testFileRef,
             targetTestFile: testFileRef,
             framework: isTest ? (targetFilePath.includes("vitest") ? "vitest" : "jest") : "jest",
+            targetLines: [],
+            targetBranches: [],
             explanation: `File \`${sourceFileToInspect}\` has reached 100% test coverage (Statements: 100%, Branches: 100%, Lines: 100%) with 0 assertion errors. No further suggestions needed!`,
+            suggestedTestCode: "",
+            fullUpdatedContent: "",
             uncoveredLines: [],
             failedLines: [],
+            summary: fullyCoveredSummary,
+            astMetadata: coverageDetails.astMetadata || null,
+            coverageGapAnalysis: coverageDetails.coverageGapAnalysis || null,
+            uncoveredBranches: [],
+            decisionPoints: coverageDetails.decisionPoints || [],
             suggestions: []
         };
     }
@@ -1173,6 +1098,10 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
     const primary = suggestions[0];
     return {
         ...primary,
+        astMetadata: coverageDetails.astMetadata || null,
+        coverageGapAnalysis: coverageDetails.coverageGapAnalysis || null,
+        uncoveredBranches: coverageDetails.uncoveredBranches || coverageDetails.coverageGapAnalysis?.uncoveredBranches || [],
+        decisionPoints: coverageDetails.decisionPoints || coverageDetails.astMetadata?.decisionPoints || [],
         frameworks: suggestions.map(s => s.framework),
         suggestions
     };

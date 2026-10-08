@@ -67,7 +67,12 @@ export const readProjectJestConfig = async (repoRoot, explicitConfigPath = null)
                     return JSON.parse(fs.readFileSync(resolvedPath, "utf8"));
                 }
                 const fileUrl = pathToFileURL(resolvedPath).href;
-                const mod = await import(`${fileUrl}?t=${Date.now()}`);
+                let mod;
+                try {
+                    mod = await import(fileUrl);
+                } catch (importErr) {
+                    mod = await import(`${fileUrl}?t=${Date.now()}`);
+                }
                 return mod.default || mod;
             } catch (e) {
                 console.warn(`[readProjectJestConfig] Error loading explicit config ${resolvedPath}:`, e.message);
@@ -90,7 +95,12 @@ export const readProjectJestConfig = async (repoRoot, explicitConfigPath = null)
                     return JSON.parse(fs.readFileSync(p, "utf8"));
                 }
                 const fileUrl = pathToFileURL(p).href;
-                const mod = await import(`${fileUrl}?t=${Date.now()}`);
+                let mod;
+                try {
+                    mod = await import(fileUrl);
+                } catch (importErr) {
+                    mod = await import(`${fileUrl}?t=${Date.now()}`);
+                }
                 return mod.default || mod;
             } catch (e) {
                 console.warn(`[readProjectJestConfig] Error loading ${p}:`, e.message);
@@ -990,27 +1000,29 @@ const getPackageForFile = (relFile, root) => {
     return "";
 };
 
-const resolveJestBin = (dir) => {
+const resolveJestBin = (dir, isEsm = false, customCommand = null) => {
+    if (customCommand && typeof customCommand === "string" && customCommand.trim()) {
+        const trimmed = customCommand.trim();
+        if (trimmed.includes("jest")) {
+            return trimmed.replace(/\s*(--coverage|--watch|--watchAll).*$/, "").trim();
+        }
+    }
+    const nodePrefix = isEsm ? "node --experimental-vm-modules" : "node";
     const directJest = path.join(dir, "node_modules", "jest", "bin", "jest.js");
-    if (fs.existsSync(directJest)) return "node node_modules/jest/bin/jest.js";
+    if (fs.existsSync(directJest)) return `${nodePrefix} node_modules/jest/bin/jest.js`;
     const localBin = path.join(dir, "node_modules", ".bin", "jest");
-    if (fs.existsSync(localBin)) return "./node_modules/.bin/jest";
+    if (fs.existsSync(localBin)) return isEsm ? `${nodePrefix} node_modules/jest/bin/jest.js` : "./node_modules/.bin/jest";
     const parentBin = path.join(dir, "..", "node_modules", ".bin", "jest");
-    if (fs.existsSync(parentBin)) return "../node_modules/.bin/jest";
+    if (fs.existsSync(parentBin)) return isEsm ? `node --experimental-vm-modules ../node_modules/jest/bin/jest.js` : "../node_modules/.bin/jest";
     if (fs.existsSync("/app/node_modules/.bin/jest")) return "/app/node_modules/.bin/jest";
-    return "npx jest";
+    return isEsm ? "node --experimental-vm-modules node_modules/jest/bin/jest.js" : "npx jest";
 };
 
-export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFiles = []) => {
+export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFiles = [], customJestCommand = null) => {
     const covDir = path.join(rootDir, "coverage");
     if (!fs.existsSync(covDir)) {
         try { fs.mkdirSync(covDir, { recursive: true }); } catch { }
     }
-
-    // Automatically sanitize all project test files to prevent syntax and import errors
-    try {
-        sanitizeAllProjectTestFiles(rootDir);
-    } catch { }
 
     // Partition test files by package
     let filesToRun = specificFiles;
@@ -1041,15 +1053,15 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
     let overallStdout = "";
     let overallStderr = "";
 
-    const rootJestBin = resolveJestBin(rootDir);
+    const projectJestConfig = await readProjectJestConfig(rootDir, jestConfigPath);
+    const isEsmProject = isEsmProjectForRepo(rootDir, projectJestConfig);
+
+    const rootJestBin = resolveJestBin(rootDir, isEsmProject, customJestCommand);
     let jestCmd = `${rootJestBin} --coverage --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=coverage/jest-results.json --forceExit --testTimeout=30000 --maxWorkers=50% --cache`;
 
     let tempConfigCreated = false;
     const tempConfigName = "covai-jest-runner.json";
     const tempConfigPath = path.join(rootDir, tempConfigName);
-
-    const projectJestConfig = await readProjectJestConfig(rootDir, jestConfigPath);
-    const isEsmProject = isEsmProjectForRepo(rootDir, projectJestConfig);
 
     const rootPkgPath = path.join(rootDir, "package.json");
     let rootPkgName = "";
@@ -1171,41 +1183,44 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             } else if (Array.isArray(transformer) && transformer[0] === "ts-jest") {
                 const existingOpts = transformer[1] || {};
                 const existingTsconfig = existingOpts.tsconfig;
-                let baseCompilerOptions = {};
                 if (typeof existingTsconfig === "string") {
-                    try {
-                        const fullTsPath = path.isAbsolute(existingTsconfig) ? existingTsconfig : path.join(rootDir, existingTsconfig);
-                        if (fs.existsSync(fullTsPath)) {
-                            const raw = fs.readFileSync(fullTsPath, "utf8");
-                            const cleaned = raw.replace(/\/\*[\s\S]*?\*\/|([^:]|^)\/\/.*$/gm, "$1");
-                            const parsed = JSON.parse(cleaned);
-                            baseCompilerOptions = parsed.compilerOptions || {};
-                        }
-                    } catch { }
-                } else if (typeof existingTsconfig === "object") {
-                    baseCompilerOptions = existingTsconfig;
-                }
-
-                result[pattern] = [
-                    "ts-jest",
-                    {
-                        ...existingOpts,
-                        isolatedModules: true,
-                        diagnostics: false,
-                        ...(isEsmProject ? { useESM: true } : {}),
-                        tsconfig: {
-                            ...baseCompilerOptions,
+                    result[pattern] = [
+                        "ts-jest",
+                        {
+                            ...existingOpts,
                             isolatedModules: true,
-                            allowJs: true,
-                            esModuleInterop: true,
-                            skipLibCheck: true,
-                            ...(isEsmProject ? { module: "esnext" } : { module: "commonjs" }),
-                            target: "es2020",
-                            noImplicitAny: false,
-                            strict: false
+                            diagnostics: false,
+                            ...(isEsmProject ? { useESM: true } : {}),
+                            tsconfig: existingTsconfig
                         }
+                    ];
+                } else {
+                    let baseCompilerOptions = {};
+                    if (typeof existingTsconfig === "object") {
+                        baseCompilerOptions = existingTsconfig;
                     }
-                ];
+
+                    result[pattern] = [
+                        "ts-jest",
+                        {
+                            ...existingOpts,
+                            isolatedModules: true,
+                            diagnostics: false,
+                            ...(isEsmProject ? { useESM: true } : {}),
+                            tsconfig: {
+                                ...baseCompilerOptions,
+                                isolatedModules: true,
+                                allowJs: true,
+                                esModuleInterop: true,
+                                skipLibCheck: true,
+                                ...(isEsmProject ? { module: "esnext" } : { module: "commonjs" }),
+                                target: "es2020",
+                                noImplicitAny: false,
+                                strict: false
+                            }
+                        }
+                    ];
+                }
             } else {
                 result[pattern] = transformer;
             }
@@ -1502,7 +1517,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
         try {
             const tempConfig = {
                 ...cleanProjectJestConfig,
-                roots: isExplicitFiles ? ["<rootDir>"] : effectiveRoots,
+                roots: effectiveRoots,
                 testMatch: testMatchPatterns,
                 testTimeout: 30000,
                 testPathIgnorePatterns: safeIgnorePatterns,
@@ -1514,27 +1529,21 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                     ...(Array.isArray(cleanProjectJestConfig?.setupFilesAfterEnv) ? cleanProjectJestConfig.setupFilesAfterEnv : []),
                     `<rootDir>/${tempSetupName}`
                 ],
-                coveragePathIgnorePatterns,
+                coveragePathIgnorePatterns: (Array.isArray(cleanProjectJestConfig?.coveragePathIgnorePatterns) && cleanProjectJestConfig.coveragePathIgnorePatterns.length > 0)
+                    ? cleanProjectJestConfig.coveragePathIgnorePatterns
+                    : coveragePathIgnorePatterns,
                 moduleNameMapper: defaultModuleNameMapper,
                 ...(Object.keys(mergedTransform).length > 0 ? { transform: mergedTransform } : {}),
                 moduleFileExtensions: resolvedModuleFileExtensions,
                 globals: {
                     ...(cleanProjectJestConfig?.globals || {}),
-                    "ts-jest": {
-                        isolatedModules: true,
-                        diagnostics: false,
-                        useESM: isEsmProject,
-                        tsconfig: {
-                            isolatedModules: true,
-                            allowJs: true,
-                            esModuleInterop: true,
-                            skipLibCheck: true,
-                            ...(isEsmProject ? { module: "esnext" } : { module: "commonjs" }),
-                            target: "es2020",
-                            noImplicitAny: false,
-                            strict: false
+                    ...(hasTsJest ? {
+                        "ts-jest": {
+                            diagnostics: false,
+                            useESM: isEsmProject,
+                            ...(typeof cleanProjectJestConfig?.globals?.["ts-jest"] === "object" ? cleanProjectJestConfig.globals["ts-jest"] : {})
                         }
-                    }
+                    } : {})
                 },
                 ...(extensionsToTreatAsEsm ? { extensionsToTreatAsEsm } : {})
             };
@@ -1616,36 +1625,6 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                 if (modResError) {
                     await addJobLog(jobId, "ERROR", `[MODULE_RESOLUTION] Test file: "${cleanStoragePath(modResError.testFile)}", missing module: "${modResError.missingModule}", resolved path: "${cleanStoragePath(modResError.expectedSourcePath || modResError.pathResolving)}", workingDirectory: "${cleanStoragePath(modResError.workingDirectory)}"`).catch(() => { });
                 }
-
-                // Attempt auto-healing of failing test files and re-run once
-                try {
-                    const { autoHealTestFailures } = await import("./applyTestSuggestion.service.js");
-                    const jestResultsPath = path.join(covDir, "jest-results.json");
-                    const rootTestResults = path.join(rootDir, "test-results.json");
-                    let parsedResults = null;
-                    const resultsFile = fs.existsSync(jestResultsPath) ? jestResultsPath : (fs.existsSync(rootTestResults) ? rootTestResults : null);
-                    if (resultsFile) {
-                        try { parsedResults = JSON.parse(fs.readFileSync(resultsFile, "utf8")); } catch { }
-                    }
-                    const healed = autoHealTestFailures(rootDir, filesToPass, parsedResults, outputText);
-                    if (healed) {
-                        await addJobLog(jobId, "INFO", "[SCRUM-140] Auto-healed test runner failures. Re-running Jest suite...").catch(() => { });
-                        const retryResult = await dockerRunner.run({
-                            snapshotPath: rootDir,
-                            command: jestCmd,
-                            timeoutMs: effectiveTimeout,
-                            jobId,
-                            env: {
-                                NODE_OPTIONS: "--unhandled-rejections=warn --experimental-vm-modules",
-                                NODE_PATH: "/app/node_modules:/usr/local/lib/node_modules:./node_modules",
-                            }
-                        });
-                        result = retryResult;
-                        if (retryResult.stdout) overallStdout += "\n" + retryResult.stdout;
-                        if (retryResult.stderr) overallStderr += "\n" + retryResult.stderr;
-                        overallExitCode = retryResult.exitCode || 0;
-                    }
-                } catch { }
             }
         } finally {
             if (rootPkgModified && originalRootPkgContent) {
@@ -1804,7 +1783,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
         } catch { }
 
         const configFlag = tempSubConfigCreated ? ` --config="${tempSubConfigName}"` : "";
-        const subJestBin = resolveJestBin(targetDir);
+        const subJestBin = resolveJestBin(targetDir, isSubEsm);
         const subJestCmd = `cd "${pkgDir}" && ${subJestBin} ${fileArgs}${configFlag} --coverage --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile="${subResultsRel}" --forceExit --testTimeout=30000 --maxWorkers=50% --cache`;
 
         let subResult;
@@ -2082,10 +2061,14 @@ export const mergeCoverageSummaries = (sum1 = {}, sum2 = {}, options = {}) => {
         for (const metric of ["lines", "statements", "functions", "branches"]) {
             const m1 = e1[metric] || {};
             const m2 = e2[metric] || {};
-            const covered = Math.max(m1.covered || 0, m2.covered || 0);
-            const total = Math.max(m1.total || 0, m2.total || 0);
+            const m1Tot = (m1.total || 0) > 0 ? m1.total : (m1.pct !== undefined ? 100 : 0);
+            const m1Cov = (m1.total || 0) > 0 ? (m1.covered || 0) : (m1.pct !== undefined ? Math.round(m1.pct) : 0);
+            const m2Tot = (m2.total || 0) > 0 ? m2.total : (m2.pct !== undefined ? 100 : 0);
+            const m2Cov = (m2.total || 0) > 0 ? (m2.covered || 0) : (m2.pct !== undefined ? Math.round(m2.pct) : 0);
+            const covered = Math.max(m1Cov, m2Cov);
+            const total = Math.max(m1Tot, m2Tot);
             const skipped = Math.max(m1.skipped || 0, m2.skipped || 0);
-            const pct = total > 0 ? Number(((covered / total) * 100).toFixed(1)) : (covered === 0 ? 0 : 100);
+            const pct = total > 0 ? Number(((covered / total) * 100).toFixed(1)) : (m2.pct ?? m1.pct ?? (covered === 0 ? 0 : 100));
             combined[metric] = { total, covered, skipped, pct };
         }
         merged[key] = combined;
@@ -2138,8 +2121,10 @@ export const mergeCoverageSummaries = (sum1 = {}, sum2 = {}, options = {}) => {
 
         for (const metric of ["lines", "statements", "functions", "branches"]) {
             if (item[metric]) {
-                total[metric].total += item[metric].total || 0;
-                total[metric].covered += item[metric].covered || 0;
+                const mTot = (item[metric].total || 0) > 0 ? item[metric].total : (item[metric].pct !== undefined ? 100 : 0);
+                const mCov = (item[metric].total || 0) > 0 ? (item[metric].covered || 0) : (item[metric].pct !== undefined ? Math.round(item[metric].pct) : 0);
+                total[metric].total += mTot;
+                total[metric].covered += mCov;
                 total[metric].skipped += item[metric].skipped || 0;
             }
         }
@@ -2344,7 +2329,7 @@ export const processRunTestsJob = async (jobId) => {
             await updateJobProgress(jobId, 60).catch(() => { });
             await addJobLog(jobId, "INFO", `[JEST] 2/2: Running ${jestFiles.length} Jest files...`).catch(() => { });
             try {
-                runnerResult = await runJestCoverage(jobId, rootDir, jestConfigPath, jestFiles);
+                runnerResult = await runJestCoverage(jobId, rootDir, jestConfigPath, jestFiles, job.snapshot?.jestCommand);
             } catch (jestErr) {
                 await addJobLog(jobId, "WARN", `[JEST] Jest execution warning: ${jestErr.message}`).catch(() => { });
             }
@@ -2472,7 +2457,7 @@ export const processRunTestsJob = async (jobId) => {
         } else if (hasJest) {
             await updateJobProgress(jobId, 50).catch(() => { });
             await addJobLog(jobId, "INFO", `[JEST] Running ${jestFiles.length} Jest files...`).catch(() => { });
-            runnerResult = await runJestCoverage(jobId, rootDir, jestConfigPath, jestFiles);
+            runnerResult = await runJestCoverage(jobId, rootDir, jestConfigPath, jestFiles, job.snapshot?.jestCommand);
             await updateJobProgress(jobId, 70).catch(() => { });
 
             const testResults = parseJestResults(coverageDir) || parseVitestResults(coverageDir);
@@ -2532,7 +2517,7 @@ export const processRunTestsJob = async (jobId) => {
             } else {
                 // If really no logic files either, try fallback runner
                 await addJobLog(jobId, "INFO", "[RUN_TESTS] Running fallback runner...").catch(() => { });
-                runnerResult = await runJestCoverage(jobId, rootDir, jestConfigPath);
+                runnerResult = await runJestCoverage(jobId, rootDir, jestConfigPath, [], job.snapshot?.jestCommand);
             }
             await updateJobProgress(jobId, 70).catch(() => { });
         }

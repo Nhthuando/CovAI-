@@ -80,6 +80,7 @@ jest.unstable_mockModule('../services/unitTestSuggestion.service.js', () => ({
     suggestUnitTestcases: jest.fn(),
     computeRelativeImportPath: jest.fn(),
     generateFallbackUnitTests: jest.fn(),
+    extractAstMetadata: jest.fn(() => ({ exportedSymbols: [], unexportedFunctions: [], decisionPoints: [] })),
 }));
 
 jest.unstable_mockModule('../services/applyTestSuggestion.service.js', () => ({

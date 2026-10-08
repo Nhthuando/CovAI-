@@ -1,7 +1,11 @@
 node_modules/
+**/node_modules/
+storage/
+uploads/
 dist/
 build/
 coverage/
 .git/
 .env*
 *.log
+

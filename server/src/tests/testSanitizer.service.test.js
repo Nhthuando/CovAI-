@@ -1,4 +1,4 @@
-import { cleanAndDeduplicateTestContent, healImportPathsInTestCode, healMultilineStrings } from "../services/testSanitizer.service.js";
+import { cleanAndDeduplicateTestContent, healImportPathsInTestCode, healMultilineStrings, healMismatchedQuotes } from "../services/testSanitizer.service.js";
 import { findAssociatedTestFile } from "../services/fileCoverage.service.js";
 import { parseJavaScriptCode } from "../services/babelParser.service.js";
 
@@ -331,6 +331,96 @@ describe('monorepo path', () => {
             const input = "const a = 'hello world';\nconst b = \"foo bar\";";
             const healed = healMultilineStrings(input);
             expect(healed).toBe(input);
+        });
+
+        test("does not corrupt valid single-quoted test titles when preceded by regex with apostrophe", () => {
+            const input = `
+describe('resolveLocalFile', () => {
+  it('checks directory', async () => {
+    await expect(foo()).rejects.toThrow(/server's own directory/);
+  });
+
+  it('rejects a file larger than the cap', async () => {
+    expect(1).toBe(1);
+  });
+});
+`;
+            const healed = healMultilineStrings(input);
+            expect(healed).not.toContain("`rejects");
+            expect(healed).toContain("it('rejects a file larger than the cap', async () => {");
+            const ast = parseJavaScriptCode(healed);
+            expect(ast.success).toBe(true);
+        });
+
+        test("heals mismatched quotes from LLMs or broken parsers", () => {
+            const input = `
+it(\`rejects a file larger than the cap', async () => {
+  expect(id).toBe(\`42');
+  expect(res).toBe(\`TaxExcluded');
+});
+jest.unstable_mockModule(\`dotenv', () => ({ default: {} }));
+// on every single call, since Deposit doesn\`t honor
+`;
+            const healed = healMismatchedQuotes(input);
+            expect(healed).toContain('it("rejects a file larger than the cap", async () => {');
+            expect(healed).toContain("expect(id).toBe('42');");
+            expect(healed).toContain("expect(res).toBe('TaxExcluded');");
+            expect(healed).toContain("jest.unstable_mockModule('dotenv', () => ({ default: {} }));");
+            expect(healed).toContain("// on every single call, since Deposit doesn't honor");
+        });
+
+        test("preserves valid mock objects and does not delete them via orphanMockRegex", () => {
+            const input = `
+import { jest, describe, it, expect } from '@jest/globals';
+
+const mockQuickbooksClient = {
+  authenticate: jest.fn().mockResolvedValue(undefined),
+  getQuickbooks: jest.fn(),
+};
+
+const mockQuickbooksClientClass = {
+  getInstance: jest.fn(),
+};
+
+jest.unstable_mockModule('../../../src/clients/quickbooks-client', () => ({
+  quickbooksClient: mockQuickbooksClient,
+  QuickbooksClient: mockQuickbooksClientClass,
+}));
+
+const { getQuickbooksGeneralLedger } = await import('../../../src/handlers/get-quickbooks-general-ledger.handler');
+
+describe('contract', () => {
+  it('works', () => {
+    expect(mockQuickbooksClient.authenticate).toBeDefined();
+  });
+});
+`;
+            const cleaned = cleanAndDeduplicateTestContent(input);
+            expect(cleaned).toContain("authenticate: jest.fn().mockResolvedValue(undefined)");
+            expect(cleaned).toContain("const mockQuickbooksClient = {");
+            expect(cleaned).toContain("jest.unstable_mockModule");
+            expect(cleaned).toContain("describe('contract'");
+            const ast = parseJavaScriptCode(cleaned);
+            expect(ast.success).toBe(true);
+        });
+
+        test("heals unclosed top-level object declarations abruptly followed by imports or describe blocks", () => {
+            const brokenInput = `
+const mockQuickbooksClient = {
+
+const { getQuickbooksGeneralLedger } = await import('../../../src/handlers/get-quickbooks-general-ledger.handler');
+
+describe('contract', () => {
+  it('calls auth', () => {
+    mockQuickbooksClient.authenticate();
+  });
+});
+`;
+            const cleaned = cleanAndDeduplicateTestContent(brokenInput);
+            expect(cleaned).toContain("authenticate: typeof jest !== 'undefined'");
+            expect(cleaned).toContain("};\nconst { getQuickbooksGeneralLedger }");
+            const ast = parseJavaScriptCode(cleaned);
+            expect(ast.success).toBe(true);
         });
     });
 

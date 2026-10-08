@@ -11,7 +11,8 @@ const {
     findAssociatedSourceFile,
     findExistingTestFile,
     generateFallbackUnitTests,
-    suggestUnitTestcases
+    suggestUnitTestcases,
+    extractAstMetadata
 } = await import("../services/unitTestSuggestion.service.js");
 
 describe("unitTestSuggestion.service unit tests", () => {
@@ -158,6 +159,40 @@ describe("unitTestSuggestion.service unit tests", () => {
             expect(result.fullUpdatedContent).toContain("import { describe, test, expect } from 'vitest';");
             expect(result.fullUpdatedContent).toContain("import { add } from '../src/calculator';");
             expect(result.fullUpdatedContent).toContain("add should execute without error");
+        });
+    });
+
+    describe("extractAstMetadata", () => {
+        test("extracts exported symbols and unexported helpers from ESM source", () => {
+            const code = `
+                export function processPayment(amount) {
+                    if (amount <= 0) throw new Error("Invalid amount");
+                    return formatReceipt(amount);
+                }
+                function formatReceipt(val) {
+                    return "Receipt: $" + val;
+                }
+            `;
+            const result = extractAstMetadata(code);
+            expect(result.exportedSymbols).toContain("processPayment");
+            expect(result.exportedSymbols).not.toContain("formatReceipt");
+            expect(result.unexportedFunctions).toContain("formatReceipt");
+            expect(result.decisionPoints.length).toBeGreaterThanOrEqual(1);
+            expect(result.decisionPoints.some(d => d.type === "if")).toBe(true);
+            expect(result.decisionPoints.some(d => d.type === "throw")).toBe(true);
+        });
+
+        test("extracts exported symbols from CommonJS source", () => {
+            const code = `
+                function calculateBonus(salary) {
+                    if (salary > 50000) return salary * 0.1;
+                    return salary * 0.05;
+                }
+                module.exports = { calculateBonus };
+            `;
+            const result = extractAstMetadata(code);
+            expect(result.exportedSymbols).toContain("calculateBonus");
+            expect(result.decisionPoints.some(d => d.type === "if")).toBe(true);
         });
     });
 });

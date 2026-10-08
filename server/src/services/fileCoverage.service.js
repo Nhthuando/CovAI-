@@ -3,6 +3,7 @@ import path from "path";
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { cleanStorageText, cleanStoragePath } from "../utils/pathSanitizer.js";
+import { analyzeSourceAst, mapCoverageGaps } from "./businessLogicAstAnalyzer.service.js";
 
 /**
  * Normalizes file paths across Windows/Linux, stripping leading slashes and dot-slashes.
@@ -239,6 +240,10 @@ export const extractStatementFlow = (fileCoverageData, sourceCode = "") => {
         let type = "statement";
         if (/^\s*(if|switch)\b/.test(codeSnippet) || codeSnippet.includes(" ? ")) {
             type = "condition";
+        } else if (/^\s*(for|while|do)\b/.test(codeSnippet)) {
+            type = "loop";
+        } else if (/^\s*(try|catch|finally)\b/.test(codeSnippet)) {
+            type = "exception";
         } else if (/^\s*return\b/.test(codeSnippet)) {
             type = "return";
         } else if (/^\s*throw\b/.test(codeSnippet)) {
@@ -265,7 +270,7 @@ export const extractStatementFlow = (fileCoverageData, sourceCode = "") => {
 };
 
 /**
- * Extracts branch decision points, conditions, paths (True/False or switch cases), and hit counts.
+ * Extracts branch decision points, conditions, paths (True/False, binary/logical, switch cases), and hit counts.
  */
 export const extractBranchFlow = (fileCoverageData, sourceCode = "") => {
     if (!fileCoverageData || !fileCoverageData.branchMap) return [];
@@ -385,6 +390,85 @@ export const extractBranchFlow = (fileCoverageData, sourceCode = "") => {
                     startLine: locLine
                 };
             });
+        } else if (type === "binary-expr" || type === "logical-expr") {
+            const hit0 = counts[0] ?? 0;
+            const hit1 = counts[1] ?? 0;
+            const p0Pct = totalHits > 0 ? Math.round((hit0 / totalHits) * 100) : 0;
+            const p1Pct = totalHits > 0 ? Math.round((hit1 / totalHits) * 100) : 0;
+
+            const isNullish = rawLine.includes("??");
+            const isOr = rawLine.includes("||");
+            const isAnd = rawLine.includes("&&");
+
+            let label0 = "Left operand path";
+            let label1 = "Right operand path";
+            let type0 = "Left";
+            let type1 = "Right";
+
+            if (isNullish) {
+                type0 = "Defined";
+                label0 = "Left operand defined / non-nullish";
+                type1 = "Fallback (??)";
+                label1 = "Left operand null/undefined (fallback to right)";
+            } else if (isOr) {
+                type0 = "Truthy";
+                label0 = "Left operand truthy (short-circuit ||)";
+                type1 = "Falsy";
+                label1 = "Left operand falsy (evaluate ||)";
+            } else if (isAnd) {
+                type0 = "Falsy";
+                label0 = "Left operand falsy (short-circuit &&)";
+                type1 = "Truthy";
+                label1 = "Left operand truthy (evaluate &&)";
+            }
+
+            paths = [
+                {
+                    index: 0,
+                    type: type0,
+                    label: label0,
+                    hits: hit0,
+                    pct: p0Pct,
+                    covered: hit0 > 0,
+                    codeSnippet: rawLine.slice(0, 120),
+                    startLine: branch.locations?.[0]?.start?.line || line
+                },
+                {
+                    index: 1,
+                    type: type1,
+                    label: label1,
+                    hits: hit1,
+                    pct: p1Pct,
+                    covered: hit1 > 0,
+                    codeSnippet: rawLine.slice(0, 120),
+                    startLine: branch.locations?.[1]?.start?.line || line
+                }
+            ];
+        } else if (type === "default-arg") {
+            const hit0 = counts[0] ?? 0;
+            const hit1 = counts[1] ?? 0;
+            paths = [
+                {
+                    index: 0,
+                    type: "Supplied",
+                    label: "Argument supplied (overrides default)",
+                    hits: hit0,
+                    pct: totalHits > 0 ? Math.round((hit0 / totalHits) * 100) : 0,
+                    covered: hit0 > 0,
+                    codeSnippet: rawLine.slice(0, 120),
+                    startLine: branch.locations?.[0]?.start?.line || line
+                },
+                {
+                    index: 1,
+                    type: "Default",
+                    label: "Argument undefined (uses default parameter)",
+                    hits: hit1,
+                    pct: totalHits > 0 ? Math.round((hit1 / totalHits) * 100) : 0,
+                    covered: hit1 > 0,
+                    codeSnippet: rawLine.slice(0, 120),
+                    startLine: branch.locations?.[1]?.start?.line || line
+                }
+            ];
         } else {
             paths = (branch.locations || []).map((loc, idx) => {
                 const hits = counts[idx] ?? 0;
@@ -403,6 +487,10 @@ export const extractBranchFlow = (fileCoverageData, sourceCode = "") => {
             });
         }
 
+        const missedTrue = counts[0] === 0;
+        const missedFalse = counts.length > 1 && counts[1] === 0;
+        const uncoveredPathsCount = counts.filter(c => (c || 0) === 0).length;
+
         return {
             id,
             line,
@@ -411,6 +499,10 @@ export const extractBranchFlow = (fileCoverageData, sourceCode = "") => {
             fullConditionText: rawLine.slice(0, 160),
             totalHits,
             status,
+            missedTrue,
+            missedFalse,
+            uncoveredPathsCount,
+            totalPathsCount: counts.length,
             paths
         };
     });
@@ -1041,6 +1133,35 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
     const branches = extractBranchFlow(matchedFileCoverage, sourceCode);
     const functions = extractFunctionFlow(matchedFileCoverage, sourceCode);
 
+    let astMetadata = null;
+    let coverageGapAnalysis = null;
+    if (sourceCode) {
+        try {
+            astMetadata = analyzeSourceAst(sourceCode);
+            coverageGapAnalysis = mapCoverageGaps({
+                astMetadata,
+                fileCoverageData: matchedFileCoverage,
+                sourceCode,
+                uncoveredLinesList: lineCoverage.uncoveredLines
+            });
+        } catch (_) { }
+    }
+
+    const uncoveredBranches = branches.filter(b => b.status !== "fully_covered");
+    const uncoveredStatements = statements.filter(s => !s.covered);
+    const uncoveredFunctionsList = functions.filter(f => !f.covered);
+
+    const decisionPoints = (astMetadata?.decisionPoints || []).map(dp => {
+        const isLineUncovered = lineCoverage.uncoveredLines.includes(dp.line);
+        const matchedBranch = uncoveredBranches.find(ub => Math.abs(ub.line - dp.line) <= 1);
+        return {
+            ...dp,
+            isCovered: !isLineUncovered && (!matchedBranch || matchedBranch.status === "fully_covered"),
+            missedTrue: matchedBranch?.missedTrue ?? false,
+            missedFalse: matchedBranch?.missedFalse ?? false
+        };
+    });
+
     return {
         filePath: targetFilePath,
         resolvedKey: matchedKey,
@@ -1048,8 +1169,15 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
         statements,
         branches,
         functions,
+        uncoveredBranches,
+        uncoveredStatements,
+        uncoveredFunctionsList,
+        decisionPoints,
         sourceCode,
         testFile,
+        rawCoverageData: matchedFileCoverage,
+        astMetadata,
+        coverageGapAnalysis,
         ...lineCoverage
     };
 };
