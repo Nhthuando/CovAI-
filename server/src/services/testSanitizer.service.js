@@ -350,6 +350,12 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
         return match;
     });
 
+    // 1.3. Heal stray closing parens after statement terminators or assertion calls
+    // e.g. `expect(res.json).toBeDefined(););` -> `expect(res.json).toBeDefined();`
+    cleaned = cleaned
+        .replace(/;\s*\)+;?/g, ";")
+        .replace(/\.(toBeDefined|toBeUndefined)\(\)\s*\)+;?/g, ".$1();");
+
     // 2. Strip corrupted or invalid TypeScript annotations in JavaScript files ONLY that break Babel parser
     if (!isTsFile) {
         cleaned = cleaned.replace(/\(\(([a-zA-Z0-9_$,\s]+)(?:\s*:\s*[^)]+)?\)\)/g, "($1)");
@@ -1139,6 +1145,11 @@ jest.mock('../src/config/prisma.js', () => ({ prisma: __sharedMockPrisma, defaul
         .replace(/\bxtest\s*\(/g, "test(")
         .replace(/\bxdescribe\s*\(/g, "describe(");
 
+    // 21. Final syntax safety check: heal stray closing parens after statement terminators
+    cleaned = cleaned
+        .replace(/;\s*\)+;?/g, ";")
+        .replace(/\.(toBeDefined|toBeUndefined)\(\)\s*\)+;?/g, ".$1();");
+
     return cleaned;
 };
 
@@ -1149,8 +1160,7 @@ jest.mock('../src/config/prisma.js', () => ({ prisma: __sharedMockPrisma, defaul
  */
 export const sanitizeAllProjectTestFiles = (rootDir) => {
     if (!rootDir || !fs.existsSync(rootDir)) return;
-    const norm = String(rootDir).replace(/\\/g, "/").toLowerCase();
-    if (norm.includes("/storage/")) return; // NEVER touch storage
+    if (isDirectStorageDirectory(rootDir)) return; // NEVER touch direct storage
     const testFiles = [];
     const scanDir = (dir, depth = 0) => {
         if (!fs.existsSync(dir) || depth > 10) return;
@@ -1191,4 +1201,42 @@ export const sanitizeAllProjectTestFiles = (rootDir) => {
             }
         } catch { }
     }
+};
+
+/**
+ * Checks if a path points directly to a raw server storage location
+ * (e.g. storage/, server/storage, storage/projects/p1, storage/projects/hack)
+ * rather than a legitimate user project repository or snapshot workspace
+ * (which contains /repo or /snapshots/<id> or /extracted/<id>).
+ *
+ * @param {string} dirPath
+ * @returns {boolean}
+ */
+export const isDirectStorageDirectory = (dirPath) => {
+    if (!dirPath || typeof dirPath !== "string") return false;
+    const norm = dirPath.replace(/\\/g, "/").toLowerCase();
+
+    // If path does not contain 'storage' as a path segment, it is not inside server storage
+    if (!/(?:^|\/)storage(?:\/|$)/.test(norm)) {
+        return false;
+    }
+
+    // It contains 'storage'. Allow legitimate project repositories and snapshots:
+    // 1. Cloned repo workspace: has /repo or /repo/
+    if (/(?:^|\/)repo(?:\/|$)/.test(norm)) {
+        return false;
+    }
+
+    // 2. Project snapshot workspace: storage/projects/<projectId>/snapshots/<snapshotId>
+    if (/(?:^|\/)storage\/projects\/[^/]+\/snapshots\/[^/]+(?:\/|$)/.test(norm)) {
+        return false;
+    }
+
+    // 3. Extracted project workspace: storage/projects/<projectId>/extracted/[^/]+
+    if (/(?:^|\/)storage\/projects\/[^/]+\/extracted\/[^/]+(?:\/|$)/.test(norm)) {
+        return false;
+    }
+
+    // Otherwise it is direct storage (e.g. storage, storage/projects/p1, server/storage, storage/projects/hack)
+    return true;
 };
