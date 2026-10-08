@@ -32,9 +32,12 @@ async function handleResponse(res) {
     return data;
 }
 
-export async function getCoverageSummary(snapshotId) {
+export async function getCoverageSummary(snapshotId, type = null) {
+    const url = type
+        ? `${BASE_URL}/coverage/${snapshotId}/summary?type=${encodeURIComponent(type)}`
+        : `${BASE_URL}/coverage/${snapshotId}/summary`;
     const res = await fetch(
-        `${BASE_URL}/coverage/${snapshotId}/summary`,
+        url,
         {
             headers: getAuthHeaders(),
         }
@@ -61,6 +64,7 @@ export async function getCoverageFiles(
         order = "asc",
         page = 1,
         limit = 200,
+        type = null,
     } = {}
 ) {
     const params = new URLSearchParams({
@@ -69,6 +73,9 @@ export async function getCoverageFiles(
         page,
         limit,
     });
+    if (type) {
+        params.append("type", type);
+    }
 
     const res = await fetch(
         `${BASE_URL}/coverage/${snapshotId}/files?${params}`,
@@ -131,11 +138,11 @@ export async function getFileCoverage(snapshotId, filePath) {
     return handleResponse(res);
 }
 
-export async function suggestUnitTestcase(snapshotId, filePath, projectId) {
+export async function suggestUnitTestcase(snapshotId, filePath, projectId, framework = null) {
     const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/suggest-testcase`, {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify({ filePath, projectId }),
+        body: JSON.stringify({ filePath, projectId, ...(framework ? { framework } : {}) }),
     });
     return handleResponse(res);
 }
@@ -148,6 +155,7 @@ export async function getCoverageFunctions(
         order = "asc",
         page = 1,
         limit = 200,
+        type = null,
     } = {}
 ) {
     const params = new URLSearchParams({
@@ -158,6 +166,9 @@ export async function getCoverageFunctions(
     });
     if (filePath) {
         params.set("filePath", filePath);
+    }
+    if (type) {
+        params.append("type", type);
     }
 
     const res = await fetch(
@@ -184,6 +195,15 @@ export async function getCoverageTestSuites(snapshotId, type = "unit") {
 export async function getIntegrationWorkspace(snapshotId) {
     const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/workspace`, {
         headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
+}
+
+export async function applyUnitTestSuggestion(snapshotId, { suggestion, suggestions, projectId } = {}) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/apply-suggestion`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ suggestion, suggestions, projectId }),
     });
     return handleResponse(res);
 }

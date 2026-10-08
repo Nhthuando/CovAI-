@@ -9,7 +9,7 @@ export function getAllSourceFiles(dirPath, arrayOfFiles = []) {
     files.forEach(function (file) {
         const fullPath = path.join(dirPath, file);
         if (fs.statSync(fullPath).isDirectory()) {
-            // Bỏ qua node_modules nếu có
+            // Ignore node_modules if present
             if (file !== 'node_modules') {
                 arrayOfFiles = getAllSourceFiles(fullPath, arrayOfFiles);
             }

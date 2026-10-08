@@ -1,6 +1,6 @@
 import { jest, describe, it, expect } from '@jest/globals';
 
-// Sử dụng unstable_mockModule cho ESM
+// Use unstable_mockModule for ESM
 jest.unstable_mockModule('../config/prisma.js', () => ({
   default: {
     aiTestResult: {
@@ -12,7 +12,7 @@ jest.unstable_mockModule('../config/prisma.js', () => ({
   },
 }));
 
-// Import động sau khi mock
+// Dynamic import after mock
 const { saveAiTestResult } = await import('../services/aiTest.service.js');
 const { default: prisma } = await import('../config/prisma.js');
 

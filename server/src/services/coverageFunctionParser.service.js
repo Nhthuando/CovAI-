@@ -25,19 +25,22 @@ const extractFilePath = (entry, key) => {
         return null;
     }
 
+    let raw = null;
     if (entry.path && typeof entry.path === "string") {
-        return entry.path;
+        raw = entry.path;
+    } else if (entry.filePath && typeof entry.filePath === "string") {
+        raw = entry.filePath;
+    } else if (entry.filename && typeof entry.filename === "string") {
+        raw = entry.filename;
+    } else if (typeof key === "string") {
+        raw = key;
     }
-    if (entry.filePath && typeof entry.filePath === "string") {
-        return entry.filePath;
-    }
-    if (entry.filename && typeof entry.filename === "string") {
-        return entry.filename;
-    }
-    if (typeof key === "string") {
-        return key;
-    }
-    return null;
+    if (!raw || typeof raw !== "string") return null;
+
+    let norm = raw.replace(/\\/g, "/").replace(/^[a-zA-Z]:[\\/]/, "");
+    norm = norm.replace(/^(?:.*?\/)?storage\/projects\/[^/]+\/[^/]+\/[^/]+\/repo\//i, "");
+    norm = norm.replace(/^(?:.*?\/)?repo\//i, "");
+    return norm.replace(/^\/+/, "");
 };
 
 const extractFunctionRowsFromIstanbul = (entry, snapshotId, filePath, rootDir = null) => {
@@ -194,7 +197,6 @@ export const parseCoverageFunctionsForSnapshot = async ({
 }) => {
     assertStringField(projectId, "projectId");
     assertStringField(snapshotId, "snapshotId");
-    assertStringField(userId, "userId");
 
     if (!coverageReport || typeof coverageReport !== "object") {
         throw new ServiceError("Invalid coverage report", 400);
@@ -218,11 +220,17 @@ export const parseCoverageFunctionsForSnapshot = async ({
         throw new ServiceError("Snapshot not found for this project", 404);
     }
 
-    if (!snapshot.project || snapshot.project.ownerId !== userId) {
+    const effectiveUserId = userId || snapshot.project?.ownerId;
+    if (!effectiveUserId) {
+        throw new ServiceError("Cannot determine owner for snapshot", 403);
+    }
+
+    if (userId && snapshot.project && snapshot.project.ownerId !== userId) {
         throw new ServiceError("You do not have permission to update coverage for this project", 403);
     }
 
     const functionRows = getFunctionCoverageRecords(coverageReport, snapshotId, snapshot.rootDir);
+
 
     await prisma.$transaction(async (tx) => {
         await tx.coverageFunction.deleteMany({

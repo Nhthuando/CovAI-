@@ -23,8 +23,8 @@ const storage = multer.diskStorage({
   },
 });
 
-const MAX_FILE_SIZE = 200 * 1024 * 1024; // 200MB cho file nén
-const MAX_UNCOMPRESSED_SIZE = 1024 * 1024 * 1024; // 1GB không nén
+const MAX_FILE_SIZE = 200 * 1024 * 1024; // 200MB for archive
+const MAX_UNCOMPRESSED_SIZE = 1024 * 1024 * 1024; // 1GB uncompressed
 const MAX_ENTRY_COUNT = 10000;
 const MAX_COMPRESSION_RATIO = 150;
 

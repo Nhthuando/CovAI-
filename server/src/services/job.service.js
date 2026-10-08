@@ -68,7 +68,84 @@ export const addJobLog = async (jobId, level, message, client = prisma) => {
   return client.jobLog.create({ data: { jobId, level, message } });
 };
 
+export const STALE_JOB_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes for large test suites
+
+export const cleanupStaleJobsForProject = async (projectId, client = prisma) => {
+  const activeJobs = await client.job.findMany({
+    where: {
+      projectId,
+      status: { in: ["QUEUED", "RUNNING"] },
+    },
+    select: { id: true, type: true, status: true, startedAt: true, createdAt: true },
+  });
+
+  const now = Date.now();
+  for (const job of activeJobs) {
+    const startTime = job.startedAt || job.createdAt;
+    const elapsedMs = startTime ? now - new Date(startTime).getTime() : 0;
+    const limit = ["RUN_TESTS", "VITEST_COVERAGE", "SUPERTEST_COVERAGE", "CYPRESS_SYSTEM_COVERAGE", "PLAYWRIGHT_SYSTEM_COVERAGE"].includes(job.type)
+      ? STALE_JOB_TIMEOUT_MS
+      : 6 * 60 * 1000;
+
+    if (elapsedMs > limit) {
+      await client.job.update({
+        where: { id: job.id },
+        data: {
+          status: "CANCELED",
+          finishedAt: new Date(),
+          errorMessage: `Job execution timed out after ${Math.round(elapsedMs / 1000)}s and was automatically stopped.`,
+        },
+      });
+      await addJobLog(
+        job.id,
+        "WARN",
+        `Job timed out (${Math.round(elapsedMs / 1000)}s). Automatically paused to release project.`,
+        client,
+      ).catch(() => { });
+    }
+  }
+};
+
+export const cleanupAllStaleJobs = async (userId = null, client = prisma) => {
+  const where = {
+    status: { in: ["QUEUED", "RUNNING"] },
+    ...(userId && { userId }),
+  };
+  const activeJobs = await client.job.findMany({
+    where,
+    select: { id: true, type: true, status: true, startedAt: true, createdAt: true },
+  });
+
+  const now = Date.now();
+  for (const job of activeJobs) {
+    const startTime = job.startedAt || job.createdAt;
+    const elapsedMs = startTime ? now - new Date(startTime).getTime() : 0;
+    const limit = ["RUN_TESTS", "VITEST_COVERAGE", "SUPERTEST_COVERAGE", "CYPRESS_SYSTEM_COVERAGE", "PLAYWRIGHT_SYSTEM_COVERAGE"].includes(job.type)
+      ? STALE_JOB_TIMEOUT_MS
+      : 6 * 60 * 1000;
+
+    if (elapsedMs > limit) {
+      await client.job.update({
+        where: { id: job.id },
+        data: {
+          status: "CANCELED",
+          finishedAt: new Date(),
+          errorMessage: `Job execution timed out after ${Math.round(elapsedMs / 1000)}s and was automatically stopped.`,
+        },
+      });
+      await addJobLog(
+        job.id,
+        "WARN",
+        `Job timed out (${Math.round(elapsedMs / 1000)}s). Automatically paused.`,
+        client,
+      ).catch(() => { });
+    }
+  }
+};
+
 const assertNoActiveJob = async (projectId, type, client = prisma, extraFilters = {}) => {
+  await cleanupStaleJobsForProject(projectId, client).catch(() => { });
+
   const where = { projectId, type, status: { in: ["QUEUED", "RUNNING"] }, ...extraFilters };
   const running = await client.job.findFirst({
     where,

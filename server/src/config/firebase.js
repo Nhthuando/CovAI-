@@ -11,7 +11,7 @@ const requiredEnvVars = [
 
 for (const key of requiredEnvVars) {
   if (!process.env[key]) {
-    throw new Error(`Thiếu biến môi trường: ${key}`);
+    throw new Error(`Missing environment variable: ${key}`);
   }
 }
 

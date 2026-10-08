@@ -324,7 +324,7 @@ export async function runAnalysisApi(projectId, { snapshotId, testType } = {}) {
     headers: getAuthHeaders(),
     body: JSON.stringify({ snapshotId, testType }),
   });
-  // Trả về job để client có thể polling
+  // Return job so client can poll
   const data = await handleResponse(res);
   return data && data.data && data.data.job ? data.data.job : data;
 }

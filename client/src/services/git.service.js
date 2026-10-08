@@ -18,10 +18,51 @@ async function handleResponse(res) {
 
 export const gitService = {
   getStatus: async (projectId) => {
-    const res = await fetch(`${BASE_URL}/git/status?projectId=${projectId}`, {
-      headers: getAuthHeaders(),
-    });
-    return handleResponse(res);
+    try {
+      const res = await fetch(`${BASE_URL}/git/status?projectId=${projectId}`, {
+        headers: getAuthHeaders(),
+      });
+      if (res.status === 404) {
+        return {
+          success: true,
+          data: {
+            isGitHubProject: false,
+            hasGit: false,
+            isReady: false,
+            branch: null,
+            tracking: null,
+            ahead: 0,
+            behind: 0,
+            staged: [],
+            unstaged: [],
+            untracked: [],
+            clean: true,
+            repoUrl: null,
+            message: "Project not found or repository snapshot not ready.",
+          },
+        };
+      }
+      return handleResponse(res);
+    } catch (err) {
+      return {
+        success: true,
+        data: {
+          isGitHubProject: false,
+          hasGit: false,
+          isReady: false,
+          branch: null,
+          tracking: null,
+          ahead: 0,
+          behind: 0,
+          staged: [],
+          unstaged: [],
+          untracked: [],
+          clean: true,
+          repoUrl: null,
+          message: err.message || "Failed to load git status",
+        },
+      };
+    }
   },
 
   stageFiles: async (projectId, files) => {

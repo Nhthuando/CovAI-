@@ -25,8 +25,18 @@ import {
 } from './job.service.js';
 import prisma from '../config/prisma.js';
 
+let isRedisConnected = false;
+
 const redisOptions = {
   maxRetriesPerRequest: null,
+  retryStrategy(times) {
+    if (process.env.NODE_ENV === 'test') {
+      if (times > 2) return null;
+      return 500;
+    }
+    return Math.min(times * 500, 3000);
+  },
+  enableOfflineQueue: true,
 };
 
 const connection = new IORedis(
@@ -34,26 +44,193 @@ const connection = new IORedis(
   redisOptions,
 );
 
+if (connection && typeof connection.on === 'function') {
+  connection.on('connect', () => {
+    isRedisConnected = true;
+    console.log('[Queue] Connected to Redis successfully.');
+  });
+
+  connection.on('ready', () => {
+    isRedisConnected = true;
+  });
+
+  connection.on('close', () => {
+    isRedisConnected = false;
+  });
+
+  connection.on('error', (err) => {
+    isRedisConnected = false;
+    if (process.env.NODE_ENV !== 'test') {
+      console.warn(`[Queue] Redis connection error: ${err.message}`);
+    }
+  });
+}
+
 export const jobQueue = new Queue('covai-jobs', { connection });
 export const flowProducer = new FlowProducer({ connection });
 
 if (typeof connection?.on === 'function') {
   connection.on('error', (err) => {
-    console.error('[Redis Connection Error]', err.message);
+    isRedisConnected = false;
+    if (process.env.NODE_ENV !== 'test') {
+      console.warn(`[Redis Connection Error] ${err.message}`);
+    }
   });
 }
 
 if (typeof jobQueue?.on === 'function') {
   jobQueue.on('error', (err) => {
-    console.error('[BullMQ Queue Error]', err.message);
+    isRedisConnected = false;
+    if (process.env.NODE_ENV !== 'test') {
+      console.warn(`[BullMQ Queue Error] ${err.message}`);
+    }
   });
 }
 
 if (typeof flowProducer?.on === 'function') {
   flowProducer.on('error', (err) => {
-    console.error('[BullMQ FlowProducer Error]', err.message);
+    if (process.env.NODE_ENV !== 'test') {
+      console.warn(`[BullMQ FlowProducer Error] ${err.message}`);
+    }
   });
 }
+
+export const executeJobDirectly = async (type, jobId, customData = {}) => {
+  console.log(`[DirectExecutor] Running job directly: type=${type}, jobId=${jobId}`);
+  try {
+    switch (type) {
+      case 'RUN_TESTS':
+        await processRunTestsJob(jobId);
+        break;
+      case 'SUPERTEST_COVERAGE':
+        await processSupertestCoverageJob(jobId);
+        break;
+      case 'SUPERTEST_COVERAGE_PIPELINE': {
+        const installJobId = customData.installJobId ?? jobId;
+        const supertestJobId = customData.supertestJobId;
+        console.log(`[Queue] SUPERTEST_COVERAGE_PIPELINE started: installJob=${installJobId}, supertestJob=${supertestJobId}`);
+
+        const installJob = await prisma.job.findUnique({ where: { id: installJobId }, select: { status: true, errorMessage: true } });
+        const installStatus = installJob?.status ?? 'UNKNOWN';
+        console.log(`[Queue] SUPERTEST_COVERAGE_PIPELINE reads INSTALL_DEPS status: installJob=${installJobId}, status=${installStatus}`);
+
+        if (['QUEUED', 'RUNNING'].includes(installStatus)) {
+          console.log(`[Queue] INSTALL_DEPS remains ${installStatus}; parent not released yet, so pipeline waits for child completion.`);
+          return;
+        }
+
+        if (['FAILED', 'CANCELED'].includes(installStatus)) {
+          const message = `Dependency installation failed; Supertest was not started. Reason: ${installJob?.errorMessage || 'Unknown error'}`;
+          console.error(`[Queue] Install deps failed => parent will not start Supertest. installJobStatus=${installStatus}, supertestJob=${supertestJobId}`);
+          if (supertestJobId) {
+            const supertestJob = await prisma.job.findUnique({
+              where: { id: supertestJobId },
+              select: { id: true, status: true }
+            });
+
+            if (supertestJob && ['QUEUED', 'RUNNING'].includes(supertestJob.status)) {
+              await prisma.job.update({
+                where: { id: supertestJobId },
+                data: {
+                  status: 'FAILED',
+                  errorMessage: message,
+                  finishedAt: new Date(),
+                },
+              });
+              console.log(`[Queue] Marked Supertest job ${supertestJobId} FAILED because dependency install failed.`);
+            }
+          }
+          return;
+        }
+
+        if (installStatus !== 'SUCCESS') {
+          console.warn(`[Queue] INSTALL_DEPS status is ${installStatus}; not eligible to run Supertest yet.`);
+          return;
+        }
+
+        console.log(`[Queue] SUPERTEST_COVERAGE_PIPELINE became runnable: installJob=${installJobId} reached SUCCESS; starting processSupertestCoverageJob(${supertestJobId})`);
+        if (supertestJobId) {
+          await processSupertestCoverageJob(supertestJobId);
+        }
+        break;
+      }
+      case 'ANALYSIS':
+        await processAnalysisJob(jobId);
+        break;
+      case 'QUALITY_ANALYSIS':
+        await processQualityAnalysisJob(jobId);
+        break;
+      case 'SECURITY_ANALYSIS':
+        await processSecurityAnalysisJob(jobId);
+        break;
+      case 'AI_TESTS':
+        await processAiTestsJob(jobId);
+        break;
+      case 'AI_SUGGEST':
+        await processAiSuggestJob(jobId);
+        break;
+      case 'BUILD_CFG': {
+        const dbJob = await getJobById(jobId);
+        if (dbJob) await processBuildCfgJob(dbJob);
+        break;
+      }
+      case 'PERFORMANCE_ANALYSIS':
+        await processPerformanceAnalysisJob(jobId);
+        break;
+      case 'INGEST':
+        await processIngestJob(jobId);
+        break;
+      case 'INSTALL_DEPS':
+        await processInstallDepsJob(jobId);
+        break;
+      case 'COVERAGE':
+        await processCoverageJob(jobId);
+        break;
+      case 'COVERAGE_PIPELINE': {
+        await processInstallDepsJob(jobId);
+        const updatedInstallJob = await prisma.job.findUnique({ where: { id: jobId }, select: { status: true } });
+        if (updatedInstallJob?.status !== 'SUCCESS') {
+          console.error(`[Queue] INSTALL_DEPS failed, stopping COVERAGE_PIPELINE`);
+          return;
+        }
+        const runJob = await createRunTestsJob({
+          projectId: customData.projectId,
+          snapshotId: customData.snapshotId,
+          userId: customData.userId,
+        });
+        await processCoverageJob(runJob.id);
+        break;
+      }
+      case 'CODE_HYGIENE':
+        await processCodeHygieneJob(jobId);
+        break;
+      case 'RUN_VITEST_TESTS':
+        await processRunVitestJob(jobId);
+        break;
+      case 'VITEST_COVERAGE':
+        await processVitestCoverageJob(jobId);
+        break;
+      case 'SYSTEM_TEST_ANALYSIS':
+      case 'CYPRESS_SYSTEM_TEST':
+      case 'CYPRESS_SYSTEM_COVERAGE':
+      case 'PLAYWRIGHT_SYSTEM_TEST':
+      case 'PLAYWRIGHT_SYSTEM_COVERAGE':
+        await processSystemTestAnalysisJob(jobId);
+        break;
+      default:
+        console.warn(`[DirectExecutor] Unknown job type: ${type}`);
+    }
+  } catch (error) {
+    console.error(`[DirectExecutor] Error executing job ${jobId} (${type}):`, error);
+    try {
+      const dbJob = await getJobById(jobId);
+      if (dbJob && ['QUEUED', 'RUNNING'].includes(dbJob.status)) {
+        await markJobFailed(jobId, error);
+      }
+    } catch (_) { }
+    throw error;
+  }
+};
 
 // Initialize Worker
 const worker = new Worker(
@@ -64,135 +241,10 @@ const worker = new Worker(
 
     try {
       console.log(`[Queue] job.data = ${JSON.stringify({ type, jobId, ...customData })}`);
-      switch (type) {
-        case 'RUN_TESTS':
-          await processRunTestsJob(jobId);
-          break;
-        case 'SUPERTEST_COVERAGE':
-          console.log(`[Queue] processSupertestCoverageJob started for prisma job ${jobId}`);
-          await processSupertestCoverageJob(jobId);
-          break;
-        case 'SUPERTEST_COVERAGE_PIPELINE': {
-          const installJobId = customData.installJobId ?? jobId;
-          const supertestJobId = customData.supertestJobId;
-          console.log(`[Queue] SUPERTEST_COVERAGE_PIPELINE started: installJob=${installJobId}, supertestJob=${supertestJobId}`);
-
-          const installJob = await prisma.job.findUnique({ where: { id: installJobId }, select: { status: true, errorMessage: true } });
-          const installStatus = installJob?.status ?? 'UNKNOWN';
-          console.log(`[Queue] SUPERTEST_COVERAGE_PIPELINE reads INSTALL_DEPS status: installJob=${installJobId}, status=${installStatus}`);
-
-          if (['QUEUED', 'RUNNING'].includes(installStatus)) {
-            console.log(`[Queue] INSTALL_DEPS remains ${installStatus}; parent not released yet, so pipeline waits for child completion.`);
-            return;
-          }
-
-          if (['FAILED', 'CANCELED'].includes(installStatus)) {
-            const message = `Dependency installation failed; Supertest was not started. Reason: ${installJob?.errorMessage || 'Unknown error'}`;
-            console.error(`[Queue] Install deps failed => parent will not start Supertest. installJobStatus=${installStatus}, supertestJob=${supertestJobId}`);
-            if (supertestJobId) {
-              const supertestJob = await prisma.job.findUnique({
-                where: { id: supertestJobId },
-                select: { id: true, status: true }
-              });
-
-              if (supertestJob && ['QUEUED', 'RUNNING'].includes(supertestJob.status)) {
-                await prisma.job.update({
-                  where: { id: supertestJobId },
-                  data: {
-                    status: 'FAILED',
-                    errorMessage: message,
-                    finishedAt: new Date(),
-                  },
-                });
-                console.log(`[Queue] Marked Supertest job ${supertestJobId} FAILED because dependency install failed.`);
-              }
-            }
-            return;
-          }
-
-          if (installStatus !== 'SUCCESS') {
-            console.warn(`[Queue] INSTALL_DEPS status is ${installStatus}; not eligible to run Supertest yet.`);
-            return;
-          }
-
-          console.log(`[Queue] SUPERTEST_COVERAGE_PIPELINE became runnable: installJob=${installJobId} reached SUCCESS; starting processSupertestCoverageJob(${supertestJobId})`);
-          if (supertestJobId) {
-            await processSupertestCoverageJob(supertestJobId);
-          }
-          break;
-        }
-        case 'ANALYSIS':
-          await processAnalysisJob(jobId);
-          break;
-        case 'QUALITY_ANALYSIS':
-          await processQualityAnalysisJob(jobId);
-          break;
-        case 'SECURITY_ANALYSIS':
-          await processSecurityAnalysisJob(jobId);
-          break;
-        case 'AI_TESTS':
-          await processAiTestsJob(jobId);
-          break;
-        case 'AI_SUGGEST':
-          await processAiSuggestJob(jobId);
-          break;
-        case 'BUILD_CFG': {
-          const dbJob = await getJobById(jobId);
-          if (!dbJob) throw new Error(`Job ${jobId} not found`);
-          await processBuildCfgJob(dbJob);
-          break;
-        }
-        case 'PERFORMANCE_ANALYSIS':
-          await processPerformanceAnalysisJob(jobId);
-          break;
-        case 'INGEST':
-          await processIngestJob(jobId);
-          break;
-        case 'INSTALL_DEPS':
-          console.log(`[Queue] INSTALL_DEPS BullMQ job started: bullJobId=${job.id}, prismaJobId=${jobId}`);
-          await processInstallDepsJob(jobId);
-          break;
-        case 'COVERAGE':
-          await processCoverageJob(jobId);
-          break;
-        case 'CODE_HYGIENE':
-          await processCodeHygieneJob(jobId);
-          break;
-        case 'COVERAGE_PIPELINE': {
-          // Custom pipeline cho coverage
-          await processInstallDepsJob(jobId); // jobId lúc này là installJobId
-          const updatedInstallJob = await prisma.job.findUnique({ where: { id: jobId }, select: { status: true } });
-          if (updatedInstallJob?.status !== 'SUCCESS') {
-            console.error(`[Queue] INSTALL_DEPS thất bại, dừng COVERAGE_PIPELINE`);
-            return;
-          }
-          const runJob = await createRunTestsJob({
-            projectId: customData.projectId,
-            snapshotId: customData.snapshotId,
-            userId: customData.userId,
-          });
-          await processCoverageJob(runJob.id);
-          break;
-        }
-        case "RUN_VITEST_TESTS":
-          await processRunVitestJob(jobId);
-          break;
-        case 'VITEST_COVERAGE':
-          await processVitestCoverageJob(jobId);
-          break;
-        case "SYSTEM_TEST_ANALYSIS":
-        case 'CYPRESS_SYSTEM_TEST':
-        case 'CYPRESS_SYSTEM_COVERAGE':
-        case 'PLAYWRIGHT_SYSTEM_TEST':
-        case 'PLAYWRIGHT_SYSTEM_COVERAGE':
-          await processSystemTestAnalysisJob(jobId);
-          break;
-        default:
-          throw new Error(`Unknown job type: ${type}`);
-      }
-      console.log(`[Queue] Hoàn thành Job ${jobId} (Type: ${type})`);
+      await executeJobDirectly(type, jobId, customData);
+      console.log(`[Queue] Completed Job ${jobId} (Type: ${type})`);
     } catch (error) {
-      console.error(`[Queue] Lỗi xử lý Job ${jobId} (Type: ${type}):`, error);
+      console.error(`[Queue] Error processing Job ${jobId} (Type: ${type}):`, error);
       // Fallback to mark job failed if the handler didn't do it itself
       try {
         const dbJob = await getJobById(jobId);
@@ -203,7 +255,7 @@ const worker = new Worker(
         }
       } catch (fallbackError) {
         console.error(
-          `[Queue] Không thể markJobFailed cho Job ${jobId}:`,
+          `[Queue] Unable to markJobFailed for Job ${jobId}:`,
           fallbackError,
         );
         try {
@@ -221,39 +273,51 @@ const worker = new Worker(
 
 worker.on('failed', (job, err) => {
   console.error(
-    `[Queue] BullMQ báo Job ${job?.data?.jobId} failed với lỗi: ${err.message}`,
+    `[Queue] BullMQ reported Job ${job?.data?.jobId} failed with error: ${err.message}`,
   );
 });
 
 worker.on('error', (err) => {
-  console.error('[BullMQ Worker Error]', err.message);
+  if (process.env.NODE_ENV !== 'test') {
+    console.error('[BullMQ Worker Error]', err.message);
+  }
 });
 
 export const addJobToQueue = async (type, jobId, customData = {}, jobOptions = {}) => {
-  const dedupeKey = `${type}-${jobId}`.replace(/[^A-Za-z0-9_-]/g, '-');
-  await jobQueue.add(type, { type, jobId, ...customData }, { jobId: dedupeKey, ...jobOptions });
-  console.log(`[Queue] Đã đưa Job ${jobId} (Type: ${type}) vào hàng đợi với dedupe key ${dedupeKey}. options=${JSON.stringify(jobOptions)}`);
+  if (!isRedisConnected && process.env.NODE_ENV !== 'test') {
+    console.warn(`[Queue] Redis unavailable. Executing Job ${jobId} (${type}) directly in-memory...`);
+    setTimeout(() => executeJobDirectly(type, jobId, customData), 10);
+    return;
+  }
+
+  try {
+    const dedupeKey = `${type}-${jobId}`.replace(/[^A-Za-z0-9_-]/g, '-');
+    await jobQueue.add(type, { type, jobId, ...customData }, { jobId: dedupeKey, removeOnComplete: true, removeOnFail: true, ...jobOptions });
+    console.log(`[Queue] Queued Job ${jobId} (Type: ${type}) with dedupe key ${dedupeKey}.`);
+  } catch (redisErr) {
+    if (process.env.NODE_ENV !== 'test') {
+      console.warn(`[Queue] Error adding job to Redis (${redisErr.message}). Falling back to direct in-memory execution...`);
+      setTimeout(() => executeJobDirectly(type, jobId, customData), 10);
+    } else {
+      throw redisErr;
+    }
+  }
 };
 
 /**
  * Creates a Supertest coverage pipeline with proper BullMQ dependency direction.
- *
- * DEPENDENCY TREE:
- *   SUPERTEST_COVERAGE_PIPELINE (Parent)
- *   └── INSTALL_DEPS (Child)
- *
- * BullMQ Semantics:
- * - Parent waits for children to complete before executing
- * - SUPERTEST_COVERAGE_PIPELINE waits for INSTALL_DEPS to finish
- * - INSTALL_DEPS must complete BEFORE SUPERTEST_COVERAGE_PIPELINE starts
- *
- * @param {string} installJobId - ID of the INSTALL_DEPS job
- * @param {string} supertestJobId - ID of the SUPERTEST_COVERAGE job
- * @param {object} options - Optional FlowProducer options
- * @returns {Promise<object>} FlowProducer result with pipeline job info
  */
 export const addSupertestCoveragePipeline = async (installJobId, supertestJobId, options = {}) => {
   const pipelineJobId = `${supertestJobId}-pipeline`;
+
+  if (!isRedisConnected && process.env.NODE_ENV !== 'test') {
+    console.warn(`[Queue] Redis unavailable for Supertest pipeline. Running directly in-memory...`);
+    setTimeout(async () => {
+      await executeJobDirectly('INSTALL_DEPS', installJobId);
+      await executeJobDirectly('SUPERTEST_COVERAGE', supertestJobId);
+    }, 10);
+    return { name: 'SUPERTEST_COVERAGE_PIPELINE' };
+  }
 
   try {
     console.log(`[Queue] Creating Supertest pipeline: installJobId=${installJobId}, supertestJobId=${supertestJobId}, pipelineJobId=${pipelineJobId}`);
@@ -293,7 +357,11 @@ export const addSupertestCoveragePipeline = async (installJobId, supertestJobId,
     console.log(`[Queue] Supertest pipeline created with flow=${JSON.stringify(flow)}`);
     return flow;
   } catch (error) {
-    console.error(`[Queue] Error creating Supertest pipeline:`, error);
-    throw error;
+    console.warn(`[Queue] Error creating Supertest pipeline in Redis (${error.message}). Running in-memory...`);
+    setTimeout(async () => {
+      await executeJobDirectly('INSTALL_DEPS', installJobId);
+      await executeJobDirectly('SUPERTEST_COVERAGE', supertestJobId);
+    }, 10);
+    return { name: 'SUPERTEST_COVERAGE_PIPELINE' };
   }
 };

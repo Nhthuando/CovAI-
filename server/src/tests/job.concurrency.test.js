@@ -10,6 +10,12 @@ describe('F-04 Job Concurrency (Actual DB Constraint)', () => {
     let user;
 
     beforeAll(async () => {
+        // Clean up any leftovers from previous aborted test runs
+        await prisma.job.deleteMany({ where: { userId: 'user-conc-1' } }).catch(() => {});
+        await prisma.projectSnapshot.deleteMany({ where: { id: { in: ['snap-conc-A', 'snap-conc-B'] } } }).catch(() => {});
+        await prisma.project.deleteMany({ where: { id: { in: ['proj-conc-A', 'proj-conc-B'] } } }).catch(() => {});
+        await prisma.user.deleteMany({ where: { id: 'user-conc-1' } }).catch(() => {});
+
         // Create base data
         user = await prisma.user.create({
             data: {

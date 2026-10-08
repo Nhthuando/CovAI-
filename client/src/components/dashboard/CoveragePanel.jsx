@@ -1,6 +1,6 @@
 /**
- * CoveragePanel: Panel chứa 3 nút để chọn loại coverage: Unit, Integration, System
- * Khi nhấn từng nút sẽ đổi mode tương ứng. Chỉ là UI & state local. Có thể custom hoặc lấy coverageType via prop nếu cần kết nối ngoài.
+ * CoveragePanel: Panel with 3 buttons to select coverage type: Unit, Integration, System
+ * Clicking each button switches the corresponding mode. Local UI & state only.
  */
 const typeLabels = [
   { key: "unit", label: "Unit Test" },

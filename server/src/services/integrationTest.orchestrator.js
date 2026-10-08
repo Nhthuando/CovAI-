@@ -5,26 +5,26 @@ import { ServiceError } from "./project.service.js";
 
 /**
  * Orchestrator cho Integration Test Pipeline
- * Điều phối việc xác định framework và chạy runner tương ứng
+ * Orchestrate framework detection and execute corresponding runner
  */
 export const runIntegrationTestPipeline = async ({
   projectId,
   snapshotId,
   userId,
 }) => {
-  // 1. Detect các frameworks đang sử dụng
+  // 1. Detect active frameworks
   const frameworks = await detectFrameworks(projectId);
 
   if (!frameworks || frameworks.length === 0) {
     throw new ServiceError(
-      "Không tìm thấy framework hỗ trợ cho Integration Test.",
+      "No supported Integration Test framework found.",
       404,
     );
   }
 
   const results = [];
 
-  // 2. Chạy lần lượt các runner dựa trên kết quả detect
+  // 2. Run detected runners sequentially
   for (const item of frameworks) {
     const fw = item.framework;
     try {
@@ -39,12 +39,12 @@ export const runIntegrationTestPipeline = async ({
         results.push({ framework: fw, status: "SUCCESS", data: result });
       }
     } catch (err) {
-      console.error(`Lỗi khi chạy ${fw} runner:`, err);
+      console.error(`Error running ${fw} runner:`, err);
       results.push({ framework: fw, status: "FAILED", error: err.message });
     }
   }
 
-  // 3. Gom kết quả (Có thể mở rộng thêm logic lưu vào DB tại đây)
+  // 3. Aggregate results (Can expand with DB persistence logic here)
   return {
     success: true,
     results,

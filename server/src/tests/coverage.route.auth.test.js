@@ -9,7 +9,8 @@ dotenv.config();
 
 jest.unstable_mockModule('../services/queue.service.js', () => ({
     jobQueue: { add: jest.fn() },
-    addSupertestCoveragePipeline: jest.fn()
+    addSupertestCoveragePipeline: jest.fn(),
+    addJobToQueue: jest.fn()
 }));
 
 const coverageRoute = (await import("../routes/coverage.route.js")).default;
@@ -32,13 +33,14 @@ describe('F-01 Integration Scenario Authorization via Router', () => {
     beforeAll(async () => {
         if (!process.env.JWT_SECRET) process.env.JWT_SECRET = 'testsecret';
 
+        const timestamp = Date.now();
         const owner = await prisma.user.create({
-            data: { name: 'Owner User', email: 'owner@example.com', passwordHash: 'password' }
+            data: { name: 'Owner User', email: `owner-${timestamp}@example.com`, passwordHash: 'password' }
         });
         ownerToken = generateToken(owner.id, owner.name, owner.email);
 
         const other = await prisma.user.create({
-            data: { name: 'Other User', email: 'other@example.com', passwordHash: 'password' }
+            data: { name: 'Other User', email: `other-${timestamp}@example.com`, passwordHash: 'password' }
         });
         otherToken = generateToken(other.id, other.name, other.email);
 

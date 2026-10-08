@@ -29,7 +29,7 @@ import {
   ArrowRight,
   ShieldCheck,
 } from "lucide-react";
-import { getUserJobsApi } from "../../services/job.service";
+import { getUserJobsApi, cancelJobApi } from "../../services/job.service";
 import {
   getProjectSnapshotsApi,
   createProjectSnapshotApi,
@@ -222,7 +222,20 @@ export default function JobQueue({ projectId, onSync }) {
   const [loadingJobs, setLoadingJobs] = useState(true);
   const [errorJobs, setErrorJobs] = useState(null);
   const [filterJobs, setFilterJobs] = useState("ALL"); // ALL | ACTIVE | COMPLETED
+  const [cancelingJobId, setCancelingJobId] = useState(null);
   const intervalRef = useRef(null);
+
+  const handleCancelJob = async (jobId) => {
+    try {
+      setCancelingJobId(jobId);
+      await cancelJobApi(jobId);
+      await fetchJobs(true);
+    } catch (err) {
+      setErrorJobs(err.message || "Failed to cancel job");
+    } finally {
+      setCancelingJobId(null);
+    }
+  };
 
   // Fetch snapshots
   const fetchSnapshots = useCallback(
@@ -1385,6 +1398,33 @@ export default function JobQueue({ projectId, onSync }) {
                             </p>
                           </div>
                         </div>
+
+                        {isActive && (
+                          <button
+                            type="button"
+                            onClick={() => handleCancelJob(job.id)}
+                            disabled={cancelingJobId === job.id}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 5,
+                              padding: "3px 8px",
+                              borderRadius: "var(--radius-sm)",
+                              fontSize: 11,
+                              fontWeight: 600,
+                              color: "var(--color-danger)",
+                              background: "rgba(239, 68, 68, 0.1)",
+                              border: "1px solid rgba(239, 68, 68, 0.3)",
+                              cursor: "pointer",
+                              transition: "all 0.15s ease",
+                            }}
+                            title="Pause / Cancel this running job"
+                            className="hover:bg-red-500/20"
+                          >
+                            <Ban size={11} />
+                            <span>{cancelingJobId === job.id ? "Stopping..." : "Stop Job"}</span>
+                          </button>
+                        )}
 
                         {/* Status Badge */}
                         <div

@@ -18,8 +18,8 @@ const router = express.Router();
 router.post("/login", authLimiter, login);
 router.post("/register", authLimiter, register);
 router.post("/logout", authMiddleware, (req, res) => {
-  // Stateless JWT — client chỉ cần xóa token phía client
-  return res.status(200).json({ message: "Đăng xuất thành công!" });
+  // Stateless JWT — client only needs to remove token client-side
+  return res.status(200).json({ message: "Logout successful!" });
 });
 router.post("/forgotPassword", authLimiter, forgotPassword);
 router.post("/resetPassword/:token", authLimiter, resetPassword);

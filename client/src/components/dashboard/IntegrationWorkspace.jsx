@@ -447,8 +447,8 @@ export default function IntegrationWorkspace({
             textLogs.includes("Saved") ||
             textLogs.includes("Generated") ||
             textLogs.includes("No Supertest") ||
-            textLogs.includes("hoàn thành") ||
-            textLogs.includes("Hoàn thành"),
+            textLogs.toLowerCase().includes("complete") ||
+            textLogs.toLowerCase().includes("finish"),
         },
       ];
     } else if (jobType === "EXECUTE") {
@@ -459,14 +459,14 @@ export default function IntegrationWorkspace({
           label: "Prepare environment",
           done:
             hasStage("PREPARE_ENV") ||
-            textLogs.includes("Bắt đầu") ||
+            textLogs.toLowerCase().includes("start") ||
             textLogs.includes("TestRun"),
         },
         {
           label: "Execute tests",
           done:
             hasStage("RUN_JEST") ||
-            textLogs.includes("Bắt đầu") ||
+            textLogs.toLowerCase().includes("start") ||
             textLogs.includes("TestRun"),
         },
         {
@@ -474,25 +474,25 @@ export default function IntegrationWorkspace({
           done:
             hasStage("PARSE_COVERAGE") ||
             textLogs.includes("TestRun") ||
-            textLogs.includes("hoàn thành"),
+            textLogs.toLowerCase().includes("complete"),
         },
         {
           label: "Map tests to endpoints",
           done:
             hasStage("MAP_RESULTS") ||
             textLogs.includes("TestRun") ||
-            textLogs.includes("hoàn thành"),
+            textLogs.toLowerCase().includes("complete"),
         },
         {
           label: "Collect coverage",
           done:
             hasStage("MAP_RESULTS") ||
             textLogs.includes("TestRun") ||
-            textLogs.includes("hoàn thành"),
+            textLogs.toLowerCase().includes("complete"),
         },
         {
           label: "Build report",
-          done: hasStage("COMPLETE") || textLogs.includes("hoàn thành"),
+          done: hasStage("COMPLETE") || textLogs.toLowerCase().includes("complete"),
         },
       ];
     }

@@ -1190,12 +1190,12 @@ export default function Editor({
               style={{ color: "var(--color-success)", flexShrink: 0 }}
             />
             <span>
-              Applied testcase to file{" "}
+              Applied test case to file{" "}
               <strong style={{ color: "var(--color-text)" }}>
                 {appliedNotification.targetTestFile}
               </strong>
-              . Review the draft code and click <strong>Run Analysis</strong> to
-              verify tests pass and coverage increases.
+              . Review the draft code and click <strong>Run Analysis Unit</strong> to
+              confirm tests pass and coverage increases.
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -1213,7 +1213,7 @@ export default function Editor({
                   border: "none",
                 }}
               >
-                Run Analysis
+                Run Analysis Unit
               </button>
             )}
             <button

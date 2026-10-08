@@ -356,7 +356,7 @@ model TestScenario {
   suiteName           String?
   status              String
   durationMs          Float?
-  failureMessages     String[]
+  failureMessages     String[] @default([])
   testFile            String?
   screenshotPath      String?
   failureStep         String?

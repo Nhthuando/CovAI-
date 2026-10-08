@@ -5,7 +5,6 @@ import { buildFullTestPrompt } from "./fullTestPromptBuilder.service.js";
 import { buildAiPayload, loadSourceCode } from "./aiContextBuilder.service.js";
 import { validateGeneratedTest } from "./testValidation.service.js";
 import { createAiTestsJob } from "./job.service.js";
-import { addJobToQueue } from "./queue.service.js";
 import { extractValidEndpoints } from "./apiEndpointParser.service.js";
 
 
@@ -179,7 +178,7 @@ export const saveAiTestResult = async (data) => {
 
   const { aiTestId, status, output, error, duration } = data;
 
-  // Kiểm tra xem aiTestId có tồn tại trong bảng AiTest không
+  // Check whether aiTestId exists in AiTest table
   const aiTest = await db.aiTest.findUnique({
     where: { id: aiTestId },
   });
@@ -265,7 +264,7 @@ export const getAiTestsList = async ({
   // Build Filter
   const where = {
     projectId,
-    ...(status && { AiTestResult: { status } }), // Lọc theo PASS/FAIL nếu truyền vào
+    ...(status && { AiTestResult: { status } }), // Filter by PASS/FAIL if provided
   };
 
   // Fetch data in parallel
@@ -288,7 +287,7 @@ export const getAiTestsList = async ({
             id: true,
             status: true,
             duration: true,
-            error: true, // Vẫn trả error ra ngoài list để frontend biết lý do tóm tắt
+            error: true, // Return error summary so frontend knows the reason
             createdAt: true,
           },
         },

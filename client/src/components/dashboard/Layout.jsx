@@ -60,6 +60,7 @@ import {
   deleteProjectEntryApi,
 } from "../../services/project.service";
 import { getProjectJobsApi } from "../../services/job.service";
+import { queryClient } from "../../lib/queryClient.js";
 
 const INITIAL_TABS = [];
 const DEFAULT_SIDEBAR_WIDTH = 260;
@@ -188,9 +189,13 @@ function LayoutInner() {
   const [testPromptSnapshotId, setTestPromptSnapshotId] = useState(null);
   const [pendingAiSuggestion, setPendingAiSuggestion] = useState(null);
 
-  const handleSuggestTestcase = (filePath) => {
+  const handleSuggestTestcase = (filePath, options = {}) => {
     setAiPanelOpen(true);
-    setPendingAiSuggestion({ filePath, timestamp: Date.now() });
+    if (typeof filePath === "object" && filePath !== null) {
+      setPendingAiSuggestion({ ...filePath, timestamp: Date.now() });
+    } else {
+      setPendingAiSuggestion({ filePath, ...options, timestamp: Date.now() });
+    }
   };
 
   const [projects, setProjects] = useState([]);
@@ -200,6 +205,13 @@ function LayoutInner() {
   const [latestRunJob, setLatestRunJob] = useState(null);
   const [isSubmittingAnalysis, setIsSubmittingAnalysis] = useState(false);
   const [editorRefreshTrigger, setEditorRefreshTrigger] = useState(0);
+  const [coverageRunTrigger, setCoverageRunTrigger] = useState(0);
+
+  const handleTriggerRunAnalysis = () => {
+    setActiveActivity("coverage");
+    setCoverageType("unit");
+    setCoverageRunTrigger((prev) => prev + 1);
+  };
 
   const handleGitSync = async () => {
     try {
@@ -211,19 +223,22 @@ function LayoutInner() {
   };
 
   useEffect(() => {
-    if (!project?.id) {
+    const projectId = project?.id;
+    if (!projectId) {
       setLatestRunJob(null);
       return undefined;
     }
     let cancelled = false;
+    let timerId = null;
+
     const refreshRunJob = async () => {
       try {
-        const response = await getProjectJobsApi(project.id);
+        const response = await getProjectJobsApi(projectId);
         const jobs = response.jobs || [];
         const targetSnapshotId =
           project.snapshots?.[0]?.id ||
           project.latestSnapshotId ||
-          localStorage.getItem(`latestSnapshot_${project.id}`);
+          localStorage.getItem(`latestSnapshot_${projectId}`);
         const latest =
           jobs
             .filter(
@@ -233,18 +248,29 @@ function LayoutInner() {
             )
             .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] ||
           null;
-        if (!cancelled) setLatestRunJob(latest);
+        if (!cancelled) {
+          setLatestRunJob(latest);
+          // If a job is active, poll faster (4s); if idle, poll slowly (20s) to keep app responsive without hammering DB
+          const hasActiveJob = jobs.some((j) => ["QUEUED", "RUNNING"].includes(j.status));
+          const nextInterval = hasActiveJob ? 4000 : 20000;
+          if (!cancelled) {
+            timerId = window.setTimeout(refreshRunJob, nextInterval);
+          }
+        }
       } catch (err) {
-        console.error("Failed to refresh jobs", err);
+        if (!cancelled) {
+          // On transient error, back off gracefully
+          timerId = window.setTimeout(refreshRunJob, 10000);
+        }
       }
     };
+
     refreshRunJob();
-    const timer = window.setInterval(refreshRunJob, 4000);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      if (timerId) window.clearTimeout(timerId);
     };
-  }, [project]);
+  }, [project?.id]);
 
   useEffect(() => {
     if (isMobile) {
@@ -263,20 +289,39 @@ function LayoutInner() {
     async (activeProjId = null, retries = 3, delay = 2000) => {
       setIsLoadingTree(true);
       try {
-        const { getProjectsApi } =
+        const { getProjectsApi, getProjectTreeApi } =
           await import("../../services/project.service");
-        const { projects: loadedProjects } = await getProjectsApi();
+        const loadedProjects = await queryClient.fetchQuery({
+          queryKey: ["projects"],
+          queryFn: async () => {
+            const res = await getProjectsApi();
+            return res?.projects || [];
+          },
+          staleTime: 5 * 60 * 1000,
+        });
         if (loadedProjects && loadedProjects.length > 0) {
           setProjects(loadedProjects);
           const targetProj = activeProjId
             ? loadedProjects.find((p) => p.id === activeProjId) ||
-              loadedProjects[0]
+            loadedProjects[0]
             : loadedProjects[0];
           setProject(targetProj);
+          if (targetProj && searchParams.get("projectId") !== targetProj.id) {
+            const newParams = new URLSearchParams(location.search);
+            newParams.set("projectId", targetProj.id);
+            navigate(`${location.pathname}?${newParams.toString()}`, { replace: true });
+          }
           let lastError = null;
           for (let attempt = 1; attempt <= retries; attempt++) {
             try {
-              const { data: tree } = await getProjectTreeApi(targetProj.id);
+              const tree = await queryClient.fetchQuery({
+                queryKey: ["projectTree", targetProj.id],
+                queryFn: async () => {
+                  const res = await getProjectTreeApi(targetProj.id);
+                  return res?.data || [];
+                },
+                staleTime: 5 * 60 * 1000,
+              });
               setFileTree(tree || []);
               if (tree && tree.length > 0) {
                 const fileExistsInTree = (nodes, path) => {
@@ -408,6 +453,9 @@ function LayoutInner() {
     setTabs([]);
     setActiveFileId(null);
     setActiveTabId(null);
+    const newParams = new URLSearchParams(location.search);
+    newParams.set("projectId", projectId);
+    navigate(`${location.pathname}?${newParams.toString()}`);
     loadData(projectId);
   };
 
@@ -416,12 +464,16 @@ function LayoutInner() {
       const { deleteProjectApi } =
         await import("../../services/project.service");
       await deleteProjectApi(projectId);
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
       showToast({ type: "success", title: "Project deleted" });
       if (project?.id === projectId) {
         setFileTree([]);
         setTabs([]);
         setActiveFileId(null);
         setActiveTabId(null);
+        const newParams = new URLSearchParams(location.search);
+        newParams.delete("projectId");
+        navigate(`${location.pathname}?${newParams.toString()}`, { replace: true });
         loadData();
       } else {
         setProjects((prev) => prev.filter((p) => p.id !== projectId));
@@ -594,13 +646,13 @@ function LayoutInner() {
   const rawActivePath = activeTabId || activeFileId;
   const activeFilePath = rawActivePath
     ? String(rawActivePath)
-        .replace(/\\/g, "/")
-        .replace(/^\.?\//, "")
+      .replace(/\\/g, "/")
+      .replace(/^\.?\//, "")
     : null;
   const cleanFilePath =
     activeFilePath &&
-    project?.name &&
-    activeFilePath.startsWith(project.name + "/")
+      project?.name &&
+      activeFilePath.startsWith(project.name + "/")
       ? activeFilePath.slice(project.name.length + 1)
       : activeFilePath;
   const filePathSegments = cleanFilePath
@@ -654,11 +706,10 @@ function LayoutInner() {
                   >
                     <span className="flex-shrink-0 select-none">/</span>
                     <span
-                      className={`truncate max-w-[100px] md:max-w-[180px] ${
-                        isLast
+                      className={`truncate max-w-[100px] md:max-w-[180px] ${isLast
                           ? "text-[var(--color-text)] font-semibold"
                           : "text-[var(--color-text-secondary)] font-medium"
-                      }`}
+                        }`}
                       title={cleanFilePath}
                     >
                       {segment}
@@ -697,11 +748,10 @@ function LayoutInner() {
             <button
               type="button"
               onClick={() => setSidebarOpen((o) => !o)}
-              className={`p-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${
-                sidebarOpen
+              className={`p-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${sidebarOpen
                   ? "text-[var(--color-primary)]"
                   : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              }`}
+                }`}
               title={
                 sidebarOpen
                   ? "Collapse Explorer (Left)"
@@ -718,11 +768,10 @@ function LayoutInner() {
             <button
               type="button"
               onClick={() => setAiPanelOpen((o) => !o)}
-              className={`p-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${
-                aiPanelOpen
+              className={`p-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${aiPanelOpen
                   ? "text-[var(--color-primary)]"
                   : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              }`}
+                }`}
               title={
                 aiPanelOpen
                   ? "Collapse Assistant (Right)"
@@ -777,21 +826,21 @@ function LayoutInner() {
               style={
                 isMobile
                   ? {
-                      position: "fixed",
-                      top: 42,
-                      bottom: 26,
-                      left: 0,
-                      width: 280,
-                      maxWidth: "85vw",
-                      overflow: "hidden",
-                      zIndex: 35,
-                      boxShadow: "4px 0 24px rgba(0,0,0,0.4)",
-                    }
+                    position: "fixed",
+                    top: 42,
+                    bottom: 26,
+                    left: 0,
+                    width: 280,
+                    maxWidth: "85vw",
+                    overflow: "hidden",
+                    zIndex: 35,
+                    boxShadow: "4px 0 24px rgba(0,0,0,0.4)",
+                  }
                   : {
-                      overflow: "hidden",
-                      flexShrink: 0,
-                      borderRight: "1px solid var(--ide-border)",
-                    }
+                    overflow: "hidden",
+                    flexShrink: 0,
+                    borderRight: "1px solid var(--ide-border)",
+                  }
               }
             >
               {activeActivity === "settings" ? (
@@ -850,105 +899,109 @@ function LayoutInner() {
           className="flex flex-1 min-w-0 min-h-0 relative"
           variants={panelVariants}
         >
-          {activeActivity === "settings" ? (
-            <div className="w-full h-full overflow-y-auto">
-              {isMobile && (
-                <SettingsSidebar
-                  activeSetting={activeSetting}
-                  onSelectSetting={setActiveSetting}
-                  variant="tabs"
-                />
-              )}
-              {activeSetting === "profile" && <UserProfile />}
-              {activeSetting === "appearance" && <Appearance />}
-              {activeSetting === "security" && <Security />}
-              {activeSetting === "notifications" && <NotificationsSettings />}
-              {activeSetting === "billing" && <Billing />}
-            </div>
-          ) : activeActivity === "jobs" ? (
+          <div className={activeActivity === "settings" ? "w-full h-full overflow-y-auto" : "hidden"}>
+            {isMobile && (
+              <SettingsSidebar
+                activeSetting={activeSetting}
+                onSelectSetting={setActiveSetting}
+                variant="tabs"
+              />
+            )}
+            {activeSetting === "profile" && <UserProfile />}
+            {activeSetting === "appearance" && <Appearance />}
+            {activeSetting === "security" && <Security />}
+            {activeSetting === "notifications" && <NotificationsSettings />}
+            {activeSetting === "billing" && <Billing />}
+          </div>
+
+          <div className={activeActivity === "jobs" ? "w-full h-full overflow-y-auto" : "hidden"}>
             <JobQueue projectId={project?.id} onSync={handleGitSync} />
-          ) : activeActivity === "architecture" ? (
+          </div>
+
+          <div className={activeActivity === "architecture" ? "w-full h-full overflow-y-auto" : "hidden"}>
             <ProjectArchitecturePanel
               projectId={project?.id}
               initialFile={archInitialContext?.initialFile}
             />
-          ) : activeActivity === "coverage" ? (
-            <div className="w-full h-full overflow-y-auto">
-              {coverageType === "unit" ? (
-                <UnitTestDashboard
-                  snapshotId={
-                    project?.latestSnapshotId ||
-                    (project?.id
-                      ? localStorage.getItem(`latestSnapshot_${project.id}`)
-                      : null) ||
-                    testPromptSnapshotId
-                  }
-                  projectId={project?.id}
-                  onOpenFile={handleOpenFileByPath}
-                  onSuggestTestcase={handleSuggestTestcase}
-                  onOpenCFG={() => setShowCFG(true)}
-                />
-              ) : coverageType === "integration" ? (
-                <IntegrationTestDashboard
-                  snapshotId={
-                    project?.latestSnapshotId ||
-                    (project?.id
-                      ? localStorage.getItem(`latestSnapshot_${project.id}`)
-                      : null) ||
-                    testPromptSnapshotId
-                  }
-                  projectId={project?.id}
-                  onOpenFile={handleOpenFileByPath}
-                  onOpenCFG={handleOpenCFG}
-                  onSuggestTestcase={handleSuggestTestcase}
-                  onOpenArchitecture={handleOpenArchitecture}
-                  initialContext={integrationInitialContext}
-                  onContextChange={setIntegrationInitialContext}
-                />
-              ) : (
-                <SystemTestDashboard
-                  snapshotId={
-                    project?.latestSnapshotId ||
-                    (project?.id
-                      ? localStorage.getItem(`latestSnapshot_${project.id}`)
-                      : null) ||
-                    testPromptSnapshotId
-                  }
-                  projectId={project?.id}
-                  onOpenFile={handleOpenFileByPath}
-                />
-              )}
+          </div>
+
+          <div className={activeActivity === "coverage" ? "w-full h-full overflow-y-auto" : "hidden"}>
+            <div className={coverageType === "unit" ? "h-full" : "hidden"}>
+              <UnitTestDashboard
+                snapshotId={
+                  project?.latestSnapshotId ||
+                  (project?.id
+                    ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                    : null) ||
+                  testPromptSnapshotId
+                }
+                projectId={project?.id}
+                onOpenFile={handleOpenFileByPath}
+                onSuggestTestcase={handleSuggestTestcase}
+                onOpenCFG={() => setShowCFG(true)}
+                runTrigger={coverageRunTrigger}
+              />
             </div>
-          ) : (
-            <Editor
-              tabs={tabs}
-              activeTabId={activeTabId}
-              onSelectTab={(tabId) => {
-                setActiveTabId(tabId);
-                setActiveFileId(tabId);
-              }}
-              onCloseTab={handleCloseTab}
-              onReorderTabs={setTabs}
-              fileTree={fileTree}
-              isLoadingTree={isLoadingTree}
-              projectId={project?.id}
-              snapshotId={
-                project?.latestSnapshotId ||
-                (project?.id
-                  ? localStorage.getItem(`latestSnapshot_${project.id}`)
-                  : null) ||
-                testPromptSnapshotId
-              }
-              coverageType={coverageType}
-              onOpenFile={handleOpenFileByPath}
-              onRunAnalysis={() => {
-                setActiveActivity("coverage");
-                setCoverageType("unit");
-              }}
-              onSuggestTestcase={handleSuggestTestcase}
-              refreshTrigger={editorRefreshTrigger}
-            />
-          )}
+            <div className={coverageType === "integration" ? "h-full" : "hidden"}>
+              <IntegrationTestDashboard
+                snapshotId={
+                  project?.latestSnapshotId ||
+                  (project?.id
+                    ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                    : null) ||
+                  testPromptSnapshotId
+                }
+                projectId={project?.id}
+                onOpenFile={handleOpenFileByPath}
+                onOpenCFG={handleOpenCFG}
+                onSuggestTestcase={handleSuggestTestcase}
+                onOpenArchitecture={handleOpenArchitecture}
+                initialContext={integrationInitialContext}
+                onContextChange={setIntegrationInitialContext}
+              />
+            </div>
+            <div className={coverageType === "system" ? "h-full" : "hidden"}>
+              <SystemTestDashboard
+                snapshotId={
+                  project?.latestSnapshotId ||
+                  (project?.id
+                    ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                    : null) ||
+                  testPromptSnapshotId
+                }
+                projectId={project?.id}
+                onOpenFile={handleOpenFileByPath}
+              />
+            </div>
+          </div>
+
+          <div className={activeActivity !== "settings" && activeActivity !== "jobs" && activeActivity !== "architecture" && activeActivity !== "coverage" ? "w-full h-full" : "hidden"}>
+                <Editor
+                  tabs={tabs}
+                  activeTabId={activeTabId}
+                  onSelectTab={(tabId) => {
+                    setActiveTabId(tabId);
+                    setActiveFileId(tabId);
+                  }}
+                  onCloseTab={handleCloseTab}
+                  onReorderTabs={setTabs}
+                  fileTree={fileTree}
+                  isLoadingTree={isLoadingTree}
+                  projectId={project?.id}
+                  snapshotId={
+                    project?.latestSnapshotId ||
+                    (project?.id
+                      ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                      : null) ||
+                    testPromptSnapshotId
+                  }
+                  coverageType={coverageType}
+                  onOpenFile={handleOpenFileByPath}
+                  onRunAnalysis={handleTriggerRunAnalysis}
+                  onSuggestTestcase={handleSuggestTestcase}
+                  refreshTrigger={editorRefreshTrigger}
+                />
+              </div>
         </motion.div>
         <AnimatePresence initial={false}>
           {aiPanelOpen && (
@@ -981,16 +1034,16 @@ function LayoutInner() {
                 style={
                   isMobile
                     ? {
-                        position: "fixed",
-                        top: 42,
-                        bottom: 26,
-                        right: 0,
-                        width: "100%",
-                        maxWidth: 360,
-                        overflow: "hidden",
-                        zIndex: 35,
-                        boxShadow: "-4px 0 24px rgba(0,0,0,0.4)",
-                      }
+                      position: "fixed",
+                      top: 42,
+                      bottom: 26,
+                      right: 0,
+                      width: "100%",
+                      maxWidth: 360,
+                      overflow: "hidden",
+                      zIndex: 35,
+                      boxShadow: "-4px 0 24px rgba(0,0,0,0.4)",
+                    }
                     : { overflow: "hidden", flexShrink: 0 }
                 }
               >
@@ -1007,10 +1060,7 @@ function LayoutInner() {
                   pendingAiSuggestion={pendingAiSuggestion}
                   onClearPendingSuggestion={() => setPendingAiSuggestion(null)}
                   onOpenFile={handleOpenFileByPath}
-                  onRunAnalysis={() => {
-                    setActiveActivity("coverage");
-                    setCoverageType("unit");
-                  }}
+                  onRunAnalysis={handleTriggerRunAnalysis}
                 />
               </motion.div>
             </>

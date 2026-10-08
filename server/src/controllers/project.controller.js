@@ -5,6 +5,7 @@ import { parseCoverageFilesForSnapshot } from "../services/coverageFileParser.se
 import { parseCoverageFunctionsForSnapshot } from "../services/coverageFunctionParser.service.js";
 import { GitHubCloneService } from "../services/githubClone.service.js";
 import { detectJest } from "../utils/jestDetector.js";
+import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 import { createAiSuggestJob } from "../services/job.service.js";
 import { processAiSuggestJob } from "../services/aiSuggestJob.service.js";
 import {
@@ -318,6 +319,9 @@ class ProjectController {
       return res.status(200).json({ success: true, data });
     } catch (error) {
       if (error instanceof ServiceError) {
+        if (error.statusCode === 404) {
+          return res.status(200).json({ success: true, data: null });
+        }
         return res
           .status(error.statusCode)
           .json({ success: false, message: error.message });
@@ -604,7 +608,7 @@ class ProjectController {
 
       return res.status(201).json({
         success: true,
-        message: "Snapshot và Job được tạo thành công",
+        message: "Snapshot and Job created successfully",
         snapshot: {
           id: result.snapshot.id,
           projectId: result.snapshot.projectId,
@@ -653,7 +657,7 @@ class ProjectController {
           needsTests: true,
           snapshotId: targetSnapshot.id,
           message:
-            "Dự án chưa có file test. Vui lòng tạo test trước khi chạy phân tích.",
+            "Project has no test files yet. Please create tests before running analysis.",
         });
       }
 
@@ -667,10 +671,10 @@ class ProjectController {
       const reused = queuedJob.reused === true;
       const { reused: _reused, ...job } = queuedJob;
 
-      // SCRUM-138..144: Kick-off full pipeline bất đồng bộ qua Queue
+      // Kick-off full async pipeline via Queue
       if (!reused)
         addJobToQueue("RUN_TESTS", job.id).catch((err) => {
-          console.error("Lỗi khi thêm RUN_TESTS vào queue:", err);
+          console.error("Error adding RUN_TESTS to queue:", err);
         });
 
       return res.status(201).json({
@@ -731,7 +735,7 @@ class ProjectController {
       });
 
       addJobToQueue("BUILD_CFG", job.id).catch((err) => {
-        console.error("Lỗi khi thêm BUILD_CFG vào queue:", err);
+        console.error("Error adding BUILD_CFG to queue:", err);
       });
 
       return res.status(201).json({
@@ -1305,14 +1309,15 @@ class ProjectController {
           .json({ success: false, message: "Duplicate snapshot" });
       }
 
-      const detection = detectJest(localPath);
+      const resolvedRootDir = resolveProjectRoot(localPath) || localPath;
+      const detection = detectJest(resolvedRootDir);
       const snapshot = await prisma.projectSnapshot.create({
         data: {
           projectId,
           source: "GITHUB",
           commitSha,
           storagePath: localPath,
-          rootDir: localPath,
+          rootDir: resolvedRootDir,
           hasJest: detection.hasJest,
           jestConfigPath: detection.configPath,
           jestCommand: detection.jestCommand,
@@ -1374,9 +1379,9 @@ class ProjectController {
         userId: req.user.id,
       });
 
-      // Kick-off full pipeline bất đồng bộ (không await)
+      // Kick-off full async pipeline (non-blocking)
       addJobToQueue("AI_SUGGEST", job.id).catch((err) => {
-        console.error("Lỗi khi thêm AI_SUGGEST vào queue:", err);
+        console.error("Error adding AI_SUGGEST to queue:", err);
       });
 
       return res.status(202).json({
@@ -1441,7 +1446,7 @@ class ProjectController {
       });
 
       addJobToQueue("AI_TESTS", job.id).catch((err) => {
-        console.error("Lỗi khi thêm AI_TESTS vào queue:", err);
+        console.error("Error adding AI_TESTS to queue:", err);
       });
 
       return res.status(202).json({
@@ -1505,9 +1510,9 @@ class ProjectController {
       });
     } catch (error) {
       console.error("Error in getChatSessions:", error);
-      return res.status(500).json({
-        success: false,
-        message: "Failed to load chat history sessions",
+      return res.status(200).json({
+        success: true,
+        data: [],
       });
     }
   }
@@ -2044,7 +2049,7 @@ The user is working on project: ${project.name}.
       const { id: projectId } = req.params;
       const { snapshotId } = req.body;
 
-      // Import hàm khởi tạo job chúng ta vừa làm ở Bước 1
+      // Import job initialization helper
       const { createVitestJob } = await import("../services/job.service.js");
 
       const job = await createVitestJob({
@@ -2053,9 +2058,9 @@ The user is working on project: ${project.name}.
         userId: req.user.id,
       });
 
-      // Đẩy job vào queue để chạy ngầm (trả về kết quả cho client ngay lập tức)
+      // Push job to queue for background processing (returns immediately to client)
       addJobToQueue("RUN_VITEST_TESTS", job.id).catch((err) => {
-        console.error("Lỗi khi thêm RUN_VITEST_TESTS vào queue:", err);
+        console.error("Error adding RUN_VITEST_TESTS to queue:", err);
       });
 
       return res.status(202).json({
@@ -2147,6 +2152,189 @@ The user is working on project: ${project.name}.
         success: true,
         message: "Playwright detection completed",
         data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+  /**
+   * POST /projects/:id/cypress-system-test
+   */
+  async runCypressSystemTests(req, res) {
+    try {
+      const { id: projectId } = req.params;
+      const { snapshotId } = req.body;
+
+      const { createCypressSystemTestJob } =
+        await import("../services/job.service.js");
+
+      const job = await createCypressSystemTestJob({
+        projectId,
+        snapshotId,
+        userId: req.user.id,
+      });
+
+      addJobToQueue("CYPRESS_SYSTEM_TEST", job.id).catch((err) => {
+        console.error("Error adding CYPRESS_SYSTEM_TEST to queue:", err);
+      });
+
+      return res.status(202).json({
+        success: true,
+        data: {
+          job: {
+            id: job.id,
+            type: job.type,
+            snapshotId: job.snapshotId,
+            status: job.status,
+            progress: job.progress,
+            createdAt: job.createdAt,
+            updatedAt: job.updatedAt,
+          },
+        },
+      });
+    } catch (error) {
+      console.error(error);
+
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  }
+
+  /**
+   * POST /projects/:id/cypress-coverage
+   */
+  async runCypressCoverage(req, res) {
+    try {
+      const { id: projectId } = req.params;
+      const { snapshotId } = req.body;
+
+      const { createCypressSystemCoverageJob } =
+        await import("../services/job.service.js");
+
+      const job = await createCypressSystemCoverageJob({
+        projectId,
+        snapshotId,
+        userId: req.user.id,
+      });
+
+      addJobToQueue("CYPRESS_SYSTEM_COVERAGE", job.id).catch((err) => {
+        console.error("Error adding CYPRESS_SYSTEM_COVERAGE to queue:", err);
+      });
+
+      return res.status(202).json({
+        success: true,
+        data: {
+          job: {
+            id: job.id,
+            type: job.type,
+            snapshotId: job.snapshotId,
+            status: job.status,
+            progress: job.progress,
+            createdAt: job.createdAt,
+            updatedAt: job.updatedAt,
+          },
+        },
+      });
+    } catch (error) {
+      console.error(error);
+
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  }
+
+  /**
+   * POST /projects/:id/playwright-test
+   */
+  async runPlaywrightSystemTests(req, res) {
+    try {
+      const { id: projectId } = req.params;
+      const { snapshotId, testDirectory } = req.body;
+
+      // Late import to avoid circular dependencies
+      const { createPlaywrightJob } =
+        await import("../services/job.service.js");
+      const { addJobToQueue } = await import("../services/queue.service.js");
+
+      // Initialize job
+      const job = await createPlaywrightJob({
+        projectId,
+        snapshotId,
+        userId: req.user.id,
+        testDirectory,
+      });
+
+      // Push job to queue for worker processing
+      addJobToQueue("PLAYWRIGHT_SYSTEM_TEST", job.id).catch((err) => {
+        console.error("Error adding PLAYWRIGHT_SYSTEM_TEST to queue:", err);
+      });
+
+      return res.status(202).json({
+        success: true,
+        data: {
+          job: {
+            id: job.id,
+            type: job.type,
+            status: job.status,
+          },
+        },
+      });
+    } catch (error) {
+      console.error(error);
+      return res
+        .status(500)
+        .json({ success: false, message: "Internal server error" });
+    }
+  }
+  async runPlaywrightCoverage(req, res, next) {
+    try {
+      const { id: projectId } = req.params;
+      const { snapshotId, testDirectory } = req.body;
+      const userId = req.user?.id;
+
+      if (!snapshotId) {
+        throw new ServiceError("snapshotId is required", 400);
+      }
+
+      const job = await createPlaywrightSystemCoverageJob({
+        projectId,
+        snapshotId,
+        userId,
+        testDirectory,
+      });
+
+      await addJobToQueue(job.type, job.id, {
+        projectId,
+        snapshotId,
+        userId,
+        testDirectory,
+      });
+
+      res.status(202).json({
+        success: true,
+        data: {
+          job: {
+            id: job.id,
+            type: job.type,
+            status: job.status,
+          },
+        },
       });
     } catch (error) {
       next(error);

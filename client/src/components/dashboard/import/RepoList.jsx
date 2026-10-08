@@ -49,8 +49,8 @@ function RepoItem({ repo, onClose, onSuccess, showToast }) {
     if (!isSupported) {
       showToast({
         type: "error",
-        title: "Ngôn ngữ không được hỗ trợ",
-        message: `CovAI chỉ hỗ trợ dự án có ngôn ngữ chính là JavaScript hoặc TypeScript. Repository này có ngôn ngữ là: ${repo.language}.`,
+        title: "Unsupported Language",
+        message: `CovAI only supports projects with JavaScript or TypeScript as primary language. This repository has language: ${repo.language}.`,
       });
       return;
     }
@@ -171,7 +171,7 @@ function RepoItem({ repo, onClose, onSuccess, showToast }) {
         loading={importing}
         title={
           !isSupported
-            ? `Chỉ hỗ trợ JavaScript/TypeScript (Ngôn ngữ: ${repo.language})`
+            ? `Only JavaScript/TypeScript supported (Language: ${repo.language})`
             : "Import repository"
         }
         id={`repo-import-${repo.id}`}

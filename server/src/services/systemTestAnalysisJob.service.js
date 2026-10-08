@@ -113,14 +113,14 @@ const broadcastJobProgress = async (
     if (progress !== undefined) {
       try {
         const p = updateJobProgress(jobId, progress);
-        if (p && typeof p.catch === "function") await p.catch(() => {});
-      } catch (_) {}
+        if (p && typeof p.catch === "function") await p.catch(() => { });
+      } catch (_) { }
     }
     if (message) {
       try {
         const l = addJobLog(jobId, "INFO", message);
-        if (l && typeof l.catch === "function") await l.catch(() => {});
-      } catch (_) {}
+        if (l && typeof l.catch === "function") await l.catch(() => { });
+      } catch (_) { }
     }
     if (global.io) {
       const payload = {
@@ -231,7 +231,6 @@ export const processSystemTestAnalysisJob = async (jobId) => {
       finishedAt,
       rootDir: job.snapshot.rootDir,
     });
-
     if (executionResult.exitCode !== 0 && testRun.status === "PASSED") {
       throw new ServiceError(
         `System test runner exited with code ${executionResult.exitCode} despite a passing report`,
@@ -242,7 +241,7 @@ export const processSystemTestAnalysisJob = async (jobId) => {
     let harvestedContext = {};
     try {
       harvestedContext = collectSystemGenerationContext(job.snapshot.rootDir);
-    } catch (_) {}
+    } catch (_) { }
 
     const systemCoverage = calculateSystemCoverage({
       rootDir: job.snapshot.rootDir,
@@ -253,13 +252,8 @@ export const processSystemTestAnalysisJob = async (jobId) => {
     });
 
     const { scenarios = [], ...testRunData } = testRun;
-    const mappingFile =
-      executionResult.reportPath &&
-      path.join(path.dirname(executionResult.reportPath), "source-map.json");
-    const sourceMap =
-      mappingFile && fs.existsSync(mappingFile)
-        ? JSON.parse(fs.readFileSync(mappingFile, "utf8"))
-        : {};
+    const mappingFile = executionResult.reportPath && path.join(path.dirname(executionResult.reportPath), 'source-map.json');
+    const sourceMap = mappingFile && fs.existsSync(mappingFile) ? JSON.parse(fs.readFileSync(mappingFile, 'utf8')) : {};
     const createdTestRun = await prisma.testRun.create({
       data: {
         snapshotId: job.snapshotId,
@@ -272,35 +266,32 @@ export const processSystemTestAnalysisJob = async (jobId) => {
         coverageFunctionsPct: systemCoverage.summary.functionsPct,
         ...(scenarios.length > 0
           ? {
-              scenarios: {
-                create: scenarios.map((s) => ({
-                  title: s.title,
-                  suiteName: s.suiteName || null,
-                  status: s.status,
-                  durationMs: s.durationMs || null,
-                  failureMessages: s.failureMessages || [],
-                  testFile:
-                    sourceMap[path.basename(s.testFile || "")] ||
-                    s.testFile ||
-                    null,
-                  screenshotPath: storeScenarioScreenshot({
-                    rootDir: job.snapshot.rootDir,
-                    source: s.screenshotSource,
-                    runKey: crypto.randomUUID(),
-                  }),
-                  failureStep: s.failureStep || null,
-                  failureCategory: s.failureCategory || null,
-                  failureCodeSnippet: s.failureCodeSnippet || null,
-                  domSnapshot: s.domSnapshot || null,
-                  coverageLinesPct:
-                    systemCoverage.scenarioContributions[s.title]?.linesPct ||
-                    null,
-                  coverageBranchesPct:
-                    systemCoverage.scenarioContributions[s.title]
-                      ?.branchesPct || null,
-                })),
-              },
-            }
+            scenarios: {
+              create: scenarios.map((s) => ({
+                title: s.title,
+                suiteName: s.suiteName || null,
+                status: s.status,
+                durationMs: s.durationMs || null,
+                failureMessages: s.failureMessages || [],
+                testFile: sourceMap[path.basename(s.testFile || '')] || s.testFile || null,
+                screenshotPath: storeScenarioScreenshot({
+                  rootDir: job.snapshot.rootDir,
+                  source: s.screenshotSource,
+                  runKey: crypto.randomUUID(),
+                }),
+                failureStep: s.failureStep || null,
+                failureCategory: s.failureCategory || null,
+                failureCodeSnippet: s.failureCodeSnippet || null,
+                domSnapshot: s.domSnapshot || null,
+                coverageLinesPct:
+                  systemCoverage.scenarioContributions?.[s.title]?.linesPct ||
+                  null,
+                coverageBranchesPct:
+                  systemCoverage.scenarioContributions?.[s.title]
+                    ?.branchesPct || null,
+              })),
+            },
+          }
           : {}),
       },
     });
@@ -323,7 +314,7 @@ export const processSystemTestAnalysisJob = async (jobId) => {
               coverageLinesPct: fileItem.coverageLinesPct,
             },
           });
-        } catch (_) {}
+        } catch (_) { }
       }
     }
 

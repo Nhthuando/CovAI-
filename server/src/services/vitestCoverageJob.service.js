@@ -14,7 +14,7 @@ import { runVitestCoverage } from "./vitestRunner.service.js";
 import { parseCoverageSummary } from "./coverageSummaryParser.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { storeCoverageOutputs } from "./coverageStorage.service.js";
-import { parseVitestResults } from "./testResultParser.service.js";
+import { parseVitestResults, formatScenariosForPrisma } from "./testResultParser.service.js";
 
 /**
  * Pipline for Vitest Coverage
@@ -39,6 +39,13 @@ export const processVitestCoverageJob = async (jobId) => {
         await saveJobOutput(jobId, { stdout: "", stderr: "" }).catch(() => { });
         await updateJobProgress(jobId, 10);
         await addJobLog(jobId, "INFO", "Start Vitest coverage pipline...");
+
+        // Ensure dependencies are installed before running Vitest
+        if (!fs.existsSync(path.join(rootDir, "node_modules"))) {
+            await addJobLog(jobId, "INFO", "node_modules not found. Installing project dependencies...").catch(() => { });
+            const { installVitestDeps } = await import("./vitestRunner.service.js");
+            await installVitestDeps(jobId, rootDir);
+        }
 
         // 1. Run Vitest
         const runResult = await runVitestCoverage(
@@ -74,20 +81,23 @@ export const processVitestCoverageJob = async (jobId) => {
         // 4. Parse test results
         const vitestResults = parseVitestResults(coverageDir);
         if (vitestResults) {
-            await prisma.testRun.create({
-                data: {
-                    snapshotId,
-                    type: "VITEST",
-                    totalTests: vitestResults.totalTests,
-                    passedTests: vitestResults.passedTests,
-                    failedTests: vitestResults.failedTests,
-                    skippedTests: vitestResults.skippedTests,
-                    durationMs: vitestResults.durationMs,
-                    status: vitestResults.status, // PASSED or FAILED
-                    startedAt: new Date(),
-                    finishedAt: new Date()
-                }
-            });
+            const formattedScenarios = formatScenariosForPrisma(vitestResults.scenarios);
+            const dataPayload = {
+                snapshotId,
+                type: "VITEST",
+                totalTests: vitestResults.totalTests,
+                passedTests: vitestResults.passedTests,
+                failedTests: vitestResults.failedTests,
+                skippedTests: vitestResults.skippedTests,
+                durationMs: vitestResults.durationMs,
+                status: vitestResults.status, // PASSED or FAILED
+                startedAt: new Date(),
+                finishedAt: new Date()
+            };
+            if (formattedScenarios) {
+                dataPayload.scenarios = formattedScenarios;
+            }
+            await prisma.testRun.create({ data: dataPayload });
             await addJobLog(jobId, "INFO", `Saved TestRun (VITEST): ${vitestResults.totalTests} tests.`).catch(() => { });
         }
 
@@ -95,9 +105,13 @@ export const processVitestCoverageJob = async (jobId) => {
         const { parseCoverageFilesForSnapshot } = await import("./coverageFileParser.service.js");
         const { parseCoverageFunctionsForSnapshot } = await import("./coverageFunctionParser.service.js");
 
-        const coverageReport = JSON.parse(fs.readFileSync(finalPath, "utf8"));
-        await parseCoverageFilesForSnapshot({ projectId, snapshotId, coverageReport, userId });
-        await parseCoverageFunctionsForSnapshot({ projectId, snapshotId, coverageReport, userId });
+        try {
+            const coverageReport = JSON.parse(fs.readFileSync(finalPath, "utf8"));
+            await parseCoverageFilesForSnapshot({ projectId, snapshotId, coverageReport, userId });
+            await parseCoverageFunctionsForSnapshot({ projectId, snapshotId, coverageReport, userId });
+        } catch (parseErr) {
+            await addJobLog(jobId, "WARN", `[VitestCoverage] Coverage parsing warning: ${parseErr.message}`).catch(() => { });
+        }
 
         await updateJobProgress(jobId, 80);
 

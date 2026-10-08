@@ -244,18 +244,20 @@ export default function FileBranchCFGView({
                 </div>
 
                 {/* Missing Branch Warning & Suggest Button */}
-                {(!isTrueCovered || !isFalseCovered) && onSuggestTestcase && (
+                {(!isTrueCovered || !isFalseCovered) && (
                   <div className="mt-2.5 flex items-center gap-2">
                     <span className="text-xs text-[var(--color-danger)]">
                       ⚠️ Uncovered branches remain
                     </span>
-                    <button
-                      onClick={() => onSuggestTestcase(filePath)}
-                      className="flex items-center gap-1 px-2.5 py-1 rounded-[var(--radius-sm)] bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs cursor-pointer font-medium transition-colors border-none"
-                    >
-                      <Sparkles size={11} />
-                      <span>Suggest testcase</span>
-                    </button>
+                    {onSuggestTestcase && (
+                      <button
+                        onClick={() => onSuggestTestcase(filePath)}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-[var(--radius-sm)] bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs cursor-pointer font-medium transition-colors border-none"
+                      >
+                        <Sparkles size={11} />
+                        <span>Suggest testcase</span>
+                      </button>
+                    )}
                   </div>
                 )}
               </div>

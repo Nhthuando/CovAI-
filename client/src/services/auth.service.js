@@ -47,7 +47,7 @@ async function fetchWithAuth(input, init = {}) {
  * Body: { name, email, password }
  * Success 201: { message, userName, userEmail }
  * Error 400:  { error: { name?, email?, password? } }  (Zod field errors)
- *        400:  { message: "Tài khoản đã tồn tại!" }
+ *        400:  { message: "Account already exists!" }
  */
 const httpClient = axios.create({ baseURL: BASE_URL });
 httpClient.interceptors.response.use(
@@ -97,7 +97,7 @@ export async function registerApi({ name, email, password }) {
       throw { type: "field", errors: fieldErrors };
     }
     // { message: "..." } — single message error
-    throw { type: "message", message: data.message || "Đăng ký thất bại!" };
+    throw { type: "message", message: data.message || "Registration failed!" };
   }
 
   return data; // { message, userName, userEmail }
@@ -126,7 +126,7 @@ export async function loginApi({ email, password }) {
       }
       throw { type: "field", errors: fieldErrors };
     }
-    throw { type: "message", message: data.message || "Đăng nhập thất bại!" };
+    throw { type: "message", message: data.message || "Login failed!" };
   }
 
   return data; // { message, token, name, email }
@@ -141,7 +141,7 @@ export async function oAuthGithubApi(code) {
   );
   const data = await res.json();
   if (!res.ok) {
-    throw new Error(data.message || "Lỗi đăng nhập GitHub");
+    throw new Error(data.message || "GitHub login error");
   }
   return data;
 }
@@ -158,7 +158,7 @@ export async function forgotPasswordApi(email) {
   });
   const data = await res.json();
   if (!res.ok) {
-    throw { type: "message", message: data.message || "Yêu cầu thất bại!" };
+    throw { type: "message", message: data.message || "Request failed!" };
   }
   return data;
 }
@@ -183,7 +183,7 @@ export async function resetPasswordApi(token, newPassword) {
       }
       throw { type: "field", errors: fieldErrors };
     }
-    throw { type: "message", message: data.message || "Cập nhật thất bại!" };
+    throw { type: "message", message: data.message || "Update failed!" };
   }
   return data;
 }

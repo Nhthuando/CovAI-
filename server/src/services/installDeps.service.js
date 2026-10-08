@@ -14,7 +14,7 @@ import { saveJobOutput, appendJobOutput } from "./jobOutput.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 
-const INSTALL_TIMEOUT_MS = 3 * 60 * 1000; // 3 phút
+const INSTALL_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 
 const assertStringField = (value, fieldName) => {
     if (!value || typeof value !== "string" || value.trim().length === 0) {
@@ -24,34 +24,34 @@ const assertStringField = (value, fieldName) => {
 
 /**
  * INSTALL_DEPS pipeline:
- *  - Chạy `npm install --prefer-offline` trong rootDir của snapshot
- *  - Capture stdout/stderr vào JobOutput
- *  - Timeout 3 phút
+ *  - Execute `npm install --prefer-offline` in snapshot rootDir
+ *  - Capture stdout/stderr into JobOutput
+ *  - Timeout 15 minutes
  */
 export const processInstallDepsJob = async (jobId) => {
     assertStringField(jobId, "jobId");
-    console.log(`[InstallDeps ${jobId}] Bắt đầu xử lý install deps`);
+    console.log(`[InstallDeps ${jobId}] Starting dependency installation`);
 
     try {
         const currentJob = await getJobById(jobId);
         console.log(`[InstallDeps ${jobId}] Prisma status before execution: ${currentJob?.status ?? "UNKNOWN"}`);
         if (currentJob.status === "RUNNING") {
-            console.log(`[InstallDeps ${jobId}] Job đang RUNNING, bỏ qua xử lý trùng lặp.`);
+            console.log(`[InstallDeps ${jobId}] Job is RUNNING, skipping duplicate handling.`);
             return;
         }
         if (["SUCCESS", "FAILED", "CANCELED"].includes(currentJob.status)) {
-            console.log(`[InstallDeps ${jobId}] Job đã ở trạng thái ${currentJob.status}, không chạy lại.`);
+            console.log(`[InstallDeps ${jobId}] Job is already in status ${currentJob.status}, skipping.`);
             return;
         }
     } catch (error) {
-        console.warn(`[InstallDeps ${jobId}] Không thể đọc trạng thái job trước khi chạy:`, error.message || error);
+        console.warn(`[InstallDeps ${jobId}] Unable to read job status before execution:`, error.message || error);
     }
 
-    // ── Chuyển sang RUNNING ───────────────────────────────────────────────
+    // ── Transition to RUNNING ──────────────────────────────────────────────
     try {
         console.log(`[InstallDeps ${jobId}] markJobRunning`);
         await markJobRunning(jobId);
-        console.log(`[InstallDeps ${jobId}] Đã chuyển trạng thái sang RUNNING`);
+        console.log(`[InstallDeps ${jobId}] State transitioned to RUNNING`);
     } catch (error) {
         const message = error?.message || "";
         const ignorable = [
@@ -62,24 +62,24 @@ export const processInstallDepsJob = async (jobId) => {
         ].includes(message);
 
         if (ignorable) {
-            console.log(`[InstallDeps ${jobId}] Bỏ qua chuyển RUNNING: ${message}`);
+            console.log(`[InstallDeps ${jobId}] Skipped transitioning to RUNNING: ${message}`);
             return;
         }
-        console.error(`[InstallDeps ${jobId}] Lỗi khi chuyển RUNNING:`, error);
+        console.error(`[InstallDeps ${jobId}] Error transitioning to RUNNING:`, error);
         return;
     }
 
-    // ── Lấy thông tin Job và Snapshot ────────────────────────────────────
+    // ── Fetch Job and Snapshot info ───────────────────────────────────────
     let job;
     try {
         job = await getJobById(jobId);
     } catch (error) {
-        console.error(`[InstallDeps ${jobId}] Không lấy được Job:`, error);
+        console.error(`[InstallDeps ${jobId}] Unable to fetch Job:`, error);
         return;
     }
 
     if (!job.snapshot?.rootDir) {
-        const msg = "Snapshot chưa có rootDir — INGEST job chưa hoàn thành.";
+        const msg = "Snapshot has no rootDir — INGEST job pending.";
         console.error(`[InstallDeps ${jobId}] ${msg}`);
         await markJobFailed(jobId, new Error(msg));
         return;
@@ -136,10 +136,10 @@ export const processInstallDepsJob = async (jobId) => {
         console.warn(`[InstallDeps ${jobId}] Failed to parse package.json, proceeding with npm install:`, err.message);
     }
 
-    // ── Khởi tạo output ───────────────────────────────────────────────────
+    // ── Initialize output ─────────────────────────────────────────────────
     await saveJobOutput(jobId, { stdout: "", stderr: "" }).catch(() => { });
     await updateJobProgress(jobId, 10);
-    await addJobLog(jobId, "INFO", `Bắt đầu npm install tại: ${resolvedRootDir}`);
+    await addJobLog(jobId, "INFO", `Starting npm install at: ${resolvedRootDir}`);
 
     // ── Spawn npm install ─────────────────────────────────────────────────
     return new Promise((resolve) => {
@@ -149,8 +149,8 @@ export const processInstallDepsJob = async (jobId) => {
         let settled = false;
 
         const command = process.platform === "win32" ? "npm.cmd" : "npm";
-        const args = ["install", "--prefer-offline", "--ignore-scripts"];
-        console.log(`[InstallDeps ${jobId}] Chạy command: ${command} ${args.join(" ")} tại ${resolvedRootDir}`);
+        const args = ["install", "--prefer-offline", "--ignore-scripts", "--legacy-peer-deps", "--no-audit", "--no-fund", "--progress=false"];
+        console.log(`[InstallDeps ${jobId}] Running command: ${command} ${args.join(" ")} at ${resolvedRootDir}`);
 
         const child = spawn(command, args, {
             cwd: resolvedRootDir,
@@ -169,7 +169,7 @@ export const processInstallDepsJob = async (jobId) => {
             try {
                 if (kind === "success") {
                     await updateJobProgress(jobId, 100);
-                    await addJobLog(jobId, "INFO", "npm install hoàn thành thành công.");
+                    await addJobLog(jobId, "INFO", "npm install completed successfully.");
                     await markJobSuccess(jobId, { installExitCode: 0, ...payload });
                     console.log(`[InstallDeps ${jobId}] markJobSuccess: npm install completed. exitCode=0`);
                 } else {
@@ -194,7 +194,7 @@ export const processInstallDepsJob = async (jobId) => {
                 console.error(`[InstallDeps ${jobId}] Unable to kill hung npm install:`, killErr);
             }
 
-            const msg = `npm install vượt quá timeout ${INSTALL_TIMEOUT_MS / 1000}s`;
+            const msg = `npm install exceeded timeout ${INSTALL_TIMEOUT_MS / 1000}s`;
             console.error(`[InstallDeps ${jobId}] TIMEOUT: ${msg}`);
             console.error(`[InstallDeps ${jobId}] stdout tail: ${stdoutBuf.slice(-2000)}`);
             console.error(`[InstallDeps ${jobId}] stderr tail: ${stderrBuf.slice(-2000)}`);
@@ -223,7 +223,7 @@ export const processInstallDepsJob = async (jobId) => {
                 await finalize("success", { installExitCode: 0 });
             } else {
                 const errSnippet = stderrBuf.trim().slice(-500) || stdoutBuf.trim().slice(-500);
-                const msg = `npm install thất bại với exit code ${code ?? "unknown"}. ${errSnippet}`;
+                const msg = `npm install failed with exit code ${code ?? "unknown"}. ${errSnippet}`;
                 console.error(`[InstallDeps ${jobId}] FAIL: ${msg}`);
                 console.error(`[InstallDeps ${jobId}] stdout tail: ${stdoutBuf.slice(-2000)}`);
                 console.error(`[InstallDeps ${jobId}] stderr tail: ${stderrBuf.slice(-2000)}`);
