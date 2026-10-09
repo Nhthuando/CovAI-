@@ -20,6 +20,7 @@ import {
   Calculator,
   Layers,
   Activity,
+  ExternalLink,
 } from "lucide-react";
 import {
   getProjectCfgApi,
@@ -312,7 +313,181 @@ function CFGNode({
   );
 }
 
-export default function CFGCalculator({ project, onClose, initialFile, initialFunc }) {
+/**
+ * Chuẩn hóa đường dẫn POSIX để so sánh an toàn
+ */
+export const normalizePathForCompare = (p) => {
+  if (!p) return "";
+  return p
+    .replace(/\\/g, "/")
+    .replace(/^\.\//, "")
+    .replace(/^(?:.*?\/)?storage\/projects\/[^/]+\/[^/]+\/[^/]+\/repo\//i, "")
+    .replace(/^(?:.*?\/)?repo\//i, "")
+    .toLowerCase();
+};
+
+/**
+ * Kiểm tra xem danh sách file ứng viên có chứa file mục tiêu không
+ */
+export const hasCfgFileMatch = (candidateFiles, targetPath) => {
+  if (!targetPath || !Array.isArray(candidateFiles) || candidateFiles.length === 0) return false;
+  const targetNorm = normalizePathForCompare(targetPath);
+  const strippedTarget = targetNorm.replace(/^(?:backend|server|client|api|app|frontend)\//i, "");
+  const baseTarget = targetNorm.split("/").pop();
+
+  return candidateFiles.some((f) => {
+    const fNorm = normalizePathForCompare(f);
+    const strippedCandidate = fNorm.replace(/^(?:backend|server|client|api|app|frontend)\//i, "");
+    return (
+      fNorm === targetNorm ||
+      targetNorm.endsWith("/" + fNorm) ||
+      fNorm.endsWith("/" + targetNorm) ||
+      strippedCandidate === strippedTarget ||
+      strippedTarget.endsWith("/" + strippedCandidate) ||
+      strippedCandidate.endsWith("/" + strippedTarget) ||
+      fNorm.split("/").pop() === baseTarget
+    );
+  });
+};
+
+/**
+ * Khớp file mục tiêu trong danh sách file CFG
+ */
+export const findMatchingCfgFile = (candidateFiles, targetPath) => {
+  if (!targetPath || !Array.isArray(candidateFiles) || candidateFiles.length === 0) {
+    return candidateFiles?.[0] || null;
+  }
+  const targetNorm = normalizePathForCompare(targetPath);
+
+  // 1. Khớp chính xác hoàn toàn
+  const exact = candidateFiles.find((f) => normalizePathForCompare(f) === targetNorm);
+  if (exact) return exact;
+
+  // 2. Khớp đuôi (endsWith)
+  const endsWithMatch = candidateFiles.find(
+    (f) =>
+      targetNorm.endsWith("/" + normalizePathForCompare(f)) ||
+      normalizePathForCompare(f).endsWith("/" + targetNorm)
+  );
+  if (endsWithMatch) return endsWithMatch;
+
+  // 3. Khớp sau khi loại bỏ prefix thư mục gốc monorepo (backend/, server/, client/, api/, app/)
+  const strippedTarget = targetNorm.replace(/^(?:backend|server|client|api|app|frontend)\//i, "");
+  const strippedMatch = candidateFiles.find((f) => {
+    const strippedCandidate = normalizePathForCompare(f).replace(/^(?:backend|server|client|api|app|frontend)\//i, "");
+    return (
+      strippedCandidate === strippedTarget ||
+      strippedTarget.endsWith("/" + strippedCandidate) ||
+      strippedCandidate.endsWith("/" + strippedTarget)
+    );
+  });
+  if (strippedMatch) return strippedMatch;
+
+  // 4. Khớp basename
+  const baseTarget = targetNorm.split("/").pop();
+  const baseMatch = candidateFiles.find(
+    (f) => normalizePathForCompare(f).split("/").pop() === baseTarget
+  );
+  if (baseMatch) return baseMatch;
+
+  // 5. Khớp tiền tố (hỗ trợ đường dẫn bị cắt ngắn dấu ... trên UI)
+  const cleanPrefix = targetNorm.replace(/\.{2,}$/, "");
+  if (cleanPrefix.length > 5) {
+    const prefixMatch = candidateFiles.find((f) =>
+      normalizePathForCompare(f).startsWith(cleanPrefix)
+    );
+    if (prefixMatch) return prefixMatch;
+  }
+
+  return candidateFiles[0];
+};
+
+/**
+ * Khớp hàm mục tiêu trong danh sách CFGs của file với chiến lược phân giải 5 tầng:
+ * 1. Khớp chính xác tên hàm (hoặc tiền tố cắt ngắn)
+ * 2. Khớp chính xác startLine
+ * 3. Khớp phạm vi lồng nhau hẹp nhất (Innermost Span)
+ * 4. Khớp tên synthetic func_L{N}
+ * 5. Fallback về hàm đầu tiên
+ */
+export const findMatchingCfgFunction = (fileCfgs, targetFuncName, targetLine) => {
+  if (!Array.isArray(fileCfgs) || fileCfgs.length === 0) return null;
+  const lineNum = targetLine && Number(targetLine) > 0 ? Number(targetLine) : null;
+
+  // 1. Khớp tên hàm (nếu không phải anonymous hoặc synthetic func_L...)
+  if (targetFuncName && typeof targetFuncName === "string") {
+    const cleanTarget = targetFuncName.replace(/\(\)$/, "").trim();
+    const isSyntheticOrAnon =
+      /^func_l\d+$/i.test(cleanTarget) ||
+      /^anonymous/i.test(cleanTarget) ||
+      /^\(anonymous/i.test(cleanTarget);
+
+    if (!isSyntheticOrAnon && cleanTarget.length > 0) {
+      // 1a. Khớp chính xác tên
+      const exactMatch = fileCfgs.find((c) => c.functionName === cleanTarget);
+      if (exactMatch) return exactMatch.functionName;
+
+      // 1b. Khớp không phân biệt hoa thường
+      const caseMatch = fileCfgs.find(
+        (c) => c.functionName?.toLowerCase() === cleanTarget.toLowerCase()
+      );
+      if (caseMatch) return caseMatch.functionName;
+
+      // 1c. Khớp tiền tố (hỗ trợ tên bị cắt ngắn fallbackRewriteFr...)
+      const prefix = cleanTarget.replace(/\.{2,}$/, "").trim();
+      if (prefix.length >= 6) {
+        const prefixMatch = fileCfgs.find(
+          (c) =>
+            c.functionName &&
+            (c.functionName.startsWith(prefix) ||
+             c.functionName.toLowerCase().startsWith(prefix.toLowerCase()))
+        );
+        if (prefixMatch) return prefixMatch.functionName;
+      }
+    }
+  }
+
+  // 2. Khớp chính xác startLine (tránh bị hàm bao ngoài nuốt khi là callback)
+  if (lineNum !== null) {
+    const exactStartMatch = fileCfgs.find((c) => c.startLine === lineNum);
+    if (exactStartMatch) return exactStartMatch.functionName;
+  }
+
+  // 3. Khớp theo khoảng bao hẹp nhất (Innermost Span)
+  if (lineNum !== null) {
+    const containingFunctions = fileCfgs.filter(
+      (c) => c.startLine <= lineNum && c.endLine && c.endLine >= lineNum
+    );
+    if (containingFunctions.length > 0) {
+      containingFunctions.sort(
+        (a, b) => (a.endLine - a.startLine) - (b.endLine - b.startLine)
+      );
+      return containingFunctions[0].functionName;
+    }
+  }
+
+  // 4. Khớp synthetic func_L{N}
+  if (targetFuncName && typeof targetFuncName === "string") {
+    const match = targetFuncName.trim().match(/^func_l(\d+)$/i);
+    if (match) {
+      const parsedLine = Number(match[1]);
+      const lineExact = fileCfgs.find((c) => c.startLine === parsedLine);
+      if (lineExact) return lineExact.functionName;
+    }
+  }
+
+  // 5. Fallback: trả về hàm đầu tiên
+  return fileCfgs[0].functionName;
+};
+
+export default function CFGCalculator({
+  project,
+  onClose,
+  initialFile,
+  initialFunc,
+  initialLine,
+  onOpenFile,
+}) {
   const { isMobile } = useBreakpoints();
   const [cfgs, setCfgs] = useState([]);
   const [ccs, setCcs] = useState([]);
@@ -395,21 +570,66 @@ export default function CFGCalculator({ project, onClose, initialFile, initialFu
     }
   };
 
+  const autoRebuiltRef = useRef(false);
+
   useEffect(() => {
     async function fetchData() {
       try {
         setLoading(true);
         // Using snapshotId empty to default to latest snapshot
-        const [cfgRes, ccRes] = await Promise.all([
+        let [cfgRes, ccRes] = await Promise.all([
           getProjectCfgApi(project.id, ""),
           getProjectCcApi(project.id, ""),
         ]);
-        setCfgs(cfgRes.data);
-        setCcs(ccRes.data);
 
-        if (cfgRes.data.length > 0) {
-          const firstFile = [...new Set(cfgRes.data.map((c) => c.filePath))][0];
-          setSelectedFile(firstFile);
+        let currentCfgs = cfgRes?.data || [];
+        let currentCcs = ccRes?.data || [];
+        let files = [...new Set(currentCfgs.map((c) => c.filePath))];
+
+        // Nếu người dùng yêu cầu file cụ thể (initialFile), nhưng file chưa có CFG
+        // và chưa thử auto-rebuild lần nào -> Tự động trigger buildCfgApi một lần để lấy CFG mới
+        if (
+          initialFile &&
+          !hasCfgFileMatch(files, initialFile) &&
+          !autoRebuiltRef.current &&
+          project?.id
+        ) {
+          autoRebuiltRef.current = true;
+          setRebuilding(true);
+          try {
+            await buildCfgApi(project.id, "");
+            await new Promise((r) => setTimeout(r, 2000));
+            const [cfgRes2, ccRes2] = await Promise.all([
+              getProjectCfgApi(project.id, ""),
+              getProjectCcApi(project.id, ""),
+            ]);
+            currentCfgs = cfgRes2?.data || [];
+            currentCcs = ccRes2?.data || [];
+            files = [...new Set(currentCfgs.map((c) => c.filePath))];
+          } catch (autoErr) {
+            console.warn("Auto-rebuild CFG for missing file failed:", autoErr);
+          } finally {
+            setRebuilding(false);
+          }
+        }
+
+        setCfgs(currentCfgs);
+        setCcs(currentCcs);
+
+        if (currentCfgs.length > 0) {
+          let targetFile = files[0];
+          if (initialFile) {
+            targetFile = findMatchingCfgFile(files, initialFile);
+          }
+          setSelectedFile(targetFile);
+
+          if (initialFunc || initialLine) {
+            const fileCfgs = currentCfgs.filter((c) => c.filePath === targetFile);
+            const targetFunc = findMatchingCfgFunction(fileCfgs, initialFunc, initialLine);
+            if (targetFunc) {
+              setSelectedFunc(targetFunc);
+            }
+          }
         }
       } catch (err) {
         setError(err.message || "Failed to fetch CFG/CC data");
@@ -418,7 +638,24 @@ export default function CFGCalculator({ project, onClose, initialFile, initialFu
       }
     }
     if (project?.id) fetchData();
-  }, [project]);
+  }, [project, initialFile, initialFunc, initialLine]);
+
+  // Keep selectedFile / selectedFunc synchronized if initialFile / initialFunc changes dynamically
+  useEffect(() => {
+    if (!initialFile || cfgs.length === 0) return;
+    const files = [...new Set(cfgs.map((c) => c.filePath))];
+    const matchedFile = findMatchingCfgFile(files, initialFile);
+    if (matchedFile && matchedFile !== selectedFile) {
+      setSelectedFile(matchedFile);
+    }
+    if (initialFunc || initialLine) {
+      const relevantCfgs = cfgs.filter((c) => c.filePath === (matchedFile || selectedFile));
+      const matchedFunc = findMatchingCfgFunction(relevantCfgs, initialFunc, initialLine);
+      if (matchedFunc && matchedFunc !== selectedFunc) {
+        setSelectedFunc(matchedFunc);
+      }
+    }
+  }, [initialFile, initialFunc, initialLine, cfgs]);
 
   useEffect(() => {
     async function fetchCode() {
@@ -465,6 +702,23 @@ export default function CFGCalculator({ project, onClose, initialFile, initialFu
   const sourceLines = useMemo(() => {
     return sourceCode.split("\n").map((text, i) => ({ num: i + 1, text }));
   }, [sourceCode]);
+
+  // Smooth-scroll code pane to target function definition
+  useEffect(() => {
+    if (!selectedFunc || !activeCfg) return;
+    const targetLine = activeCfg.startLine || initialLine;
+    if (!targetLine) return;
+
+    setHighlightedLine(targetLine);
+
+    const timer = setTimeout(() => {
+      const lineEl = document.getElementById(`cfg-source-line-${targetLine}`);
+      if (lineEl && codeContainerRef.current) {
+        lineEl.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [selectedFunc, activeCfg, sourceCode, initialLine]);
 
   // DAGRE Layouts
   const graphLayout = useMemo(() => {
@@ -516,11 +770,23 @@ export default function CFGCalculator({ project, onClose, initialFile, initialFu
     }
   }, [isCallGraph, fileCfgs, activeCfg]);
 
-  // Auto-center / reset pan & zoom when file or function changes
+  // Auto-center / reset pan & zoom when file or function changes, auto-fit large graphs
   useEffect(() => {
+    if (canvasRef.current && graphLayout.width && graphLayout.height) {
+      const rect = canvasRef.current.getBoundingClientRect();
+      if (rect.width > 100 && rect.height > 100) {
+        const padding = 60;
+        const scaleX = (rect.width - padding) / Math.max(graphLayout.width, 100);
+        const scaleY = (rect.height - padding) / Math.max(graphLayout.height, 100);
+        const fitScale = Math.min(1, Math.max(0.4, Math.min(scaleX, scaleY)));
+        setZoom(Number(fitScale.toFixed(2)));
+        setPan({ x: 0, y: 0 });
+        return;
+      }
+    }
     setPan({ x: 0, y: 0 });
     setZoom(1);
-  }, [selectedFile, selectedFunc]);
+  }, [selectedFile, selectedFunc, graphLayout.width, graphLayout.height]);
 
   // Handle canvas mouse drag for panning
   const handleCanvasMouseDown = (e) => {
@@ -690,13 +956,33 @@ export default function CFGCalculator({ project, onClose, initialFile, initialFu
             )}
           </div>
         </div>
-        <button
-          className="p-1.5 rounded-[var(--radius-sm)] hover:bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer bg-transparent border-none"
-          onClick={onClose}
-          title="Close"
-        >
-          <X size={18} />
-        </button>
+        <div className="flex items-center gap-2">
+          {onOpenFile && selectedFile && (
+            <button
+              onClick={() => {
+                onClose?.();
+                onOpenFile(
+                  selectedFile,
+                  activeCfg?.startLine || highlightedLine || initialLine || 1,
+                  selectedFunc,
+                  activeCfg?.endLine
+                );
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-md)] bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/30 hover:bg-[var(--color-primary)]/20 transition-all text-xs font-medium cursor-pointer shadow-sm"
+              title="Open this function in Monaco Editor"
+            >
+              <ExternalLink size={13} />
+              <span>Open in Editor</span>
+            </button>
+          )}
+          <button
+            className="p-1.5 rounded-[var(--radius-sm)] hover:bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer bg-transparent border-none"
+            onClick={onClose}
+            title="Close"
+          >
+            <X size={18} />
+          </button>
+        </div>
       </div>
 
       {loading || rebuilding ? (

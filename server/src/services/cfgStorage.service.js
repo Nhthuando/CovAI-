@@ -17,6 +17,7 @@ export const storeCfg = async ({
   startLine,
   endLine,
   graphJson,
+  skipSnapshotCheck = false,
 }) => {
   // 1. Validate required fields
   if (!snapshotId || !filePath || !functionName || !graphJson) {
@@ -26,13 +27,15 @@ export const storeCfg = async ({
     );
   }
 
-  // 2. Validate snapshot existence
-  const snapshot = await prisma.projectSnapshot.findUnique({
-    where: { id: snapshotId },
-  });
+  // 2. Validate snapshot existence (if not explicitly skipped by batch caller)
+  if (!skipSnapshotCheck) {
+    const snapshot = await prisma.projectSnapshot.findUnique({
+      where: { id: snapshotId },
+    });
 
-  if (!snapshot) {
-    throw new ServiceError(`Snapshot with id ${snapshotId} not found`, 404);
+    if (!snapshot) {
+      throw new ServiceError(`Snapshot with id ${snapshotId} not found`, 404);
+    }
   }
 
   // 3. Validate graphJson (ensure it is a valid JSON string)

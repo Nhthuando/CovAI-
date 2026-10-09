@@ -30,6 +30,7 @@ export async function buildCfgForSnapshot(snapshotId) {
         if (!/\.(js|ts|jsx|tsx)$/.test(file)) continue;
         const relativePath = path.relative(rootDir, file).replace(/\\/g, '/');
         const functions = extractFunctions(fs.readFileSync(file, 'utf-8'));
+        const seenInFile = new Set();
 
         for (const func of functions) {
             functionCount++;
@@ -42,12 +43,41 @@ export async function buildCfgForSnapshot(snapshotId) {
                 console.error(`[BuildCFG] Failed to calculate complexity for ${func.functionName} in ${relativePath}`);
             }
 
+            let uniqueName = func.functionName;
+            if (seenInFile.has(uniqueName)) {
+                uniqueName = `${func.functionName}@L${func.startLine || 1}`;
+            }
+            seenInFile.add(uniqueName);
+
             const cfg = await storeCfg({
-                snapshotId, filePath: relativePath, functionName: func.functionName,
-                startLine: func.startLine, endLine: func.endLine, graphJson: JSON.stringify(graphJson)
+                snapshotId,
+                filePath: relativePath,
+                functionName: uniqueName,
+                startLine: func.startLine,
+                endLine: func.endLine,
+                graphJson: JSON.stringify(graphJson),
+                skipSnapshotCheck: true
             });
-            await prisma.cyclomatic.create({
-                data: { snapshotId, filePath: relativePath, functionName: func.functionName, value: complexity, cfgId: cfg.id }
+
+            await prisma.cyclomatic.upsert({
+                where: {
+                    snapshotId_filePath_functionName: {
+                        snapshotId,
+                        filePath: relativePath,
+                        functionName: uniqueName
+                    }
+                },
+                update: {
+                    value: complexity,
+                    cfgId: cfg.id
+                },
+                create: {
+                    snapshotId,
+                    filePath: relativePath,
+                    functionName: uniqueName,
+                    value: complexity,
+                    cfgId: cfg.id
+                }
             });
         }
     }

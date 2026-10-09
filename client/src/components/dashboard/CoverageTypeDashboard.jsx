@@ -706,6 +706,7 @@ export default function CoverageTypeDashboard({
   const [flowData, setFlowData] = useState(null);
   const [loadingFlow, setLoadingFlow] = useState(false);
   const [showCfgModal, setShowCfgModal] = useState(false);
+  const [cfgModalContext, setCfgModalContext] = useState(null);
 
   // Multi-accordion state: Set of expanded filePaths (supports opening File A, File B, File C simultaneously)
   const [expandedFiles, setExpandedFiles] = useState(new Set());
@@ -4095,10 +4096,11 @@ export default function CoverageTypeDashboard({
                   loading={loadingFunctions}
                   onOpenFile={onOpenFile}
                   onSuggestTestcase={onSuggestTestcase}
-                  onOpenCfg={(filePath, funcName) => {
+                  onOpenCfg={(filePath, funcName, line) => {
                     if (onOpenCFG) {
-                      onOpenCFG(filePath, funcName);
+                      onOpenCFG(filePath, funcName, line);
                     } else {
+                      setCfgModalContext({ file: filePath, func: funcName, line });
                       setShowCfgModal(true);
                     }
                   }}
@@ -4421,8 +4423,18 @@ export default function CoverageTypeDashboard({
                             }}
                           >
                             <button
-                              onClick={() => onOpenFile?.(fn.filePath)}
+                              onClick={() =>
+                                onOpenFile?.(
+                                  fn.filePath,
+                                  fn.startLine || fn.line || 1,
+                                  fn.functionName,
+                                  fn.endLine
+                                )
+                              }
                               style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 4,
                                 padding: "4px 8px",
                                 borderRadius: 5,
                                 background: isLight ? "#ffffff" : "rgba(255,255,255,0.05)",
@@ -4434,7 +4446,42 @@ export default function CoverageTypeDashboard({
                               }}
                               title="View function source code"
                             >
-                              Open code
+                              <Code2 size={12} />
+                              <span>Open code</span>
+                            </button>
+
+                            <button
+                              onClick={() => {
+                                const targetLine = fn.startLine || fn.line || 1;
+                                const targetFunc = fn.displayName || fn.functionName;
+                                if (onOpenCFG) {
+                                  onOpenCFG(fn.filePath, targetFunc, targetLine);
+                                } else {
+                                  setCfgModalContext({
+                                    file: fn.filePath,
+                                    func: targetFunc,
+                                    line: targetLine,
+                                  });
+                                  setShowCfgModal(true);
+                                }
+                              }}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 4,
+                                padding: "4px 8px",
+                                borderRadius: 5,
+                                background: isLight ? "#e0f2fe" : "rgba(56, 189, 248, 0.12)",
+                                border: isLight ? "1px solid #7dd3fc" : "1px solid rgba(56, 189, 248, 0.3)",
+                                color: isLight ? "#0284c7" : "#38bdf8",
+                                fontSize: 11,
+                                fontWeight: 600,
+                                cursor: "pointer",
+                              }}
+                              title="View Control Flow Graph (CFG) for this function"
+                            >
+                              <Network size={12} />
+                              <span>View CFG</span>
                             </button>
                           </div>
                         </div>
@@ -5377,7 +5424,14 @@ export default function CoverageTypeDashboard({
       {showCfgModal && projectId && (
         <CFGCalculator
           project={{ id: projectId }}
-          onClose={() => setShowCfgModal(false)}
+          onClose={() => {
+            setShowCfgModal(false);
+            setCfgModalContext(null);
+          }}
+          initialFile={cfgModalContext?.file}
+          initialFunc={cfgModalContext?.func}
+          initialLine={cfgModalContext?.line}
+          onOpenFile={onOpenFile}
         />
       )}
       {showJobQueueModal && projectId && (

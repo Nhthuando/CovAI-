@@ -473,6 +473,7 @@ export default function Editor({
   onRunAnalysis,
   onSuggestTestcase,
   refreshTrigger,
+  jumpTarget,
 }) {
   const { resolvedTheme } = useTheme();
   const [fileContents, setFileContents] = useState({});
@@ -498,6 +499,77 @@ export default function Editor({
   const editorRef = useRef(null);
   const monacoRef = useRef(null);
   const decorationsCollectionRef = useRef(null);
+  const jumpDecorationsRef = useRef([]);
+  const [editorMountCount, setEditorMountCount] = useState(0);
+
+  // Handle jumpTarget navigation (e.g. from Function Coverage "Open code" or CFG "Open in Editor")
+  useEffect(() => {
+    if (!jumpTarget || !editorRef.current || !monacoRef.current) return;
+    if (!activeTabId || !jumpTarget.filePath) return;
+
+    const normActive = activeTabId.replace(/\\/g, "/").toLowerCase();
+    const normTarget = jumpTarget.filePath.replace(/\\/g, "/").toLowerCase();
+
+    // Check if active file matches target
+    const isMatched =
+      normActive === normTarget ||
+      normActive.endsWith("/" + normTarget) ||
+      normTarget.endsWith("/" + normActive) ||
+      normActive.split("/").pop() === normTarget.split("/").pop();
+
+    if (!isMatched) return;
+
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    const line = Math.max(1, Number(jumpTarget.line) || 1);
+    const endLine = Math.max(line, Number(jumpTarget.endLine) || line);
+
+    // Wait until model is available with loaded lines
+    const model = editor.getModel();
+    if (!model) return;
+
+    const fileText = currentFile.draft ?? currentFile.content;
+    if (typeof fileText === "string" && fileText.length > 0 && model.getValueLength() === 0) {
+      model.setValue(fileText);
+    }
+
+    const lineCount = model.getLineCount();
+    const safeLine = Math.min(line, Math.max(1, lineCount));
+    const safeEndLine = Math.min(endLine, Math.max(1, lineCount));
+
+    editor.revealLineInCenter(safeLine);
+    editor.setPosition({ lineNumber: safeLine, column: 1 });
+
+    const newDecorations = [
+      {
+        range: new monaco.Range(safeLine, 1, safeEndLine, 1),
+        options: {
+          isWholeLine: true,
+          className: "monaco-function-active-range",
+          marginClassName: "monaco-function-glyph-marker",
+          linesDecorationsClassName: "monaco-function-line-number-active",
+        },
+      },
+    ];
+
+    jumpDecorationsRef.current = editor.deltaDecorations(
+      jumpDecorationsRef.current,
+      newDecorations
+    );
+
+    editor.focus();
+
+    const timer = setTimeout(() => {
+      if (editorRef.current) {
+        jumpDecorationsRef.current = editorRef.current.deltaDecorations(
+          jumpDecorationsRef.current,
+          []
+        );
+      }
+    }, 3500);
+
+    return () => clearTimeout(timer);
+  }, [jumpTarget, activeTabId, fileContents, editorMountCount]);
 
   const isCurrentTestFile = isTestFile(activeTabId);
 
@@ -781,6 +853,7 @@ export default function Editor({
   const handleEditorDidMount = (editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
+    setEditorMountCount((c) => c + 1);
 
     // Save shortcut
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () =>
