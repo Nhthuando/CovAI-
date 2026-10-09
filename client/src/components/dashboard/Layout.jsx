@@ -144,6 +144,7 @@ function LayoutInner() {
   const [showImport, setShowImport] = useState(false);
   const [showQualityDashboard, setShowQualityDashboard] = useState(false);
   const [cfgInitialContext, setCfgInitialContext] = useState(null);
+  const [editorJumpTarget, setEditorJumpTarget] = useState(null);
   const [archInitialContext, setArchInitialContext] = useState(null);
   const [integrationInitialContext, setIntegrationInitialContext] = useState(null);
 
@@ -161,11 +162,12 @@ function LayoutInner() {
     navigate(`${location.pathname}?${params.toString()}`);
   };
 
-  const handleOpenCFG = (filePath = null, functionName = null) => {
+  const handleOpenCFG = (filePath = null, functionName = null, initialLine = null) => {
     if (filePath) {
       setCfgInitialContext({
         initialFile: filePath,
         initialFunc: functionName,
+        initialLine: initialLine ? Number(initialLine) : null,
       });
     } else {
       setCfgInitialContext(null);
@@ -496,7 +498,7 @@ function LayoutInner() {
     setActiveTabId(node.id);
   };
 
-  const handleOpenFileByPath = (filePath) => {
+  const handleOpenFileByPath = (filePath, targetLine = null, functionName = null, endLine = null) => {
     setActiveActivity("explorer");
     const normalizedPath = filePath.replace(/\\/g, "/").replace(/^\.\//, "");
     const findNode = (nodes, path) => {
@@ -522,6 +524,16 @@ function LayoutInner() {
         id: normalizedPath,
         name: normalizedPath.split("/").pop(),
         type: "file",
+      });
+    }
+
+    if (targetLine && Number(targetLine) > 0) {
+      setEditorJumpTarget({
+        filePath: normalizedPath,
+        line: Number(targetLine),
+        endLine: endLine ? Number(endLine) : null,
+        functionName: functionName || null,
+        timestamp: Date.now(),
       });
     }
   };
@@ -938,7 +950,7 @@ function LayoutInner() {
                 projectId={project?.id}
                 onOpenFile={handleOpenFileByPath}
                 onSuggestTestcase={handleSuggestTestcase}
-                onOpenCFG={() => setShowCFG(true)}
+                onOpenCFG={handleOpenCFG}
                 runTrigger={coverageRunTrigger}
               />
             </div>
@@ -1000,6 +1012,7 @@ function LayoutInner() {
                   onRunAnalysis={handleTriggerRunAnalysis}
                   onSuggestTestcase={handleSuggestTestcase}
                   refreshTrigger={editorRefreshTrigger}
+                  jumpTarget={editorJumpTarget}
                 />
               </div>
         </motion.div>
@@ -1118,6 +1131,8 @@ function LayoutInner() {
             onClose={handleCloseCFG}
             initialFile={cfgInitialContext?.initialFile}
             initialFunc={cfgInitialContext?.initialFunc}
+            initialLine={cfgInitialContext?.initialLine}
+            onOpenFile={handleOpenFileByPath}
           />
         )}
       </AnimatePresence>

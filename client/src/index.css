@@ -338,3 +338,37 @@ select:-webkit-autofill:focus {
 [data-theme="dark"] .file-panel-scrollbar::-webkit-scrollbar-thumb:hover {
   background: rgba(167, 139, 250, 0.85);
 }
+
+/* ── Monaco Editor Function Active Range Decoration & Glow ── */
+.monaco-function-active-range {
+  background: rgba(56, 189, 248, 0.12) !important;
+  border-left: 3px solid #38bdf8 !important;
+  animation: functionPulseGlow 3.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.monaco-function-line-number-active {
+  color: #38bdf8 !important;
+  font-weight: 700 !important;
+}
+
+.monaco-function-glyph-marker {
+  background: #38bdf8 !important;
+  width: 4px !important;
+  border-radius: 2px;
+  margin-left: 3px;
+}
+
+@keyframes functionPulseGlow {
+  0% {
+    background: rgba(56, 189, 248, 0.28);
+    border-left-color: #38bdf8;
+  }
+  60% {
+    background: rgba(56, 189, 248, 0.12);
+    border-left-color: #38bdf8;
+  }
+  100% {
+    background: transparent;
+    border-left-color: transparent;
+  }
+}

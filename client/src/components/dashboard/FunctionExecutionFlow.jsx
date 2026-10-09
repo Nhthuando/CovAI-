@@ -618,7 +618,14 @@ export default function FunctionExecutionFlow({
                   }}
                 >
                   <button
-                    onClick={() => onOpenFile?.(fn.filePath)}
+                    onClick={() =>
+                      onOpenFile?.(
+                        fn.filePath,
+                        fn.startLine || fn.line || 1,
+                        fn.displayName || fn.functionName,
+                        fn.endLine
+                      )
+                    }
                     style={{
                       display: "flex",
                       alignItems: "center",
@@ -640,7 +647,13 @@ export default function FunctionExecutionFlow({
                   <div style={{ display: "flex", gap: 6 }}>
                     {onOpenCfg && (
                       <button
-                        onClick={() => onOpenCfg(fn.filePath, fn.displayName)}
+                        onClick={() =>
+                          onOpenCfg(
+                            fn.filePath,
+                            fn.displayName || fn.functionName,
+                            fn.startLine || fn.line || 1
+                          )
+                        }
                         style={{
                           display: "flex",
                           alignItems: "center",
