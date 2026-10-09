@@ -5,6 +5,7 @@ import fs from "fs";
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { GitHubRepositoryAccessService } from "./github.service.js";
+import { snapshotWorkspaceRoot } from "../utils/snapshotWorkspace.js";
 
 const execAsync = util.promisify(exec);
 
@@ -46,7 +47,7 @@ export class GitService {
 
     const isGitHubProject = snapshot.source === "GITHUB" || !!project.repoUrl;
 
-    const rootDir = path.resolve(snapshot.rootDir);
+    const rootDir = snapshotWorkspaceRoot(snapshot);
     if (!fs.existsSync(rootDir)) {
       throw new ServiceError(
         `Project directory not found on disk: ${rootDir}`,

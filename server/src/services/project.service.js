@@ -29,6 +29,7 @@ import {
 } from "../utils/nodeProjectValidator.js";
 import { validateArchiveLanguage } from "../utils/languageDetector.js";
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
+import { snapshotWorkspaceRoot, resolveSnapshotFile } from "../utils/snapshotWorkspace.js";
 
 export { ServiceError };
 
@@ -41,7 +42,8 @@ function buildTree(dirPath, rootPath = dirPath) {
       if (item === "node_modules" || item === ".git") continue;
 
       const itemPath = path.join(dirPath, item);
-      const stat = fs.statSync(itemPath);
+      const stat = fs.lstatSync(itemPath);
+      if (stat.isSymbolicLink()) continue;
       const relativePath = path
         .relative(rootPath, itemPath)
         .replace(/\\/g, "/");
@@ -503,7 +505,7 @@ export const listProjectSnapshots = async ({ projectId, userId }) => {
   return snapshots.map((snapshot, idx) => {
     let meta = null;
     if (snapshot.rootDir && fs.existsSync(snapshot.rootDir)) {
-      const metaPath = path.join(snapshot.rootDir, ".covai-checkpoint.json");
+      const metaPath = path.join(snapshotWorkspaceRoot(snapshot), ".covai-checkpoint.json");
       if (fs.existsSync(metaPath)) {
         try {
           meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
@@ -572,10 +574,10 @@ export const createProjectCheckpoint = async ({
   );
   fs.mkdirSync(baseStorage, { recursive: true });
 
-  const { fileCount, sizeBytes } = copyDirRecursive(
-    activeSnapshot.rootDir,
-    baseStorage,
-  );
+  const workspaceRoot = snapshotWorkspaceRoot(activeSnapshot);
+  const analysisRelative = path.relative(workspaceRoot, activeSnapshot.rootDir);
+  const checkpointAnalysisRoot = path.join(baseStorage, analysisRelative);
+  const { fileCount, sizeBytes } = copyDirRecursive(workspaceRoot, baseStorage);
 
   const checkpointMeta = {
     id: newSnapshotId,
@@ -598,7 +600,7 @@ export const createProjectCheckpoint = async ({
     jestCommand: activeSnapshot.jestCommand,
   };
   try {
-    detection = detectJest(baseStorage);
+    detection = detectJest(checkpointAnalysisRoot);
   } catch (_) {}
 
   const checksum = `cp_${Date.now()}_${randomUUID().slice(0, 8)}`;
@@ -610,7 +612,7 @@ export const createProjectCheckpoint = async ({
       checksum,
       commitSha: null,
       storagePath: baseStorage,
-      rootDir: baseStorage,
+      rootDir: checkpointAnalysisRoot,
       hasJest: detection.hasJest,
       jestConfigPath: detection.configPath,
       jestCommand: detection.jestCommand,
@@ -671,21 +673,22 @@ export const restoreProjectCheckpoint = async ({
     throw new ServiceError("Current project working directory not found", 400);
   }
 
-  const workingDir = activeSnapshot.rootDir;
+  const workingDir = snapshotWorkspaceRoot(activeSnapshot);
+  const targetWorkspace = snapshotWorkspaceRoot(targetSnapshot);
+  const targetAnalysisRelative = path.relative(targetWorkspace, targetSnapshot.rootDir);
 
-  // Clean working directory (preserve git and dependencies)
+  // Stage the target before changing the working tree, including when restoring
+  // the active snapshot itself.
+  const restoreCheckpointId = `snap_${Date.now()}_${randomUUID().slice(0, 8)}`;
+  const restoreStorage = path.resolve("storage/projects", projectId, "snapshots", restoreCheckpointId);
+  fs.mkdirSync(restoreStorage, { recursive: true });
+  const { fileCount, sizeBytes } = copyDirRecursive(targetWorkspace, restoreStorage, [".git", "node_modules"]);
   cleanWorkingDir(workingDir, [".git", "node_modules"]);
-
-  // Copy target files to working directory
-  const { fileCount, sizeBytes } = copyDirRecursive(
-    targetSnapshot.rootDir,
-    workingDir,
-    [".git", "node_modules"],
-  );
+  copyDirRecursive(restoreStorage, workingDir, [".git", "node_modules"]);
 
   let targetLabel = targetSnapshot.id.slice(0, 8);
   const targetMetaPath = path.join(
-    targetSnapshot.rootDir,
+    restoreStorage,
     ".covai-checkpoint.json",
   );
   if (fs.existsSync(targetMetaPath)) {
@@ -696,17 +699,6 @@ export const restoreProjectCheckpoint = async ({
   } else if (targetSnapshot.commitSha) {
     targetLabel = `Git: ${targetSnapshot.commitSha.slice(0, 7)}`;
   }
-
-  // Record a new checkpoint for this rollback
-  const restoreCheckpointId = `snap_${Date.now()}_${randomUUID().slice(0, 8)}`;
-  const restoreStorage = path.resolve(
-    "storage/projects",
-    projectId,
-    "snapshots",
-    restoreCheckpointId,
-  );
-  fs.mkdirSync(restoreStorage, { recursive: true });
-  copyDirRecursive(workingDir, restoreStorage, [".git", "node_modules"]);
 
   const restoreMeta = {
     id: restoreCheckpointId,
@@ -732,7 +724,7 @@ export const restoreProjectCheckpoint = async ({
       checksum,
       commitSha: null,
       storagePath: restoreStorage,
-      rootDir: workingDir,
+      rootDir: path.join(restoreStorage, targetAnalysisRelative),
       hasJest: targetSnapshot.hasJest,
       jestConfigPath: targetSnapshot.jestConfigPath,
       jestCommand: targetSnapshot.jestCommand,
@@ -1064,7 +1056,7 @@ export const getProjectTree = async (projectId, userId) => {
     throw new ServiceError("Project snapshot not ready", 202);
   }
 
-  const tree = buildTree(snapshot.rootDir);
+  const tree = buildTree(snapshotWorkspaceRoot(snapshot));
   return tree;
 };
 
@@ -1083,16 +1075,7 @@ export const getFileContent = async (projectId, userId, filePath) => {
     throw new ServiceError("Project snapshot not ready", 404);
   }
 
-  const normalizedPath = path
-    .normalize(filePath)
-    .replace(/^(\.\.(\/|\\|$))+/, "");
-  const absolutePath = path.join(snapshot.rootDir, normalizedPath);
-
-  const resolvedRoot = path.resolve(snapshot.rootDir);
-  const resolvedFile = path.resolve(absolutePath);
-  if (!resolvedFile.startsWith(resolvedRoot)) {
-    throw new ServiceError("Invalid file path", 400);
-  }
+  const resolvedFile = resolveSnapshotFile(snapshot, filePath);
 
   if (!fs.existsSync(resolvedFile)) {
     throw new ServiceError("File not found", 404);
@@ -1134,15 +1117,9 @@ export const updateFileContent = async (
     throw new ServiceError("File content is too large to save", 413);
   }
 
-  const normalizedPath = path
-    .normalize(filePath)
-    .replace(/^(\.\.(\/|\\|$))+/, "");
-  const resolvedRoot = path.resolve(snapshot.rootDir);
-  const resolvedFile = path.resolve(resolvedRoot, normalizedPath);
+  const resolvedRoot = snapshotWorkspaceRoot(snapshot);
+  const resolvedFile = resolveSnapshotFile(snapshot, filePath);
   const relativePath = path.relative(resolvedRoot, resolvedFile);
-  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
-    throw new ServiceError("Invalid file path", 400);
-  }
 
   if (!fs.existsSync(resolvedFile)) {
     throw new ServiceError("File not found", 404);
@@ -1171,7 +1148,7 @@ const getSnapshotRoot = async (projectId, userId) => {
   });
   if (!snapshot?.rootDir)
     throw new ServiceError("Project snapshot not ready", 404);
-  return path.resolve(snapshot.rootDir);
+  return snapshotWorkspaceRoot(snapshot);
 };
 
 const resolveProjectPath = (rootDir, filePath) => {

@@ -1,0 +1,1 @@
+import http from 'node:http'; http.createServer((req,res) => { res.setHeader('Content-Type','text/html'); res.end("<h1>System smoke</h1><button onclick=\"this.textContent='Done'\">Continue</button>"); }).listen(Number(process.env.PORT),'127.0.0.1');

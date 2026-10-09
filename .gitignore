@@ -38,3 +38,13 @@ AGENTS.md
 .specify
 specs/
 
+# Local export verification artifacts and dependency cache
+/.npm-cache/
+/tmp/
+/output/
+
+# Keep the approved export design alongside its delivery plan
+!/docs/superpowers/specs/
+/docs/superpowers/specs/*
+!/docs/superpowers/specs/2026-10-09-project-analysis-export-design.md
+

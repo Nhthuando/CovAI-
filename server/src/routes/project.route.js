@@ -1,6 +1,7 @@
 import express from "express";
 import projectController from "./../controllers/project.controller.js";
 import { authMiddleware } from "../middlewares/auth.middleware.js";
+import { downloadProjectExport } from "../controllers/projectExport.controller.js";
 import { uploadSingleArchive } from "../middlewares/upload.middleware.js";
 import {
   runQualityAnalysis,
@@ -19,6 +20,7 @@ router.post(
   projectController.validateArchive,
 );
 router.get("/:id", projectController.getProjectById);
+router.get("/:id/export", downloadProjectExport);
 router.get("/:id/snapshots", projectController.listSnapshots);
 router.post("/:id/snapshots", projectController.createSnapshot);
 router.post(

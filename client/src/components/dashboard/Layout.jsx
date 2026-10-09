@@ -27,6 +27,7 @@ import { ToastProvider, useToast } from "./ToastContext";
 import MissingTestFilesModal from "./MissingTestFilesModal";
 import PanelResizer from "./PanelResizer";
 import ConfirmDialog from "../common/ConfirmDialog";
+import ProjectExportDialog from "./ProjectExportDialog";
 import {
   PanelLeftClose,
   PanelLeftOpen,
@@ -43,6 +44,7 @@ import {
   MoreHorizontal,
   Terminal,
   LogOut,
+  Download,
 } from "lucide-react";
 
 import { useAuth } from "../../hooks/useAuth";
@@ -96,6 +98,7 @@ function LayoutInner() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [showExport, setShowExport] = useState(false);
   const [showCFG, setShowCFG] = useState(false);
 
   const handleLogout = () => {
@@ -756,6 +759,18 @@ function LayoutInner() {
             </button>
           )}
 
+          {project?.id && (
+            <button
+              type="button"
+              onClick={() => setShowExport(true)}
+              aria-label="Export project and analysis"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-[var(--radius-md)] text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-border)] border border-[var(--color-border)] cursor-pointer focus-visible:outline-2 focus-visible:outline-[var(--color-focus)]"
+            >
+              <Download size={13} />
+              {!isMobile && <span>Export</span>}
+            </button>
+          )}
+
           <div className="flex items-center rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] p-0.5 gap-0.5">
             <button
               type="button"
@@ -1156,6 +1171,14 @@ function LayoutInner() {
         variant="danger"
         icon={LogOut}
       />
+      {showExport && project?.id && (
+        <ProjectExportDialog
+          key={project.id}
+          project={project}
+          initialSnapshotId={project.latestSnapshotId || localStorage.getItem(`latestSnapshot_${project.id}`)}
+          onClose={() => setShowExport(false)}
+        />
+      )}
     </div>
   );
 }

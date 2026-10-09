@@ -1,0 +1,40 @@
+FILE: D:\HuuThuan - Project\NCKH\CovAI\temp\C1SE.20_ProductBacklog-UserStory_Storelens_v1.1.xlsx.bak
+sha256: 136c925e7bc513d644ba5d2e7ea5a5af15a10ce9fc928e5667eb80106b66562d
+sheets: 1
+
+SHEET Product Backlog: max 990x22; merged=['J4:J6', 'M3:M6']; freeze=D8; gridlines=False; print_area=None
+tables={}
+R001:                        ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  || 
+R005:  || Product Backlog ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  || 
+R007:  || Id || Heading || As a.. || I want to .. || so that .. || Acceptance Criteria || Remarks || Priority || Status || Type || Project Id || Sprint No || Estimate
+(Hours) || Status ||  ||  ||  ||  ||  ||  || 
+R008:  || PB-01 || Edge AI Processing Pipeline || System Enginee || build a service on the Edge Layer to process video streams (RTSP) using AI models (YOLOv8, DeepSORT). || the backend API  receives the anonymized metadata needed to power all AI analytics features. || Successfully connect to and process the RTSP video stream.
+Apply (YOLOv8 + DeepSORT) to detect and assign anonymous IDs to people.
+Send only anonymized metadata (ID, coordinates, timestamp) to the backend API (PB-05).
+ DO NOT store or send raw video, images, or PII. ||  || 5 ||  ||  ||  || Sprint 1 ||  || done ||  ||  ||  ||  ||  ||  || 
+R009:  || PB-02 || Authentication || User || Authenticate and authorize users || ensure that only authorized personnel can access the data. || With correct credentials (email/pass), login is successful and redirects to the Dashboard.
+With incorrect credentials, an error is shown and the user stays on the login page.
+When the user clicks "Logout", the session ends and redirects to the login page. ||  || 5 ||  ||  ||  || Sprint 1 ||  ||  ||  ||  ||  ||  ||  ||  || 
+R010:  || PB-03 || Camera Management || Store Manager || Manage and monitor the in-store camera system || I can configure analysis zones (ROIs) and ensure the system is operational. || Manager can draw , name, and save a new ROI on the camera interface.
+The new ROI is saved to the database .
+Manager can delete existing ROIs. ||  || 5 ||  ||  ||  || Sprint 1 ||  ||  ||  ||  ||  ||  ||  ||  || 
+R011:  || PB-04 || POS Data Integration || System || Automatically synchronize invoice data from the POS system || I can link customer behavior (AI) with purchase outcomes (POS) for analysis. || System automatically syncs new invoices from the POS API.
+Invoice data  is saved to the database. ||  || 3 ||  ||  ||  || Sprint 2 ||  ||  ||  ||  ||  ||  ||  ||  || 
+R012:  || PB-05 || AI Data Ingestion || System || Receive analyzed metadata (tracking, coordinates, timestamps) from the Edge AI layer || the application can store and display AI-driven insights (heatmaps, dwell time). || Backend receives metadata  from the Edge AI Layer.
+Metadata is saved to the database 
+System DOES NOT store raw video, faces, or PII. ||  || 3 ||  ||  ||  || Sprint 2 ||  ||  ||  ||  ||  ||  ||  ||  || 
+R013:  || PB-06 || Dashboard || Store Manager || View an overview dashboard and real-time store metrics || I can quickly grasp the current operational status. || Display main KPIs 
+Display real-time metrics
+Real-time metrics auto-update  ||  || 3 ||  ||  ||  || Sprint 2 ||  ||  ||  ||  ||  ||  ||  ||  || 
+R014:  || PB-07 || Heatmap Analysis || Store Manager || Analyze customer traffic density and movement || I can identify "hot spots" and "cold spots" to optimize the store layout. || Manager selects a camera and date range.
+System displays a heatmap overlay (hot/cold) on the camera snapshot.
+"Hot" (red) areas must correspond to high customer density. ||  || 4 ||  ||  ||  || Sprint 2 ||  ||  ||  ||  ||  ||  ||  ||  || 
+R015:  || PB-08 || Reporting || Store Manager || Generate and export detailed activity reports || I can perform in-depth performance analysis and make strategic decisions. || Manager can select report type and date range.
+System displays the report on the screen.
+Manager can export the report to a file  ||  || 1 ||  ||  ||  || Sprint 3 ||  ||  ||  ||  ||  ||  ||  ||  || 
+R016:  || PB-09 || Product Management || Store Manager || Manage the product catalog and information || product data (for linking with AI analysis) is always accurate and up-to-date. || Manager can add, edit, and delete products  in the database.
+Product information is updated accurately. ||  || 2 ||  ||  ||  || Sprint 3 ||  ||  ||  ||  ||  ||  ||  ||  || 
+R017:  || PB-10 || Data Import/Export || Store Manager || Import or export system data (e.g., products, reports) || I can easily synchronize with other software or archive data. || Manager can import a product list from a CSV file.
+Manager can export data (products, reports) to a CSV file. ||  || 2 ||  ||  ||  || Sprint 3 ||  ||  ||  ||  ||  ||  ||  ||  || 
+R018:  || PB-11 || Dwell Time Analysis || Store Manager || Analyze statistics on how long customers stay in specific areas (ROIs) || I can evaluate the attractiveness of products/displays. || Manager selects one or more ROIs and a date range.
+System displays a chart comparing the average dwell time for those ROIs. ||  || 3 ||  ||  ||  || Sprint 3 ||  ||  ||  ||  ||  ||  ||  ||  || 

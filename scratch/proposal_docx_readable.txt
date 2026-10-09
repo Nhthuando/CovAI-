@@ -1,0 +1,471 @@
+FILE: D:\HuuThuan - Project\NCKH\CovAI\temp\C1SE.30_Proposal_ver1.2.docx
+sha256: b5271bdd10dd835277c63b42ba1f909342d6757ec15ec0aa824848273ff97e25
+paragraphs: 390; tables: 18; sections: 6
+
+BODY PARAGRAPHS
+P000 [Normal] International School
+P001 [Normal] Capstone Project 1
+P002 [Normal] CMU-SE 450 
+P003 [Normal] Project Proposal
+P004 [Normal] Version 1.2
+P005 [Normal] Date: August 10, 2026
+P006 [Normal] COVAI
+P007 [Normal] TEST COVERAGE ANALYSIS AND AI-DRIVEN TEST GENERATION SYSTEM
+P008 [Normal] Created by C1SE.30
+P009 [Normal] Dinh, Huynh Tan
+P010 [Normal] Phuc, Tran Huu
+P011 [Normal] Quy, Nguyen Duy
+P012 [Normal] Thuan, Ngo Huu
+P013 [Normal] Approved by 
+P014 [Normal] Man, Nguyen Duc, Ph.D.
+P015 [Normal]    Proposal Review Panel Representative:	
+P016 [Normal]     Name				Signature		Date
+P017 [Normal] Capstone Project 1- Mentor:			
+P018 [Normal]     Name				Signature		Date
+P019 [Normal] PROJECT INFORMATION
+P020 [Normal] DOCUMENT APPROVALS
+P021 [Normal] The following signatures are required for approval of this document.
+P022 [Normal] PROJECT PROPOSAL DOCUMENT
+P023 [Normal] REVISION HISTORY
+P024 [Normal] TABLE OF CONTENTS
+P025 [table of figures] LIST OF FIGURES
+P026 [table of figures] Figure 1- System context diagram	5
+P027 [table of figures] Figure 2 - System Workflow	9
+P028 [table of figures] Figure 3 - System Workflow	10
+P029 [table of figures] Figure 4 - Database Design Overview	11
+P030 [table of figures] Figure 5 - Database Design Overview	12
+P031 [table of figures] LIST OF TABLES
+P032 [table of figures] Table 1 - Solution Comparison	4
+P033 [table of figures] Table 2 - Specific Objectives	11
+P034 [table of figures] Table 3 - Functional Requirements	14
+P035 [table of figures] Table 4 - Non-Functional Requirements	15
+P036 [table of figures] Table 5 - Three-Layer AI Chatbot Evaluation Framework	16
+P037 [table of figures] Table 6 - Evaluation Dataset, Metrics and Scoring	17
+P038 [table of figures] Table 7 - Constraints and Assumptions	18
+P039 [table of figures] Table 8 - Target Users and Stakeholders	18
+P040 [table of figures] Table 9 - Technology Stack	20
+P041 [table of figures] Table 10 - Project Schedule	20
+P042 [table of figures] Table 11 - Project Team Roles and Responsibilities	22
+P043 [table of figures] Table 12 - Risk Assessment	23
+P044 [table of figures] Table 13 - Budget and Resource Allocation	25
+P045 [table of figures] Table 14 - References	27
+P046 [Heading 1] Project Title
+P047 [Normal] COVAI – Software Testing and AI Chatbot Trustworthiness Evaluation System
+P048 [Heading 1] Project Overview
+P049 [Normal] COVAI is an AI-driven software quality platform that combines two complementary capabilities in a single engineering workflow. The first capability analyzes automated software testing by ingesting source code, detecting supported testing frameworks, executing tests in isolated environments, analyzing coverage and code structure, and generating additional tests. The second capability evaluates the trustworthiness of an internal AI chatbot according to project-specific knowledge, business rules, API contracts, conversation context and tool permissions.
+P050 [Normal] The platform is intended for developers, QA engineers and AI engineers who need repeatable evidence about software quality. COVAI supports local ZIP uploads and GitHub repositories, project snapshots, background jobs, dashboards and notifications. The platform initially focuses on JavaScript/TypeScript projects and supported testing frameworks such as Jest, Vitest, Supertest, Playwright and Cypress.
+P051 [Heading 1] Project Background and Motivation
+P052 [pdq2pg_selectionanchorcontainer] Software testing is essential for ensuring software quality, but as projects become larger and more complex, developers face increasing difficulties in writing, executing, and maintaining automated tests. They often need to manually analyze test coverage, identify insufficiently tested code, understand code complexity, and create additional test cases.
+P053 [Normal (Web)] Modern projects may also use different testing levels and frameworks, such as Unit, Integration, and System Testing with Jest, Vitest, Supertest, Playwright, or Cypress. This makes automated framework detection, test execution, and result analysis important challenges.
+P054 [Normal (Web)] At the same time, many applications integrate AI chatbots for knowledge assistance, user guidance, and tool-based actions. These chatbots must be evaluated not only for answer correctness, but also for relevance, context retention, safety, privacy, and compliance with project-specific rules.
+P055 [Normal] Motivation:
+P056 [List Paragraph] Reduce manual effort in software testing and coverage analysis. 
+P057 [List Paragraph] Identify insufficiently tested and complex source-code areas. 
+P058 [List Paragraph] Use AI to assist in generating additional test cases. 
+P059 [List Paragraph] Support multiple testing levels and frameworks in one platform. 
+P060 [List Paragraph] Evaluate internal AI chatbots using project-specific knowledge and rules. 
+P061 [List Paragraph] Provide measurable results and recommendations for improving software and chatbot quality. 
+P062 [List Paragraph] Automate analysis through GitHub integration.
+P063 [Heading 1] Problem Statement
+P064 [Normal] Modern software teams face two related quality problems. First, automated testing is distributed across different testing levels and frameworks. Developers must manually execute tests, inspect coverage reports, identify insufficiently tested code, understand complex control flow, and create additional tests. These activities become increasingly time-consuming as projects grow and change frequently.
+P065 [Normal] Second, web applications are increasingly integrating internal AI chatbots for question answering, user guidance, and tool or API-based actions. The reliability of these chatbots cannot be determined only by the name of the underlying model. Their behavior also depends on system prompts, internal data, retrieval mechanisms, conversation context, tool permissions, refusal logic, and implementation choices. Two chatbots that use the same model may therefore produce different levels of reliability.
+P066 [Normal] A general-purpose comparison of large AI models is too broad for this project because different tasks require different evaluation criteria and many open-ended prompts do not have a single ground-truth answer. In contrast, an internal chatbot operates inside a specific application where source code, business documents, knowledge bases, API specifications, and confirmed business rules can provide project-specific ground truth.
+P067 [Normal] Therefore, COVAI addresses the need for a unified engineering platform that can analyze software testing quality and also evaluate whether an internal AI chatbot behaves correctly, faithfully, safely, consistently, and appropriately within the data and business rules of its own web application.
+P068 [Heading 1] Proposed Solution
+P069 [Normal (Web)] COVAI is an AI-driven software quality platform that combines automated software testing and code analysis with AI chatbot trustworthiness evaluation in a unified engineering workflow.
+P070 [Normal (Web)] The system accepts source code through local ZIP upload or GitHub repository import. After a project is imported, COVAI creates a source-code snapshot and analyzes the project configuration to identify the supported testing framework.
+P071 [Normal (Web)] For software testing, COVAI executes tests inside isolated Docker environments and collects test results, execution logs, and coverage reports. Coverage is analyzed at overall, file, and function levels. The system also analyzes source-code structure using Control Flow Graph (CFG) and Cyclomatic Complexity to identify complex and insufficiently tested areas.
+P072 [Normal (Web)] When testing gaps are identified, the AI service analyzes the source code, test results, coverage information, and code structure to generate additional test skeletons or test implementations. Generated tests can then be reviewed and validated by the user.
+P073 [Normal (Web)] For AI chatbot evaluation, COVAI uses project-specific knowledge, business rules, API specifications, and expected behaviors to build an evaluation profile and generate benchmark scenarios. The system evaluates internal chatbots across tasks such as Knowledge Q&A, Usage Guidance, and Action/Tool Execution. Evaluation results include criteria such as correctness, faithfulness, relevance, consistency, context retention, safety, privacy, appropriate refusal, and tool usage.
+P074 [Normal] Core Components:
+P075 [List Paragraph] Project Management & Source Ingestion: Manages projects, source-code snapshots, ZIP uploads, and GitHub repository imports. 
+P076 [List Paragraph] Test Execution & Coverage Analysis: Detects supported testing frameworks, executes tests in isolated Docker environments, and collects and analyzes coverage reports. 
+P077 [List Paragraph] Code Structure Analysis: Analyzes source code using Control Flow Graph and Cyclomatic Complexity. 
+P078 [List Paragraph] AI Test Generation: Uses AI to generate test skeletons and full test implementations based on source code and analysis results. 
+P079 [List Paragraph] Multi-Framework Testing: Supports selected testing levels and frameworks, including Jest, Vitest, Supertest, Playwright, and Cypress. 
+P080 [List Paragraph] AI Chatbot Trustworthiness Evaluation: Builds project-specific evaluation profiles, generates benchmark scenarios, evaluates chatbot responses and actions, and calculates trustworthiness scores. 
+P081 [List Paragraph] Evidence, Dashboard & Reporting: Stores test and evaluation evidence and provides visual reports, scores, failed cases, risk indicators, recommendations, and job status. 
+P082 [List Paragraph] GitHub Automation: Integrates with GitHub to import repositories and trigger analysis when source code is updated. 
+P083 [Heading 1] Related Works or Projects on the Market
+P084 [Caption] Table 1 - Solution Comparison
+P085 [Heading 1] System Architecture Overview
+P086 [Heading 2] System Context Diagram
+P087 [Caption] Figure 1- System context diagram
+P088 [Normal] System Context Description:
+P089 [Normal] Developer / QA / AI Engineer
+P090 [Normal] The Developer / QA / AI Engineer is the primary user of COVAI who uses the platform to analyze software quality and evaluate internal AI chatbot trustworthiness:
+P091 [List Paragraph] Login / Logout
+P092 [List Paragraph] Create and manage projects
+P093 [List Paragraph] Upload source code (ZIP / RAR)
+P094 [List Paragraph] Import GitHub repositories
+P095 [List Paragraph] Select or detect testing framework
+P096 [List Paragraph] Trigger test analysis
+P097 [List Paragraph] View coverage results (statement, branch, function, line)
+P098 [List Paragraph] View CFG and Cyclomatic Complexity
+P099 [List Paragraph] Request AI-generated tests (skeletons and full implementations)
+P100 [List Paragraph] View generated test history
+P101 [List Paragraph] Configure evaluation profile and chatbot task types
+P102 [List Paragraph] Confirm or edit benchmark test scenarios
+P103 [List Paragraph] View trustworthiness scores (overall and component)
+P104 [List Paragraph] View failed cases, error classification, and risk levels
+P105 [List Paragraph] View improvement suggestions
+P106 [List Paragraph] Compare chatbot versions or configurations
+P107 [List Paragraph] Receive real-time job status and notifications
+P108 [Normal] Domain Expert / Project Owner
+P109 [Normal] The Domain Expert / Project Owner provides and confirms the project-specific ground truth used to evaluate internal AI chatbots:
+P110 [List Paragraph] Upload business documents, FAQ, knowledge base, and API specifications
+P111 [List Paragraph] Confirm or edit business rules, expected facts, and expected actions
+P112 [List Paragraph] Review proposed evaluation rules and test scenarios generated by the system
+P113 [List Paragraph] Confirm risk levels and forbidden actions for high-risk scenarios
+P114 [Normal] GitHub
+P115 [Normal] GitHub is an external service used to provide source-code repositories and repository update events:
+P116 [List Paragraph] Provide repository listing (via OAuth)
+P117 [List Paragraph] Provide repository source code (via git clone)
+P118 [List Paragraph] Send push event payloads when repositories are updated (Webhook)
+P119 [Normal] Docker Environment
+P120 [Normal] The Docker environment provides an isolated execution environment for running user projects and tests safely:
+P121 [List Paragraph] Install project dependencies
+P122 [List Paragraph] Execute testing frameworks (Jest, Vitest, Supertest, Playwright, Cypress)
+P123 [List Paragraph] Generate coverage reports and test output
+P124 [List Paragraph] Capture execution logs (stdout, stderr)
+P125 [Normal] AI Service (Google Gemini API)
+P126 [Normal] The AI service provides intelligent source-code analysis, test-generation, and evaluation-scoring capabilities:
+P127 [List Paragraph] Analyze source code and coverage data
+P128 [List Paragraph] Generate test skeletons
+P129 [List Paragraph] Generate full test implementations
+P130 [List Paragraph] Provide suggestions for insufficiently tested code
+P131 [List Paragraph] Score chatbot responses against evaluation criteria and ground truth
+P132 [Normal] Target Internal Chatbot
+P133 [Normal] The Target Internal Chatbot is the external chatbot system being evaluated. It is integrated into a specific web application and operates within that application's data and business rules:
+P134 [List Paragraph] Receive evaluation prompts and test scenarios from COVAI
+P135 [List Paragraph] Return responses, citations, and available tool/action execution traces
+P136 [List Paragraph] Provide latency and metadata when available
+P137 [Normal] Firebase Cloud Storage
+P138 [Normal] Firebase Cloud Storage is an external cloud storage service used to persist project artifacts: 
+P139 [List Paragraph] Store uploaded source archives (ZIP / RAR)
+P140 [List Paragraph] Store coverage report artifacts (JSON, LCOV)
+P141 [List Paragraph] Provide download access to stored artifacts
+P142 [Normal] Gmail SMTP
+P143 [Normal] Gmail SMTP is an external email delivery service used for account management:
+P144 [List Paragraph] Deliver password reset emails to users
+P145 [List Paragraph] Return delivery status
+P146 [Normal] COVAI System
+P147 [Normal] COVAI processes project source code, executes tests, analyzes results, provides quality insights to developers, and evaluates the trustworthiness of internal AI chatbots against project-specific data and business rules:
+P148 [List Paragraph] Project and snapshot management
+P149 [List Paragraph] Test framework detection (Jest, Vitest, Supertest, Playwright, Cypress)
+P150 [List Paragraph] Test execution in isolated Docker environments
+P151 [List Paragraph] Coverage analysis (statement, branch, function, line at overall / file / function level)
+P152 [List Paragraph] Control Flow Graph analysis
+P153 [List Paragraph] Cyclomatic Complexity analysis
+P154 [List Paragraph] AI-assisted test generation (skeletons and full implementations)
+P155 [List Paragraph] AI evaluation knowledge ingestion (source code, documents, knowledge base, API specs)
+P156 [List Paragraph] Evaluation profile building and task classification
+P157 [List Paragraph] Benchmark and test scenario generation
+P158 [List Paragraph] Chatbot evaluation execution (prompt delivery, response collection)
+P159 [List Paragraph] Multi-criteria trustworthiness scoring (correctness, faithfulness, hallucination, safety, etc.)
+P160 [List Paragraph] Diagnosis and improvement suggestions
+P161 [List Paragraph] Chatbot version and configuration comparison
+P162 [List Paragraph] Job management and background processing
+P163 [List Paragraph] Real-time notifications
+P164 [List Paragraph] GitHub integration and webhook automation
+P165 [List Paragraph] User authentication and password reset
+P166 [Heading 2] System Workflow
+P167 [Caption] Figure 2 - System Workflow
+P168 [Caption] Figure 3 - System Workflow
+P169 [Heading 2] Database Design Overview
+P170 [Caption] Figure 4 - Database Design Overview
+P171 [Caption] Figure 5 - Database Design Overview
+P172 [Heading 1] Objectives and Deliverables 
+P173 [Heading 2] General Objective
+P174 [Normal] To develop an AI-driven software quality platform that automates software test analysis and provides evidence-based evaluation of internal AI chatbot trustworthiness using project-specific knowledge, rules and execution context.
+P175 [Heading 2] Specific Objectives
+P176 [Caption] Table 2 - Specific Objectives
+P177 [Heading 2] In Scope
+P178 [List Bullet] JavaScript/TypeScript project ingestion and snapshot management.
+P179 [List Bullet] Jest, Vitest, Supertest, Playwright and Cypress integrations within the agreed project scope.
+P180 [List Bullet] Docker-based test execution, logs and resource controls.
+P181 [List Bullet] Coverage, CFG and Cyclomatic Complexity analysis.
+P182 [List Bullet] AI-assisted test generation with validation/fallback behavior.
+P183 [List Bullet] Project-specific AI chatbot evaluation for Knowledge Q&A, Usage Guidance and Action/Tool Execution.
+P184 [List Bullet] Trustworthiness scoring, diagnosis, comparison and reporting.
+P185 [List Bullet] GitHub repository import and webhook-triggered analysis.
+P186 [Heading 2] Out of Scope
+P187 [List Bullet] Full support for every programming language or test framework.
+P188 [List Bullet] Universal benchmarking of all public foundation models.
+P189 [List Bullet] Uncontrolled execution of real-world production actions during chatbot evaluation.
+P190 [List Bullet] Guaranteeing that AI-generated tests or AI judgments are always correct.
+P191 [List Bullet] Replacing human/domain-expert validation for critical business rules and high-risk scenarios.
+P192 [Heading 1] Features & Requirements
+P193 [Heading 2] Software Testing Features
+P194 [artifact-docx-preview_listbullet] Project & Source Management
+P195 [artifact-docx-preview_listbullet] Framework Detection
+P196 [artifact-docx-preview_listbullet] Isolated Test Execution
+P197 [artifact-docx-preview_listbullet] Coverage Analysis
+P198 [artifact-docx-preview_listbullet] Control Flow Graph Analysis
+P199 [artifact-docx-preview_listbullet] Cyclomatic Complexity Analysis
+P200 [artifact-docx-preview_listbullet] AI-Assisted Test Generation
+P201 [artifact-docx-preview_listbullet] Multi-Framework Testing
+P202 [artifact-docx-preview_listbullet] GitHub Automation
+P203 [artifact-docx-preview_listbullet] Dashboard, Jobs and Notifications
+P204 [Heading 2] AI Chatbot Trustworthiness Evaluation Features
+P205 [artifact-docx-preview_listbullet] AI Evaluation Knowledge Ingestion
+P206 [artifact-docx-preview_listbullet] Evaluation Profile Builder
+P207 [artifact-docx-preview_listbullet] Benchmark & Scenario Generation
+P208 [artifact-docx-preview_listbullet] Chatbot Evaluation Runner
+P209 [artifact-docx-preview_listbullet] Evidence Collection
+P210 [artifact-docx-preview_listbullet] Trustworthiness Scoring
+P211 [artifact-docx-preview_listbullet] Diagnosis & Improvement Suggestions
+P212 [artifact-docx-preview_listbullet] Comparison & Reporting
+P213 [Heading 2] Functional Requirements
+P214 [Caption] Table 3 - Functional Requirements
+P215 [Heading 2] Non-Functional Requirements
+P216 [Caption] Table 4 - Non-Functional Requirements
+P217 [Heading 2] AI Trustworthiness Evaluation Framework
+P218 [Normal] The AI evaluation extension uses a three-layer framework so that COVAI can remain reusable across different web applications while still respecting project-specific business rules.
+P219 [Caption] Table 5 - Three-Layer AI Chatbot Evaluation Framework
+P220 [Heading 2] Evaluation Dataset, Metrics and Scoring
+P221 [Normal] Each evaluation case is defined by a task type, prompt, context, expected behavior and evidence requirements. For deterministic cases, the expected answer, facts, UI steps, tool calls or forbidden actions can be specified explicitly. User/domain-expert confirmation is used for important project rules.
+P222 [Caption] Table 6 - Evaluation Dataset, Metrics and Scoring
+P223 [Heading 1] Constraints and Assumptions
+P224 [Caption] Table 7 - Constraints and Assumptions
+P225 [Heading 1] Target Users and Stakeholders
+P226 [Caption] Table 8 - Target Users and Stakeholders
+P227 [Heading 1] Development Methodology and Technology Stack
+P228 [Heading 2] Development Methodology (Agile Scrum)
+P229 [Normal] We will follow an Agile Scrum methodology to develop the CovAI platform through iterative and incremental sprints. Each sprint focuses on implementing and integrating a specific group of system features.
+P230 [Normal] Scrum is suitable for this project because the system contains multiple technical components including backend services, frontend interfaces, Docker-based execution, code analysis, AI integration, and testing frameworks.
+P231 [Normal] The iterative development process allows the team to implement core functionality first, evaluate the results, identify technical problems, and gradually expand the system.
+P232 [Normal] Picture 1: Development Methodology (Agile Scrum)
+P233 [Normal] Why did we choose the Scrum process to develop the system?
+P234 [List Paragraph] We chose Scrum because the project contains multiple complex and interdependent features. Requirements may change during development, especially for AI-generated testing and multi-framework support.
+P235 [List Paragraph] Scrum allows the team to divide the project into manageable sprints, continuously review progress, and adjust implementation priorities based on technical results and feedback.
+P236 [Heading 2] Technology Stack
+P237 [Caption] Table 9 - Technology Stack
+P238 [Heading 1] Timeline
+P239 [Caption] Table 10 - Project Schedule
+P240 [Heading 1] Project Team
+P241 [Caption] Table 11 - Project Team Roles and Responsibilities
+P242 [Heading 1] Risk Management
+P243 [Caption] Table 12 - Risk Assessment
+P244 [Heading 1] Budget and Resources
+P245 [Heading 2] Budget
+P246 [Caption] Table 13 - Budget and Resource Allocation
+P247 [Heading 2] Human Resources
+P248 [Normal] The project is fully executed by an internal team of four undergraduate software engineering students under faculty supervision. Because this is an academic research and capstone project, labor expenses are treated as non-billable academic effort:
+P249 [List Paragraph] Project Team: 4 software engineering students.
+P250 [List Paragraph] Expected Effort: Approximately 15–20 hours/week per member across a 15-week development lifecycle (total estimated effort: ~1,000–1,200 Man-hours).
+P251 [List Paragraph] Supervision: Academic and technical advising provided by the faculty project supervisor.
+P252 [Heading 1] Conclusion
+P253 [Normal] COVAI is designed as a unified software-quality platform with two major capabilities: automated software testing and AI chatbot trustworthiness evaluation. The software-testing pipeline helps developers move from source-code ingestion to test execution, coverage analysis, structural analysis and AI-assisted test generation. The AI-evaluation pipeline complements this by checking whether an internal chatbot behaves according to project-specific facts, rules, context and action constraints.
+P254 [Normal] The combination of project snapshots, background jobs, evidence collection, configurable evaluation profiles and reporting provides a basis for repeatable quality assessment. At the same time, the project explicitly recognizes the limits of AI-generated tests and model-assisted evaluation, so critical results remain subject to validation and domain-expert review.
+P255 [Normal] The expected result is a functional academic prototype that demonstrates how software testing quality and AI-powered application behavior can be evaluated in one engineering workflow.
+P256 [Heading 1] References
+P257 [Caption] Table 14 - References
+P258 [Normal] END
+
+TABLES
+TABLE 1: 13x6
+R01: Project acronym || COVAI || COVAI || COVAI || COVAI || COVAI
+R02: Project Title || Test Coverage Analysis and AI-Driven Test Generation System || Test Coverage Analysis and AI-Driven Test Generation System || Test Coverage Analysis and AI-Driven Test Generation System || Test Coverage Analysis and AI-Driven Test Generation System || Test Coverage Analysis and AI-Driven Test Generation System
+R03: Start Date || Aug 10, 2026 || End Date || Dec 12, 2026 || Dec 12, 2026 || Dec 12, 2026
+R04: Lead Institution || International School, Duy Tan University || International School, Duy Tan University || International School, Duy Tan University || International School, Duy Tan University || International School, Duy Tan University
+R05: Project Mentor || Man, Nguyen Duc, Ph.D. || Man, Nguyen Duc, Ph.D. || Man, Nguyen Duc, Ph.D. || Man, Nguyen Duc, Ph.D. || Man, Nguyen Duc, Ph.D.
+R06: Scrum master / / Project Leader & contact details || Dinh, Huynh Tan / Email: huynhtandinh.dev@gmail.com / Tel: 0365 472 162  / ID: 29219052500 || Dinh, Huynh Tan / Email: huynhtandinh.dev@gmail.com / Tel: 0365 472 162  / ID: 29219052500 || Dinh, Huynh Tan / Email: huynhtandinh.dev@gmail.com / Tel: 0365 472 162  / ID: 29219052500 || Dinh, Huynh Tan / Email: huynhtandinh.dev@gmail.com / Tel: 0365 472 162  / ID: 29219052500 || Dinh, Huynh Tan / Email: huynhtandinh.dev@gmail.com / Tel: 0365 472 162  / ID: 29219052500
+R07: Partner Organization || Duy Tan University || Duy Tan University || Duy Tan University || Duy Tan University || Duy Tan University
+R08: Project Web URL ||  ||  ||  ||  || 
+R09: Team members || Name || Email || Email || Email || Tel
+R10: 29219052500 || Dinh, Huynh Tan || huynhtandinh.dev@gmail.com ||  || 0365472162 || 0365472162
+R11: 29211458179 || Phuc, Tran Huu || phuc12435az@gmail.com ||  || 0842644169 || 0842644169
+R12: 29211158823 || Quy, Nguyen Duy || quylavip333@gmail.com ||  || 0334814522 || 0334814522
+R13: 29219065178 || Thuan, Huu Ngo || thuanhuugl@gmail.com ||  || 0385591447 || 0385591447
+TABLE 2: 4x3
+R01: Dinh, Huynh Tan / Student ID: 29219052500 / Scrum Master || Signature || Date
+R02: Phuc, Tran Huu / Student ID: 29211458179 / Team Member || Signature || Date
+R03: Quy, Nguyen Duy / Student ID: 29211158823 / Team Member || Signature || Date
+R04: Thuan, Ngo Huu / Student ID: 29219065178 / Team Member || Signature || Date
+TABLE 3: 4x4
+R01: Document Title || Project Proposal Document || Project Proposal Document || Project Proposal Document
+R02: Author(s) || Dinh, Huynh Tan || Dinh, Huynh Tan || Dinh, Huynh Tan
+R03: Role || Scrum Master || Scrum Master || Scrum Master
+R04: Date || August 10, 2026 || File name: || C1SE.30_Proposal_ver1.2.doc
+TABLE 4: 4x4
+R01: Version || Date || Comments || Author
+R02: 1.0 || Aug 10, 2026 || Initial Proposal Document || Dinh
+R03: 1.1 || Sep 05, 2026 || Update Document || C1SE.30
+R04: 1.2 || Sep 07, 2026 || Update Header and Footer || C1SE.30
+TABLE 5: 6x4
+R01: Solution || Description || Strengths || Weaknesses
+R02: SonarQube || Platform for source-code quality and static analysis || Mature code-quality analysis || Limited focus on automated test generation
+R03: Codecov || Platform for collecting and visualizing test coverage || Strong coverage reporting || Does not provide complete test-generation workflow
+R04: Jest || JavaScript testing framework || Test execution and coverage support || Focused on test execution rather than complete project analysis
+R05: Playwright || Browser automation and testing framework || Powerful end-to-end testing || Not a complete coverage and AI analysis platform
+R06: CovAI || AI-driven platform for test execution, coverage analysis, code analysis, and test generation || Integrate testing, coverage, code analysis, and AI assistance || Initial implementation focuses mainly on JavaScript-based projects
+TABLE 6: 14x3
+R01: ID || Objective || Description
+R02: SO-01 || Project and Source Code Management || Implement project, source-code, repository and snapshot management.
+R03: SO-02 || Automated Test Execution || Execute supported test frameworks inside controlled Docker environments.
+R04: SO-03 || Test Coverage Analysis || Analyze statement, branch, function and line coverage at supported scopes.
+R05: SO-04 || Code Structure Analysis || Generate Control Flow Graphs and calculate Cyclomatic Complexity.
+R06: SO-05 || AI-Assisted Test Generation || Generate test skeletons and runnable test implementations from analysis evidence.
+R07: SO-06 || Multi-Framework Testing || Support the selected Unit, Integration and System testing frameworks.
+R08: SO-07 || GitHub Automation || Trigger analysis from repository updates through GitHub integration and webhooks.
+R09: SO-08 || AI Chatbot Evaluation Framework || Provide reusable mechanisms for evaluating internal chatbot behavior.
+R10: SO-09 || Project-Specific Evaluation Profile || Build and confirm evaluation rules from project knowledge and business context.
+R11: SO-10 || Benchmark and Scenario Generation || Generate knowledge, guidance and action/tool evaluation scenarios.
+R12: SO-11 || Trustworthiness Scoring || Compute criterion-level, task-level and overall evaluation scores.
+R13: SO-12 || Diagnosis and Improvement Recommendations || Classify likely failure causes and suggest improvement directions.
+R14: SO-13 || Comparison and Reporting || Compare chatbot versions/configurations under the same evaluation profile and report results.
+TABLE 7: 17x2
+R01: ID || Functional Requirement
+R02: FR-01 || The system shall authenticate users and allow authorized users to create and manage projects.
+R03: FR-02 || The system shall accept project source code through local ZIP upload or GitHub repository import and maintain project snapshots.
+R04: FR-03 || The system shall detect supported testing frameworks and execute tests inside isolated Docker environments.
+R05: FR-04 || The system shall calculate statement, branch, function, and line coverage and present results at overall, file, and function levels when supported by the framework.
+R06: FR-05 || The system shall analyze source code using Control Flow Graph and Cyclomatic Complexity techniques.
+R07: FR-06 || The system shall allow users to request AI-generated test skeletons and full test implementations and store generation history.
+R08: FR-07 || The system shall integrate with GitHub and support automated analysis triggered by repository updates.
+R09: FR-08 || The system shall allow users to provide business documents, knowledge-base content, API specifications, and project rules for chatbot evaluation.
+R10: FR-09 || The system shall analyze the provided project context and propose an evaluation profile containing chatbot task types, relevant rules, and candidate test scenarios.
+R11: FR-10 || The system shall allow a user or domain expert to confirm or edit important rules, expected facts, and expected actions before final evaluation.
+R12: FR-11 || The system shall support evaluation of knowledge Q&A, usage guidance, and action/tool-execution tasks.
+R13: FR-12 || The system shall send evaluation prompts to a configurable target chatbot interface and collect returned answers and available execution metadata.
+R14: FR-13 || The system shall evaluate core criteria including correctness, faithfulness, relevance, completeness, hallucination, consistency, context retention, clarification, refusal, safety, privacy, latency, and cost where measurable.
+R15: FR-14 || For action/tool tasks, the system shall check tool selection, parameter accuracy, required confirmation, forbidden actions, and duplicate execution where relevant.
+R16: FR-15 || The system shall display overall and component scores, failed cases, serious violations, risk levels, error categories, and improvement suggestions.
+R17: FR-16 || The system shall support comparison of multiple chatbot versions or configurations under the same evaluation profile.
+TABLE 8: 9x3
+R01: ID || Quality Attribute || Non-Functional Requirement
+R02: NFR-01 || Security || Source code, business documents, credentials, and chatbot evaluation data shall be accessible only to authorized users and shall not be exposed unnecessarily to external services.
+R03: NFR-02 || Isolation || User projects and test executions shall run inside controlled Docker environments with timeout and resource limits.
+R04: NFR-03 || Reproducibility || Evaluation runs shall store relevant project snapshot, evaluation profile, test cases, and available chatbot configuration metadata so results can be reviewed and compared.
+R05: NFR-04 || Reliability || Failures in one background job or target chatbot request shall be handled without corrupting other project results; failed jobs shall provide logs or status information.
+R06: NFR-05 || Performance || Long-running analysis shall use background jobs and shall provide progress/status feedback rather than blocking the user interface.
+R07: NFR-06 || Modularity || The chatbot evaluation framework shall support adding new task-specific evaluation modules in future versions without redesigning the entire platform.
+R08: NFR-07 || Usability || Evaluation results shall explain component scores, failed cases, expected behavior, observed behavior, and recommended next steps in a form understandable to developers and evaluators.
+R09: NFR-08 || Safety || Evaluation of tool/action chatbots shall avoid unintended real-world side effects by using confirmation rules and controlled test environments when necessary.
+TABLE 9: 4x3
+R01: Layer || Purpose || Examples
+R02: Layer 1 – Core Criteria || Applied to all evaluated chatbots. || Correctness; Faithfulness; Relevance; Completeness; Hallucination; Consistency; Context Retention; Clarification; Appropriate Refusal; Safety; Privacy; Latency; Cost.
+R03: Layer 2 – Task Module || Adds criteria based on chatbot behavior type. || Knowledge Q&A: source correctness and no fabricated facts/policies. Usage Guidance: correct UI/menu/button/step sequence and ability to help complete the task. Action/Tool: correct tool/API, correct parameters, required confirmation, and no duplicate or forbidden action.
+R04: Layer 3 – Project Rules || Uses the specific application’s ground truth. || Business rules, policies, API contracts, role/permission rules, knowledge-base facts, and expected actions confirmed for the target project.
+TABLE 10: 6x2
+R01: Area || Examples
+R02: Dataset || Knowledge Q&A cases, Usage Guidance cases, Action/Tool cases, refusal/safety cases, context-retention cases.
+R03: Ground Truth || Expected facts, expected answer elements, expected UI sequence, allowed tools, expected parameters, forbidden actions.
+R04: Evidence || Chatbot answer, citations, conversation context, tool/API trace, parameters, confirmation events, latency and available cost metadata.
+R05: Scoring || Criterion score → task score → aggregate score. Deterministic checks are preferred where objective evidence is available; model-assisted judgments are used only where necessary.
+R06: Validation || Compare automated judgments against human/domain-expert judgments on a representative evaluation subset.
+TABLE 11: 9x2
+R01: Category || Constraint / Assumption
+R02: Technical || Initial implementation focuses on JavaScript/TypeScript projects and the selected testing frameworks.
+R03: Execution || Docker execution requires available CPU, memory and storage resources; timeouts and limits are enforced.
+R04: AI || AI-generated tests and AI-assisted judgments may be incorrect and require validation.
+R05: Chatbot Integration || The target chatbot must expose a testable interface and, where relevant, useful action/tool metadata.
+R06: Ground Truth || Project-specific rules and expected behavior must be available or confirmed by a user/domain expert.
+R07: Safety || High-risk actions are evaluated in sandbox/mock environments rather than against uncontrolled production systems.
+R08: Time || The project is constrained by an academic capstone schedule.
+R09: Budget || The project prioritizes open-source tools and low-cost infrastructure.
+TABLE 12: 7x2
+R01: Stakeholder || Needs / Responsibilities
+R02: Developer || Analyze source code, test coverage and complexity; generate and validate additional tests.
+R03: QA Engineer || Execute and review testing workflows, identify gaps and compare test-quality results.
+R04: AI Engineer || Configure chatbot evaluation profiles, adapters, datasets and scoring strategies.
+R05: Domain Expert / Product Owner || Confirm business rules, expected answers/actions and high-risk scenarios.
+R06: Project Manager / Team Lead || Review project quality indicators, reports, risks and historical comparisons.
+R07: Faculty Mentor || Review scope, methodology, progress and academic quality.
+TABLE 13: 14x2
+R01: Area || Technology
+R02: Language || JavaScript, TypeScript
+R03: Frontend || React, Vite, Tailwind CSS
+R04: Backend || Node.js, Express.js
+R05: API || REST API
+R06: Database || PostgreSQL
+R07: ORM || Prisma
+R08: AI || Google Gemini
+R09: Testing || Jest, Vitest, Supertest, Playwright, Cypress
+R10: Code Analysis || Babel Parser, Control Flow Graph, Cyclomatic Complexity
+R11: Execution || Docker
+R12: Queue / Realtime || Redis, Socket.IO
+R13: Version Control || Git, GitHub
+R14: Development Tools || Visual Studio Code, Postman, Figma
+TABLE 14: 18x5
+R01: No. || Task Name || Duration (Days) || Start Date || End Date
+R02: — || Project Timeline || 131 || Aug 10, 2026 || Aug 10, 2026
+R03: 1 || Initial Project Phase || 7 || Aug 11, 2026 || Aug 17, 2026
+R04: 1.1 || Kick-off Meeting || 1 || Aug 18, 2026 || Aug 18, 2026
+R05: 1.2 || Discuss Project Idea || 1 || Aug 19, 2026 || Aug 19, 2026
+R06: 1.3 || Proposal Document || 1 || Aug 20, 2026 || Aug 20, 2026
+R07: 1.4 || Project Plan Document || 1 || Aug 21, 2026 || Aug 21, 2026
+R08: 1.5 || Product Backlog || 1 || Aug 22, 2026 || Aug 22, 2026
+R09: 1.6 || User Story || 1 || Aug 23, 2026 || Aug 23, 2026
+R10: 1.7 || Review Document || 1 || Aug 24, 2026 || Aug 24, 2026
+R11: 2 || Development Phase || 56 || Aug 25, 2026 || Oct 19, 2026
+R12: 2.1 || Sprint 1 – Environment Setup, Authentication & Project Management || 14 || Aug 25, 2026 || Sep 07, 2026
+R13: 2.2 || Sprint 2 – Source Ingestion, Test Execution & Coverage Analysis || 14 || Sep 08, 2026 || Sep 21, 2026
+R14: 2.3 || Sprint 3 – Code Analysis, Multi-Test Framework Support & AI Test Generation || 14 || Sep 22, 2026 || Oct 05, 2026
+R15: 2.4 || Sprint 4 – GitHub Automation, Monitoring & System Integration || 14 || Oct 06, 2026 || Oct 19, 2026
+R16: 3 || Complete Project Documents || 28 || Oct 06, 2026 || Oct 19, 2026
+R17: 3.1 || Project Retrospective Meeting || 2 || Oct 06, 2026 || Oct 19, 2026
+R18: 4 || Final Release Activities || 16 || Oct 06, 2026 || Oct 19, 2026
+TABLE 15: 5x3
+R01: Full Name || Project Role || Primary Responsibilities
+R02: Dinh, Huynh Tan || Team Leader / AI & Backend Lead || System architecture, backend core services, AI test generation pipeline, and CI/CD infrastructure.
+R03: Phuc, Tran Huu || Backend & Integration Developer || Business logic APIs, database schema design, system integration, and end-to-end testing.
+R04: Quy, Nguyen Duy || Data & Full-Stack Developer || Database query optimization, data analysis services, API integration, and user interface modules.
+R05: Thuan, Ngo Huu || Frontend Lead, Full-Stack Developer || Frontend architecture (React dashboard), UI/UX design implementation, state management, and client performance.
+TABLE 16: 11x5
+R01: Risk || Type || Probability || Impact || Mitigation
+R02: AI-generated tests are incorrect or incomplete || Technical || Medium || High || Validate generated tests, attempt execution, and provide fallback/TODO output.
+R03: Test execution fails due to dependencies/configuration || Technical || High || High || Use isolated Docker environments, preflight checks, timeouts and clear logs.
+R04: Multi-framework support increases complexity || Technical || Medium || High || Use framework-specific adapters and prioritize the selected frameworks.
+R05: Large projects consume excessive resources || Performance || Medium || High || Use job queues, time/resource limits and snapshot reuse.
+R06: Automated chatbot scoring is biased or inconsistent || AI / Research || Medium || High || Prefer deterministic checks, store evidence, calibrate scoring and compare against human judgments.
+R07: Ground-truth business rules are incomplete or outdated || Domain || Medium || High || Require user/domain-expert confirmation and version the evaluation profile.
+R08: Tool/action evaluation causes unintended side effects || Safety || Low || Very High || Use mock/sandbox tools, non-production accounts, confirmation gates and forbidden-action rules.
+R09: Sensitive evaluation data is exposed || Security || Medium || High || Apply authorization, data minimization and avoid unnecessary external transmission.
+R10: Limited academic development time || Management || High || High || Prioritize core features and deliver in Scrum increments.
+R11: Target chatbot does not expose sufficient metadata || Integration || Medium || Medium || Use a configurable adapter and clearly mark unavailable evidence/criteria.
+TABLE 17: 9x4
+R01: Category || Item & Description || Pricing Model / Status || Estimated Cost (VND)
+R02: Hardware || Personal development machines (Laptops/PCs) || Existing student-owned equipment || 0 VND
+R03: Infrastructure || Cloud VPS / Database hosting (Testing & Demo) || Paid cloud instance (monthly/quarterly) || 250.000 – 400.000 VND
+R04: Domain & Network || Custom domain name (.com / .tech / .site) & SSL || 1-year registration / Let's Encrypt || 150.000 – 250.000 VND
+R05: AI Services || Gemini API & LLM integration || Google AI Studio (Free tier quota) + buffer pay-as-you-go || 100.000 VND
+R06: Software & Tools || IDEs, Git repository, Docker, Open-source libs || GitHub Education / Open-source licenses || 0 VND
+R07: Academic Deliverables || Poster printing, capstone thesis binding, demo materials || Academic submission expenses || 200.000 – 300.000 VND
+R08: Contingency || Miscellaneous & service overage reserve (~10%) || Contingency buffer || 100.000 VND
+R09: Total Estimated Budget || Total Estimated Budget || 800.000 – 1.150.000 VND || 800.000 – 1.150.000 VND
+TABLE 18: 20x3
+R01: No. || Title || Link
+R02: 1 || Scrum Guide || https://en.wikipedia.org/wiki/Scrum_(software_development)
+R03: 1 || Scrum Guide || https://www.atlassian.com/agile/scrum
+R04: 1 || Scrum Guide || https://www.digite.com/agile/scrum-methodology/
+R05: 1 || Scrum Guide || https://www.scrum.org/resources/scrum-guide
+R06: 2 || React Documentation || https://react.dev/reference/react
+R07: 3 || Node.js Documentation || https://nodejs.org/docs/latest/api/
+R08: 4 || Express.js Documentation || https://expressjs.com/
+R09: 5 || Prisma Documentation || https://www.prisma.io/docs/prisma-orm/quickstart/postgresql
+R10: 6 || Jest Documentation || https://jestjs.io/docs/getting-started
+R11: 7 || Vitest Documentation || https://vitest.dev/guide/
+R12: 8 || Playwright Documentation || https://playwright.dev/docs/intro
+R13: 9 || Cypress Documentation || https://docs.cypress.io/app/get-started/why-cypress
+R14: 10 || Docker Documentation || https://docs.docker.com/guides/
+R15: 11 || GitHub Documentation || https://docs.github.com/en/get-started
+R16: 12 || Google Gemini Documentation || https://ai.google.dev/gemini-api/docs
+R17: 13 || ISO/IEC/IEEE 29119 – Software Testing || https://www.iso.org/standard/81291.html
+R18: 14 || ISO/IEC 25010 – Systems and Software Quality Models || https://www.iso.org/standard/78176.html
+R19: 15 || ISO/IEC/IEEE 12207 – Software Life Cycle Processes || https://www.iso.org/standard/81702.html
+R20: 16 || ISTQB Glossary || https://glossary.istqb.org/en_US/search?term=&exact_matches_first=true
+
+SECTIONS / HEADERS / FOOTERS
+SECTION 1: page 8.277777777777779x11.708333333333334 in; margins T0.7875 B0.7875 L1.18125 R0.7875; header 0.5; footer 0.5
+FOOTER [Normal] `
+SECTION 2: page 8.277777777777779x11.708333333333334 in; margins T0.7875 B0.7875 L1.18125 R0.7875; header 0.5; footer 0.5
+FOOTER [Normal] `
+SECTION 3: page 8.277777777777779x11.708333333333334 in; margins T0.7875 B0.7875 L1.18125 R0.7875; header 0.5; footer 0.5
+FOOTER [Normal] `
+SECTION 4: page 8.277777777777779x11.708333333333334 in; margins T0.7875 B0.7875 L1.18125 R0.7875; header 0.5; footer 0.5
+SECTION 5: page 8.277777777777779x11.708333333333334 in; margins T0.7875 B0.625 L1.18125 R0.7875; header 0.5; footer 0.5
+SECTION 6: page 8.277777777777779x11.708333333333334 in; margins T0.7875 B0.625 L1.18125 R0.7875; header 0.5; footer 0.5
+HEADER [Normal] PROPOSAL	   	 International School Capstone 1 – 2026
+FOOTER [Footer] C1SE.30		Page 1 of 31

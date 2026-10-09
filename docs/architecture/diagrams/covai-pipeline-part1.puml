@@ -1,0 +1,98 @@
+@startuml CovAI_Pipeline_Part1
+title <b>CovAI Pipeline (Part 1): Ingestion, Static Analysis & Multi-Level Testing</b>\n<size:12>IEEE / ACM Standard - AST Parsing, Control Flow Graph Generation, and Dynamic Test Execution</size>
+
+skinparam monochrome false
+skinparam shadowing false
+skinparam roundCorner 8
+skinparam defaultFontName "Segoe UI", Arial, sans-serif
+skinparam defaultFontSize 12
+skinparam defaultTextAlignment center
+
+skinparam nodesep 45
+skinparam ranksep 55
+skinparam padding 12
+
+skinparam ArrowColor #1B4F72
+skinparam ArrowThickness 1.5
+skinparam ArrowFontSize 11
+skinparam ArrowFontColor #2C3E50
+
+skinparam package {
+  BackgroundColor #F8F9FA
+  BorderColor #7F8C8D
+  FontColor #154360
+  FontStyle bold
+  BorderThickness 1.3
+}
+
+skinparam rectangle {
+  BackgroundColor #FFFFFF
+  BorderColor #34495E
+  BorderThickness 1.3
+  FontColor #1C2833
+}
+
+' 1. INPUT LAYER
+package "1. INGESTION & INPUT ARTIFACTS LAYER" as L1 {
+  rectangle "<b>User Source Code</b>\n---\n• Uploaded ZIP Archive\n• GitHub Repository (OAuth Clone)\n• JavaScript / TypeScript Codebase" as Src #EBF5FB
+  rectangle "<b>Configurations & Datasets</b>\n---\n• RAG Golden Dataset (Query / Context / Truth)\n• LLM API Keys & Target Endpoints\n• Custom Test Runner Configuration" as Cfg #EBF5FB
+}
+
+' 2. WORKSPACE & ISOLATION
+package "2. WORKSPACE PREPARATION & DETECTION LAYER" as L2 {
+  rectangle "<b>Ingestion Service</b>\n---\n• adm-zip: Isolated workspace extraction\n• Git Clone & Branch Checkout\n• Snapshot Persistence (Prisma & Firebase)" as Ingest #E8F8F5
+  rectangle "<b>Framework & Stack Detector</b>\n---\n• Unit / Integ: Jest, Vitest, Supertest\n• E2E / System: Cypress, Playwright\n• LLM SDKs: LangChain, LlamaIndex, OpenAI" as Det #E8F8F5
+  rectangle "<b>Docker Runtime Sandbox</b>\n---\n• Isolated Container Environment\n• Dependency Build: npm install / yarn\n• Host protection & sandbox isolation" as Dk #E8F8F5
+}
+
+' 3. STATIC ANALYSIS
+package "3. STATIC CODE ANALYSIS PIPELINE" as L3 {
+  rectangle "<b>Babel AST Parser</b>\n---\n• Engine: @babel/parser\n• Plugins: TS, JSX, Async/Await\n• Emits Abstract Syntax Tree (JSON AST)" as Ast #FEF9E7
+  rectangle "<b>Control Flow Graph Generator</b>\n---\n• AST Traversal Algorithm\n• Extracts Condition Nodes & Branch Jumps\n• Constructs Control Flow Graph (CFG)" as CfgGen #FEF9E7
+  rectangle "<b>McCabe Complexity Engine</b>\n---\n• Library: estraverse\n• Decision point scanning: if, loops, switches\n• Cyclomatic Complexity: CC = 1 + P" as CC #FEF9E7
+  rectangle "<b>Code Hygiene Inspector</b>\n---\n• AST Static Rule Runner\n• Scans debug leaks (debugger, console.log)\n• Dead code detection & Hygiene scoring" as Hyg #FEF9E7
+}
+
+' 4. DYNAMIC MULTI-LEVEL TESTING
+package "4. DYNAMIC MULTI-LEVEL TESTING PIPELINE" as L4 {
+  label "<color:#B7950B><size:13><b>[ Decision: Do Test Files Exist in Repo? ]</b></size></color>" as HasTest
+  
+  rectangle "<b>Unit Testing & Coverage Runner</b>\n---\n• Jest / Vitest executed in Docker\n• Coverage Instrumenters: Istanbul / v8\n• 4-Dim Metrics: Stmt, Branch, Func, Line %" as Unit #E8F8F5
+  
+  rectangle "<b>Integration Testing Engine</b>\n---\n• Runner: Supertest in Docker Sandbox\n• Tests API routes, HTTP status & headers\n• Database mocking & middleware verification" as Integ #E8F8F5
+  
+  rectangle "<b>System & Acceptance Testing</b>\n---\n• Runner: Cypress / Playwright Headless\n• Tests real end-to-end user journeys\n• Acceptance criteria verification" as E2E #E8F8F5
+  
+  rectangle "<b>Zero-Test Baseline Initialization</b>\n---\n• Flags 0% initial coverage baseline\n• Extracts target functions & exported APIs\n• Triggers initial AI Test Generation" as Zero #FDEDEC
+}
+
+' TRANSITION TO PART 2
+rectangle "<b>== HANDOFF TO PART 2 ==</b>\n---\n• AST Tree, CFG Graph & CC Metrics\n• Uncovered Branch Map (Coverage Gaps)\n• Docker Sandbox & Test Endpoints" as Trans #EAEDED
+
+' Flows
+Src --> Ingest : Upload / Clone
+Cfg --> Det : Attach configs
+Ingest --> Det : Extracted files
+Det --> Dk : Dependency config
+
+Dk --> Ast : Source code
+Ast --> CfgGen : AST Tree
+Ast --> CC : Decision nodes
+Ast --> Hyg : Code patterns
+
+Det --> HasTest : Scan for test files
+HasTest --> Unit : [TESTS EXIST] Run tests & measure coverage
+HasTest --> Zero : [NO TESTS] Initialize 0% baseline
+
+Dk --> Integ : API endpoints & routes
+Dk --> E2E : E2E test specs
+
+CfgGen --> Trans
+CC --> Trans
+Hyg --> Trans
+Unit --> Trans : Gaps & Coverage
+Zero --> Trans : Trigger AI
+Integ --> Trans : API Test Results
+E2E --> Trans : E2E Results
+
+@enduml

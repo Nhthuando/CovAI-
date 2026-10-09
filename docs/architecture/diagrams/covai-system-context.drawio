@@ -1,0 +1,154 @@
+<mxfile host="app.diagrams.net" agent="Mozilla/5.0">
+  <diagram id="CovAI_System_Context" name="CovAI System Context Diagram">
+    <mxGraphModel dx="1471" dy="803" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1650" pageHeight="1150" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="header_title" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" value="&lt;b style=&quot;font-size:22px; font-family: Segoe UI, Arial, sans-serif;&quot;&gt;System Context Diagram for CovAI System&lt;/b&gt;" vertex="1">
+          <mxGeometry height="35" width="1000" x="325" y="25" as="geometry" />
+        </mxCell>
+        <mxCell id="header_caption" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" value="&lt;span style=&quot;font-size:13px; color:#555555; font-family: Segoe UI, Arial, sans-serif;&quot;&gt;[C4 Model - Level 1: System Context] Test Coverage Analysis and AI-Driven Test Generation Platform&lt;/span&gt;" vertex="1">
+          <mxGeometry height="25" width="1000" x="325" y="58" as="geometry" />
+        </mxCell>
+        <mxCell id="actor_developer" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#08427B;strokeColor=#052E56;fontColor=#ffffff;align=center;verticalAlign=top;arcSize=6;shadow=0;strokeWidth=1.5;" value="&lt;div style=&quot;padding-top:4px;&quot;&gt;&lt;b style=&quot;font-size:15px;&quot;&gt;Developer / QA Engineer&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px; color:#e0e0e0;&quot;&gt;[Person]&lt;/font&gt;&lt;br&gt;&lt;br&gt;&lt;font style=&quot;font-size:11.5px; line-height:1.3;&quot;&gt;Software developer, QA tester, or team lead who develops, tests, and analyzes JavaScript &amp;amp; TypeScript applications.&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="150" width="270" x="690" y="110" as="geometry" />
+        </mxCell>
+        <mxCell id="system_covai" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1168BD;strokeColor=#0B4D8C;fontColor=#ffffff;align=center;verticalAlign=top;arcSize=6;shadow=0;strokeWidth=2;" value="&lt;div style=&quot;padding-top:6px;&quot;&gt;&lt;b style=&quot;font-size:16px;&quot;&gt;CovAI System&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px; color:#e0e0e0;&quot;&gt;[Software System]&lt;/font&gt;&lt;br&gt;&lt;br&gt;&lt;font style=&quot;font-size:11.5px; line-height:1.35;&quot;&gt;AI-driven test coverage analysis &amp;amp; automated test generation platform. Ingests source code, auto-detects frameworks, executes tests in isolated Docker containers, computes 4-dimension coverage (stmt/branch/func/line), builds AST-based CFG &amp;amp; Cyclomatic Complexity, and generates AI tests &amp;amp; suggestions.&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="190" width="380" x="635" y="380" as="geometry" />
+        </mxCell>
+        <mxCell id="ext_github" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#999999;strokeColor=#666666;fontColor=#ffffff;align=center;verticalAlign=top;arcSize=6;shadow=0;strokeWidth=1.5;" value="&lt;div style=&quot;padding-top:4px;&quot;&gt;&lt;b style=&quot;font-size:14px;&quot;&gt;GitHub&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10.5px; color:#f0f0f0;&quot;&gt;[External Software System]&lt;/font&gt;&lt;br&gt;&lt;br&gt;&lt;font style=&quot;font-size:11.5px; line-height:1.3;&quot;&gt;VCS platform providing OAuth 2.0 authentication, repository metadata, source code cloning, and push/pull-request webhook triggers.&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="150" width="220" x="50" y="740" as="geometry" />
+        </mxCell>
+        <mxCell id="ext_docker" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#999999;strokeColor=#666666;fontColor=#ffffff;align=center;verticalAlign=top;arcSize=6;shadow=0;strokeWidth=1.5;" value="&lt;div style=&quot;padding-top:4px;&quot;&gt;&lt;b style=&quot;font-size:14px;&quot;&gt;Docker Execution Environment&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10.5px; color:#f0f0f0;&quot;&gt;[External Software System]&lt;/font&gt;&lt;br&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px; line-height:1.3;&quot;&gt;Sandboxed container runtime that installs dependencies and runs test runners (Jest, Vitest, Supertest, Playwright, Cypress) in isolation, returning execution logs and coverage artifacts.&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="160" width="240" x="310" y="740" as="geometry" />
+        </mxCell>
+        <mxCell id="ext_gemini" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#999999;strokeColor=#666666;fontColor=#ffffff;align=center;verticalAlign=top;arcSize=6;shadow=0;strokeWidth=1.5;" value="&lt;div style=&quot;padding-top:4px;&quot;&gt;&lt;b style=&quot;font-size:14px;&quot;&gt;Google Gemini AI Service&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10.5px; color:#f0f0f0;&quot;&gt;[External Software System]&lt;/font&gt;&lt;br&gt;&lt;br&gt;&lt;font style=&quot;font-size:11.5px; line-height:1.3;&quot;&gt;External Cloud LLM service providing code analysis, coverage improvement recommendations, test skeletons, and full runnable test suites.&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="150" width="230" x="590" y="740" as="geometry" />
+        </mxCell>
+        <mxCell id="ext_firebase" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#999999;strokeColor=#666666;fontColor=#ffffff;align=center;verticalAlign=top;arcSize=6;shadow=0;strokeWidth=1.5;" value="&lt;div style=&quot;padding-top:4px;&quot;&gt;&lt;b style=&quot;font-size:14px;&quot;&gt;Firebase Cloud Storage&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10.5px; color:#f0f0f0;&quot;&gt;[External Software System]&lt;/font&gt;&lt;br&gt;&lt;br&gt;&lt;font style=&quot;font-size:11.5px; line-height:1.3;&quot;&gt;Cloud object storage for persistent storage of source snapshots, project ZIP archives, and raw coverage artifacts (LCOV, JSON).&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="150" width="230" x="860" y="740" as="geometry" />
+        </mxCell>
+        <mxCell id="ext_email" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#999999;strokeColor=#666666;fontColor=#ffffff;align=center;verticalAlign=top;arcSize=6;shadow=0;strokeWidth=1.5;" value="&lt;div style=&quot;padding-top:4px;&quot;&gt;&lt;b style=&quot;font-size:14px;&quot;&gt;Email Service (SMTP)&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10.5px; color:#f0f0f0;&quot;&gt;[External Software System]&lt;/font&gt;&lt;br&gt;&lt;br&gt;&lt;font style=&quot;font-size:11.5px; line-height:1.3;&quot;&gt;Transactional email delivery service for password resets, verification tokens, and critical analysis alerts.&lt;/font&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="150" width="230" x="1130" y="740" as="geometry" />
+        </mxCell>
+        <mxCell id="rel_dev_covai" edge="1" parent="1" source="actor_developer" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.25;exitY=1;entryX=0.25;entryY=0;strokeColor=#666666;strokeWidth=1.5;fontSize=11;labelBackgroundColor=#ffffff;" target="system_covai" value="Manages projects, uploads ZIP, imports repos,&lt;br&gt;triggers test analysis, views CFG/CC, requests AI tests&lt;br&gt;&lt;i style=&quot;color:#666;&quot;&gt;[HTTPS / Web Browser]&lt;/i&gt;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="758" y="320" />
+              <mxPoint x="730" y="320" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rel_covai_dev" edge="1" parent="1" source="system_covai" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=0;entryX=0.75;entryY=1;strokeColor=#666666;strokeWidth=1.5;fontSize=11;labelBackgroundColor=#ffffff;" target="actor_developer" value="Delivers dashboards, coverage reports,&lt;br&gt;interactive CFG, generated tests &amp;amp; real-time progress&lt;br&gt;&lt;i style=&quot;color:#666;&quot;&gt;[HTTPS / WebSocket]&lt;/i&gt;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="920" y="320" />
+              <mxPoint x="893" y="320" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rel_covai_github" edge="1" parent="1" source="system_covai" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.35;entryX=0.35;entryY=0;strokeColor=#666666;strokeWidth=1.5;fontSize=11;labelBackgroundColor=#ffffff;" target="ext_github" value="Authenticates via OAuth, fetches repo&lt;br&gt;metadata, clones source code&lt;br&gt;&lt;i style=&quot;color:#666;&quot;&gt;[HTTPS / REST API / Git]&lt;/i&gt;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="127" y="447" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rel_github_covai" edge="1" parent="1" source="ext_github" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=0;entryX=0;entryY=0.7;strokeColor=#666666;strokeWidth=1.5;dashed=1;fontSize=11;labelBackgroundColor=#ffffff;" target="system_covai" value="Sends push / pull-request webhook&lt;br&gt;events to trigger automated analysis&lt;br&gt;&lt;i style=&quot;color:#666;&quot;&gt;[HTTPS / Webhook]&lt;/i&gt;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="215" y="513" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rel_covai_docker" edge="1" parent="1" source="system_covai" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.15;exitY=1;entryX=0.35;entryY=0;strokeColor=#666666;strokeWidth=1.5;fontSize=11;labelBackgroundColor=#ffffff;" target="ext_docker" value="Mounts source snapshot and&lt;br&gt;executes testing commands&lt;br&gt;&lt;i style=&quot;color:#666;&quot;&gt;[Docker CLI / Container API]&lt;/i&gt;">
+          <mxGeometry relative="1" x="0.5726" as="geometry">
+            <mxPoint y="-1" as="offset" />
+            <Array as="points">
+              <mxPoint x="692" y="600" />
+              <mxPoint x="394" y="600" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rel_docker_covai" edge="1" parent="1" source="ext_docker" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=0;entryX=0.3;entryY=1;strokeColor=#666666;strokeWidth=1.5;fontSize=11;labelBackgroundColor=#ffffff;" target="system_covai" value="Returns execution logs, exit codes,&lt;br&gt;and coverage outputs (LCOV, JSON)&lt;br&gt;&lt;i style=&quot;color:#666;&quot;&gt;[Host Volume / stdout stream]&lt;/i&gt;">
+          <mxGeometry relative="1" x="0.0256" y="-10" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="490" y="640" />
+              <mxPoint x="749" y="640" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rel_covai_gemini" edge="1" parent="1" source="system_covai" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.45;exitY=1;entryX=0.5;entryY=0;strokeColor=#666666;strokeWidth=1.5;fontSize=11;labelBackgroundColor=#ffffff;" target="ext_gemini" value="Sends prompts with source AST, CFG, CC, and&lt;br&gt;uncovered branches; receives generated tests &amp;amp; tips&lt;br&gt;&lt;i style=&quot;color:#666;&quot;&gt;[HTTPS / REST API]&lt;/i&gt;">
+          <mxGeometry relative="1" x="0.0037" y="30" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="806" y="670" />
+              <mxPoint x="705" y="670" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rel_covai_firebase" edge="1" parent="1" source="system_covai" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=1;entryX=0.5;entryY=0;strokeColor=#666666;strokeWidth=1.5;fontSize=11;labelBackgroundColor=#ffffff;" target="ext_firebase" value="Uploads and downloads project&lt;br&gt;snapshots, archives, and coverage files&lt;br&gt;&lt;i style=&quot;color:#666;&quot;&gt;[HTTPS / Firebase Admin SDK]&lt;/i&gt;">
+          <mxGeometry relative="1" x="-0.1111" y="10" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="970" y="570" />
+              <mxPoint x="970" y="630" />
+              <mxPoint x="975" y="630" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rel_covai_email" edge="1" parent="1" source="system_covai" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.6;entryX=0.35;entryY=0;strokeColor=#666666;strokeWidth=1.5;fontSize=11;labelBackgroundColor=#ffffff;" target="ext_email" value="Dispatches password reset&lt;br&gt;and system notification emails&lt;br&gt;&lt;i style=&quot;color:#666;&quot;&gt;[SMTP / TLS]&lt;/i&gt;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1210" y="494" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="rel_email_dev" edge="1" parent="1" source="ext_email" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=0;entryX=1;entryY=0.5;strokeColor=#666666;strokeWidth=1.5;fontSize=11;labelBackgroundColor=#ffffff;" target="actor_developer" value="Delivers notification &amp;amp;&lt;br&gt;verification emails&lt;br&gt;&lt;i style=&quot;color:#666;&quot;&gt;[Email Client]&lt;/i&gt;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1303" y="185" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="legend_group" connectable="0" parent="1" style="group" value="" vertex="1">
+          <mxGeometry height="150" width="190" x="1420" y="870" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_bg" parent="legend_group" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#cccccc;shadow=0;" value="" vertex="1">
+          <mxGeometry height="150" width="190" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_title" parent="legend_group" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;" value="&lt;b&gt;Legend (C4)&lt;/b&gt;" vertex="1">
+          <mxGeometry height="20" width="160" x="15" y="10" as="geometry" />
+        </mxCell>
+        <mxCell id="leg_item_person_color" parent="legend_group" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#08427B;strokeColor=#052E56;" value="" vertex="1">
+          <mxGeometry height="16" width="22" x="15" y="38" as="geometry" />
+        </mxCell>
+        <mxCell id="leg_item_person_text" parent="legend_group" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=11;" value="Person / Actor" vertex="1">
+          <mxGeometry height="20" width="130" x="45" y="36" as="geometry" />
+        </mxCell>
+        <mxCell id="leg_item_sys_color" parent="legend_group" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1168BD;strokeColor=#0B4D8C;" value="" vertex="1">
+          <mxGeometry height="16" width="22" x="15" y="66" as="geometry" />
+        </mxCell>
+        <mxCell id="leg_item_sys_text" parent="legend_group" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=11;" value="Software System" vertex="1">
+          <mxGeometry height="20" width="130" x="45" y="64" as="geometry" />
+        </mxCell>
+        <mxCell id="leg_item_ext_color" parent="legend_group" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#999999;strokeColor=#666666;" value="" vertex="1">
+          <mxGeometry height="16" width="22" x="15" y="94" as="geometry" />
+        </mxCell>
+        <mxCell id="leg_item_ext_text" parent="legend_group" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=11;" value="External System" vertex="1">
+          <mxGeometry height="20" width="130" x="45" y="92" as="geometry" />
+        </mxCell>
+        <mxCell id="leg_item_rel_line" edge="1" parent="legend_group" style="endArrow=classic;html=1;rounded=0;strokeColor=#666666;strokeWidth=1.5;" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="15" y="130" as="sourcePoint" />
+            <mxPoint x="37" y="130" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="leg_item_rel_text" parent="legend_group" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=11;" value="Relationship / Flow" vertex="1">
+          <mxGeometry height="20" width="130" x="45" y="120" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

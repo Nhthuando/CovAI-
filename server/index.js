@@ -60,6 +60,7 @@ app.use(
       "http://localhost:5174",
     ],
     credentials: true,
+    exposedHeaders: ["Content-Disposition"],
   }),
 );
 

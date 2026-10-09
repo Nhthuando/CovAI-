@@ -1,0 +1,24 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { runSystemTests } from '../server/src/services/systemTestRunner.service.js';
+import { resolveSystemTestExecution } from '../server/src/services/systemTestDetection.service.js';
+import { parseSystemTestResult } from '../server/src/services/systemTestResultParser.service.js';
+import { isPortInUse } from '../server/src/services/autLifecycle.service.js';
+
+const fixture = fileURLToPath(new URL('./system-test-smoke/', import.meta.url));
+fs.mkdirSync(path.join(fixture, 'e2e'), { recursive: true });
+fs.mkdirSync(path.join(fixture, 'node_modules'), { recursive: true });
+fs.writeFileSync(path.join(fixture, 'package.json'), JSON.stringify({ type: 'module', scripts: { start: 'node app.mjs' }, devDependencies: { '@playwright/test': '*' } }));
+const html = `<h1>System smoke</h1><button onclick="this.textContent='Done'">Continue</button>`;
+fs.writeFileSync(path.join(fixture, 'app.mjs'), `import http from 'node:http'; http.createServer((req,res) => { res.setHeader('Content-Type','text/html'); res.end(${JSON.stringify(html)}); }).listen(Number(process.env.PORT),'127.0.0.1');`);
+fs.writeFileSync(path.join(fixture, 'e2e/home.spec.js'), `import { test, expect } from '@playwright/test'; test('public user flow', async ({page}) => { await page.goto('/'); await expect(page.getByRole('heading', {name:'System smoke'})).toBeVisible(); await page.getByRole('button', {name:'Continue'}).click(); await expect(page.getByRole('button', {name:'Done'})).toBeVisible(); }); test('assertion failure is recorded', async ({page}) => { await page.goto('/'); await expect(page.getByRole('heading')).toHaveText('Wrong', {timeout: 100}); });`);
+const execution = resolveSystemTestExecution({ rootDir: fixture, runner: 'playwright' });
+const startedAt = new Date();
+const result = await runSystemTests({ rootDir: fixture, execution });
+const report = parseSystemTestResult({ runner: execution.runner, resultPath: execution.reportPath, startedAt, finishedAt: new Date() });
+const port = result.autPort;
+const portReleased = !await isPortInUse(port);
+console.log(JSON.stringify({ exitCode: result.exitCode, total: report.totalTests, passed: report.passedTests, failed: report.failedTests, scenarios: report.scenarios.length, portReleased }));
+if (report.totalTests !== 2 || report.passedTests !== 1 || report.failedTests !== 1 || !portReleased) process.exitCode = 1;
+process.exit(process.exitCode || 0);

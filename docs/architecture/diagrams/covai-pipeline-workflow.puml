@@ -1,0 +1,119 @@
+@startuml CovAI_Pipeline_Workflow
+title <b>CovAI - Pipeline Data Flow Architecture Diagram (IEEE / ACM Standard)</b>\n<size:11>Comprehensive AI-Driven Testing, Code Quality & LLM/RAG Evaluation Platform</size>
+
+skinparam monochrome false
+skinparam shadowing false
+skinparam roundCorner 8
+skinparam defaultFontName "Segoe UI", Arial, sans-serif
+skinparam defaultFontSize 11
+skinparam defaultTextAlignment center
+
+skinparam nodesep 45
+skinparam ranksep 55
+skinparam padding 10
+
+skinparam ArrowColor #2C3E50
+skinparam ArrowThickness 1.3
+skinparam ArrowFontSize 10
+skinparam ArrowFontColor #34495E
+
+skinparam package {
+  BackgroundColor #F8F9FA
+  BorderColor #7F8C8D
+  FontColor #1B4F72
+  FontStyle bold
+  BorderThickness 1.2
+}
+
+skinparam rectangle {
+  BackgroundColor #FFFFFF
+  BorderColor #34495E
+  BorderThickness 1.2
+  FontColor #2C3E50
+}
+
+package "1. Ingestion Layer (Inputs)" as L1 {
+  rectangle "<b>User Source Code</b>\n---\n• ZIP File / GitHub Repo\n• JS / TS / JSX / TSX" as Src #EBF5FB
+  rectangle "<b>Configurations & Datasets</b>\n---\n• RAG Golden Dataset (Q / Context / A)\n• LLM API Endpoint & Framework Config" as Cfg #EBF5FB
+}
+
+package "2. Workspace & Sandbox Preparation" as L2 {
+  rectangle "<b>Ingestion & Snapshot</b>\n---\n• adm-zip extraction & git clone\n• Firebase backup & Prisma snapshot" as Ingest #E8F8F5
+  rectangle "<b>Framework & Stack Detector</b>\n---\n• Unit / Integ: Jest, Vitest, Supertest\n• E2E: Cypress, Playwright\n• LLM SDKs: LangChain, OpenAI, Gemini" as Det #E8F8F5
+  rectangle "<b>Docker Runtime Sandbox</b>\n---\n• Isolated container environment\n• Sandboxed npm install & dependency build" as Dk #E8F8F5
+}
+
+package "3. Static Code Analysis Pipeline" as L3 {
+  rectangle "<b>Babel AST Parser</b>\n---\n• @babel/parser engine\n• AST JSON Tree generation" as Ast #FEF9E7
+  rectangle "<b>CFG Generator</b>\n---\n• AST Traversal Service\n• Graph Nodes & Edges" as CfgGen #FEF9E7
+  rectangle "<b>McCabe Complexity Engine</b>\n---\n• estraverse decision points\n• CC = 1 + P (McCabe)" as CC #FEF9E7
+  rectangle "<b>Code Hygiene Inspector</b>\n---\n• Dead code & debug leaks\n• Code hygiene score" as Hyg #FEF9E7
+}
+
+package "4. Dynamic Multi-Level Testing Pipeline" as L4 {
+  label "<color:#B7950B><size:12><b>[ Decision: Test Files Exist? ]</b></size></color>" as HasTest
+  rectangle "<b>Unit Testing & Coverage</b>\n---\n• Jest / Vitest execution\n• Istanbul/v8 instrumenters\n• 4-Dim Coverage: Stmt/Branch/Func/Line" as Unit #E8F8F5
+  rectangle "<b>Integration Testing</b>\n---\n• Supertest API runner\n• Endpoint & DB mock validation" as Integ #E8F8F5
+  rectangle "<b>System & Acceptance Testing</b>\n---\n• Cypress / Playwright runners\n• Headless E2E user flows" as E2E #E8F8F5
+  rectangle "<b>Zero-Test Baseline</b>\n---\n• Flag 0% initial coverage\n• Identify functions for AI generation" as Zero #FDEDEC
+}
+
+package "5. Quality & LLM/RAG Evaluation Pipelines" as L5 {
+  rectangle "<b>Performance Testing Engine</b>\n---\n• Execution time profiling\n• Slow function risk scoring\n• k6 / Artillery load & stress runner" as Perf #F4ECF7
+  rectangle "<b>Security Testing (SAST & AI)</b>\n---\n• Static rules: Secrets, eval, exec\n• npm audit CVE vulnerability scan\n• Gemini AI scan: SQLi, XSS, Crypto" as Sec #F4ECF7
+  rectangle "<b>LLM / RAG Evaluation Engine</b>\n---\n• <b>RAG Triad:</b> Faithfulness, Relevance, Precision\n• <b>Safety:</b> Prompt Injection, Toxicity, JSON Schema\n• <b>Operational:</b> Latency (TTFT), Token Cost\n• LLM-as-a-Judge (Gemini evaluator)" as RAG #F5EEF8
+}
+
+package "6. AI Test Generation & Repair Engine" as L6 {
+  rectangle "<b>AI Context & Prompt Builder</b>\n---\n• Ingests Source + AST + CFG + CC\n• Maps Uncovered Branches & Gaps" as Ctx #EBF5FB
+  rectangle "<b>Google Gemini LLM Inference</b>\n---\n• Generates Test Skeletons\n• Generates Full Runnable Tests" as AI #EBF5FB
+  rectangle "<b>Syntax Validator & Fallback</b>\n---\n• AST validation of generated test\n• test.todo fallback (100% runnable)" as Rep #EBF5FB
+}
+
+package "7. Output Artifacts & Visualizations" as L7 {
+  rectangle "<b>Interactive Code & CFG Viewer</b>\n---\n• React Flow interactive graph\n• Cyclomatic hotspot heatmap" as OutCFG #E8F8F5
+  rectangle "<b>Multi-Level Coverage Dashboard</b>\n---\n• 4-Dimension coverage gauge\n• Uncovered lines code inspector" as OutCov #E8F8F5
+  rectangle "<b>Unified Quality Scorecard & RAG Radar</b>\n---\n• Weighted composite score (0-100)\n• RAG Triad radar & security findings" as OutSc #E8F8F5
+  rectangle "<b>Deployable Test Artifacts</b>\n---\n• Generated runnable *.test.js files\n• Exportable test suites & reports" as OutTest #E8F8F5
+}
+
+' Data flows and connections
+Src --> Ingest : Source upload
+Cfg --> Det : Configuration & Dataset
+Ingest --> Det : Extracted files
+Det --> Dk : Detected stack
+
+Dk --> Ast : Source code
+Ast --> CfgGen : AST Tree
+Ast --> CC : AST Nodes
+Ast --> Hyg : Code patterns
+
+Det --> HasTest : Check test existence
+HasTest --> Unit : [YES: Tests found]
+HasTest --> Zero : [NO: No tests]
+
+Zero --> Ctx : Trigger AI Test Gen
+Unit --> Ctx : Feed uncovered gaps
+
+Dk --> Integ : API routes
+Dk --> E2E : E2E specs
+Dk --> Perf : Execution profiling & k6
+Dk --> Sec : Source & dependencies
+Dk --> RAG : LLM calls & Golden Dataset
+
+Ctx --> AI : Structured prompt
+AI --> Rep : Generated test suite
+Rep --> Unit : Re-run in Docker to verify
+Rep --> OutTest : Export *.test.js files
+
+CfgGen --> OutCFG : CFG Graph JSON
+CC --> OutCFG : CC Metrics
+Unit --> OutCov : 4-Dim Coverage
+Integ --> OutCov : API Test Logs
+E2E --> OutCov : E2E Results
+Perf --> OutSc : Perf Scores
+Sec --> OutSc : Security Findings
+Hyg --> OutSc : Hygiene Score
+RAG --> OutSc : RAG Triad Radar
+
+@enduml

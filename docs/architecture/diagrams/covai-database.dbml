@@ -1,0 +1,189 @@
+// CovAI Database Schema (DBML format for dbdiagram.io)
+// Paste this code into https://dbdiagram.io to generate interactive ERD
+
+Table User {
+  id varchar [pk]
+  email varchar [unique, not null]
+  name varchar
+  passwordHash varchar
+  githubUserId varchar [unique]
+  aiUsageCount int [default: 0]
+  aiTokenUsage int [default: 0]
+  createdAt timestamp [default: `now()`]
+}
+
+Table Project {
+  id varchar [pk]
+  ownerId varchar [ref: > User.id, not null]
+  name varchar [not null]
+  repoUrl varchar
+  defaultBranch varchar
+  hasJest boolean [default: false]
+  hasVitest boolean [default: false]
+  createdAt timestamp [default: `now()`]
+}
+
+Table ProjectSnapshot {
+  id varchar [pk]
+  projectId varchar [ref: > Project.id, not null]
+  source varchar [not null]
+  checksum varchar
+  commitSha varchar
+  storagePath varchar [not null]
+  selectedTestingFramework varchar
+  createdAt timestamp [default: `now()`]
+}
+
+Table QualityReport {
+  id varchar [pk]
+  snapshotId varchar [ref: - ProjectSnapshot.id, not null]
+  projectId varchar [ref: > Project.id, not null]
+  overallScore float
+  performanceScore float
+  securityScore float
+  coverageScore float
+  maintainabilityScore float
+  recommendations text
+  createdAt timestamp [default: `now()`]
+}
+
+Table CoverageSummary {
+  id varchar [pk]
+  snapshotId varchar [ref: - ProjectSnapshot.id, not null]
+  linesPct float
+  branchesPct float
+  funcsPct float
+  stmtsPct float
+  createdAt timestamp [default: `now()`]
+}
+
+Table CoverageFile {
+  id varchar [pk]
+  snapshotId varchar [ref: > ProjectSnapshot.id, not null]
+  filePath varchar [not null]
+  linesPct float
+  branchesPct float
+  funcsPct float
+  stmtsPct float
+}
+
+Table CoverageFunction {
+  id varchar [pk]
+  snapshotId varchar [ref: > ProjectSnapshot.id, not null]
+  filePath varchar [not null]
+  functionName varchar [not null]
+  hit int
+}
+
+Table Cfg {
+  id varchar [pk]
+  snapshotId varchar [ref: > ProjectSnapshot.id, not null]
+  filePath varchar [not null]
+  functionName varchar [not null]
+  graphJson text
+}
+
+Table Cyclomatic {
+  id varchar [pk]
+  snapshotId varchar [ref: > ProjectSnapshot.id, not null]
+  cfgId varchar [ref: - Cfg.id]
+  filePath varchar [not null]
+  functionName varchar [not null]
+  value int
+}
+
+Table Vulnerability {
+  id varchar [pk]
+  snapshotId varchar [ref: > ProjectSnapshot.id, not null]
+  type varchar
+  severity varchar
+  file varchar
+  line int
+  description text
+}
+
+Table TestRun {
+  id varchar [pk]
+  snapshotId varchar [ref: > ProjectSnapshot.id, not null]
+  type varchar
+  totalTests int
+  passedTests int
+  failedTests int
+  durationMs float
+  status varchar
+}
+
+Table AiTest {
+  id varchar [pk]
+  projectId varchar [ref: > Project.id, not null]
+  snapshotId varchar [ref: > ProjectSnapshot.id, not null]
+  mode varchar
+  filePath varchar
+  content text
+  createdAt timestamp [default: `now()`]
+}
+
+Table AiTestResult {
+  id varchar [pk]
+  aiTestId varchar [ref: - AiTest.id, not null]
+  status varchar
+  output text
+  duration int
+}
+
+// ==============================================================================
+// EXTENDED TABLES: LLM / RAG EVALUATION & PERFORMANCE
+// ==============================================================================
+
+Table RagDataset {
+  id varchar [pk]
+  projectId varchar [ref: > Project.id, not null]
+  name varchar [not null]
+  datasetType varchar [note: "Q_CONTEXT_A, SAFETY_BENCHMARK, PROMPT_INJECTION"]
+  itemCount int
+  createdAt timestamp [default: `now()`]
+}
+
+Table RagEvaluation {
+  id varchar [pk]
+  snapshotId varchar [ref: > ProjectSnapshot.id, not null]
+  projectId varchar [ref: > Project.id, not null]
+  datasetId varchar [ref: > RagDataset.id]
+  name varchar [not null]
+  status varchar
+  faithfulnessScore float [note: "Anti-hallucination rate"]
+  answerRelevanceScore float
+  contextPrecisionScore float
+  hallucinationRate float
+  promptInjectionResilience float
+  toxicityScore float
+  avgLatencyMs float
+  totalTokensUsed int
+  estimatedCostUsd float
+  createdAt timestamp [default: `now()`]
+}
+
+Table RagTestCase {
+  id varchar [pk]
+  evaluationId varchar [ref: > RagEvaluation.id, not null]
+  query text [not null]
+  retrievedContext text
+  actualAnswer text
+  groundTruth text
+  faithfulness float
+  relevance float
+  passed boolean
+  latencyMs int
+}
+
+Table LoadTestRun {
+  id varchar [pk]
+  snapshotId varchar [ref: > ProjectSnapshot.id, not null]
+  targetEndpoint varchar [not null]
+  virtualUsers int
+  durationSeconds int
+  requestsPerSec float
+  p95LatencyMs float
+  errorRate float
+  createdAt timestamp [default: `now()`]
+}
