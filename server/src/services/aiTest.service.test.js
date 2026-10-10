@@ -31,9 +31,10 @@ describe('AiTest Service', () => {
         expect(true).toBe(true);
     });
 
-    it('8. Invalid enum values are impossible at runtime in query', async () => {
-        // Assert that queueSupertestGeneration does not pass SUPERTEST to mode
+    it('8. Enforces correct generation branch (SUPERTEST)', async () => {
+        // Assert that queueSupertestGeneration DOES pass SUPERTEST to mode
+        // to avoid accidentally triggering Unit Test generation branches.
         const code = String(queueSupertestGeneration);
-        expect(code).not.toMatch(/mode:\s*['"]SUPERTEST['"]/);
+        expect(code).toMatch(/mode:\s*['"]SUPERTEST['"]/);
     });
 });

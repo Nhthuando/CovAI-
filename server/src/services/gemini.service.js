@@ -29,19 +29,33 @@ async function executeWithRetry(apiCall, maxRetries = 3) {
       return await apiCall();
     } catch (error) {
       const isRateLimit = error.status === 429 || error.message.includes("429");
+      const isDailyQuota = isRateLimit && (error.message.includes("PerDay") || error.message.includes("generate_content_free_tier_requests"));
+      const isUnavailable = error.status === 503 || error.message.includes("503");
       const isServerError =
         error.status >= 500 || error.message.includes("fetch failed");
 
-      if ((isRateLimit || isServerError) && retries < maxRetries - 1) {
+      if ((isRateLimit || isUnavailable || isServerError) && retries < maxRetries - 1) {
         retries++;
-        // Exponential backoff: 2s, 4s, 8s...
-        const waitTime = Math.pow(2, retries) * 1000;
+        
+        let waitTime = Math.pow(2, retries) * 1000 + (Math.random() * 500);
+        const retryMatch = error.message.match(/retry in ([\d\.]+)s/i);
+        
+        if (isDailyQuota) {
+           waitTime = 0; // Immediate retry to fallback model
+        } else if (isRateLimit && retryMatch && retryMatch[1]) {
+           waitTime = (parseFloat(retryMatch[1]) + 1) * 1000;
+           if (waitTime > 45000) waitTime = 45000;
+        } else if (isUnavailable) {
+           waitTime = Math.pow(2, retries) * 2000 + (Math.random() * 1000);
+        }
+
         console.warn(
-          `[Gemini API] Rate limit or server error. Retrying in ${waitTime}ms... (Attempt ${retries}/${maxRetries})`,
+          `[Gemini API] ${isDailyQuota ? 'Daily Quota Exhausted' : isRateLimit ? 'Rate limit (429)' : isUnavailable ? 'Service Unavailable (503)' : 'Server error'}. Retrying in ${Math.round(waitTime)}ms... (Attempt ${retries}/${maxRetries})`,
         );
-        await delay(waitTime);
+        if (waitTime > 0) {
+          await delay(waitTime);
+        }
       } else {
-        // Handle API errors
         console.error("[Gemini API] Error:", error.message);
         throw new Error(`Gemini API Error: ${error.message}`);
       }
@@ -49,7 +63,7 @@ async function executeWithRetry(apiCall, maxRetries = 3) {
   }
 }
 
-const VALID_MODELS = ["gemini-3.1-flash-lite-preview", "gemini-2.5-flash"];
+const VALID_MODELS = ["gemini-3.8-flash", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite"];
 const exhaustedModels = new Set();
 
 /**
@@ -64,14 +78,17 @@ export function markModelExhausted(modelName) {
  * with the currently active and verified models.
  */
 function resolveModelName(requestedModel) {
-  const preferred = (requestedModel && requestedModel.trim()) || process.env.GEMINI_MODEL || "gemini-3.1-flash-lite-preview";
+  const preferred = (requestedModel && requestedModel.trim()) || process.env.GEMINI_MODEL || "gemini-3.8-flash";
+  
   if (VALID_MODELS.includes(preferred) && !exhaustedModels.has(preferred)) {
     return preferred;
   }
   for (const m of VALID_MODELS) {
     if (!exhaustedModels.has(m)) return m;
   }
-  return "gemini-3.1-flash-lite-preview";
+  
+  // If we reach here, all configured fallback models are exhausted.
+  throw new Error("PROVIDER_QUOTA_EXHAUSTED: All available Gemini models have exhausted their free-tier quota.");
 }
 
 /**
@@ -130,7 +147,7 @@ export const generateMultimodalText = async (
     generationConfig = modelNameOrConfig;
   }
 
-  const primaryModelName = resolveModelName(modelName);
+  let primaryModelName = resolveModelName(modelName);
   
   const createModelInstance = (mName) => {
     const modelOptions = { model: mName };
@@ -160,6 +177,7 @@ export const generateMultimodalText = async (
   parts.push({ text: prompt });
 
   const apiCall = async () => {
+    primaryModelName = resolveModelName(modelName);
     try {
       const model = createModelInstance(primaryModelName);
       const result = await model.generateContent({
@@ -169,13 +187,26 @@ export const generateMultimodalText = async (
           ...generationConfig,
         },
       });
+      console.log(`[Gemini API] Successfully generated response using primary model: ${primaryModelName}`);
+      if (result.response && result.response.candidates && result.response.candidates.length > 0) {
+        console.log(`[Gemini API] Provider returned version info (if any):`, result.response.modelVersion || 'N/A');
+      }
       return result.response.text();
     } catch (primaryErr) {
-      if (primaryErr.message && (primaryErr.message.includes("Quota exceeded") || primaryErr.message.includes("429"))) {
+      const isRateLimit = primaryErr.message && (primaryErr.message.includes("Quota exceeded") || primaryErr.message.includes("429"));
+      const isUnavailable = primaryErr.message && (primaryErr.message.includes("503") || primaryErr.message.includes("Service Unavailable"));
+      
+      if (isRateLimit) {
         markModelExhausted(primaryModelName);
       }
-      // If primary model failed with 404, rate limit, or model error, try secondary fallback model
-      const fallbackModel = primaryModelName === "gemini-3.1-flash-lite-preview" ? "gemini-2.5-flash" : "gemini-3.1-flash-lite-preview";
+      
+      // If it's a 503 or 429, we throw immediately so the outer executeWithRetry can handle backoff and retry the SAME model (if 503) or let resolveModelName pick a new one on next retry
+      if (isUnavailable || isRateLimit) {
+         throw primaryErr;
+      }
+
+      // If primary model failed with 404 or other model error, try secondary fallback model
+      const fallbackModel = VALID_MODELS.find(m => m !== primaryModelName && !exhaustedModels.has(m)) || "gemini-3.8-flash";
       console.warn(`[Gemini API] Primary model ${primaryModelName} error: ${primaryErr.message}. Attempting fallback with ${fallbackModel}...`);
       const model = createModelInstance(fallbackModel);
       const result = await model.generateContent({
@@ -185,9 +216,13 @@ export const generateMultimodalText = async (
           ...generationConfig,
         },
       });
+      console.log(`[Gemini API] Successfully generated response using fallback model: ${fallbackModel}`);
+      if (result.response && result.response.candidates && result.response.candidates.length > 0) {
+        console.log(`[Gemini API] Provider returned version info (if any):`, result.response.modelVersion || 'N/A');
+      }
       return result.response.text();
     }
   };
 
-  return executeWithRetry(apiCall);
+  return executeWithRetry(apiCall, 4); // Use 4 max retries to give it more chances
 };

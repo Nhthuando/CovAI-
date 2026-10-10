@@ -6,19 +6,11 @@ import { extractTestRequests } from './testSourceParser.service.js';
 const isMatch = (parsedReq, discoveredEp) => {
     if (parsedReq.method !== discoveredEp.method) return false;
     
-    const pSegs = parsedReq.path.split('/');
-    const dSegs = discoveredEp.fullPath.split('/');
-    if (pSegs.length !== dSegs.length) return false;
+    const cleanPath = parsedReq.path.split("?")[0].replace(/\/+$/, "") || "/";
+    const cleanRoute = discoveredEp.fullPath.replace(/\/+$/, "") || "/";
     
-    for (let i = 0; i < pSegs.length; i++) {
-        const p = pSegs[i];
-        const d = dSegs[i];
-        if (p === d) continue;
-        if (p === ":param" && d.startsWith(":")) continue;
-        if (d.startsWith(":") && !p.startsWith(":")) continue;
-        return false;
-    }
-    return true;
+    const regexStr = "^" + cleanRoute.replace(/:[^\/]+/g, "[^/]+") + "$";
+    return new RegExp(regexStr).test(cleanPath);
 };
 
 export const getIntegrationAnalytics = async (projectId) => {
@@ -182,6 +174,17 @@ export const getIntegrationAnalytics = async (projectId) => {
     let testedApis = 0;
     
     discoveredEndpoints.forEach(ep => {
+        const mappedScenarios = allParsedRequests.filter(req => isMatch(req, ep));
+        
+        // Let's mimic what we did in workspace for consistency if we have access to executions.
+        // Wait, integrationReport doesn't have testScenarios execution statuses available!
+        // It just counts if they are "tested" by checking if any request targets it!
+        // So the old logic was:
+        // const isTested = allParsedRequests.some(req => isMatch(req, ep));
+        // if (isTested) testedApis++;
+        // Why is this 0 in the UI? 
+        // Oh, the UI uses the `summary` from `buildWorkspace`, not the `report`!
+        // So I just need to leave this as is if we don't have execution statuses here.
         const isTested = allParsedRequests.some(req => isMatch(req, ep));
         if (isTested) testedApis++;
     });

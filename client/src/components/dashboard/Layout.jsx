@@ -925,8 +925,8 @@ function LayoutInner() {
             />
           </div>
 
-          <div className={activeActivity === "coverage" ? "w-full h-full overflow-y-auto" : "hidden"}>
-            <div className={coverageType === "unit" ? "h-full" : "hidden"}>
+          <div className={activeActivity === "coverage" ? "w-full h-full overflow-hidden" : "hidden"}>
+            <div className={coverageType === "unit" ? "h-full overflow-y-auto" : "hidden"}>
               <UnitTestDashboard
                 snapshotId={
                   project?.latestSnapshotId ||
@@ -942,7 +942,7 @@ function LayoutInner() {
                 runTrigger={coverageRunTrigger}
               />
             </div>
-            <div className={coverageType === "integration" ? "h-full" : "hidden"}>
+            <div className={coverageType === "integration" ? "h-full overflow-hidden flex flex-col min-h-0" : "hidden"}>
               <IntegrationTestDashboard
                 snapshotId={
                   project?.latestSnapshotId ||
@@ -960,7 +960,7 @@ function LayoutInner() {
                 onContextChange={setIntegrationInitialContext}
               />
             </div>
-            <div className={coverageType === "system" ? "h-full" : "hidden"}>
+            <div className={coverageType === "system" ? "h-full overflow-y-auto" : "hidden"}>
               <SystemTestDashboard
                 snapshotId={
                   project?.latestSnapshotId ||

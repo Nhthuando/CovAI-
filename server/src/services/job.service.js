@@ -68,7 +68,23 @@ export const addJobLog = async (jobId, level, message, client = prisma) => {
   return client.jobLog.create({ data: { jobId, level, message } });
 };
 
-export const STALE_JOB_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes for large test suites
+export const STALE_JOB_TIMEOUT_MS = 25 * 60 * 1000; // 25 minutes for large test suites and AI batch generation
+const INACTIVE_HEARTBEAT_TIMEOUT_MS = 6 * 60 * 1000; // 6 minutes of zero logs/activity
+
+const LONG_RUNNING_JOB_TYPES = [
+  "AI_TESTS",
+  "RUN_TESTS",
+  "VITEST_COVERAGE",
+  "RUN_VITEST_TESTS",
+  "SUPERTEST_COVERAGE",
+  "SYSTEM_TEST",
+  "CYPRESS_SYSTEM_TEST",
+  "CYPRESS_SYSTEM_COVERAGE",
+  "PLAYWRIGHT_SYSTEM_TEST",
+  "PLAYWRIGHT_SYSTEM_COVERAGE",
+  "SYSTEM_TEST_ANALYSIS",
+  "INSTALL_DEPS",
+];
 
 export const cleanupStaleJobsForProject = async (projectId, client = prisma) => {
   const activeJobs = await client.job.findMany({
@@ -83,25 +99,41 @@ export const cleanupStaleJobsForProject = async (projectId, client = prisma) => 
   for (const job of activeJobs) {
     const startTime = job.startedAt || job.createdAt;
     const elapsedMs = startTime ? now - new Date(startTime).getTime() : 0;
-    const limit = ["RUN_TESTS", "VITEST_COVERAGE", "SUPERTEST_COVERAGE", "CYPRESS_SYSTEM_COVERAGE", "PLAYWRIGHT_SYSTEM_COVERAGE"].includes(job.type)
-      ? STALE_JOB_TIMEOUT_MS
-      : 6 * 60 * 1000;
+    const isLongRunning = LONG_RUNNING_JOB_TYPES.includes(job.type);
+    const maxLimit = isLongRunning ? STALE_JOB_TIMEOUT_MS : 8 * 60 * 1000;
 
-    if (elapsedMs > limit) {
-      await client.job.update({
-        where: { id: job.id },
-        data: {
-          status: "CANCELED",
-          finishedAt: new Date(),
-          errorMessage: `Job execution timed out after ${Math.round(elapsedMs / 1000)}s and was automatically stopped.`,
-        },
+    if (elapsedMs > INACTIVE_HEARTBEAT_TIMEOUT_MS) {
+      const latestLog = await client.jobLog.findFirst({
+        where: { jobId: job.id },
+        orderBy: { createdAt: "desc" },
+        select: { createdAt: true },
       });
-      await addJobLog(
-        job.id,
-        "WARN",
-        `Job timed out (${Math.round(elapsedMs / 1000)}s). Automatically paused to release project.`,
-        client,
-      ).catch(() => { });
+      const lastActiveTime = latestLog?.createdAt || startTime;
+      const inactiveMs = now - new Date(lastActiveTime).getTime();
+
+      const isDead = inactiveMs > INACTIVE_HEARTBEAT_TIMEOUT_MS;
+      const isHardTimeout = elapsedMs > maxLimit;
+
+      if (isDead || isHardTimeout) {
+        const reason = isHardTimeout
+          ? `Job execution timed out after ${Math.round(elapsedMs / 1000)}s and was automatically stopped.`
+          : `Job became inactive for ${Math.round(inactiveMs / 1000)}s without any progress and was automatically stopped.`;
+
+        await client.job.update({
+          where: { id: job.id },
+          data: {
+            status: "CANCELED",
+            finishedAt: new Date(),
+            errorMessage: reason,
+          },
+        });
+        await addJobLog(
+          job.id,
+          "WARN",
+          reason,
+          client,
+        ).catch(() => { });
+      }
     }
   }
 };
@@ -120,25 +152,41 @@ export const cleanupAllStaleJobs = async (userId = null, client = prisma) => {
   for (const job of activeJobs) {
     const startTime = job.startedAt || job.createdAt;
     const elapsedMs = startTime ? now - new Date(startTime).getTime() : 0;
-    const limit = ["RUN_TESTS", "VITEST_COVERAGE", "SUPERTEST_COVERAGE", "CYPRESS_SYSTEM_COVERAGE", "PLAYWRIGHT_SYSTEM_COVERAGE"].includes(job.type)
-      ? STALE_JOB_TIMEOUT_MS
-      : 6 * 60 * 1000;
+    const isLongRunning = LONG_RUNNING_JOB_TYPES.includes(job.type);
+    const maxLimit = isLongRunning ? STALE_JOB_TIMEOUT_MS : 8 * 60 * 1000;
 
-    if (elapsedMs > limit) {
-      await client.job.update({
-        where: { id: job.id },
-        data: {
-          status: "CANCELED",
-          finishedAt: new Date(),
-          errorMessage: `Job execution timed out after ${Math.round(elapsedMs / 1000)}s and was automatically stopped.`,
-        },
+    if (elapsedMs > INACTIVE_HEARTBEAT_TIMEOUT_MS) {
+      const latestLog = await client.jobLog.findFirst({
+        where: { jobId: job.id },
+        orderBy: { createdAt: "desc" },
+        select: { createdAt: true },
       });
-      await addJobLog(
-        job.id,
-        "WARN",
-        `Job timed out (${Math.round(elapsedMs / 1000)}s). Automatically paused.`,
-        client,
-      ).catch(() => { });
+      const lastActiveTime = latestLog?.createdAt || startTime;
+      const inactiveMs = now - new Date(lastActiveTime).getTime();
+
+      const isDead = inactiveMs > INACTIVE_HEARTBEAT_TIMEOUT_MS;
+      const isHardTimeout = elapsedMs > maxLimit;
+
+      if (isDead || isHardTimeout) {
+        const reason = isHardTimeout
+          ? `Job execution timed out after ${Math.round(elapsedMs / 1000)}s and was automatically stopped.`
+          : `Job became inactive for ${Math.round(inactiveMs / 1000)}s without any progress and was automatically stopped.`;
+
+        await client.job.update({
+          where: { id: job.id },
+          data: {
+            status: "CANCELED",
+            finishedAt: new Date(),
+            errorMessage: reason,
+          },
+        });
+        await addJobLog(
+          job.id,
+          "WARN",
+          reason,
+          client,
+        ).catch(() => { });
+      }
     }
   }
 };
@@ -237,7 +285,7 @@ export const createPerformanceAnalysisJob = createTypedJob("PERFORMANCE_ANALYSIS
 export const createAiSuggestJob = createTypedJob("AI_SUGGEST");
 export const createCodeHygieneJob = createTypedJob("CODE_HYGIENE");
 
-export const createAiTestsJob = async ({ projectId, snapshotId, userId, mode = "SKELETON", executionMode = "full" }) => {
+export const createAiTestsJob = async ({ projectId, snapshotId, userId, mode = "SKELETON", executionMode = "full", targetEndpoints = null }) => {
   if (["PLAYWRIGHT_E2E","PLAYWRIGHT"].includes(mode) && executionMode !== "full") throw new ServiceError("System Test generation requires full-system execution.",400);
   if (!["frontend", "full"].includes(executionMode)) throw new ServiceError("Invalid executionMode", 400);
   const existing = await prisma.job.findFirst({
@@ -259,7 +307,7 @@ export const createAiTestsJob = async ({ projectId, snapshotId, userId, mode = "
     snapshotId,
     userId,
     type: "AI_TESTS",
-    payloadJson: { snapshotId, mode, executionMode },
+    payloadJson: { snapshotId, mode, executionMode, targetEndpoints },
   });
 };
 

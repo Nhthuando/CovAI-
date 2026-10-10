@@ -50,26 +50,27 @@ export const includeSourceCode = (sourceCode) => {
  * @param {Array<{path: string, content: string}>} sourceCode
  * @returns {string}
  */
-export const includeRouteContext = (sourceCode) => {
+export const includeRouteContext = (sourceCode, targetEndpoints = null) => {
     if (!sourceCode || sourceCode.length === 0) return "";
 
-    const endpoints = extractValidEndpoints(sourceCode);
+    const endpoints = targetEndpoints || extractValidEndpoints(sourceCode);
 
     let segment = "### VALID API ENDPOINTS (Extracted from Source Code)\n\n";
 
     if (endpoints.length > 0) {
         segment += "**YOU MUST ONLY USE THESE ENDPOINTS. DO NOT INVENT ANY OTHER ENDPOINTS.**\n\n";
-        segment += "| Method | Path | Controller | Middleware | Payload Schema | DB Models | Source File |\n";
-        segment += "|--------|------|------------|------------|----------------|-----------|-------------|\n";
+        segment += "| Method | Path | Controller | Middleware | Payload Schema | DB Models | Source File | Required Coverage Focus |\n";
+        segment += "|--------|------|------------|------------|----------------|-----------|-------------|-------------------------|\n";
         for (const ep of endpoints) {
             const controller = ep.controllerMethod || "-";
             const middleware = ep.middleware ? ep.middleware.join(", ") : "-";
             const payload = ep.requestBodySchema ? ep.requestBodySchema.join(", ") : "-";
             const db = ep.databaseModels ? ep.databaseModels.join(", ") : "-";
-            segment += `| ${ep.method} | ${ep.fullPath} | ${controller} | ${middleware} | ${payload} | ${db} | ${ep.sourceFile} |\n`;
+            const missing = ep.missingCoverageRequested && ep.missingCoverageRequested.length > 0 ? ep.missingCoverageRequested.join(" AND ") : "Happy Path (200/201) AND Error Edge Case (400/404/500)";
+            segment += `| ${ep.method} | ${ep.fullPath} | ${controller} | ${middleware} | ${payload} | ${db} | ${ep.sourceFile} | ${missing} |\n`;
         }
         segment += "\n";
-        segment += "**CRITICAL:** If you generate a test for any endpoint NOT listed above, the test WILL FAIL with 404. Only test the endpoints above.\n\n";
+        segment += "**CRITICAL INSTRUCTION:** For each endpoint listed above, you MUST write the scenarios explicitly requested in the 'Required Coverage Focus' column. If 'Happy Path (200/201)' is requested, you MUST name the test containing 'happy' or '200'. If 'Error Edge Case (400/404/500)' is requested, you MUST name the test containing 'error' or '404'. Do NOT invent any endpoints not in this table!\n\n";
     } else {
         segment += "No specific route definitions were detected. Analyze the source code carefully to identify endpoints.\n\n";
     }
@@ -128,7 +129,7 @@ export const includeSupertestInstructions = (sourceCode) => {
     segment += "#### 1. API Flow & Application Startup\n";
     segment += `- **CRITICAL: Import the app from \`${appImportPath}\`** (the Express app module that exports the app WITHOUT calling \`app.listen()\`). DO NOT import from \`server.js\` because it starts the HTTP server on a port.\n`;
     segment += "- If the source code uses ES modules (`import`/`export`), you MUST use `import` syntax. If it uses CommonJS (`require`), use `require`.\n";
-    segment += "- Use `request(app)` from Supertest to make HTTP requests.\n";
+    segment += "- **AST PARSER COMPATIBILITY (CRITICAL):** You MUST write tests using inline Supertest chains exactly like: `await request(app).get('/api/users')`. DO NOT assign `request(app)` to a variable first. DO NOT abstract it into a helper function. The `request(app)` call MUST be inline inside the `it()` or `test()` block or else the tests will be silently ignored.\n";
     segment += "- DO NOT start the Express server on a port (do not call `app.listen()`).\n";
     segment += "- Send realistic request bodies, query params, and path params.\n";
     segment += "- Assert meaningful HTTP status codes and response bodies (`expect(res.status).toBe(200)`).\n";
@@ -206,16 +207,17 @@ export const includeSupertestOutputFormat = () => {
 /**
  * Main function: builds the complete Supertest generation prompt.
  * @param {Object} payload - AI context payload
+ * @param {Array} targetEndpoints - Optional array of endpoints to restrict generation to
  * @returns {string} The complete prompt string
  */
-export const buildSupertestPrompt = (payload) => {
+export const buildSupertestPrompt = (payload, targetEndpoints = null) => {
     let prompt = "You are an expert Backend QA Engineer. Your task is to analyze the provided source code and generate comprehensive Supertest integration test files for the API endpoints.\n\n";
 
     prompt += "---\n\n";
 
     if (payload.sourceCode) {
         prompt += includeSourceCode(payload.sourceCode);
-        prompt += includeRouteContext(payload.sourceCode);
+        prompt += includeRouteContext(payload.sourceCode, targetEndpoints);
     }
 
     prompt += includeSupertestInstructions(payload.sourceCode);

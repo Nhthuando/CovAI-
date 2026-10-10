@@ -42,14 +42,55 @@ export const processSupertestCoverageJob = async (jobId) => {
             where: { snapshotId }
         });
         
-        const supertestFiles = aiTests
-            .filter(t => {
-                if (!t.metaJson) return false;
-                const meta = typeof t.metaJson === 'string' ? JSON.parse(t.metaJson) : t.metaJson;
-                return meta.framework === "SUPERTEST" && meta.status === "APPROVED";
-            })
-            .map(t => path.join(rootDir, t.filePath))
-            .filter(p => fs.existsSync(p));
+        const supertestFiles = [];
+        const { parseCode, findScenarioPath, getScenarioIdentity } = await import("./scenarioManager.service.js");
+        const _genModule = await import('@babel/generator');
+        const generate = _genModule.default?.default || _genModule.default || _genModule;
+
+        for (const t of aiTests) {
+            if (!t.metaJson) continue;
+            let meta;
+            try { meta = typeof t.metaJson === 'string' ? JSON.parse(t.metaJson) : t.metaJson; } catch(e) { continue; }
+            if (meta.framework !== "SUPERTEST" || meta.status !== "APPROVED") continue;
+            
+            const filePath = path.join(rootDir, t.filePath);
+            
+            // Sync DB content to disk and enforce approval & toggle semantics
+            const ast = parseCode(t.content);
+            const requests = Array.isArray(meta.requests) ? meta.requests : [];
+            const approvedScenarios = new Set(meta.approvedScenarios || []);
+            
+            for (const r of requests) {
+                const { testName, nameIndex } = getScenarioIdentity(t, r.scenarioId);
+                const scenarioPath = findScenarioPath(ast, testName, nameIndex);
+                if (scenarioPath) {
+                    const isApproved = approvedScenarios.has(r.scenarioId);
+                    const isEnabled = r.enabled !== false;
+                    const shouldRun = isApproved && isEnabled;
+
+                    const callee = scenarioPath.node.callee;
+                    if (shouldRun) {
+                        if (callee.type === 'MemberExpression' && (callee.object.name === 'it' || callee.object.name === 'test')) {
+                            scenarioPath.node.callee = callee.object;
+                        }
+                    } else {
+                        if (callee.type === 'Identifier' && (callee.name === 'it' || callee.name === 'test')) {
+                            scenarioPath.node.callee = {
+                                type: 'MemberExpression',
+                                object: callee,
+                                property: { type: 'Identifier', name: 'skip' },
+                                computed: false
+                            };
+                        }
+                    }
+                }
+            }
+            
+            const { code: finalCode } = generate(ast);
+            fs.mkdirSync(path.dirname(filePath), { recursive: true });
+            fs.writeFileSync(filePath, finalCode, 'utf8');
+            supertestFiles.push(filePath);
+        }
 
         if (supertestFiles.length === 0) {
             throw new ServiceError("No valid AI-generated Supertest files were found in this snapshot.", 422);

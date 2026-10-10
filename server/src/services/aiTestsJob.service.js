@@ -389,48 +389,291 @@ export const processAiTestsJob = async (jobId) => {
         }
 
         if (mode === "SUPERTEST") {
-            const supertestPrompt = buildSupertestPrompt(payload);
+            const { extractValidEndpoints } = await import("./apiEndpointParser.service.js");
+            const allEndpoints = extractValidEndpoints(payload.sourceCode || []);
+            const CHUNK_SIZE = 2; // Strict requirement: start with 2
+            const allTestsCombined = [];
+            const suggestionsCombined = [];
+            let summaryCombined = { message: "" };
 
-            await updateJobStatus({ jobId, progress: 40 });
-
-            await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'BUILD_CONTEXT', label: "Calling Gemini AI model for Supertest test generation...", progress: 40 }));
-            const supertestResponseText = await generateText(supertestPrompt, "gemini-1.5-pro");
-
-            if (!supertestResponseText) {
-                throw new ServiceError("AI Model failed to return test scenarios", 500);
+            // Selective Generation: filter to targetEndpoints if specified
+            let targetEndpoints = allEndpoints;
+            if (payload.targetEndpoints && Array.isArray(payload.targetEndpoints) && payload.targetEndpoints.length > 0) {
+                const targetSet = new Set(
+                    payload.targetEndpoints.map(t => typeof t === 'string' ? t.trim().toUpperCase() : `${t.method} ${t.path || t.fullPath || t.route}`.trim().toUpperCase())
+                );
+                targetEndpoints = allEndpoints.filter(ep => {
+                    const key = `${ep.method} ${ep.fullPath}`.toUpperCase();
+                    const altKey = `${ep.method} ${ep.path || ep.route}`.toUpperCase();
+                    return targetSet.has(key) || targetSet.has(altKey);
+                });
+                await addJobLog(jobId, "INFO", `Selective generation active: ${targetEndpoints.length} of ${allEndpoints.length} endpoints selected.`);
+            } else {
+                await addJobLog(jobId, "INFO", `Found ${allEndpoints.length} endpoints to generate tests for. Batching in chunks of ${CHUNK_SIZE}...`);
             }
 
-            await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'GENERATE_AI_TESTS', label: "Parsing and validating generated test scenarios...", progress: 80 }));
-            await updateJobStatus({ jobId, progress: 80 });
-
-            await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'VALIDATE_SCENARIOS', label: "Parsing Supertest scenarios...", progress: 85 }));
-            const { allTests, suggestions, summary } = processSupertestTests(supertestResponseText, {
-                projectId,
-                snapshotId,
+            // Initialize tracker for target endpoints
+            const endpointTracker = new Map();
+            targetEndpoints.forEach(ep => {
+                endpointTracker.set(`${ep.method} ${ep.fullPath}`, {
+                    endpoint: ep,
+                    happy: false,
+                    error: false,
+                    scenarios: [],
+                    failed: false,
+                    retries: 0
+                });
             });
 
+            if (targetEndpoints.length === 0) {
+                await addJobLog(jobId, "WARN", "No matching API endpoints detected for generation. Aborting.");
+                await updateJobStatus({ jobId, status: "SUCCESS", progress: 100 });
+                return { success: true, count: 0, summary: summaryCombined };
+            }
+
+            const MAX_RETRIES = 2;
+            let currentQueue = Array.from(endpointTracker.keys());
+            let generationCycles = 0;
+
+            while (currentQueue.length > 0 && generationCycles < 5) { // Limit total cycles to prevent infinite loops
+                generationCycles++;
+                await addJobLog(jobId, "INFO", `Generation Cycle ${generationCycles}. Endpoints in queue: ${currentQueue.length}`);
+                
+                let nextQueue = [];
+                for (let i = 0; i < currentQueue.length; i += CHUNK_SIZE) {
+                    const chunkKeys = currentQueue.slice(i, i + CHUNK_SIZE);
+                    const chunkEndpoints = chunkKeys.map(k => endpointTracker.get(k).endpoint);
+                    
+                    const chunkProgress = Math.min(80, Math.floor(40 + ((i / currentQueue.length) * 40 / generationCycles)));
+                    await updateJobStatus({ jobId, progress: chunkProgress });
+                    
+                    const batchId = `cycle-${generationCycles}-batch-${Math.floor(i / CHUNK_SIZE) + 1}`;
+                    await addJobLog(jobId, "INFO", JSON.stringify({ 
+                        stage: 'BUILD_CONTEXT', 
+                        label: `Calling Gemini for batch ${batchId} (${chunkEndpoints.length} endpoints)...`, 
+                        progress: chunkProgress 
+                    }));
+
+                    // We instruct the model precisely for the missing coverage types
+                    const promptChunk = chunkEndpoints.map(ep => {
+                        const tr = endpointTracker.get(`${ep.method} ${ep.fullPath}`);
+                        let missing = [];
+                        if (!tr.happy) missing.push("Happy Path (200/201)");
+                        if (!tr.error) missing.push("Error Edge Case (400/404/500)");
+                        return { ...ep, missingCoverageRequested: missing };
+                    });
+
+                    const supertestPrompt = buildSupertestPrompt(payload, promptChunk);
+                    
+                    let batchStatus = "SUCCESS";
+                    let acceptedScenarios = 0;
+                    let rejectedScenarios = 0;
+                    
+                    try {
+                        // The model name is hardcoded here but gemini.service resolves fallbacks internally
+                        const supertestResponseText = await generateText(supertestPrompt, "gemini-3.8-flash");
+                        
+                        if (supertestResponseText) {
+                            try {
+                                const { allTests, suggestions, summary } = processSupertestTests(supertestResponseText, { projectId, snapshotId });
+                                
+                                // Helper to match path with route params and query strings
+                                const matchEndpoint = (requestPath, requestMethod, validKeys) => {
+                                    const cleanPath = requestPath.split("?")[0].replace(/\/+$/, "") || "/";
+                                    for (const key of validKeys) {
+                                        const [method, path] = key.split(" ");
+                                        if (method !== requestMethod) continue;
+                                        
+                                        const cleanRoute = path.replace(/\/+$/, "") || "/";
+                                        
+                                        // Convert express route /path/:id to regex ^/path/[^/]+$
+                                        const regexStr = "^" + cleanRoute.replace(/:[^\/]+/g, "[^/]+") + "$";
+                                        const regex = new RegExp(regexStr);
+                                        if (regex.test(cleanPath)) {
+                                            return key;
+                                        }
+                                    }
+                                    return null;
+                                };
+
+                                // VALIDATION: Strict per-endpoint output validation
+                                const validTestsForBatch = [];
+                                for (const testFile of allTests) {
+                                    const meta = JSON.parse(testFile.metaJson);
+                                    const validRequests = [];
+                                    
+                                    for (const req of meta.requests) {
+                                        const matchedKey = matchEndpoint(req.path, req.method, chunkKeys);
+                                        
+                                        // Verify that scenario is associated with a REAL endpoint IN THE CURRENT BATCH
+                                        if (!matchedKey) {
+                                            rejectedScenarios++;
+                                            await addJobLog(jobId, "WARN", `Rejected scenario '${req.testName}' for endpoint '${req.method} ${req.path}': Not in the requested batch or is an invented endpoint.`);
+                                            continue;
+                                        }
+                                        
+                                        const tr = endpointTracker.get(matchedKey);
+                                        const name = req.testName.toLowerCase();
+                                        
+                                        // Distinguish Happy Path from Error Edge Case
+                                        let isHappy = name.includes('happy') || name.includes('200') || name.includes('201') || name.includes('success');
+                                        let isError = name.includes('error') || name.includes('400') || name.includes('401') || name.includes('404') || name.includes('500') || name.includes('fail') || name.includes('missing') || name.includes('invalid');
+                                        
+                                        if (!isHappy && !isError) {
+                                            // Fallback classification if naming is vague
+                                            isHappy = true;
+                                        }
+                                        
+                                        if (isHappy) tr.happy = true;
+                                        if (isError) tr.error = true;
+                                        
+                                        acceptedScenarios++;
+                                        validRequests.push(req);
+                                    }
+                                    
+                                    if (validRequests.length > 0) {
+                                        meta.requests = validRequests;
+                                        testFile.metaJson = JSON.stringify(meta);
+                                        validTestsForBatch.push(testFile);
+                                    }
+                                }
+                                
+                                allTestsCombined.push(...validTestsForBatch);
+                                if (suggestions) suggestionsCombined.push(...suggestions);
+                                
+                            } catch (e) {
+                                batchStatus = "PARSE_ERROR";
+                                await addJobLog(jobId, "WARN", `AI Model output parsing failed for batch: ${e.message}`);
+                            }
+                        } else {
+                            batchStatus = "EMPTY_RESPONSE";
+                            await addJobLog(jobId, "WARN", `AI Model returned empty response for batch.`);
+                        }
+                    } catch (genErr) {
+                        batchStatus = "PROVIDER_ERROR";
+                        await addJobLog(jobId, "ERROR", `Provider generation failed for batch ${batchId}: ${genErr.message}`);
+                    }
+                    
+                    // Evaluate missing coverage for the chunk and queue retries
+                    for (const key of chunkKeys) {
+                        const tr = endpointTracker.get(key);
+                        if (!tr.happy || !tr.error) {
+                            tr.retries++;
+                            if (tr.retries <= MAX_RETRIES) {
+                                await addJobLog(jobId, "WARN", `Endpoint ${key} missing required coverage (Happy: ${tr.happy}, Error: ${tr.error}). Queuing for retry (${tr.retries}/${MAX_RETRIES}).`);
+                                nextQueue.push(key);
+                            } else {
+                                tr.failed = true;
+                                await addJobLog(jobId, "ERROR", `Endpoint ${key} exhausted retries. Unresolved coverage.`);
+                            }
+                        }
+                    }
+                    
+                    // Log structured batch info
+                    await addJobLog(jobId, "INFO", JSON.stringify({
+                        batchId,
+                        endpoints: chunkKeys,
+                        attempt: generationCycles,
+                        status: batchStatus,
+                        acceptedScenarios,
+                        rejectedScenarios,
+                    }));
+                }
+                currentQueue = nextQueue;
+            }
+            
+            // Check Final Status
+            let completelyCovered = 0;
+            let partialCovered = 0;
+            let completelyMissed = 0;
+            const unresolvedEndpoints = [];
+
+            for (const [key, tr] of endpointTracker.entries()) {
+                if (tr.happy && tr.error) completelyCovered++;
+                else if (tr.happy || tr.error) {
+                    partialCovered++;
+                    unresolvedEndpoints.push(`${key} (Missing: ${!tr.happy ? 'Happy' : 'Error'})`);
+                } else {
+                    completelyMissed++;
+                    unresolvedEndpoints.push(`${key} (Missing: Both)`);
+                }
+            }
+
+            const finalJobStatus = (completelyMissed === targetEndpoints.length) ? "FAILED" : (unresolvedEndpoints.length > 0 ? "PARTIAL" : "SUCCESS");
+            await addJobLog(jobId, "INFO", `Coverage Results: ${completelyCovered} Complete, ${partialCovered} Partial, ${completelyMissed} Missed.`);
+
+            await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'GENERATE_AI_TESTS', label: "Consolidating test scenarios...", progress: 85 }));
+            await updateJobStatus({ jobId, progress: 85 });
+
             await addJobLog(jobId, "INFO", "Replacing old Supertest tests atomically...");
-            // Clean up old SUPERTEST files using in-memory filtering because Prisma doesn't support json filtering cleanly on all DBs
             const existingTests = await prisma.aiTest.findMany({
                 where: { snapshotId }
             });
-            const supertestTests = existingTests
-                .filter(t => {
-                    if (!t.metaJson) return false;
-                    try {
-                        return JSON.parse(t.metaJson).framework === "SUPERTEST";
-                    } catch { return false; }
-                });
-            const supertestIds = supertestTests.map(t => t.id);
+            const supertestIds = [];
+            const testsToUpdate = [];
+            
+            const { stripAiScenariosService } = await import("./scenarioManager.service.js");
+
+            const successfullyGeneratedEndpoints = new Set();
+            for (const [key, tr] of endpointTracker.entries()) {
+                if (tr.happy || tr.error) successfullyGeneratedEndpoints.add(key);
+            }
+
+            existingTests.forEach(t => {
+                if (!t.metaJson) return;
+                try {
+                    const meta = JSON.parse(t.metaJson);
+                    if (meta.framework !== "SUPERTEST") return;
+                    
+                    let overlapsWithNew = false;
+                    if (meta.requests && Array.isArray(meta.requests)) {
+                        for (const req of meta.requests) {
+                            const key = `${req.method} ${req.path}`;
+                            // Use basic string matching or the regex matcher if needed. We assume path is normalized.
+                            // If this old test covers an endpoint we just generated, we consider it overlapping.
+                            // We can check if any successfully generated endpoint regex matches this req.path
+                            for (const successKey of successfullyGeneratedEndpoints) {
+                                const [sMethod, sPath] = successKey.split(" ");
+                                if (req.method === sMethod) {
+                                    const regexStr = "^" + sPath.replace(/:[^\/]+/g, "[^/]+") + "$";
+                                    if (new RegExp(regexStr).test(req.path)) {
+                                        overlapsWithNew = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (overlapsWithNew) break;
+                        }
+                    }
+
+                    if (meta.userModified || overlapsWithNew) {
+                        // If it overlaps, we MUST strip the old AI scenarios for those endpoints to replace them.
+                        // Wait, stripAiScenariosService strips ALL AI scenarios in the file.
+                        // This is acceptable because files usually group related endpoints.
+                        const stripped = stripAiScenariosService(t);
+                        if (stripped) {
+                            testsToUpdate.push(stripped);
+                        } else {
+                            if (overlapsWithNew) supertestIds.push(t.id);
+                        }
+                    } else {
+                        // If it doesn't overlap and wasn't user modified, we KEEP IT to preserve partial coverage!
+                        // Do not add to supertestIds.
+                    }
+                } catch { }
+            });
 
             // Step 1: Write NEW files to unique staging paths
-            allTests.forEach(t => {
+            allTestsCombined.forEach(t => {
                 if (!t.id) t.id = crypto.randomUUID();
                 t.filePath = t.filePath.replace('.test.js', `-${t.id.substring(0, 8)}.test.js`);
             });
 
-            if (allTests.length > 0) {
-                saveAiTestsToFilesystem(job.snapshot.rootDir, allTests);
+            if (allTestsCombined.length > 0) {
+                saveAiTestsToFilesystem(job.snapshot.rootDir, allTestsCombined);
+            }
+            if (testsToUpdate.length > 0) {
+                saveAiTestsToFilesystem(job.snapshot.rootDir, testsToUpdate);
             }
 
             // Step 2: Atomic DB Transaction
@@ -441,42 +684,58 @@ export const processAiTestsJob = async (jobId) => {
                     });
                 }
                 
+                for (const updated of testsToUpdate) {
+                    await tx.aiTest.update({
+                        where: { id: updated.id },
+                        data: {
+                            content: updated.content,
+                            metaJson: updated.metaJson
+                        }
+                    });
+                }
+                
                 await tx.aiSuggestion.deleteMany({
                     where: { snapshotId }
                 });
                 
-                if (suggestions && suggestions.length > 0) {
-                    await tx.aiSuggestion.createMany({ data: suggestions });
+                if (suggestionsCombined && suggestionsCombined.length > 0) {
+                    await tx.aiSuggestion.createMany({ data: suggestionsCombined });
                 }
 
-                if (allTests.length > 0) {
-                    await tx.aiTest.createMany({ data: allTests });
+                if (allTestsCombined.length > 0) {
+                    await tx.aiTest.createMany({ data: allTestsCombined });
                 }
             });
 
             // Step 3: Cleanup old files asynchronously
             if (supertestIds.length > 0) {
                 try {
-                    removeAiTestsFromFilesystem(job.snapshot.rootDir, supertestTests);
+                    // Assuming existing tests are retrieved above, we can filter them for cleanup.
+                    const existingSupertests = existingTests.filter(t => supertestIds.includes(t.id));
+                    removeAiTestsFromFilesystem(job.snapshot.rootDir, existingSupertests);
                 } catch (err) {
                     console.error("[aiTestsJob] Failed to clean up old files after DB transaction", err);
                     await addJobLog(jobId, "WARN", "Failed to clean up some old test files. New tests are safely saved.");
                 }
             }
 
-            if (suggestions && suggestions.length > 0) {
-                await addJobLog(jobId, "INFO", `Saved ${suggestions.length} Supertest integration scenario suggestions.`);
-            }
-
-            if (allTests.length > 0) {
-                await addJobLog(jobId, "INFO", summary.message);
+            if (allTestsCombined.length > 0) {
+                await addJobLog(jobId, "INFO", `Successfully generated ${allTestsCombined.length} Supertest test files.`);
             } else {
                 await addJobLog(jobId, "INFO", "No Supertest integration test files were generated.");
             }
 
-            await updateJobStatus({ jobId, status: "SUCCESS", progress: 100 });
+            await updateJobStatus({ jobId, status: finalJobStatus === "PARTIAL" ? "SUCCESS" : finalJobStatus, progress: 100 });
             await notificationService.createJobFinishedNotification(jobId);
-            return { success: true, count: allTests.length, summary };
+            return { 
+                success: finalJobStatus !== "FAILED", 
+                count: allTestsCombined.length, 
+                summary: { 
+                    message: `Coverage: ${completelyCovered} Complete, ${partialCovered} Partial, ${completelyMissed} Missed.`,
+                    unresolvedEndpoints,
+                    status: finalJobStatus
+                } 
+            };
         }
 
         // ── Cypress E2E Generation Branch ──────────────────────────────────
@@ -486,7 +745,7 @@ export const processAiTestsJob = async (jobId) => {
             await updateJobStatus({ jobId, progress: 40 });
 
             await addJobLog(jobId, "INFO", "Calling Gemini AI model for Cypress test generation...");
-            const cypressResponseText = await generateText(cypressPrompt, "gemini-1.5-pro");
+            const cypressResponseText = await generateText(cypressPrompt, "gemini-3.8-flash");
 
             if (!cypressResponseText) {
                 throw new Error("Gemini returned an empty response for Cypress generation.");
@@ -524,7 +783,7 @@ export const processAiTestsJob = async (jobId) => {
 
         // SCRUM-394: Call Gemini API
         await addJobLog(jobId, "INFO", "Calling Gemini AI model...");
-        const responseText = await generateText(finalPrompt, "gemini-1.5-pro");
+        const responseText = await generateText(finalPrompt, "gemini-3.8-flash");
 
         // SCRUM-396: Validate AI response
         if (!responseText) {

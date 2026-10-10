@@ -6,9 +6,9 @@ import { buildAiPayload, loadSourceCode } from "./aiContextBuilder.service.js";
 import { validateGeneratedTest } from "./testValidation.service.js";
 import { createAiTestsJob } from "./job.service.js";
 import { extractValidEndpoints } from "./apiEndpointParser.service.js";
+import { addJobToQueue } from "./queue.service.js";
 
-
-export const queueSupertestGeneration = async ({ projectId, snapshotId, userId, force }) => {
+export const queueSupertestGeneration = async ({ projectId, snapshotId, userId, force, targetEndpoints }) => {
   const db = prisma;
 
   // 1. Verify project ownership
@@ -47,14 +47,8 @@ export const queueSupertestGeneration = async ({ projectId, snapshotId, userId, 
     resolvedSnapshotId = latestSnapshot.id;
   }
 
-  // 2.5 Verify Analysis exists
-  const sourceCode = await loadSourceCode(resolvedSnapshotId).catch(() => []);
-  const discoveredEndpoints = extractValidEndpoints(sourceCode);
-  if (discoveredEndpoints.length === 0) {
-    const err = new Error("ANALYSIS_REQUIRED");
-    err.status = 400;
-    throw err;
-  }
+  // 2.5 Ensure the job proceeds immediately to background processing.
+  // The worker will load source code and extract endpoints asynchronously.
 
   // 2.8 Pre-flight Dirty Check (F-03)
   if (!force) {
@@ -69,17 +63,33 @@ export const queueSupertestGeneration = async ({ projectId, snapshotId, userId, 
     });
     
     let hasEdits = false;
+    const targetSet = (targetEndpoints && Array.isArray(targetEndpoints) && targetEndpoints.length > 0)
+      ? new Set(targetEndpoints.map(t => typeof t === 'string' ? t.trim().toUpperCase() : `${t.method} ${t.path || t.fullPath || t.route}`.trim().toUpperCase()))
+      : null;
+
     for (const test of existingTests) {
       if (test.metaJson) {
         try {
           const meta = JSON.parse(test.metaJson);
-          if (meta.userModified) {
-            hasEdits = true;
-            break;
-          }
-          if (meta.requests?.some(r => r.userEdited || r.isManuallyAdded || r.enabled === false)) {
-            hasEdits = true;
-            break;
+          if (targetSet) {
+            // Only check requests matching the targeted endpoints
+            const targetRequests = meta.requests?.filter(r => {
+              const k = `${r.method} ${r.path}`.toUpperCase();
+              return targetSet.has(k);
+            }) || [];
+            if (targetRequests.some(r => r.userEdited || r.isManuallyAdded || r.enabled === false)) {
+              hasEdits = true;
+              break;
+            }
+          } else {
+            if (meta.userModified) {
+              hasEdits = true;
+              break;
+            }
+            if (meta.requests?.some(r => r.userEdited || r.isManuallyAdded || r.enabled === false)) {
+              hasEdits = true;
+              break;
+            }
           }
         } catch (e) {}
       }
@@ -93,12 +103,13 @@ export const queueSupertestGeneration = async ({ projectId, snapshotId, userId, 
     }
   }
 
-  // 3. Create job (deduped — reuses active SUPERTEST job if exists)
+  // 3. Create job (deduped — reuses active job if exists)
   const job = await createAiTestsJob({
     projectId,
     snapshotId: resolvedSnapshotId,
     userId,
     mode: "SUPERTEST",
+    targetEndpoints,
   });
 
   // 4. Fire-and-forget queue addition (non-blocking)

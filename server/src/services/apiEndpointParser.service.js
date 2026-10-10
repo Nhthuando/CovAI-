@@ -30,9 +30,14 @@ export const extractValidEndpoints = (sourceCode) => {
     const mounts = extractMountPaths(sourceCode);
     const endpoints = [];
 
-    const routeFiles = sourceCode.filter(
-        (f) => f.path.includes("route") || f.path.includes("router")
-    );
+    const routeFiles = sourceCode.filter((f) => {
+        const lower = f.path.toLowerCase();
+        // Skip obvious test files or mocks
+        if (lower.includes(".test.") || lower.includes(".spec.") || lower.includes("__tests__") || lower.includes("mock")) {
+            return false;
+        }
+        return true;
+    });
 
     for (const routeFile of routeFiles) {
         let mountPath = "";
@@ -51,9 +56,12 @@ export const extractValidEndpoints = (sourceCode) => {
                 CallExpression(path) {
                     if (
                         path.node.callee.type === "MemberExpression" &&
-                        path.node.callee.object.name === "router" &&
                         ["get", "post", "put", "delete", "patch"].includes(path.node.callee.property.name)
                     ) {
+                        const objName = path.node.callee.object.name || "";
+                        // Exclude obvious HTTP clients
+                        if (["axios", "http", "https", "request", "fetch", "supertest"].includes(objName.toLowerCase())) return;
+
                         const method = path.node.callee.property.name.toUpperCase();
                         const args = path.node.arguments;
                         if (args.length < 2) return;
@@ -61,6 +69,10 @@ export const extractValidEndpoints = (sourceCode) => {
                         const routePathNode = args[0];
                         if (routePathNode.type !== "StringLiteral") return;
                         
+                        // Strict check: if it's not a common router variable, the path MUST start with '/'
+                        const isCommonRouter = ["router", "app", "api", "server"].includes(objName.toLowerCase()) || objName.toLowerCase().includes("router");
+                        if (!isCommonRouter && !routePathNode.value.startsWith("/")) return;
+
                         const subPath = routePathNode.value === "/" ? "" : routePathNode.value;
                         const fullPath = mountPath + subPath;
 
@@ -133,7 +145,13 @@ export const extractValidEndpoints = (sourceCode) => {
                             middleware: middleware.length > 0 ? middleware : undefined,
                             params: params.length > 0 ? params : undefined,
                             requestBodySchema,
-                            databaseModels: databaseModels.length > 0 ? [...new Set(databaseModels)] : undefined
+                            databaseModels: databaseModels.length > 0 ? [...new Set(databaseModels)] : undefined,
+                            provenance: {
+                                detectionType: "AST",
+                                sourceFile: routeFile.path,
+                                sourceLine: path.node.loc?.start?.line || null,
+                                resolutionStatus: "FULLY_RESOLVED"
+                            }
                         });
                     }
                 }
@@ -149,13 +167,32 @@ export const extractValidEndpoints = (sourceCode) => {
         const directRouteRegex = /app\.(get|post|put|patch|delete)\(\s*['"`]([^'"`]+)['"`]/gi;
         let match;
         while ((match = directRouteRegex.exec(file.content)) !== null) {
+            const upToMatch = file.content.substring(0, match.index);
+            const lineMatch = upToMatch.match(/\n/g);
+            const sourceLine = lineMatch ? lineMatch.length + 1 : 1;
+            
             endpoints.push({
                 method: match[1].toUpperCase(),
                 fullPath: match[2],
                 sourceFile: file.path,
+                provenance: {
+                    detectionType: "REGEX_FALLBACK",
+                    sourceFile: file.path,
+                    sourceLine: sourceLine,
+                    resolutionStatus: "PARTIALLY_RESOLVED"
+                }
             });
         }
     }
+    // Deduplicate based on method + fullPath
+    const uniqueEndpointsMap = new Map();
+    for (const ep of endpoints) {
+        const key = `${ep.method}:${ep.fullPath}`;
+        // Prefer AST over REGEX_FALLBACK
+        if (!uniqueEndpointsMap.has(key) || ep.provenance?.detectionType === "AST") {
+            uniqueEndpointsMap.set(key, ep);
+        }
+    }
 
-    return endpoints;
+    return Array.from(uniqueEndpointsMap.values());
 };
