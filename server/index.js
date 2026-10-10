@@ -122,6 +122,15 @@ async function startServer() {
     await prisma.$connect();
     console.log("Database connected successfully.");
 
+    // Auto-clean any leftover orphaned storage workspaces on boot
+    import("./src/services/project.service.js")
+      .then(({ cleanupOrphanedProjectStorage }) => {
+        cleanupOrphanedProjectStorage().catch((err) => {
+          console.warn("[StorageBoot] Orphaned storage cleanup failed:", err?.message);
+        });
+      })
+      .catch(() => {});
+
     httpServer.listen(PORT, () => {
       console.log("-----------------------------------------------");
       console.log("CovAI server is running on port: " + PORT);

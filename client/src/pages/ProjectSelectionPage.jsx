@@ -18,8 +18,17 @@ import {
   SlidersHorizontal,
   X,
   Terminal,
+  Database,
+  HardDrive,
+  Cloud,
+  Sparkles,
+  CheckCircle2,
 } from "lucide-react";
-import { getProjectsApi, deleteProjectApi } from "../services/project.service";
+import {
+  getProjectsApi,
+  deleteProjectApi,
+  cleanupOrphanedStorageApi,
+} from "../services/project.service";
 import ImportLayout from "../components/dashboard/import/ImportLayout";
 import { useAuth } from "../hooks/useAuth";
 import Button from "../components/common/Button";
@@ -37,7 +46,10 @@ export default function ProjectSelectionPage() {
   const [sortBy, setSortBy] = useState("recent"); // "recent" | "name" | "oldest"
   const [viewMode, setViewMode] = useState("grid"); // "grid" | "list"
   const [projectToDelete, setProjectToDelete] = useState(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isPurgingStorage, setIsPurgingStorage] = useState(false);
+  const [toastMessage, setToastMessage] = useState(null);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [favorites, setFavorites] = useState(() => {
     try {
@@ -103,20 +115,55 @@ export default function ProjectSelectionPage() {
     });
   };
 
+  const showToastNotification = (msg) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage((curr) => (curr === msg ? null : curr));
+    }, 4500);
+  };
+
   const handleConfirmDelete = async () => {
     if (!projectToDelete) return;
     const targetProject = projectToDelete;
+    if (deleteConfirmText.trim() !== targetProject.name) return;
+
     try {
       setIsDeleting(true);
       await deleteProjectApi(targetProject.id);
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       setProjects((prev) => prev.filter((p) => p.id !== targetProject.id));
       setProjectToDelete(null);
+      setDeleteConfirmText("");
+      showToastNotification(
+        `Workspace and physical storage for "${targetProject.name}" permanently deleted.`,
+      );
     } catch (err) {
       console.error("Failed to delete project", err);
       alert(err.message || "Failed to delete project");
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handlePurgeOrphanStorage = async () => {
+    try {
+      setIsPurgingStorage(true);
+      const res = await cleanupOrphanedStorageApi();
+      const count = res?.data?.purgedCount ?? 0;
+      if (count > 0) {
+        showToastNotification(
+          `Purged ${count} orphaned workspaces from server storage.`,
+        );
+      } else {
+        showToastNotification(
+          "Storage is clean. No orphaned project workspaces found.",
+        );
+      }
+    } catch (err) {
+      console.error("Failed to cleanup orphaned storage", err);
+      alert(err.message || "Failed to cleanup orphan storage");
+    } finally {
+      setIsPurgingStorage(false);
     }
   };
 
@@ -271,6 +318,22 @@ export default function ProjectSelectionPage() {
                 <option value="oldest">Oldest First</option>
               </select>
             </div>
+
+            {/* Purge Orphan Workspaces in Storage */}
+            <button
+              type="button"
+              onClick={handlePurgeOrphanStorage}
+              disabled={isPurgingStorage}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-[var(--radius-md)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer disabled:opacity-50"
+              title="Purge unused/orphaned project folders in storage"
+            >
+              {isPurgingStorage ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-primary)]" />
+              ) : (
+                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+              )}
+              <span className="hidden sm:inline">Clean Storage</span>
+            </button>
 
             {/* Grid / List View Toggle */}
             <div className="flex items-center p-0.5 rounded-[var(--radius-md)] bg-[var(--color-surface)] border border-[var(--color-border)]">
@@ -527,25 +590,85 @@ export default function ProjectSelectionPage() {
         icon={LogOut}
       />
 
-      {/* ── Project Delete Confirmation Dialog (Rule 24) ─────── */}
+      {/* ── Upgraded Project Delete Confirmation Dialog ─────── */}
       <ConfirmDialog
         isOpen={Boolean(projectToDelete)}
-        onClose={() => setProjectToDelete(null)}
+        onClose={() => {
+          setProjectToDelete(null);
+          setDeleteConfirmText("");
+        }}
         onConfirm={handleConfirmDelete}
         title="Delete Project Workspace"
-        message="This action is permanent and cannot be undone. All synthesized tests and coverage snapshots will be permanently removed."
-        confirmText="Delete Permanently"
+        message="This action is permanent and cannot be undone. All project files, storage workspaces, and database snapshots will be permanently removed."
+        confirmText={isDeleting ? "Deleting Workspace..." : "Delete Permanently"}
         cancelText="Cancel"
         variant="danger"
         icon={AlertTriangle}
         loading={isDeleting}
+        confirmDisabled={deleteConfirmText.trim() !== projectToDelete?.name}
       >
         {projectToDelete && (
-          <div className="p-2.5 rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] font-mono text-xs text-[var(--color-danger)] break-all">
-            {projectToDelete.name}
+          <div className="flex flex-col gap-3 mt-1">
+            {/* Scope breakdown */}
+            <div className="p-3 rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] flex flex-col gap-2 text-xs">
+              <div className="text-[10px] font-bold tracking-wider uppercase text-[var(--color-text-muted)]">
+                Permanent Removal Scope
+              </div>
+              <div className="flex items-center gap-2 text-[var(--color-text-secondary)]">
+                <Database className="w-3.5 h-3.5 text-[var(--color-primary)] shrink-0" />
+                <span>PostgreSQL DB records (metadata, CFG, coverage summaries)</span>
+              </div>
+              <div className="flex items-center gap-2 text-[var(--color-text-secondary)]">
+                <HardDrive className="w-3.5 h-3.5 text-[var(--color-danger)] shrink-0" />
+                <span>
+                  Physical disk workspace:{" "}
+                  <code className="px-1 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] text-[10px] font-mono text-[var(--color-danger)]">
+                    storage/projects/{projectToDelete.id}
+                  </code>
+                </span>
+              </div>
+              <div className="flex items-center gap-2 text-[var(--color-text-secondary)]">
+                <Cloud className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                <span>Cloud artifacts & Firebase snapshot packages</span>
+              </div>
+            </div>
+
+            {/* Type-to-confirm input safeguard */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs text-[var(--color-text-secondary)]">
+                To confirm permanent deletion, please type{" "}
+                <span className="font-mono font-bold text-[var(--color-danger)] select-all">
+                  {projectToDelete.name}
+                </span>{" "}
+                below:
+              </label>
+              <input
+                type="text"
+                value={deleteConfirmText}
+                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                placeholder={`Type "${projectToDelete.name}" to confirm`}
+                className="w-full px-3 py-2 text-xs rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-danger)] transition-colors font-mono"
+                autoFocus
+              />
+            </div>
           </div>
         )}
       </ConfirmDialog>
+
+      {/* ── Floating Notification Toast ──────────────────────── */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-2.5 rounded-[var(--radius-md)] bg-[var(--color-surface)] border border-[var(--color-border)] shadow-xl text-xs font-medium text-[var(--color-text)] animate-in slide-in-from-bottom-2 duration-150">
+          <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+          <span>{toastMessage}</span>
+          <button
+            type="button"
+            onClick={() => setToastMessage(null)}
+            className="ml-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* ── Import Modal ────────────────────────────────────── */}
       {showImport && (

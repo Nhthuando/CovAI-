@@ -3,6 +3,7 @@ import { jest, describe, beforeEach, it, expect } from '@jest/globals';
 const mockPrisma = {
   project: {
     findUnique: jest.fn(),
+    findMany: jest.fn(),
     delete: jest.fn(),
   },
   projectSnapshot: {
@@ -41,9 +42,14 @@ await jest.unstable_mockModule('../config/firebase.js', () => ({
   getBucket: jest.fn(() => mockBucket),
 }));
 
-const { deleteProject, cleanupProjectStorageAsync, ServiceError } = await import(
-  '../services/project.service.js'
-);
+const {
+  deleteProject,
+  cleanupProjectStorageAsync,
+  cleanupProjectPhysicalStorage,
+  cleanupOrphanedProjectStorage,
+  removePhysicalStorage,
+  ServiceError,
+} = await import('../services/project.service.js');
 
 describe('deleteProject service', () => {
   const projectId = 'proj-123';
@@ -75,7 +81,7 @@ describe('deleteProject service', () => {
     );
   });
 
-  it('deletes project via native cascade delete in a single query and returns immediately', async () => {
+  it('deletes project via native cascade delete and returns storage deletion report', async () => {
     mockPrisma.project.findUnique.mockResolvedValue({
       id: projectId,
       ownerId: userId,
@@ -85,13 +91,18 @@ describe('deleteProject service', () => {
     ]);
     mockPrisma.project.delete.mockResolvedValue({ id: projectId });
 
-    await deleteProject(projectId, userId);
+    const result = await deleteProject(projectId, userId);
 
     expect(mockPrisma.project.delete).toHaveBeenCalledWith({
       where: { id: projectId },
     });
-    // Should NOT have needed to invoke the heavy 14-statement transaction
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(result).toEqual(
+      expect.objectContaining({
+        projectId,
+        storageDeleted: true,
+      }),
+    );
   });
 
   it('falls back to manual transaction cascade if native delete fails', async () => {
@@ -105,12 +116,13 @@ describe('deleteProject service', () => {
     );
     mockPrisma.$transaction.mockResolvedValue([]);
 
-    await deleteProject(projectId, userId);
+    const result = await deleteProject(projectId, userId);
 
     expect(mockPrisma.project.delete).toHaveBeenCalledWith({
       where: { id: projectId },
     });
     expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(result).toHaveProperty('storageDeleted', true);
   });
 
   it('cleans up Firebase files and prefix asynchronously in background', async () => {
@@ -132,5 +144,22 @@ describe('deleteProject service', () => {
       prefix: `projects/${projectId}/`,
     });
     expect(prefixFile.delete).toHaveBeenCalled();
+  });
+
+  it('safely handles cleanupProjectPhysicalStorage with non-existent or safety-checked paths', async () => {
+    const result = await cleanupProjectPhysicalStorage(projectId, [
+      { rootDir: '/invalid/system/path' },
+    ]);
+    expect(result).toHaveProperty('success', true);
+    expect(Array.isArray(result.deletedPaths)).toBe(true);
+  });
+
+  it('cleanupOrphanedProjectStorage queries valid projects and executes without error', async () => {
+    mockPrisma.project.findMany.mockResolvedValue([
+      { id: projectId },
+    ]);
+    const result = await cleanupOrphanedProjectStorage();
+    expect(result).toHaveProperty('purgedCount');
+    expect(Array.isArray(result.purgedFolders)).toBe(true);
   });
 });

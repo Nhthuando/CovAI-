@@ -26,6 +26,7 @@ const controller = {
   parseCoverageFiles: (_req, res) => res.status(200).json({ success: true }),
   parseCoverageFunctions: (_req, res) => res.status(200).json({ success: true }),
   deleteProject: (_req, res) => res.status(200).json({ success: true }),
+  cleanupOrphanedStorage: (_req, res) => res.status(200).json({ success: true }),
   detectJestConfig: (_req, res) => res.status(200).json({ success: true }),
   importGitHub: (_req, res) => res.status(200).json({ success: true }),
   runAiSuggest: (_req, res) => res.status(200).json({ success: true }),

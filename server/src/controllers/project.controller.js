@@ -30,6 +30,7 @@ import {
   detectVitestConfig,
   detectCypressConfig,
   deleteProject,
+  cleanupOrphanedProjectStorage,
   getProjectTree,
   getFileContent,
   createCoverageAnalysisJob,
@@ -1245,13 +1246,15 @@ class ProjectController {
   async deleteProject(req, res) {
     try {
       const { id } = req.params;
-      await deleteProject(id, req.user.id);
+      const result = await deleteProject(id, req.user.id);
 
-      return res
-        .status(200)
-        .json({ success: true, message: "Project deleted successfully" });
+      return res.status(200).json({
+        success: true,
+        message: "Project and associated storage files deleted successfully",
+        data: result,
+      });
     } catch (error) {
-      console.error(error);
+      console.error("[DeleteProject] Error:", error);
 
       if (error instanceof ServiceError) {
         return res
@@ -1268,6 +1271,26 @@ class ProjectController {
       return res
         .status(500)
         .json({ success: false, message: "Internal server error" });
+    }
+  }
+
+  /**
+   * POST /projects/cleanup-orphaned-storage
+   */
+  async cleanupOrphanedStorage(req, res) {
+    try {
+      const result = await cleanupOrphanedProjectStorage();
+      return res.status(200).json({
+        success: true,
+        message: `Successfully cleaned up ${result.purgedCount} orphaned storage workspaces`,
+        data: result,
+      });
+    } catch (error) {
+      console.error("[CleanupOrphanedStorage] Error:", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to cleanup orphaned storage",
+      });
     }
   }
 

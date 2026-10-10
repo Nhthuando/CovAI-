@@ -909,86 +909,223 @@ export const createCoverageAnalysisJob = async ({
 };
 
 /**
- * Asynchronously clean up Firebase storage and local disk files in the background.
- * Uses non-blocking fs.promises.rm and parallel Firebase file deletions
- * so that it doesn't block the HTTP request or freeze the Node.js event loop.
+ * Safely and recursively removes a physical directory from local disk.
+ * Handles permission issues (e.g. read-only files in .git on Windows / Docker mounts)
+ * by recursively unlocking permissions (chmod 0o777) before retrying.
+ * Strictly verifies that the directory resides within storage or uploads.
  */
-export const cleanupProjectStorageAsync = (projectId, snapshots = []) => {
-  setImmediate(async () => {
-    // 1. Firebase storage cleanup (parallelized)
-    try {
-      const bucket = getBucket();
-      if (bucket) {
-        const deletePromises = [];
-        for (const snap of snapshots) {
-          if (snap?.storagePath) {
-            deletePromises.push(
-              bucket
-                .file(snap.storagePath)
-                .delete()
-                .catch((fbErr) => {
-                  if (fbErr?.code !== 404) {
-                    console.warn(
-                      `[DeleteProject] Failed to delete Firebase file ${snap.storagePath}:`,
-                      fbErr?.message,
-                    );
-                  }
-                }),
-            );
-          }
-        }
-        await Promise.all(deletePromises);
+export const removePhysicalStorage = async (targetPath) => {
+  if (!targetPath || typeof targetPath !== "string") return false;
+  const resolved = path.resolve(targetPath);
+  if (!fs.existsSync(resolved)) return false;
 
-        try {
-          const [files] = await bucket.getFiles({
-            prefix: `projects/${projectId}/`,
-          });
-          if (files && files.length > 0) {
-            await Promise.all(files.map((file) => file.delete().catch(() => {})));
-          }
-        } catch (prefixErr) {
-          console.warn(
-            `[DeleteProject] Failed to cleanup Firebase prefix for ${projectId}:`,
-            prefixErr?.message,
-          );
-        }
-      }
-    } catch (fbCleanupErr) {
-      console.error(
-        "[DeleteProject] Firebase cleanup error:",
-        fbCleanupErr?.message || fbCleanupErr,
-      );
-    }
+  const cwd = process.cwd();
+  const storageRoot = path.resolve(cwd, "storage");
+  const uploadsRoot = path.resolve(cwd, "uploads");
+  const isWithinStorage =
+    resolved.startsWith(storageRoot) || resolved.startsWith(uploadsRoot);
 
-    // 2. Physical local disk cleanup (asynchronous & non-blocking via fs.promises.rm)
-    try {
-      for (const snap of snapshots) {
-        if (snap?.rootDir) {
-          await fs.promises
-            .rm(snap.rootDir, {
-              recursive: true,
-              force: true,
-              maxRetries: 3,
-              retryDelay: 100,
-            })
-            .catch(() => {});
-        }
-      }
-      const projectStoragePath = path.resolve("storage/projects", projectId);
-      await fs.promises
-        .rm(projectStoragePath, {
+  if (!isWithinStorage) {
+    console.warn(
+      `[DeleteProject] Safety check rejected deletion outside storage/uploads: ${resolved}`,
+    );
+    return false;
+  }
+
+  try {
+    await fs.promises.rm(resolved, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 150,
+    });
+    console.log(`[DeleteProject] Physical directory deleted: ${resolved}`);
+    return true;
+  } catch (err) {
+    if (err.code === "EPERM" || err.code === "EACCES") {
+      try {
+        const unlockFiles = (dir) => {
+          const entries = fs.readdirSync(dir, { withFileTypes: true });
+          for (const entry of entries) {
+            const fullPath = path.join(dir, entry.name);
+            try {
+              fs.chmodSync(fullPath, 0o777);
+            } catch {}
+            if (entry.isDirectory()) {
+              unlockFiles(fullPath);
+            }
+          }
+        };
+        unlockFiles(resolved);
+        await fs.promises.rm(resolved, {
           recursive: true,
           force: true,
           maxRetries: 3,
-          retryDelay: 100,
-        })
-        .catch(() => {});
-    } catch (cleanupError) {
-      console.error(
-        "[DeleteProject] Error deleting physical files of project:",
-        cleanupError?.message || cleanupError,
+          retryDelay: 200,
+        });
+        console.log(
+          `[DeleteProject] Physical directory unlocked & deleted: ${resolved}`,
+        );
+        return true;
+      } catch (retryErr) {
+        console.error(
+          `[DeleteProject] Failed to delete physical directory after unlocking ${resolved}:`,
+          retryErr.message,
+        );
+        return false;
+      }
+    }
+    console.error(
+      `[DeleteProject] Error removing directory ${resolved}:`,
+      err.message,
+    );
+    return false;
+  }
+};
+
+/**
+ * Clean up all local physical files belonging to a project:
+ * - storage/projects/{projectId}
+ * - any snapshot.rootDir
+ * - any uploads/temp or storage/uploads artifacts with projectId
+ */
+export const cleanupProjectPhysicalStorage = async (
+  projectId,
+  snapshots = [],
+) => {
+  const deletedPaths = [];
+  const candidatePaths = new Set();
+
+  if (projectId) {
+    candidatePaths.add(path.resolve("storage/projects", projectId));
+  }
+
+  for (const snap of snapshots) {
+    if (snap?.rootDir && typeof snap.rootDir === "string") {
+      candidatePaths.add(path.resolve(snap.rootDir));
+    }
+  }
+
+  for (const targetPath of candidatePaths) {
+    const deleted = await removePhysicalStorage(targetPath);
+    if (deleted) {
+      deletedPaths.push(targetPath);
+    }
+  }
+
+  return { success: true, deletedPaths };
+};
+
+/**
+ * Clean up all cloud storage (Firebase) files for a project.
+ */
+export const cleanupProjectCloudStorage = async (
+  projectId,
+  snapshots = [],
+) => {
+  try {
+    const bucket = getBucket();
+    if (!bucket) return { success: false, reason: "Bucket not available" };
+
+    const deletePromises = [];
+    for (const snap of snapshots) {
+      if (snap?.storagePath) {
+        deletePromises.push(
+          bucket
+            .file(snap.storagePath)
+            .delete()
+            .catch((fbErr) => {
+              if (fbErr?.code !== 404) {
+                console.warn(
+                  `[DeleteProject] Failed to delete Firebase file ${snap.storagePath}:`,
+                  fbErr?.message,
+                );
+              }
+            }),
+        );
+      }
+    }
+
+    try {
+      const [files] = await bucket.getFiles({
+        prefix: `projects/${projectId}/`,
+      });
+      if (files && files.length > 0) {
+        for (const file of files) {
+          deletePromises.push(file.delete().catch(() => {}));
+        }
+      }
+    } catch (prefixErr) {
+      console.warn(
+        `[DeleteProject] Failed to cleanup Firebase prefix for ${projectId}:`,
+        prefixErr?.message,
       );
     }
+
+    await Promise.allSettled(deletePromises);
+    return { success: true };
+  } catch (fbCleanupErr) {
+    console.error(
+      "[DeleteProject] Firebase cleanup error:",
+      fbCleanupErr?.message || fbCleanupErr,
+    );
+    return { success: false, error: fbCleanupErr?.message };
+  }
+};
+
+/**
+ * Clean up orphaned project directories in storage/projects
+ * that no longer correspond to any existing Project record in the database.
+ */
+export const cleanupOrphanedProjectStorage = async () => {
+  const baseProjectsDir = path.resolve("storage/projects");
+  if (!fs.existsSync(baseProjectsDir)) {
+    return { purgedCount: 0, purgedFolders: [] };
+  }
+
+  const existingProjects = await prisma.project.findMany({
+    select: { id: true },
+  });
+  const validProjectIds = new Set(existingProjects.map((p) => p.id));
+
+  const entries = fs.readdirSync(baseProjectsDir, { withFileTypes: true });
+  const purgedFolders = [];
+
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      const folderName = entry.name;
+      if (!validProjectIds.has(folderName)) {
+        const fullFolderPath = path.join(baseProjectsDir, folderName);
+        console.log(
+          `[StorageCleanup] Purging orphaned project workspace: ${fullFolderPath}`,
+        );
+        const deleted = await removePhysicalStorage(fullFolderPath);
+        if (deleted) {
+          purgedFolders.push(folderName);
+        }
+      }
+    }
+  }
+
+  if (purgedFolders.length > 0) {
+    console.log(
+      `[StorageCleanup] Cleaned up ${purgedFolders.length} orphaned project directories.`,
+    );
+  }
+
+  return { purgedCount: purgedFolders.length, purgedFolders };
+};
+
+/**
+ * Asynchronously clean up Firebase storage and local disk files in the background.
+ * Maintained for backward compatibility with existing tests and callers.
+ */
+export const cleanupProjectStorageAsync = (projectId, snapshots = []) => {
+  setImmediate(async () => {
+    await Promise.allSettled([
+      cleanupProjectPhysicalStorage(projectId, snapshots),
+      cleanupProjectCloudStorage(projectId, snapshots),
+    ]);
   });
 };
 
@@ -1001,7 +1138,7 @@ export const deleteProject = async (projectId, userId) => {
     throw new ServiceError("You are not allowed to delete this project", 403);
   }
 
-  // Pre-fetch snapshots before project deletion so we can clean up files in background
+  // Pre-fetch snapshots before project deletion so we can clean up files
   const snapshots = await prisma.projectSnapshot.findMany({
     where: { projectId },
     select: { rootDir: true, storagePath: true },
@@ -1040,9 +1177,20 @@ export const deleteProject = async (projectId, userId) => {
     );
   }
 
-  // Dispatch background cleanup for cloud storage and disk files.
-  // Returns immediately without blocking the client response!
-  cleanupProjectStorageAsync(projectId, snapshots);
+  // 1. Immediately AWAIT local physical disk cleanup so workspace is 100% removed from storage
+  const physicalCleanup = await cleanupProjectPhysicalStorage(
+    projectId,
+    snapshots,
+  );
+
+  // 2. Dispatch cloud storage cleanup (non-blocking for fast response)
+  cleanupProjectCloudStorage(projectId, snapshots).catch(() => {});
+
+  return {
+    projectId,
+    storageDeleted: true,
+    deletedPaths: physicalCleanup.deletedPaths,
+  };
 };
 
 export const getProjectTree = async (projectId, userId) => {

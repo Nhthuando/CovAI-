@@ -29,6 +29,7 @@ export default function ConfirmDialog({
   variant = "danger",
   icon: CustomIcon,
   loading = false,
+  confirmDisabled = false,
   children,
 }) {
   // Keyboard shortcut: Esc to close
@@ -151,6 +152,7 @@ export default function ConfirmDialog({
             size="sm"
             onClick={onConfirm}
             loading={loading}
+            disabled={confirmDisabled || loading}
           >
             {confirmText}
           </Button>

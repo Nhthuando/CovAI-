@@ -52,6 +52,10 @@ router.post(
   "/:id/coverage/functions/parse",
   projectController.parseCoverageFunctions,
 );
+router.post(
+  "/cleanup-orphaned-storage",
+  projectController.cleanupOrphanedStorage,
+);
 router.delete("/:id", projectController.deleteProject);
 router.post("/:id/detect-jest", projectController.detectJestConfig);
 router.post("/:id/detect-playwright", projectController.detectPlaywrightConfig);

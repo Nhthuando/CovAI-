@@ -50,6 +50,14 @@ export async function deleteProjectApi(projectId) {
   return handleResponse(res);
 }
 
+export async function cleanupOrphanedStorageApi() {
+  const res = await fetch(`${BASE_URL}/projects/cleanup-orphaned-storage`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+  });
+  return handleResponse(res);
+}
+
 export async function getProjectTreeApi(projectId) {
   const res = await fetch(`${BASE_URL}/projects/${projectId}/tree`, {
     headers: getAuthHeaders(),
