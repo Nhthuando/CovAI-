@@ -44,7 +44,7 @@ export const processAiSuggestJob = async (jobId) => {
 
         // SCRUM-312: Call Gemini
         await addJobLog(jobId, "INFO", "Calling Gemini AI model...");
-        const responseText = await generateText(finalPrompt, "gemini-1.5-pro");
+        const responseText = await generateText(finalPrompt, "gemini-3.8-flash");
         
         if (!responseText) {
             throw new Error("Gemini returned an empty response.");

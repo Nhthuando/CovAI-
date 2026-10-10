@@ -34,21 +34,53 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
         prisma.job.findMany({ where: { snapshotId }, orderBy: { createdAt: "desc" }, select: { id: true, type: true, status: true, createdAt: true, startedAt: true, finishedAt: true, errorMessage: true } })
     ]);
     const dbTime = Date.now() - startDb;
-    const latestRun = testRuns[0] || null;
+    const latestRun = (testRuns && testRuns[0]) || null;
 
-    // 2. Load API Endpoints (Cached by snapshotId)
+    // 2. Load API Endpoints (Cached by snapshotId in memory and fs)
     const startAst = Date.now();
     let discoveredEndpointsCache = endpointCache.get(snapshotId);
     let discoveredEndpoints = [];
     let sourceFilesCount = 0;
     let sourceTime = 0;
+    
     if (!discoveredEndpointsCache) {
-        const startSource = Date.now();
-        const sourceCode = await loadSourceCode(snapshotId).catch(() => []);
-        sourceTime = Date.now() - startSource;
-        sourceFilesCount = sourceCode.length;
-        discoveredEndpoints = extractValidEndpoints(sourceCode);
-        endpointCache.set(snapshotId, { discoveredEndpoints, sourceFilesCount });
+        // Try file cache
+        const fs = (await import('fs')).default;
+        const path = (await import('path')).default;
+        const cacheFile = snapshot?.rootDir ? path.join(snapshot.rootDir, '.covai-temp', `endpoints-${snapshotId}.json`) : null;
+        
+        try {
+            if (cacheFile && fs.existsSync(cacheFile)) {
+                const fileData = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+                discoveredEndpoints = fileData.discoveredEndpoints;
+                sourceFilesCount = fileData.sourceFilesCount;
+                endpointCache.set(snapshotId, { discoveredEndpoints, sourceFilesCount });
+                discoveredEndpointsCache = endpointCache.get(snapshotId);
+            }
+        } catch (e) {
+            console.error("Failed to read endpoint cache file", e);
+        }
+        
+        // Fallback to computing
+        if (!discoveredEndpointsCache) {
+            const startSource = Date.now();
+            const sourceCode = await loadSourceCode(snapshotId).catch(() => []);
+            sourceTime = Date.now() - startSource;
+            sourceFilesCount = sourceCode.length;
+            discoveredEndpoints = extractValidEndpoints(sourceCode);
+            endpointCache.set(snapshotId, { discoveredEndpoints, sourceFilesCount });
+            
+            if (cacheFile) {
+                try {
+                    if (!fs.existsSync(path.dirname(cacheFile))) {
+                        fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
+                    }
+                    fs.writeFileSync(cacheFile, JSON.stringify({ discoveredEndpoints, sourceFilesCount }), 'utf8');
+                } catch (e) {
+                    console.error("Failed to write endpoint cache file", e);
+                }
+            }
+        }
     } else {
         sourceFilesCount = discoveredEndpointsCache.sourceFilesCount;
         discoveredEndpoints = discoveredEndpointsCache.discoveredEndpoints;
@@ -121,21 +153,11 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
     const isMatch = (parsedReq, discoveredEp) => {
         if (parsedReq.method !== discoveredEp.method) return false;
         
-        const pSegs = parsedReq.path.split('/');
-        const dSegs = discoveredEp.fullPath.split('/');
-        if (pSegs.length !== dSegs.length) return false;
+        const cleanPath = parsedReq.path.split("?")[0].replace(/\/+$/, "") || "/";
+        const cleanRoute = discoveredEp.fullPath.replace(/\/+$/, "") || "/";
         
-        for (let i = 0; i < pSegs.length; i++) {
-            const p = pSegs[i];
-            const d = dSegs[i];
-            if (p === d) continue;
-            // if template literal param
-            if (p === ":param" && d.startsWith(":")) continue;
-            // if dynamic segment like 123 mapped to :id
-            if (d.startsWith(":") && !p.startsWith(":")) continue;
-            return false;
-        }
-        return true;
+        const regexStr = "^" + cleanRoute.replace(/:[^\/]+/g, "[^/]+") + "$";
+        return new RegExp(regexStr).test(cleanPath);
     };
 
     const enrichedScenarios = testScenarios.map(s => {
@@ -176,9 +198,11 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
                 status = "Partial";
             } else if (passedCount === executedCount) {
                 status = "Covered";
-                testedApis++;
             } else {
                 status = "Partial";
+            }
+            if (passedCount > 0 || failedCount > 0) {
+                testedApis++;
             }
         } else {
             if (hasRelevantTestFile) {
@@ -245,6 +269,7 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
                 requestBodySchema: ep.requestBodySchema,
                 databaseModels: ep.databaseModels,
             },
+            provenance: ep.provenance,
             generatedCount,
             approvedCount,
             scenarios: cleanScenarios
@@ -268,8 +293,8 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
 
     const analyzeJob = jobs.find(j => j.type === "ANALYSIS");
     const generateJob = jobs.find(j => j.type === "AI_TESTS");
-    // Execution pipeline could be COVERAGE_PIPELINE or SUPERTEST_COVERAGE_PIPELINE
-    const executeJob = jobs.find(j => j.type === "COVERAGE_PIPELINE" || j.type === "SUPERTEST_COVERAGE_PIPELINE");
+    // Execution pipeline jobs
+    const executeJob = jobs.find(j => j.type === "SUPERTEST_COVERAGE" || j.type === "RUN_TESTS" || j.type === "SYSTEM_TEST_ANALYSIS" || j.type === "PLAYWRIGHT_SYSTEM_TEST" || j.type === "CYPRESS_SYSTEM_TEST");
 
     // Phase 6B: Execution Semantics
     let semanticState = "NOT_EXECUTED";

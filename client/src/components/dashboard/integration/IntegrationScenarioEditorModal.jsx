@@ -10,6 +10,9 @@ export default function IntegrationScenarioEditorModal({
   initialCode,
   title,
   loading,
+  targetEndpoint,
+  availableEndpoints = [],
+  onSelectTargetEndpoint,
 }) {
   const [code, setCode] = useState(initialCode || "");
   const { theme } = useTheme();
@@ -31,12 +34,35 @@ export default function IntegrationScenarioEditorModal({
       <div className="w-full max-w-4xl h-[600px] max-h-[90vh] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-xl)] shadow-xl flex flex-col overflow-hidden text-[var(--color-text)]">
         {/* Header */}
         <div className="h-14 px-6 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between shrink-0">
-          <h3
-            id="scenario-editor-title"
-            className="text-sm font-bold text-[var(--color-text)] tracking-tight"
-          >
-            {title}
-          </h3>
+          <div className="flex items-center gap-3">
+            <h3
+              id="scenario-editor-title"
+              className="text-sm font-bold text-[var(--color-text)] tracking-tight"
+            >
+              {title}
+            </h3>
+            {targetEndpoint && availableEndpoints.length > 1 && onSelectTargetEndpoint && (
+              <div className="flex items-center gap-1.5 ml-2">
+                <span className="text-[11px] text-[var(--color-text-muted)] font-mono">Target API:</span>
+                <select
+                  value={`${targetEndpoint.method} ${targetEndpoint.path}`}
+                  onChange={(e) => {
+                    const found = availableEndpoints.find(
+                      ep => `${ep.method} ${ep.path}` === e.target.value
+                    );
+                    if (found) onSelectTargetEndpoint(found);
+                  }}
+                  className="bg-[var(--color-surface-secondary)] border border-[var(--color-border)] rounded text-xs px-2 py-0.5 text-[var(--color-text)] font-mono focus:outline-none focus:border-[var(--color-primary)]"
+                >
+                  {availableEndpoints.map((ep) => (
+                    <option key={`${ep.method} ${ep.path}`} value={`${ep.method} ${ep.path}`}>
+                      {ep.method} {ep.path}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
           <button
             type="button"
             onClick={onClose}

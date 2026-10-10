@@ -366,13 +366,14 @@ export async function generateIntegrationTestApi(
   projectId,
   snapshotId,
   force = false,
+  targetEndpoints = null,
 ) {
   const res = await fetch(
     `${BASE_URL}/projects/${projectId}/ai/generate-integration-test`,
     {
       method: "POST",
       headers: getAuthHeaders(),
-      body: JSON.stringify({ snapshotId, framework: "SUPERTEST", force }),
+      body: JSON.stringify({ snapshotId, framework: "SUPERTEST", force, targetEndpoints }),
     },
   );
   return handleResponse(res);

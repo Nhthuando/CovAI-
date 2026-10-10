@@ -1,6 +1,5 @@
 import React, { useState } from "react";
-import IntegrationScenariosPane from "./IntegrationScenariosPane.jsx";
-import { Database, FileCode, GitBranch, PlayCircle, Shield, Activity, Network } from "lucide-react";
+import { Database, FileCode, GitBranch, PlayCircle, Shield, Activity, Network, Sparkles } from "lucide-react";
 
 export default function IntegrationEndpointDetail({
   endpoint,
@@ -17,13 +16,15 @@ export default function IntegrationEndpointDetail({
   onOpenArchitecture,
   onScenarioChange,
   onError,
+  onGenerateThisEndpoint,
+  isGenerating = false,
 }) {
-  const [tab, setTab] = useState("SCENARIOS"); // SCENARIOS | OVERVIEW | EXECUTION
+  const [tab, setTab] = useState("OVERVIEW"); // OVERVIEW | EXECUTION
 
   if (!endpoint) return null;
 
   return (
-    <div className="flex flex-col h-full font-sans text-[var(--color-text)]">
+    <div className="flex flex-col h-full min-h-0 font-sans text-[var(--color-text)] overflow-hidden">
       {/* Header */}
       <div className="px-6 py-5 border-b border-[var(--color-border)] bg-[var(--color-surface)] shrink-0">
         <div className="flex items-center justify-between mb-4">
@@ -41,38 +42,23 @@ export default function IntegrationEndpointDetail({
           </div>
           
           <div className="flex items-center gap-2">
-            <button 
-              onClick={() => window.open(`/integration-report/${projectId}`, '_blank')} 
-              className="flex items-center gap-2 px-3 py-1.5 rounded bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/25 text-xs font-semibold hover:bg-[var(--color-primary)]/20 transition-colors"
-            >
-              <FileCode size={14} /> Report & Guidance
-            </button>
-            {endpoint.source?.sourceFile && onSuggestTestcase && (
-              <button onClick={() => onSuggestTestcase(endpoint.source.sourceFile)} className="flex items-center gap-2 px-3 py-1.5 rounded bg-[#ec4899]/10 text-[#ec4899] border border-[#ec4899]/25 text-xs font-semibold hover:bg-[#ec4899]/20 transition-colors">
-                <Shield size={14} /> Unit Test
-              </button>
-            )}
-            {endpoint.source?.controllerMethod && onOpenCFG && (
-              <button onClick={() => onOpenCFG(endpoint.source.sourceFile, endpoint.source.controllerMethod)} className="flex items-center gap-2 px-3 py-1.5 rounded bg-[#3b82f6]/10 text-[#3b82f6] border border-[#3b82f6]/25 text-xs font-semibold hover:bg-[#3b82f6]/20 transition-colors">
-                <GitBranch size={14} /> Logic Flow
-              </button>
-            )}
-            {endpoint.source?.sourceFile && onOpenArchitecture && (
-              <button onClick={() => onOpenArchitecture(endpoint.source.sourceFile)} className="flex items-center gap-2 px-3 py-1.5 rounded bg-[#8b5cf6]/10 text-[#8b5cf6] border border-[#8b5cf6]/25 text-xs font-semibold hover:bg-[#8b5cf6]/20 transition-colors">
-                <Network size={14} /> Architecture
+            {onGenerateThisEndpoint && (
+              <button
+                type="button"
+                onClick={() => onGenerateThisEndpoint(endpoint)}
+                disabled={isGenerating}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-md)] bg-[var(--color-primary)] text-white text-xs font-semibold hover:bg-[var(--color-primary)]/90 transition-colors shadow-sm disabled:opacity-50 cursor-pointer"
+                title={`Generate tests for ${endpoint.method} ${endpoint.path}`}
+              >
+                <Sparkles size={13} />
+                {isGenerating ? "Generating..." : "Generate This API"}
               </button>
             )}
           </div>
         </div>
 
         {/* Nav Tabs */}
-        <div className="flex items-center gap-6 border-b border-[var(--color-border)]">
-          <button
-            onClick={() => setTab("SCENARIOS")}
-            className={`pb-3 text-sm font-semibold transition-colors border-b-2 ${tab === "SCENARIOS" ? "text-[var(--color-primary)] border-[var(--color-primary)]" : "text-[var(--color-text-secondary)] border-transparent hover:text-[var(--color-text)]"}`}
-          >
-            Test Scenarios ({endpoint.scenarios?.length || 0})
-          </button>
+        <div className="flex items-center gap-6 mt-4">
           <button
             onClick={() => setTab("OVERVIEW")}
             className={`pb-3 text-sm font-semibold transition-colors border-b-2 ${tab === "OVERVIEW" ? "text-[var(--color-primary)] border-[var(--color-primary)]" : "text-[var(--color-text-secondary)] border-transparent hover:text-[var(--color-text)]"}`}
@@ -89,30 +75,15 @@ export default function IntegrationEndpointDetail({
       </div>
 
       {/* Content Area */}
-      <div className="flex-1 overflow-y-auto bg-[var(--color-bg)]">
-        {tab === "SCENARIOS" && (
-          <IntegrationScenariosPane
-            endpoints={endpoints}
-            onOpenCFG={onOpenCFG}
-            onSuggestTestcase={onSuggestTestcase}
-            onOpenArchitecture={onOpenArchitecture}
-            aiTests={aiTests}
-            selectedEndpoint={endpoint}
-            hasGeneratedTests={hasGeneratedTests}
-            isApproved={isApproved}
-            selectedTestIds={selectedTestIds}
-            setSelectedTestIds={setSelectedTestIds}
-            snapshotId={snapshotId}
-            onScenarioChange={onScenarioChange}
-            onError={onError}
-          />
-        )}
+      <div className="flex-1 min-h-0 overflow-y-auto bg-[var(--color-bg)] custom-scrollbar">
         
         {tab === "OVERVIEW" && (
           <div className="p-6 max-w-4xl">
-            <h3 className="text-sm font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-4">AST Discovered Context</h3>
-            {endpoint.source ? (
-              <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-6 mb-8">
+              <div>
+                <h3 className="text-sm font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-4">AST Discovered Context</h3>
+                {endpoint.source ? (
+                  <div className="space-y-4">
                 <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-4">
                   <div className="flex items-center gap-2 mb-2 text-[var(--color-text-secondary)] text-xs font-semibold">
                     <FileCode size={14} /> SOURCE CONTROLLER
@@ -158,6 +129,56 @@ export default function IntegrationEndpointDetail({
                 Source mapping context is unavailable for this endpoint.
               </div>
             )}
+            </div>
+            
+            {endpoint.provenance && (
+              <div>
+                <h3 className="text-sm font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-4">Discovery Provenance</h3>
+                <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-4">
+                  <div className="grid grid-cols-2 gap-y-3 text-sm">
+                    <div className="text-[var(--color-text-secondary)]">Detection Mechanism</div>
+                    <div className="font-mono text-[var(--color-text)]">{endpoint.provenance.detectionType}</div>
+                    
+                    <div className="text-[var(--color-text-secondary)]">Resolution Status</div>
+                    <div className="font-mono text-[var(--color-text)]">{endpoint.provenance.resolutionStatus}</div>
+                    
+                    <div className="text-[var(--color-text-secondary)]">Source Line</div>
+                    <div className="font-mono text-[var(--color-text)]">{endpoint.provenance.sourceLine || 'Unknown'}</div>
+                  </div>
+                </div>
+              </div>
+            )}
+            </div>
+
+            <div className="pt-6 border-t border-[var(--color-border)] mt-4">
+              <h3 className="text-sm font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-4">Deep Analysis Tools</h3>
+              <p className="text-xs text-[var(--color-text-secondary)] mb-4">
+                Use these tools to investigate the internal logic and architecture of this endpoint to better understand edge cases and dependencies.
+              </p>
+              <div className="flex flex-wrap items-center gap-3">
+                <button 
+                  onClick={() => window.open(`/integration-report/${projectId}`, '_blank')} 
+                  className="flex items-center gap-2 px-4 py-2 rounded bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/25 text-sm font-semibold hover:bg-[var(--color-primary)]/20 transition-colors"
+                >
+                  <FileCode size={16} /> API Integration Report
+                </button>
+                {endpoint.source?.sourceFile && onSuggestTestcase && (
+                  <button onClick={() => onSuggestTestcase(endpoint.source.sourceFile)} className="flex items-center gap-2 px-4 py-2 rounded bg-[#ec4899]/10 text-[#ec4899] border border-[#ec4899]/25 text-sm font-semibold hover:bg-[#ec4899]/20 transition-colors">
+                    <Shield size={16} /> Generate Unit Tests
+                  </button>
+                )}
+                {endpoint.source?.controllerMethod && onOpenCFG && (
+                  <button onClick={() => onOpenCFG(endpoint.source.sourceFile, endpoint.source.controllerMethod)} className="flex items-center gap-2 px-4 py-2 rounded bg-[#3b82f6]/10 text-[#3b82f6] border border-[#3b82f6]/25 text-sm font-semibold hover:bg-[#3b82f6]/20 transition-colors">
+                    <GitBranch size={16} /> View Logic Flow
+                  </button>
+                )}
+                {endpoint.source?.sourceFile && onOpenArchitecture && (
+                  <button onClick={() => onOpenArchitecture(endpoint.source.sourceFile)} className="flex items-center gap-2 px-4 py-2 rounded bg-[#8b5cf6]/10 text-[#8b5cf6] border border-[#8b5cf6]/25 text-sm font-semibold hover:bg-[#8b5cf6]/20 transition-colors">
+                    <Network size={16} /> View Architecture
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         )}
 

@@ -2,17 +2,18 @@ import { parse } from '@babel/parser';
 import _traverse from '@babel/traverse';
 import _generate from '@babel/generator';
 import prisma from '../config/prisma.js';
+import crypto from 'crypto';
 const traverse = _traverse.default || _traverse;
 const generate = _generate.default || _generate;
 
-function parseCode(code) {
+export function parseCode(code) {
     return parse(code, { 
         sourceType: 'module', 
         plugins: ['jsx', 'typescript'] 
     });
 }
 
-function findScenarioPath(ast, scenarioName, targetIndex = 0) {
+export function findScenarioPath(ast, scenarioName, targetIndex = 0) {
     let foundPath = null;
     let currentIndex = 0;
     traverse(ast, {
@@ -39,9 +40,8 @@ function findScenarioPath(ast, scenarioName, targetIndex = 0) {
     return foundPath;
 }
 
-import crypto from 'crypto';
 
-function getScenarioIdentity(aiTest, scenarioId) {
+export function getScenarioIdentity(aiTest, scenarioId) {
     let meta = {};
     if (aiTest.metaJson) {
         try { meta = JSON.parse(aiTest.metaJson); } catch(e) {}
@@ -199,6 +199,46 @@ export const deleteScenarioService = async (aiTestId, scenarioId) => {
     return updatedTest;
 };
 
+export const stripAiScenariosService = (aiTest) => {
+    let meta = {};
+    if (aiTest.metaJson) {
+        try { meta = JSON.parse(aiTest.metaJson); } catch(e) {}
+    }
+    const requests = Array.isArray(meta.requests) ? meta.requests : [];
+    
+    // If no manual scenarios, return null to indicate file should be deleted
+    const hasManual = requests.some(r => r.userEdited);
+    if (!hasManual) return null;
+
+    const ast = parseCode(aiTest.content);
+    const aiRequests = requests.filter(r => !r.userEdited);
+    const manualRequests = requests.filter(r => r.userEdited);
+
+    for (const r of aiRequests) {
+        let nameIndex = 0;
+        // Count how many times this testName appeared before in the ORIGINAL requests list to find the correct index
+        for (const origReq of requests) {
+            if (origReq === r) break;
+            if (origReq.testName === r.testName) nameIndex++;
+        }
+        
+        const path = findScenarioPath(ast, r.testName, nameIndex);
+        if (path) {
+            path.remove();
+        }
+    }
+
+    meta.requests = manualRequests;
+    const { code: finalCode } = generate(ast);
+
+    return {
+        id: aiTest.id,
+        filePath: aiTest.filePath,
+        content: finalCode,
+        metaJson: JSON.stringify(meta)
+    };
+};
+
 export const toggleScenarioService = async (aiTestId, scenarioId, enable) => {
     const aiTest = await prisma.aiTest.findUnique({ where: { id: aiTestId } });
     if (!aiTest) throw new Error("AiTest not found");
@@ -348,7 +388,7 @@ ${originalCode}
 Please improve it, fix potential issues, or make it more robust based on the API context if relevant. Do NOT output a full file, ONLY the test block (e.g. it(...) {...}).
 `;
 
-    const generatedText = await generateText(prompt, "gemini-1.5-pro");
+    const generatedText = await generateText(prompt, "gemini-3.8-flash");
     if (!generatedText) throw new Error("Failed to generate test from AI");
 
     const cleanText = generatedText.replace(/```(javascript|js|typescript|ts)?/g, '').replace(/```/g, '').trim();

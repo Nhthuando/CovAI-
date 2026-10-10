@@ -63,12 +63,8 @@ export const parseJestResults = (coverageDir) => {
             });
         }
 
-        const totalTests = (raw.numTotalTests || 0) > 0
-            ? raw.numTotalTests
-            : (raw.numFailedTestSuites && !raw.success ? raw.numFailedTestSuites : 0);
-        const failedTests = (raw.numFailedTests || 0) > 0
-            ? raw.numFailedTests
-            : (raw.numFailedTestSuites && !raw.success ? raw.numFailedTestSuites : 0);
+        const totalTests = raw.numTotalTests || 0;
+        const failedTests = raw.numFailedTests || 0;
 
         const results = {
             totalTests,

@@ -5,6 +5,7 @@ import {
   runCoverageByType,
 } from "../../services/coverage.service.js";
 import { runProjectStructureAnalysisApi } from "../../services/project.service.js";
+import { Search, Zap, CheckCircle2, PlayCircle, BarChart3, ChevronRight } from "lucide-react";
 
 import IntegrationTargetsPane from "./integration/IntegrationTargetsPane.jsx";
 import IntegrationScenariosPane from "./integration/IntegrationScenariosPane.jsx";
@@ -164,16 +165,50 @@ export default function IntegrationWorkspace({
   const [selectedTestIds, setSelectedTestIds] = useState([]);
 
   // UI View State
-  const [selectedEndpointIndex, setSelectedEndpointIndex] = useState(() => {
+  const [selectedEndpointId, setSelectedEndpointId] = useState(() => {
     return (initialContext && initialContext.snapshotId === snapshotId) 
-      ? (initialContext.selectedEndpointIndex ?? null) 
+      ? (initialContext.selectedEndpointId ?? null) 
       : null;
   });
-  const [rightPaneTab, setRightPaneTab] = useState(() => {
-    return (initialContext && initialContext.snapshotId === snapshotId) 
-      ? (initialContext.rightPaneTab ?? "SUMMARY") 
-      : "SUMMARY";
+  const [activeStage, setActiveStage] = useState(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get("stage") || "ANALYZE";
   });
+  const [pendingAction, setPendingAction] = useState(null);
+  const [selectedTargetEndpoints, setSelectedTargetEndpoints] = useState(new Set());
+
+  const handleToggleSelectEndpoint = (endpointKey) => {
+    setSelectedTargetEndpoints((prev) => {
+      const next = new Set(prev);
+      if (next.has(endpointKey)) {
+        next.delete(endpointKey);
+      } else {
+        next.add(endpointKey);
+      }
+      return next;
+    });
+  };
+
+  const handleToggleSelectModule = (moduleEndpoints) => {
+    setSelectedTargetEndpoints((prev) => {
+      const next = new Set(prev);
+      const allSelected = moduleEndpoints.every((ep) => next.has(`${ep.method} ${ep.path}`));
+      if (allSelected) {
+        moduleEndpoints.forEach((ep) => next.delete(`${ep.method} ${ep.path}`));
+      } else {
+        moduleEndpoints.forEach((ep) => next.add(`${ep.method} ${ep.path}`));
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAllEndpoints = (allList) => {
+    setSelectedTargetEndpoints(new Set(allList.map((ep) => `${ep.method} ${ep.path}`)));
+  };
+
+  const handleClearSelectedEndpoints = () => {
+    setSelectedTargetEndpoints(new Set());
+  };
 
   // 1. Sync context upwards when it changes
   useEffect(() => {
@@ -181,23 +216,31 @@ export default function IntegrationWorkspace({
       onContextChange({
         snapshotId,
         projectId,
-        rightPaneTab,
-        selectedEndpointIndex,
+        activeStage,
+        selectedEndpointId,
         cachedWorkspace: workspace
       });
     }
-  }, [rightPaneTab, selectedEndpointIndex, snapshotId, projectId, workspace, onContextChange]);
+  }, [activeStage, selectedEndpointId, snapshotId, projectId, workspace, onContextChange]);
 
-
-  // 3. Fallback safely if selected endpoint index is out of bounds
   useEffect(() => {
-    if (workspace?.endpoints && selectedEndpointIndex !== null) {
-      if (selectedEndpointIndex >= workspace.endpoints.length) {
-        setSelectedEndpointIndex(null);
-        setRightPaneTab("SUMMARY");
+    const params = new URLSearchParams(location.search);
+    if (params.get("stage") !== activeStage) {
+      params.set("stage", activeStage);
+      navigate(`${location.pathname}?${params.toString()}`, { replace: true });
+    }
+  }, [activeStage, navigate, location.search, location.pathname]);
+
+
+  // 3. Fallback safely if selected endpoint id is out of bounds
+  useEffect(() => {
+    if (workspace?.endpoints && selectedEndpointId !== null) {
+      const exists = workspace.endpoints.some(e => `${e.method} ${e.path}` === selectedEndpointId);
+      if (!exists) {
+        setSelectedEndpointId(null);
       }
     }
-  }, [workspace?.endpoints, selectedEndpointIndex]);
+  }, [workspace?.endpoints, selectedEndpointId]);
 
   const load = useCallback(async () => {
     if (!snapshotId) return;
@@ -239,11 +282,14 @@ export default function IntegrationWorkspace({
           setActiveJobId(runningJobId);
           setActiveJobType(runningJobType);
           setActiveJobStatus("RUNNING");
-          setRightPaneTab("LIVE");
+          setActiveStage(runningJobType === "EXECUTE" ? "RUN" : runningJobType);
         } else if (!initialContext || initialContext.snapshotId !== snapshotId) {
-          if (fetchedJobs.analyze?.status === "SUCCESS" || res.data?.aiTests?.length > 0) {
-            setRightPaneTab((prev) => prev === "LIVE" ? "SUMMARY" : prev);
-          }
+          setActiveStage((prev) => {
+            if (prev === "RUN" || prev === "REPORT" || prev === "APPROVE") return prev;
+            if (res.data?.aiTests?.length > 0) return "GENERATE";
+            if (fetchedJobs.analyze?.status === "SUCCESS") return "ANALYZE";
+            return prev;
+          });
         }
       }
 
@@ -267,13 +313,6 @@ export default function IntegrationWorkspace({
     load();
   }, [load]);
 
-  useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    if (params.get("subtab") === "history") {
-      setRightPaneTab("HISTORY");
-    }
-  }, [location.search]);
-
   const { logs: activeLogs, logsEndRef } = useLiveJobLogs(
     activeJobId,
     () => {
@@ -281,7 +320,6 @@ export default function IntegrationWorkspace({
       setActiveJobType(null);
       setActiveJobStatus("RUNNING");
       load();
-      setRightPaneTab("SUMMARY");
     },
     (err) => {
       setActiveJobStatus("FAILED");
@@ -297,7 +335,8 @@ export default function IntegrationWorkspace({
     )
       return;
     setError("");
-    setRightPaneTab("LIVE");
+    setActiveStage("ANALYZE");
+    setPendingAction("ANALYZE");
     try {
       const response = await runProjectStructureAnalysisApi(
         projectId,
@@ -311,19 +350,26 @@ export default function IntegrationWorkspace({
       }
     } catch (err) {
       setError(err.message || "Project analysis failed.");
+    } finally {
+      setPendingAction(null);
     }
   };
 
-  const handleGenerateClick = async () => {
+  const handleGenerateClick = async (explicitTargets = null) => {
     if (
       !workspace?.generation?.hasAnalysis ||
       (activeJobId && activeJobStatus !== "FAILED")
     )
       return;
     setError("");
-    setRightPaneTab("LIVE");
+    setActiveStage("GENERATE");
+    setPendingAction("GENERATE");
     try {
-      const res = await onGenerate();
+      let targets = explicitTargets;
+      if (!targets && selectedTargetEndpoints.size > 0) {
+        targets = Array.from(selectedTargetEndpoints);
+      }
+      const res = await onGenerate(targets);
       if (res === undefined) return; // User was shown the overwrite confirm modal
       const jobId = res?.data?.job?.id;
       if (jobId) {
@@ -333,6 +379,8 @@ export default function IntegrationWorkspace({
       } else throw new Error("Backend failed to return a generation Job ID.");
     } catch (err) {
       setError(err.message || "Generation failed.");
+    } finally {
+      setPendingAction(null);
     }
   };
 
@@ -344,18 +392,22 @@ export default function IntegrationWorkspace({
     )
       return;
     setError("");
+    setPendingAction("APPROVE");
     try {
       await approveIntegrationTestsApi(snapshotId, selectedTestIds);
       await load();
     } catch (err) {
       setError(err.message || "Approval failed.");
+    } finally {
+      setPendingAction(null);
     }
   };
 
   const handleRunApprovedTests = async () => {
     if (!snapshotId || (activeJobId && activeJobStatus !== "FAILED")) return;
     setError("");
-    setRightPaneTab("LIVE");
+    setActiveStage("RUN");
+    setPendingAction("RUN");
     try {
       const response = await runCoverageByType(snapshotId, "integration");
       if (response.data?.job?.id) {
@@ -365,6 +417,8 @@ export default function IntegrationWorkspace({
       }
     } catch (err) {
       setError(err.message || "Test execution failed.");
+    } finally {
+      setPendingAction(null);
     }
   };
 
@@ -517,7 +571,7 @@ export default function IntegrationWorkspace({
   const isJobActive = activeJobId && activeJobStatus !== "FAILED";
 
   const selectedEndpoint =
-    selectedEndpointIndex !== null ? endpoints[selectedEndpointIndex] : null;
+    selectedEndpointId !== null ? endpoints.find(e => `${e.method} ${e.path}` === selectedEndpointId) : null;
 
   return (
     <div
@@ -525,14 +579,16 @@ export default function IntegrationWorkspace({
         display: "flex",
         flexDirection: "column",
         height: "100%",
+        minHeight: 0,
+        overflow: "hidden",
         background: "var(--color-bg)",
         color: "var(--color-text)",
       }}
     >
-      {/* TOP BAR */}
+      {/* PIPELINE STAGE HEADER */}
       <div
         style={{
-          padding: "16px 24px",
+          padding: "0 24px",
           borderBottom: "1px solid var(--color-border)",
           display: "flex",
           justifyContent: "space-between",
@@ -540,92 +596,101 @@ export default function IntegrationWorkspace({
           background: "var(--color-surface)",
         }}
       >
-        <div>
-          <h1
-            style={{
-              margin: 0,
-              fontSize: 18,
-              fontWeight: 600,
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-            }}
-          >
-            Integration Testing Workbench
-            <span
-              style={{
-                fontSize: 11,
-                padding: "2px 8px",
-                background: "rgba(109,93,251,.1)",
-                color: "var(--color-primary)",
-                borderRadius: 12,
-                border: "1px solid var(--color-primary)",
-                fontWeight: 600,
-              }}
-            >
-              Phase 2
-            </span>
-            {refreshing && (
-              <span style={{ fontSize: 11, color: "var(--color-info)", opacity: 0.8, display: "flex", alignItems: "center", gap: 4 }}>
-                <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
-                Refreshing...
-              </span>
-            )}
-          </h1>
+        <div className="flex gap-2 flex-1 items-center py-4">
+          {[
+            { id: "ANALYZE", label: "Analyze", icon: Search },
+            { id: "GENERATE", label: "Generate", icon: Zap },
+            { id: "APPROVE", label: "Approve", icon: CheckCircle2 },
+            { id: "RUN", label: "Run", icon: PlayCircle },
+            { id: "REPORT", label: "Report", icon: BarChart3 }
+          ].map((stage, idx, arr) => {
+            const isActive = activeStage === stage.id;
+            const isPast = arr.findIndex(s => s.id === activeStage) > idx;
+            const Icon = stage.icon;
+            
+            return (
+              <React.Fragment key={stage.id}>
+                <button
+                  onClick={() => {
+                    if (stage.id === "REPORT") {
+                      navigate(`/project/${projectId}/reports/integration`);
+                    } else {
+                      setActiveStage(stage.id);
+                    }
+                  }}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-full transition-all duration-200 border text-sm font-semibold ${
+                    isActive 
+                      ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] border-[var(--color-primary)]/30 shadow-[0_0_10px_var(--color-primary-light)]" 
+                      : isPast
+                      ? "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border-[var(--color-border)] hover:bg-[var(--color-border)]"
+                      : "bg-transparent text-[var(--color-text-secondary)] border-transparent hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)]"
+                  }`}
+                >
+                  <Icon size={16} className={isActive ? "text-[var(--color-primary)]" : isPast ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"} />
+                  {stage.label}
+                </button>
+                {idx < arr.length - 1 && (
+                  <ChevronRight size={16} className="text-[var(--color-border)] mx-1" />
+                )}
+              </React.Fragment>
+            );
+          })}
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button
-            onClick={handleRunAnalysis}
-            disabled={isJobActive}
-            style={
-              isJobActive
-                ? disabledButtonStyle
-                : buttonStyle("var(--color-text-secondary)")
-            }
-          >
-            Analyze Project
-          </button>
-          <button
-            onClick={handleGenerateClick}
-            disabled={!hasAnalysis || isJobActive}
-            style={
-              !hasAnalysis || isJobActive
-                ? disabledButtonStyle
-                : buttonStyle("var(--color-primary)")
-            }
-          >
-            Generate Tests
-          </button>
-          <button
-            onClick={handleApprove}
-            disabled={!hasGeneratedTests || isApproved || isJobActive}
-            style={
-              !hasGeneratedTests || isApproved || isJobActive
-                ? disabledButtonStyle
-                : buttonStyle("var(--color-warning, #fbbf24)")
-            }
-          >
-            {isApproved ? "Approved" : "Approve Selected"}
-          </button>
-          <button
-            onClick={handleRunApprovedTests}
-            disabled={!isApproved || isJobActive}
-            style={
-              !isApproved || isJobActive
-                ? disabledButtonStyle
-                : buttonStyle("var(--color-info, #3b82f6)")
-            }
-          >
-            Run Tests
-          </button>
-          <button
-            onClick={() =>
-              navigate(`/project/${projectId}/reports/integration`)
-            }
-            style={buttonStyle("var(--color-success, #10b981)")}
-          >
-            View Report
-          </button>
+        
+        {/* Commands (Action Buttons for Current Stage) */}
+        <div style={{ display: "flex", gap: 8, padding: "12px 0" }}>
+          {activeStage === "ANALYZE" && (
+             <button
+               onClick={handleRunAnalysis}
+               disabled={isJobActive || pendingAction === "ANALYZE"}
+               style={isJobActive || pendingAction === "ANALYZE" ? disabledButtonStyle : buttonStyle("var(--color-text-secondary)", true)}
+             >
+               {pendingAction === "ANALYZE" ? "Analyzing..." : (hasAnalysis ? "Re-analyze Project" : "Analyze Project")}
+             </button>
+          )}
+          {activeStage === "GENERATE" && (
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <button
+                onClick={() => handleGenerateClick()}
+                disabled={!hasAnalysis || isJobActive || pendingAction === "GENERATE"}
+                style={!hasAnalysis || isJobActive || pendingAction === "GENERATE" ? disabledButtonStyle : buttonStyle("var(--color-primary)", true)}
+              >
+                {pendingAction === "GENERATE"
+                  ? "Generating..."
+                  : selectedTargetEndpoints.size > 0
+                    ? `Generate Selected (${selectedTargetEndpoints.size})`
+                    : (hasGeneratedTests ? "Regenerate All Tests" : "Generate Tests")}
+              </button>
+              {selectedTargetEndpoints.size > 0 && (
+                <button
+                  type="button"
+                  onClick={handleClearSelectedEndpoints}
+                  style={buttonStyle("var(--color-surface-secondary)", false)}
+                  title="Clear endpoint selections"
+                >
+                  Clear ({selectedTargetEndpoints.size})
+                </button>
+              )}
+            </div>
+          )}
+          {activeStage === "APPROVE" && (
+             <button
+               onClick={handleApprove}
+               disabled={!hasGeneratedTests || isJobActive || selectedTestIds.length === 0 || pendingAction === "APPROVE"}
+               style={!hasGeneratedTests || isJobActive || selectedTestIds.length === 0 || pendingAction === "APPROVE" ? disabledButtonStyle : buttonStyle("var(--color-warning, #fbbf24)", true)}
+             >
+               {pendingAction === "APPROVE" ? "Approving..." : (isApproved ? "Update Approval" : "Approve Selected")}
+             </button>
+          )}
+          {activeStage === "RUN" && (
+             <button
+               onClick={handleRunApprovedTests}
+               disabled={!isApproved || isJobActive || pendingAction === "RUN"}
+               style={!isApproved || isJobActive || pendingAction === "RUN" ? disabledButtonStyle : buttonStyle("var(--color-info, #3b82f6)", true)}
+             >
+               {pendingAction === "RUN" ? "Starting..." : (execution ? "Run Tests Again" : "Run Tests")}
+             </button>
+          )}
         </div>
       </div>
 
@@ -659,38 +724,66 @@ export default function IntegrationWorkspace({
       )}
 
       {/* MASTER-DETAIL LAYOUT */}
-      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+      <div style={{ display: "flex", flex: 1, minHeight: 0, overflow: "hidden" }}>
         {/* LEFT PANE (MASTER): Targets */}
         <div
           style={{
-            width: 300,
-            minWidth: 260,
+            flexShrink: 0,
+            width: 320,
+            minWidth: 0,
+            minHeight: 0,
+            height: "100%",
             borderRight: "1px solid var(--color-border)",
             background: "var(--color-surface)",
             display: "flex",
             flexDirection: "column",
+            overflow: "hidden",
           }}
         >
-          <IntegrationTargetsPane
-            endpoints={endpoints}
-            selectedEndpointIndex={selectedEndpointIndex}
-            onSelectEndpoint={setSelectedEndpointIndex}
-            hasAnalysis={hasAnalysis}
-          />
+          {activeStage === "ANALYZE" || activeStage === "GENERATE" || activeStage === "APPROVE" ? (
+             <IntegrationTargetsPane
+               endpoints={endpoints}
+               selectedEndpointId={selectedEndpointId}
+               onSelectEndpoint={setSelectedEndpointId}
+               hasAnalysis={hasAnalysis}
+               selectedTargetEndpoints={selectedTargetEndpoints}
+               onToggleSelectEndpoint={handleToggleSelectEndpoint}
+               onToggleSelectModule={handleToggleSelectModule}
+               onSelectAllEndpoints={handleSelectAllEndpoints}
+               onClearSelectedEndpoints={handleClearSelectedEndpoints}
+               onGenerateSelected={() => handleGenerateClick()}
+               isGenerating={pendingAction === "GENERATE" || (activeJobId && activeJobType === "GENERATE")}
+             />
+          ) : activeStage === "HISTORY" ? (
+             <div style={{padding: 16, color: "var(--color-text-secondary)"}}>History Mode</div>
+          ) : activeStage === "RUN" ? (
+             <div style={{padding: 16, color: "var(--color-text-secondary)"}}>Execution Results</div>
+          ) : null}
         </div>
 
         {/* RIGHT PANE (DETAIL): Context */}
         <div
           style={{
             flex: 1,
-            minWidth: 500,
+            minWidth: 0,
+            minHeight: 0,
+            height: "100%",
             background: "var(--color-bg)",
             display: "flex",
             flexDirection: "column",
             overflow: "hidden"
           }}
         >
-          {selectedEndpointIndex !== null ? (
+          {activeJobId && (activeJobType === activeStage || (activeStage === "RUN" && activeJobType === "EXECUTE")) ? (
+             <IntegrationLiveProgress
+               activeJobId={activeJobId}
+               activeJobType={activeJobType}
+               activeJobStatus={activeJobStatus}
+               error={error}
+               activeLogs={activeLogs}
+               parseProgressSteps={parseProgressSteps}
+             />
+          ) : activeStage === "ANALYZE" && selectedEndpointId !== null ? (
             <IntegrationEndpointDetail
               endpoint={selectedEndpoint}
               aiTests={aiTests}
@@ -706,95 +799,38 @@ export default function IntegrationWorkspace({
               onOpenArchitecture={onOpenArchitecture}
               onScenarioChange={load}
               onError={setError}
+              onGenerateThisEndpoint={(ep) => handleGenerateClick([`${ep.method} ${ep.path || ep.route}`])}
+              isGenerating={pendingAction === "GENERATE" || (activeJobId && activeJobType === "GENERATE")}
+            />
+          ) : (activeStage === "GENERATE" || activeStage === "APPROVE") ? (
+            <IntegrationScenariosPane
+              aiTests={aiTests}
+              selectedEndpoint={selectedEndpoint}
+              hasGeneratedTests={hasGeneratedTests}
+              isApproved={isApproved}
+              selectedTestIds={selectedTestIds}
+              setSelectedTestIds={setSelectedTestIds}
+              snapshotId={snapshotId}
+              endpoints={endpoints}
+              onOpenCFG={onOpenCFG}
+              onSuggestTestcase={onSuggestTestcase}
+              onOpenArchitecture={onOpenArchitecture}
+              onScenarioChange={load}
+              onError={setError}
+              onGenerateThisEndpoint={(key) => handleGenerateClick([key])}
+              isGenerating={pendingAction === "GENERATE" || (activeJobId && activeJobType === "GENERATE")}
             />
           ) : (
             <div className="flex flex-col h-full bg-[var(--color-surface)]">
-              <div
-                style={{
-                  display: "flex",
-                  borderBottom: "1px solid var(--color-border)",
-                }}
-              >
-                <div
-                  onClick={() => setRightPaneTab("LIVE")}
-                  style={{
-                    flex: 1,
-                    padding: "12px",
-                    textAlign: "center",
-                    fontSize: 12,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    color:
-                      rightPaneTab === "LIVE"
-                        ? "var(--color-primary)"
-                        : "var(--color-text-secondary)",
-                    borderBottom:
-                      rightPaneTab === "LIVE"
-                        ? "2px solid var(--color-primary)"
-                        : "2px solid transparent",
-                    transition: "all 0.15s",
-                  }}
-                >
-                  LIVE PROGRESS
-                </div>
-                <div
-                  onClick={() => setRightPaneTab("SUMMARY")}
-                  style={{
-                    flex: 1,
-                    padding: "12px",
-                    textAlign: "center",
-                    fontSize: 12,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    color:
-                      rightPaneTab === "SUMMARY"
-                        ? "var(--color-info, #3b82f6)"
-                        : "var(--color-text-secondary)",
-                    borderBottom:
-                      rightPaneTab === "SUMMARY"
-                        ? "2px solid var(--color-info, #3b82f6)"
-                        : "2px solid transparent",
-                    transition: "all 0.15s",
-                  }}
-                >
-                  SUMMARY
-                </div>
-                <div
-                  onClick={() => setRightPaneTab("HISTORY")}
-                  style={{
-                    flex: 1,
-                    padding: "12px",
-                    textAlign: "center",
-                    fontSize: 12,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    color:
-                      rightPaneTab === "HISTORY"
-                        ? "var(--color-text)"
-                        : "var(--color-text-secondary)",
-                    borderBottom:
-                      rightPaneTab === "HISTORY"
-                        ? "2px solid var(--color-text)"
-                        : "2px solid transparent",
-                    transition: "all 0.15s",
-                  }}
-                >
-                  HISTORY
-                </div>
-              </div>
+
+
 
               <div style={{ flex: 1, overflow: "hidden" }}>
-                {rightPaneTab === "LIVE" && (
-                  <IntegrationLiveProgress
-                    activeJobId={activeJobId}
-                    activeJobType={activeJobType}
-                    activeJobStatus={activeJobStatus}
-                    error={error}
-                    activeLogs={activeLogs}
-                    parseProgressSteps={parseProgressSteps}
-                  />
-                )}
-                {rightPaneTab === "SUMMARY" && (
+                {activeStage === "ANALYZE" && hasAnalysis && !selectedEndpointId ? (
+                   <div style={{padding: 24, color: "var(--color-text-secondary)"}}>Select an endpoint from the left to view analysis details.</div>
+                ) : activeStage === "REPORT" ? (
+                   <div style={{padding: 24, color: "var(--color-text-secondary)"}}>Redirecting to Report...</div>
+                ) : activeStage === "RUN" && (
                   <div style={{ padding: 24, overflowY: "auto", height: "100%" }}>
                     {/* SCENARIO GENERATION */}
                     <div
@@ -866,7 +902,11 @@ export default function IntegrationWorkspace({
                         let description = "";
                         let color = "#8b949e";
                         
-                        if (semanticState === "RUNNING") {
+                        if (pendingAction === "RUN" || (activeJobType === "EXECUTE" && activeJobStatus === "RUNNING" && semanticState === "NOT_EXECUTED")) {
+                          title = "Queued / Starting";
+                          description = "Execution request has been sent and is starting...";
+                          color = "var(--color-primary)";
+                        } else if (semanticState === "RUNNING" || (activeJobType === "EXECUTE" && activeJobStatus === "RUNNING")) {
                           title = "Running";
                           description = "Execution is currently in progress.";
                           color = "var(--color-primary)";
@@ -1094,7 +1134,7 @@ export default function IntegrationWorkspace({
                     )}
                   </div>
                 )}
-                {rightPaneTab === "HISTORY" && (
+                {activeStage === "HISTORY" && (
                   <IntegrationHistoryPane snapshotId={snapshotId} />
                 )}
               </div>

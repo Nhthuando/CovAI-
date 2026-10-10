@@ -222,6 +222,7 @@ describe("API", () => {
             // Update local memory for next test
             generatedAiTest.content = updateCall.data.content;
             generatedAiTest.metaJson = updateCall.data.metaJson;
+            generatedAiTest.updatedAt = new Date();
         });
 
         it('Test 4: Refresh/reload -> verify scenarioId remains identical', async () => {

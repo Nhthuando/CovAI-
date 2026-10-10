@@ -2,9 +2,9 @@ import { jest } from '@jest/globals';
 
 // Mock dependencies before importing the service
 jest.unstable_mockModule('../config/prisma.js', () => ({
-    prisma: {
+    default: {
         job: { findMany: jest.fn() },
-        testRun: { findFirst: jest.fn() },
+        testRun: { findFirst: jest.fn(), findMany: jest.fn() },
         projectSnapshot: { findUnique: jest.fn() },
         project: { findUnique: jest.fn() },
         endpoint: { findMany: jest.fn() },
@@ -17,8 +17,8 @@ jest.unstable_mockModule('../config/prisma.js', () => ({
     }
 }));
 
-const { prisma } = await import('../utils/prisma.js');
-const { buildIntegrationWorkspace } = await import('./integrationWorkspace.service.js');
+const { default: prisma } = await import('../config/prisma.js');
+const { buildIntegrationWorkspace } = await import('../services/integrationWorkspace.service.js');
 
 describe('IntegrationWorkspace Service - Semantic States', () => {
     beforeEach(() => {
@@ -28,6 +28,7 @@ describe('IntegrationWorkspace Service - Semantic States', () => {
         prisma.project.findUnique.mockResolvedValue({ id: 'proj-1' });
         prisma.endpoint.findMany.mockResolvedValue([]);
         prisma.aiTest.findMany.mockResolvedValue([]);
+        prisma.testRun.findMany.mockResolvedValue([]);
         prisma.coverageSummary.findUnique.mockResolvedValue(null);
         prisma.coverageFile.findMany.mockResolvedValue([]);
         prisma.coverageFunction.findMany.mockResolvedValue([]);
@@ -38,6 +39,7 @@ describe('IntegrationWorkspace Service - Semantic States', () => {
     const setupMocks = (executeJob, latestRun, coverageSummary = null) => {
         prisma.job.findMany.mockResolvedValue(executeJob ? [executeJob] : []);
         prisma.testRun.findFirst.mockResolvedValue(latestRun);
+        prisma.testRun.findMany.mockResolvedValue(latestRun ? [latestRun] : []);
         prisma.coverageSummary.findUnique.mockResolvedValue(coverageSummary);
     };
 
