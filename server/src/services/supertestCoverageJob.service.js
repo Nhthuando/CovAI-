@@ -55,8 +55,11 @@ export const processSupertestCoverageJob = async (jobId) => {
             
             const filePath = path.join(rootDir, t.filePath);
             
+            const testCode = t.content || (fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '');
+            if (!testCode) continue;
+
             // Sync DB content to disk and enforce approval & toggle semantics
-            const ast = parseCode(t.content);
+            const ast = parseCode(testCode);
             const requests = Array.isArray(meta.requests) ? meta.requests : [];
             const approvedScenarios = new Set(meta.approvedScenarios || []);
             
@@ -64,7 +67,7 @@ export const processSupertestCoverageJob = async (jobId) => {
                 const { testName, nameIndex } = getScenarioIdentity(t, r.scenarioId);
                 const scenarioPath = findScenarioPath(ast, testName, nameIndex);
                 if (scenarioPath) {
-                    const isApproved = approvedScenarios.has(r.scenarioId);
+                    const isApproved = approvedScenarios.has(r.scenarioId) || approvedScenarios.has(r.testName);
                     const isEnabled = r.enabled !== false;
                     const shouldRun = isApproved && isEnabled;
 

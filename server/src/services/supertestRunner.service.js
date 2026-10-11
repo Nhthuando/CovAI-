@@ -7,7 +7,20 @@ import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 
 const SUPERTEST_TIMEOUT_MS = 10 * 60 * 1000;
 
-const quoteForShell = (value) => `'${value.replaceAll("'", "'\\''")}'`;
+const quoteForShell = (value) => {
+    if (!value) return '""';
+    const str = String(value);
+    // Safe alphanumeric path with no spaces doesn't need quotes
+    if (/^[a-zA-Z0-9_\-./\\]+$/.test(str)) {
+        return str;
+    }
+    // On Windows cmd.exe, single quotes are NOT stripped and get passed as literal characters into filename.
+    // Use double quotes on Windows.
+    if (process.platform === "win32") {
+        return `"${str.replace(/"/g, '""')}"`;
+    }
+    return `'${str.replaceAll("'", "'\\''")}'`;
+};
 
 const readProjectPackageJson = (rootDir) => {
     const packageJsonPath = path.join(rootDir, "package.json");
@@ -76,7 +89,11 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
 
     const testArgs = normalizedFiles.map(quoteForShell).join(" ");
     const usesEsm = shouldUseNodeJestDirect(resolvedRoot);
-    const nodeOptions = usesEsm ? "NODE_OPTIONS='--experimental-vm-modules'" : "";
+    const env = {
+        CI: "true",
+        NODE_ENV: "test",
+        ...(usesEsm ? { NODE_OPTIONS: "--experimental-vm-modules" } : {})
+    };
     const jestBinary = "npx --no-install jest";
 
     const coverageDir = path.join(resolvedRoot, "coverage");
@@ -84,9 +101,13 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
         fs.mkdirSync(coverageDir, { recursive: true });
     }
     const resultsPath = path.join(coverageDir, "test-results.json");
+    // Remove stale results file from previous runs so a failed run does not report false success
+    if (fs.existsSync(resultsPath)) {
+        try { fs.unlinkSync(resultsPath); } catch (_) {}
+    }
     const relativeResultsPath = path.relative(resolvedRoot, resultsPath).replace(/\\/g, "/");
 
-    let jestCmd = `CI=true NODE_ENV=test ${nodeOptions} ${jestBinary} --runInBand --coverage --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=${quoteForShell(relativeResultsPath)} --forceExit --testTimeout=30000`;
+    let jestCmd = `${jestBinary} --runInBand --coverage --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=${quoteForShell(relativeResultsPath)} --forceExit --testTimeout=30000`;
     jestCmd += ` --runTestsByPath ${testArgs}`;
 
     if (jestConfigPath) {
@@ -101,7 +122,7 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
     const startedAt = Date.now();
     let result;
     try {
-        result = await dockerRunner.run({ snapshotPath: resolvedRoot, command: jestCmd, timeoutMs: SUPERTEST_TIMEOUT_MS, jobId });
+        result = await dockerRunner.run({ snapshotPath: resolvedRoot, command: jestCmd, timeoutMs: SUPERTEST_TIMEOUT_MS, jobId, env });
     } catch (error) {
         await addJobLog(jobId, "ERROR", `[SUPERTEST] Runner error: ${error.message}`).catch(() => { });
         throw error;
