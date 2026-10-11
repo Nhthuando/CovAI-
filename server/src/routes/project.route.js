@@ -1,4 +1,5 @@
 import express from "express";
+import { aiContextController } from "../controllers/aiContext.controller.js";
 import projectController from "./../controllers/project.controller.js";
 import { authMiddleware } from "../middlewares/auth.middleware.js";
 import { downloadProjectExport } from "../controllers/projectExport.controller.js";
@@ -88,21 +89,30 @@ router.post(
 router.post("/:id/import-github", projectController.importGitHub);
 router.post("/:id/ai-suggest", projectController.runAiSuggest);
 router.post("/:id/ai-tests", projectController.runAiTests);
-router.get("/:id/chat/sessions", projectController.getChatSessions);
-router.post("/:id/chat/sessions", projectController.createChatSession);
+router.get("/:id/ai-context", aiContextController.settings);
+router.put("/:id/ai-context", aiContextController.saveSettings);
+router.post("/:id/ai-context/preview", aiContextController.preview);
+router.get("/:id/ai-context/memories", aiContextController.memories);
+router.post("/:id/ai-context/memories", aiContextController.addMemory);
+router.patch("/:id/ai-context/memories/:memoryId", aiContextController.editMemory);
+router.delete("/:id/ai-context/memories/:memoryId", aiContextController.forgetMemory);
+router.delete("/:id/ai-context/memories", aiContextController.clearMemories);
+router.post("/:id/chat/sessions/:sessionId/branch", aiContextController.branch);
+router.get("/:id/chat/sessions", aiContextController.sessions);
+router.post("/:id/chat/sessions", aiContextController.createSession);
 router.get(
   "/:id/chat/sessions/:sessionId",
-  projectController.getChatSessionMessages,
+  aiContextController.session,
 );
 router.patch(
   "/:id/chat/sessions/:sessionId",
-  projectController.updateChatSession,
+  aiContextController.renameSession,
 );
 router.delete(
   "/:id/chat/sessions/:sessionId",
-  projectController.deleteChatSession,
+  aiContextController.deleteSession,
 );
-router.post("/:id/chat", projectController.chat);
+router.post("/:id/chat", aiContextController.chat);
 router.get("/:id/cfg", projectController.getCfg);
 router.get("/:id/cc", projectController.getCc);
 router.get("/:id/ai/tests", projectController.getAiTests);

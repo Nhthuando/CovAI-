@@ -29,6 +29,8 @@ model User {
   notifications        Notification[]
   projects             Project[]
   chatSessions         ChatSession[]
+  aiContextSettings    AiContextSettings[]
+  projectMemories      ProjectMemory[]
 }
 
 model Project {
@@ -66,6 +68,8 @@ model Project {
   snapshots            ProjectSnapshot[]
   qualityReports       QualityReport[]
   chatSessions         ChatSession[]
+  aiContextSettings    AiContextSettings?
+  projectMemories      ProjectMemory[]
 
   @@index([ownerId])
 }
@@ -431,6 +435,16 @@ model ChatSession {
   title     String        @default("New Chat")
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
+  useMemory Boolean       @default(true)
+  sourceSessionId String?
+  sourceSnapshotId String?
+  sourceMessageId String?
+  snapshotId String?
+  summary String?         @db.Text
+  summaryThroughId String?
+  contextStatus String    @default("READY")
+  processingToken String?
+  processingUntil DateTime?
   messages  ChatMessage[]
   project   Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -448,8 +462,40 @@ model ChatMessage {
   attachments Json?       // [{ id, type, name, path, previewUrl, ... }]
   createdAt   DateTime    @default(now())
   session     ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  memories    ProjectMemory[]
 
   @@index([sessionId, createdAt])
+}
+
+model AiContextSettings {
+  projectId String @id
+  userId String
+  automaticMemory Boolean @default(false)
+  guidance String @default("") @db.Text
+  revision Int @default(0)
+  memoryGeneration Int @default(0)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ProjectMemory {
+  id String @id @default(cuid())
+  projectId String
+  userId String
+  content String @db.Text
+  fingerprint String
+  pinned Boolean @default(false)
+  status String @default("ACTIVE")
+  revision Int @default(0)
+  sourceMessageId String?
+  conflictsWithId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceMessage ChatMessage? @relation(fields: [sourceMessageId], references: [id], onDelete: Cascade)
+  @@unique([projectId, userId, fingerprint])
+  @@index([projectId, userId, status])
 }
 
 enum SnapshotSource {

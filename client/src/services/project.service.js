@@ -204,11 +204,12 @@ export async function sendAiChatMessageApi(
   model,
   attachments = [],
   sessionId = null,
+  context = {},
 ) {
   const res = await fetch(`${BASE_URL}/projects/${projectId}/chat`, {
     method: "POST",
     headers: getAuthHeaders(),
-    body: JSON.stringify({ message, history, model, attachments, sessionId }),
+    body: JSON.stringify({ message, model, attachments, sessionId, ...context }),
   });
   return handleResponse(res);
 }

@@ -54,6 +54,8 @@ import {
 import { getProjectJobsApi } from "../../services/job.service";
 import { useToast } from "./ToastContext";
 import DiffReviewModal from "./DiffReviewModal";
+import AIContextDialog from "./AIContextDialog";
+import { getAiContext } from "../../services/aiContext.service";
 
 /* ── Clean and Normalize Path Utilities ─────────────────── */
 export function cleanFilePath(pathStr = "") {
@@ -2241,6 +2243,20 @@ export default function AIPanel({
 
   const [sessions, setSessions] = useState([]);
   const [activeSessionId, setActiveSessionId] = useState(null);
+  const [activeSessionMeta, setActiveSessionMeta] = useState(null);
+  const [useProjectMemory, setUseProjectMemory] = useState(true);
+  const [memoryAvailable, setMemoryAvailable] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(true);
+  const [contextInfo, setContextInfo] = useState(null);
+  const [contextDialog, setContextDialog] = useState(null);
+  const contextRequestRef = useRef(0);
+  const sendRef = useRef(false);
+  const storageKey = useMemo(() => {
+    try {
+      const payload = JSON.parse(atob(localStorage.getItem("token").split(".")[1]));
+      return payload.userId && projectId ? `covai_chat_${payload.userId}_${projectId}` : null;
+    } catch { return null; }
+  }, [projectId]);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isFetchingSessions, setIsFetchingSessions] = useState(false);
   const [isLoadingSession, setIsLoadingSession] = useState(false);
@@ -2263,62 +2279,63 @@ export default function AIPanel({
     }
   }, [projectId]);
 
-  useEffect(() => {
-    if (projectId) {
-      fetchSessions();
-    } else {
-      setSessions([]);
-      setActiveSessionId(null);
-    }
-  }, [projectId, fetchSessions]);
-
-  const handleSelectSession = async (sessionId) => {
-    if (!sessionId || sessionId === activeSessionId) {
-      setIsHistoryOpen(false);
-      return;
-    }
-
+  const handleSelectSession = useCallback(async (sessionId, throwOnError = false) => {
+    if (!sessionId) return;
+    const request = ++contextRequestRef.current;
     setIsLoadingSession(true);
     try {
       const res = await getChatSessionMessagesApi(projectId, sessionId);
-      if (res?.success && res.data) {
-        const dbMessages = res.data.messages || [];
-        const formatted = dbMessages.map((m) => ({
-          id: m.id,
-          role: m.role,
-          content: m.content,
-          model: m.model,
-          attachments: m.attachments || [],
-          timestamp: new Date(m.createdAt).toLocaleTimeString("en-US", {
-            hour: "2-digit",
-            minute: "2-digit",
-          }),
-        }));
-
-        setActiveSessionId(sessionId);
-        setMessages(formatted.length > 0 ? formatted : INITIAL_MESSAGES);
-        setIsHistoryOpen(false);
-      }
+      if (request !== contextRequestRef.current) return;
+      if (!res?.success || !res.data) throw new Error("Could not load conversation.");
+      const session = res.data.session;
+      const formatted = (res.data.messages || []).map(m => ({
+        id: m.id, role: m.role, content: m.content, model: m.model,
+        attachments: (m.attachments || []).map((att, index) => ({ ...att, id: att.id || `${m.id}_${index}`, previewUrl: att.type === "image" ? att.data : undefined })),
+        timestamp: new Date(m.createdAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
+      }));
+      setActiveSessionId(sessionId); setActiveSessionMeta(session);
+      setUseProjectMemory(session.useMemory ?? true); setContextInfo(null);
+      setMessages(formatted.length ? formatted : INITIAL_MESSAGES); setIsHistoryOpen(false);
+      if (storageKey) localStorage.setItem(storageKey, JSON.stringify({ id: sessionId, useMemory: session.useMemory ?? true }));
+      if (res.data.truncated) showToast({ type: "info", title: "Recent history loaded", message: "Only the latest 2,000 messages are shown. Older stored context may be summarized." });
     } catch (err) {
-      console.error("Failed to load chat session messages:", err);
-      showToast({
-        type: "error",
-        title: "Load Failed",
-        message: "Could not load messages for this conversation.",
-      });
-    } finally {
-      setIsLoadingSession(false);
-    }
-  };
+      if (request === contextRequestRef.current) showToast({ type: "error", title: "Load failed", message: err.message });
+      if (throwOnError) throw err;
+    } finally { if (request === contextRequestRef.current) setIsLoadingSession(false); }
+  }, [projectId, storageKey, showToast]);
 
-  const handleNewChat = () => {
+  useEffect(() => {
+    let cancelled = false;
+    const requestState = contextRequestRef;
+    Promise.resolve().then(async () => {
+      if (cancelled) return;
+      setIsRestoring(true); setMessages(INITIAL_MESSAGES); setActiveSessionId(null); setActiveSessionMeta(null); setContextInfo(null);
+      fetchSessions();
+      getAiContext(projectId).then(config => { if (!cancelled) setMemoryAvailable(config.automaticMemory); }).catch(() => { if (!cancelled) setMemoryAvailable(false); });
+      let stored = null;
+      try { stored = storageKey ? JSON.parse(localStorage.getItem(storageKey)) : null; } catch { /* Invalid local pointer cannot grant access. */ }
+      if (stored?.id) {
+        try { await handleSelectSession(stored.id, true); if (!cancelled && typeof stored.useMemory === "boolean") setUseProjectMemory(stored.useMemory); }
+        catch { if (storageKey && !cancelled) localStorage.removeItem(storageKey); }
+      } else if (!cancelled) setUseProjectMemory(stored?.useMemory ?? true);
+      if (!cancelled) setIsRestoring(false);
+    });
+    return () => { cancelled = true; requestState.current++; };
+  }, [projectId, storageKey, fetchSessions, handleSelectSession]);
+
+  const handleNewChat = (memory = useProjectMemory) => {
+    if (isTyping || isRestoring || isLoadingSession) return;
+    contextRequestRef.current++;
+    setUseProjectMemory(typeof memory === "boolean" ? memory : useProjectMemory);
+    setActiveSessionMeta(null); setContextInfo(null);
+    if (storageKey) localStorage.setItem(storageKey, JSON.stringify({ id: null, useMemory: typeof memory === "boolean" ? memory : useProjectMemory }));
     setActiveSessionId(null);
     setMessages(INITIAL_MESSAGES);
     setIsHistoryOpen(false);
     showToast({
       type: "info",
       title: "New Session",
-      message: "Chat history cleared. Started a fresh conversation.",
+      message: "Started a fresh conversation. Previous chats are saved in history.",
     });
   };
 
@@ -2366,6 +2383,8 @@ export default function AIPanel({
         setSessions((prev) => prev.filter((s) => s.id !== sessionId));
         if (activeSessionId === sessionId) {
           setActiveSessionId(null);
+          setActiveSessionMeta(null); setContextInfo(null);
+          if (storageKey) localStorage.setItem(storageKey, JSON.stringify({ id: null, useMemory: useProjectMemory }));
           setMessages(INITIAL_MESSAGES);
         }
         showToast({
@@ -3208,6 +3227,7 @@ export default function AIPanel({
   };
 
   const handleSend = async (text, attachments = []) => {
+    if (sendRef.current || isRestoring || isLoadingSession || isTyping) return;
     if (!projectId) {
       showToast({
         type: "warning",
@@ -3228,10 +3248,9 @@ export default function AIPanel({
       }),
     };
 
-    const currentHistory = messages.map((m) => ({
-      role: m.role,
-      content: m.content,
-    }));
+    const currentHistory = []; // The server reconstructs authoritative history from the session.
+    sendRef.current = true;
+    const requestScope = contextRequestRef.current;
     setMessages((m) => [...m, userMsg]);
     setIsTyping(true);
 
@@ -3243,10 +3262,14 @@ export default function AIPanel({
         selectedModel.id,
         attachments || [],
         activeSessionId,
+        { snapshotId, useMemory: useProjectMemory },
       );
+      if (requestScope !== contextRequestRef.current) return;
 
       if (res?.data?.sessionId) {
         setActiveSessionId(res.data.sessionId);
+        setContextInfo(res.data.context || null);
+        if (storageKey) localStorage.setItem(storageKey, JSON.stringify({ id: res.data.sessionId, useMemory: useProjectMemory }));
         fetchSessions();
       }
 
@@ -3263,6 +3286,7 @@ export default function AIPanel({
         },
       ]);
     } catch (err) {
+      if (requestScope !== contextRequestRef.current) return;
       console.error(err);
       const isQuotaError =
         err.message && err.message.includes("QUOTA_EXCEEDED");
@@ -3285,7 +3309,7 @@ export default function AIPanel({
         showToast({
           type: "error",
           title: "AI Error",
-          message: "Failed to connect to AI Chat API, please try again.",
+          message: err.message || "Could not complete the AI request.",
         });
         setMessages((m) => [
           ...m,
@@ -3297,11 +3321,12 @@ export default function AIPanel({
               minute: "2-digit",
             }),
             content:
-              "❌ **Connection Error**\n\nCould not connect to the backend API service. Please verify server status.",
+              `❌ **Request not completed**\n\n${err.message || "Could not complete the AI request. Please try again."}`,
           },
         ]);
       }
     } finally {
+      sendRef.current = false;
       setIsTyping(false);
     }
   };
@@ -3320,10 +3345,10 @@ export default function AIPanel({
     >
       {/* ── Top Header ──────────────────────────────────── */}
       <div
-        className="flex items-center justify-between flex-shrink-0"
+        className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2 flex-shrink-0"
         style={{
-          height: 48,
-          padding: "0 14px",
+          minHeight: 48,
+          padding: "10px 14px",
           borderBottom: "1px solid var(--color-border)",
           background: "var(--color-surface)",
         }}
@@ -3388,10 +3413,12 @@ export default function AIPanel({
 
         {/* Header Actions */}
         <div className="flex items-center gap-1.5 flex-shrink-0">
+          <button type="button" aria-label="Choose AI conversation context" disabled={isTyping || isRestoring || isLoadingSession} onClick={() => setContextDialog("conversations")} className="px-2 py-1 rounded-md border border-[var(--color-border)] text-[11px] cursor-pointer disabled:opacity-50">Context</button>
           <motion.button
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={() => setIsHistoryOpen((prev) => !prev)}
+            disabled={isTyping || isRestoring || isLoadingSession}
             className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer transition-colors"
             style={{
               color: isHistoryOpen
@@ -3430,7 +3457,8 @@ export default function AIPanel({
           <motion.button
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
-            onClick={handleNewChat}
+            onClick={() => handleNewChat()}
+            disabled={isTyping || isRestoring || isLoadingSession}
             className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer transition-colors"
             style={{
               color: "var(--color-text)",
@@ -3448,6 +3476,13 @@ export default function AIPanel({
       </div>
 
       {/* ── Chat History Drawer (ChatGPT style) ──────────── */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 border-b border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)]">
+        <span>{isRestoring ? "Restoring conversation..." : activeSessionMeta?.sourceSessionId ? "Branched conversation" : activeSessionId ? "Saved conversation" : "New conversation"}</span>
+        <span title={snapshotId || "No snapshot"}>Snapshot: {snapshotId?.slice(-8) || "none"}</span>
+        <label className="flex items-center gap-1"><input type="checkbox" aria-label="Use project memory for this conversation" checked={memoryAvailable && useProjectMemory} disabled={!memoryAvailable || isTyping || isRestoring || isLoadingSession} onChange={event => { setUseProjectMemory(event.target.checked); if (storageKey) localStorage.setItem(storageKey, JSON.stringify({ id: activeSessionId, useMemory: event.target.checked })); }} />Project memory</label>
+        <button type="button" className="underline cursor-pointer" disabled={isTyping || isRestoring} onClick={() => setContextDialog("context")}>Inspect</button>
+        {contextInfo?.warnings?.map(warning => <span key={warning} className="w-full">{warning}</span>)}
+      </div>
       <AnimatePresence>
         {isHistoryOpen && (
           <motion.div
@@ -3502,7 +3537,8 @@ export default function AIPanel({
                 <motion.button
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
-                  onClick={handleNewChat}
+                  onClick={() => handleNewChat()}
+            disabled={isTyping || isRestoring || isLoadingSession}
                   className="flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer transition-colors"
                   style={{
                     fontSize: 11,
@@ -4272,7 +4308,7 @@ export default function AIPanel({
       {/* ── Modern Prompt Input ──────────────────────────── */}
       <ChatInput
         onSend={handleSend}
-        isTyping={isTyping}
+        isTyping={isTyping || isRestoring || isLoadingSession}
         selectedModel={selectedModel}
         setSelectedModel={setSelectedModel}
         fileTree={internalTree}
@@ -4280,6 +4316,11 @@ export default function AIPanel({
       />
 
       {/* ── Monaco Code Review Diff Modal ────────────────── */}
+      {contextDialog && projectId && <AIContextDialog
+        projectId={projectId} snapshotId={snapshotId} sessionId={activeSessionId} useMemory={useProjectMemory}
+        initialTab={contextDialog} onNew={handleNewChat} onSelect={id => handleSelectSession(id, true)}
+        onClose={() => { setContextDialog(null); fetchSessions(); getAiContext(projectId).then(config => setMemoryAvailable(config.automaticMemory)).catch(() => {}); }}
+      />}
       <DiffReviewModal
         isOpen={reviewModalOpen}
         onClose={() => setReviewModalOpen(false)}

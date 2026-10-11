@@ -1,4 +1,5 @@
 import { Queue, Worker, FlowProducer } from 'bullmq';
+import { processChatContextMaintenance } from './chatMemoryMaintenance.service.js';
 import IORedis from 'ioredis';
 import { processRunTestsJob } from './runTestsJob.service.js';
 import { processAnalysisJob } from './analysisJob.service.js';
@@ -99,6 +100,9 @@ export const executeJobDirectly = async (type, jobId, customData = {}) => {
   console.log(`[DirectExecutor] Running job directly: type=${type}, jobId=${jobId}`);
   try {
     switch (type) {
+      case 'CHAT_CONTEXT':
+        await processChatContextMaintenance(customData);
+        break;
       case 'RUN_TESTS':
         await processRunTestsJob(jobId);
         break;
