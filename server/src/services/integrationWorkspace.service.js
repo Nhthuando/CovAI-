@@ -12,6 +12,90 @@ function categorizeScenario(name) {
     return "Positive";
 }
 
+export function parseFailureMessages(failureMessages, req = null) {
+    if (!failureMessages || (Array.isArray(failureMessages) && failureMessages.length === 0)) {
+        return null;
+    }
+    const text = Array.isArray(failureMessages) ? failureMessages.join('\n') : String(failureMessages);
+    if (!text.trim()) return null;
+
+    // Clean ANSI escape codes
+    const cleanText = text.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '');
+
+    const firstLine = cleanText.split('\n')[0] || '';
+    const headline = firstLine.replace(/^Error:\s*/, '').trim();
+
+    // 1. Extract Expected and Received
+    let expected = null;
+    let received = null;
+    const expMatch = cleanText.match(/Expected:\s*([\s\S]*?)(?=\n\s*Received:|\n\s*at|\n\n|$)/);
+    const recMatch = cleanText.match(/Received:\s*([\s\S]*?)(?=\n\s*(?:at|\d+\s*\|)|\n\n|$)/);
+    if (expMatch && recMatch) {
+        expected = expMatch[1].trim();
+        received = recMatch[1].trim();
+    } else {
+        const diffMatches = [...cleanText.matchAll(/\n([+-])\s+([^\n\r]+)/g)];
+        for (const m of diffMatches) {
+            const sign = m[1];
+            const val = m[2].trim();
+            if (val.startsWith('Expected') || val.startsWith('Received')) continue;
+            if (sign === '-' && !expected) expected = val;
+            if (sign === '+' && !received) received = val;
+        }
+        if (!expected && req?.expectedStatus) {
+            expected = String(req.expectedStatus);
+        }
+    }
+
+    // 2. Extract Diff block (- Expected / + Received)
+    const diffLines = [];
+    const lines = cleanText.split('\n');
+    let capturingDiff = false;
+    for (const line of lines) {
+        if (line.includes('- Expected') || line.includes('+ Received')) {
+            capturingDiff = true;
+        }
+        if (capturingDiff) {
+            if (line.trim().startsWith('-') || line.trim().startsWith('+') || line.trim().startsWith('Object') || line.trim().startsWith('Array')) {
+                diffLines.push(line);
+            } else if (line.includes('at Object') || line.includes('at ')) {
+                capturingDiff = false;
+            }
+        }
+    }
+
+    // 3. Extract Code Snippet / Frame
+    const snippetLines = [];
+    let brokenLineText = null;
+    for (const line of lines) {
+        if (/^\s*\d+\s*\|/.test(line) || /^\s*>\s*\d+\s*\|/.test(line) || /^\s*\|\s*\^/.test(line)) {
+            snippetLines.push(line);
+            if (/^\s*>\s*\d+\s*\|/.test(line)) {
+                brokenLineText = line.replace(/^\s*>\s*\d+\s*\|\s*/, '').trim();
+            }
+        }
+    }
+
+    // 4. Extract Stack File & Line
+    const stackMatch = cleanText.match(/at\s+.*?\((.*?):(\d+):(\d+)\)/) || cleanText.match(/at\s+(.*?):(\d+):(\d+)/);
+    const file = stackMatch ? stackMatch[1] : null;
+    const lineNum = stackMatch ? parseInt(stackMatch[2], 10) : null;
+    const colNum = stackMatch ? parseInt(stackMatch[3], 10) : null;
+
+    return {
+        headline: headline || "Test Assertion Failed",
+        expected,
+        received,
+        diff: diffLines.length > 0 ? diffLines.join('\n') : null,
+        codeSnippet: snippetLines.length > 0 ? snippetLines.join('\n') : null,
+        brokenLineText,
+        file,
+        line: lineNum,
+        column: colNum,
+        raw: cleanText
+    };
+}
+
 const endpointCache = new Map();
 const firebaseCache = new Map();
 const aiTestParseCache = new Map(); // Structure: Map<snapshotId, Map<aiTestId, { updatedAt: number, requests: Array }>>
@@ -26,7 +110,7 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
     const startDb = Date.now();
     // 1. Run all DB queries concurrently
     const [testRuns, coverageSummary, coverageFiles, aiTests, snapshot, jobs] = await Promise.all([
-        prisma.testRun.findMany({ where: { snapshotId, type: "SUPERTEST" }, orderBy: { createdAt: "desc" }, take: 1 }),
+        prisma.testRun.findMany({ where: { snapshotId, type: "SUPERTEST" }, orderBy: { createdAt: "desc" }, take: 1, include: { scenarios: true } }),
         prisma.coverageSummary.findUnique({ where: { snapshotId } }),
         prisma.coverageFile.findMany({ where: { snapshotId } }),
         prisma.aiTest.findMany({ where: { snapshotId } }),
@@ -106,6 +190,16 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             console.error("[IntegrationWorkspace] Failed to download scenarios from Firebase:", e);
         }
     }
+    // Fallback: If Firebase file is not available, use scenarios stored on latestRun in DB
+    if ((!testScenarios || testScenarios.length === 0) && latestRun?.scenarios?.length > 0) {
+        testScenarios = latestRun.scenarios.map(s => ({
+            title: s.title,
+            suiteName: s.suiteName,
+            status: s.status,
+            duration: s.durationMs,
+            failureMessages: s.failureMessages || []
+        }));
+    }
     const fbTime = Date.now() - startFb;
 
     // We filter only SUPERTEST framework tests
@@ -160,10 +254,35 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
         return new RegExp(regexStr).test(cleanPath);
     };
 
+    const isMatchSuite = (suiteName, title, ep) => {
+        const suite = (suiteName || '').toUpperCase();
+        const tName = (title || '').toUpperCase();
+        const epMethod = ep.method.toUpperCase();
+        const epPath = (ep.fullPath || ep.path || '').toUpperCase();
+        
+        const hasMethod = suite.includes(epMethod) || tName.includes(epMethod);
+        if (!hasMethod) return false;
+
+        if (epPath.includes(':')) {
+            const prefix = epPath.split('/:')[0];
+            if (suite.includes(epPath)) return true;
+            if (suite.includes(prefix)) {
+                if (suite.includes(':') || /\b(BY\s+ID|USER\s+ID|WITH\s+ID|NON-EXISTENT.*ID|WHEN\s+ID|SPECIFIC\s+ID)\b/i.test(title || '')) {
+                    return true;
+                }
+            }
+            return false;
+        } else {
+            if (suite.includes(epPath + '/:') || suite.includes(epPath + '/:ID')) return false;
+            if (/\b(BY\s+ID|USER\s+ID|WITH\s+ID|NON-EXISTENT.*ID)\b/i.test(title || '')) return false;
+            return suite.includes(epPath);
+        }
+    };
+
     const enrichedScenarios = testScenarios.map(s => {
         const matchingRequests = allParsedRequests.filter(pr => 
             pr.testName === s.title && 
-            (s.suiteName.includes(pr.suiteName) || pr.suiteName.includes(s.suiteName) || s.suiteName === pr.suiteName)
+            (s.suiteName?.includes(pr.suiteName) || pr.suiteName?.includes(s.suiteName) || s.suiteName === pr.suiteName)
         );
         return {
             ...s,
@@ -176,16 +295,33 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
     let notExecutedApis = 0;
 
     const endpoints = discoveredEndpoints.map(ep => {
-        const controllerCoverage = coverageFiles.find(cf => cf.filePath === ep.sourceFile);
+        const controllerCoverage = coverageFiles.find(cf => cf.filePath === ep.sourceFile || cf.filePath?.endsWith(ep.sourceFile));
         
-        // Exact mapping: Scenario contains a request that matches this endpoint's method/path
+        // Multi-level mapping:
+        // 1. AST request match
+        // 2. Suite/title route match from Jest test results
         const mappedScenarios = enrichedScenarios.filter(s => {
-            return s.requests.some(req => isMatch(req, ep));
+            if (s.requests && s.requests.some(req => isMatch(req, ep))) return true;
+            return isMatchSuite(s.suiteName, s.title, ep);
         });
 
-        const executedCount = mappedScenarios.length; // From the executed scenarios file in Firebase
+        const executedCount = mappedScenarios.length; // From the executed scenarios file in Firebase / latestRun
         const passedCount = mappedScenarios.filter(s => s.status === 'passed').length;
         const failedCount = mappedScenarios.filter(s => s.status === 'failed').length;
+        const skippedCount = mappedScenarios.filter(s => s.status === 'pending' || s.status === 'skipped').length;
+        
+        const executedDurations = mappedScenarios.map(s => s.duration || s.durationMs || 0);
+        const totalDurationMs = executedDurations.reduce((acc, d) => acc + d, 0);
+        const avgDurationMs = executedCount > 0 ? Math.round(totalDurationMs / executedCount) : 0;
+        const minDurationMs = executedCount > 0 ? Math.min(...executedDurations) : 0;
+        const maxDurationMs = executedCount > 0 ? Math.max(...executedDurations) : 0;
+
+        let latencyStatus = "NORMAL";
+        if (avgDurationMs > 0 && avgDurationMs < 80) {
+            latencyStatus = "FAST";
+        } else if (avgDurationMs > 250) {
+            latencyStatus = "SLOW";
+        }
         
         let status = "Uncovered";
         const hasRelevantTestFile = integrationTests.some(t => {
@@ -223,9 +359,11 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             const meta = typeof t.metaJson === 'string' ? JSON.parse(t.metaJson) : t.metaJson;
             if (meta?.status !== 'APPROVED') return acc;
             const reqs = extractTestRequests(t.content, t.filePath);
-            const approvedReqs = meta.approvedScenarios 
-                ? reqs.filter(r => meta.approvedScenarios.includes(r.testName))
-                : reqs; // Fallback for old data
+            const approvedSet = new Set(meta.approvedScenarios || []);
+            const metaReqsMap = new Map((meta.requests || []).map(mr => [mr.testName, mr.scenarioId]));
+            const approvedReqs = meta.approvedScenarios && meta.approvedScenarios.length > 0
+                ? reqs.filter(r => approvedSet.has(r.testName) || (metaReqsMap.has(r.testName) && approvedSet.has(metaReqsMap.get(r.testName))))
+                : reqs;
             return acc + approvedReqs.filter(r => isMatch(r, ep)).length;
         }, 0);
 
@@ -240,10 +378,22 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             return "Scenario";
         };
 
-        const cleanScenarios = mappedScenarios.map(({ requests, ...rest }) => ({
-            ...rest,
-            category: categorizeScenario(rest.title)
-        }));
+        const cleanScenarios = mappedScenarios.map(({ requests, ...rest }) => {
+            const req = requests && requests[0] ? requests[0] : null;
+            const parsedFailure = (rest.status === 'failed' || (rest.failureMessages && rest.failureMessages.length > 0))
+                ? parseFailureMessages(rest.failureMessages, req)
+                : null;
+            const scDuration = rest.duration || rest.durationMs || 0;
+            return {
+                ...rest,
+                category: categorizeScenario(rest.title),
+                durationMs: scDuration,
+                requestPayload: req?.payload || null,
+                queryParams: req?.queryParams || null,
+                expectedStatus: req?.expectedStatus || null,
+                failureDetails: parsedFailure
+            };
+        });
 
         return {
             method: ep.method,
@@ -255,6 +405,11 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             failedCount,
             skippedCount: mappedScenarios.filter(s => s.status === 'pending').length,
             passRate: executedCount > 0 ? (passedCount / executedCount) * 100 : 0,
+            durationMs: totalDurationMs,
+            avgDurationMs,
+            minDurationMs,
+            maxDurationMs,
+            latencyStatus,
             mappedCodeCoverage: controllerCoverage ? {
                 statement: controllerCoverage.stmtsPct,
                 branch: controllerCoverage.branchesPct,
@@ -294,7 +449,7 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
     const analyzeJob = jobs.find(j => j.type === "ANALYSIS");
     const generateJob = jobs.find(j => j.type === "AI_TESTS");
     // Execution pipeline jobs
-    const executeJob = jobs.find(j => j.type === "SUPERTEST_COVERAGE" || j.type === "RUN_TESTS" || j.type === "SYSTEM_TEST_ANALYSIS" || j.type === "PLAYWRIGHT_SYSTEM_TEST" || j.type === "CYPRESS_SYSTEM_TEST");
+    const executeJob = jobs.find(j => j.type === "SUPERTEST_COVERAGE" || j.type === "COVERAGE_PIPELINE" || j.type === "RUN_TESTS" || j.type === "SYSTEM_TEST_ANALYSIS" || j.type === "PLAYWRIGHT_SYSTEM_TEST" || j.type === "CYPRESS_SYSTEM_TEST");
 
     // Phase 6B: Execution Semantics
     let semanticState = "NOT_EXECUTED";
@@ -366,6 +521,9 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             failedTests: latestRun?.failedTests || 0,
             skippedTests: latestRun?.skippedTests || 0,
             durationMs: latestRun?.durationMs || 0,
+            avgEndpointLatencyMs: testedApis > 0 
+                ? Math.round(endpoints.filter(e => e.executedCount > 0).reduce((acc, e) => acc + (e.avgDurationMs || 0), 0) / testedApis) 
+                : 0,
             semanticState,
             executionJobId,
             testRunId,

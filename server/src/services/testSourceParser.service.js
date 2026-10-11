@@ -46,6 +46,28 @@ export const extractTestRequests = (sourceCode, filePath) => {
         return "mappingUnavailable";
     };
 
+    const extractLiteralOrObject = (node) => {
+        if (!node) return null;
+        if (node.type === "Literal") return node.value;
+        if (node.type === "ObjectExpression") {
+            const obj = {};
+            for (const prop of (node.properties || [])) {
+                const key = prop.key ? (prop.key.name || prop.key.value) : null;
+                if (key) {
+                    obj[key] = extractLiteralOrObject(prop.value);
+                }
+            }
+            return obj;
+        }
+        if (node.type === "ArrayExpression") {
+            return (node.elements || []).map(extractLiteralOrObject);
+        }
+        if (node.type === "Identifier") {
+            return `<${node.name}>`;
+        }
+        return null;
+    };
+
     const isRequestCall = (callee) => {
         // match: request(app).get
         if (callee.type === "MemberExpression") {
@@ -79,32 +101,116 @@ export const extractTestRequests = (sourceCode, filePath) => {
                 const oldTest = currentTest;
                 currentTest = extractPathFromNode(node.arguments[0]) || currentTest;
                 
-                if (node.arguments[1] && (node.arguments[1].type === "ArrowFunctionExpression" || node.arguments[1].type === "FunctionExpression")) {
-                    walk(node.arguments[1].body);
+                const fn = node.arguments[1];
+                if (fn && (fn.type === "ArrowFunctionExpression" || fn.type === "FunctionExpression") && fn.body) {
+                    // Pre-scan test body for local variables, send payload, and expectedStatus
+                    const testVars = {};
+                    let testPayload = null;
+                    let testQueryParams = null;
+                    let testExpectedStatus = null;
+
+                    const scanTestBody = (bNode) => {
+                        if (!bNode) return;
+                        if (bNode.type === "VariableDeclaration") {
+                            for (const decl of (bNode.declarations || [])) {
+                                if (decl.id?.name && decl.init) {
+                                    testVars[decl.id.name] = extractLiteralOrObject(decl.init);
+                                }
+                            }
+                        }
+                        if (bNode.type === "CallExpression") {
+                            const propName = bNode.callee?.property?.name;
+                            if (propName === "send" && bNode.arguments?.[0]) {
+                                const arg = bNode.arguments[0];
+                                if (arg.type === "Identifier" && testVars[arg.name] !== undefined) {
+                                    testPayload = testVars[arg.name];
+                                } else {
+                                    testPayload = extractLiteralOrObject(arg);
+                                }
+                            }
+                            if (propName === "query" && bNode.arguments?.[0]) {
+                                const arg = bNode.arguments[0];
+                                if (arg.type === "Identifier" && testVars[arg.name] !== undefined) {
+                                    testQueryParams = testVars[arg.name];
+                                } else {
+                                    testQueryParams = extractLiteralOrObject(arg);
+                                }
+                            }
+                            if ((propName === "toBe" || propName === "toEqual") && bNode.arguments?.[0]) {
+                                const argVal = bNode.arguments[0];
+                                const targetObj = bNode.callee?.object;
+                                const targetArg = targetObj?.arguments?.[0];
+                                if (targetArg?.property?.name === "status" || targetArg?.property?.name === "statusCode") {
+                                    if (argVal.type === "Literal") {
+                                        testExpectedStatus = argVal.value;
+                                    }
+                                }
+                            }
+                        }
+                        for (const k in bNode) {
+                            if (bNode[k] && typeof bNode[k] === "object") {
+                                if (Array.isArray(bNode[k])) {
+                                    bNode[k].forEach(scanTestBody);
+                                } else {
+                                    scanTestBody(bNode[k]);
+                                }
+                            }
+                        }
+                    };
+
+                    scanTestBody(fn.body);
+
+                    // Now scan for request calls inside this test
+                    const scanRequests = (rNode) => {
+                        if (!rNode) return;
+                        if (rNode.type === "CallExpression") {
+                            const method = isRequestCall(rNode.callee);
+                            if (method && ['get', 'post', 'put', 'patch', 'delete'].includes(method)) {
+                                let reqPath = "mappingUnavailable";
+                                if (rNode.arguments.length > 0) {
+                                    reqPath = extractPathFromNode(rNode.arguments[0]) || "mappingUnavailable";
+                                }
+
+                                // Parse query string from path if present
+                                let qParams = testQueryParams;
+                                if (!qParams && reqPath.includes("?")) {
+                                    try {
+                                        const queryStr = reqPath.split("?")[1];
+                                        const parsedQ = {};
+                                        new URLSearchParams(queryStr).forEach((val, key) => {
+                                            parsedQ[key] = val;
+                                        });
+                                        qParams = parsedQ;
+                                    } catch (_) {}
+                                }
+
+                                results.push({
+                                    suiteName: currentSuite,
+                                    testName: currentTest,
+                                    method: method.toUpperCase(),
+                                    path: reqPath,
+                                    testFile: filePath,
+                                    payload: testPayload,
+                                    queryParams: qParams,
+                                    expectedStatus: testExpectedStatus
+                                });
+                            }
+                        }
+                        for (const k in rNode) {
+                            if (rNode[k] && typeof rNode[k] === "object") {
+                                if (Array.isArray(rNode[k])) {
+                                    rNode[k].forEach(scanRequests);
+                                } else {
+                                    scanRequests(rNode[k]);
+                                }
+                            }
+                        }
+                    };
+
+                    scanRequests(fn.body);
                 }
                 currentTest = oldTest;
                 return;
-            }
-        }
-
-        // Look for request(app).get(...)
-        if (node.type === "CallExpression") {
-            const method = isRequestCall(node.callee);
-            if (method && ['get', 'post', 'put', 'patch', 'delete'].includes(method)) {
-                let reqPath = "mappingUnavailable";
-                if (node.arguments.length > 0) {
-                    reqPath = extractPathFromNode(node.arguments[0]) || "mappingUnavailable";
-                }
-
-                if (currentTest) {
-                    results.push({
-                        suiteName: currentSuite,
-                        testName: currentTest,
-                        method: method.toUpperCase(),
-                        path: reqPath,
-                        testFile: filePath
-                    });
-                }
             }
         }
 
