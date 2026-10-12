@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import IntegrationScenarioEditorModal from "./IntegrationScenarioEditorModal.jsx";
 import ConfirmDialog from "../../common/ConfirmDialog";
 import {
@@ -11,6 +11,7 @@ import {
   Sparkles,
   ChevronDown,
   ChevronRight,
+  PlayCircle,
 } from "lucide-react";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
@@ -32,6 +33,27 @@ const statusColor = (status) => {
   return "var(--color-text-muted)";
 };
 
+function IndeterminateCheckbox({ checked, indeterminate, onChange, disabled, className, title }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (ref.current) {
+      ref.current.indeterminate = Boolean(indeterminate) && !checked;
+    }
+  }, [checked, indeterminate]);
+
+  return (
+    <input
+      type="checkbox"
+      ref={ref}
+      checked={Boolean(checked)}
+      onChange={onChange}
+      disabled={disabled}
+      className={className}
+      title={title}
+    />
+  );
+}
+
 export default function IntegrationScenariosPane({
   aiTests,
   selectedEndpoint,
@@ -48,6 +70,8 @@ export default function IntegrationScenariosPane({
   onError,
   onGenerateThisEndpoint,
   isGenerating = false,
+  onApproveAndRun,
+  isApprovingAndRunning = false,
 }) {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorCode, setEditorCode] = useState("");
@@ -113,11 +137,17 @@ export default function IntegrationScenariosPane({
 
   // Group tests by endpoint for the view
   const scenariosByEndpoint = {};
-  aiTests.forEach((t) => {
-    t.requests.forEach((r, idx) => {
-      const matchedEp = findMatchingEndpoint(r.method, r.path);
-      const epMethod = matchedEp ? matchedEp.method.toUpperCase() : r.method.toUpperCase();
-      const epPath = matchedEp ? (matchedEp.path || matchedEp.route || matchedEp.fullPath) : (r.path || "").split("?")[0];
+  (aiTests || []).forEach((t) => {
+    if (!t) return;
+    (t.requests || []).forEach((r, idx) => {
+      if (!r) return;
+      const rMethod = (r.method || "GET").toUpperCase();
+      const rPath = r.path || "";
+      const matchedEp = findMatchingEndpoint(rMethod, rPath);
+      const epMethod = matchedEp ? (matchedEp.method || "GET").toUpperCase() : rMethod;
+      const epPath = matchedEp
+        ? (matchedEp.path || matchedEp.route || matchedEp.fullPath || "/")
+        : rPath.split("?")[0] || "/";
       const epKey = `${epMethod} ${epPath}`;
 
       if (!scenariosByEndpoint[epKey]) {
@@ -134,8 +164,9 @@ export default function IntegrationScenariosPane({
       scenariosByEndpoint[epKey].scenarios.push({
         ...r,
         id: `${t.id}::${r.scenarioId || r.testName || idx}`,
+        testName: r.testName || `Scenario ${idx + 1}`,
         enabled: r.enabled !== false,
-        userEdited: r.userEdited,
+        userEdited: Boolean(r.userEdited),
       });
     });
   });
@@ -159,10 +190,15 @@ export default function IntegrationScenariosPane({
 
       if (action === "DELETE") {
         method = "DELETE";
+        setSelectedTestIds((prev) => prev.filter((id) => id !== scenario.id));
       } else if (action === "TOGGLE") {
         url += "/toggle";
         method = "PATCH";
         body = { enable: !scenario.enabled };
+        if (scenario.enabled) {
+          // If disabling, remove from selected
+          setSelectedTestIds((prev) => prev.filter((id) => id !== scenario.id));
+        }
       } else if (action === "REGENERATE") {
         url += "/regenerate";
       }
@@ -299,16 +335,62 @@ export default function IntegrationScenariosPane({
     }
   };
 
+  // Master Checkbox Calculations (Respecting the visible endpoints)
+  const visibleEnabledScenarios = useMemo(() => {
+    const list = [];
+    endpointKeys.forEach((key) => {
+      const epData = scenariosByEndpoint[key];
+      if (epData) {
+        (epData.scenarios || []).forEach((s) => {
+          if (s.enabled) {
+            list.push(s.id);
+          }
+        });
+      }
+    });
+    return list;
+  }, [endpointKeys, scenariosByEndpoint]);
+
+  const selectedCount = visibleEnabledScenarios.filter((id) => selectedTestIds.includes(id)).length;
+  const isAllMasterSelected = visibleEnabledScenarios.length > 0 && selectedCount === visibleEnabledScenarios.length;
+  const isMasterIndeterminate = selectedCount > 0 && selectedCount < visibleEnabledScenarios.length;
+
+  const handleToggleMaster = () => {
+    if (isAllMasterSelected) {
+      setSelectedTestIds((prev) => prev.filter((id) => !visibleEnabledScenarios.includes(id)));
+    } else {
+      setSelectedTestIds((prev) => {
+        const next = new Set(prev);
+        visibleEnabledScenarios.forEach((id) => next.add(id));
+        return Array.from(next);
+      });
+    }
+  };
+
   return (
     <div className="flex flex-col h-full min-h-0 font-sans text-[var(--color-text)] overflow-hidden">
-      {/* Header */}
+      {/* Header with Master Checkbox */}
       <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text)]">
-            Test Scenarios
-          </h3>
+          <div className="flex items-center gap-2">
+            <IndeterminateCheckbox
+              checked={isAllMasterSelected}
+              indeterminate={isMasterIndeterminate}
+              onChange={handleToggleMaster}
+              disabled={isApproved || visibleEnabledScenarios.length === 0}
+              className="w-4 h-4 rounded cursor-pointer accent-[var(--color-primary)]"
+              title={
+                isAllMasterSelected
+                  ? (selectedEndpoint ? `Deselect all scenarios for ${selectedEndpoint.method} ${selectedEndpoint.path || selectedEndpoint.route}` : "Deselect all scenarios in project")
+                  : (selectedEndpoint ? `Select all scenarios for ${selectedEndpoint.method} ${selectedEndpoint.path || selectedEndpoint.route}` : "Select all scenarios in project")
+              }
+            />
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text)]">
+              {selectedEndpoint ? "Endpoint Scenarios" : "All Test Scenarios"}
+            </h3>
+          </div>
           <span className="text-xs text-[var(--color-text-secondary)] font-mono">
-            Total: {aiTests.reduce((acc, t) => acc + t.requests.length, 0)}
+            Selected: <strong className="text-[var(--color-text)]">{selectedCount}</strong>/{visibleEnabledScenarios.length}
           </span>
           <span
             className={`text-xs font-semibold ${
@@ -322,6 +404,19 @@ export default function IntegrationScenariosPane({
         </div>
 
         <div className="flex items-center gap-2">
+          {onApproveAndRun && (
+            <button
+              type="button"
+              onClick={onApproveAndRun}
+              disabled={selectedCount === 0 || isApprovingAndRunning || isGenerating}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-md)] bg-[var(--color-success)] text-white text-xs font-semibold hover:bg-[var(--color-success)]/90 transition-colors shadow-sm disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
+              title="Approve selected scenarios and execute tests immediately"
+            >
+              <PlayCircle size={13} strokeWidth={2.2} />
+              {isApprovingAndRunning ? "Starting..." : `Run Selected (${selectedCount})`}
+            </button>
+          )}
+
           <button
             type="button"
             onClick={handleTopAddClick}
@@ -348,17 +443,50 @@ export default function IntegrationScenariosPane({
             if (!data) return null;
             const isCollapsed = collapsedCards.has(key);
 
+            // Endpoint-level selection stats
+            const epEnabledScenarios = (data.scenarios || []).filter((s) => s.enabled).map((s) => s.id);
+            const epSelectedCount = epEnabledScenarios.filter((id) => selectedTestIds.includes(id)).length;
+            const isAllEpSelected = epEnabledScenarios.length > 0 && epSelectedCount === epEnabledScenarios.length;
+            const isEpIndeterminate = epSelectedCount > 0 && epSelectedCount < epEnabledScenarios.length;
+
+            const handleToggleEndpoint = (e) => {
+              e.stopPropagation();
+              if (isAllEpSelected) {
+                setSelectedTestIds((prev) => prev.filter((id) => !epEnabledScenarios.includes(id)));
+              } else {
+                setSelectedTestIds((prev) => {
+                  const next = new Set(prev);
+                  epEnabledScenarios.forEach((id) => next.add(id));
+                  return Array.from(next);
+                });
+              }
+            };
+
             return (
               <div
                 key={key}
                 className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-lg)] overflow-hidden shrink-0 transition-all shadow-xs"
               >
-                {/* Endpoint Header */}
+                {/* Endpoint Header with Checkbox */}
                 <div
                   onClick={() => toggleCardCollapse(key)}
                   className="px-4 py-3 bg-[var(--color-surface-secondary)] border-b border-[var(--color-border)] flex items-center justify-between cursor-pointer select-none hover:bg-[var(--color-surface)]/80 transition-colors"
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
+                    <div onClick={(e) => e.stopPropagation()} className="flex items-center shrink-0">
+                      <IndeterminateCheckbox
+                        checked={isAllEpSelected}
+                        indeterminate={isEpIndeterminate}
+                        onChange={handleToggleEndpoint}
+                        disabled={isApproved || epEnabledScenarios.length === 0}
+                        className="w-4 h-4 rounded cursor-pointer accent-[var(--color-primary)]"
+                        title={
+                          isAllEpSelected
+                            ? `Deselect all scenarios for ${key}`
+                            : `Select all scenarios for ${key}`
+                        }
+                      />
+                    </div>
                     <span className="text-[var(--color-text-muted)] shrink-0">
                       {isCollapsed ? (
                         <ChevronRight size={15} />
@@ -392,8 +520,7 @@ export default function IntegrationScenariosPane({
                       </button>
                     )}
                     <span className="text-xs font-mono text-[var(--color-text-muted)] bg-[var(--color-surface)] px-2 py-0.5 rounded border border-[var(--color-border)]">
-                      {data.scenarios.length}{" "}
-                      {data.scenarios.length === 1 ? "scenario" : "scenarios"}
+                      {epSelectedCount}/{data.scenarios.length} selected
                     </span>
                   </div>
                 </div>
@@ -403,18 +530,20 @@ export default function IntegrationScenariosPane({
                   <div className="divide-y divide-[var(--color-border)]">
                     {data.scenarios.map((scenario, idx) => {
                       const isProcessing = processingScenarioId === scenario.id;
+                      const isSelected = selectedTestIds.includes(scenario.id);
+
                       return (
                         <div
                           key={idx}
                           className={`p-3.5 flex items-start gap-3 transition-colors ${
-                            scenario.enabled && !isProcessing
-                              ? "bg-[var(--color-surface)]"
-                              : "bg-[var(--color-bg)] opacity-60"
+                            !scenario.enabled || !isSelected
+                              ? "bg-[var(--color-bg)]/60 opacity-60 border-l-2 border-l-transparent"
+                              : "bg-[var(--color-surface)] border-l-2 border-l-[var(--color-primary)]"
                           }`}
                         >
                           <input
                             type="checkbox"
-                            checked={selectedTestIds.includes(scenario.id)}
+                            checked={isSelected}
                             onChange={(e) => {
                               if (e.target.checked) {
                                 setSelectedTestIds((prev) => [
@@ -431,12 +560,22 @@ export default function IntegrationScenariosPane({
                             className="mt-0.5 rounded cursor-pointer accent-[var(--color-primary)]"
                           />
                           <div className="flex-1 min-w-0">
-                            <div
-                              className={`text-xs font-semibold text-[var(--color-text)] mb-1 ${
-                                !scenario.enabled ? "line-through opacity-60" : ""
-                              }`}
-                            >
-                              {scenario.testName}
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                              <span
+                                className={`text-xs font-semibold text-[var(--color-text)] ${
+                                  !scenario.enabled ? "line-through opacity-60" : ""
+                                }`}
+                              >
+                                {scenario.testName}
+                              </span>
+                              {!isSelected && scenario.enabled && (
+                                <span
+                                  className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--color-warning)]/10 text-[var(--color-warning)] border border-[var(--color-warning)]/20"
+                                  title="Kịch bản này chưa được chọn và sẽ bị bỏ qua khi chạy test (it.skip)"
+                                >
+                                  ○ BỎ QUA (Chưa chọn)
+                                </span>
+                              )}
                             </div>
                             <div className="text-[11px] text-[var(--color-text-secondary)] flex items-center gap-3">
                               <span>
@@ -447,17 +586,21 @@ export default function IntegrationScenariosPane({
                                 style={{
                                   color: !scenario.enabled
                                     ? "var(--color-text-muted)"
-                                    : statusColor(
-                                        isApproved ? "APPROVED" : data.fileStatus,
-                                      ),
+                                    : !isSelected
+                                      ? "var(--color-warning)"
+                                      : statusColor(
+                                          isApproved ? "APPROVED" : data.fileStatus,
+                                        ),
                                 }}
                               >
                                 ●{" "}
                                 {!scenario.enabled
                                   ? "DISABLED"
-                                  : isApproved
-                                    ? "APPROVED"
-                                    : data.fileStatus || "DRAFT"}
+                                  : !isSelected
+                                    ? "SKIPPED (Unselected)"
+                                    : isApproved
+                                      ? "APPROVED"
+                                      : data.fileStatus || "SELECTED"}
                               </span>
                             </div>
 

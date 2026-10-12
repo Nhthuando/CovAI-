@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Database, FileCode, GitBranch, PlayCircle, Shield, Activity, Network, Sparkles } from "lucide-react";
+import { Database, FileCode, GitBranch, PlayCircle, Shield, Activity, Network, Sparkles, Clock, AlertTriangle, CheckCircle, XCircle } from "lucide-react";
 
 export default function IntegrationEndpointDetail({
   endpoint,
@@ -185,23 +185,82 @@ export default function IntegrationEndpointDetail({
         {tab === "EXECUTION" && (
           <div className="p-6 max-w-4xl">
              <h3 className="text-sm font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-4">Endpoint Performance</h3>
-             <div className="p-4 mb-6 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm text-[var(--color-text-secondary)]">
-               <div style={{ color: "#e6edf3", fontWeight: 600, marginBottom: 4 }}>Per-Endpoint Results Unavailable</div>
-               <p className="mb-4">
-                 Execution counts (Passed/Failed) cannot be derived reliably at the individual endpoint level. Please refer to the global Execution Summary for accurate runtime results.
-               </p>
-               <button 
-                 onClick={() => {
-                   const params = new URLSearchParams(window.location.search);
-                   params.set("subtab", "history");
-                   window.history.pushState(null, '', `${window.location.pathname}?${params.toString()}`);
-                   window.dispatchEvent(new PopStateEvent('popstate'));
-                 }}
-                 className="flex items-center gap-2 px-3 py-1.5 rounded bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/25 text-xs font-semibold hover:bg-[var(--color-primary)]/20 transition-colors"
-               >
-                 <Activity size={14} /> View Global Execution History
-               </button>
-             </div>
+             {endpoint.executedCount > 0 ? (
+               <div className="mb-6 space-y-4">
+                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                   <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-3">
+                     <div className="text-xs text-[var(--color-text-secondary)] mb-1">Total Executed</div>
+                     <div className="text-lg font-bold text-[#e6edf3]">{endpoint.executedCount}</div>
+                   </div>
+                   <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-3">
+                     <div className="text-xs text-[var(--color-success)] mb-1">Passed</div>
+                     <div className="text-lg font-bold text-[var(--color-success)]">{endpoint.passedCount || 0}</div>
+                   </div>
+                   <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-3">
+                     <div className="text-xs text-[var(--color-danger)] mb-1">Failed</div>
+                     <div className="text-lg font-bold text-[#f87171]">{endpoint.failedCount || 0}</div>
+                   </div>
+                   <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-3">
+                     <div className="text-xs text-[#38bdf8] mb-1">Avg Latency</div>
+                     <div className="text-lg font-bold text-[#e6edf3] flex items-center gap-1.5">
+                       <Clock size={15} className="text-[#38bdf8]" />
+                       <span>{endpoint.avgDurationMs || 0}ms</span>
+                       {endpoint.latencyStatus === "SLOW" && (
+                         <span className="text-[10px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded font-bold">Chậm</span>
+                       )}
+                     </div>
+                   </div>
+                 </div>
+
+                 {endpoint.scenarios && endpoint.scenarios.length > 0 && (
+                   <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-4">
+                     <div className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-3">
+                       Scenarios Executed ({endpoint.scenarios.length})
+                     </div>
+                     <div className="space-y-2">
+                       {endpoint.scenarios.map((sc, i) => (
+                         <div key={i} className="flex items-center justify-between text-xs p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)]">
+                           <div className="flex items-center gap-2">
+                             {sc.status === "passed" ? (
+                               <CheckCircle size={13} className="text-[var(--color-success)] shrink-0" />
+                             ) : (
+                               <XCircle size={13} className="text-[#f87171] shrink-0" />
+                             )}
+                             <span className="font-medium text-[#e6edf3]">{sc.title}</span>
+                           </div>
+                           <div className="flex items-center gap-3">
+                             {sc.durationMs > 0 && (
+                               <span className="text-[var(--color-text-secondary)] font-mono">⏱️ {sc.durationMs}ms</span>
+                             )}
+                             <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase ${sc.status === 'passed' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+                               {sc.status}
+                             </span>
+                           </div>
+                         </div>
+                       ))}
+                     </div>
+                   </div>
+                 )}
+               </div>
+             ) : (
+               <div className="p-4 mb-6 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm text-[var(--color-text-secondary)]">
+                 <div style={{ color: "#e6edf3", fontWeight: 600, marginBottom: 4 }}>Endpoint Chưa Được Test Đợt Này</div>
+                 <p className="mb-4">
+                   Endpoint này chưa có kịch bản nào được thực thi trong đợt chạy gần nhất. Hãy chạy lại kiểm thử để cập nhật số liệu.
+                 </p>
+                 <button 
+                   onClick={() => {
+                     const params = new URLSearchParams(window.location.search);
+                     params.set("subtab", "history");
+                     window.history.pushState(null, '', `${window.location.pathname}?${params.toString()}`);
+                     window.dispatchEvent(new PopStateEvent('popstate'));
+                   }}
+                   className="flex items-center gap-2 px-3 py-1.5 rounded bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/25 text-xs font-semibold hover:bg-[var(--color-primary)]/20 transition-colors"
+                 >
+                   <Activity size={14} /> View Global Execution History
+                 </button>
+               </div>
+             )}
 
              <h3 className="text-sm font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-4">Controller Coverage (Mapped)</h3>
              {endpoint.mappedCodeCoverage ? (
