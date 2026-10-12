@@ -5,11 +5,12 @@ const lifecycle = {
   addJobLog: jest.fn(), getJobById: jest.fn(), markJobFailed: jest.fn(),
   markJobRunning: jest.fn(), markJobSuccess: jest.fn(), updateJobProgress: jest.fn(),
 };
-const prismaMock = { testRun: { create: jest.fn() } };
+const prismaMock = { testRun: { create: jest.fn() }, aiTest:{create:jest.fn()} };
 const saveJobOutput = jest.fn();
 const resolveSystemTestExecution = jest.fn();
 const runSystemTests = jest.fn();
 const parseSystemTestResult = jest.fn();
+const prepareFullSystemExecution = jest.fn();
 
 await jest.unstable_mockModule("../config/prisma.js", () => ({ default: prismaMock }));
 await jest.unstable_mockModule("../services/job.service.js", () => lifecycle);
@@ -17,6 +18,7 @@ await jest.unstable_mockModule("../services/jobOutput.service.js", () => ({ save
 await jest.unstable_mockModule("../services/systemTestDetection.service.js", () => ({ resolveSystemTestExecution }));
 await jest.unstable_mockModule("../services/systemTestRunner.service.js", () => ({ runSystemTests }));
 await jest.unstable_mockModule("../services/systemTestResultParser.service.js", () => ({ parseSystemTestResult }));
+await jest.unstable_mockModule('../services/fullSystemExecutionPreparation.service.js',()=>({prepareFullSystemExecution}));
 await jest.unstable_mockModule("../services/coverageSummaryParser.service.js", () => ({ parseCoverageSummary: jest.fn() }));
 await jest.unstable_mockModule("../services/coverageFileParser.service.js", () => ({ parseCoverageFilesForSnapshot: jest.fn() }));
 await jest.unstable_mockModule("../services/coverageFunctionParser.service.js", () => ({ parseCoverageFunctionsForSnapshot: jest.fn() }));
@@ -37,6 +39,7 @@ describe("processSystemTestAnalysisJob", () => {
     lifecycle.getJobById.mockResolvedValue(job);
     resolveSystemTestExecution.mockReturnValue(execution);
     runSystemTests.mockResolvedValue({ success: true, exitCode: 0 });
+    prepareFullSystemExecution.mockImplementation(async ({execution})=>({execution}));
     parseSystemTestResult.mockReturnValue(testRun);
     // Model the real Prisma boundary instead of accepting unsupported fields silently.
     prismaMock.testRun.create.mockImplementation(async ({ data }) => {
@@ -46,6 +49,21 @@ describe("processSystemTestAnalysisJob", () => {
       }
       return { id: "test-run-1", ...data };
     });
+  });
+
+  it('generates a verified full suite for a fresh import and stores its mode separately',async()=>{
+    resolveSystemTestExecution.mockImplementationOnce(()=>{throw new Error('No executable Playwright configuration was found');});
+    const generated={filePath:'tests/system/ai-generated.spec.js',code:'verified content',verificationRuns:2};
+    prepareFullSystemExecution.mockImplementationOnce(async({execution})=>({execution:{...execution,testDirectory:'tests/system'},generated}));
+    await processSystemTestAnalysisJob('job-1');
+    expect(prismaMock.aiTest.create).toHaveBeenCalledWith({data:expect.objectContaining({projectId:'project-1',snapshotId:'snapshot-1',status:'VERIFIED',content:'verified content',metaJson:expect.stringContaining('"executionMode":"full"')})});
+    expect(runSystemTests).toHaveBeenCalledWith(expect.objectContaining({executionMode:'full',execution:expect.objectContaining({testDirectory:'tests/system'})}));
+  });
+
+  it('finalizes provider failures during generation without starting a runner or creating reports',async()=>{
+    prepareFullSystemExecution.mockRejectedValueOnce(new Error('Gemini service unavailable (503)'));
+    await expect(processSystemTestAnalysisJob('job-1')).rejects.toThrow('503');
+    expect(lifecycle.markJobFailed).toHaveBeenCalledTimes(1);expect(runSystemTests).not.toHaveBeenCalled();expect(prismaMock.testRun.create).not.toHaveBeenCalled();
   });
 
   it("stores a passing TestRun and completes the job", async () => {
@@ -77,6 +95,17 @@ describe("processSystemTestAnalysisJob", () => {
     await expect(processSystemTestAnalysisJob("job-1")).rejects.toThrow("Docker daemon crash");
     expect(prismaMock.testRun.create).not.toHaveBeenCalled();
     expect(lifecycle.markJobFailed).toHaveBeenCalledTimes(1);
+  });
+
+  it('stores bounded attempt detail and preserves a meaningful zero duration', async () => {
+    const executionDetails = { version: 1, runner: 'playwright', attempts: [{ index: 0, status: 'passed', durationMs: 0, steps: [] }] };
+    parseSystemTestResult.mockReturnValue({ ...testRun, scenarios: [{ title: 'Zero duration', status: 'passed', durationMs: 0, executionDetails }] });
+    await processSystemTestAnalysisJob('job-1');
+    const stored = prismaMock.testRun.create.mock.calls[0][0].data.scenarios.create[0];
+    expect(stored).toMatchObject({ durationMs: 0, executionDetails });
+    const fields = Prisma.dmmf.datamodel.models.find(model => model.name === 'TestScenario').fields.map(field => field.name);
+    expect(fields).toContain('executionDetails');
+    expect(Object.keys(stored).every(field => fields.includes(field))).toBe(true);
   });
 
   it("finalizes preparation failures without saving a test result", async () => {

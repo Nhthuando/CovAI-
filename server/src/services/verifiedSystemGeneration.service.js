@@ -9,6 +9,8 @@ import {validateGeneratedTestCode} from '../validators/aiTestCode.validator.js';
 import {validateFullSystemTest} from './systemTestEvidence.service.js';
 import {parseTestFileDetails} from '../utils/testFileParser.js';
 import {ServiceError} from '../utils/serviceError.js';
+import {ensurePlaywrightExecutionSteps,PLAYWRIGHT_EXECUTION_STEP_RULES} from './playwrightExecutionSteps.service.js';
+import {SYSTEM_TEST_QUALITY_RULES,validateSystemTestQuality} from './systemTestQuality.service.js';
 
 export const extractSystemTestCode = response => {
   let text=String(response || '').trim();
@@ -39,7 +41,7 @@ export const applySystemTestRepair = (response,code) => {
   return result;
 };
 
-export const validateSystemTestIntent = code => {
+export const validateSystemTestIntent = (code,{quality=false}={}) => {
   const {ast}=validateGeneratedTestCode(code);
   validateFullSystemTest(code);
   const titles=[];
@@ -68,6 +70,7 @@ export const validateSystemTestIntent = code => {
   };
   visit(ast);
   if(!titles.length || new Set(titles).size !== titles.length) throw new ServiceError('Generate distinct runnable scenarios with assertions.',422);
+  if(quality) validateSystemTestQuality(ast);
   return titles;
 };
 
@@ -79,6 +82,8 @@ Identify supported user journeys from source and observed UI; do not invent cont
 Scope controls to the actual row component, hover hidden actions. After entering edit mode, a row filter requiring visible title text may no longer match: select its edit form/input instead. Do not use a generic div.hasText(...).last() as a row locator. For unnamed icons, use the actual enclosing component plus svg class/attributes shown in source; avoid guessed accessible names.
 Never build an edit-form or submit-button locator from a mutable text/value filter: filling the input changes that filter. Select the stable edit form using its actual component structure/classes, get its textbox and submit button, then fill/click. Derive icon button order from the JSX source; do not change unrelated actions during repair.
 Use modern await expect(locator) assertions. Prefer accessible locators. English scenario titles should state behavior. Preserve useful screenshots automatically captured by the runner.
+${PLAYWRIGHT_EXECUTION_STEP_RULES}
+${SYSTEM_TEST_QUALITY_RULES}
 Observed running application:
 ${JSON.stringify(runtime)}
 Snapshot context (complete files, no arbitrary first-200-line truncation). Omitted files: ${JSON.stringify(context.omittedFiles)}. Generate only scenarios supported by available context; this is not a claim of complete business coverage.
@@ -126,10 +131,14 @@ export const generateVerifiedSystemTests = async ({rootDir,jobId,onProgress=asyn
       const responseSchema=patchMode
         ? {type:'OBJECT',properties:{replacements:{type:'ARRAY',items:{type:'OBJECT',properties:{old:{type:'STRING'},new:{type:'STRING'}},required:['old','new']}}},required:['replacements']}
         : {type:'OBJECT',properties:{content:{type:'STRING'}},required:['content']};
-      const response=await generate(prompt+instruction,null,{responseMimeType:'application/json',responseSchema,temperature:0.2,maxOutputTokens:16000});
+      const response=await generate(prompt+instruction,null,{responseMimeType:'application/json',responseSchema,temperature:0.2,maxOutputTokens:16000,
+        requestTimeoutMs:120000,totalTimeoutMs:300000,maxAttempts:3,
+        onRetry:({attempt:retry,maxAttempts,waitMs,reason})=>onProgress(40+attempt*15,`Test generation AI ${reason}; retry ${retry}/${maxAttempts} in ${Math.ceil(waitMs/1000)}s`),
+        onWait:({elapsedMs})=>onProgress(40+attempt*15,`Waiting for generated tests (${Math.round(elapsedMs/1000)}s)`),
+      });
       try {
-        const candidate=patchMode ? applySystemTestRepair(response,code) : extractSystemTestCode(response);
-        const titles=validateSystemTestIntent(candidate);
+        const candidate=ensurePlaywrightExecutionSteps(patchMode ? applySystemTestRepair(response,code) : extractSystemTestCode(response));
+        const titles=validateSystemTestIntent(candidate,{quality:true});
         if(intent && JSON.stringify(titles)!==JSON.stringify(intent)) throw new ServiceError('Repair changed scenario intent/titles; preserve all scenarios.',422);
         intent ||= titles;
         code=candidate;
@@ -151,7 +160,7 @@ export const generateVerifiedSystemTests = async ({rootDir,jobId,onProgress=asyn
           const current=collect(rootDir);
           const currentHash=crypto.createHash('sha256').update(JSON.stringify({sourceCode:current.sourceCode,configuration:current.configuration,omittedFiles:current.omittedFiles})).digest('hex');
           if(currentHash !== contextHash) throw new ServiceError('Snapshot source changed during verification. Generate again against the current source.',409);
-          return {code,attempts,verificationRuns:2,contextHash,scenarioCount:intent.length,contextComplete:context.contextComplete,omittedFiles:context.omittedFiles};
+          return {code,attempts,verificationRuns:2,quality:validateSystemTestQuality(validateGeneratedTestCode(code).ast),contextHash,scenarioCount:intent.length,contextComplete:context.contextComplete,omittedFiles:context.omittedFiles};
         }
         attempts.at(-1).passed=false;
         attempts.at(-1).confirmationFailed=true;
@@ -324,7 +333,9 @@ INSTRUCTIONS:
    - User Interaction Tests: Locate input fields and buttons from discovered UI components, perform fill/click actions, and assert responsive UI.
 6. Do NOT import child_process or use eval/process.exit.
 7. Provide clear, descriptive English scenario titles with web-first assertions (await expect(...)).
-8. Return only valid JavaScript syntax.`;
+8. Return only valid JavaScript syntax.
+9. ${PLAYWRIGHT_EXECUTION_STEP_RULES}
+10. ${SYSTEM_TEST_QUALITY_RULES}`;
 };
 
 /**
@@ -403,7 +414,7 @@ ${actionTest}
   });`;
   }
 
-  return `import { test, expect } from '@playwright/test';
+  return ensurePlaywrightExecutionSteps(`import { test, expect } from '@playwright/test';
 
 test.describe('Cold-Start Automated E2E Suite (Playwright)', () => {
   test('Smoke Test: Application root loads successfully', async ({ page }) => {
@@ -415,7 +426,7 @@ ${navTests}
 
 ${actionTest}
 });
-`;
+`);
 };
 
 /**
@@ -452,6 +463,8 @@ export const generateColdStartSystemTests = async ({
   const prompt = buildColdStartSystemPrompt({ context, framework: normFramework, targetRoutes });
 
   let code = '';
+  let fallbackUsed = false;
+  let quality;
   try {
     const responseSchema = {
       type: 'OBJECT',
@@ -466,6 +479,7 @@ export const generateColdStartSystemTests = async ({
     });
     code = extractSystemTestCode(response);
   } catch (error) {
+    fallbackUsed = true;
     console.warn(`[generateColdStartSystemTests] AI generation fallback used: ${error.message}`);
     code = generateFallbackColdStartTest({
       framework: normFramework,
@@ -477,7 +491,9 @@ export const generateColdStartSystemTests = async ({
   await onProgress(70, 'Validating test syntax and AST safety');
   try {
     validateGeneratedTestCode(code);
+    if (normFramework === 'playwright') code = ensurePlaywrightExecutionSteps(code);
   } catch (err) {
+    fallbackUsed = true;
     console.warn(`[generateColdStartSystemTests] AST validation failed, applying fallback: ${err.message}`);
     code = generateFallbackColdStartTest({
       framework: normFramework,
@@ -485,7 +501,9 @@ export const generateColdStartSystemTests = async ({
       uiActions: context.uiActions,
     });
     validateGeneratedTestCode(code);
+    if (normFramework === 'playwright') code = ensurePlaywrightExecutionSteps(code);
   }
+  if (normFramework === 'playwright' && !fallbackUsed) quality = validateSystemTestQuality(validateGeneratedTestCode(code).ast);
 
   await onProgress(85, 'Saving generated test files');
   const relFilePath =
@@ -512,6 +530,9 @@ export const generateColdStartSystemTests = async ({
     suites: details.suites,
     scenarios: details.scenarios,
     code,
+    quality,
+    fallbackUsed,
+    coverageScope: fallbackUsed ? 'smoke-only' : 'source-supported-scenarios',
   };
 };
 

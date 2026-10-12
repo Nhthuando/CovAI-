@@ -18,6 +18,24 @@ export const validateFullSystemTest = (code) => {
   visit(ast);
 };
 
+// Playwright transpiles import syntax to require() in CommonJS packages.
+// Preserve each source file's module mode even when copying it out of a nested package.
+const isModuleFile = file => {
+  if (/\.(mjs|mts)$/.test(file)) return true;
+  if (/\.(cjs|cts)$/.test(file)) return false;
+  let directory=path.dirname(file);
+  while (true) {
+    const metadata=path.join(directory,'package.json');
+    if (fs.existsSync(metadata)) {
+      try { return JSON.parse(fs.readFileSync(metadata,'utf8')).type === 'module'; }
+      catch { return false; }
+    }
+    const parent=path.dirname(directory);
+    if (parent === directory) return false;
+    directory=parent;
+  }
+};
+
 export const prepareSystemPlaywright = ({rootDir,execution,executionMode,backendUrl,frontendPort,runKey,testFile}) => {
   const directory=path.join(rootDir,'.covai-system-test','runs',runKey);
   const specs=path.join(directory,'specs');
@@ -50,12 +68,13 @@ module.exports={...playwright,test};`, 'utf8');
       if(item.isSymbolicLink() || ['node_modules','.git','.covai-system-test'].includes(item.name)) continue;
       const file=path.join(directory,item.name);
       if(item.isDirectory()) walk(file);
-      else if(/\.(spec|test)\.([cm]?js|ts)$/.test(item.name)) files.push(file);
+      else if(/\.(spec|test)\.([cm]?[jt]s)$/.test(item.name)) files.push(file);
     }
   };
   if(testFile) files.push(testFile); else walk(containedPath(rootDir,execution.testDirectory || 'tests/e2e'));
   if(!files.length) throw new ServiceError('No E2E test files were found for this run',422);
   for(const file of files) {
+    const esm=isModuleFile(file);
     let code=fs.readFileSync(file,'utf8');
     if(executionMode === 'full') validateFullSystemTest(code);
     const ast=parse(code,{sourceType:'module',plugins:['typescript','jsx']});
@@ -65,9 +84,12 @@ module.exports={...playwright,test};`, 'utf8');
       const value=node.source.value;
       if(value === '@playwright/test') {
         hasPlaywright=true;
-        replacements.push([node.source.start,node.source.end,JSON.stringify(pathToFileURL(fixture).href)]);
+        replacements.push([node.source.start,node.source.end,JSON.stringify(esm ? pathToFileURL(fixture).href : commonJsFixture)]);
       }
-      else if(value.startsWith('.')) replacements.push([node.source.start,node.source.end,JSON.stringify(pathToFileURL(path.resolve(path.dirname(file),value)).href)]);
+      else if(value.startsWith('.')) {
+        const resolved=path.resolve(path.dirname(file),value);
+        replacements.push([node.source.start,node.source.end,JSON.stringify(esm ? pathToFileURL(resolved).href : resolved)]);
+      }
     }
     const visit=node => {
       if(!node || typeof node !== 'object') return;
@@ -88,7 +110,8 @@ module.exports={...playwright,test};`, 'utf8');
     visit(ast);
     if(!hasPlaywright) throw new ServiceError(`Managed system test ${path.relative(rootDir,file)} must import or require @playwright/test`,422);
     for(const [start,end,value] of replacements.sort((a,b)=>b[0]-a[0])) code=code.slice(0,start)+value+code.slice(end);
-    const target=path.join(specs,`${crypto.randomUUID()}.spec${path.extname(file)}`);
+    const extension=/\.[cm]?ts$/.test(file) ? (esm ? '.mts' : '.cts') : (esm ? '.mjs' : '.cjs');
+    const target=path.join(specs,`${crypto.randomUUID()}.spec${extension}`);
     fileMap[path.basename(target)]=path.relative(rootDir,file).replace(/\\/g,'/');
     fs.writeFileSync(target,code,'utf8');
   }
@@ -101,12 +124,19 @@ module.exports={...playwright,test};`, 'utf8');
 
 export const storeScenarioScreenshot = ({rootDir,source,runKey}) => {
   if(!source) return null;
-  const safeSource=containedPath(rootDir,path.relative(rootDir,source));
-  if(!fs.existsSync(safeSource)) return null;
-  const data=fs.readFileSync(safeSource);
+  let data;
+  if(typeof source==='object' && typeof source.body==='string') {
+    if(source.body.length>20*1024*1024 || !/^[A-Za-z0-9+/]*={0,2}$/.test(source.body)) return null;
+    data=Buffer.from(source.body,'base64');
+  } else {
+    if(typeof source!=='string') return null;
+    const safeSource=containedPath(rootDir,path.relative(rootDir,source));
+    if(!fs.existsSync(safeSource)) return null;
+    data=fs.readFileSync(safeSource);
+  }
   if(data.length > 15*1024*1024 || !data.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) return null;
   const relative=path.posix.join('.covai-system-test','evidence',runKey,`${crypto.randomUUID()}.png`);
   const target=containedPath(rootDir,relative);
-  fs.mkdirSync(path.dirname(target),{recursive:true});fs.copyFileSync(safeSource,target);
+  fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,data);
   return relative;
 };

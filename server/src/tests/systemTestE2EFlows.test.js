@@ -14,6 +14,7 @@ import { optimizeSystemTest } from "../services/systemTestBooster.service.js";
 import { validateGeneratedTestCode } from "../validators/aiTestCode.validator.js";
 
 const tmpDirs = [];
+const offlineGenerate = async () => { throw new Error('AI disabled for deterministic flow verification'); };
 const createTempDir = (files = {}) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "covai-phase7-e2e-"));
   tmpDirs.push(dir);
@@ -194,6 +195,7 @@ describe("Phase 7.2 - E2E Scenario B: Clean Project Without Tests (Zero-Test & A
       rootDir,
       framework: "playwright",
       targetRoutes: ["/", "/login"],
+      dependencies: { generate: offlineGenerate },
     });
 
     expect(generated.filePath).toBeDefined();
@@ -208,6 +210,7 @@ describe("Phase 7.2 - E2E Scenario B: Clean Project Without Tests (Zero-Test & A
     const codeContent = fs.readFileSync(absoluteTestPath, "utf8");
     const astValidation = validateGeneratedTestCode(codeContent);
     expect(astValidation.valid).toBe(true);
+    expect(codeContent).toContain('await test.step(');
     expect(astValidation.ast).toBeDefined();
 
     // 5. Subsequent detection discovers newly generated test suite
@@ -258,6 +261,7 @@ describe("Phase 7.2 - E2E Scenario C: Test Editor & AI Booster Flow (Coverage Bo
       filePath: testRelPath,
       mode: "BOOST_COVERAGE",
       instruction: "Add validation test for empty fields",
+      dependencies: { generate: offlineGenerate },
     });
 
     expect(boosted.success).toBe(true);
@@ -277,6 +281,7 @@ describe("Phase 7.2 - E2E Scenario C: Test Editor & AI Booster Flow (Coverage Bo
       },
       mode: "FIX_BREAKPOINT",
       instruction: "Use text query instead of broken id",
+      dependencies: { generate: offlineGenerate },
     });
 
     expect(fixed.success).toBe(true);

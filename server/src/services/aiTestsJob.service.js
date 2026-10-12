@@ -23,6 +23,8 @@ import { dockerRunner } from "./dockerRunner.service.js";
 import { ensurePlaywrightPrerequisites, resolvePlaywrightCommand, runSystemTests } from "./systemTestRunner.service.js";
 import { validateFullSystemTest } from "./systemTestEvidence.service.js";
 import { generateVerifiedSystemTests } from './verifiedSystemGeneration.service.js';
+import { ensurePlaywrightExecutionSteps } from './playwrightExecutionSteps.service.js';
+import { validateSystemTestQuality } from './systemTestQuality.service.js';
 import {
     resolveAvailableAutPort,
     prepareAutEnvironment,
@@ -92,7 +94,7 @@ export const processAiTestsJob = async (jobId) => {
             // Keep previous verified generations; a failed candidate must not erase them.
             await prisma.aiTest.create({data:{
                 projectId,snapshotId,mode:'PLAYWRIGHT_E2E',status:result.failed?'FAILED':'VERIFIED',filePath,content:result.code,
-                metaJson:JSON.stringify({framework:'PLAYWRIGHT',executionMode:'full',dryRun:result.failed?'FAILED':'PASSED',attempts:result.attempts,verificationRuns:result.verificationRuns,contextHash:result.contextHash,scenarioCount:result.scenarioCount,contextComplete:result.contextComplete,omittedFiles:result.omittedFiles,error:result.error,verifiedAt:result.failed?undefined:new Date().toISOString()}),
+                metaJson:JSON.stringify({framework:'PLAYWRIGHT',executionMode:'full',dryRun:result.failed?'FAILED':'PASSED',attempts:result.attempts,verificationRuns:result.verificationRuns,contextHash:result.contextHash,quality:result.quality,scenarioCount:result.scenarioCount,contextComplete:result.contextComplete,omittedFiles:result.omittedFiles,error:result.error,verifiedAt:result.failed?undefined:new Date().toISOString()}),
             }});
             await updateJobStatus({jobId,status:result.failed?'FAILED':'SUCCESS',progress:100,...(result.failed?{errorMessage:result.error}:{})});
             await notificationService.createJobFinishedNotification(jobId);
@@ -163,6 +165,8 @@ export const processAiTestsJob = async (jobId) => {
             // 1. AST Syntax & Security Validation
             try {
                 validateGeneratedTestCode(generatedCode);
+                generatedCode = ensurePlaywrightExecutionSteps(generatedCode);
+                validateSystemTestQuality(validateGeneratedTestCode(generatedCode).ast);
                 if (executionMode === "full") validateFullSystemTest(generatedCode);
                 await addJobLog(jobId, "INFO", "AST Validation passed: Syntax is valid and no forbidden APIs detected.");
             } catch (astError) {
@@ -315,6 +319,7 @@ export const processAiTestsJob = async (jobId) => {
                             framework: "PLAYWRIGHT",
                             executionMode,
                             dryRun: "PASSED",
+                            quality: validateSystemTestQuality(validateGeneratedTestCode(generatedCode).ast),
                             verifiedAt: new Date().toISOString(),
                         }),
                     },

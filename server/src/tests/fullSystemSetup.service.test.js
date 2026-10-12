@@ -29,6 +29,62 @@ describe('automatic Full Stack setup', () => {
         expect(fs.readFileSync(path.join(root,'.covai/generated-schema.sql'),'utf8')).toContain('CREATE TABLE todos');
         expect(model.mock.calls[0][0]).not.toContain('never-send-me');
         expect(model.mock.calls[0][0]).not.toMatch(/hidden-password|hidden-private-key|hidden-uri/);
+        expect(model.mock.calls[0][0]).toContain('A missing SQL schema file alone is not missing information');
+        expect(model.mock.calls[0][2]).toMatchObject({
+            responseMimeType: 'application/json',
+            responseSchema: { type: 'OBJECT', required: ['missingInformation'] },
+            maxOutputTokens: 16000,
+        });
+    });
+    it('accepts a complete JSON fence with BOM without another model call', async () => {
+        const root = fixture();
+        const value = proposal();
+        value.schemaSql = 'CREATE TABLE todos(\n id INT PRIMARY KEY,\n title VARCHAR(255)\n);';
+        const model = jest.fn().mockResolvedValue('\uFEFF```json\n' + JSON.stringify(value, null, 2) + '\n```');
+        const result = await ensureFullSystemSetup({rootDir:root,dependencies:{generate:model}});
+        expect(result.generated).toBe(true);
+        expect(model).toHaveBeenCalledTimes(1);
+        expect(fs.readFileSync(path.join(root,'.covai/generated-schema.sql'),'utf8')).toBe(value.schemaSql);
+    });
+    it('regenerates malformed JSON once before writing any files', async () => {
+        const root = fixture(), progress = jest.fn();
+        const invalid = '{"schemaSql":"CREATE TABLE todos(\n secret-value';
+        const model = jest.fn().mockResolvedValueOnce(invalid).mockImplementationOnce(async () => {
+            expect(fs.existsSync(path.join(root,'.covai/system-test.json'))).toBe(false);
+            expect(fs.existsSync(path.join(root,'.covai/generated-schema.sql'))).toBe(false);
+            return JSON.stringify(proposal());
+        });
+        expect((await ensureFullSystemSetup({rootDir:root,onProgress:progress,dependencies:{generate:model}})).generated).toBe(true);
+        expect(model).toHaveBeenCalledTimes(2);
+        expect(model.mock.calls[1][0]).toContain('Regenerate the complete proposal');
+        expect(model.mock.calls[1][0]).not.toContain('secret-value');
+        expect(model.mock.calls[1][2].maxOutputTokens).toBe(32000);
+        expect(progress).toHaveBeenCalledWith(22, expect.stringContaining('regenerating once'));
+    });
+    it.each(['', 'secret-value', '{"frontend":', 'null', '[]', '"secret-value"', '{"missingInformation":"secret-value"}', 'Explanation\n' + JSON.stringify(proposal())])('stops after two unreadable responses without partial files: %s', async response => {
+        const root = fixture(), model = jest.fn().mockResolvedValue(response);
+        let failure;
+        try { await ensureFullSystemSetup({rootDir:root,dependencies:{generate:model}}); } catch (error) { failure = error; }
+        expect(failure).toMatchObject({statusCode:422});
+        expect(failure.message).toContain('after 2 attempts');
+        expect(failure.message).not.toContain('secret-value');
+        expect(model).toHaveBeenCalledTimes(2);
+        expect(fs.existsSync(path.join(root,'.covai/system-test.json'))).toBe(false);
+        expect(fs.existsSync(path.join(root,'.covai/generated-schema.sql'))).toBe(false);
+    });
+    it('does not retry valid JSON that selects an unsafe configuration', async () => {
+        const root = fixture(), value = proposal();
+        value.schemaSql += ' DROP TABLE todos;';
+        const model = generate(value);
+        await expect(ensureFullSystemSetup({rootDir:root,dependencies:{generate:model}})).rejects.toThrow(/only CREATE TABLE/);
+        expect(model).toHaveBeenCalledTimes(1);
+        expect(fs.existsSync(path.join(root,'.covai'))).toBe(false);
+    });
+    it('returns missing source information without retrying or writing setup', async () => {
+        const root = fixture(), model = generate({missingInformation:['Database schema is unavailable']});
+        await expect(ensureFullSystemSetup({rootDir:root,dependencies:{generate:model}})).rejects.toThrow('needs more information: Database schema is unavailable');
+        expect(model).toHaveBeenCalledTimes(1);
+        expect(fs.existsSync(path.join(root,'.covai'))).toBe(false);
     });
     it('reuses existing config without a model call or schema overwrite', async () => {
         const root=fixture(), model=generate(proposal());

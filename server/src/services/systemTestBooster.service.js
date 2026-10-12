@@ -1,3 +1,4 @@
+import { SYSTEM_TEST_QUALITY_RULES } from './systemTestQuality.service.js';
 import fs from "node:fs";
 import path from "node:path";
 import prisma from "../config/prisma.js";
@@ -7,6 +8,7 @@ import { generateText } from "./gemini.service.js";
 import { validateGeneratedTestCode } from "../validators/aiTestCode.validator.js";
 import { extractSuitesAndScenarios } from "../utils/testFileParser.js";
 import { ServiceError } from "../utils/serviceError.js";
+import { ensurePlaywrightExecutionSteps, PLAYWRIGHT_EXECUTION_STEP_RULES } from './playwrightExecutionSteps.service.js';
 
 /**
  * Extracts JSON or clean code from a Gemini text response.
@@ -34,6 +36,25 @@ export const extractBoosterResponse = (rawResponse) => {
   }
 
   throw new ServiceError("Failed to parse AI booster response", 422);
+};
+
+const appendFallbackScenarios = (existingCode, newScenarios) => {
+  const { ast } = validateGeneratedTestCode(existingCode);
+  let insertion = null;
+  const visit = node => {
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'CallExpression' && (node.callee?.name === 'describe' || node.callee?.property?.name === 'describe')) {
+      const callback = node.arguments.at(-1);
+      if (callback?.body?.type === 'BlockStatement') insertion = callback.body.end - 1;
+    }
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) value.forEach(visit);
+      else if (value?.type) visit(value);
+    }
+  };
+  visit(ast);
+  return insertion === null ? existingCode + '\n' + newScenarios
+    : existingCode.slice(0, insertion) + newScenarios + '\n' + existingCode.slice(insertion);
 };
 
 /**
@@ -74,12 +95,7 @@ export const generateFallbackBoosterScenarios = ({ framework, existingCode, rout
     }
   });`;
 
-    // Insert inside the last describe block if present, or append
-    const lastCloseIndex = existingCode.lastIndexOf("});");
-    if (lastCloseIndex > 0) {
-      return existingCode.slice(0, lastCloseIndex) + newScenarios + "\n" + existingCode.slice(lastCloseIndex);
-    }
-    return existingCode + "\n" + newScenarios;
+    return ensurePlaywrightExecutionSteps(appendFallbackScenarios(existingCode, newScenarios));
   } else {
     // Cypress fallback
     const newScenarios = `
@@ -104,11 +120,7 @@ export const generateFallbackBoosterScenarios = ({ framework, existingCode, rout
     cy.get('body').should('be.visible');
   });`;
 
-    const lastCloseIndex = existingCode.lastIndexOf("});");
-    if (lastCloseIndex > 0) {
-      return existingCode.slice(0, lastCloseIndex) + newScenarios + "\n" + existingCode.slice(lastCloseIndex);
-    }
-    return existingCode + "\n" + newScenarios;
+    return appendFallbackScenarios(existingCode, newScenarios);
   }
 };
 
@@ -199,7 +211,9 @@ export const optimizeSystemTest = async ({
   mode = "BOOST_COVERAGE",
   instruction = null,
   scenarioData = null,
+  dependencies = {},
 }) => {
+  const generate = dependencies.generate || generateText;
   if (!rootDir || typeof rootDir !== "string") {
     throw new ServiceError("rootDir is required", 400);
   }
@@ -237,8 +251,9 @@ export const optimizeSystemTest = async ({
     // ---------------------- MODE 1: BOOST COVERAGE ----------------------
     const systemPrompt = `You are an elite QA automation architect specialized in ${framework === "playwright" ? "Playwright" : "Cypress"}.
 Your mission is to expand the existing test suite with high-value edge case scenarios (form validation errors, boundary conditions, empty states, and error handling) to achieve maximum branch, route, and component test coverage.
+${framework === 'playwright' ? PLAYWRIGHT_EXECUTION_STEP_RULES + '\n' + SYSTEM_TEST_QUALITY_RULES : ''}
 CRITICAL RULES:
-1. Preserve all existing tests and imports exactly as they are.
+1. Preserve existing imports, scenario intent and assertions. Only add execution step wrappers to existing scenarios.
 2. Add 2 to 3 new distinctive test scenarios inside the existing describe/suite block.
 3. Use realistic assertions checking DOM elements, error texts, and application state.
 4. Do NOT import non-existent libraries or forbidden packages (eval, child_process).
@@ -265,7 +280,7 @@ Generate the updated test file code with expanded scenarios to boost coverage.`;
 
     let optimizedResult = null;
     try {
-      const aiResponse = await generateText(userPrompt, systemPrompt, {
+      const aiResponse = await generate(userPrompt, systemPrompt, {
         temperature: 0.2,
       });
       const parsed = extractBoosterResponse(aiResponse);
@@ -303,7 +318,7 @@ Generate the updated test file code with expanded scenarios to boost coverage.`;
       mode: "BOOST_COVERAGE",
       framework,
       filePath,
-      optimizedCode: optimizedResult.optimizedCode,
+      optimizedCode: framework === 'playwright' ? ensurePlaywrightExecutionSteps(optimizedResult.optimizedCode) : optimizedResult.optimizedCode,
       addedScenarios: optimizedResult.addedScenarios,
       explanation: optimizedResult.explanation,
     };
@@ -326,6 +341,7 @@ Generate the updated test file code with expanded scenarios to boost coverage.`;
 
     const systemPrompt = `You are a senior test automation engineer specialized in fixing broken ${framework === "playwright" ? "Playwright" : "Cypress"} tests.
 Your task is to repair the specific step/locator where the test failed.
+${framework === 'playwright' ? PLAYWRIGHT_EXECUTION_STEP_RULES + '\n' + SYSTEM_TEST_QUALITY_RULES : ''}
 CRITICAL RULES:
 1. Fix the broken locator or assertion without altering the intended test goal.
 2. Use robust, accessible locators (e.g. getByRole, button:has-text, data-testid) instead of brittle CSS selectors.
@@ -356,7 +372,7 @@ Repair the broken step in the test code.`;
 
     let repairResult = null;
     try {
-      const aiResponse = await generateText(userPrompt, systemPrompt, {
+      const aiResponse = await generate(userPrompt, systemPrompt, {
         temperature: 0.1,
       });
       const parsed = extractBoosterResponse(aiResponse);
@@ -392,7 +408,7 @@ Repair the broken step in the test code.`;
       scenarioId,
       failureCategory,
       fixedStep: repairResult.fixedStep,
-      optimizedCode: repairResult.optimizedCode,
+      optimizedCode: framework === 'playwright' ? ensurePlaywrightExecutionSteps(repairResult.optimizedCode) : repairResult.optimizedCode,
       explanation: repairResult.explanation,
     };
   }

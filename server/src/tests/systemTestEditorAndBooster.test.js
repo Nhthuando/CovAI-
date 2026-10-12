@@ -412,6 +412,8 @@ test.describe('Menu', () => {
             expect(result.success).toBe(true);
             expect(result.mode).toBe('BOOST_COVERAGE');
             expect(result.optimizedCode).toContain('empty cart state');
+            expect(result.optimizedCode.match(/test\.step\(/g)).toHaveLength(3);
+            expect(mockGenerateText.mock.calls.at(-1)[1]).toContain('In EVERY Playwright scenario');
             expect(result.addedScenarios).toEqual(['empty cart state']);
         });
 
@@ -435,6 +437,7 @@ test.describe('Menu', () => {
             expect(result.success).toBe(true);
             expect(result.mode).toBe('BOOST_COVERAGE');
             expect(result.optimizedCode).toContain('AI Boost: handles boundary conditions');
+            expect(result.optimizedCode).toContain('await test.step(');
             expect(result.addedScenarios.length).toBeGreaterThan(0);
         });
 
@@ -468,6 +471,7 @@ test('checkout test', async ({ page }) => {
             expect(result.mode).toBe('FIX_BREAKPOINT');
             expect(result.failureCategory).toBe('TIMEOUT');
             expect(result.optimizedCode).toContain('timeout: 10000');
+            expect(result.optimizedCode).toContain('await test.step(');
             expect(result.fixedStep).toContain('timeout: 10000');
         });
     });

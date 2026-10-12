@@ -2152,7 +2152,8 @@ export const getSystemTestSummary = async (req, res) => {
             },
             orderBy: { createdAt: "desc" },
             include: {
-                scenarios: true,
+                // Execution payloads are fetched only for the pinned scenario run.
+                scenarios: { omit: { executionDetails: true } },
                 testFiles: true,
             },
         });
@@ -2324,6 +2325,7 @@ export const getSystemTestSummary = async (req, res) => {
                 failedTests,
                 flaky: flakyTests,
                 flakyTests,
+                skippedTests: latestRun.skippedTests || 0,
                 durationMs,
                 stabilityScorePct,
                 coverageAvailable,
@@ -2432,7 +2434,8 @@ export const getSystemTestScenarios = async (req, res) => {
             title: s.title,
             suiteName: s.suiteName,
             status: s.status,
-            durationMs: s.durationMs || 0,
+            durationMs: s.durationMs ?? null,
+            executionDetails: s.executionDetails || null,
             failureMessages: s.failureMessages || [],
             testFile: s.testFile || "unknown",
             failureBreakpoint: {

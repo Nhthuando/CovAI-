@@ -62,7 +62,7 @@ describe("runSystemTests", () => {
     expect(fsMock.mkdirSync).toHaveBeenCalledWith("C:/snapshot/.covai-system-test", { recursive: true });
     expect(prepareAutEnvironment).toHaveBeenCalledWith("C:/snapshot", 4173, "job-1");
     expect(runSeedDataIfPresent).toHaveBeenCalledWith({ snapshotDir: "C:/snapshot", jobId: "job-1" });
-    expect(startAutServer).toHaveBeenCalledWith({ snapshotDir: "C:/snapshot", port: 4173, jobId: "job-1" });
+    expect(startAutServer).toHaveBeenCalledWith({ snapshotDir: "C:/snapshot", port: 4173, jobId: "job-1", requireHealthy: true });
     expect(run).toHaveBeenCalledWith(expect.objectContaining({
       snapshotPath: "C:/snapshot",
       jobId: "job-1",

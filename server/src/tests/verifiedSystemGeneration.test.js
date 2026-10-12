@@ -7,7 +7,11 @@ import {generateVerifiedSystemTests,validateSystemTestIntent,extractSystemTestCo
 const directories=[];
 const root=()=>{const directory=fs.mkdtempSync(path.join(os.tmpdir(),'covai-generation-'));directories.push(directory);return directory;};
 afterEach(()=>{for(const directory of directories.splice(0)) fs.rmSync(directory,{recursive:true,force:true});});
-const code="import {test,expect} from '@playwright/test'; test('shows tasks',async({page})=>{await page.goto('/');await expect(page.getByRole('heading')).toBeVisible();});";
+const code=`import {test,expect} from '@playwright/test'; test('shows tasks',async({page})=>{
+await test.step('Action: NAVIGATION - open homepage',async()=>{await page.goto('/');});
+await test.step('Assert: task heading is visible',async()=>{await expect(page.getByRole('heading')).toBeVisible();});
+await test.step('Evidence: verified outcome',async()=>{await test.info().attach('evidence',{body:await page.screenshot(),contentType:'image/png'});});
+});`;
 const setup=directory=>{
   fs.mkdirSync(path.join(directory,'.covai'),{recursive:true});
   fs.writeFileSync(path.join(directory,'.covai/system-test.json'),JSON.stringify({database:{engine:'mysql',initSql:'.covai/schema.sql'},backend:{directory:'server',healthPath:'/api/todos'},frontend:{directory:'client'}}));
@@ -38,7 +42,7 @@ describe('verified system generation',()=>{
   });
   it('repairs against real feedback and returns only verified code without saving candidate to suite',async()=>{
     const directory=root();const reportPath=path.join(directory,'report.json');
-    const generate=jest.fn().mockResolvedValueOnce(JSON.stringify({content:code})).mockResolvedValue(JSON.stringify({replacements:[{old:"await page.goto('/');",new:"await page.goto('/'); await page.reload();"}]}));
+    const generate=jest.fn().mockResolvedValueOnce(JSON.stringify({content:code})).mockResolvedValue(JSON.stringify({replacements:[{old:"page.goto('/')",new:"page.goto('/tasks')"}]}));
     const run=jest.fn().mockImplementationOnce(async()=>{
       fs.writeFileSync(reportPath,JSON.stringify({stats:{expected:0,unexpected:1},suites:[{specs:[{title:'shows tasks',tests:[{results:[{status:'failed',error:{message:'heading selector matched two elements'}}]}]}]}]}));
       return {success:false,reportPath};
@@ -51,6 +55,10 @@ describe('verified system generation',()=>{
     expect(generate.mock.calls[1][0]).toContain('heading selector matched two elements');
     expect(fs.existsSync(path.join(directory,'tests/system/ai-generated.spec.js'))).toBe(false);
     expect(run).toHaveBeenCalledWith(expect.objectContaining({executionMode:'full'}));
+    expect(result.code).toContain("await test.step('Action: NAVIGATION - open homepage'");
+    expect(result.code).toContain("await test.step('Assert: task heading is visible'");
+    expect(result.code).toContain("page.goto('/tasks')");
+    expect(generate.mock.calls[0][0]).toContain('In EVERY Playwright scenario');
   });
   it('does not accept repairs that delete scenarios and stops after bounded attempts',async()=>{
     const directory=root();const reportPath=path.join(directory,'report.json');

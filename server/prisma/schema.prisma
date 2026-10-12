@@ -367,6 +367,7 @@ model TestScenario {
   failureCodeSnippet  String?
   failureCategory     String?
   domSnapshot         String?
+  executionDetails    Json?
   coverageLinesPct    Float?
   coverageBranchesPct Float?
   createdAt           DateTime @default(now())

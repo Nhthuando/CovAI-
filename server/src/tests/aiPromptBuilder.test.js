@@ -47,6 +47,8 @@ describe("buildPlaywrightPrompt", () => {
         expect(prompt).toContain("NEVER use `page.waitForTimeout()`");
         expect(prompt).toContain("http://localhost:4173");
         expect(prompt).toContain("tests/e2e/ai-generated.spec.js");
+        expect(prompt).toContain("awaited test.step(");
+        expect(prompt).toContain("never include passwords/tokens/input values in step titles");
     });
 });
 

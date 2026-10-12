@@ -13,6 +13,7 @@ import Button from "../common/Button.jsx";
 import SystemTestMetricsCards from "./system/SystemTestMetricsCards.jsx";
 import SystemTestZeroStateBanner from "./system/SystemTestZeroStateBanner.jsx";
 import SystemTestScenarioList from "./system/SystemTestScenarioList.jsx";
+import SystemTestExecutionView from "./system/SystemTestExecutionView.jsx";
 import SystemTestBreakpointModal from "./system/SystemTestBreakpointModal.jsx";
 import SystemTestGeneratorModal from "./system/SystemTestGeneratorModal.jsx";
 import SystemTestEditorModal from "./system/SystemTestEditorModal.jsx";
@@ -29,6 +30,7 @@ const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
 export default function SystemTestDashboard({ projectId, snapshotId, onOpenFile }) {
   // Current view: "dashboard" | "report"
   const [currentView, setCurrentView] = useState("dashboard");
+  const [resultView, setResultView] = useState("scenarios");
 
   // Selected framework: "playwright" | "cypress"
   const [activeFramework, setActiveFramework] = useState("playwright");
@@ -398,7 +400,14 @@ export default function SystemTestDashboard({ projectId, snapshotId, onOpenFile 
       {/* Metric Cards (Task 6.1) */}
       <SystemTestMetricsCards summary={summary} />
 
-      {/* Scenarios Table & Breakpoint Explorer (Task 6.2) */}
+      <div className="flex gap-2 border-b border-[var(--color-border)] pb-2" aria-label="System test result views">
+        {['scenarios', 'execution'].map(view => <button key={view} type="button" aria-pressed={resultView === view} onClick={() => setResultView(view)} className={`rounded-[var(--radius-sm)] px-4 py-2 text-xs font-semibold focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] ${resultView === view ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)]'}`}>
+          {view === 'scenarios' ? 'Scenarios' : 'Execution'}
+        </button>)}
+      </div>
+      {resultView === 'execution' ? <SystemTestExecutionView key={`${selectionKey}:${summary.testRunId}`} summary={summary} testFiles={testFiles} snapshotId={snapshotId}
+        onInspect={setInspectedScenario} onOpenEditor={target => { onOpenFile?.(target.filePath); setEditorTarget(target); }} /> :
+
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -425,7 +434,7 @@ export default function SystemTestDashboard({ projectId, snapshotId, onOpenFile 
             });
           }}
         />
-      </div>
+      </div>}
 
       </>}
 
