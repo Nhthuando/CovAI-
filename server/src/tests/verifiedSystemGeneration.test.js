@@ -62,12 +62,13 @@ describe('verified system generation',()=>{
   });
   it('does not accept repairs that delete scenarios and stops after bounded attempts',async()=>{
     const directory=root();const reportPath=path.join(directory,'report.json');
-    fs.writeFileSync(reportPath,JSON.stringify({stats:{expected:0,unexpected:1},suites:[]}));
+    fs.writeFileSync(reportPath,JSON.stringify({stats:{expected:0,unexpected:1},suites:[{specs:[{title:'shows tasks',tests:[{results:[{status:'failed',error:{message:'Original API setup failure'}}]}]}]}]}));
     const generate=jest.fn().mockResolvedValueOnce(JSON.stringify({content:code})).mockResolvedValue(JSON.stringify({replacements:[{old:code,new:code.replace('shows tasks','different scenario')}]}));
     const run=jest.fn().mockResolvedValue({success:false,reportPath});
     const result=await generateVerifiedSystemTests({rootDir:directory,dependencies:{ensureSetup:async()=>{},collect:()=>({sourceCode:[],omittedFiles:[]}),observe:async()=>({}),generate,run}});
     expect(result.failed).toBe(true);expect(generate).toHaveBeenCalledTimes(3);expect(run).toHaveBeenCalledTimes(1);
     expect(result.error).toContain('scenarios or assertions');
+    expect(result.error).toContain('Original API setup failure');
   });
   it('refuses repairs that weaken assertions or change imports',()=>{
     expect(()=>applySystemTestRepair(JSON.stringify({replacements:[{old:"expect(page.getByRole('heading'))",new:'expect(true)'}]}),code)).toThrow(/assertions/);

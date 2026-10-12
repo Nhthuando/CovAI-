@@ -95,7 +95,7 @@ const readFailureFeedback = reportPath => {
   const walk=suite=>{
     for(const spec of suite.specs || []) for(const test of spec.tests || []) for(const result of test.results || []) {
       if(result.status === 'passed') continue;
-      const entry={title:spec.title,errors:[result.error?.message,...(result.errors || []).map(error=>error.message)].filter(Boolean)};
+      const entry={title:spec.title,errors:[...(result.annotations || []).filter(item=>item.type === 'api-failure').map(item=>item.description),result.error?.message,...(result.errors || []).map(error=>error.message)].filter(Boolean)};
       const attachment=result.attachments?.find(item=>item.name==='error-context' && item.path);
       if(attachment && path.relative(path.dirname(reportPath),attachment.path).startsWith('..') === false && fs.existsSync(attachment.path)) entry.pageSnapshot=fs.readFileSync(attachment.path,'utf8').split('# Page snapshot')[1]?.split('# Test source')[0]?.slice(0,16000);
       feedback.push(entry);
@@ -122,7 +122,7 @@ export const generateVerifiedSystemTests = async ({rootDir,jobId,onProgress=asyn
   fs.mkdirSync(directory,{recursive:true});
   const file=path.join(directory,'candidate.spec.js');
   const attempts=[];
-  let code='';let intent=null;let feedback='';
+  let code='';let intent=null;let feedback='';let executionFailure='';
   try {
     for(let attempt=0;attempt<3;attempt++) {
       await onProgress(40+attempt*15,attempt ? `Repairing generated tests (attempt ${attempt+1}/3)` : 'Generating system tests from source and live UI');
@@ -131,7 +131,8 @@ export const generateVerifiedSystemTests = async ({rootDir,jobId,onProgress=asyn
       const responseSchema=patchMode
         ? {type:'OBJECT',properties:{replacements:{type:'ARRAY',items:{type:'OBJECT',properties:{old:{type:'STRING'},new:{type:'STRING'}},required:['old','new']}}},required:['replacements']}
         : {type:'OBJECT',properties:{content:{type:'STRING'}},required:['content']};
-      const response=await generate(prompt+instruction,null,{responseMimeType:'application/json',responseSchema,temperature:0.2,maxOutputTokens:16000,
+      const selectorGuidance=patchMode ? '\nFor a strict-mode locator failure inside an assertion, replace only its locator expression, not the enclosing expect(), matcher, or expected value. Scope the locator to the actual dialog/row or use exact text matching where source supports it. For example, replace itemRow.getByText(expectedSubtotal) with itemRow.getByText(expectedSubtotal, { exact: true }); preserve the visibility assertion and expectedSubtotal.' : '';
+      const response=await generate(prompt+instruction+selectorGuidance,null,{responseMimeType:'application/json',responseSchema,temperature:0.2,maxOutputTokens:16000,
         requestTimeoutMs:120000,totalTimeoutMs:300000,maxAttempts:3,
         onRetry:({attempt:retry,maxAttempts,waitMs,reason})=>onProgress(40+attempt*15,`Test generation AI ${reason}; retry ${retry}/${maxAttempts} in ${Math.ceil(waitMs/1000)}s`),
         onWait:({elapsedMs})=>onProgress(40+attempt*15,`Waiting for generated tests (${Math.round(elapsedMs/1000)}s)`),
@@ -167,9 +168,10 @@ export const generateVerifiedSystemTests = async ({rootDir,jobId,onProgress=asyn
         failedResult=confirmed;
       }
       feedback=JSON.stringify({failures:failedResult.feedback,runnerErrors:failedResult.runnerErrors,stats:failedResult.report.stats}).slice(0,48000);
+      executionFailure=feedback;
       attempts.at(-1).error=feedback.slice(0,1500);
     }
-    return {code,attempts,failed:true,error:`Generated tests did not pass real-system verification after ${attempts.length} attempts. ${feedback.slice(0,1200)}`};
+    return {code,attempts,failed:true,error:`Generated tests could not be verified against the running application after ${attempts.length} attempts. ${feedback.slice(0,1200)}${executionFailure && executionFailure !== feedback ? ` Original execution failure: ${executionFailure.slice(0,1800)}` : ''}`};
   } finally {
     // Only remove the owned candidate; runner reports/screenshots remain for diagnostics.
     if(fs.existsSync(file)) fs.unlinkSync(file);

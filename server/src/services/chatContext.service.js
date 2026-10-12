@@ -118,11 +118,20 @@ export const assembleChatContext = async (projectId, userId, options = {}) => {
     if (history.recent.some(row => durableAttachments(row.attachments).some(att => !att.content && att.type !== "image"))) warnings.push("Some earlier attachments have no durable text content and were omitted.");
     const coverage = snapshot ? await prisma.coverageSummary.findUnique({ where: { snapshotId: snapshot.id }, select: { linesPct: true, branchesPct: true, funcsPct: true, stmtsPct: true } }) : null;
     const files = snapshot && options.message?.trim().toLowerCase() === "analyze coverage" ? await prisma.coverageFile.findMany({ where: { snapshotId: snapshot.id }, select: { filePath: true, linesPct: true, branchesPct: true, funcsPct: true, stmtsPct: true }, take: 60, orderBy: { filePath: "asc" } }) : [];
+    const screenContext = options.screenContext || null;
+    const types = { unit: ["JEST", "VITEST"], integration: ["SUPERTEST"], system: ["PLAYWRIGHT", "CYPRESS"] };
+    const testResults = snapshot && screenContext?.activity === "coverage" && types[screenContext.testType]
+        ? await prisma.testRun.findFirst({ where: { snapshotId: snapshot.id, type: { in: types[screenContext.testType] } }, orderBy: { createdAt: "desc" },
+            select: { id: true, type: true, status: true, executionMode: true, totalTests: true, passedTests: true, failedTests: true, skippedTests: true, finishedAt: true,
+                scenarios: { where: { status: "FAILED" }, take: 8, select: { title: true, testFile: true, failureMessages: true } } } }) : null;
+    if (screenContext?.testType && !testResults) warnings.push("No saved test run is available for the current screen. Do not infer results from conversation history.");
+    if (testResults?.scenarios) testResults.scenarios = testResults.scenarios.map(row => ({ ...row,
+        failureMessages: row.failureMessages.slice(0, 2).map(text => text.slice(0, 1500)) }));
     const snapshotInfo = snapshot ? { id: snapshot.id, commitSha: snapshot.commitSha, createdAt: snapshot.createdAt,
         analysisPackage: snapshot.rootDir?.replace(/\\/g, "/").split("/").filter(Boolean).at(-1) || null } : null;
     const summary = history.cursorValid ? session?.summary?.slice(0, 8000) || "" : "";
     return { project, settings, session, messages, recent: history.recent, summary, selectedNotes, memoryEnabled, warnings,
-        snapshot: snapshotInfo, coverage, files, omittedTurns: history.omitted };
+        screenContext, testResults, snapshot: snapshotInfo, coverage, files, omittedTurns: history.omitted };
 };
 export const contextPreview = context => ({
     sessionId: context.session?.id || null, sourceSessionId: context.session?.sourceSessionId || null,
@@ -130,6 +139,6 @@ export const contextPreview = context => ({
     memories: context.selectedNotes.map(({ id, content, sourceMessageId }) => ({ id, content, sourceMessageId })),
     recentTurnCount: context.recent.length, omittedTurnCount: context.omittedTurns, summaryIncluded: Boolean(context.summary),
     summary: context.summary, maintenanceStatus: context.session?.contextStatus || "READY",
-    coverage: context.coverage, files: context.files.map(row => row.filePath), warnings: context.warnings,
+    screenContext: context.screenContext, testResults: context.testResults, coverage: context.coverage, files: context.files.map(row => row.filePath), warnings: context.warnings,
     sizeUnit: "UTF-8 bytes (not exact model tokens)",
 });

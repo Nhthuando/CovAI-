@@ -10,6 +10,22 @@ const roots=[];
 const root=()=>{const directory=fs.mkdtempSync(path.join(os.tmpdir(),'covai-evidence-'));roots.push(directory);return directory;};
 afterEach(()=>{for(const directory of roots.splice(0)) fs.rmSync(directory,{recursive:true,force:true});});
 describe('real system execution and evidence',()=>{
+  it('automatically records user-written steps in an execution copy and preserves config-owned servers',()=>{
+    const directory=root();fs.mkdirSync(path.join(directory,'e2e'));
+    const source="import {test,expect} from '@playwright/test'; test('title',async({page})=>{await page.goto('/');await expect(page).toHaveTitle('Wrong title');});";
+    const original=path.join(directory,'e2e/home.spec.ts');fs.writeFileSync(original,source);
+    const configPath=path.join(directory,'playwright.config.ts');fs.writeFileSync(configPath,"export default {webServer:{command:'npm run dev'},use:{baseURL:'http://localhost:3001'}};");
+    const result=prepareSystemPlaywright({rootDir:directory,execution:{testDirectory:'e2e'},executionMode:'frontend',frontendPort:4173,runKey:'steps',configPath});
+    const specs=path.join(result.directory,'specs');
+    const copy=fs.readFileSync(path.join(specs,fs.readdirSync(specs)[0]),'utf8');
+    expect(copy).toContain('test.step("Open application page"');
+    expect(copy).toContain('test.step("Verify expected result"');
+    expect(copy).toContain("expect(page).toHaveTitle('Wrong title')");
+    expect(fs.readFileSync(original,'utf8')).toBe(source);
+    const config=fs.readFileSync(path.join(result.directory,'playwright.config.mjs'),'utf8');
+    expect(config).toContain('import original from');expect(config).toContain('original.webServer');
+    expect(config).toContain('...base.use');expect(config).not.toContain("baseURL:'http://127.0.0.1:4173'");
+  });
   it('stores inline PNG checkpoints and rejects invalid or excessive attachment bodies',()=>{
     const directory=root();
     const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9d8AAAAASUVORK5CYII=','base64');
@@ -38,6 +54,8 @@ describe('real system execution and evidence',()=>{
     expect(fs.readFileSync(path.join(result.directory,'playwright.config.mjs'),'utf8')).toContain("screenshot:'on'");
     const fixture=fs.readFileSync(path.join(result.directory,'fixture.mjs'),'utf8');
     expect(fixture).toContain('route.continue');expect(fixture).not.toContain('route.fulfill');
+    expect(fixture).toContain('playwright.request.newContext({baseURL:backend');
+    expect(fixture).toContain('await request.dispose()');
   });
   it.each(['js','cjs'])('runs CommonJS .%s Playwright imports through a CommonJS fixture and preserves the original file',(extension)=>{
     const directory=root();fs.mkdirSync(path.join(directory,'tests/e2e'),{recursive:true});

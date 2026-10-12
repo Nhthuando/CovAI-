@@ -20,7 +20,7 @@ import { remapExecutionLocations } from "./systemTestExecutionDetails.service.js
 import { calculateSystemCoverage } from "./systemCoverageEngine.service.js";
 import { collectSystemGenerationContext } from "./systemGenerationContext.service.js";
 import crypto from "node:crypto";
-import {prepareFullSystemExecution} from './fullSystemExecutionPreparation.service.js';
+import {prepareFullSystemExecution,resolveSystemTestFile} from './fullSystemExecutionPreparation.service.js';
 
 const readPayload = (payloadJson) => {
   if (!payloadJson) return {};
@@ -183,7 +183,7 @@ export const processSystemTestAnalysisJob = async (jobId) => {
     }
 
     if (payload.testFile) {
-      execution.testFile = payload.testFile;
+      execution.testFile = resolveSystemTestFile(job.snapshot.rootDir, execution.rootDir || job.snapshot.rootDir, payload.testFile);
       if (execution.runner === "cypress" && !execution.command.includes("--spec")) {
         const redirection = execution.command.indexOf(" > ");
         const specArg = ` --spec "${payload.testFile}"`;

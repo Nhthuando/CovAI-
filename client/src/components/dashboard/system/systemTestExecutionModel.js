@@ -44,3 +44,29 @@ export function executionDuration(ms) {
   if (duration(ms) === null) return 'Unavailable';
   return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(2)}s`;
 }
+
+export function scenarioProgress(scenario, attempt = scenario.executionDetails?.attempts?.at(-1)) {
+  const details = scenario.executionDetails;
+  const failed = ['failed', 'timedOut', 'interrupted'].includes(attempt?.status) || (!attempt && scenario.status?.toLowerCase() === 'failed');
+  const findFailure = steps => {
+    for (const step of steps || []) {
+      const nested = findFailure(step.steps);
+      if (nested) return nested;
+      if (step.status === 'failed' || step.error) return step;
+    }
+    return null;
+  };
+  const failedStep = findFailure(attempt?.steps);
+  const errors = [...new Set([...(attempt?.errors || []), failedStep?.error,
+    ...(!attempt?.errors?.length && !failedStep?.error ? scenario.failureMessages || [] : []),
+    !attempt?.errors?.length && !failedStep?.error ? scenario.errorMessage : null].filter(Boolean))];
+  const plan = details?.plannedSteps;
+  const recorded = (attempt?.steps || []).filter(step => step.category === 'test.step' || (!step.category && plan?.includes(step.title)));
+  const completed = Array.isArray(plan) ? recorded.filter(step => plan.includes(step.title) && ['completed', 'passed'].includes(step.status) && !step.error).length : null;
+  const reliable = plan?.length && !details.truncated && recorded.length <= plan.length
+    && recorded.every((step, index) => step.title === plan[index]) && completed <= plan.length;
+  const passed = attempt ? attempt.status === 'passed' : scenario.status?.toLowerCase() === 'passed';
+  return { percent: reliable ? Math.floor(completed / plan.length * 100) : passed ? 100 : null,
+    completed: reliable ? completed : null, total: reliable ? plan.length : null,
+    failed, failedStep: failedStep?.title || scenario.failureStep || scenario.failureBreakpoint?.failureStep || null, errors };
+}

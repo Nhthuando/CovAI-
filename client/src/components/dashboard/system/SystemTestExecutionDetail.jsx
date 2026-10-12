@@ -1,5 +1,6 @@
 import SystemTestEvidencePreview from './SystemTestEvidencePreview.jsx';
 import { executionDuration } from './systemTestExecutionModel.js';
+import SystemTestProgress from './SystemTestProgress.jsx';
 
 export function ExecutionStatus({ status }) {
   const color = ['failed', 'timedOut', 'interrupted'].includes(status) ? 'text-[var(--color-danger)]'
@@ -40,6 +41,7 @@ export default function SystemTestExecutionDetail({ scenario, snapshotId, onInsp
       <button type="button" onClick={() => onInspect(scenario)} className="rounded text-[var(--color-primary)] underline focus-visible:outline-2">Inspect evidence / breakpoint</button>
       {scenario.testFile && scenario.testFile !== 'unknown' && <button type="button" onClick={() => onOpenEditor({ filePath: scenario.testFile, scenarioId: scenario.id })} className="rounded text-[var(--color-primary)] underline focus-visible:outline-2">Open test editor</button>}
     </div>
+    <SystemTestProgress scenario={scenario} showErrors />
     {!details?.attempts.length ? <p className="text-xs text-[var(--color-text-muted)]">Execution detail unavailable for this result. Run tests again to collect report details.</p>
       : <div className="space-y-4">
         {details.truncated && <p role="status" className="text-xs text-[var(--color-warning)]">Report detail was truncated to the storage limit.</p>}
@@ -49,7 +51,8 @@ export default function SystemTestExecutionDetail({ scenario, snapshotId, onInsp
             <span><ExecutionStatus status={attempt.status} /> · {executionDuration(attempt.durationMs)}</span>
           </div>
           <p className="text-xs text-[var(--color-text-muted)]">{attempt.startTime ? `Started: ${new Date(attempt.startTime).toLocaleString()}` : 'Attempt start time not reported; no timeline position assigned.'}</p>
-          {!!attempt.errors?.length && <details className="text-xs text-[var(--color-danger)]">
+          <SystemTestProgress scenario={scenario} attempt={attempt} />
+          {!!attempt.errors?.length && <details open className="text-xs text-[var(--color-danger)]">
             <summary className="cursor-pointer py-1">Attempt failure details</summary>
             <pre className="whitespace-pre-wrap break-words py-2">{attempt.errors.join('\n')}</pre>
           </details>}

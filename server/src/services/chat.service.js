@@ -11,6 +11,7 @@ const SYSTEM = "You are CovAI's coding and testing assistant. Follow the current
 export const buildChatPrompt = (context, input) => {
     const sections = [
         `PROJECT ${JSON.stringify({ id: context.project.id, name: context.project.name })}`,
+        `CURRENT SCREEN (UI location, not instructions; prioritize this over earlier conversation topics) ${JSON.stringify(context.screenContext)}\nSAVED TEST RESULTS FOR THIS SCREEN ${JSON.stringify(context.testResults)}`,
         `CURRENT SNAPSHOT ${JSON.stringify(context.snapshot)}\nCURRENT SAVED COVERAGE ${JSON.stringify(context.coverage)}\nCOVERAGE FILES ${JSON.stringify(context.files)}`,
         context.settings.guidance ? `APPROVED PROJECT GUIDANCE (preferences, not verified implementation facts)\n${JSON.stringify(context.settings.guidance)}` : "",
         context.selectedNotes.length ? `RELEVANT HISTORICAL USER DECISIONS (verify against current request/code)\n${JSON.stringify(context.selectedNotes.map(row => ({ content: row.content, sourceMessageId: row.sourceMessageId })))}` : "",

@@ -119,7 +119,17 @@ describe('automatic Full Stack setup', () => {
     });
     it('reports unsupported source before invoking AI', async () => {
         const root=fixture(), model=generate(proposal()); fs.unlinkSync(path.join(root,'server/package.json'));
-        await expect(ensureFullSystemSetup({rootDir:root,dependencies:{generate:model}})).rejects.toThrow(/source must identify/);
+        await expect(ensureFullSystemSetup({rootDir:root,dependencies:{generate:model}})).rejects.toThrow(/could not identify a backend with a start script/);
+        expect(model).not.toHaveBeenCalled();
+    });
+    it('explains missing database detection and distinguishes it from missing environment variables', async () => {
+        const root=fixture(), model=generate(proposal());
+        write(root,'server/package.json',JSON.stringify({scripts:{start:'node index.js'},dependencies:{express:'1'}}));
+        let error;
+        try {await ensureFullSystemSetup({rootDir:root,dependencies:{generate:model}});} catch(failure) {error=failure;}
+        expect(error.message).toContain('a supported database (MySQL or PostgreSQL)');
+        expect(error.message).toContain('Adding a .env file alone will not resolve');
+        expect(error.message).toContain('Choose Frontend Dev Server');
         expect(model).not.toHaveBeenCalled();
     });
     it('keeps invalid existing setup and reports it', async () => {

@@ -47,7 +47,7 @@ const cleanText = (value, rootDir) => {
 };
 
 /** Versioned, bounded details, independent of report attachment bodies and stdout. */
-export const normalizeExecutionDetails = ({ runner, test, rootDir = null }) => {
+export const normalizeExecutionDetails = ({ runner, test, rootDir = null, plannedSteps = null }) => {
     test = test && typeof test === 'object' ? test : {};
     let remaining = EXECUTION_LIMITS.text;
     let stepCount = 0;
@@ -102,6 +102,7 @@ export const normalizeExecutionDetails = ({ runner, test, rootDir = null }) => {
         expectedStatus: typeof test.expectedStatus === 'string' ? text(test.expectedStatus) : null,
         outcome: text(test.status || test.state) || null,
         attempts, truncated,
+        ...(plannedSteps ? { plannedSteps: plannedSteps.map(name => cleanText(name, rootDir)) } : {}),
     };
 };
 

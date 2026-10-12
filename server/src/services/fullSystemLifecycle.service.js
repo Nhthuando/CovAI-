@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { prepareFullSystemPackage, readApplicationEnvironment } from './fullSystemRuntime.service.js';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { startAutServer, stopAutServer, resolveAvailableAutPort } from './autLifecycle.service.js';
@@ -63,17 +65,28 @@ export const startFullSystem = async ({rootDir,jobId,onProgress}) => {
       } catch {await new Promise(resolve => setTimeout(resolve,1000));}
     }
     if (!ready) throw new ServiceError('Disposable test database did not become ready',408);
-    await writeSql(container,engine,password,fs.readFileSync(containedPath(rootDir,config.database.initSql),'utf8'));
     const backendDir=containedPath(rootDir,config.backend.directory);
     const backendPort=await resolveAvailableAutPort(backendDir,4500);
     const databaseUrl=`${engine === 'mysql' ? 'mysql' : 'postgresql'}://covai:${password}@127.0.0.1:${databasePort}/covai_test`;
-    const backend=await startAutServer({snapshotDir:backendDir,port:backendPort,jobId,healthPath:config.backend.healthPath,requireHealthy:true,env:{DATABASE_URL:databaseUrl,DB_HOST:'127.0.0.1',DB_PORT:String(databasePort),DB_USER:'covai',DB_PASSWORD:password,DB_NAME:'covai_test'}});
+    const backendEnv={...readApplicationEnvironment(backendDir),NODE_ENV:'development',DATABASE_URL:databaseUrl,DB_HOST:'127.0.0.1',DB_PORT:String(databasePort),DB_USER:'covai',DB_PASSWORD:password,DB_NAME:'covai_test'};
+    const metadata=JSON.parse(fs.readFileSync(path.join(backendDir,'package.json'),'utf8'));
+    const usesPrisma=Boolean(metadata.dependencies?.['@prisma/client'] || metadata.devDependencies?.['@prisma/client']);
+    // Prisma owns its schema/migrations; generated SQL is for SQL-driver projects.
+    if (!usesPrisma) await writeSql(container,engine,password,fs.readFileSync(containedPath(rootDir,config.database.initSql),'utf8'));
+    await onProgress?.(28,'Installing backend dependencies and preparing the isolated database schema');
+    await prepareFullSystemPackage({directory:backendDir,env:backendEnv,jobId,database:true});
+    const preload=fileURLToPath(new URL('../utils/autPortOverride.cjs',import.meta.url)).replaceAll('\\','/');
+    backendEnv.COVAI_AUT_PORT=String(backendPort);
+    backendEnv.NODE_OPTIONS=`${process.env.NODE_OPTIONS || ''} --require="${preload}"`.trim();
+    const backend=await startAutServer({snapshotDir:backendDir,port:backendPort,jobId,healthPath:config.backend.healthPath,requireHealthy:true,env:backendEnv,preferStart:true});
     if (!backend.started) throw new ServiceError('No backend start script found',422);
     handles.push(backend);
     const frontendDir=containedPath(rootDir,config.frontend.directory);
     const frontendPort=await resolveAvailableAutPort(frontendDir,4173);
     const backendUrl=`http://127.0.0.1:${backendPort}`;
-    const frontend=await startAutServer({snapshotDir:frontendDir,port:frontendPort,jobId,requireHealthy:true,env:{VITE_API_URL:backendUrl,VITE_API_BASE_URL:backendUrl}});
+    const frontendEnv={...readApplicationEnvironment(frontendDir),NODE_ENV:'development',VITE_API_URL:backendUrl,VITE_API_BASE_URL:backendUrl};
+    await prepareFullSystemPackage({directory:frontendDir,env:frontendEnv,jobId});
+    const frontend=await startAutServer({snapshotDir:frontendDir,port:frontendPort,jobId,requireHealthy:true,env:frontendEnv});
     if (!frontend.started) throw new ServiceError('No frontend start script found',422);
     handles.push(frontend);
     return {frontendPort,backendUrl,cleanup};

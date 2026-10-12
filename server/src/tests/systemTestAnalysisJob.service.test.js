@@ -14,11 +14,11 @@ const prepareFullSystemExecution = jest.fn();
 
 await jest.unstable_mockModule("../config/prisma.js", () => ({ default: prismaMock }));
 await jest.unstable_mockModule("../services/job.service.js", () => lifecycle);
-await jest.unstable_mockModule("../services/jobOutput.service.js", () => ({ saveJobOutput }));
+await jest.unstable_mockModule("../services/jobOutput.service.js", () => ({ saveJobOutput, appendJobOutput: jest.fn() }));
 await jest.unstable_mockModule("../services/systemTestDetection.service.js", () => ({ resolveSystemTestExecution }));
 await jest.unstable_mockModule("../services/systemTestRunner.service.js", () => ({ runSystemTests }));
 await jest.unstable_mockModule("../services/systemTestResultParser.service.js", () => ({ parseSystemTestResult }));
-await jest.unstable_mockModule('../services/fullSystemExecutionPreparation.service.js',()=>({prepareFullSystemExecution}));
+await jest.unstable_mockModule('../services/fullSystemExecutionPreparation.service.js',()=>({prepareFullSystemExecution,resolveSystemTestFile: (_root,_runner,file)=>file}));
 await jest.unstable_mockModule("../services/coverageSummaryParser.service.js", () => ({ parseCoverageSummary: jest.fn() }));
 await jest.unstable_mockModule("../services/coverageFileParser.service.js", () => ({ parseCoverageFilesForSnapshot: jest.fn() }));
 await jest.unstable_mockModule("../services/coverageFunctionParser.service.js", () => ({ parseCoverageFunctionsForSnapshot: jest.fn() }));

@@ -398,6 +398,11 @@ export default function SystemTestDashboard({ projectId, snapshotId, onOpenFile 
         </div>
       ) : <>
       {/* Metric Cards (Task 6.1) */}
+      <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] p-3 text-xs text-[var(--color-text-secondary)] space-y-2">
+        <p className="font-medium">These results apply only to the files executed in this run:</p>
+        <ul className="space-y-1 font-mono break-all">{testFiles.filter(file => file.scenarios?.length).map(file => <li key={file.filePath}>{file.filePath}</li>)}</ul>
+        {executionMode === 'full' && <p>Full Stack runs the real-backend suite. Files that mock APIs with page.route / route.fulfill belong to Frontend mode. To check an edited file, open Edit Test and run that file.</p>}
+      </div>
       <SystemTestMetricsCards summary={summary} />
 
       <div className="flex gap-2 border-b border-[var(--color-border)] pb-2" aria-label="System test result views">
@@ -417,7 +422,7 @@ export default function SystemTestDashboard({ projectId, snapshotId, onOpenFile 
             </h3>
           </div>
           <span className="text-xs text-[var(--color-text-muted)] font-mono">
-            {testFiles.length} {testFiles.length === 1 ? "spec file" : "spec files"} detected
+            {testFiles.filter(file => file.scenarios?.length).length} spec file(s) executed
           </span>
         </div>
 

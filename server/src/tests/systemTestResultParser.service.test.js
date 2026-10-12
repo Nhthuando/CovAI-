@@ -17,6 +17,21 @@ afterEach(() => paths.splice(0).forEach((dir) => fs.rmSync(dir, { recursive: tru
 describe("parseSystemTestResult", () => {
   const startedAt = new Date("2026-08-22T00:00:00Z");
   const finishedAt = new Date("2026-08-22T00:00:02Z");
+  it('retains the complete source step plan when execution stops early', () => {
+    const resultPath = report('steps.json', { suites: [{ specs: [{ file: 'checkout.spec.js', line: 1, title: 'checkout', tests: [{ results: [{ status: 'failed', steps: [
+      { title: 'open', category: 'test.step', duration: 10 },
+      { title: 'pay', category: 'test.step', duration: 10, error: { message: 'Payment unavailable' } },
+    ] }] }] }] }] });
+    const rootDir = path.dirname(resultPath);
+    fs.writeFileSync(path.join(rootDir, 'checkout.spec.js'), `test('checkout', async () => {
+      await test.step('open', async () => {});
+      await test.step('pay', async () => {});
+      await test.step('receipt', async () => {});
+    });`);
+    const parsed = parseSystemTestResult({ runner: 'playwright', resultPath, startedAt, finishedAt, rootDir });
+    expect(parsed.scenarios[0].executionDetails.plannedSteps).toEqual(['open', 'pay', 'receipt']);
+    expect(parsed.scenarios[0].executionDetails.attempts[0].steps).toHaveLength(2);
+  });
 
   it('prefers the inline outcome checkpoint over an automatic screenshot after cleanup',()=>{
     const resultPath=report('checkpoint.json',{stats:{expected:1},suites:[{specs:[{title:'create task',tests:[{results:[{status:'passed',attachments:[

@@ -1,7 +1,32 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildExecutionTimeline, executionDuration, executionScenarios, filterExecutionScenarios } from './systemTestExecutionModel.js';
+import { buildExecutionTimeline, executionDuration, executionScenarios, filterExecutionScenarios, scenarioProgress } from './systemTestExecutionModel.js';
 const start = '2026-10-12T00:00:00.000Z';
+test('failed test reports 70% from seven completed steps out of ten planned steps', () => {
+  const plan = Array.from({ length: 10 }, (_, index) => `Step ${index + 1}`);
+  const result = scenarioProgress({ status: 'failed', executionDetails: { plannedSteps: plan, attempts: [{ status: 'failed', errors: ['Expected receipt'], steps: [
+    ...plan.slice(0, 7).map(title => ({ title, category: 'test.step', status: 'completed' })),
+    { title: plan[7], category: 'test.step', status: 'failed', error: 'Expected receipt' },
+  ] }] } });
+  assert.equal(result.percent, 70);
+  assert.equal(result.completed, 7);
+  assert.equal(result.total, 10);
+  assert.equal(result.failedStep, 'Step 8');
+  assert.deepEqual(result.errors, ['Expected receipt']);
+});
+test('missing or truncated plans never yield guessed failure percentages', () => {
+  assert.equal(scenarioProgress({ status: 'failed', failureMessages: ['Browser missing'] }).percent, null);
+  assert.deepEqual(scenarioProgress({ status: 'failed', failureMessages: ['Browser missing'] }).errors, ['Browser missing']);
+  assert.equal(scenarioProgress({ status: 'failed', executionDetails: { truncated: true, plannedSteps: ['A'], attempts: [{ status: 'failed', steps: [] }] } }).percent, null);
+});
+test('retry progress uses the selected attempt without blending earlier failures', () => {
+  const failed = { status: 'failed', steps: [{ title: 'A', status: 'failed', error: 'Timeout' }] };
+  const passed = { status: 'passed', steps: [{ title: 'A', status: 'completed' }] };
+  const sc = { status: 'flaky', executionDetails: { plannedSteps: ['A'], attempts: [failed, passed] } };
+  assert.equal(scenarioProgress(sc).percent, 100);
+  assert.equal(scenarioProgress(sc).failed, false);
+  assert.equal(scenarioProgress(sc, failed).percent, 0);
+});
 const scenario = (id, status, attempts) => ({ id, title: id, status, executionDetails: { version: 1, attempts } });
 test('parallel attempts share an axis and elapsed is not summed test duration', () => {
   const model = buildExecutionTimeline([

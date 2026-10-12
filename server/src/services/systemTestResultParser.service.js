@@ -1,7 +1,9 @@
 import fs from "fs";
+import path from "node:path";
 import { ServiceError } from "../utils/serviceError.js";
 import { analyzeFailureBreakpoint } from "./failureBreakpointAnalyzer.service.js";
 import { normalizeExecutionDetails } from "./systemTestExecutionDetails.service.js";
+import { readPlaywrightStepPlan } from "./systemTestStepPlan.service.js";
 
 const readReport = (resultPath) => {
   if (!fs.existsSync(resultPath)) {
@@ -89,7 +91,7 @@ const normalisePlaywright = (report, startedAt, finishedAt, rootDir = null) => {
           suiteName: suite.title || null,
           status: statusStr,
           durationMs: results.some(r => typeof r.duration === 'number') ? totalDuration : null,
-          executionDetails: normalizeExecutionDetails({ runner: 'playwright', test, rootDir }),
+          executionDetails: normalizeExecutionDetails({ runner: 'playwright', test, rootDir, plannedSteps: readPlaywrightStepPlan(rootDir, { ...spec, file: report.config?.rootDir ? path.resolve(report.config.rootDir, spec.file || currentFile) : spec.file || currentFile }) }),
           failureMessages,
           testFile: currentFile || spec.file || null,
           screenshotSource: (() => {
