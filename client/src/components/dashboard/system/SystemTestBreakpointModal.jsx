@@ -34,6 +34,9 @@ export default function SystemTestBreakpointModal({
     const loadEvidence = async () => {
       setLoadingEvidence(true);
       setEvidenceError(null);
+      setEvidenceUrl(null);
+      setDomData(null);
+      setActiveTab("screenshot");
 
       // Load Screenshot
       try {
@@ -80,6 +83,7 @@ export default function SystemTestBreakpointModal({
   if (!isOpen || !scenario) return null;
 
   const breakpoint = scenario.failureBreakpoint || {};
+  const isFailure = ["FAILED", "FLAKY"].includes(String(scenario.status).toUpperCase());
   const failureCategory =
     breakpoint.failureCategory || scenario.failureCategory || "EXECUTION_ERROR";
   const failureStep = breakpoint.failureStep || scenario.failureStep || null;
@@ -89,18 +93,18 @@ export default function SystemTestBreakpointModal({
     scenario.errorMessage || breakpoint.errorMessage || "Test step assertion failed or timed out.";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs font-sans">
+    <div role="dialog" aria-modal="true" aria-label={`Evidence for ${scenario.title || scenario.name}`} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs font-sans">
       <div className="w-full max-w-3xl bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-lg)] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
         <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-secondary)]/50">
           <div className="flex items-center gap-2.5 overflow-hidden">
-            <div className="p-1.5 rounded-[var(--radius-sm)] bg-[var(--color-danger)]/10 text-[var(--color-danger)] shrink-0">
-              <AlertOctagon size={18} />
+            <div className={`p-1.5 rounded-[var(--radius-sm)] shrink-0 ${isFailure ? "bg-[var(--color-danger)]/10 text-[var(--color-danger)]" : "bg-[var(--color-success)]/10 text-[var(--color-success)]"}`}>
+              {isFailure ? <AlertOctagon size={18} /> : <Image size={18} />}
             </div>
             <div className="overflow-hidden">
               <div className="flex items-center gap-2">
-                <span className="text-xs px-2 py-0.5 rounded-[var(--radius-sm)] bg-[var(--color-danger)]/10 text-[var(--color-danger)] border border-[var(--color-danger)]/30 font-semibold uppercase tracking-wider">
-                  {failureCategory}
+                <span className={`text-xs px-2 py-0.5 rounded-[var(--radius-sm)] border font-semibold uppercase tracking-wider ${isFailure ? "bg-[var(--color-danger)]/10 text-[var(--color-danger)] border-[var(--color-danger)]/30" : "bg-[var(--color-success)]/10 text-[var(--color-success)] border-[var(--color-success)]/30"}`}>
+                  {isFailure ? failureCategory : scenario.status || "Evidence"}
                 </span>
                 <span className="text-xs text-[var(--color-text-muted)] font-mono truncate">
                   {scenario.testFile}
@@ -135,14 +139,14 @@ export default function SystemTestBreakpointModal({
           )}
 
           {/* Error Message */}
-          <div>
+          {isFailure && <div>
             <label className="block text-[11px] font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-1">
               Failure Reason & Stack
             </label>
             <div className="p-3 rounded-[var(--radius-md)] bg-[var(--color-danger)]/5 border border-[var(--color-danger)]/20 text-[var(--color-danger)] font-mono text-[11px] leading-relaxed whitespace-pre-wrap overflow-x-auto max-h-36">
               {errorMessage}
             </div>
-          </div>
+          </div>}
 
           {/* Code Snippet Highlight */}
           {failureSnippet && (
@@ -170,7 +174,7 @@ export default function SystemTestBreakpointModal({
                   }`}
                 >
                   <Image size={13} />
-                  <span>Failure Screenshot</span>
+                  <span>Screenshot</span>
                 </button>
                 <button
                   type="button"
@@ -201,20 +205,20 @@ export default function SystemTestBreakpointModal({
             {loadingEvidence ? (
               <div className="p-8 text-center text-[var(--color-text-muted)] flex flex-col items-center justify-center gap-2">
                 <Loader2 size={20} className="animate-spin text-[var(--color-primary)]" />
-                <span>Loading breakpoint evidence...</span>
+                <span>Loading scenario evidence...</span>
               </div>
             ) : activeTab === "screenshot" ? (
               evidenceUrl ? (
                 <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] overflow-hidden bg-black/40 flex items-center justify-center max-h-80">
                   <img
                     src={evidenceUrl}
-                    alt={`Breakpoint for ${scenario.title}`}
+                    alt={`Test evidence for ${scenario.title}`}
                     className="max-w-full max-h-80 object-contain"
                   />
                 </div>
               ) : (
                 <div className="p-6 text-center text-[var(--color-text-muted)] italic border border-dashed border-[var(--color-border)] rounded-[var(--radius-md)]">
-                  {evidenceError || "No screenshot available for this failure breakpoint."}
+                  {evidenceError || "No screenshot available for this scenario."}
                 </div>
               )
             ) : (
@@ -236,7 +240,7 @@ export default function SystemTestBreakpointModal({
         {/* Footer Actions */}
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-secondary)]/40 flex items-center justify-between">
           <div className="text-[11px] text-[var(--color-text-muted)]">
-            Breakpoint ID: <span className="font-mono">{scenario.id || "N/A"}</span>
+            Scenario ID: <span className="font-mono">{scenario.id || "N/A"}</span>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="secondary" size="sm" onClick={onClose}>
@@ -252,12 +256,12 @@ export default function SystemTestBreakpointModal({
                   onOpenEditor({
                     filePath: scenario.testFile,
                     scenarioId: scenario.id,
-                    initialMode: "FIX_BREAKPOINT",
+                    initialMode: isFailure ? "FIX_BREAKPOINT" : "EDIT",
                   });
                 }
               }}
             >
-              Fix in Editor
+              {isFailure ? "Fix in Editor" : "Open in Editor"}
             </Button>
           </div>
         </div>

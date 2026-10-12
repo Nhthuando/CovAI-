@@ -29,6 +29,7 @@ export default function SystemTestEditorModal({
   scenarioId = null,
   initialMode = null,
   framework = "playwright",
+  executionMode = "frontend",
   onSaved,
   onRunFinished,
 }) {
@@ -177,7 +178,7 @@ export default function SystemTestEditorModal({
     setError(null);
 
     try {
-      const res = await runSingleSystemTest(snapshotId, filePath, framework);
+      const res = await runSingleSystemTest(snapshotId, filePath, framework, executionMode);
       setSingleRunResult(res.data);
       if (onRunFinished) onRunFinished(res.data);
     } catch (err) {

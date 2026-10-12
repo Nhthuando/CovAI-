@@ -1,4 +1,5 @@
-import { useState, useMemo } from "react";
+import SystemTestEvidencePreview from "./SystemTestEvidencePreview.jsx";
+import { Fragment, useState, useMemo } from "react";
 import {
   FileCode2,
   ChevronDown,
@@ -53,6 +54,7 @@ function StatusBadge({ status }) {
 
 export default function SystemTestScenarioList({
   testFiles = [],
+  snapshotId,
   onInspectBreakpoint,
   onOpenEditor,
 }) {
@@ -230,8 +232,8 @@ export default function SystemTestScenarioList({
                               : "—";
 
                           return (
+                            <Fragment key={sc.id || sc.title}>
                             <tr
-                              key={sc.id || sc.title}
                               className={`hover:bg-[var(--color-surface-secondary)]/40 transition-colors ${
                                 isFailed ? "bg-[var(--color-danger)]/5" : ""
                               }`}
@@ -265,7 +267,7 @@ export default function SystemTestScenarioList({
                                         })
                                       }
                                       className="inline-flex items-center gap-1 px-2 py-1 rounded-[var(--radius-sm)] text-[11px] font-semibold bg-[var(--color-danger)]/10 text-[var(--color-danger)] hover:bg-[var(--color-danger)]/20 border border-[var(--color-danger)]/30 transition-colors cursor-pointer"
-                                      title="Inspect failure breakpoint, screenshot & DOM"
+                                      title="View scenario evidence, screenshot & DOM"
                                     >
                                       <AlertOctagon size={12} />
                                       <span>Breakpoint</span>
@@ -287,6 +289,17 @@ export default function SystemTestScenarioList({
                                 </div>
                               </td>
                             </tr>
+                            <tr>
+                              <td colSpan={5}>
+                                <SystemTestEvidencePreview
+                                  key={`${snapshotId}:${sc.id}`}
+                                  snapshotId={snapshotId}
+                                  scenario={sc}
+                                  onEnlarge={() => onInspectBreakpoint({ ...sc, testFile: file.filePath })}
+                                />
+                              </td>
+                            </tr>
+                            </Fragment>
                           );
                         })}
                       </tbody>

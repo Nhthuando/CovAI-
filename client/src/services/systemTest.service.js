@@ -56,11 +56,11 @@ export const runSystemTestAnalysis = (projectId, snapshotId, runner = null) =>
 /**
  * Fetch system test execution summary and coverage metrics
  */
-export const getSystemTestSummary = async (snapshotId) => {
+export const getSystemTestSummary = async (snapshotId, params = {}) => {
   const headers = getAuthHeaders();
   const response = await axios.get(
     `${API_BASE}/coverage/${snapshotId}/system/summary`,
-    { headers }
+    { headers, params }
   );
   return response.data;
 };
@@ -83,24 +83,29 @@ export const getSystemTestScenarios = async (snapshotId, params = {}) => {
 export const getSystemTestEvidence = async (
   snapshotId,
   scenarioId,
-  format = "image"
+  format = "image",
+  { signal } = {}
 ) => {
   const headers = getAuthHeaders();
   if (format === "dom" || format === "json") {
     const response = await axios.get(
-      `${API_BASE}/coverage/${snapshotId}/system/scenarios/${scenarioId}/evidence?format=${format}`,
+      `${API_BASE}/coverage/${snapshotId}/system/scenarios/${scenarioId}/evidence?type=dom`,
       { headers }
     );
     return response.data;
   }
 
   const response = await axios.get(
-    `${API_BASE}/coverage/${snapshotId}/system/scenarios/${scenarioId}/evidence`,
+    `${API_BASE}/coverage/${snapshotId}/system/scenarios/${scenarioId}/evidence?type=screenshot`,
     {
-      headers,
+      headers: { ...headers, Accept: "image/png" },
       responseType: "blob",
+      signal,
     }
   );
+  if (!response.data?.type?.startsWith("image/")) {
+    throw new Error("Screenshot unavailable for this scenario");
+  }
   return response.data;
 };
 
@@ -157,12 +162,13 @@ export const updateSystemTestFileContent = async (
 export const runSingleSystemTest = async (
   snapshotId,
   filePath,
-  framework = "playwright"
+  framework = "playwright",
+  executionMode = "frontend"
 ) => {
   const headers = getAuthHeaders();
   const response = await axios.post(
     `${API_BASE}/coverage/${snapshotId}/system/tests/run-single`,
-    { filePath, framework },
+    { filePath, framework, executionMode },
     { headers }
   );
   return response.data;

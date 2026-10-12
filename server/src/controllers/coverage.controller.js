@@ -1,3 +1,4 @@
+import { parseSystemTestResultQuery } from '../validators/systemTestResultQuery.validator.js';
 import fs from "fs";
 import path from "path";
 import prisma from "../config/prisma.js";
@@ -28,7 +29,7 @@ import { detectSystemTestFrameworksForSnapshot } from "../services/systemTestFra
 import { optimizeSystemTest } from "../services/systemTestBooster.service.js";
 import { validateGeneratedTestCode } from "../validators/aiTestCode.validator.js";
 import { extractSuitesAndScenarios } from "../utils/testFileParser.js";
-import { containedPath } from "../services/fullSystemLifecycle.service.js";
+import { containedPath, readFullSystemConfig } from "../services/fullSystemLifecycle.service.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -2064,6 +2065,9 @@ export const runSystemTestCoverage = async (req, res) => {
         if (!["frontend", "full"].includes(executionMode)) {
             return res.status(400).json({ success: false, message: "executionMode must be 'frontend' or 'full'." });
         }
+        if (executionMode === "full") {
+            readFullSystemConfig(snapshot.rootDir, {allowMissing: true});
+        }
 
         const testFile = req.body?.testFile ? String(req.body.testFile).trim() : null;
 
@@ -2139,10 +2143,12 @@ export const getSystemTestSummary = async (req, res) => {
             return res.status(403).json({ success: false, message: "Forbidden." });
         }
 
+        const resultFilter = parseSystemTestResultQuery(req.query);
         const testRuns = await prisma.testRun.findMany({
             where: {
                 snapshotId,
                 type: { in: ["PLAYWRIGHT", "CYPRESS"] },
+                ...resultFilter,
             },
             orderBy: { createdAt: "desc" },
             include: {
@@ -2156,7 +2162,7 @@ export const getSystemTestSummary = async (req, res) => {
             ? await prisma.aiTest.findFirst({
                 where: {
                     snapshotId,
-                    mode: { in: ["PLAYWRIGHT_E2E", "CYPRESS_E2E"] },
+                    mode: { in: ["PLAYWRIGHT_E2E"] },
                 },
                 orderBy: { createdAt: "desc" },
                 select: {
@@ -2185,6 +2191,8 @@ export const getSystemTestSummary = async (req, res) => {
                 success: true,
                 data: {
                     hasRun: false,
+                    testRunId: null,
+                    executionMode: resultFilter.executionMode || null,
                     runner: null,
                     status: null,
                     e2eTests: 0,
@@ -2305,6 +2313,7 @@ export const getSystemTestSummary = async (req, res) => {
             success: true,
             data: {
                 hasRun: true,
+                testRunId: latestRun.id,
                 runner: latestRun.type.toLowerCase(),
                 status: latestRun.status,
                 e2eTests: totalTests,
@@ -2347,7 +2356,7 @@ export const getSystemTestSummary = async (req, res) => {
         });
     } catch (error) {
         console.error("[getSystemTestSummary] Error:", error);
-        return res.status(500).json({ success: false, message: "Server error." });
+        return res.status(error.statusCode || 500).json({ success: false, message: error.statusCode ? error.message : "Server error." });
     }
 };
 
@@ -2373,11 +2382,12 @@ export const getSystemTestScenarios = async (req, res) => {
             return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
         }
 
+        const resultFilter = parseSystemTestResultQuery(req.query);
         const testRunId = req.query.testRunId;
         let targetRun = null;
         if (testRunId) {
             targetRun = await prisma.testRun.findFirst({
-                where: { id: testRunId, snapshotId },
+                where: { id: testRunId, snapshotId, ...resultFilter },
                 include: { scenarios: true, testFiles: true },
             });
         } else {
@@ -2385,6 +2395,7 @@ export const getSystemTestScenarios = async (req, res) => {
                 where: {
                     snapshotId,
                     type: { in: ["PLAYWRIGHT", "CYPRESS"] },
+                    ...resultFilter,
                 },
                 orderBy: { createdAt: "desc" },
                 include: { scenarios: true, testFiles: true },
@@ -2398,7 +2409,7 @@ export const getSystemTestScenarios = async (req, res) => {
                     hasRun: false,
                     testRunId: null,
                     runner: null,
-                    executionMode: null,
+                    executionMode: resultFilter.executionMode || null,
                     totalScenarios: 0,
                     testFiles: [],
                     scenarios: [],
@@ -2514,7 +2525,7 @@ export const getSystemTestScenarios = async (req, res) => {
         });
     } catch (error) {
         console.error("[getSystemTestScenarios] Error:", error);
-        return res.status(500).json({ success: false, message: error.message || "Server error." });
+        return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Server error." });
     }
 };
 
@@ -2618,7 +2629,7 @@ export const generateColdStartSystemTestsController = async (req, res) => {
         if (!snapshot) {
             return res.status(404).json({ success: false, message: "Snapshot not found." });
         }
-        if (snapshot.project?.ownerId && snapshot.project.ownerId !== userId) {
+        if (snapshot.project?.ownerId !== userId) {
             return res.status(403).json({ success: false, message: "Forbidden: You do not own this snapshot." });
         }
 
@@ -2646,6 +2657,7 @@ export const generateColdStartSystemTestsController = async (req, res) => {
         const aiMode = framework === "cypress" ? "CYPRESS_E2E" : "PLAYWRIGHT_E2E";
         const aiTest = await prisma.aiTest.create({
             data: {
+                projectId: snapshot.projectId,
                 snapshotId,
                 filePath: generationResult.filePath,
                 content: generationResult.code,

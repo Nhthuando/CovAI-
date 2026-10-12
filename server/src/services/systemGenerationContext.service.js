@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import {containedPath, readFullSystemConfig, startFullSystem} from './fullSystemLifecycle.service.js';
+import {startFullSystem} from './fullSystemLifecycle.service.js';
+import {containedPath, readFullSystemConfig, resolveSystemRepositoryRoot} from './fullSystemConfig.service.js';
 import {extractValidEndpoints} from './apiEndpointParser.service.js';
 import {ServiceError} from '../utils/serviceError.js';
 
@@ -176,6 +177,8 @@ export const collectSystemGenerationContext = (
       409,
     );
   }
+
+  rootDir = resolveSystemRepositoryRoot(rootDir);
 
   // Gracefully read configuration if present, otherwise auto-detect
   let configuration = null;

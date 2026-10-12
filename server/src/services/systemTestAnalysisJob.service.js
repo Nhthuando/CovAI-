@@ -203,6 +203,7 @@ export const processSystemTestAnalysisJob = async (jobId) => {
       rootDir: job.snapshot.rootDir,
       execution,
       executionMode,
+      onPreparing: (progress, message) => broadcastJobProgress(jobId, {progress, stage:'Preparing Full Stack', message, userId:job.userId, snapshotId:jobSnapshotId, runner:execution.runner}),
       onReady: () =>
         broadcastJobProgress(jobId, {
           progress: 35,
@@ -251,7 +252,7 @@ export const processSystemTestAnalysisJob = async (jobId) => {
       harvestedContext,
     });
 
-    const { scenarios = [], ...testRunData } = testRun;
+    const { scenarios = [] } = testRun;
     const mappingFile = executionResult.reportPath && path.join(path.dirname(executionResult.reportPath), 'source-map.json');
     const sourceMap = mappingFile && fs.existsSync(mappingFile) ? JSON.parse(fs.readFileSync(mappingFile, 'utf8')) : {};
     const createdTestRun = await prisma.testRun.create({
@@ -259,7 +260,16 @@ export const processSystemTestAnalysisJob = async (jobId) => {
         snapshotId: job.snapshotId,
         type: testTypeFor(execution.runner),
         executionMode,
-        ...testRunData,
+        // Persist schema fields explicitly; parser metrics also include derived UI values.
+        totalTests: testRun.totalTests,
+        passedTests: testRun.passedTests,
+        failedTests: testRun.failedTests,
+        flakyTests: testRun.flakyTests,
+        skippedTests: testRun.skippedTests,
+        durationMs: testRun.durationMs,
+        status: testRun.status,
+        startedAt: testRun.startedAt,
+        finishedAt: testRun.finishedAt,
         coverageLinesPct: systemCoverage.summary.linesPct,
         coverageBranchesPct: systemCoverage.summary.branchesPct,
         coverageStatementsPct: systemCoverage.summary.statementsPct,

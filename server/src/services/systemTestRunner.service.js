@@ -5,6 +5,7 @@ import { dockerRunner } from "./dockerRunner.service.js";
 import crypto from "node:crypto";
 import { startFullSystem } from "./fullSystemLifecycle.service.js";
 import { prepareSystemPlaywright } from "./systemTestEvidence.service.js";
+import { ServiceError } from "../utils/serviceError.js";
 import {
   prepareAutEnvironment,
   runSeedDataIfPresent,
@@ -128,13 +129,42 @@ module.exports = defineConfig({
   }
 };
 
-export const runSystemTests = async ({ jobId, rootDir, execution, onReady, executionMode = "frontend" }) => {
+export const resolveFrontendAutDirectory = (rootDir) => {
+  const candidates = ["client", "frontend", "web"].map((name) => path.join(rootDir, name));
+  // Some imported monorepos select the backend package as their snapshot root.
+  const parent = path.dirname(rootDir);
+  if (["server", "backend", "api"].includes(path.basename(rootDir)) && fs.existsSync(path.join(parent, ".git"))) {
+    candidates.push(...["client", "frontend", "web"].map((name) => path.join(parent, name)));
+  }
+  for (const directory of candidates) {
+    const file = path.join(directory, "package.json");
+    if (!fs.existsSync(file)) continue;
+    try {
+      const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
+      const scripts = Object.values(pkg.scripts || {}).filter((value) => typeof value === "string").join(" ");
+      if (/\b(vite|next|react-scripts|vue-cli-service|astro|nuxt)\b/.test(scripts)) {
+        const real = fs.realpathSync(directory);
+        const boundary = fs.realpathSync(directory.startsWith(rootDir + path.sep) ? rootDir : parent);
+        const relative = path.relative(boundary, real);
+        if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+          throw new ServiceError("Frontend directory must remain inside the imported repository", 422);
+        }
+        return directory;
+      }
+    } catch (error) {
+      if (error instanceof ServiceError) throw error;
+      // Ignore malformed package metadata while searching other app directories.
+    }
+  }
+  return rootDir;
+};
+
+export const runSystemTests = async ({ jobId, rootDir, execution, onReady, onPreparing, executionMode = "frontend" }) => {
   if (executionMode === "full") {
     if (execution.runner === "playwright") {
-      const stack = await startFullSystem({rootDir,jobId});
+      const stack = await startFullSystem({rootDir,jobId,onProgress:onPreparing});
       try {
-        const runnerRoot=rootDir;
-        execution={...execution, testDirectory:execution.testFile ? execution.testDirectory : 'tests/system'};
+        const runnerRoot=execution.rootDir || rootDir;
         ensurePlaywrightPrerequisites(runnerRoot,stack.frontendPort);
         const managed=prepareSystemPlaywright({rootDir:runnerRoot,execution,executionMode,backendUrl:stack.backendUrl,frontendPort:stack.frontendPort,runKey:crypto.randomUUID(),testFile:execution.testFile});
         await onReady?.();
@@ -144,7 +174,7 @@ export const runSystemTests = async ({ jobId, rootDir, execution, onReady, execu
     } else if (execution.runner === "cypress") {
       const stack = await startFullSystem({rootDir,jobId});
       try {
-        const runnerRoot = rootDir;
+        const runnerRoot = execution.rootDir || rootDir;
         ensureCypressPrerequisites(runnerRoot, stack.frontendPort);
         await onReady?.();
         const cmd = execution.command;
@@ -173,21 +203,21 @@ export const runSystemTests = async ({ jobId, rootDir, execution, onReady, execu
 
   const configFile = execution.configPath ? path.join(rootDir, execution.configPath) : null;
   const ownsWebServer = execution.runner === "playwright" && configFile && /\bwebServer\s*:/.test(fs.readFileSync(configFile, "utf8"));
-  const autPort = ownsWebServer ? detectAutPort(rootDir, 4173) : await resolveAvailableAutPort(rootDir, 4173);
+  const autRoot = resolveFrontendAutDirectory(rootDir);
+  const autPort = ownsWebServer ? detectAutPort(autRoot, 4173) : await resolveAvailableAutPort(autRoot, 4173);
 
   // 1. Prepare minimal mock .env if needed
-  await prepareAutEnvironment(rootDir, autPort, jobId);
+  await prepareAutEnvironment(autRoot, autPort, jobId);
 
   // 2. Execute seed data if configured
-  await runSeedDataIfPresent({ snapshotDir: rootDir, jobId });
+  await runSeedDataIfPresent({ snapshotDir: autRoot, jobId });
 
   // 4. Start AUT server & 2-tier healthcheck
   let autHandle = null;
   try {
-    try {
-      if (!ownsWebServer) autHandle = await startAutServer({ snapshotDir: rootDir, port: autPort, jobId });
-    } catch (autError) {
-      console.warn(`[AUT Lifecycle] AUT server start notice: ${autError.message}. Proceeding with runner execution.`);
+    if (!ownsWebServer) {
+      autHandle = await startAutServer({ snapshotDir: autRoot, port: autPort, jobId, requireHealthy: true });
+      if (!autHandle?.started) throw new ServiceError("Frontend server could not be started for system tests", 422);
     }
 
     if (execution.runner === "playwright") {

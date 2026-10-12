@@ -1,3 +1,4 @@
+import {ensureFullSystemSetup} from './fullSystemSetup.service.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -105,6 +106,7 @@ export const generateVerifiedSystemTests = async ({rootDir,jobId,onProgress=asyn
   const observe=dependencies.observe || observeSystemApplication;
   const generate=dependencies.generate || generateText;
   const run=dependencies.run || runSystemTests;
+  await (dependencies.ensureSetup || ensureFullSystemSetup)({rootDir,onProgress});
   await onProgress(15,'Inspecting imported source and startup configuration');
   const context=collect(rootDir);
   const contextHash=crypto.createHash('sha256').update(JSON.stringify({sourceCode:context.sourceCode,configuration:context.configuration,omittedFiles:context.omittedFiles})).digest('hex');

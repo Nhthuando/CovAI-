@@ -1,4 +1,5 @@
-import { useState } from "react";
+import SystemTestEvidencePreview from "./SystemTestEvidencePreview.jsx";
+import { Fragment, useState } from "react";
 import {
   Printer,
   Download,
@@ -157,6 +158,8 @@ export default function SystemTestReportView({
           <div className="text-right text-xs text-[var(--color-text-muted)] font-mono">
             <div>Generated: {new Date().toLocaleDateString()} {new Date().toLocaleTimeString()}</div>
             <div>Runner: <span className="font-semibold uppercase text-[var(--color-primary)]">{summary?.runner || "Playwright"}</span></div>
+            <div>Mode: {summary?.executionMode === 'full' ? 'Full Stack' : 'Frontend Dev Server'}</div>
+            {summary?.latestRun?.finishedAt && <div>Run finished: {new Date(summary.latestRun.finishedAt).toLocaleString()}</div>}
           </div>
         </div>
 
@@ -290,7 +293,8 @@ export default function SystemTestReportView({
                           const isPassed = String(sc.status).toUpperCase() === "PASSED";
                           const isFailed = String(sc.status).toUpperCase() === "FAILED";
                           return (
-                            <tr key={sc.id || sc.title} className="hover:bg-[var(--color-surface-secondary)]/20">
+                            <Fragment key={sc.id || sc.title}>
+                            <tr className="hover:bg-[var(--color-surface-secondary)]/20">
                               <td className="py-2 px-4 text-[var(--color-text)]">
                                 <div className="font-medium">{sc.title}</div>
                                 {isFailed && sc.errorMessage && (
@@ -321,6 +325,12 @@ export default function SystemTestReportView({
                                   : "—"}
                               </td>
                             </tr>
+                            <tr>
+                              <td colSpan={4}>
+                                <SystemTestEvidencePreview key={`${snapshotId}:${sc.id}`} snapshotId={snapshotId} scenario={sc} />
+                              </td>
+                            </tr>
+                            </Fragment>
                           );
                         })}
                       </tbody>

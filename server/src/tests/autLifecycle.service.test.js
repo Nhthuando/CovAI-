@@ -15,6 +15,7 @@ const {
   isPortInUse,
   waitForPortOpen,
   verifyHttpHealth,
+  waitForHttpHealthy,
   detectAutPort,
   prepareAutEnvironment,
   runSeedDataIfPresent,
@@ -172,6 +173,42 @@ describe("autLifecycle.service", () => {
       expect(result.healthy).toBe(false);
       expect(result.status).toBe(500);
       expect(result.warning).toBe(true);
+    });
+  });
+
+  describe('HTTP readiness retries', () => {
+    let server;
+    afterEach(async () => { if(server) {server.closeAllConnections();await new Promise(resolve=>server.close(resolve));server=null;} });
+    const listen = async handler => {
+      server=http.createServer(handler);
+      await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+      return server.address().port;
+    };
+    it('waits past an initial HTTP timeout while a listening frontend compiles', async () => {
+      let requests=0;
+      const port=await listen((req,res)=>{if(++requests===1)return;res.end('ready');});
+      const onRetry=jest.fn();
+      expect((await waitForHttpHealthy({port,timeoutMs:1000,probeTimeoutMs:50,intervalMs:10,onRetry})).status).toBe(200);
+      expect(requests).toBe(2);
+      expect(onRetry).toHaveBeenCalledWith(expect.objectContaining({status:0,error:'HTTP probe timeout'}));
+    });
+    it('retries transient backend initialization failures', async () => {
+      let requests=0;
+      const port=await listen((req,res)=>{res.statusCode=++requests<3?503:200;res.end();});
+      expect((await waitForHttpHealthy({port,timeoutMs:1000,intervalMs:10})).status).toBe(200);
+      expect(requests).toBe(3);
+    });
+    it('retains a real timeout failure with connection details', async () => {
+      const port=await listen(()=>{});
+      await expect(waitForHttpHealthy({port,timeoutMs:120,probeTimeoutMs:40,intervalMs:10})).rejects.toThrow(/status 0 \(HTTP probe timeout\)/);
+    });
+    it('does not retry an invalid health endpoint or ignore process exit', async () => {
+      let requests=0;
+      const port=await listen((req,res)=>{requests++;res.statusCode=404;res.end();});
+      await expect(waitForHttpHealthy({port,timeoutMs:1000})).rejects.toThrow('status 404');
+      expect(requests).toBe(1);
+      await expect(waitForHttpHealthy({port,isExited:()=>true})).rejects.toThrow('process exited');
+      expect(requests).toBe(1);
     });
   });
 

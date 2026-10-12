@@ -45,7 +45,7 @@ describe('verified system generation',()=>{
     }).mockImplementation(async()=>{
       fs.writeFileSync(reportPath,JSON.stringify({stats:{expected:1,unexpected:0},suites:[]}));return {success:true,reportPath};
     });
-    const result=await generateVerifiedSystemTests({rootDir:directory,dependencies:{collect:()=>({sourceCode:[],omittedFiles:[],contextComplete:true}),observe:async()=>({accessibility:'heading Tasks'}),generate,run}});
+    const result=await generateVerifiedSystemTests({rootDir:directory,dependencies:{ensureSetup:async()=>{},collect:()=>({sourceCode:[],omittedFiles:[],contextComplete:true}),observe:async()=>({accessibility:'heading Tasks'}),generate,run}});
     expect(result.failed).toBeUndefined();expect(result.attempts).toHaveLength(2);
     expect(result.verificationRuns).toBe(2);expect(run).toHaveBeenCalledTimes(3);
     expect(generate.mock.calls[1][0]).toContain('heading selector matched two elements');
@@ -57,7 +57,7 @@ describe('verified system generation',()=>{
     fs.writeFileSync(reportPath,JSON.stringify({stats:{expected:0,unexpected:1},suites:[]}));
     const generate=jest.fn().mockResolvedValueOnce(JSON.stringify({content:code})).mockResolvedValue(JSON.stringify({replacements:[{old:code,new:code.replace('shows tasks','different scenario')}]}));
     const run=jest.fn().mockResolvedValue({success:false,reportPath});
-    const result=await generateVerifiedSystemTests({rootDir:directory,dependencies:{collect:()=>({sourceCode:[],omittedFiles:[]}),observe:async()=>({}),generate,run}});
+    const result=await generateVerifiedSystemTests({rootDir:directory,dependencies:{ensureSetup:async()=>{},collect:()=>({sourceCode:[],omittedFiles:[]}),observe:async()=>({}),generate,run}});
     expect(result.failed).toBe(true);expect(generate).toHaveBeenCalledTimes(3);expect(run).toHaveBeenCalledTimes(1);
     expect(result.error).toContain('scenarios or assertions');
   });
@@ -69,6 +69,6 @@ describe('verified system generation',()=>{
     const directory=root();const reportPath=path.join(directory,'report.json');
     fs.writeFileSync(reportPath,JSON.stringify({stats:{expected:1},suites:[]}));
     const collect=jest.fn().mockReturnValueOnce({sourceCode:[{path:'App.jsx',content:'before'}],omittedFiles:[]}).mockReturnValue({sourceCode:[{path:'App.jsx',content:'after'}],omittedFiles:[]});
-    await expect(generateVerifiedSystemTests({rootDir:directory,dependencies:{collect,observe:async()=>({}),generate:async()=>JSON.stringify({content:code}),run:async()=>({success:true,reportPath})}})).rejects.toThrow(/source changed/);
+    await expect(generateVerifiedSystemTests({rootDir:directory,dependencies:{ensureSetup:async()=>{},collect,observe:async()=>({}),generate:async()=>JSON.stringify({content:code}),run:async()=>({success:true,reportPath})}})).rejects.toThrow(/source changed/);
   });
 });

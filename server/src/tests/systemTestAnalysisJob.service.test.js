@@ -1,4 +1,5 @@
 import { jest, beforeEach, describe, expect, it } from "@jest/globals";
+import { Prisma } from "@prisma/client";
 
 const lifecycle = {
   addJobLog: jest.fn(), getJobById: jest.fn(), markJobFailed: jest.fn(),
@@ -28,7 +29,7 @@ const job = {
   payloadJson: JSON.stringify({ runner: "playwright" }), snapshot: { rootDir: "C:/snapshot" },
 };
 const execution = { runner: "playwright", reportDirectory: "C:/snapshot/.covai-system-test", reportPath: "report.json", coverageDir: "missing-coverage" };
-const testRun = { totalTests: 2, passedTests: 2, failedTests: 0, skippedTests: 0, durationMs: 12, status: "PASSED", startedAt: new Date(), finishedAt: new Date() };
+const testRun = { totalTests: 2, passedTests: 2, failedTests: 0, skippedTests: 0, stabilityScorePct: 100, durationMs: 12, status: "PASSED", startedAt: new Date(), finishedAt: new Date() };
 
 describe("processSystemTestAnalysisJob", () => {
   beforeEach(() => {
@@ -37,12 +38,22 @@ describe("processSystemTestAnalysisJob", () => {
     resolveSystemTestExecution.mockReturnValue(execution);
     runSystemTests.mockResolvedValue({ success: true, exitCode: 0 });
     parseSystemTestResult.mockReturnValue(testRun);
+    // Model the real Prisma boundary instead of accepting unsupported fields silently.
+    prismaMock.testRun.create.mockImplementation(async ({ data }) => {
+      const fields = new Set(Prisma.dmmf.datamodel.models.find((model) => model.name === "TestRun").fields.map((field) => field.name));
+      for (const field of Object.keys(data)) {
+        if (!fields.has(field)) throw new Error(`Unknown TestRun field: ${field}`);
+      }
+      return { id: "test-run-1", ...data };
+    });
   });
 
   it("stores a passing TestRun and completes the job", async () => {
     await expect(processSystemTestAnalysisJob("job-1")).resolves.toMatchObject({ runner: "playwright", coverageAvailable: false });
     expect(prismaMock.testRun.create).toHaveBeenCalledWith({ data: expect.objectContaining({ snapshotId: "snapshot-1", type: "PLAYWRIGHT", passedTests: 2 }) });
     expect(lifecycle.markJobSuccess).toHaveBeenCalledWith("job-1", expect.objectContaining({ exitCode: 0, coverageAvailable: false }));
+    expect(prismaMock.testRun.create.mock.calls[0][0].data).not.toHaveProperty("stabilityScorePct");
+    expect(lifecycle.markJobSuccess.mock.calls[0][1].testRun.stabilityScorePct).toBe(100);
   });
 
   it("stores a valid report with test failures and still marks the job success", async () => {
@@ -66,6 +77,18 @@ describe("processSystemTestAnalysisJob", () => {
     await expect(processSystemTestAnalysisJob("job-1")).rejects.toThrow("Docker daemon crash");
     expect(prismaMock.testRun.create).not.toHaveBeenCalled();
     expect(lifecycle.markJobFailed).toHaveBeenCalledTimes(1);
+  });
+
+  it("finalizes preparation failures without saving a test result", async () => {
+    runSystemTests.mockImplementationOnce(async ({onPreparing}) => {
+      await onPreparing(22, 'Generating missing Full Stack setup');
+      throw new Error('Full Stack setup needs more information: schema');
+    });
+    await expect(processSystemTestAnalysisJob('job-1')).rejects.toThrow('setup needs more information');
+    expect(lifecycle.updateJobProgress).toHaveBeenCalled();
+    expect(lifecycle.markJobFailed).toHaveBeenCalledTimes(1);
+    expect(prismaMock.testRun.create).not.toHaveBeenCalled();
+    expect(lifecycle.markJobSuccess).not.toHaveBeenCalled();
   });
 
   it("persists flaky tests and nested test scenarios into TestRun and completes job", async () => {

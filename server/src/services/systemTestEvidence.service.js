@@ -23,9 +23,8 @@ export const prepareSystemPlaywright = ({rootDir,execution,executionMode,backend
   const specs=path.join(directory,'specs');
   fs.mkdirSync(specs,{recursive:true});
   const fixture=path.join(directory,'fixture.mjs');
-  fs.writeFileSync(fixture,`import {test as base} from '@playwright/test';
-export * from '@playwright/test';
-export const test=base.extend({
+  const commonJsFixture=path.join(directory,'fixture.cjs');
+  const fixtureBody=`const test=base.extend({
   _covaiRealBackend: [async ({page, context}, use) => {
     const backend=${JSON.stringify(backendUrl || null)};
     if (backend) {
@@ -35,7 +34,14 @@ export const test=base.extend({
     }
     await use();
   }, {auto:true}]
-});`, 'utf8');
+});`;
+  fs.writeFileSync(fixture,`import {test as base} from '@playwright/test';
+export * from '@playwright/test';
+export ${fixtureBody}`, 'utf8');
+  fs.writeFileSync(commonJsFixture,`const playwright=require('@playwright/test');
+const base=playwright.test;
+${fixtureBody}
+module.exports={...playwright,test};`, 'utf8');
   const files=[];
   const fileMap={};
   const walk=directory => {
@@ -44,7 +50,7 @@ export const test=base.extend({
       if(item.isSymbolicLink() || ['node_modules','.git','.covai-system-test'].includes(item.name)) continue;
       const file=path.join(directory,item.name);
       if(item.isDirectory()) walk(file);
-      else if(/\.(spec|test)\.(m?js|ts)$/.test(item.name)) files.push(file);
+      else if(/\.(spec|test)\.([cm]?js|ts)$/.test(item.name)) files.push(file);
     }
   };
   if(testFile) files.push(testFile); else walk(containedPath(rootDir,execution.testDirectory || 'tests/e2e'));
@@ -54,12 +60,33 @@ export const test=base.extend({
     if(executionMode === 'full') validateFullSystemTest(code);
     const ast=parse(code,{sourceType:'module',plugins:['typescript','jsx']});
     const replacements=[];
+    let hasPlaywright=false;
     for(const node of ast.program.body) if(node.type === 'ImportDeclaration') {
       const value=node.source.value;
-      if(value === '@playwright/test') replacements.push([node.source.start,node.source.end,JSON.stringify(pathToFileURL(fixture).href)]);
+      if(value === '@playwright/test') {
+        hasPlaywright=true;
+        replacements.push([node.source.start,node.source.end,JSON.stringify(pathToFileURL(fixture).href)]);
+      }
       else if(value.startsWith('.')) replacements.push([node.source.start,node.source.end,JSON.stringify(pathToFileURL(path.resolve(path.dirname(file),value)).href)]);
     }
-    if(!replacements.some(item => item[2] === JSON.stringify(pathToFileURL(fixture).href))) throw new ServiceError('Managed system tests require ESM imports from @playwright/test',422);
+    const visit=node => {
+      if(!node || typeof node !== 'object') return;
+      if(node.type === 'CallExpression' && node.callee?.type === 'Identifier' && node.callee.name === 'require' && node.arguments.length === 1 && node.arguments[0].type === 'StringLiteral') {
+        const source=node.arguments[0];
+        if(source.value === '@playwright/test') {
+          hasPlaywright=true;
+          replacements.push([source.start,source.end,JSON.stringify(commonJsFixture)]);
+        } else if(source.value.startsWith('.')) {
+          replacements.push([source.start,source.end,JSON.stringify(path.resolve(path.dirname(file),source.value))]);
+        }
+      }
+      for(const value of Object.values(node)) {
+        if(Array.isArray(value)) value.forEach(visit);
+        else if(value?.type) visit(value);
+      }
+    };
+    visit(ast);
+    if(!hasPlaywright) throw new ServiceError(`Managed system test ${path.relative(rootDir,file)} must import or require @playwright/test`,422);
     for(const [start,end,value] of replacements.sort((a,b)=>b[0]-a[0])) code=code.slice(0,start)+value+code.slice(end);
     const target=path.join(specs,`${crypto.randomUUID()}.spec${path.extname(file)}`);
     fileMap[path.basename(target)]=path.relative(rootDir,file).replace(/\\/g,'/');

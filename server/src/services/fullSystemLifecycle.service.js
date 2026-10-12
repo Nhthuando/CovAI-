@@ -8,33 +8,9 @@ import { ServiceError } from '../utils/serviceError.js';
 
 const exec = promisify(execFile);
 const docker = (args, options = {}) => exec('docker', args, {timeout: 120000, windowsHide:true, maxBuffer: 2 * 1024 * 1024, ...options});
-export const containedPath = (root, relative) => {
-  const resolved = path.resolve(root, relative || '.');
-  const rel = path.relative(path.resolve(root), resolved);
-  if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) throw new ServiceError('System configuration path must remain inside the snapshot', 422);
-  let ancestor=resolved;
-  while (!fs.existsSync(ancestor) && ancestor !== path.dirname(ancestor)) ancestor=path.dirname(ancestor);
-  if (fs.existsSync(ancestor)) {
-    const real = fs.realpathSync(ancestor);
-    const realRel = path.relative(fs.realpathSync(root), real);
-    if (realRel === '..' || realRel.startsWith(`..${path.sep}`) || path.isAbsolute(realRel)) throw new ServiceError('System configuration symlink escapes the snapshot', 422);
-  }
-  return resolved;
-};
-
-export const readFullSystemConfig = (rootDir) => {
-  const file = containedPath(rootDir, '.covai/system-test.json');
-  if (!fs.existsSync(file)) throw new ServiceError('Full system requires .covai/system-test.json with frontend, backend, database and schema configuration. No mock fallback was used.', 422);
-  let config;
-  try { config = JSON.parse(fs.readFileSync(file,'utf8')); } catch { throw new ServiceError('Invalid .covai/system-test.json',422); }
-  if(!config || typeof config !== 'object' || Array.isArray(config)) throw new ServiceError('System test configuration must be a JSON object.',422);
-  if (!['mysql','postgres'].includes(config.database?.engine) || ![config.database?.initSql,config.backend?.directory,config.backend?.healthPath,config.frontend?.directory].every(value=>typeof value==='string' && value.trim())) {
-    throw new ServiceError('Full system requires a database engine/initSql, backend directory/healthPath, and frontend directory',422);
-  }
-  for (const item of [config.frontend.directory, config.backend.directory, config.database.initSql]) containedPath(rootDir,item);
-  if (!config.backend.healthPath.startsWith('/') || config.backend.healthPath.startsWith('//')) throw new ServiceError('Backend healthPath must be a local path',422);
-  return config;
-};
+import { containedPath } from './fullSystemConfig.service.js';
+import { ensureFullSystemSetup } from './fullSystemSetup.service.js';
+export { containedPath, readFullSystemConfig } from './fullSystemConfig.service.js';
 
 const writeSql = (container, engine, password, sql) => new Promise((resolve,reject) => {
   const args = engine === 'mysql'
@@ -50,8 +26,11 @@ const writeSql = (container, engine, password, sql) => new Promise((resolve,reje
   child.once('close',code => {clearTimeout(timer);code === 0 ? resolve() : reject(new ServiceError(`Test database initialization failed: ${error.replaceAll(password,'[redacted]')}`,422));});
 });
 
-export const startFullSystem = async ({rootDir,jobId}) => {
-  const config = readFullSystemConfig(rootDir);
+export const startFullSystem = async ({rootDir,jobId,onProgress}) => {
+  const setup = await ensureFullSystemSetup({rootDir,onProgress});
+  rootDir = setup.rootDir;
+  const config = setup.config;
+  try { await docker(['info'],{timeout:10000}); } catch { throw new ServiceError('Full Stack needs Docker running to create an isolated test database. Start Docker Desktop and retry.',422); }
   const engine = config.database.engine;
   const container = `covai-system-${crypto.randomUUID()}`;
   const password = crypto.randomBytes(24).toString('hex');
@@ -98,5 +77,5 @@ export const startFullSystem = async ({rootDir,jobId}) => {
     if (!frontend.started) throw new ServiceError('No frontend start script found',422);
     handles.push(frontend);
     return {frontendPort,backendUrl,cleanup};
-  } catch (error) {await cleanup();throw new ServiceError(`Full system setup failed: ${error.message.replaceAll(password,'[redacted]')}`,error.statusCode || 422);}
+  } catch (error) {await cleanup().catch(() => {});throw new ServiceError(`Full system setup failed: ${error.message.replaceAll(password,'[redacted]')}`,error.statusCode || 422);}
 };

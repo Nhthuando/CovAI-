@@ -71,6 +71,8 @@ export const waitForPortOpen = async (port, timeoutMs = 45000, host = "localhost
  */
 export const verifyHttpHealth = (port, pathName = "/", host = "127.0.0.1", timeoutMs = 5000) => {
   return new Promise((resolve) => {
+    let timer;
+    const finish = result => { clearTimeout(timer); resolve(result); };
     const req = http.get(
       {
         host,
@@ -82,22 +84,48 @@ export const verifyHttpHealth = (port, pathName = "/", host = "127.0.0.1", timeo
         res.resume();
         const status = res.statusCode || 200;
         if (status >= 200 && status < 500) {
-          resolve({ healthy: true, status });
+          finish({ healthy: true, status });
         } else {
-          resolve({ healthy: false, status, warning: true });
+          finish({ healthy: false, status, warning: true });
         }
       }
     );
 
+    // Bound wall-clock time even if the socket stays active without response headers.
+    timer = setTimeout(() => {
+      finish({ healthy: false, status: 0, error: "HTTP probe timeout" });
+      req.destroy();
+    }, timeoutMs);
     req.once("timeout", () => {
       req.destroy();
-      resolve({ healthy: false, status: 0, error: "HTTP probe timeout" });
+      finish({ healthy: false, status: 0, error: "HTTP probe timeout" });
     });
 
     req.once("error", (err) => {
-      resolve({ healthy: false, status: 0, error: err.message });
+      finish({ healthy: false, status: 0, error: err.message });
     });
   });
+};
+
+/** Wait for HTTP readiness after the port opens (dev servers may still be compiling). */
+export const waitForHttpHealthy = async ({
+  port, healthPath = "/", timeoutMs = 45000, intervalMs = 500,
+  probeTimeoutMs = 5000, isExited = () => false, onRetry = async () => {},
+}) => {
+  const deadline = Date.now() + timeoutMs;
+  let result = { healthy: false, status: 0, error: "HTTP readiness timeout" };
+  let attempts = 0;
+  while (Date.now() < deadline) {
+    if (isExited()) throw new Error(`AUT process exited before HTTP readiness at http://127.0.0.1:${port}${healthPath}`);
+    result = await verifyHttpHealth(port, healthPath, "127.0.0.1", Math.max(1, Math.min(probeTimeoutMs, deadline - Date.now())));
+    if (isExited()) throw new Error(`AUT process exited before HTTP readiness at http://127.0.0.1:${port}${healthPath}`);
+    if (result.healthy && result.status < 400) return result;
+    if (result.status >= 400 && result.status < 500 && ![408, 429].includes(result.status)) break;
+    if (attempts++ === 0) await onRetry(result);
+    const remaining = deadline - Date.now();
+    if (remaining > 0) await new Promise(resolve => setTimeout(resolve, Math.min(intervalMs, remaining)));
+  }
+  throw new Error(`AUT healthcheck ${healthPath} at http://127.0.0.1:${port} failed with status ${result.status}${result.error ? ` (${result.error})` : ""} within ${timeoutMs}ms`);
 };
 
 /**
@@ -382,8 +410,9 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
   });
 
   // Tầng 1: Socket Check (polling waitForPortOpen)
+  const readinessDeadline = Date.now() + healthTimeoutMs;
   try {
-    await waitForPortOpen(port, healthTimeoutMs);
+    await waitForPortOpen(port, healthTimeoutMs, "127.0.0.1");
   } catch (error) {
     await stopAutServer(child.pid, port, jobId);
     if (serverExited) {
@@ -396,10 +425,19 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
   }
 
   // Tầng 2: HTTP Verification
-  const httpResult = await verifyHttpHealth(port, healthPath, "127.0.0.1", 5000);
-  if (requireHealthy && (!httpResult.healthy || httpResult.status >= 400)) {
-    await stopAutServer(child.pid,port,jobId);
-    throw new Error(`AUT healthcheck ${healthPath} failed with status ${httpResult.status}`);
+  let httpResult;
+  try {
+    httpResult = requireHealthy
+      ? await waitForHttpHealthy({
+          port, healthPath, timeoutMs: Math.max(1, readinessDeadline - Date.now()),
+          isExited: () => serverExited,
+          onRetry: result => safeAddJobLog(jobId, "INFO", `[AUT Healthcheck] Port ${port} is open; waiting for HTTP readiness (${result.error || `HTTP ${result.status}`})...`),
+        })
+      : await verifyHttpHealth(port, healthPath, "127.0.0.1", 5000);
+  } catch (error) {
+    await stopAutServer(child.pid, port, jobId);
+    await safeAddJobLog(jobId, "ERROR", `[AUT Healthcheck] ${error.message}`);
+    throw error;
   }
   if (httpResult.healthy && httpResult.status >= 200 && httpResult.status < 500) {
     await safeAddJobLog(jobId, "INFO", `[AUT Healthcheck] Successfully connected to http://localhost:${port} with status ${httpResult.status}`);
