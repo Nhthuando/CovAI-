@@ -1,112 +1,237 @@
-import { jest } from '@jest/globals';
-import fs from 'fs';
-import path from 'path';
+import { extractValidEndpoints, findControllerLocation } from './apiEndpointParser.service.js';
 
-// Mock dependencies before importing the service
-jest.unstable_mockModule('fs/promises', () => ({
-  readdir: jest.fn(),
-  stat: jest.fn(),
-  readFile: jest.fn(),
-}));
+describe('API Endpoint Parser & Controller Location Resolver', () => {
+    it('1. Extracts direct route declarations from app.js', () => {
+        const sourceCode = [
+            {
+                path: 'server/app.js',
+                content: `
+                    const express = require('express');
+                    const app = express();
+                    app.get('/api/users', (req, res) => res.send('OK'));
+                    app.post('/api/users/:id', (req, res) => res.send('OK'));
+                `
+            }
+        ];
 
-jest.unstable_mockModule('../utils/logger.js', () => ({
-  logger: {
-    info: jest.fn(),
-    warn: jest.fn(),
-    error: jest.fn(),
-    debug: jest.fn(),
-  }
-}));
-
-const { extractValidEndpoints } = await import('./apiEndpointParser.service.js');
-const fsPromises = await import('fs/promises');
-
-describe('API Endpoint Parser', () => {
-    beforeEach(() => {
-        jest.clearAllMocks();
-    });
-
-    it('1. Extracts direct route declarations (AST fallback)', async () => {
-        const mockCode = `
-            const express = require('express');
-            const app = express();
-            app.get('/api/users', (req, res) => res.send('OK'));
-            app.post('/api/users/:id', (req, res) => res.send('OK'));
-        `;
-        
-        fsPromises.readdir.mockResolvedValueOnce(['app.js']);
-        fsPromises.stat.mockResolvedValue({ isDirectory: () => false });
-        fsPromises.readFile.mockResolvedValueOnce(mockCode);
-        
-        const endpoints = await extractValidEndpoints('/project/root', '/project/root/src');
-        
+        const endpoints = extractValidEndpoints(sourceCode);
         expect(endpoints).toHaveLength(2);
-        expect(endpoints.find(e => e.method === 'GET' && e.path === '/api/users')).toBeDefined();
-        expect(endpoints.find(e => e.method === 'POST' && e.path === '/api/users/:id')).toBeDefined();
-        
-        // Assert provenance
-        expect(endpoints[0].provenance.detectionType).toBe('AST_FALLBACK');
-        expect(endpoints[0].provenance.resolutionStatus).toBe('PARTIALLY_RESOLVED');
+        expect(endpoints.find(e => e.method === 'GET' && e.fullPath === '/api/users')).toBeDefined();
+        expect(endpoints.find(e => e.method === 'POST' && e.fullPath === '/api/users/:id')).toBeDefined();
+        expect(endpoints[0].sourceFile).toBe('server/app.js');
+        expect(endpoints[0].sourceLine).toBeGreaterThan(0);
     });
 
-    it('2. Excludes non-server and HTTP client code', async () => {
-        const mockCode = `
-            const axios = require('axios');
-            const request = require('supertest');
-            axios.get('/external/api');
-            request(app).post('/internal/test');
-            // This valid route should still be extracted
-            router.put('/valid/route', controller.update);
-        `;
-        
-        fsPromises.readdir.mockResolvedValueOnce(['controller.js']);
-        fsPromises.stat.mockResolvedValue({ isDirectory: () => false });
-        fsPromises.readFile.mockResolvedValueOnce(mockCode);
-        
-        const endpoints = await extractValidEndpoints('/project/root', '/project/root/src');
-        
+    it('2. Extracts router endpoints with controller file and line location', () => {
+        const sourceCode = [
+            {
+                path: 'server/app.js',
+                content: `
+                    const express = require('express');
+                    const app = express();
+                    const authRoutes = require('./routes/auth.routes');
+                    app.use('/api/auth', authRoutes);
+                `
+            },
+            {
+                path: 'server/routes/auth.routes.js',
+                content: `
+                    const express = require('express');
+                    const router = express.Router();
+                    const authController = require('../controllers/auth.controller');
+
+                    router.post('/login', authController.login);
+                    router.get('/profile', authController.getProfile);
+                    module.exports = router;
+                `
+            },
+            {
+                path: 'server/controllers/auth.controller.js',
+                content: `
+                    // Controller implementation
+                    const prisma = require('../prisma');
+
+                    exports.login = async (req, res) => {
+                        const { email, password } = req.body;
+                        return res.json({ token: 'xyz' });
+                    };
+
+                    exports.getProfile = async (req, res) => {
+                        return res.json({ user: 'test' });
+                    };
+                `
+            }
+        ];
+
+        const endpoints = extractValidEndpoints(sourceCode);
+        expect(endpoints).toHaveLength(2);
+
+        const loginEp = endpoints.find(e => e.method === 'POST' && e.fullPath === '/api/auth/login');
+        expect(loginEp).toBeDefined();
+        expect(loginEp.sourceFile).toBe('server/routes/auth.routes.js');
+        expect(loginEp.sourceLine).toBeGreaterThan(0);
+        expect(loginEp.controllerFile).toBe('server/controllers/auth.controller.js');
+        expect(loginEp.controllerLine).toBe(5); // line 5 in controller
+        expect(loginEp.controllerMethod).toBe('authController.login');
+        expect(loginEp.requestBodySchema).toEqual(expect.arrayContaining(['email', 'password']));
+
+        const profileEp = endpoints.find(e => e.method === 'GET' && e.fullPath === '/api/auth/profile');
+        expect(profileEp).toBeDefined();
+        expect(profileEp.controllerFile).toBe('server/controllers/auth.controller.js');
+        expect(profileEp.controllerLine).toBe(10); // line 10 in controller
+    });
+
+    it('3. Excludes HTTP clients like axios and supertest', () => {
+        const sourceCode = [
+            {
+                path: 'server/routes/test.routes.js',
+                content: `
+                    const router = express.Router();
+                    axios.get('/external/api');
+                    supertest(app).post('/internal/test');
+                    router.put('/valid/item', itemController.update);
+                `
+            },
+            {
+                path: 'server/controllers/item.controller.js',
+                content: `
+                    export const update = async (req, res) => {
+                        res.send('updated');
+                    };
+                `
+            }
+        ];
+
+        const endpoints = extractValidEndpoints(sourceCode);
         expect(endpoints).toHaveLength(1);
         expect(endpoints[0].method).toBe('PUT');
-        expect(endpoints[0].path).toBe('/valid/route');
+        expect(endpoints[0].fullPath).toBe('/valid/item');
+        expect(endpoints[0].controllerFile).toBe('server/controllers/item.controller.js');
+        expect(endpoints[0].controllerLine).toBe(2);
     });
 
-    it('3. Deduplicates identical endpoints', async () => {
-        const mockCode = `
-            // Declared twice or detected via both AST and regex
-            app.delete('/items/:itemId', handler);
-            router.delete('/items/:itemId', handler);
-        `;
-        
-        fsPromises.readdir.mockResolvedValueOnce(['routes.js']);
-        fsPromises.stat.mockResolvedValue({ isDirectory: () => false });
-        fsPromises.readFile.mockResolvedValueOnce(mockCode);
-        
-        const endpoints = await extractValidEndpoints('/project/root', '/project/root/src');
-        
-        expect(endpoints).toHaveLength(1);
-        expect(endpoints[0].method).toBe('DELETE');
-        expect(endpoints[0].path).toBe('/items/:itemId');
+    it('4. Resolves controller location when handler is ES6 export or arrow function', () => {
+        const sourceCode = [
+            {
+                path: 'server/controllers/user.controller.js',
+                content: `
+// File header comments
+import prisma from '../prisma';
+
+export async function getUser(req, res) {
+    res.json({});
+}
+
+export const deleteUser = async (req, res) => {
+    res.json({});
+};
+                `
+            }
+        ];
+
+        const getRes = findControllerLocation(sourceCode, 'userController', 'getUser', null);
+        expect(getRes.controllerFile).toBe('server/controllers/user.controller.js');
+        expect(getRes.controllerLine).toBe(5);
+
+        const delRes = findControllerLocation(sourceCode, 'userController', 'deleteUser', null);
+        expect(delRes.controllerFile).toBe('server/controllers/user.controller.js');
+        expect(delRes.controllerLine).toBe(9);
     });
 
-    it('4. Excludes test files and excluded directories', async () => {
-        fsPromises.readdir.mockResolvedValueOnce(['node_modules', 'test.spec.js', 'src']);
-        fsPromises.stat.mockImplementation(async (filePath) => {
-            if (filePath.includes('node_modules')) return { isDirectory: () => true };
-            if (filePath.includes('test.spec.js')) return { isDirectory: () => false };
-            if (filePath.includes('src')) return { isDirectory: () => true };
-            return { isDirectory: () => false };
-        });
-        
-        // src directory contents
-        fsPromises.readdir.mockResolvedValueOnce(['app.js']);
-        fsPromises.readFile.mockResolvedValueOnce(`app.get('/test', handler);`);
+    it('5. Resolves controller location when controller is a class or object literal', () => {
+        const sourceCode = [
+            {
+                path: 'server/controllers/product.controller.js',
+                content: `
+                    class ProductController {
+                        async createProduct(req, res) {
+                            res.send('ok');
+                        }
+                    }
+                    module.exports = new ProductController();
+                `
+            },
+            {
+                path: 'server/controllers/order.controller.js',
+                content: `
+                    module.exports = {
+                        listOrders: async (req, res) => {
+                            res.send('orders');
+                        }
+                    };
+                `
+            }
+        ];
 
-        const endpoints = await extractValidEndpoints('/project/root', '/project/root');
-        
-        // It shouldn't read node_modules or test.spec.js
-        const readFiles = fsPromises.readFile.mock.calls.map(call => call[0]);
-        expect(readFiles.some(f => f.includes('node_modules'))).toBe(false);
-        expect(readFiles.some(f => f.includes('test.spec.js'))).toBe(false);
+        const classRes = findControllerLocation(sourceCode, 'productController', 'createProduct', null);
+        expect(classRes.controllerFile).toBe('server/controllers/product.controller.js');
+        expect(classRes.controllerLine).toBe(3);
+
+        const objRes = findControllerLocation(sourceCode, 'orderController', 'listOrders', null);
+        expect(objRes.controllerFile).toBe('server/controllers/order.controller.js');
+        expect(objRes.controllerLine).toBe(3);
+    });
+
+    it('6. Gracefully handles endpoints with inline handlers and no external controller', () => {
+        const sourceCode = [
+            {
+                path: 'server/routes/health.routes.js',
+                content: `
+                    const router = express.Router();
+                    router.get('/health', (req, res) => res.json({ status: 'UP' }));
+                `
+            }
+        ];
+
+        const endpoints = extractValidEndpoints(sourceCode);
         expect(endpoints).toHaveLength(1);
+        expect(endpoints[0].method).toBe('GET');
+        expect(endpoints[0].fullPath).toBe('/health');
+        expect(endpoints[0].sourceFile).toBe('server/routes/health.routes.js');
+        expect(endpoints[0].sourceLine).toBe(3);
+        expect(endpoints[0].controllerFile).toBeNull();
+        expect(endpoints[0].controllerLine).toBeNull();
+    });
+
+    it('7. Correctly maps router mount paths when variable names differ from filenames', () => {
+        const sourceCode = [
+            {
+                path: 'server/index.js',
+                content: `
+                    const express = require('express');
+                    const app = express();
+                    const foodRoutes = require('./routes/productRoutes');
+                    const cardRoutes = require('./routes/cartRoutes');
+
+                    app.use('/api/food-items', foodRoutes);
+                    app.use('/api/cart', cardRoutes);
+                `
+            },
+            {
+                path: 'server/routes/productRoutes.js',
+                content: `
+                    const express = require('express');
+                    const router = express.Router();
+                    router.get('/', (req, res) => res.json([]));
+                    router.post('/create', (req, res) => res.json({ ok: true }));
+                    module.exports = router;
+                `
+            },
+            {
+                path: 'server/routes/cartRoutes.js',
+                content: `
+                    const express = require('express');
+                    const router = express.Router();
+                    router.post('/validate', (req, res) => res.json({ valid: true }));
+                    module.exports = router;
+                `
+            }
+        ];
+
+        const endpoints = extractValidEndpoints(sourceCode);
+        expect(endpoints).toHaveLength(3);
+        expect(endpoints.find(e => e.method === 'GET' && e.fullPath === '/api/food-items')).toBeDefined();
+        expect(endpoints.find(e => e.method === 'POST' && e.fullPath === '/api/food-items/create')).toBeDefined();
+        expect(endpoints.find(e => e.method === 'POST' && e.fullPath === '/api/cart/validate')).toBeDefined();
     });
 });

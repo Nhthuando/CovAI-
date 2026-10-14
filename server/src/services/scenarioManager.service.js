@@ -395,3 +395,105 @@ Please improve it, fix potential issues, or make it more robust based on the API
     
     return await updateScenarioService(aiTestId, scenarioId, cleanText);
 };
+
+/**
+ * Prunes specific scenarios from raw test file code using AST.
+ * Ensures that if the LLM generated test cases for unselected/rejected endpoints,
+ * their code blocks (it/test) are cleanly stripped from the content string before saving.
+ *
+ * @param {string} content - Raw JavaScript test file content
+ * @param {Array<object>} allRequests - All requests initially parsed from the content
+ * @param {Array<object>} rejectedRequests - Requests that failed batch/endpoint validation
+ * @returns {string} Cleaned JavaScript code
+ */
+export const pruneScenariosFromCode = (content, allRequests = [], rejectedRequests = []) => {
+    if (!content || !rejectedRequests || rejectedRequests.length === 0) {
+        return content;
+    }
+
+    try {
+        const ast = parseCode(content);
+        const rejectedSet = new Set(rejectedRequests);
+        const pathsToRemove = new Set();
+
+        // 1. Collect all test CallExpressions in AST in document order
+        const testCalls = [];
+        traverse(ast, {
+            CallExpression(path) {
+                const { callee, arguments: args } = path.node;
+                let isTest = false;
+                if (callee.type === 'Identifier' && (callee.name === 'it' || callee.name === 'test')) {
+                    isTest = true;
+                } else if (callee.type === 'MemberExpression' && (callee.object.name === 'it' || callee.object.name === 'test')) {
+                    isTest = true;
+                }
+
+                if (isTest && args.length > 0 && args[0].type === 'StringLiteral') {
+                    testCalls.push({
+                        path,
+                        testName: args[0].value
+                    });
+                }
+            }
+        });
+
+        // 2. Correlate allRequests to testCalls in document order
+        const handledRejected = new Set();
+        let callIdx = 0;
+        for (const req of allRequests) {
+            while (callIdx < testCalls.length && testCalls[callIdx].testName !== req.testName) {
+                callIdx++;
+            }
+            if (callIdx < testCalls.length) {
+                if (rejectedSet.has(req)) {
+                    pathsToRemove.add(testCalls[callIdx].path);
+                    handledRejected.add(req);
+                }
+                callIdx++;
+            }
+        }
+
+        // 3. Fallback: only for rejected requests not correlated in step 2
+        for (const rej of rejectedRequests) {
+            if (handledRejected.has(rej)) continue;
+            const unmatched = testCalls.find(tc => tc.testName === rej.testName && !pathsToRemove.has(tc.path));
+            if (unmatched) {
+                pathsToRemove.add(unmatched.path);
+                handledRejected.add(rej);
+            }
+        }
+
+        // 4. Remove all identified paths (expression statement or call expression)
+        for (const p of pathsToRemove) {
+            if (p.parentPath && p.parentPath.isExpressionStatement()) {
+                p.parentPath.remove();
+            } else {
+                p.remove();
+            }
+        }
+
+        // 5. Clean up any newly empty describe blocks
+        traverse(ast, {
+            CallExpression(path) {
+                const { callee, arguments: args } = path.node;
+                if (callee.type === 'Identifier' && callee.name === 'describe' && args.length > 1) {
+                    const callback = args[1];
+                    if ((callback.type === 'ArrowFunctionExpression' || callback.type === 'FunctionExpression') && callback.body) {
+                        if (callback.body.type === 'BlockStatement' && callback.body.body.length === 0) {
+                            if (path.parentPath && path.parentPath.isExpressionStatement()) {
+                                path.parentPath.remove();
+                            } else {
+                                path.remove();
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        const { code: finalCode } = generate(ast);
+        return finalCode;
+    } catch (err) {
+        return content;
+    }
+};

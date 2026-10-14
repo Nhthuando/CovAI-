@@ -111,6 +111,16 @@ export const storeCoverageOutputs = async (snapshotId, projectId, coverageDir) =
         console.log(`[CoverageStorage] Uploaded integration-scenarios.json → ${dest}`);
     }
 
+    // ── Runtime Evidence ─────────────────────────────────────────────
+    const evidenceFile = path.join(coverageDir, "runtime-evidence.json");
+    if (fs.existsSync(evidenceFile)) {
+        const buf = fs.readFileSync(evidenceFile);
+        const dest = `${baseStoragePath}/runtime-evidence.json`;
+        await uploadBufferToFirebase(buf, dest, "application/json");
+        results.evidenceStoragePath = dest;
+        console.log(`[CoverageStorage] Uploaded runtime-evidence.json → ${dest}`);
+    }
+
     // ── SCRUM-117: Associate outputs with Snapshot ────────────────────────
     // ProjectSnapshot uses the real Prisma field `storagePath`, not `storageBasePath`.
     await prisma.projectSnapshot.update({

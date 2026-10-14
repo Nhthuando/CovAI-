@@ -247,37 +247,35 @@ export const parseCoverageFilesForSnapshot = async ({
     return 0;
   };
 
-  await prisma.$transaction(async (tx) => {
-    await tx.coverageFile.deleteMany({
-      where: { snapshotId },
-    });
-
-    if (formattedRows.length > 0) {
-      await tx.coverageFile.createMany({
-        data: formattedRows,
-        skipDuplicates: true,
-      });
-    }
-
-    if (rawSummary) {
-      await tx.coverageSummary.upsert({
-        where: { snapshotId },
-        update: {
-          linesPct: safeNum(summaryRow.linesPct),
-          branchesPct: safeNum(summaryRow.branchesPct),
-          funcsPct: safeNum(summaryRow.funcsPct),
-          stmtsPct: safeNum(summaryRow.stmtsPct),
-        },
-        create: {
-          snapshotId,
-          linesPct: safeNum(summaryRow.linesPct),
-          branchesPct: safeNum(summaryRow.branchesPct),
-          funcsPct: safeNum(summaryRow.funcsPct),
-          stmtsPct: safeNum(summaryRow.stmtsPct),
-        },
-      });
-    }
+  await prisma.coverageFile.deleteMany({
+    where: { snapshotId },
   });
+
+  if (formattedRows.length > 0) {
+    await prisma.coverageFile.createMany({
+      data: formattedRows,
+      skipDuplicates: true,
+    });
+  }
+
+  if (rawSummary) {
+    await prisma.coverageSummary.upsert({
+      where: { snapshotId },
+      update: {
+        linesPct: safeNum(summaryRow.linesPct),
+        branchesPct: safeNum(summaryRow.branchesPct),
+        funcsPct: safeNum(summaryRow.funcsPct),
+        stmtsPct: safeNum(summaryRow.stmtsPct),
+      },
+      create: {
+        snapshotId,
+        linesPct: safeNum(summaryRow.linesPct),
+        branchesPct: safeNum(summaryRow.branchesPct),
+        funcsPct: safeNum(summaryRow.funcsPct),
+        stmtsPct: safeNum(summaryRow.stmtsPct),
+      },
+    });
+  }
 
   return {
     totalFiles: formattedRows.length,

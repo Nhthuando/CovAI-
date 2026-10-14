@@ -1,4 +1,6 @@
-import esprima from "esprima";
+import * as esprimaModule from "esprima";
+const esprima = esprimaModule?.default?.parseScript ? esprimaModule.default : esprimaModule;
+
 
 /**
  * Extracts Supertest requests from an AI-generated Jest test file content.
@@ -24,24 +26,43 @@ export const extractTestRequests = (sourceCode, filePath) => {
     let currentSuite = "";
     let currentTest = "";
 
-    const extractPathFromNode = (node) => {
+    const extractPathFromNode = (node, vars = {}) => {
         if (!node) return null;
         if (node.type === "Literal") {
             return String(node.value);
         }
         if (node.type === "TemplateLiteral") {
-            // For template literals like `/api/users/${id}`, we replace the expressions with dynamic segments
+            // For template literals like `/api/users/${id}`, resolve expressions using local vars if available
             let extractedPath = "";
-            const quasis = node.quasis;
+            const quasis = node.quasis || [];
+            const exprs = node.expressions || [];
             for (let i = 0; i < quasis.length; i++) {
                 extractedPath += quasis[i].value.raw;
-                if (i < quasis.length - 1) {
-                    // There's an expression here. Replace it with a placeholder that we can normalize later.
-                    // For example: /api/users/${userId} -> /api/users/:placeholder
-                    extractedPath += ":param";
+                if (i < exprs.length) {
+                    const expr = exprs[i];
+                    if (expr.type === "Literal") {
+                        extractedPath += String(expr.value);
+                    } else if (expr.type === "Identifier" && vars[expr.name] !== undefined && vars[expr.name] !== null) {
+                        extractedPath += String(vars[expr.name]);
+                    } else if (expr.type === "Identifier") {
+                        extractedPath += expr.name;
+                    } else {
+                        extractedPath += ":param";
+                    }
                 }
             }
             return extractedPath;
+        }
+        if (node.type === "Identifier") {
+            if (vars[node.name] !== undefined && vars[node.name] !== null) return String(vars[node.name]);
+            return node.name || ":param";
+        }
+        if (node.type === "BinaryExpression" && node.operator === "+") {
+            const left = extractPathFromNode(node.left, vars);
+            const right = extractPathFromNode(node.right, vars);
+            if (left !== "mappingUnavailable" && right !== "mappingUnavailable") {
+                return left + right;
+            }
         }
         return "mappingUnavailable";
     };
@@ -69,13 +90,19 @@ export const extractTestRequests = (sourceCode, filePath) => {
     };
 
     const isRequestCall = (callee) => {
-        // match: request(app).get
+        // match: request(app).get or (0, _supertest.default)(app).get
         if (callee.type === "MemberExpression") {
             const obj = callee.object;
             const prop = callee.property;
             
-            if (obj.type === "CallExpression" && obj.callee.name === "request" && prop.type === "Identifier") {
-                return prop.name.toLowerCase();
+            if (obj.type === "CallExpression" && prop.type === "Identifier") {
+                const c = obj.callee;
+                const isDirectRequest = c.name === "request";
+                const isBabelSupertest = (c.type === "SequenceExpression" && c.expressions?.some(e => (e.property?.name === "default" || e.name?.includes("supertest")))) ||
+                                         (c.type === "MemberExpression" && c.property?.name === "default" && c.object?.name?.includes("supertest"));
+                if (isDirectRequest || isBabelSupertest) {
+                    return prop.name.toLowerCase();
+                }
             }
         }
         return null;
@@ -84,9 +111,23 @@ export const extractTestRequests = (sourceCode, filePath) => {
     const walk = (node) => {
         if (!node) return;
 
-        // Track describe() and it()/test()
-        if (node.type === "CallExpression" && node.callee.type === "Identifier") {
-            if (node.callee.name === "describe" && node.arguments.length > 0) {
+        const isDescribe = (callee) => {
+            if (!callee) return false;
+            if (callee.type === "Identifier" && callee.name === "describe") return true;
+            if (callee.type === "MemberExpression" && callee.object?.name === "describe") return true;
+            return false;
+        };
+
+        const isTestOrIt = (callee) => {
+            if (!callee) return false;
+            if (callee.type === "Identifier" && (callee.name === "it" || callee.name === "test")) return true;
+            if (callee.type === "MemberExpression" && (callee.object?.name === "it" || callee.object?.name === "test")) return true;
+            return false;
+        };
+
+        // Track describe() and it()/test() (including .skip, .only)
+        if (node.type === "CallExpression") {
+            if (isDescribe(node.callee) && node.arguments.length > 0) {
                 const oldSuite = currentSuite;
                 currentSuite = extractPathFromNode(node.arguments[0]) || currentSuite;
                 
@@ -97,7 +138,7 @@ export const extractTestRequests = (sourceCode, filePath) => {
                 return;
             }
 
-            if ((node.callee.name === "it" || node.callee.name === "test") && node.arguments.length > 0) {
+            if (isTestOrIt(node.callee) && node.arguments.length > 0) {
                 const oldTest = currentTest;
                 currentTest = extractPathFromNode(node.arguments[0]) || currentTest;
                 
@@ -142,7 +183,13 @@ export const extractTestRequests = (sourceCode, filePath) => {
                                 const targetArg = targetObj?.arguments?.[0];
                                 if (targetArg?.property?.name === "status" || targetArg?.property?.name === "statusCode") {
                                     if (argVal.type === "Literal") {
-                                        testExpectedStatus = argVal.value;
+                                        const objName = targetArg?.object?.name || "";
+                                        const isSetupOrTeardown = /^(created|create|seed|setup|init|verify|teardown|cleanup|after)/i.test(objName);
+                                        if ((!testExpectedStatus && !isSetupOrTeardown) || (!isSetupOrTeardown && (objName === "res" || objName === "response" || /res$/i.test(objName)))) {
+                                            testExpectedStatus = argVal.value;
+                                        } else if (!testExpectedStatus) {
+                                            testExpectedStatus = argVal.value;
+                                        }
                                     }
                                 }
                             }
@@ -160,6 +207,7 @@ export const extractTestRequests = (sourceCode, filePath) => {
 
                     scanTestBody(fn.body);
 
+                    const testRequests = [];
                     // Now scan for request calls inside this test
                     const scanRequests = (rNode) => {
                         if (!rNode) return;
@@ -168,7 +216,7 @@ export const extractTestRequests = (sourceCode, filePath) => {
                             if (method && ['get', 'post', 'put', 'patch', 'delete'].includes(method)) {
                                 let reqPath = "mappingUnavailable";
                                 if (rNode.arguments.length > 0) {
-                                    reqPath = extractPathFromNode(rNode.arguments[0]) || "mappingUnavailable";
+                                    reqPath = extractPathFromNode(rNode.arguments[0], testVars) || "mappingUnavailable";
                                 }
 
                                 // Parse query string from path if present
@@ -184,7 +232,7 @@ export const extractTestRequests = (sourceCode, filePath) => {
                                     } catch (_) {}
                                 }
 
-                                results.push({
+                                testRequests.push({
                                     suiteName: currentSuite,
                                     testName: currentTest,
                                     method: method.toUpperCase(),
@@ -208,6 +256,69 @@ export const extractTestRequests = (sourceCode, filePath) => {
                     };
 
                     scanRequests(fn.body);
+
+                    if (testRequests.length === 1) {
+                        results.push(testRequests[0]);
+                    } else if (testRequests.length > 1) {
+                        // When a test contains multiple requests (e.g. setup POST then target PUT/DELETE),
+                        // choose the single primary target request for this test.
+                        let targetRequest = null;
+                        const suiteUpper = (currentSuite || "").toUpperCase();
+                        const testUpper = (currentTest || "").toUpperCase();
+
+                        // 1. Prioritize request whose method AND path match currentSuite
+                        for (const req of testRequests) {
+                            const methodMatch = suiteUpper.includes(req.method);
+                            const cleanReq = (req.path || "").split("?")[0].replace(/\/+$/, "") || "/";
+                            const reqBase = cleanReq.includes("/") ? cleanReq.split("/").slice(-1)[0] : cleanReq;
+                            const pathMatch = suiteUpper.includes(cleanReq) || (reqBase && suiteUpper.includes(reqBase));
+                            if (methodMatch && pathMatch) {
+                                targetRequest = req;
+                                break;
+                            }
+                        }
+
+                        // 2. Prioritize request whose method matches currentSuite
+                        if (!targetRequest) {
+                            for (const req of testRequests) {
+                                if (suiteUpper.includes(req.method)) {
+                                    targetRequest = req;
+                                    break;
+                                }
+                            }
+                        }
+
+                        // 2b. Prioritize request whose method AND path match test name
+                        if (!targetRequest) {
+                            for (const req of testRequests) {
+                                const methodMatch = testUpper.includes(req.method);
+                                const cleanReq = (req.path || "").split("?")[0].replace(/\/+$/, "") || "/";
+                                const reqBase = cleanReq.includes("/") ? cleanReq.split("/").slice(-1)[0] : cleanReq;
+                                const pathMatch = testUpper.includes(cleanReq) || (reqBase && testUpper.includes(reqBase));
+                                if (methodMatch && pathMatch) {
+                                    targetRequest = req;
+                                    break;
+                                }
+                            }
+                        }
+
+                        // 3. Prioritize request whose method matches test name
+                        if (!targetRequest) {
+                            for (const req of testRequests) {
+                                if (testUpper.includes(req.method)) {
+                                    targetRequest = req;
+                                    break;
+                                }
+                            }
+                        }
+
+                        // 4. Default: Pick the LAST request in the test body (the "Act" call in Arrange-Act-Assert)
+                        if (!targetRequest) {
+                            targetRequest = testRequests[testRequests.length - 1];
+                        }
+
+                        results.push(targetRequest);
+                    }
                 }
                 currentTest = oldTest;
                 return;

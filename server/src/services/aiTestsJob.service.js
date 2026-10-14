@@ -15,6 +15,7 @@ import { processFullTests } from "./fullTestsPostProcessor.service.js";
 import { processCypressTests } from "./cypressPostProcessor.service.js";
 import { processSupertestTests } from "./supertestPostProcessor.service.js";
 import { notificationService } from "./notification.service.js";
+import { invalidateEndpointCache } from "./integrationWorkspace.service.js";
 import { saveAiTestsToFilesystem, removeAiTestsFromFilesystem } from "./aiTestStorage.service.js";
 import crypto from "crypto";
 import { validateGeneratedTestCode } from "../validators/aiTestCode.validator.js";
@@ -403,9 +404,10 @@ export const processAiTestsJob = async (jobId) => {
 
             // Selective Generation: filter to targetEndpoints if specified
             let targetEndpoints = allEndpoints;
-            if (payload.targetEndpoints && Array.isArray(payload.targetEndpoints) && payload.targetEndpoints.length > 0) {
+            const requestedTargets = payloadJsonObj?.targetEndpoints || payload?.targetEndpoints;
+            if (requestedTargets && Array.isArray(requestedTargets) && requestedTargets.length > 0) {
                 const targetSet = new Set(
-                    payload.targetEndpoints.map(t => typeof t === 'string' ? t.trim().toUpperCase() : `${t.method} ${t.path || t.fullPath || t.route}`.trim().toUpperCase())
+                    requestedTargets.map(t => typeof t === 'string' ? t.trim().toUpperCase() : `${t.method} ${t.path || t.fullPath || t.route}`.trim().toUpperCase())
                 );
                 targetEndpoints = allEndpoints.filter(ep => {
                     const key = `${ep.method} ${ep.fullPath}`.toUpperCase();
@@ -424,6 +426,9 @@ export const processAiTestsJob = async (jobId) => {
                     endpoint: ep,
                     happy: false,
                     error: false,
+                    negativeNotApplicable: false,
+                    negativeNotApplicableReason: null,
+                    generationCompleted: false,
                     scenarios: [],
                     failed: false,
                     retries: 0
@@ -446,6 +451,10 @@ export const processAiTestsJob = async (jobId) => {
                 
                 let nextQueue = [];
                 for (let i = 0; i < currentQueue.length; i += CHUNK_SIZE) {
+                    if (i > 0) {
+                        // Rate limit backoff between batches to prevent burst 429
+                        await new Promise(r => setTimeout(r, 2500));
+                    }
                     const chunkKeys = currentQueue.slice(i, i + CHUNK_SIZE);
                     const chunkEndpoints = chunkKeys.map(k => endpointTracker.get(k).endpoint);
                     
@@ -475,8 +484,8 @@ export const processAiTestsJob = async (jobId) => {
                     let rejectedScenarios = 0;
                     
                     try {
-                        // The model name is hardcoded here but gemini.service resolves fallbacks internally
-                        const supertestResponseText = await generateText(supertestPrompt, "gemini-3.8-flash");
+                        // gemini.service resolves fallbacks internally
+                        const supertestResponseText = await generateText(supertestPrompt, process.env.GEMINI_MODEL || "gemini-3.5-flash");
                         
                         if (supertestResponseText) {
                             try {
@@ -491,11 +500,30 @@ export const processAiTestsJob = async (jobId) => {
                                         
                                         const cleanRoute = path.replace(/\/+$/, "") || "/";
                                         
-                                        // Convert express route /path/:id to regex ^/path/[^/]+$
+                                        // 1. Exact or parameterized match: e.g. /api/users/:id matches /api/users/123
                                         const regexStr = "^" + cleanRoute.replace(/:[^\/]+/g, "[^/]+") + "$";
                                         const regex = new RegExp(regexStr);
                                         if (regex.test(cleanPath)) {
                                             return key;
+                                        }
+
+                                        // 2. Subpath suffix match: if key has subpath e.g. "/validate" or "/get/:id"
+                                        // and requestPath is full path "/api/cart/validate" or "/api/food-items/get/123"
+                                        if (cleanRoute !== "/" && cleanRoute !== "") {
+                                            const suffixRegexStr = cleanRoute.replace(/:[^\/]+/g, "[^/]+") + "$";
+                                            if (new RegExp(suffixRegexStr).test(cleanPath)) {
+                                                return key;
+                                            }
+                                        }
+
+                                        // 3. Fallback: if key is root "/" and cleanPath points to the endpoint resource
+                                        const epData = endpointTracker.get(key);
+                                        if (cleanRoute === "/" && epData?.endpoint?.sourceFile) {
+                                            const srcBase = epData.endpoint.sourceFile.split("/").pop().replace(/\.(js|ts)$/, "").replace(/[.\-_]/g, "").toLowerCase();
+                                            const pathCleaned = cleanPath.replace(/[.\-_/]/g, "").toLowerCase();
+                                            if (pathCleaned.includes(srcBase.replace("routes", "").replace("route", ""))) {
+                                                return key;
+                                            }
                                         }
                                     }
                                     return null;
@@ -505,7 +533,9 @@ export const processAiTestsJob = async (jobId) => {
                                 const validTestsForBatch = [];
                                 for (const testFile of allTests) {
                                     const meta = JSON.parse(testFile.metaJson);
+                                    const originalRequests = Array.isArray(meta.requests) ? [...meta.requests] : [];
                                     const validRequests = [];
+                                    const rejectedRequests = [];
                                     
                                     for (const req of meta.requests) {
                                         const matchedKey = matchEndpoint(req.path, req.method, chunkKeys);
@@ -514,6 +544,7 @@ export const processAiTestsJob = async (jobId) => {
                                         if (!matchedKey) {
                                             rejectedScenarios++;
                                             await addJobLog(jobId, "WARN", `Rejected scenario '${req.testName}' for endpoint '${req.method} ${req.path}': Not in the requested batch or is an invented endpoint.`);
+                                            rejectedRequests.push(req);
                                             continue;
                                         }
                                         
@@ -532,11 +563,22 @@ export const processAiTestsJob = async (jobId) => {
                                         if (isHappy) tr.happy = true;
                                         if (isError) tr.error = true;
                                         
+                                        // Special case: Simple root health-check endpoints without parameters (like GET /) do not have meaningful error branches
+                                        if ((matchedKey.trim().toUpperCase() === "GET /" || matchedKey.trim().toUpperCase().endsWith(" /")) && tr.happy) {
+                                            tr.negativeNotApplicable = true;
+                                            tr.negativeNotApplicableReason = "Static parameterless health-check endpoint has no input validation or error branch";
+                                            tr.generationCompleted = true;
+                                        }
+                                        
                                         acceptedScenarios++;
                                         validRequests.push(req);
                                     }
                                     
                                     if (validRequests.length > 0) {
+                                        if (rejectedRequests.length > 0) {
+                                            const { pruneScenariosFromCode } = await import("./scenarioManager.service.js");
+                                            testFile.content = pruneScenariosFromCode(testFile.content, originalRequests, rejectedRequests);
+                                        }
                                         meta.requests = validRequests;
                                         testFile.metaJson = JSON.stringify(meta);
                                         validTestsForBatch.push(testFile);
@@ -544,7 +586,15 @@ export const processAiTestsJob = async (jobId) => {
                                 }
                                 
                                 allTestsCombined.push(...validTestsForBatch);
-                                if (suggestions) suggestionsCombined.push(...suggestions);
+                                if (suggestions && Array.isArray(suggestions)) {
+                                    const validSuggestions = suggestions.filter(s => {
+                                        if (!s.functionName) return true;
+                                        const [sMethod, ...sPathParts] = s.functionName.split(" ");
+                                        const sPath = sPathParts.join(" ");
+                                        return !sPath || matchEndpoint(sPath, sMethod, chunkKeys);
+                                    });
+                                    suggestionsCombined.push(...validSuggestions);
+                                }
                                 
                             } catch (e) {
                                 batchStatus = "PARSE_ERROR";
@@ -562,10 +612,11 @@ export const processAiTestsJob = async (jobId) => {
                     // Evaluate missing coverage for the chunk and queue retries
                     for (const key of chunkKeys) {
                         const tr = endpointTracker.get(key);
-                        if (!tr.happy || !tr.error) {
+                        const isComplete = tr.happy && (tr.error || tr.negativeNotApplicable || tr.generationCompleted);
+                        if (!isComplete) {
                             tr.retries++;
                             if (tr.retries <= MAX_RETRIES) {
-                                await addJobLog(jobId, "WARN", `Endpoint ${key} missing required coverage (Happy: ${tr.happy}, Error: ${tr.error}). Queuing for retry (${tr.retries}/${MAX_RETRIES}).`);
+                                await addJobLog(jobId, "WARN", `Endpoint ${key} missing required coverage (Happy: ${tr.happy}, Error: ${tr.error}, Negative Not Applicable: ${Boolean(tr.negativeNotApplicable)}). Queuing for retry (${tr.retries}/${MAX_RETRIES}).`);
                                 nextQueue.push(key);
                             } else {
                                 tr.failed = true;
@@ -710,7 +761,7 @@ export const processAiTestsJob = async (jobId) => {
                 if (allTestsCombined.length > 0) {
                     await tx.aiTest.createMany({ data: allTestsCombined });
                 }
-            });
+            }, { maxWait: 15000, timeout: 30000 });
 
             // Step 3: Cleanup old files asynchronously
             if (supertestIds.length > 0) {
@@ -730,7 +781,22 @@ export const processAiTestsJob = async (jobId) => {
                 await addJobLog(jobId, "INFO", "No Supertest integration test files were generated.");
             }
 
-            await updateJobStatus({ jobId, status: finalJobStatus === "PARTIAL" ? "SUCCESS" : finalJobStatus, progress: 100 });
+            invalidateEndpointCache(snapshotId, job.snapshot?.rootDir);
+            if (unresolvedEndpoints.length > 0) {
+                await addJobLog(jobId, "WARN", `⚠️ ${unresolvedEndpoints.length} endpoint(s) could not be generated (due to Gemini quota exhaustion or provider errors). Unresolved: ${unresolvedEndpoints.join(", ")}`);
+            }
+            await updateJobStatus({ 
+                jobId, 
+                status: finalJobStatus === "PARTIAL" ? "SUCCESS" : finalJobStatus, 
+                progress: 100,
+                resultJson: JSON.stringify({
+                    count: allTestsCombined.length,
+                    completelyCovered,
+                    partialCovered,
+                    completelyMissed,
+                    unresolvedEndpoints
+                })
+            });
             await notificationService.createJobFinishedNotification(jobId);
             return { 
                 success: finalJobStatus !== "FAILED", 

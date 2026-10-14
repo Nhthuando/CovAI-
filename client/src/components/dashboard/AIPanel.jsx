@@ -2306,6 +2306,7 @@ export default function AIPanel({
   }, [projectId, storageKey, showToast]);
 
   useEffect(() => {
+    if (!projectId) return;
     let cancelled = false;
     const requestState = contextRequestRef;
     Promise.resolve().then(async () => {

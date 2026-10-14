@@ -5,7 +5,7 @@ import {
   runCoverageByType,
 } from "../../services/coverage.service.js";
 import { runProjectStructureAnalysisApi } from "../../services/project.service.js";
-import { Search, Zap, CheckCircle2, PlayCircle, BarChart3, ChevronRight, Play, ChevronDown, Clock, AlertTriangle } from "lucide-react";
+import { Search, Zap, CheckCircle2, PlayCircle, BarChart3, ChevronRight, Play, ChevronDown, Clock, AlertTriangle, RefreshCw } from "lucide-react";
 
 import IntegrationTargetsPane from "./integration/IntegrationTargetsPane.jsx";
 import IntegrationScenariosPane from "./integration/IntegrationScenariosPane.jsx";
@@ -263,7 +263,11 @@ export default function IntegrationWorkspace({
   }, [workspace?.endpoints, selectedEndpointId]);
 
   const load = useCallback(async () => {
-    if (!snapshotId) return;
+    if (!snapshotId) {
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
     if (workspace) {
       setRefreshing(true);
     } else {
@@ -496,9 +500,12 @@ export default function IntegrationWorkspace({
 
       // Check if any of these remaining endpoints do not have AI tests generated
       const ungenerated = remainingList.filter((ep) => (ep.generatedCount || 0) === 0);
-      if (ungenerated.length > 0 && (!workspace?.aiTests || workspace.aiTests.length === 0)) {
+      if (ungenerated.length > 0) {
+        setPendingAction(null);
+        const targetIds = ungenerated.map((ep) => `${ep.method} ${ep.path || ep.route || ep.fullPath}`);
+        setSelectedTargetEndpoints(new Set(targetIds));
         setActiveStage("GENERATE");
-        await handleGenerateClick(ungenerated.map((ep) => `${ep.method} ${ep.path}`));
+        await handleGenerateClick(targetIds);
         return;
       }
 
@@ -539,7 +546,12 @@ export default function IntegrationWorkspace({
       });
 
       if (remainingScenarioIds.length === 0) {
-        throw new Error("Chưa tìm thấy kịch bản kiểm thử nào cho endpoint này. Hãy tạo kịch bản ở bước Generate & Review.");
+        setPendingAction(null);
+        const targetIds = remainingList.map((ep) => `${ep.method} ${ep.path || ep.route || ep.fullPath}`);
+        setSelectedTargetEndpoints(new Set(targetIds));
+        setActiveStage("GENERATE");
+        await handleGenerateClick(targetIds);
+        return;
       }
 
       // 2. Combine with previously approved scenarios to preserve cumulative test results
@@ -716,10 +728,69 @@ export default function IntegrationWorkspace({
     return steps;
   };
 
-  if (loading && !workspace)
+  if (!snapshotId && !workspace) {
     return (
-      <div style={{ padding: 40, color: "#e6edf3" }}>Loading workspace...</div>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 360, padding: 40, textAlign: "center", color: "#e6edf3" }}>
+        <AlertTriangle size={36} style={{ color: "#eab308", marginBottom: 14 }} />
+        <h3 style={{ fontSize: 16, fontWeight: 600, color: "#f0f6fc", marginBottom: 8 }}>Chưa chọn Snapshot dự án</h3>
+        <p style={{ fontSize: 13, color: "#8b949e", maxWidth: 440, lineHeight: 1.6, marginBottom: 16 }}>
+          Vui lòng chọn một Snapshot từ danh sách hoặc chạy phân tích dự án (Run Analysis) trước khi sử dụng tính năng Integration Test.
+        </p>
+      </div>
     );
+  }
+
+  if (error && !workspace) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 360, padding: 40, textAlign: "center", color: "#e6edf3" }}>
+        <AlertTriangle size={36} style={{ color: "#f87171", marginBottom: 14 }} />
+        <h3 style={{ fontSize: 16, fontWeight: 600, color: "#f0f6fc", marginBottom: 8 }}>Không thể nạp dữ liệu Integration Workspace</h3>
+        <p style={{ fontSize: 13, color: "#fca5a5", maxWidth: 440, lineHeight: 1.6, marginBottom: 18 }}>{error}</p>
+        <button
+          type="button"
+          onClick={() => { setError(""); load(); }}
+          style={{
+            padding: "8px 18px",
+            background: "#2563eb",
+            color: "#ffffff",
+            border: "none",
+            borderRadius: 6,
+            fontSize: 13,
+            fontWeight: 600,
+            cursor: "pointer",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6
+          }}
+        >
+          <RefreshCw size={14} /> Thử lại
+        </button>
+      </div>
+    );
+  }
+
+  if (loading && !workspace) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 360, padding: 40, color: "#e6edf3" }}>
+        <div style={{
+          width: 38,
+          height: 38,
+          border: "3px solid rgba(59, 130, 246, 0.2)",
+          borderTopColor: "#3b82f6",
+          borderRadius: "50%",
+          animation: "spin 1s linear infinite",
+          marginBottom: 16
+        }} />
+        <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
+        <div style={{ fontSize: 15, fontWeight: 600, color: "#f0f6fc", marginBottom: 6 }}>
+          Đang nạp không gian kiểm thử tích hợp...
+        </div>
+        <div style={{ fontSize: 12, color: "#8b949e", maxWidth: 400, textAlign: "center", lineHeight: 1.5 }}>
+          Đang kết nối Snapshot ({snapshotId ? snapshotId.substring(0, 10) + "..." : ""}) và chuẩn bị dữ liệu API Endpoints
+        </div>
+      </div>
+    );
+  }
 
   const {
     generation,
@@ -858,9 +929,9 @@ export default function IntegrationWorkspace({
                 <button
                   type="button"
                   onClick={() => handleRunRemainingEndpoints()}
-                  disabled={isJobActive || pendingAction === "RUN_REMAINING"}
+                  disabled={isJobActive || pendingAction === "RUN_REMAINING" || pendingAction === "GENERATE"}
                   style={
-                    isJobActive || pendingAction === "RUN_REMAINING"
+                    isJobActive || pendingAction === "RUN_REMAINING" || pendingAction === "GENERATE"
                       ? disabledButtonStyle
                       : {
                           ...buttonStyle("#22c55e", true),
@@ -870,10 +941,18 @@ export default function IntegrationWorkspace({
                           boxShadow: "0 2px 8px rgba(16, 185, 129, 0.25)",
                         }
                   }
-                  title="Chạy nốt các endpoint chưa được kiểm thử trong đợt này mà không cần quay lại cấu hình"
+                  title={
+                    remainingEndpoints.some((ep) => (ep.generatedCount || 0) === 0)
+                      ? "Tự động tạo kịch bản và chạy nốt các endpoint chưa kiểm thử"
+                      : "Chạy nốt các endpoint chưa được kiểm thử trong đợt này"
+                  }
                 >
                   <Play size={13} style={{ display: "inline", verticalAlign: "middle", marginRight: 6 }} fill="#ffffff" />
-                  {pendingAction === "RUN_REMAINING" ? "Starting Remaining..." : `Run Remaining Endpoints (${remainingEndpoints.length})`}
+                  {pendingAction === "RUN_REMAINING" || pendingAction === "GENERATE"
+                    ? "Starting Remaining..."
+                    : remainingEndpoints.some((ep) => (ep.generatedCount || 0) === 0)
+                      ? `Generate & Run Remaining (${remainingEndpoints.length})`
+                      : `Run Remaining Endpoints (${remainingEndpoints.length})`}
                 </button>
               )}
               <button
@@ -977,7 +1056,7 @@ export default function IntegrationWorkspace({
                activeLogs={activeLogs}
                parseProgressSteps={parseProgressSteps}
              />
-          ) : activeStage === "ANALYZE" && selectedEndpointId !== null ? (
+          ) : selectedEndpointId !== null ? (
             <IntegrationEndpointDetail
               endpoint={selectedEndpoint}
               aiTests={aiTests}
@@ -994,6 +1073,7 @@ export default function IntegrationWorkspace({
               onScenarioChange={load}
               onError={setError}
               onGenerateThisEndpoint={(ep) => handleGenerateClick([`${ep.method} ${ep.path || ep.route}`])}
+              onOpenFile={onOpenFile}
               isGenerating={pendingAction === "GENERATE" || (activeJobId && activeJobType === "GENERATE")}
             />
           ) : activeStage === "GENERATE" ? (
@@ -1126,9 +1206,13 @@ export default function IntegrationWorkspace({
                           title = "Skipped";
                           description = "Tests were skipped.";
                           color = "var(--color-warning)";
+                        } else if (semanticState === "CONTRACT_VERIFICATION_REQUIRED") {
+                          title = "Runner Assertions Passed — Contract Verification Required";
+                          description = `${summary?.passedTests || 0}/${summary?.totalTests || 0} runner assertions passed, but ${summary?.qualityClassification?.contractUnverified || 0} scenarios require contract verification.`;
+                          color = "#f59e0b";
                         } else if (semanticState === "SUCCESS") {
-                          title = "Success";
-                          description = "All tests passed successfully.";
+                          title = "All Tests Contract-Verified";
+                          description = "All executed tests passed and verified against API contracts.";
                           color = "#22c55e";
                         } else {
                           title = semanticState || "No Status";
@@ -1156,13 +1240,14 @@ export default function IntegrationWorkspace({
                             <div style={{ color: "#8b949e", fontSize: 13, marginBottom: 16, lineHeight: 1.4 }}>
                               {description}
                             </div>
-                                                        {(() => {
+                            {(() => {
                               const passed = summary?.passedTests || 0;
                               const failed = summary?.failedTests || 0;
                               const skipped = summary?.skippedTests || 0;
                               const total = summary?.totalTests || 0;
                               const executed = passed + failed;
                               const passRate = executed > 0 ? Math.round((passed / executed) * 100) : 0;
+                              const unexecuted = summary?.qualityClassification?.notExecuted || 0;
 
                               return (
                                 <div>
@@ -1175,36 +1260,90 @@ export default function IntegrationWorkspace({
                                     }}
                                   >
                                     <div style={{ background: "rgba(34,197,94,0.06)", padding: "10px 12px", borderRadius: 6, border: "1px solid rgba(34,197,94,0.18)" }}>
-                                      <div style={{ fontSize: 11, color: "var(--color-success)", fontWeight: 600 }}>PASSED</div>
+                                      <div style={{ fontSize: 11, color: "var(--color-success)", fontWeight: 600 }}>RUNNER PASS</div>
                                       <div style={{ fontSize: 18, fontWeight: 700, color: "#e6edf3", marginTop: 2 }}>{passed}</div>
                                     </div>
                                     <div style={{ background: failed > 0 ? "rgba(239,68,68,0.08)" : "rgba(255,255,255,0.02)", padding: "10px 12px", borderRadius: 6, border: failed > 0 ? "1px solid rgba(239,68,68,0.25)" : "1px solid rgba(255,255,255,0.05)" }}>
-                                      <div style={{ fontSize: 11, color: failed > 0 ? "var(--color-danger)" : "#8b949e", fontWeight: 600 }}>FAILED</div>
+                                      <div style={{ fontSize: 11, color: failed > 0 ? "var(--color-danger)" : "#8b949e", fontWeight: 600 }}>RUNNER FAIL</div>
                                       <div style={{ fontSize: 18, fontWeight: 700, color: failed > 0 ? "var(--color-danger)" : "#e6edf3", marginTop: 2 }}>{failed}</div>
                                     </div>
                                     <div style={{ background: "rgba(245,158,11,0.06)", padding: "10px 12px", borderRadius: 6, border: "1px solid rgba(245,158,11,0.18)" }}>
-                                      <div style={{ fontSize: 11, color: "var(--color-warning)", fontWeight: 600 }}>SKIPPED (Bỏ qua)</div>
+                                      <div style={{ fontSize: 11, color: "var(--color-warning)", fontWeight: 600 }}>SKIPPED</div>
                                       <div style={{ fontSize: 18, fontWeight: 700, color: "#e6edf3", marginTop: 2 }}>{skipped}</div>
                                     </div>
                                     <div style={{ background: "rgba(255,255,255,0.02)", padding: "10px 12px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.05)" }}>
-                                      <div style={{ fontSize: 11, color: "var(--color-text-secondary)", fontWeight: 600 }}>PASS RATE (Đã chạy)</div>
+                                      <div style={{ fontSize: 11, color: "var(--color-text-secondary)", fontWeight: 600 }} title="Tỷ lệ assertions thành công của test runner Jest">Runner Assertion Pass Rate</div>
                                       <div style={{ fontSize: 18, fontWeight: 700, color: passRate >= 80 ? "var(--color-success)" : passRate > 0 ? "var(--color-warning)" : "#8b949e", marginTop: 2 }}>
                                         {passRate}%
                                       </div>
                                     </div>
                                     <div style={{ background: "rgba(56,189,248,0.06)", padding: "10px 12px", borderRadius: 6, border: "1px solid rgba(56,189,248,0.18)" }}>
-                                      <div style={{ fontSize: 11, color: "#38bdf8", fontWeight: 600 }}>AVG LATENCY</div>
+                                      <div style={{ fontSize: 11, color: "#38bdf8", fontWeight: 600 }} title="Thời gian phản hồi trung bình của từng HTTP request thực tế">AVG REQUEST LATENCY</div>
                                       <div style={{ fontSize: 18, fontWeight: 700, color: "#e6edf3", marginTop: 2 }}>
-                                        {summary?.avgEndpointLatencyMs || 0}<span style={{ fontSize: 12, fontWeight: 500, color: "#8b949e" }}>ms</span>
+                                        {summary?.avgRequestLatencyMs ?? (summary?.avgEndpointLatencyMs || 0)}<span style={{ fontSize: 12, fontWeight: 500, color: "#8b949e" }}>ms</span>
                                       </div>
                                     </div>
                                   </div>
 
-                                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#8b949e", padding: "0 2px" }}>
+                                  <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 8, fontSize: 12, color: "#8b949e", padding: "0 2px" }}>
                                     <span>Tổng kịch bản: <strong style={{ color: "#e6edf3" }}>{total}</strong></span>
                                     <span>Đã chạy: <strong style={{ color: "#e6edf3" }}>{executed}</strong> (Pass: {passed} | Fail: {failed})</span>
                                     <span>Bỏ qua: <strong style={{ color: "var(--color-warning)" }}>{skipped}</strong></span>
+                                    <span>Chưa chạy: <strong style={{ color: "#8b949e" }}>{unexecuted}</strong></span>
+                                    <span>Avg Endpoint Latency: <strong style={{ color: "#38bdf8" }}>{summary?.avgEndpointLatencyMs || 0}ms</strong></span>
+                                    <span>Thời lượng Suite: <strong style={{ color: "#a5d6ff" }}>{summary?.durationMs || 0}ms</strong></span>
                                   </div>
+
+                                  {/* QA Trustworthy Quality Classification Breakdown */}
+                                  {summary?.qualityClassification && (
+                                    <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                                        <div style={{ fontSize: 11, fontWeight: 700, color: "#e6edf3", display: "flex", alignItems: "center", gap: 6 }}>
+                                          <span>🎯 Phân loại chất lượng kiểm thử (Trustworthy QA Classification)</span>
+                                        </div>
+                                        <div style={{ fontSize: 11, color: "#8b949e" }}>
+                                          Kịch bản hợp lệ đã chạy: <strong style={{ color: "#38bdf8" }}>{summary.qualityClassification.validExecuted}</strong> / {summary.qualityClassification.total}
+                                        </div>
+                                      </div>
+                                      <div
+                                        style={{
+                                          display: "grid",
+                                          gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))",
+                                          gap: 6,
+                                          fontSize: 11,
+                                        }}
+                                      >
+                                        <div style={{ background: "rgba(34,197,94,0.05)", border: "1px solid rgba(34,197,94,0.15)", borderRadius: 5, padding: "6px 8px" }}>
+                                          <div style={{ color: "#22c55e", fontWeight: 600 }}>Passed (Code)</div>
+                                          <div style={{ fontSize: 14, fontWeight: 700, color: "#e6edf3", marginTop: 2 }}>{summary.qualityClassification.passed}</div>
+                                        </div>
+                                        <div style={{ background: "rgba(56,189,248,0.05)", border: "1px solid rgba(56,189,248,0.15)", borderRadius: 5, padding: "6px 8px" }}>
+                                          <div style={{ color: "#38bdf8", fontWeight: 600 }}>Consistent</div>
+                                          <div style={{ fontSize: 14, fontWeight: 700, color: "#e6edf3", marginTop: 2 }}>{summary.qualityClassification.implementationConsistent ?? summary.qualityClassification.passed}</div>
+                                        </div>
+                                        <div style={{ background: summary.qualityClassification.assertionFailures > 0 ? "rgba(239,68,68,0.08)" : "rgba(255,255,255,0.02)", border: summary.qualityClassification.assertionFailures > 0 ? "1px solid rgba(239,68,68,0.25)" : "1px solid rgba(255,255,255,0.05)", borderRadius: 5, padding: "6px 8px" }}>
+                                          <div style={{ color: summary.qualityClassification.assertionFailures > 0 ? "#f87171" : "#8b949e", fontWeight: 600 }}>Assertion Failures</div>
+                                          <div style={{ fontSize: 14, fontWeight: 700, color: summary.qualityClassification.assertionFailures > 0 ? "#f87171" : "#e6edf3", marginTop: 2 }}>{summary.qualityClassification.assertionFailures}</div>
+                                        </div>
+                                        <div style={{ background: summary.qualityClassification.testScriptErrors > 0 ? "rgba(249,115,22,0.08)" : "rgba(255,255,255,0.02)", border: summary.qualityClassification.testScriptErrors > 0 ? "1px solid rgba(249,115,22,0.25)" : "1px solid rgba(255,255,255,0.05)", borderRadius: 5, padding: "6px 8px" }}>
+                                          <div style={{ color: summary.qualityClassification.testScriptErrors > 0 ? "#fb923c" : "#8b949e", fontWeight: 600 }} title="Lỗi cú pháp hoặc mock functions không hợp lệ trong file test">Test-Script Errors</div>
+                                          <div style={{ fontSize: 14, fontWeight: 700, color: summary.qualityClassification.testScriptErrors > 0 ? "#fb923c" : "#e6edf3", marginTop: 2 }}>{summary.qualityClassification.testScriptErrors}</div>
+                                        </div>
+                                        <div style={{ background: summary.qualityClassification.invalidTests > 0 ? "rgba(168,85,247,0.08)" : "rgba(255,255,255,0.02)", border: summary.qualityClassification.invalidTests > 0 ? "1px solid rgba(168,85,247,0.25)" : "1px solid rgba(255,255,255,0.05)", borderRadius: 5, padding: "6px 8px" }}>
+                                          <div style={{ color: summary.qualityClassification.invalidTests > 0 ? "#c084fc" : "#8b949e", fontWeight: 600 }} title="Kỳ vọng không hợp lệ hoặc test đặt tên lỗi nhà cung cấp nhưng không kích hoạt lỗi">Invalid Tests</div>
+                                          <div style={{ fontSize: 14, fontWeight: 700, color: summary.qualityClassification.invalidTests > 0 ? "#c084fc" : "#e6edf3", marginTop: 2 }}>{summary.qualityClassification.invalidTests}</div>
+                                        </div>
+                                        <div style={{ background: summary.qualityClassification.contractUnverified > 0 ? "rgba(234,179,8,0.08)" : "rgba(255,255,255,0.02)", border: summary.qualityClassification.contractUnverified > 0 ? "1px solid rgba(234,179,8,0.25)" : "1px solid rgba(255,255,255,0.05)", borderRadius: 5, padding: "6px 8px" }}>
+                                          <div style={{ color: summary.qualityClassification.contractUnverified > 0 ? "#facc15" : "#8b949e", fontWeight: 600 }} title="Khớp hành vi 500 hiện tại của backend nhưng chưa có đặc tả API contract độc lập">Contract Unverified</div>
+                                          <div style={{ fontSize: 14, fontWeight: 700, color: summary.qualityClassification.contractUnverified > 0 ? "#facc15" : "#e6edf3", marginTop: 2 }}>{summary.qualityClassification.contractUnverified || 0}</div>
+                                        </div>
+                                        <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: 5, padding: "6px 8px" }}>
+                                          <div style={{ color: "#8b949e", fontWeight: 600 }} title="Số kịch bản có căn cứ API Contract độc lập (OpenAPI/Swagger)">Contract Verified</div>
+                                          <div style={{ fontSize: 14, fontWeight: 700, color: "#8b949e", marginTop: 2 }}>{summary.qualityClassification.contractVerified || 0}</div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
 
                                   {generation?.generatedScenarios && generation.generatedScenarios !== total && (
                                     <div style={{ 
@@ -1255,93 +1394,24 @@ export default function IntegrationWorkspace({
                               Chi tiết kiểm thử từng API Endpoint
                             </h4>
                             <div style={{ fontSize: 11, color: "#8b949e", marginTop: 2 }}>
-                              Chỉ rõ endpoint nào đã được test, endpoint nào chưa chạy trong đợt này
+                              Chỉ rõ endpoint nào đã được test, tính nhất quán code và xác minh contract độc lập
                             </div>
                           </div>
-                          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                            <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(34,197,94,0.12)", color: "#22c55e", fontWeight: 600 }}>
-                              {summary?.testedApis || 0} Đã test
+                          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                            <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(34,197,94,0.12)", color: "#22c55e", fontWeight: 600 }} title="Số endpoint đã kiểm thử nhất quán với implementation code">
+                              {summary?.implementationConsistentApis ?? summary?.executedApis ?? (summary?.testedApis || 0)} Khớp Code (Consistent)
+                            </span>
+                            <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(234,179,8,0.12)", color: "#facc15", fontWeight: 600 }} title="Số endpoint được xác minh theo tài liệu API Contract độc lập (OpenAPI/Swagger)">
+                              {summary?.contractVerifiedApis ?? 0} Xác minh Contract (UNVERIFIED)
+                            </span>
+                            <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(56,189,248,0.12)", color: "#38bdf8", fontWeight: 600 }} title="Số endpoint có request HTTP thực tế được gửi và chạy">
+                              {summary?.executedApis !== undefined ? summary.executedApis : (summary?.testedApis || 0)} Đã thực thi
                             </span>
                             <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(139,148,158,0.12)", color: "#8b949e", fontWeight: 600 }}>
                               {(summary?.discoveredApis || 0) - (summary?.testedApis || 0)} Chưa chạy
                             </span>
-                            {remainingEndpoints.length > 0 && (
-                              <button
-                                type="button"
-                                onClick={() => handleRunRemainingEndpoints()}
-                                disabled={isJobActive || pendingAction === "RUN_REMAINING"}
-                                style={{
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: 6,
-                                  background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
-                                  color: "#ffffff",
-                                  border: "none",
-                                  borderRadius: 5,
-                                  padding: "4px 10px",
-                                  fontSize: 11,
-                                  fontWeight: 600,
-                                  cursor: isJobActive || pendingAction === "RUN_REMAINING" ? "not-allowed" : "pointer",
-                                  opacity: isJobActive || pendingAction === "RUN_REMAINING" ? 0.6 : 1,
-                                  boxShadow: "0 2px 6px rgba(16, 185, 129, 0.25)",
-                                }}
-                                title="Tự động phê duyệt và chạy nốt các endpoint còn lại mà không cần quay lại cấu hình"
-                              >
-                                <Play size={11} fill="#ffffff" />
-                                <span>{pendingAction === "RUN_REMAINING" ? "Đang chuẩn bị..." : `Run Remaining Endpoints (${remainingEndpoints.length})`}</span>
-                              </button>
-                            )}
                           </div>
                         </div>
-
-                        {/* REMAINING ENDPOINTS ACTION BANNER */}
-                        {remainingEndpoints.length > 0 && (
-                          <div
-                            style={{
-                              marginBottom: 14,
-                              padding: "10px 14px",
-                              borderRadius: 6,
-                              background: "rgba(37, 99, 235, 0.08)",
-                              border: "1px solid rgba(59, 130, 246, 0.2)",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "space-between",
-                              gap: 12,
-                            }}
-                          >
-                            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#93c5fd" }}>
-                              <Zap size={16} style={{ color: "#60a5fa", flexShrink: 0 }} />
-                              <span>
-                                Phát hiện <strong>{remainingEndpoints.length}</strong> API endpoint chưa được kiểm thử trong đợt này.
-                                Bấm 1 click để chạy nốt các endpoint còn lại mà không cần quay lại cấu hình.
-                              </span>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => handleRunRemainingEndpoints()}
-                              disabled={isJobActive || pendingAction === "RUN_REMAINING"}
-                              style={{
-                                whiteSpace: "nowrap",
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: 6,
-                                background: "#2563eb",
-                                color: "#ffffff",
-                                border: "none",
-                                borderRadius: 5,
-                                padding: "5px 12px",
-                                fontSize: 12,
-                                fontWeight: 600,
-                                cursor: isJobActive || pendingAction === "RUN_REMAINING" ? "not-allowed" : "pointer",
-                                opacity: isJobActive || pendingAction === "RUN_REMAINING" ? 0.6 : 1,
-                                transition: "all 0.15s ease",
-                              }}
-                            >
-                              <Play size={12} fill="#ffffff" />
-                              <span>Chạy nốt {remainingEndpoints.length} endpoint</span>
-                            </button>
-                          </div>
-                        )}
 
                         {/* ENDPOINT LIST */}
                         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1450,7 +1520,7 @@ export default function IntegrationWorkspace({
                                       <button
                                         type="button"
                                         onClick={() => handleRunRemainingEndpoints([ep])}
-                                        disabled={isJobActive || pendingAction === "RUN_REMAINING"}
+                                        disabled={isJobActive || pendingAction === "RUN_REMAINING" || pendingAction === "GENERATE"}
                                         style={{
                                           display: "inline-flex",
                                           alignItems: "center",
@@ -1462,14 +1532,20 @@ export default function IntegrationWorkspace({
                                           padding: "2px 8px",
                                           fontSize: 11,
                                           fontWeight: 600,
-                                          cursor: isJobActive || pendingAction === "RUN_REMAINING" ? "not-allowed" : "pointer",
-                                          opacity: isJobActive || pendingAction === "RUN_REMAINING" ? 0.6 : 1,
+                                          cursor: isJobActive || pendingAction === "RUN_REMAINING" || pendingAction === "GENERATE" ? "not-allowed" : "pointer",
+                                          opacity: isJobActive || pendingAction === "RUN_REMAINING" || pendingAction === "GENERATE" ? 0.6 : 1,
                                           transition: "all 0.15s ease",
                                         }}
-                                        title="Chạy kiểm thử riêng endpoint này"
+                                        title={
+                                          (ep.generatedCount || 0) > 0
+                                            ? "Chạy kiểm thử riêng endpoint này"
+                                            : "Tạo kịch bản kiểm thử cho riêng endpoint này"
+                                        }
                                       >
                                         <Play size={10} fill="#38bdf8" />
-                                        <span>Chạy endpoint này</span>
+                                        <span>
+                                          {(ep.generatedCount || 0) > 0 ? "Chạy endpoint này" : "Tạo test endpoint này"}
+                                        </span>
                                       </button>
                                     )}
                                   </div>
@@ -1507,16 +1583,61 @@ export default function IntegrationWorkspace({
                                               transition: "all 0.15s ease",
                                             }}
                                           >
-                                            <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#c9d1d9" }}>
-                                              <span style={{ color: sc.status === "passed" ? "#22c55e" : isFailed ? "#f87171" : "#8b949e", fontWeight: "bold" }}>
+                                            <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#c9d1d9", flexWrap: "wrap" }}>
+                                              <span style={{ color: sc.status === "passed" ? "#22c55e" : isFailed ? "#f87171" : sc.status === "not_run" ? "#eab308" : "#8b949e", fontWeight: "bold" }}>
                                                 {sc.status === "passed" ? "✓" : isFailed ? "✗" : "○"}
                                               </span>
-                                              <span style={{ fontWeight: isFailed ? 600 : 400, color: isFailed ? "#fca5a5" : "#e6edf3" }}>
+
+                                              {/* Scenario Type Badge */}
+                                              {(() => {
+                                                const sType = sc.scenarioType || (sc.title?.toLowerCase().includes("happy") ? "HAPPY_PATH" : "NEGATIVE");
+                                                const color = sType === "HAPPY_PATH" ? "#38bdf8" : sType === "VALIDATION" ? "#c084fc" : sType === "EDGE_CASE" ? "#818cf8" : "#fb923c";
+                                                const bg = sType === "HAPPY_PATH" ? "rgba(56,189,248,0.12)" : sType === "VALIDATION" ? "rgba(192,132,252,0.12)" : sType === "EDGE_CASE" ? "rgba(129,140,248,0.12)" : "rgba(251,146,60,0.12)";
+                                                return (
+                                                  <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 3, fontWeight: 700, background: bg, color, border: `1px solid ${color}33`, letterSpacing: "0.5px" }}>
+                                                    {sType.replace(/_/g, " ")}
+                                                  </span>
+                                                );
+                                              })()}
+
+                                              {/* Resolved URL Badge */}
+                                              <code style={{ fontSize: 10, color: "#7ee787", background: "rgba(126,231,135,0.08)", padding: "1px 5px", borderRadius: 3, fontFamily: "monospace" }} title="Resolved Request URL">
+                                                {sc.resolvedUrl || sc.path || ep.path}
+                                              </code>
+
+                                              <span style={{ fontWeight: isFailed ? 600 : 400, color: isFailed ? "#fca5a5" : sc.status === "not_run" ? "#94a3b8" : "#e6edf3" }}>
                                                 {sc.title}
                                               </span>
-                                              {isFailed && (
-                                                <span style={{ fontSize: 10, background: "rgba(239,68,68,0.2)", color: "#f87171", padding: "1px 5px", borderRadius: 3, fontWeight: 700 }}>
-                                                  FAILED
+
+                                              {/* Runner Verdict Badge */}
+                                              <span style={{
+                                                fontSize: 9,
+                                                padding: "1px 5px",
+                                                borderRadius: 3,
+                                                fontWeight: 700,
+                                                background: sc.executionVerdict === "PASS" ? "rgba(34,197,94,0.12)" : sc.executionVerdict === "FAIL" ? "rgba(239,68,68,0.15)" : "rgba(234,179,8,0.15)",
+                                                color: sc.executionVerdict === "PASS" ? "#22c55e" : sc.executionVerdict === "FAIL" ? "#f87171" : "#facc15",
+                                                border: `1px solid ${sc.executionVerdict === "PASS" ? "#22c55e33" : sc.executionVerdict === "FAIL" ? "#f8717133" : "#facc1533"}`
+                                              }}>
+                                                RUNNER: {sc.executionVerdict || (sc.status === "passed" ? "PASS" : "FAIL")}
+                                              </span>
+
+                                              {/* QA Classification Badge */}
+                                              <span style={{
+                                                fontSize: 9,
+                                                padding: "1px 5px",
+                                                borderRadius: 3,
+                                                fontWeight: 700,
+                                                background: sc.classification === "PASSED" ? "rgba(34,197,94,0.12)" : sc.classification === "CONTRACT_UNVERIFIED" ? "rgba(234,179,8,0.15)" : sc.classification === "INVALID_TEST" ? "rgba(168,85,247,0.15)" : "rgba(239,68,68,0.15)",
+                                                color: sc.classification === "PASSED" ? "#22c55e" : sc.classification === "CONTRACT_UNVERIFIED" ? "#facc15" : sc.classification === "INVALID_TEST" ? "#c084fc" : "#f87171",
+                                                border: `1px solid ${sc.classification === "PASSED" ? "#22c55e33" : sc.classification === "CONTRACT_UNVERIFIED" ? "#facc1533" : sc.classification === "INVALID_TEST" ? "#c084fc33" : "#f8717133"}`
+                                              }} title={sc.classificationReason || ""}>
+                                                QA: {(sc.classification || "UNKNOWN").replace(/_/g, " ")}
+                                              </span>
+
+                                              {sc.status === "not_run" && (
+                                                <span style={{ fontSize: 9, background: "rgba(234,179,8,0.15)", color: "#facc15", padding: "1px 5px", borderRadius: 3, fontWeight: 600 }}>
+                                                  CHƯA CHẠY
                                                 </span>
                                               )}
                                             </div>
@@ -1531,11 +1652,11 @@ export default function IntegrationWorkspace({
 
                                               <span style={{ 
                                                 fontSize: 10, 
-                                                color: sc.status === "passed" ? "#22c55e" : isFailed ? "#f87171" : "#8b949e",
+                                                color: sc.status === "passed" ? "#22c55e" : isFailed ? "#f87171" : sc.status === "not_run" ? "#eab308" : "#8b949e",
                                                 textTransform: "uppercase",
                                                 fontWeight: 600
                                               }}>
-                                                {sc.category || sc.status}
+                                                {sc.status === "not_run" ? "CHƯA CHẠY" : (sc.category || sc.status)}
                                               </span>
 
                                               <span style={{ fontSize: 10, color: isFailed ? "#f87171" : "#58a6ff", display: "inline-flex", alignItems: "center", gap: 3, fontWeight: 500 }}>
@@ -1559,6 +1680,22 @@ export default function IntegrationWorkspace({
                                                 gap: 10,
                                               }}
                                             >
+                                              {/* QA Classification Advisory Callout */}
+                                              {isFailed && (sc.classification === "TEST_SCRIPT_ERROR" || sc.classification === "INVALID_TEST") && (
+                                                <div style={{
+                                                  padding: "8px 12px",
+                                                  borderRadius: 5,
+                                                  background: sc.classification === "TEST_SCRIPT_ERROR" ? "rgba(249,115,22,0.08)" : "rgba(168,85,247,0.08)",
+                                                  border: sc.classification === "TEST_SCRIPT_ERROR" ? "1px solid rgba(249,115,22,0.25)" : "1px solid rgba(168,85,247,0.25)",
+                                                  fontSize: 11,
+                                                  color: sc.classification === "TEST_SCRIPT_ERROR" ? "#fdba74" : "#d8b4fe",
+                                                  lineHeight: 1.4
+                                                }}>
+                                                  {sc.classification === "TEST_SCRIPT_ERROR"
+                                                    ? "⚠️ Test Script Error: Lỗi runtime trong script kiểm thử (hàm mock bị gọi sai trên module CommonJS). Đây không phải lỗi từ backend API."
+                                                    : "⚠️ Invalid Test: Kịch bản kiểm thử không hợp lệ (ví dụ: mong đợi HTTP 500 nhưng gửi dữ liệu mà backend xử lý thành công trả về 200 mà không kích hoạt lỗi nhà cung cấp)."}
+                                                </div>
+                                              )}
                                               {/* 1. FAILURE STEP & BROKEN CODE LINE */}
                                               {isFailed && sc.failureDetails && (
                                                 <div>
@@ -1637,10 +1774,10 @@ export default function IntegrationWorkspace({
                                                     </div>
                                                     <div style={{ fontSize: 11, marginBottom: 4 }}>
                                                       <span style={{ color: "#8b949e" }}>Kỳ vọng (Expected): </span>
-                                                      <strong style={{ color: "#22c55e" }}>{sc.failureDetails.expected || sc.expectedStatus || "200 OK"}</strong>
+                                                      <strong style={{ color: "#22c55e" }}>{sc.failureDetails?.expected ? `HTTP ${sc.failureDetails.expected}` : sc.expectedStatus ? `HTTP ${sc.expectedStatus}` : "NOT_CAPTURED"}</strong>
                                                       {"  |  "}
                                                       <span style={{ color: "#8b949e" }}>Thực tế (Received): </span>
-                                                      <strong style={{ color: "#f87171" }}>{sc.failureDetails.received || "Error"}</strong>
+                                                      <strong style={{ color: "#f87171" }}>{sc.failureDetails?.received ? `HTTP ${sc.failureDetails.received}` : sc.actualStatus ? `HTTP ${sc.actualStatus}` : "NOT_CAPTURED"}</strong>
                                                     </div>
                                                     {sc.failureDetails.diff && (
                                                       <pre

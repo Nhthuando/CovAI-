@@ -16,14 +16,38 @@ if (apiKey) {
   );
 }
 
-const VALID_MODELS = ["gemini-3.8-flash", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite"];
-const exhaustedModels = new Set();
+const VALID_MODELS = [
+  "gemini-3.5-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-3.6-flash",
+  "gemini-3.7-flash",
+  "gemini-3.8-flash",
+  "gemini-3.1-pro-preview",
+  "gemini-3.1-flash-lite"
+];
+const exhaustedModels = new Map();
 
 /**
- * Marks a model as quota-exhausted for the remainder of this process session.
+ * Checks if a model is currently exhausted and cleans up expired entries.
  */
-export function markModelExhausted(modelName) {
-  if (modelName) exhaustedModels.add(modelName);
+function isModelExhausted(modelName) {
+  if (!exhaustedModels.has(modelName)) return false;
+  const retryAt = exhaustedModels.get(modelName);
+  if (Date.now() >= retryAt) {
+    exhaustedModels.delete(modelName);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Marks a model as quota-exhausted with a TTL (default 60s for rate limits, 10m for daily quota).
+ */
+export function markModelExhausted(modelName, isDailyQuota = false) {
+  if (!modelName) return;
+  const ttlMs = isDailyQuota ? 10 * 60 * 1000 : 60 * 1000;
+  exhaustedModels.set(modelName, Date.now() + ttlMs);
+  console.warn(`[Gemini API] Marked model ${modelName} as exhausted for ${ttlMs / 1000}s.`);
 }
 
 /**
@@ -31,13 +55,13 @@ export function markModelExhausted(modelName) {
  * with the currently active and verified models.
  */
 function resolveModelName(requestedModel) {
-  const preferred = (requestedModel && requestedModel.trim()) || process.env.GEMINI_MODEL || "gemini-3.8-flash";
+  const preferred = (requestedModel && requestedModel.trim()) || process.env.GEMINI_MODEL || "gemini-3.5-flash";
   
-  if (VALID_MODELS.includes(preferred) && !exhaustedModels.has(preferred)) {
+  if (VALID_MODELS.includes(preferred) && !isModelExhausted(preferred)) {
     return preferred;
   }
   for (const m of VALID_MODELS) {
-    if (!exhaustedModels.has(m)) return m;
+    if (!isModelExhausted(m)) return m;
   }
   
   // If we reach here, all configured fallback models are exhausted.
@@ -151,10 +175,13 @@ export const generateMultimodalText = async (
     } catch (primaryErr) {
       if (signal.aborted) throw primaryErr;
       const isRateLimit = primaryErr.status === 429 || (primaryErr.message && (primaryErr.message.includes("Quota exceeded") || primaryErr.message.includes("429")));
+      const isDailyQuota = isRateLimit && isDailyQuotaError(primaryErr);
       const isUnavailable = primaryErr.status === 503 || (primaryErr.message && (primaryErr.message.includes("503") || primaryErr.message.includes("Service Unavailable")));
       
-      if (isRateLimit && isDailyQuotaError(primaryErr)) {
-        markModelExhausted(primaryModelName);
+      if (isDailyQuota) {
+        markModelExhausted(primaryModelName, true);
+      } else if (isRateLimit || isUnavailable) {
+        markModelExhausted(primaryModelName, false);
       }
       
       // Retry transient errors through the bounded request policy; 503 keeps the selected model.
@@ -163,7 +190,7 @@ export const generateMultimodalText = async (
       }
 
       // If primary model failed with 404 or other model error, try secondary fallback model
-      const fallbackModel = VALID_MODELS.find(m => m !== primaryModelName && !exhaustedModels.has(m)) || "gemini-3.8-flash";
+      const fallbackModel = VALID_MODELS.find(m => m !== primaryModelName && !isModelExhausted(m)) || "gemini-3.5-flash-lite";
       console.warn(`[Gemini API] Primary model ${primaryModelName} error: ${primaryErr.message}. Attempting fallback with ${fallbackModel}...`);
       const model = createModelInstance(fallbackModel);
       const result = await model.generateContent({

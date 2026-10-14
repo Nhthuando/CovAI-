@@ -16,7 +16,7 @@ export const includeSourceCode = (sourceCode) => {
     }
 
     const isRouteOrController = (filePath) => {
-        return filePath.includes("route") || filePath.includes("router") || filePath.includes("controller") || filePath.includes("app.") || filePath.includes("index.");
+        return filePath.includes("route") || filePath.includes("router") || filePath.includes("controller") || filePath.includes("service") || filePath.includes("model") || filePath.includes("schema") || filePath.includes("prisma") || filePath.includes("app.") || filePath.includes("index.");
     };
 
     const sortedFiles = [...sourceCode].sort((a, b) => {
@@ -42,6 +42,76 @@ export const includeSourceCode = (sourceCode) => {
     }
 
     return segment;
+};
+
+/**
+ * Formats API contract evidence from client callers and existing tests.
+ * @param {Array<{path: string, content: string}>} sourceCode
+ * @param {Array<{path: string, content: string}>} testFiles
+ * @returns {string}
+ */
+export const includeContractContext = (sourceCode = [], testFiles = []) => {
+    let segment = "### API Contract Evidence & Client Consumers (Ground Truth)\n\n";
+    let hasContent = false;
+
+    // 1. Client API Consumers (Frontend services, fetch/axios callers)
+    const clientFiles = (sourceCode || []).filter(f =>
+        f.path.includes("client/") && (f.path.includes("api.") || f.path.includes("service") || f.content?.includes("fetch(") || f.content?.includes("axios"))
+    );
+
+    if (clientFiles.length > 0) {
+        hasContent = true;
+        segment += "#### Frontend Client API Consumer Expectations\n";
+        clientFiles.slice(0, 4).forEach(f => {
+            segment += `##### File: \`${f.path}\`\n\`\`\`javascript\n`;
+            segment += f.content.split("\n").slice(0, 90).join("\n") + "\n```\n\n";
+        });
+    }
+
+    // 2. Existing Tests (Established Response Schemas & Status Contracts)
+    const existingTests = (testFiles || []).filter(f =>
+        !f.path.includes("node_modules") && (f.path.includes("integration") || f.path.includes("unit") || f.path.includes("api.test"))
+    );
+
+    if (existingTests.length > 0) {
+        hasContent = true;
+        segment += "#### Existing Test Suites (Established Request & Response Contracts)\n";
+        existingTests.slice(0, 4).forEach(f => {
+            segment += `##### File: \`${f.path}\`\n\`\`\`javascript\n`;
+            segment += f.content.split("\n").slice(0, 100).join("\n") + "\n```\n\n";
+        });
+    }
+
+    return hasContent ? segment : "";
+};
+
+/**
+ * Formats database schema models and required fields for prompt context.
+ * @param {Array<{path: string, content: string}>} sourceCode
+ * @returns {string}
+ */
+export const includeDatabaseSchemaContext = (sourceCode = []) => {
+    let segment = "### Database Schema & Model Constraints (Ground Truth for Request Payloads)\n\n";
+    let hasSchema = false;
+
+    const prismaFiles = (sourceCode || []).filter(f => f.path.endsWith(".prisma") || f.path.includes("schema.prisma"));
+    for (const file of prismaFiles) {
+        hasSchema = true;
+        segment += `#### Prisma Schema File (\`${file.path}\`)\n`;
+        segment += "```prisma\n" + file.content + "\n```\n\n";
+    }
+
+    if (hasSchema) {
+        segment += "**CRITICAL DATABASE SCHEMA VALIDATION RULES:**\n";
+        segment += "- In-memory database mocks automatically enforce schema constraints at runtime.\n";
+        segment += "- When writing happy-path tests for POST creation endpoints (such as `POST /api/food-items/create/`), your request body MUST provide ALL required non-nullable fields defined in the model without `@default`.\n";
+        segment += "- Specifically for the `Food` model (`model Food`):\n";
+        segment += "  * REQUIRED non-nullable fields without `@default`: `name` (String), `image` (String), `price` (Float/Int), `rating` (Float/Int).\n";
+        segment += "  * OPTIONAL fields: `description` (String?), `category` (String?), `isAvailable` (Boolean or String?). Always supply boolean `true` for `isAvailable`.\n";
+        segment += "  * The happy-path creation request payload MUST contain `name`, `image`, `price`, AND `rating` (e.g. `{ name: 'Delicious Pizza', image: 'https://example.com/pizza.jpg', price: 60000, rating: 4.5, category: 'Fast Food', isAvailable: true }`). Omitting `image` or `rating` will trigger runtime validation errors and cause tests to fail.\n\n";
+    }
+
+    return hasSchema ? segment : "";
 };
 
 /**
@@ -71,6 +141,7 @@ export const includeRouteContext = (sourceCode, targetEndpoints = null) => {
         }
         segment += "\n";
         segment += "**CRITICAL INSTRUCTION:** For each endpoint listed above, you MUST write the scenarios explicitly requested in the 'Required Coverage Focus' column. If 'Happy Path (200/201)' is requested, you MUST name the test containing 'happy' or '200'. If 'Error Edge Case (400/404/500)' is requested, you MUST name the test containing 'error' or '404'. Do NOT invent any endpoints not in this table!\n\n";
+        segment += "**STRICT SCOPE RESTRICTION (CRITICAL):** The user has SELECTIVELY picked only the endpoints listed in the table above. Even if the provided source code files contain other route definitions (e.g. other endpoints in the same route or controller file), you are STRICTLY FORBIDDEN from generating any `describe()`, `it()`, or `test()` blocks for any endpoint NOT present in the table. Generating tests for unselected routes will cause an immediate rejection.\n\n";
     } else {
         segment += "No specific route definitions were detected. Analyze the source code carefully to identify endpoints.\n\n";
     }
@@ -103,21 +174,27 @@ export const includeRouteContext = (sourceCode, targetEndpoints = null) => {
  * @returns {string} Relative import path for tests
  */
 const detectAppImportPath = (sourceCode) => {
-    if (!sourceCode) return "../../src/app.js";
+    if (!sourceCode || sourceCode.length === 0) return "../../server/index.js";
 
-    // Prefer app.js over server.js to avoid calling app.listen()
-    const appFile = sourceCode.find((f) => f.path.endsWith("app.js") && !f.path.includes("node_modules"));
+    // 1. Prefer app.js over server.js to avoid calling app.listen()
+    const appFile = sourceCode.find((f) => f.path.endsWith("app.js") && !f.path.includes("node_modules") && !f.path.includes("test"));
     if (appFile) {
         return `../../${appFile.path}`;
     }
 
-    // Fallback to index.js
-    const indexFile = sourceCode.find((f) => f.path.endsWith("index.js") && (f.path.includes("src/") || f.path.includes("app/")));
+    // 2. Check for index.js in server/, src/, app/
+    const serverIndex = sourceCode.find((f) => f.path.endsWith("index.js") && (f.path.includes("server/") || f.path.includes("src/") || f.path.includes("app/")) && !f.path.includes("node_modules") && !f.path.includes("test"));
+    if (serverIndex) {
+        return `../../${serverIndex.path}`;
+    }
+
+    // 3. Fallback to any index.js
+    const indexFile = sourceCode.find((f) => f.path.endsWith("index.js") && !f.path.includes("node_modules") && !f.path.includes("test"));
     if (indexFile) {
         return `../../${indexFile.path}`;
     }
 
-    return "../../src/app.js";
+    return "../../server/index.js";
 };
 
 export const includeSupertestInstructions = (sourceCode) => {
@@ -138,26 +215,46 @@ export const includeSupertestInstructions = (sourceCode) => {
     segment += "- If the project uses CommonJS, use `require`.\n\n";
 
     segment += "#### ENDPOINT VERIFICATION (MANDATORY)\n";
-    segment += "- **NEVER invent an endpoint.** Every HTTP method + path in your tests MUST appear in the 'VALID API ENDPOINTS' table above.\n";
-    segment += "- If an endpoint is NOT in the table, DO NOT generate a test for it.\n";
-    segment += "- DO NOT test `GET /`, `GET /api/health`, or any endpoint that is not explicitly registered in the source code.\n\n";
+    segment += "- **NEVER invent an endpoint or generate tests for unlisted routes.** Every HTTP method + path in your tests MUST appear in the 'VALID API ENDPOINTS' table above.\n";
+    segment += "- For EVERY endpoint present in the 'VALID API ENDPOINTS' table (including `GET /` if listed in the table), you MUST generate test scenarios according to the 'Required Coverage Focus' column.\n";
+    segment += "- If an endpoint is NOT in the table, DO NOT generate any tests or describe blocks for it.\n\n";
 
     segment += "#### 2. Database & External Dependencies\n";
-    segment += "- The tests will run in an isolated Docker container.\n";
-    segment += "- **ESM COMPATIBILITY (CRITICAL):** If the source code uses ES modules (`import`/`export`), you MUST follow these rules:\n";
-    segment += "  - Add `import { jest } from '@jest/globals';` at the top of the test file.\n";
-    segment += "  - **DO NOT use `jest.mock()`.** It does not work in ESM mode.\n";
-    segment += "  - If the source code uses in-memory data stores (arrays, Maps, etc.) instead of a real database, test the REAL modules directly without mocking.\n";
-    segment += "  - If the source code uses a real database (Prisma, Mongoose, etc.), use `jest.unstable_mockModule()` with dynamic `import()` to mock the database module BEFORE importing the app.\n";
-    segment += "- If the source code uses CommonJS, you may use `jest.mock()` normally.\n";
-    segment += "- DO NOT mock the route, controller, or the service under test! The test must verify the flow traversing through these layers.\n";
-    segment += "- **TEST ISOLATION (CRITICAL):** You MUST use `beforeAll`, `afterAll`, or `afterEach` hooks to clean up mock data or wrap test operations in DB transactions. The generated code MUST NOT pollute the real database with leftover test records.\n\n";
+    segment += "- **AUTOMATED DATABASE MOCKING ACTIVE:** CovAI automatically provides an in-memory database mock environment (for Prisma, Mongoose, etc.) through Jest's `setupFilesAfterEnv`. Database calls (such as `findMany`, `findUnique`, `create`, `update`, `delete`, `$connect`) are safely intercepted in-memory and will succeed without needing a live database connection.\n";
+    segment += "- **STRICT PROHIBITION ON INTERNAL SERVICE/CONTROLLER MOCKING:** DO NOT use `jest.mock()`, `jest.spyOn()`, `mockResolvedValue`, or `mockRejectedValue` on internal controllers, services, routers, or database clients. Tests that attempt to call `mockResolvedValue` or `mockRejectedValue` will fail at runtime with `TypeError: mockResolvedValue is not a function`. You MUST test the system as an integrated whole via Supertest HTTP requests.\n";
+    segment += "- If the source code uses ES modules (`import`/`export`), use standard `import request from 'supertest';` and `import app from '...';`.\n";
+    segment += "- If the source code uses CommonJS (`require`), use `const request = require('supertest');` and `const app = require('...');`.\n\n";
 
-    segment += "#### 3. Test Scenarios & Coverage Breadth\n";
-    segment += "- **COVERAGE BREADTH:** You MUST generate at least one \"Happy Path\" AND one \"Error Edge Case\" (e.g., 400 Bad Request, missing fields, or 500 scenarios) per endpoint.\n";
-    segment += "- Write tests for successful API flows (Happy Path).\n";
-    segment += "- Write tests for validation failures (e.g., missing required fields resulting in 400 Bad Request).\n";
-    segment += "- Write tests for error responses (e.g., Not Found, Unauthorized).\n\n";
+    segment += "#### 3. Test Scenarios & Contract-Driven Oracle\n";
+    segment += "- **COVERAGE BREADTH:** You MUST generate at least one \"Happy Path\" (200/201) AND one \"Error Edge Case\" (400/404) per endpoint.\n";
+    segment += "- **REQUIRED FIELDS FOR RESOURCE CREATION (CRITICAL):**\n";
+    segment += "  * When generating happy-path tests for POST creation endpoints (e.g., `POST /api/food-items/create/`), you MUST supply all required non-nullable fields defined in the database schema (`name`, `image`, `price`, `rating`, with `isAvailable: true`). Never omit required schema fields like `image` or `rating` in happy-path tests!\n";
+    segment += "  * When testing missing required fields or empty payload `{}` for `POST /api/food-items/create/`, name the scenario accurately: `validation edge case: should return 500 when required fields are missing`. DO NOT name it 'database creation fails' because it is testing missing required fields constraint validation, not database infrastructure failure.\n";
+    segment += "- **EMPTY CART VALIDATION BEHAVIOR:**\n";
+    segment += "  * When testing `POST /api/cart/validate` with an empty items array (`{ items: [] }`), this is valid empty-cart edge case behavior returning 200 with total 0: name the scenario `edge case: should return 200 with 0 total for empty cart`.\n";
+    segment += "- **ROOT ENDPOINT HEALTH CHECK (GET /):**\n";
+    segment += "  * For the static root endpoint `GET /`, generate exactly ONE concise happy-path test (`happy path: GET / should return 200`). Do not generate redundant duplicate tests for the static root endpoint.\n";
+    segment += "- **DETERMINISTIC ASSERTIONS FOR PARAMETERIZED ROUTES (:id):**\n";
+    segment += "  * For routes with `:id` parameters (e.g. `GET /api/food-items/get/:id`, `PUT /api/food-items/update/:id`, `DELETE /api/food-items/delete/:id`), ALWAYS use deterministic assertions. NEVER write conditional assertions like `if (res.status === 200) { ... } else { expect(res.status).toBe(404); }`.\n";
+    segment += "  * When testing happy path for `GET /api/food-items/get/:id`, you MUST query a valid item (e.g. create one first via `POST /api/food-items/create/` or fetch the first item from `GET /api/food-items`) to obtain a verified existing ID, then expect 200 with matching properties (`id`, `name`). For negative case, explicitly query a non-existent ID like `999999` and expect 404 (`Food item not found`).\n";
+    segment += "- **THIRD-PARTY SDK & PAYMENT ASSERTIONS (CRITICAL):**\n";
+    segment += "  * For external service integrations such as Stripe (`/api/payments/create-payment-intent`):\n";
+    segment += "    - For `amount > 0`: assert property existence and boolean flag: `expect(res.status).toBe(200); expect(res.body).toHaveProperty('clientSecret'); expect(res.body.free).toBe(false);`. DO NOT assert arbitrary hardcoded mock secrets like `expect(res.body).toHaveProperty('clientSecret', 'pi_test_secret_456')` because secret strings vary by environment!\n";
+    segment += "    - For `amount === 0`: assert `expect(res.status).toBe(200); expect(res.body.free).toBe(true); expect(res.body).toHaveProperty('url');`. DO NOT assert hardcoded arbitrary checkout URLs like `'https://checkout.stripe.com/c/pay/cs_test_123'`.\n";
+    segment += "- **RESPONSE SCHEMA CONTRACT (CRITICAL):** Inspect the controller and service return statements, existing test suites, and frontend API consumers provided above before writing assertions.\n";
+    segment += "  * If the service/tests return `{ data: [...], total, page, totalPages }`, your assertion MUST expect `res.body.data` (e.g. `expect(res.body).toHaveProperty('data')` or `expect(Array.isArray(res.body.data)).toBe(true)`). NEVER guess or hallucinate unverified property names like `items`!\n";
+    segment += "- **QUERY PARAMETER FALLBACKS:**\n";
+    segment += "  * If the controller uses fallback defaults for query params (e.g. `page: parseInt(page) || 1`), testing `?page=invalid` MUST verify that the endpoint gracefully falls back to page 1 and returns HTTP 200 with default page data. Do NOT expect HTTP 500 for non-numeric query parameters when the code has graceful fallback logic!\n";
+    segment += "- **CLIENT INPUT ERRORS vs UNHANDLED SERVER ERRORS:**\n";
+    segment += "  * Client input errors (such as malformed IDs, missing required fields) belong to HTTP 400 Bad Request or HTTP 404 Not Found according to standard REST contracts.\n";
+    segment += "  * NEVER write tests that expect HTTP 500 as the intended, valid business contract for client input errors. If the backend implementation currently catches all errors and returns 500 due to unhandled database exceptions, write assertions checking for proper contract status (400/404) or document the discrepancy.\n";
+    segment += "- **EXTERNAL SERVICE FAILURE BOUNDARIES (STRIPE):**\n";
+    segment += "  * When testing error conditions for external integrations (such as Stripe `POST /api/payments/create-payment-intent`):\n";
+    segment += "    - The application converts amount from VND to USD cents via `Math.round((amount / 23000) * 100)`.\n";
+    segment += "    - Small amounts like `amount: -100` VND round to `0 USD cents` and trigger free order (HTTP 200) instead of an error! DO NOT send small numbers like `-100`.\n";
+    segment += "    - To genuinely trigger a Stripe SDK amount error at the external boundary, provide a realistic negative amount like `{ amount: -50000 }` (which evaluates to `-217 USD cents` < 0) or non-numeric `{ amount: 'invalid-amount' }` (which evaluates to `NaN`).\n";
+    segment += "    - The mock will throw `StripeInvalidRequestError`, and the controller catch block returns HTTP 500 (`res.status(500).json({ error: error.message })`).\n";
+    segment += "  * All assertions must check exact status codes (`expect(res.status).toBe(200)` or `500`) and expected response fields based on the actual API contract. Do NOT write loose assertions like `expect([200, 500]).toContain(res.status)`.\n\n";
 
     segment += "#### 4. Security & Authentication\n";
     segment += "- **SECURITY (CRITICAL):** Explicitly DO NOT hardcode real production credentials, API keys, or JWT tokens in the test files.\n";
@@ -183,7 +280,7 @@ export const includeSupertestOutputFormat = () => {
     segment += '  "tests": [\n';
     segment += "    {\n";
     segment += '      "filePath": "tests/integration/users.test.js",\n';
-    segment += '      "content": "import request from \\\'supertest\\\';\\nimport app from \\\'../../src/app.js\\\';\\n\\n// Mock DB\\njest.mock(\\\'../../src/config/prisma.js\\\');\\n\\ndescribe(\\\'User API\\\', () => { it(\\\'should return 200\\\', async () => { ... }); });"\n';
+    segment += '      "content": "import request from \\\'supertest\\\';\\nimport app from \\\'../../src/app.js\\\';\\n\\ndescribe(\\\'User API\\\', () => { it(\\\'happy path: should return 200\\\', async () => { const res = await request(app).get(\\\'/api/users\\\'); expect(res.status).toBe(200); }); });"\n';
     segment += "    }\n";
     segment += "  ]\n";
     segment += "}\n";
@@ -211,12 +308,14 @@ export const includeSupertestOutputFormat = () => {
  * @returns {string} The complete prompt string
  */
 export const buildSupertestPrompt = (payload, targetEndpoints = null) => {
-    let prompt = "You are an expert Backend QA Engineer. Your task is to analyze the provided source code and generate comprehensive Supertest integration test files for the API endpoints.\n\n";
+    let prompt = "You are an expert Backend QA Engineer. Your task is to analyze the provided source code, API contracts, existing test suites, and client consumers to generate comprehensive Supertest integration test files for the API endpoints.\n\n";
 
     prompt += "---\n\n";
 
     if (payload.sourceCode) {
         prompt += includeSourceCode(payload.sourceCode);
+        prompt += includeDatabaseSchemaContext(payload.sourceCode);
+        prompt += includeContractContext(payload.sourceCode, payload.testFiles);
         prompt += includeRouteContext(payload.sourceCode, targetEndpoints);
     }
 
@@ -224,7 +323,7 @@ export const buildSupertestPrompt = (payload, targetEndpoints = null) => {
     prompt += includeSupertestOutputFormat();
 
     prompt += "---\n\n";
-    prompt += "Now analyze the source code above and generate the Supertest integration test files in the exact JSON format specified. Output ONLY the JSON object inside a markdown code block. Do NOT add any explanations before or after the JSON block.";
+    prompt += "Now analyze the source code and contracts above and generate the Supertest integration test files in the exact JSON format specified. Output ONLY the JSON object inside a markdown code block. Do NOT add any explanations before or after the JSON block.";
 
     return prompt;
 };

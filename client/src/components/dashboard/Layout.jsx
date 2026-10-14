@@ -131,6 +131,10 @@ function LayoutInner() {
       setShowCFG(true);
     }
     setActiveActivity(tab);
+    const cType = params.get("coverageType");
+    if (cType) {
+      setCoverageType(cType);
+    }
   }, [location.search]);
 
   const [activeSetting, setActiveSetting] = useState("profile");
@@ -143,7 +147,8 @@ function LayoutInner() {
   const [tabs, setTabs] = useState(INITIAL_TABS);
   const [activeTabId, setActiveTabId] = useState(null);
   const [activeFileId, setActiveFileId] = useState(null);
-  const [coverageType, setCoverageType] = useState("unit");
+  const initialCoverageType = searchParams.get("coverageType") || "unit";
+  const [coverageType, setCoverageType] = useState(initialCoverageType);
   const screenContext = useMemo(() => ({ activity: activeActivity, testType: activeActivity === "coverage" ? coverageType : undefined, filePath: activeActivity === "explorer" ? activeTabId || undefined : undefined }), [activeActivity, coverageType, activeTabId]);
   const [showImport, setShowImport] = useState(false);
   const [showQualityDashboard, setShowQualityDashboard] = useState(false);
@@ -213,9 +218,18 @@ function LayoutInner() {
   const [editorRefreshTrigger, setEditorRefreshTrigger] = useState(0);
   const [coverageRunTrigger, setCoverageRunTrigger] = useState(0);
 
+  const handleSelectCoverageType = (type) => {
+    setCoverageType(type);
+    const params = new URLSearchParams(location.search);
+    if (params.get("coverageType") !== type) {
+      params.set("coverageType", type);
+      navigate(`${location.pathname}?${params.toString()}`, { replace: true });
+    }
+  };
+
   const handleTriggerRunAnalysis = () => {
     setActiveActivity("coverage");
-    setCoverageType("unit");
+    handleSelectCoverageType("unit");
     setCoverageRunTrigger((prev) => prev + 1);
   };
 
@@ -883,7 +897,7 @@ function LayoutInner() {
                 <CoveragePanel
                   sidebarWidth={sidebarWidth}
                   coverageType={coverageType}
-                  setCoverageType={setCoverageType}
+                  setCoverageType={handleSelectCoverageType}
                 />
               ) : activeActivity === "git" ? (
                 <GitPanel projectId={project?.id} onSync={handleGitSync} />
@@ -957,8 +971,9 @@ function LayoutInner() {
             <div className={coverageType === "unit" ? "h-full overflow-y-auto" : "hidden"}>
               <UnitTestDashboard
                 snapshotId={
-                  project?.snapshots?.[0]?.id ||
+                  searchParams.get("snapshotId") ||
                   project?.latestSnapshotId ||
+                  project?.snapshots?.[0]?.id ||
                   (project?.id
                     ? localStorage.getItem(`latestSnapshot_${project.id}`)
                     : null) ||
@@ -974,8 +989,9 @@ function LayoutInner() {
             <div className={coverageType === "integration" ? "h-full overflow-hidden flex flex-col min-h-0" : "hidden"}>
               <IntegrationTestDashboard
                 snapshotId={
-                  project?.snapshots?.[0]?.id ||
+                  searchParams.get("snapshotId") ||
                   project?.latestSnapshotId ||
+                  project?.snapshots?.[0]?.id ||
                   (project?.id
                     ? localStorage.getItem(`latestSnapshot_${project.id}`)
                     : null) ||
