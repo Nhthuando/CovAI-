@@ -177,7 +177,7 @@ const normalisePlaywright = (report, startedAt, finishedAt, rootDir = null) => {
     totalTests = Math.max(totalTests, passedTests + failedTests + flakyTests + skippedTests);
   }
 
-  const stabilityScorePct = totalTests > 0 ? Number(((passedTests / totalTests) * 100).toFixed(1)) : 0;
+  const passRatePct = totalTests > 0 ? Number(((passedTests / totalTests) * 100).toFixed(1)) : null;
 
   return {
     totalTests,
@@ -185,7 +185,8 @@ const normalisePlaywright = (report, startedAt, finishedAt, rootDir = null) => {
     failedTests,
     flakyTests,
     skippedTests,
-    stabilityScorePct,
+    stabilityScorePct: null,
+    passRatePct,
     durationMs: Number(stats.duration) || Math.max(0, finishedAt - startedAt),
     status: (failedTests > 0 || runnerErrors.length > 0) ? "FAILED" : "PASSED",
     startedAt,
@@ -276,7 +277,7 @@ const normaliseCypress = (report, startedAt, finishedAt, rootDir = null) => {
     }
   }
 
-  const stabilityScorePct = totalTests > 0 ? Number(((passedTests / totalTests) * 100).toFixed(1)) : 0;
+  const passRatePct = totalTests > 0 ? Number(((passedTests / totalTests) * 100).toFixed(1)) : null;
 
   return {
     totalTests,
@@ -284,7 +285,8 @@ const normaliseCypress = (report, startedAt, finishedAt, rootDir = null) => {
     failedTests,
     flakyTests,
     skippedTests,
-    stabilityScorePct,
+    stabilityScorePct: null,
+    passRatePct,
     durationMs: Number(stats.duration) || Math.max(0, finishedAt - startedAt),
     status: failedTests > 0 ? "FAILED" : "PASSED",
     startedAt,

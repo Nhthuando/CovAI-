@@ -36,13 +36,13 @@ export default function SystemTestMetricsCards({ summary }) {
   const flaky = summary?.flakyTests || 0;
   const skipped = summary?.skippedTests || 0;
   const durationMs = summary?.durationMs || 0;
-  const stability = summary?.stabilityScorePct ?? (total > 0 ? Math.round((passed / total) * 100) : 100);
 
-  const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
+
+  const passRate = total > 0 ? Math.round((passed / total) * 100) : null;
 
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
       {/* 1. Pass Rate Card */}
       <div className="p-4 rounded-[var(--radius-lg)] bg-[var(--color-surface)] border border-[var(--color-border)] flex flex-col justify-between">
         <div className="flex items-center justify-between text-xs text-[var(--color-text-muted)] font-medium mb-1">
@@ -50,11 +50,11 @@ export default function SystemTestMetricsCards({ summary }) {
           <ShieldCheck size={16} className="text-[var(--color-primary)]" />
         </div>
         <div className="flex items-baseline gap-2 my-1">
-          <span className={`text-2xl font-bold tracking-tight ${getPassRateColor(passRate)}`}>
-            {passRate}%
+          <span className={`text-2xl font-bold tracking-tight ${passRate === null ? 'text-[var(--color-text-muted)]' : getPassRateColor(passRate)}`}>
+            {passRate === null ? '—' : `${passRate}%`}
           </span>
           <span className="text-xs text-[var(--color-text-secondary)] font-mono">
-            {passed}/{total} passed
+            {total ? `${passed}/${total} passed` : 'No test results yet'}
           </span>
         </div>
         <div className="w-full bg-[var(--color-surface-secondary)] h-1.5 rounded-full overflow-hidden mt-2">
@@ -66,7 +66,7 @@ export default function SystemTestMetricsCards({ summary }) {
                 ? "bg-[var(--color-warning)]"
                 : "bg-[var(--color-danger)]"
             }`}
-            style={{ width: `${passRate}%` }}
+            style={{ width: `${passRate ?? 0}%` }}
           />
         </div>
       </div>
@@ -99,8 +99,8 @@ export default function SystemTestMetricsCards({ summary }) {
           )}
         </div>
         <div className="text-[11px] text-[var(--color-text-secondary)] font-mono pt-1 border-t border-[var(--color-border)] flex justify-between">
-          <span>Stability Score</span>
-          <span className="font-semibold text-[var(--color-text)]">{stability}%</span>
+          <span>Skipped / flaky</span>
+          <span className="font-semibold text-[var(--color-text)]">{skipped} / {flaky}</span>
         </div>
       </div>
 
@@ -112,7 +112,7 @@ export default function SystemTestMetricsCards({ summary }) {
         </div>
         <div className="flex items-baseline gap-2 my-1">
           <span className="text-2xl font-bold tracking-tight text-[var(--color-text)] font-mono">
-            {formatDuration(durationMs)}
+            {summary?.hasRun ? formatDuration(durationMs) : '—'}
           </span>
         </div>
         <div className="text-[11px] text-[var(--color-text-secondary)] pt-1 border-t border-[var(--color-border)] flex justify-between">

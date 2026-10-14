@@ -3,7 +3,7 @@ import express from "express";
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it, jest } from "@jest/globals";
+import { describe, expect, it, jest, beforeEach } from "@jest/globals";
 
 const prismaMock = {
     projectSnapshot: {
@@ -40,6 +40,7 @@ app.use(express.json());
 app.use("/api/coverage", coverageRouter);
 
 describe('system evidence ownership',()=>{
+    beforeEach(()=>{prismaMock.projectSnapshot.findFirst.mockReset();prismaMock.testScenario.findFirst.mockReset();});
     it('does not save a failed AI candidate as VERIFIED',async()=>{
         prismaMock.projectSnapshot.findUnique.mockResolvedValueOnce({id:'snap',rootDir:'/not-used',project:{ownerId:'user-123'}});
         prismaMock.aiTest.findFirst.mockResolvedValueOnce({status:'FAILED',filePath:'tests/system/candidate.spec.js'});
@@ -66,7 +67,7 @@ describe('system evidence ownership',()=>{
         prismaMock.projectSnapshot.findFirst.mockResolvedValueOnce({id:'snap',rootDir:root});
         prismaMock.testScenario.findFirst.mockResolvedValueOnce({screenshotPath});
         try {
-            const response=await request(app).get('/api/coverage/snap/system/scenarios/scenario/evidence');
+            const response=await request(app).get('/api/coverage/snap/system/scenarios/scenario/evidence').set('Accept','image/png');
             expect(response.status).toBe(200);
             expect(response.headers['content-type']).toContain('image/png');
             expect(response.headers['cache-control']).toBe('private, no-store');
@@ -120,7 +121,7 @@ describe("GET /api/coverage/:snapshotId/system/summary route", () => {
         const res = await request(app).get("/api/coverage/snap-1/system/summary");
 
         expect(res.status).toBe(200);
-        expect(res.body).toEqual({
+        expect(res.body).toMatchObject({
             success: true,
             data: {
                 hasRun: false,

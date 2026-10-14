@@ -1,3 +1,4 @@
+import { coverageSummaryFor } from '../services/systemAssessmentContract.service.js';
 import { parseSystemTestResultQuery } from '../validators/systemTestResultQuery.validator.js';
 import fs from "fs";
 import path from "path";
@@ -2205,9 +2206,10 @@ export const getSystemTestSummary = async (req, res) => {
                     flaky: 0,
                     flakyTests: 0,
                     durationMs: 0,
-                    stabilityScorePct: 100,
+                    stabilityScorePct: null,
+                    passRatePct: null,
                     coverageAvailable: false,
-                    coverageSummary: { linesPct: 0, branchesPct: 0, statementsPct: 0, functionsPct: 0 },
+                    coverageSummary: coverageSummaryFor({status: "NOT_MEASURED"}),
                     featureCoverage: null,
                     files: [],
                     testFiles: [],
@@ -2224,16 +2226,12 @@ export const getSystemTestSummary = async (req, res) => {
         const failedTests = latestRun.failedTests || 0;
         const flakyTests = latestRun.flakyTests || 0;
         const durationMs = latestRun.durationMs || 0;
-        const stabilityScorePct = totalTests > 0 ? Number(((passedTests / totalTests) * 100).toFixed(2)) : 0;
-        const coverageAvailable = Boolean(latestRun.coverageLinesPct !== null && latestRun.coverageLinesPct !== undefined);
-        const coverageSummary = {
-            linesPct: latestRun.coverageLinesPct ?? 0,
-            branchesPct: latestRun.coverageBranchesPct ?? 0,
-            statementsPct: latestRun.coverageStatementsPct ?? 0,
-            functionsPct: latestRun.coverageFunctionsPct ?? 0,
-        };
+        const passRatePct = totalTests > 0 ? Number(((passedTests / totalTests) * 100).toFixed(2)) : null;
+        const stabilityScorePct = null;
+        const coverageSummary = coverageSummaryFor(latestRun.systemMeasurement);
+        const coverageAvailable = Object.values(coverageSummary.tiers).some(tier => tier.status === 'MEASURED');
 
-        const systemTestFiles = latestRun.testFiles || [];
+        const systemTestFiles = (latestRun.testFiles || []).map(file => ({...file,coverageLinesPct:null}));
 
         // Parse scenarios: use DB records if available, otherwise check report files on disk
         let scenarios = [];
@@ -2252,8 +2250,8 @@ export const getSystemTestSummary = async (req, res) => {
                 failureCodeSnippet: s.failureCodeSnippet || null,
                 domSnapshot: s.domSnapshot || null,
                 coverageContributions: {
-                    linesPct: s.coverageLinesPct ?? null,
-                    branchesPct: s.coverageBranchesPct ?? null,
+                    linesPct: null,
+                    branchesPct: null,
                 },
             }));
         } else if (snapshot.rootDir && fs.existsSync(snapshot.rootDir)) {
@@ -2328,6 +2326,7 @@ export const getSystemTestSummary = async (req, res) => {
                 skippedTests: latestRun.skippedTests || 0,
                 durationMs,
                 stabilityScorePct,
+                passRatePct,
                 coverageAvailable,
                 coverageSummary,
                 featureCoverage: null,
@@ -2335,12 +2334,8 @@ export const getSystemTestSummary = async (req, res) => {
                 testFiles: systemTestFiles,
                 testRuns: testRuns.map(run => ({
                     ...run,
-                    coverageSummary: {
-                        linesPct: run.coverageLinesPct ?? 0,
-                        branchesPct: run.coverageBranchesPct ?? 0,
-                        statementsPct: run.coverageStatementsPct ?? 0,
-                        functionsPct: run.coverageFunctionsPct ?? 0,
-                    },
+                    coverageLinesPct:null,coverageBranchesPct:null,coverageStatementsPct:null,coverageFunctionsPct:null,
+                    coverageSummary: coverageSummaryFor(run.systemMeasurement),
                     scenarios: run.scenarios?.map(({screenshotPath, ...scenario}) => ({
                         ...scenario,
                         hasEvidence: Boolean(screenshotPath),
@@ -2349,6 +2344,7 @@ export const getSystemTestSummary = async (req, res) => {
                 scenarios,
                 latestRun: {
                     ...latestRun,
+                    coverageLinesPct:null,coverageBranchesPct:null,coverageStatementsPct:null,coverageFunctionsPct:null,
                     coverageSummary,
                     scenarios: undefined,
                 },
@@ -2445,8 +2441,8 @@ export const getSystemTestScenarios = async (req, res) => {
                 hasDomSnapshot: Boolean(s.domSnapshot),
             },
             coverageContributions: {
-                linesPct: s.coverageLinesPct ?? null,
-                branchesPct: s.coverageBranchesPct ?? null,
+                linesPct: null,
+                branchesPct: null,
             },
             evidence: {
                 hasScreenshot: Boolean(s.screenshotPath),
@@ -2495,7 +2491,7 @@ export const getSystemTestScenarios = async (req, res) => {
         for (const dbFile of dbFiles) {
             if (fileGroupsMap.has(dbFile.filePath)) {
                 const grp = fileGroupsMap.get(dbFile.filePath);
-                grp.coverageLinesPct = dbFile.coverageLinesPct;
+                grp.coverageLinesPct = null;
                 if (dbFile.durationMs) grp.durationMs = dbFile.durationMs;
             } else {
                 fileGroupsMap.set(dbFile.filePath, {
@@ -2506,7 +2502,7 @@ export const getSystemTestScenarios = async (req, res) => {
                     passedScenarios: 0,
                     failedScenarios: 0,
                     flakyScenarios: 0,
-                    coverageLinesPct: dbFile.coverageLinesPct,
+                    coverageLinesPct: null,
                     scenarios: [],
                 });
             }
@@ -2836,6 +2832,7 @@ export const getSystemTestFileContent = async (req, res) => {
  * Updates and saves modified test file content to disk and synchronizes DB records.
  */
 export const updateSystemTestFileContent = async (req, res) => {
+    let writeLease;
     try {
         const userId = req.user?.id;
         if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
@@ -2856,6 +2853,11 @@ export const updateSystemTestFileContent = async (req, res) => {
         }
 
         // Validate syntax and dangerous imports using AST validator
+        if (process.env.SYSTEM_ASSESSMENT_ENABLED === 'true') {
+            const {acquireSnapshotLease} = await import('../services/systemAssessmentWorkspace.service.js');
+            const {getSystemEvidenceRedis}=await import('../services/queue.service.js');
+            writeLease = await acquireSnapshotLease({redis:getSystemEvidenceRedis(),snapshotId});
+        }
         validateGeneratedTestCode(content);
 
         const fullPath = containedPath(snapshot.rootDir, filePath.trim());
@@ -2889,6 +2891,8 @@ export const updateSystemTestFileContent = async (req, res) => {
     } catch (error) {
         console.error("[updateSystemTestFileContent] Error:", error);
         return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to update test file." });
+    } finally {
+        await writeLease?.release();
     }
 };
 
@@ -2995,10 +2999,16 @@ export const optimizeSystemTestController = async (req, res) => {
             return res.status(409).json({ success: false, message: "Snapshot repository not ready on disk." });
         }
 
+        let scenarioData = null;
+        if (scenarioId) {
+            scenarioData = await prisma.testScenario.findFirst({where:{id:scenarioId,testRun:{snapshotId},testFile:filePath.trim()}});
+            if (!scenarioData) return res.status(404).json({success:false,message:'Scenario not found for this snapshot and test file'});
+        }
         const optimizationResult = await optimizeSystemTest({
             rootDir: snapshot.rootDir,
+            snapshotId,
             filePath: filePath.trim(),
-            scenarioId: scenarioId || null,
+            scenarioData,
             mode,
             instruction: instruction || null,
         });

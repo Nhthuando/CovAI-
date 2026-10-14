@@ -21,6 +21,7 @@ export default {
         '/node_modules/',
         '/storage/',
         '/uploads/',
+        '/fixtures/system-assessment/',
     ],
     moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx'],
 };

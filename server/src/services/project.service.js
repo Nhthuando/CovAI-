@@ -1130,7 +1130,18 @@ export const updateFileContent = async (
     throw new ServiceError("Path is a directory, not a file", 400);
   }
 
-  await fs.promises.writeFile(resolvedFile, content, "utf8");
+  let mutationLease;
+  try {
+    if (process.env.SYSTEM_ASSESSMENT_ENABLED === 'true') {
+      const { acquireSnapshotLease } = await import('./systemAssessmentWorkspace.service.js');
+      const { getSystemEvidenceRedis } = await import('./queue.service.js');
+      mutationLease = await acquireSnapshotLease({ redis: getSystemEvidenceRedis(), snapshotId: snapshot.id });
+      await mutationLease.assertHeld();
+    }
+    await fs.promises.writeFile(resolveSnapshotFile(snapshot, filePath), content, "utf8");
+  } finally {
+    await mutationLease?.release();
+  }
   return {
     path: relativePath.replace(/\\/g, "/"),
     size: Buffer.byteLength(content, "utf8"),

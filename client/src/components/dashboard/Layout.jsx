@@ -957,6 +957,7 @@ function LayoutInner() {
             <div className={coverageType === "unit" ? "h-full overflow-y-auto" : "hidden"}>
               <UnitTestDashboard
                 snapshotId={
+                  project?.snapshots?.[0]?.id ||
                   project?.latestSnapshotId ||
                   (project?.id
                     ? localStorage.getItem(`latestSnapshot_${project.id}`)
@@ -973,6 +974,7 @@ function LayoutInner() {
             <div className={coverageType === "integration" ? "h-full overflow-hidden flex flex-col min-h-0" : "hidden"}>
               <IntegrationTestDashboard
                 snapshotId={
+                  project?.snapshots?.[0]?.id ||
                   project?.latestSnapshotId ||
                   (project?.id
                     ? localStorage.getItem(`latestSnapshot_${project.id}`)
@@ -991,6 +993,7 @@ function LayoutInner() {
             <div className={coverageType === "system" ? "h-full overflow-y-auto" : "hidden"}>
               <SystemTestDashboard
                 snapshotId={
+                  project?.snapshots?.[0]?.id ||
                   project?.latestSnapshotId ||
                   (project?.id
                     ? localStorage.getItem(`latestSnapshot_${project.id}`)
@@ -1017,6 +1020,7 @@ function LayoutInner() {
                   isLoadingTree={isLoadingTree}
                   projectId={project?.id}
                   snapshotId={
+                    project?.snapshots?.[0]?.id ||
                     project?.latestSnapshotId ||
                     (project?.id
                       ? localStorage.getItem(`latestSnapshot_${project.id}`)
@@ -1080,6 +1084,7 @@ function LayoutInner() {
                   screenContext={screenContext}
                   projectId={project?.id}
                   snapshotId={
+                    project?.snapshots?.[0]?.id ||
                     project?.latestSnapshotId ||
                     (project?.id
                       ? localStorage.getItem(`latestSnapshot_${project.id}`)
@@ -1177,7 +1182,7 @@ function LayoutInner() {
         <ProjectExportDialog
           key={project.id}
           project={project}
-          initialSnapshotId={project.latestSnapshotId || localStorage.getItem(`latestSnapshot_${project.id}`)}
+          initialSnapshotId={project.snapshots?.[0]?.id || project.latestSnapshotId || localStorage.getItem(`latestSnapshot_${project.id}`)}
           onClose={() => setShowExport(false)}
         />
       )}

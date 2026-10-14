@@ -147,9 +147,9 @@ describe("Phase 7.2 - E2E Scenario A: Project With Existing Tests (Detection, Ru
     });
 
     expect(covResult.summary).toBeDefined();
-    expect(covResult.summary.linesPct).toBeGreaterThanOrEqual(0);
+    expect(covResult.summary.linesPct).toBeNull();
     expect(covResult.fileBreakdown).toHaveLength(1);
-    expect(Object.keys(covResult.scenarioContributions)).toHaveLength(2);
+    expect(covResult.scenarioContributions).toEqual({});
   });
 });
 
@@ -255,42 +255,10 @@ describe("Phase 7.2 - E2E Scenario C: Test Editor & AI Booster Flow (Coverage Bo
 
     const testRelPath = "tests/e2e/contact.spec.js";
 
-    // 1. AI BOOST_COVERAGE mode: generates boundary/validation test cases
-    const boosted = await optimizeSystemTest({
-      rootDir,
-      filePath: testRelPath,
-      mode: "BOOST_COVERAGE",
-      instruction: "Add validation test for empty fields",
-      dependencies: { generate: offlineGenerate },
-    });
-
-    expect(boosted.success).toBe(true);
-    expect(boosted.optimizedCode).toContain("validation");
-    // Verify AST safety of boosted code
-    expect(validateGeneratedTestCode(boosted.optimizedCode).valid).toBe(true);
-
-    // 2. AI FIX_BREAKPOINT mode: repairs broken locator
-    const fixed = await optimizeSystemTest({
-      rootDir,
-      filePath: testRelPath,
-      scenarioData: {
-        failureCategory: "TIMEOUT",
-        failureStep: "await page.click('#broken-button-id')",
-        failureCodeSnippet: "await page.click('#broken-button-id');",
-        errorMessage: "Timed out 5000ms waiting for locator('#broken-button-id')",
-      },
-      mode: "FIX_BREAKPOINT",
-      instruction: "Use text query instead of broken id",
-      dependencies: { generate: offlineGenerate },
-    });
-
-    expect(fixed.success).toBe(true);
-    expect(fixed.optimizedCode).toBeDefined();
-    expect(validateGeneratedTestCode(fixed.optimizedCode).valid).toBe(true);
-
-    // 3. Persist optimized code back to disk
-    const targetFile = path.join(rootDir, testRelPath);
-    fs.writeFileSync(targetFile, fixed.optimizedCode, "utf8");
+    // An unavailable provider must not invent tests or claim improvement.
+    await expect(optimizeSystemTest({rootDir,filePath:testRelPath,mode:'BOOST_COVERAGE',dependencies:{generate:offlineGenerate}})).rejects.toMatchObject({statusCode:503});
+    await expect(optimizeSystemTest({rootDir,filePath:testRelPath,mode:'FIX_BREAKPOINT',dependencies:{generate:offlineGenerate}})).rejects.toMatchObject({statusCode:503});
+    expect(validateGeneratedTestCode(fs.readFileSync(path.join(rootDir,testRelPath),'utf8')).valid).toBe(true);
 
     // 4. Verify test framework detection detects updated scenarios
     const updatedDetection = await detectSystemTestFrameworks(rootDir);

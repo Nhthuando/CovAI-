@@ -13,10 +13,17 @@ export const readApplicationEnvironment = directory => {
     return env;
 };
 
-export const prepareFullSystemPackage = async ({directory, env, jobId, database = false}) => {
+// Measurement copies exclude credential files. Read the explicitly configured
+// test environment from the owned original snapshot into process memory only.
+export const readAssessmentTestEnvironment = directory => {
+    const file = path.join(directory, '.env.test');
+    return fs.existsSync(file) ? parse(fs.readFileSync(file, 'utf8')) : {};
+};
+
+export const prepareFullSystemPackage = async ({directory, env, jobId, database = false, signal}) => {
     const pkg = JSON.parse(fs.readFileSync(path.join(directory, 'package.json'), 'utf8'));
     const run = async (command, label) => {
-        const result = await dockerRunner.run({snapshotPath:directory,command,jobId,forceHost:true,timeoutMs:600000,
+        const result = await dockerRunner.run({snapshotPath:directory,command,jobId,forceHost:true,timeoutMs:600000,signal,
             env:{...env,NODE_ENV:'development',PATH:process.env.PATH || '',NODE_PATH:''}});
         if (!result.success) {
             let detail = (result.stderr || result.stdout || '').replace(/\x1b\[[0-9;]*m/g,'').trim();
@@ -24,7 +31,18 @@ export const prepareFullSystemPackage = async ({directory, env, jobId, database 
             throw new ServiceError(`${label} failed. ${detail.slice(0,2000)}`,422);
         }
     };
-    await run('npm install --include=dev --prefer-offline --legacy-peer-deps --no-audit --no-fund --progress=false','Application dependency installation');
+    await run('npm install --include=dev --include=optional --prefer-offline --legacy-peer-deps --no-audit --no-fund --progress=false','Application dependency installation');
+    // npm can report success while dropping Rollup's optional Windows binary.
+    // Reconcile that exact declared binary in the disposable workspace only.
+    const rollupMetadata = path.join(directory, 'node_modules/rollup/package.json');
+    if (process.platform === 'win32' && process.arch === 'x64' && fs.existsSync(rollupMetadata)) {
+        const nativePackage = '@rollup/rollup-win32-x64-msvc';
+        const rollup = JSON.parse(fs.readFileSync(rollupMetadata, 'utf8'));
+        const nativeVersion = rollup.optionalDependencies?.[nativePackage];
+        if (!fs.existsSync(path.join(directory, 'node_modules', nativePackage)) && /^\d+\.\d+\.\d+$/.test(nativeVersion || '')) {
+            await run(`npm install --no-save --include=optional --no-audit --no-fund ${nativePackage}@${nativeVersion}`, 'Rollup Windows runtime installation');
+        }
+    }
     const deps={...pkg.dependencies,...pkg.devDependencies};
     if (!database || !deps['@prisma/client']) return;
     const schema = ['prisma/schema.prisma','schema.prisma'].map(file=>path.join(directory,file)).find(file=>fs.existsSync(file));

@@ -342,8 +342,8 @@ export const processSystemTestAnalysisJob = async (jobId) => {
 
     await broadcastJobProgress(jobId, {
       progress: 85,
-      stage: "Measuring coverage...",
-      message: `System test coverage: ${systemCoverage.summary.linesPct}% lines, ${systemCoverage.summary.branchesPct}% branches`,
+      stage: "Finalizing evidence...",
+      message: "System results recorded. Source coverage requires run-specific instrumentation.",
       userId: job.userId,
       snapshotId: jobSnapshotId,
       runner: execution.runner,

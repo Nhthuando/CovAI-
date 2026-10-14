@@ -427,9 +427,9 @@ describe('System Test Phase 4 Endpoints', () => {
                 data: expect.objectContaining({
                     hasRun: false,
                     totalTests: 0,
-                    stabilityScorePct: 100,
+                    stabilityScorePct: null,
                     coverageAvailable: false,
-                    coverageSummary: { linesPct: 0, branchesPct: 0, statementsPct: 0, functionsPct: 0 },
+                    coverageSummary: expect.objectContaining({linesPct:null,branchesPct:null,statementsPct:null,functionsPct:null,status:"NOT_MEASURED"}),
                 }),
             }));
         });
@@ -497,14 +497,10 @@ describe('System Test Phase 4 Endpoints', () => {
                     failedTests: 1,
                     flakyTests: 1,
                     durationMs: 4500,
-                    stabilityScorePct: 80,
-                    coverageAvailable: true,
-                    coverageSummary: {
-                        linesPct: 82.5,
-                        branchesPct: 75.0,
-                        statementsPct: 80.0,
-                        functionsPct: 70.0,
-                    },
+                    stabilityScorePct: null,
+                    passRatePct: 80,
+                    coverageAvailable: false,
+                    coverageSummary: expect.objectContaining({linesPct:null,branchesPct:null,statementsPct:null,functionsPct:null,status:'LEGACY_UNVERIFIED'}),
                     testFiles: expect.arrayContaining([
                         expect.objectContaining({ filePath: 'tests/e2e/auth.spec.js' }),
                     ]),
@@ -653,8 +649,8 @@ describe('System Test Phase 4 Endpoints', () => {
                                 hasDomSnapshot: true,
                             }),
                             coverageContributions: {
-                                linesPct: 75.0,
-                                branchesPct: 60.0,
+                                linesPct: null,
+                                branchesPct: null,
                             },
                             evidence: expect.objectContaining({
                                 hasScreenshot: true,

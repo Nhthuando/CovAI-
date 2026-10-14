@@ -318,7 +318,8 @@ export const runSeedDataIfPresent = async ({ snapshotDir, jobId = null }) => {
 /**
  * Starts the application under test (AUT) web server and performs 2-tier healthcheck.
  */
-export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, healthTimeoutMs = 45000, env = {}, healthPath = "/", requireHealthy = false, preferStart = false }) => {
+export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, healthTimeoutMs = 45000, env = {}, healthPath = "/", requireHealthy = false, preferStart = false, signal }) => {
+  if (signal?.aborted) throw new ServiceError('AUT startup canceled',409);
   const candidateDirs = ["", "client", "frontend", "web", "ui", "app"];
   let chosenDir = null;
   let command = null;
@@ -384,6 +385,7 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
 
   const child = spawn(command, {
     shell: true,
+    windowsHide: true,
     cwd: chosenDir,
     env: {
       ...process.env,
@@ -393,6 +395,11 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
+
+  const abortAut = () => { stopAutServer(child.pid,port,jobId).catch(()=>{}); };
+  signal?.addEventListener('abort',abortAut,{once:true});
+  child.once('close',()=>signal?.removeEventListener('abort',abortAut));
+  if(signal?.aborted) abortAut();
 
   let stderrBuffer = "";
   let stdoutBuffer = "";

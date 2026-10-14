@@ -50,3 +50,9 @@ specs/
 /docs/superpowers/specs/*
 !/docs/superpowers/specs/2026-10-09-project-analysis-export-design.md
 
+
+# Local system-assessment verification artifacts
+/temp/system-assessment-*
+/client/.evidence-review/
+/client/evidence-preview.html
+/server/src/tests/fixtures/system-assessment/.covai-system-test/

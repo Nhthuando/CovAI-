@@ -10,6 +10,7 @@ import {
 import { io } from "socket.io-client";
 import { getJobDetailApi } from "../../services/job.service.js";
 import Button from "../common/Button.jsx";
+import SystemTestAssessmentPanel from "./system/SystemTestAssessmentPanel.jsx";
 import SystemTestMetricsCards from "./system/SystemTestMetricsCards.jsx";
 import SystemTestZeroStateBanner from "./system/SystemTestZeroStateBanner.jsx";
 import SystemTestScenarioList from "./system/SystemTestScenarioList.jsx";
@@ -23,6 +24,7 @@ import {
   runSystemTest,
   getSystemTestSummary,
   getSystemTestScenarios,
+  systemEvidenceRequest,
 } from "../../services/systemTest.service.js";
 
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
@@ -65,10 +67,25 @@ export default function SystemTestDashboard({ projectId, snapshotId, onOpenFile 
   const activeJobRef = useRef(null);
   const frameworkDiscoveryRef = useRef(null);
 
+  // Restore the persisted measurement job after refresh instead of letting Run
+  // submit another operation while an existing suite is still executing.
+  useEffect(() => {
+    let ignore = false;
+    if (!snapshotId) return;
+    systemEvidenceRequest(snapshotId, 'assessments').then(record => {
+      if (ignore || !record?.jobId || !['QUEUED', 'RUNNING'].includes(record.status)) return;
+      activeJobRef.current = record.jobId;
+      setActiveJobId(record.jobId); setRunningTests(true);
+      setJobSelection({ executionMode: record.reportJson?.input?.executionMode || executionMode, runner: record.runner });
+      setJobProgress({ progress: 0, stage: 'Resuming status', message: 'Checking the existing system test job...' });
+    }).catch(() => { /* Ordinary runner still works when evidence is unavailable. */ });
+    return () => { ignore = true; };
+  }, [snapshotId, executionMode]);
+
   // Framework discovery is independent of the selected result mode.
   useEffect(() => {
     let ignore = false;
-    if (projectId) getSystemTestFrameworks(projectId, snapshotId).then(response => {
+    if (projectId && snapshotId) getSystemTestFrameworks(projectId, snapshotId).then(response => {
       if (ignore) return;
       setFrameworksData(response?.data || null);
       const list = response?.data?.frameworks || [];
@@ -156,7 +173,8 @@ export default function SystemTestDashboard({ projectId, snapshotId, onOpenFile 
       try {
         const response = await getJobDetailApi(activeJobId);
         if (!ignore && response?.job) {
-          applyJobUpdate({ ...response.job, jobId: response.job.id });
+          const stageLog = (response.job.logs || []).filter(log => log.message?.startsWith('Assessment stage: ')).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
+          applyJobUpdate({ ...response.job, jobId: response.job.id, ...(stageLog ? { stage: 'Measuring system tests', message: stageLog.message.slice('Assessment stage: '.length) } : response.job.type === 'SYSTEM_TEST_ASSESSMENT' ? { stage: 'Running system tests', message: 'Preparing application or executing tests. Open Job Queue for detailed logs.' } : {}) });
         }
       } catch (err) {
         if (!ignore) setError(`Unable to check system test status: ${err.message}`);
@@ -214,10 +232,15 @@ export default function SystemTestDashboard({ projectId, snapshotId, onOpenFile 
     setJobProgress({ progress: 5, stage: "Starting", message: "Queuing system test job..." });
 
     try {
-      const res = await runSystemTest(snapshotId, {
+      const capabilities = activeFramework === 'playwright' ? await systemEvidenceRequest(snapshotId, 'capabilities') : null;
+      const res = capabilities?.enabled && capabilities.coverageEnabled
+        ? await systemEvidenceRequest(snapshotId, 'assessments', { method: 'POST', data: { autoDiscover: true, runner: activeFramework, executionMode } }).then(data => ({ data }))
+        : await runSystemTest(snapshotId, {
         framework: activeFramework,
         executionMode,
       });
+
+      setRefreshKey(value => value + 1);
 
       if (res?.data?.jobId) {
         activeJobRef.current = res.data.jobId;
@@ -254,6 +277,8 @@ export default function SystemTestDashboard({ projectId, snapshotId, onOpenFile 
 
   return (
     <div className="w-full min-h-full bg-[var(--color-bg)] text-[var(--color-text)] font-sans p-4 sm:p-6 space-y-6">
+      <SystemTestMetricsCards summary={summary} />
+
       {/* Top Action Bar */}
       <div className="p-4 rounded-[var(--radius-lg)] bg-[var(--color-surface)] border border-[var(--color-border)] flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         {/* Framework Selector & Mode */}
@@ -324,7 +349,7 @@ export default function SystemTestDashboard({ projectId, snapshotId, onOpenFile 
             size="sm"
             icon={runningTests ? Loader2 : Play}
             loading={runningTests}
-            disabled={loading || runningTests}
+            disabled={!snapshotId || loading || runningTests}
             onClick={handleRunTests}
             className="text-xs h-9 font-semibold"
           >
@@ -378,6 +403,8 @@ export default function SystemTestDashboard({ projectId, snapshotId, onOpenFile 
         </div>
       )}
 
+      <SystemTestAssessmentPanel key={snapshotId} snapshotId={snapshotId} refreshKey={refreshKey} onOpenFile={onOpenFile} onRerun={handleRunTests} runner={activeFramework} executionMode={executionMode} onChanged={() => setRefreshKey(value => value + 1)} />
+
       {/* Zero Test Project Banner */}
       {isZeroTestProject && (
         <SystemTestZeroStateBanner
@@ -403,7 +430,6 @@ export default function SystemTestDashboard({ projectId, snapshotId, onOpenFile 
         <ul className="space-y-1 font-mono break-all">{testFiles.filter(file => file.scenarios?.length).map(file => <li key={file.filePath}>{file.filePath}</li>)}</ul>
         {executionMode === 'full' && <p>Full Stack runs the real-backend suite. Files that mock APIs with page.route / route.fulfill belong to Frontend mode. To check an edited file, open Edit Test and run that file.</p>}
       </div>
-      <SystemTestMetricsCards summary={summary} />
 
       <div className="flex gap-2 border-b border-[var(--color-border)] pb-2" aria-label="System test result views">
         {['scenarios', 'execution'].map(view => <button key={view} type="button" aria-pressed={resultView === view} onClick={() => setResultView(view)} className={`rounded-[var(--radius-sm)] px-4 py-2 text-xs font-semibold focus-visible:outline-2 focus-visible:outline-[var(--color-primary)] ${resultView === view ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)]'}`}>

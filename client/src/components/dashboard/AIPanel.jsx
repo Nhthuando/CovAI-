@@ -2311,6 +2311,7 @@ export default function AIPanel({
     Promise.resolve().then(async () => {
       if (cancelled) return;
       setIsRestoring(true); setMessages(INITIAL_MESSAGES); setActiveSessionId(null); setActiveSessionMeta(null); setContextInfo(null);
+      if (!projectId) { setIsRestoring(false); return; }
       fetchSessions();
       getAiContext(projectId).then(config => { if (!cancelled) setMemoryAvailable(config.automaticMemory); }).catch(() => { if (!cancelled) setMemoryAvailable(false); });
       let stored = null;

@@ -201,18 +201,18 @@ export const resolveFrontendAutDirectory = (rootDir) => {
   return rootDir;
 };
 
-export const runSystemTests = async ({ jobId, rootDir, execution, onReady, onPreparing, executionMode = "frontend" }) => {
+export const runSystemTests = async ({ jobId, rootDir, execution, onReady, onPreparing, executionMode = "frontend", measurementPreparation, assertionBindings = [], signal }) => {
   if (executionMode === "full") {
     if (execution.runner === "playwright") {
-      const stack = await startFullSystem({rootDir,jobId,onProgress:onPreparing});
+      const stack = await startFullSystem({rootDir,jobId,onProgress:onPreparing,measurementPreparation,signal});
       try {
         const runnerRoot=execution.rootDir || rootDir;
         ensurePlaywrightPrerequisites(runnerRoot,stack.frontendPort);
         await onPreparing?.(30, "Preparing Playwright browsers...");
         const browserEnv = await preparePlaywrightBrowsers(runnerRoot, jobId);
-        const managed=prepareSystemPlaywright({rootDir:runnerRoot,execution,executionMode,backendUrl:stack.backendUrl,frontendPort:stack.frontendPort,runKey:crypto.randomUUID(),testFile:execution.testFile});
+        const managed=prepareSystemPlaywright({rootDir:runnerRoot,execution,executionMode,backendUrl:stack.backendUrl,frontendPort:stack.frontendPort,runKey:crypto.randomUUID(),testFile:execution.testFile,measurementPreparation,assertionBindings});
         await onReady?.();
-        const result=await dockerRunner.run({snapshotPath:runnerRoot,command:resolvePlaywrightCommand(runnerRoot,managed.command),timeoutMs:SYSTEM_TEST_TIMEOUT_MS,jobId,forceHost:true,env:{...browserEnv,PLAYWRIGHT_BASE_URL:`http://127.0.0.1:${stack.frontendPort}`}});
+        const result=await dockerRunner.run({snapshotPath:runnerRoot,command:resolvePlaywrightCommand(runnerRoot,managed.command),timeoutMs:SYSTEM_TEST_TIMEOUT_MS,jobId,forceHost:true,signal,env:{...browserEnv,PLAYWRIGHT_BASE_URL:`http://127.0.0.1:${stack.frontendPort}`}});
         return {...result,reportPath:managed.reportPath,autPort:stack.frontendPort,executionMode};
       } finally {await stack.cleanup();}
     } else if (execution.runner === "cypress") {
@@ -265,7 +265,7 @@ export const runSystemTests = async ({ jobId, rootDir, execution, onReady, onPre
   let autHandle = null;
   try {
     if (!ownsWebServer) {
-      autHandle = await startAutServer({ snapshotDir: autRoot, port: autPort, jobId, requireHealthy: true });
+      autHandle = await startAutServer({ snapshotDir: autRoot, port: autPort, jobId, requireHealthy: true, signal });
       if (!autHandle?.started) throw new ServiceError("Frontend server could not be started for system tests", 422);
     }
 
@@ -309,7 +309,7 @@ export default {...config, testDir: path.resolve(root, config.testDir || '.'), o
 
     let managed = null;
     if (execution.runner === "playwright" && execution.testDirectory) {
-      managed = prepareSystemPlaywright({rootDir,execution,executionMode,frontendPort:autPort,runKey:crypto.randomUUID(),testFile:execution.testFile,configPath:!autHandle?.started ? configFile : undefined});
+      managed = prepareSystemPlaywright({rootDir,execution,executionMode,frontendPort:autPort,runKey:crypto.randomUUID(),testFile:execution.testFile,configPath:!autHandle?.started ? configFile : undefined,measurementPreparation,assertionBindings});
       command = managed.command;
     }
     if (execution.runner === "playwright" && execution.testFile && !managed) {
@@ -327,6 +327,7 @@ export default {...config, testDir: path.resolve(root, config.testDir || '.'), o
       snapshotPath: rootDir,
       command: finalCommand,
       timeoutMs: SYSTEM_TEST_TIMEOUT_MS,
+      signal,
       jobId,
       image: RUNNER_IMAGES[execution.runner],
       forceHost: true,
