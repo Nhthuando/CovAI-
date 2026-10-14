@@ -42,7 +42,17 @@ export const saveAiTestsToFilesystem = (rootDir, tests) => {
             fs.mkdirSync(dir, { recursive: true });
         }
 
-        fs.writeFileSync(fullPath, test.content, 'utf8');
+        let content = test.content;
+        // Automatically resolve app import if model pointed to ../../index when server is in server/index.js
+        if (
+            (content.includes('"../../index"') || content.includes("'../../index'") || content.includes('"../../index.js"') || content.includes("'../../index.js'")) &&
+            !fs.existsSync(path.join(rootDir, 'index.js')) &&
+            fs.existsSync(path.join(rootDir, 'server', 'index.js'))
+        ) {
+            content = content.replace(/(['"])\.\.\/\.\.\/index(\.js)?(['"])/g, '$1../../server/index.js$3');
+        }
+
+        fs.writeFileSync(fullPath, content, 'utf8');
     }
 };
 

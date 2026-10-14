@@ -15,7 +15,88 @@ import { storeCoverageOutputs } from "./coverageStorage.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { detectSupertest } from "./supertestDetection.service.js";
 import { parseJestResults, formatScenariosForPrisma } from "./testResultParser.service.js";
+import { dockerRunner } from "./dockerRunner.service.js";
+import babel from "@babel/core";
+import transformCommonJsPlugin from "@babel/plugin-transform-modules-commonjs";
 import prisma from "../config/prisma.js";
+
+/**
+ * Ensure project and subproject dependencies (e.g. server/node_modules) are installed.
+ */
+const ensureProjectDependencies = async (jobId, rootDir) => {
+    const candidates = [
+        rootDir,
+        path.join(rootDir, "server"),
+        path.join(rootDir, "backend"),
+        path.join(rootDir, "api"),
+    ];
+
+    for (const dir of candidates) {
+        const pkgPath = path.join(dir, "package.json");
+        if (fs.existsSync(pkgPath)) {
+            const modulesPath = path.join(dir, "node_modules");
+            const needsInstall = !fs.existsSync(modulesPath) || fs.readdirSync(modulesPath).length <= 2;
+            if (needsInstall) {
+                const rel = path.relative(rootDir, dir).replace(/\\/g, "/");
+                const label = rel ? rel : "root";
+                await addJobLog(jobId, "INFO", `[SUPERTEST] Installing dependencies for ${label}...`).catch(() => { });
+                const prefixFlag = rel ? ` --prefix ${rel}` : "";
+                const installCmd = `npm install${prefixFlag} --prefer-offline --legacy-peer-deps --no-audit --no-fund --progress=false`;
+                await dockerRunner.run({
+                    snapshotPath: rootDir,
+                    command: installCmd,
+                    timeoutMs: 5 * 60 * 1000,
+                    jobId
+                });
+            }
+        }
+    }
+};
+
+/**
+ * Automatically transform ESM test code to CommonJS if the project is CommonJS.
+ */
+const transformTestCodeForProject = async (code, rootDir) => {
+    try {
+        let transformedCode = code;
+
+        // Automatically resolve relative app import if pointing to non-existent ../../index when ../../server/index.js exists
+        if (
+            (transformedCode.includes('"../../index"') || transformedCode.includes("'../../index'") || transformedCode.includes('"../../index.js"') || transformedCode.includes("'../../index.js'")) &&
+            !fs.existsSync(path.join(rootDir, "index.js")) &&
+            fs.existsSync(path.join(rootDir, "server", "index.js"))
+        ) {
+            transformedCode = transformedCode.replace(/(['"])\.\.\/\.\.\/index(\.js)?(['"])/g, '$1../../server/index.js$3');
+        }
+
+        const checkIsEsm = (dir) => {
+            const pkgPath = path.join(dir, "package.json");
+            if (fs.existsSync(pkgPath)) {
+                try {
+                    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+                    if (pkg.type === "module") return true;
+                } catch (_) { }
+            }
+            return false;
+        };
+
+        const isEsm = checkIsEsm(rootDir) || checkIsEsm(path.join(rootDir, "server")) || checkIsEsm(path.join(rootDir, "backend"));
+
+        if (!isEsm && (/\bimport\s+[\s\S]*?from\s+['"]/.test(transformedCode) || /\bexport\s+(default|\{)/.test(transformedCode))) {
+            const result = babel.transformSync(transformedCode, {
+                plugins: [transformCommonJsPlugin],
+                sourceType: "module"
+            });
+            if (result?.code) {
+                return result.code;
+            }
+        }
+        return transformedCode;
+    } catch (err) {
+        console.warn("[SupertestCoverageJob] Babel transform fallback:", err.message);
+    }
+    return code;
+};
 
 /**
  * Pipeline cho Supertest Coverage:
@@ -90,8 +171,9 @@ export const processSupertestCoverageJob = async (jobId) => {
             }
             
             const { code: finalCode } = generate(ast);
+            const executableCode = await transformTestCodeForProject(finalCode, rootDir);
             fs.mkdirSync(path.dirname(filePath), { recursive: true });
-            fs.writeFileSync(filePath, finalCode, 'utf8');
+            fs.writeFileSync(filePath, executableCode, 'utf8');
             supertestFiles.push(filePath);
         }
 
@@ -102,6 +184,9 @@ export const processSupertestCoverageJob = async (jobId) => {
         await saveJobOutput(jobId, { stdout: "", stderr: "" }).catch(() => { });
         await updateJobProgress(jobId, 10);
         await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'PREPARE_ENV', label: "Starting Supertest coverage pipeline...", progress: 10 }));
+
+        // Ensure dependencies exist (e.g. server/node_modules) before starting test suite
+        await ensureProjectDependencies(jobId, rootDir);
 
         // 1. Run Supertest
         await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'RUN_JEST', label: "Running Supertest test suite...", progress: 20 }));
@@ -124,7 +209,9 @@ export const processSupertestCoverageJob = async (jobId) => {
         const summaryPath = path.join(coverageDir, "coverage-summary.json");
         const finalPath = path.join(coverageDir, "coverage-final.json");
         if (!fs.existsSync(summaryPath) || !fs.existsSync(finalPath)) {
-            throw new ServiceError("Supertest completed without producing the required coverage JSON files.", 422);
+            const errorSnippet = (runResult.stderr || runResult.stdout || "").trim();
+            const reason = errorSnippet ? `: ${errorSnippet.slice(-300)}` : "";
+            throw new ServiceError(`Supertest completed without producing the required coverage JSON files${reason}`, 422);
         }
         const summaryResult = await parseCoverageSummary(coverageDir, snapshotId);
 
@@ -148,8 +235,40 @@ export const processSupertestCoverageJob = async (jobId) => {
             if (formattedScenarios) {
                 dataPayload.scenarios = formattedScenarios;
             }
-            await prisma.testRun.create({ data: dataPayload });
+            const createdTestRun = await prisma.testRun.create({
+                data: dataPayload,
+                include: { scenarios: true }
+            });
             await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'PARSE_COVERAGE', label: `[SCRUM-141] Saved TestRun (SUPERTEST): ${supertestResults.totalTests} tests.`, progress: 60 })).catch(() => { });
+
+            // Enrich runtime evidence with testRunId and scenarioId
+            try {
+                const evidencePath = path.join(coverageDir, "runtime-evidence.json");
+                const tempEvidencePath = path.join(rootDir, ".covai-temp", "runtime-evidence.json");
+                const targetEvidencePath = fs.existsSync(evidencePath) ? evidencePath : (fs.existsSync(tempEvidencePath) ? tempEvidencePath : null);
+                if (targetEvidencePath) {
+                    const rawEv = JSON.parse(fs.readFileSync(targetEvidencePath, "utf8"));
+                    if (Array.isArray(rawEv)) {
+                        const scenarioMap = new Map((createdTestRun.scenarios || []).map(s => [s.title, s]));
+                        const enriched = rawEv.map(ev => {
+                            const sc = scenarioMap.get(ev.testTitle) || (createdTestRun.scenarios || []).find(s =>
+                                (ev.testTitle && s.title && (ev.testTitle.includes(s.title) || s.title.includes(ev.testTitle)))
+                            );
+                            return {
+                                ...ev,
+                                testRunId: createdTestRun.id,
+                                scenarioId: sc?.id || null,
+                                runnerVerdict: sc ? (sc.status === 'passed' ? 'PASS' : (sc.status === 'failed' ? 'FAIL' : 'SKIPPED')) : (ev.actualStatusFromRuntime ? 'PASS' : 'UNKNOWN'),
+                                statusAssertionResult: sc ? (sc.status === 'passed' ? 'PASS' : (sc.status === 'failed' ? 'FAIL' : 'NOT_EVALUATED')) : (ev.actualStatusFromRuntime ? 'PASS' : 'NOT_EVALUATED')
+                            };
+                        });
+                        fs.writeFileSync(evidencePath, JSON.stringify(enriched, null, 2), "utf8");
+                        try { fs.writeFileSync(tempEvidencePath, JSON.stringify(enriched, null, 2), "utf8"); } catch (_) {}
+                    }
+                }
+            } catch (evErr) {
+                console.warn("[SupertestCoverageJob] Failed to enrich runtime evidence:", evErr.message);
+            }
         }
 
         // Parse details (reuse logic from runTestsJob)

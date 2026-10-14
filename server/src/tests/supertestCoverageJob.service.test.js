@@ -10,12 +10,14 @@ const updateJobProgress = jest.fn();
 const getJobById = jest.fn();
 const addJobLog = jest.fn();
 const saveJobOutput = jest.fn();
+const appendJobOutput = jest.fn();
 const runSupertest = jest.fn();
 const parseCoverageSummary = jest.fn();
 const storeCoverageOutputs = jest.fn();
 const parseCoverageFilesForSnapshot = jest.fn();
 const parseCoverageFunctionsForSnapshot = jest.fn();
 const mockAiTestFindMany = jest.fn();
+const mockDockerRun = jest.fn().mockResolvedValue({ success: true, exitCode: 0, stdout: '', stderr: '' });
 
 const mockPrisma = {
     aiTest: {
@@ -32,7 +34,10 @@ await jest.unstable_mockModule('../config/prisma.js', () => ({
 await jest.unstable_mockModule('../services/job.service.js', () => ({
     markJobRunning, markJobSuccess, markJobFailed, updateJobProgress, getJobById, addJobLog,
 }));
-await jest.unstable_mockModule('../services/jobOutput.service.js', () => ({ saveJobOutput }));
+await jest.unstable_mockModule('../services/jobOutput.service.js', () => ({ saveJobOutput, appendJobOutput }));
+await jest.unstable_mockModule('../services/dockerRunner.service.js', () => ({
+    dockerRunner: { run: mockDockerRun }
+}));
 await jest.unstable_mockModule('../services/supertestRunner.service.js', () => ({ runSupertest }));
 await jest.unstable_mockModule('../services/coverageSummaryParser.service.js', () => ({ parseCoverageSummary }));
 await jest.unstable_mockModule('../services/coverageStorage.service.js', () => ({ storeCoverageOutputs }));

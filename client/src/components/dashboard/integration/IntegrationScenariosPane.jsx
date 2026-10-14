@@ -377,7 +377,7 @@ export default function IntegrationScenariosPane({
               checked={isAllMasterSelected}
               indeterminate={isMasterIndeterminate}
               onChange={handleToggleMaster}
-              disabled={isApproved || visibleEnabledScenarios.length === 0}
+              disabled={visibleEnabledScenarios.length === 0}
               className="w-4 h-4 rounded cursor-pointer accent-[var(--color-primary)]"
               title={
                 isAllMasterSelected
@@ -420,7 +420,7 @@ export default function IntegrationScenariosPane({
           <button
             type="button"
             onClick={handleTopAddClick}
-            disabled={isApproved || (!selectedEndpoint && availableTargetEndpoints.length === 0)}
+            disabled={!selectedEndpoint && availableTargetEndpoints.length === 0}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-md)] bg-[var(--color-primary)] text-white text-xs font-semibold hover:bg-[var(--color-primary)]/90 transition-colors shadow-sm disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
             title={selectedEndpoint ? `Add Scenario to ${selectedEndpoint.method} ${selectedEndpoint.path || selectedEndpoint.route}` : "Add Scenario"}
           >
@@ -478,7 +478,7 @@ export default function IntegrationScenariosPane({
                         checked={isAllEpSelected}
                         indeterminate={isEpIndeterminate}
                         onChange={handleToggleEndpoint}
-                        disabled={isApproved || epEnabledScenarios.length === 0}
+                        disabled={epEnabledScenarios.length === 0}
                         className="w-4 h-4 rounded cursor-pointer accent-[var(--color-primary)]"
                         title={
                           isAllEpSelected
@@ -504,7 +504,7 @@ export default function IntegrationScenariosPane({
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    {!isApproved && onGenerateThisEndpoint && (
+                    {onGenerateThisEndpoint && (
                       <button
                         type="button"
                         onClick={(e) => {
@@ -556,7 +556,7 @@ export default function IntegrationScenariosPane({
                                 );
                               }
                             }}
-                            disabled={isApproved || !scenario.enabled}
+                            disabled={!scenario.enabled}
                             className="mt-0.5 rounded cursor-pointer accent-[var(--color-primary)]"
                           />
                           <div className="flex-1 min-w-0">

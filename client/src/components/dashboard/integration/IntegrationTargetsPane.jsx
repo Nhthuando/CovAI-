@@ -254,6 +254,11 @@ export default function IntegrationTargetsPane({
                   ○ {ep.skippedCount}
                 </span>
               )}
+              {ep.unexecutedCount > 0 && (
+                <span className="text-[var(--color-text-muted)] opacity-80" title="Chưa chạy trong đợt này (để lại chạy sau)">
+                  ○ {ep.unexecutedCount} còn lại
+                </span>
+              )}
             </div>
           ) : (
             <span>{ep.generatedCount || 0} scenarios</span>

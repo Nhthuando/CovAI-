@@ -1,7 +1,7 @@
 {
-  "watch": ["src"],
+  "watch": ["src", ".env"],
   "ignore": ["storage/*", "node_modules"],
-  "ext": "js,json,ts",
+  "ext": "js,json,ts,env",
   "exec": "node index.js",
   "legacyWatch": true
 }
