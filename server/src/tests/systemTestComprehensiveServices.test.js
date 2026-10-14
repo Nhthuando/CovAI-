@@ -213,7 +213,7 @@ describe("Phase 7.1 - Unit & Integration Tests: System Test Result Parser & Brea
     expect(parsed.totalTests).toBe(1);
     expect(parsed.failedTests).toBe(1);
     expect(parsed.passedTests).toBe(0);
-    expect(parsed.stabilityScorePct).toBe(0);
+    expect(parsed.passRatePct).toBe(0);
 
     const scenario = parsed.scenarios[0];
     expect(scenario.title).toBe("checkout flow");
@@ -224,7 +224,7 @@ describe("Phase 7.1 - Unit & Integration Tests: System Test Result Parser & Brea
     expect(scenario.screenshotSource).toContain("evidence-screenshot.png");
   });
 
-  it("calculates stabilityScorePct accurately with passing and flaky tests", () => {
+  it("calculates passRatePct accurately with passing and flaky tests", () => {
     const rootDir = createTempDir();
     const reportPath = path.join(rootDir, "pw-flaky-results.json");
 
@@ -285,10 +285,10 @@ describe("Phase 7.1 - Unit & Integration Tests: System Test Result Parser & Brea
     expect(parsed.flakyTests).toBe(1);
     expect(parsed.failedTests).toBe(1);
     // 2 passed out of 4 total => 50%
-    expect(parsed.stabilityScorePct).toBe(50);
+    expect(parsed.passRatePct).toBe(50);
   });
 
-  it("normalizes Cypress JSON with test errors, duration, and stability score", () => {
+  it("normalizes Cypress JSON with test errors, duration, and pass rate", () => {
     const rootDir = createTempDir({
       "cypress/e2e/payment.cy.js": [
         "describe('Payment', () => {",
@@ -330,7 +330,7 @@ describe("Phase 7.1 - Unit & Integration Tests: System Test Result Parser & Brea
     expect(parsed.passedTests).toBe(2);
     expect(parsed.failedTests).toBe(1);
     expect(parsed.status).toBe("FAILED");
-    expect(parsed.stabilityScorePct).toBe(66.7);
+    expect(parsed.passRatePct).toBe(66.7);
     expect(parsed.scenarios).toHaveLength(3);
 
     const failingScenario = parsed.scenarios[0];

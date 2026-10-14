@@ -137,8 +137,8 @@ export default function SystemTestEditorModal({
         instruction: customInstruction.trim(),
       });
 
-      const optCode = res.data?.code || res.data?.content || "";
-      const explanation = res.data?.explanation || "Optimization complete.";
+      const optCode = res.data?.optimizedCode || res.data?.code || res.data?.content || "";
+      const explanation = res.data?.explanation || "Proposal generated; execution and coverage improvement have not been verified.";
 
       setSuggestedContent(optCode);
       setAiExplanation(explanation);
@@ -237,7 +237,7 @@ export default function SystemTestEditorModal({
               size="sm"
               icon={runningSingle ? Loader2 : Play}
               loading={runningSingle}
-              disabled={loading || optimizing || runningSingle}
+              disabled={loading || optimizing || runningSingle || isDirty}
               onClick={handleRunSingle}
               className="text-xs h-8"
             >
@@ -276,18 +276,18 @@ export default function SystemTestEditorModal({
               variant="secondary"
               size="sm"
               icon={Sparkles}
-              disabled={loading || optimizing || runningSingle}
+              disabled={loading || optimizing || runningSingle || isDirty}
               onClick={() => handleOptimize("BOOST_COVERAGE")}
               className="text-xs h-7 px-2.5"
             >
-              AI Boost Coverage
+              AI Suggest Additional Tests
             </Button>
 
             <Button
               variant="secondary"
               size="sm"
               icon={Wrench}
-              disabled={loading || optimizing || runningSingle}
+              disabled={loading || optimizing || runningSingle || isDirty}
               onClick={() => handleOptimize("FIX_BREAKPOINT")}
               className="text-xs h-7 px-2.5"
             >
@@ -328,7 +328,7 @@ export default function SystemTestEditorModal({
               <div>
                 <div className="font-semibold text-[var(--color-primary)] flex items-center gap-1.5 mb-0.5">
                   <Sparkles size={14} />
-                  <span>AI Generated Improvements Ready</span>
+                  <span>AI Proposal ? Not Verified</span>
                 </div>
                 <p className="text-[var(--color-text-secondary)] text-[11px] leading-relaxed m-0">
                   {aiExplanation}

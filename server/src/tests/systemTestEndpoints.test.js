@@ -427,9 +427,9 @@ describe('System Test Phase 4 Endpoints', () => {
                 data: expect.objectContaining({
                     hasRun: false,
                     totalTests: 0,
-                    stabilityScorePct: 100,
+                    stabilityScorePct: null,
                     coverageAvailable: false,
-                    coverageSummary: { linesPct: 0, branchesPct: 0, statementsPct: 0, functionsPct: 0 },
+                    coverageSummary: expect.objectContaining({linesPct:null,branchesPct:null,statementsPct:null,functionsPct:null,status:"NOT_MEASURED"}),
                 }),
             }));
         });
@@ -497,14 +497,10 @@ describe('System Test Phase 4 Endpoints', () => {
                     failedTests: 1,
                     flakyTests: 1,
                     durationMs: 4500,
-                    stabilityScorePct: 80,
-                    coverageAvailable: true,
-                    coverageSummary: {
-                        linesPct: 82.5,
-                        branchesPct: 75.0,
-                        statementsPct: 80.0,
-                        functionsPct: 70.0,
-                    },
+                    stabilityScorePct: null,
+                    passRatePct: 80,
+                    coverageAvailable: false,
+                    coverageSummary: expect.objectContaining({linesPct:null,branchesPct:null,statementsPct:null,functionsPct:null,status:'LEGACY_UNVERIFIED'}),
                     testFiles: expect.arrayContaining([
                         expect.objectContaining({ filePath: 'tests/e2e/auth.spec.js' }),
                     ]),
@@ -514,6 +510,29 @@ describe('System Test Phase 4 Endpoints', () => {
     });
 
     describe('GET /api/coverage/:snapshotId/system/scenarios', () => {
+        it('returns persisted execution details and historical null detail within the pinned owned run', async () => {
+            prismaMock.projectSnapshot.findFirst.mockResolvedValueOnce({ id: 'snap-1', rootDir: '/repo' });
+            const executionDetails = { version: 1, attempts: [{ index: 0, status: 'failed', steps: [{ title: 'Submit', error: 'timeout' }] }] };
+            prismaMock.testRun.findFirst.mockResolvedValueOnce({ id: 'run-1', type: 'PLAYWRIGHT', executionMode: 'full', testFiles: [], scenarios: [
+                { id: 'new', title: 'Login', testFile: 'login.spec.js', durationMs: 0, executionDetails },
+                { id: 'old', title: 'Old', testFile: 'login.spec.js', executionDetails: null },
+            ] });
+            const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+            await getSystemTestScenarios({ user: { id: 'user-1' }, params: { snapshotId: 'snap-1' }, query: { testRunId: 'run-1', executionMode: 'full' } }, res);
+            const data = res.json.mock.calls[0][0].data;
+            expect(data.scenarios[0]).toMatchObject({ durationMs: 0, executionDetails });
+            expect(data.testFiles[0].scenarios[0].executionDetails).toEqual(executionDetails);
+            expect(data.scenarios[1].executionDetails).toBeNull();
+        });
+
+        it('does not fetch execution details for another owner snapshot', async () => {
+            prismaMock.projectSnapshot.findFirst.mockResolvedValueOnce(null);
+            const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+            await getSystemTestScenarios({ user: { id: 'other' }, params: { snapshotId: 'snap-1' }, query: {} }, res);
+            expect(res.status).toHaveBeenCalledWith(404);
+            expect(prismaMock.projectSnapshot.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ project: { ownerId: 'other' } }) }));
+            expect(prismaMock.testRun.findFirst).not.toHaveBeenCalled();
+        });
         it.each(['frontend','full'])('pins scenarios to the requested %s run and runner', async executionMode => {
             prismaMock.projectSnapshot.findFirst.mockResolvedValueOnce({id:'snap-1'});
             prismaMock.testRun.findFirst.mockResolvedValueOnce({id:'selected-run',type:'PLAYWRIGHT',executionMode,scenarios:[],testFiles:[]});
@@ -630,8 +649,8 @@ describe('System Test Phase 4 Endpoints', () => {
                                 hasDomSnapshot: true,
                             }),
                             coverageContributions: {
-                                linesPct: 75.0,
-                                branchesPct: 60.0,
+                                linesPct: null,
+                                branchesPct: null,
                             },
                             evidence: expect.objectContaining({
                                 hasScreenshot: true,

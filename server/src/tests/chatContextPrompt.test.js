@@ -3,6 +3,20 @@ import { db, resetContextFixture, generate, quota, enqueue, settings, session } 
 const { sendContextChat } = await import("../services/chat.service.js");
 const { assembleChatContext, boundHistory } = await import("../services/chatContext.service.js");
 beforeEach(resetContextFixture);
+it("updates screen context within the same conversation and scopes saved runs to the snapshot and test type", async () => {
+    db.testRun.findFirst.mockResolvedValue({ id: "run-system", type: "PLAYWRIGHT", passedTests: 4, failedTests: 1, totalTests: 5 });
+    await send({ screenContext: { activity: "coverage", testType: "system" } });
+    expect(generate.mock.calls[0][0]).toContain('"testType":"system"');
+    expect(generate.mock.calls[0][0]).toContain('"id":"run-system"');
+    expect(db.testRun.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { snapshotId: "snapshot-1", type: { in: ["PLAYWRIGHT", "CYPRESS"] } } }));
+    db.testRun.findFirst.mockResolvedValue(null);
+    await send({ screenContext: { activity: "coverage", testType: "unit" } });
+    const nextPrompt = generate.mock.calls[1][0];
+    expect(nextPrompt).toContain('"testType":"unit"');
+    expect(nextPrompt).not.toContain('"id":"run-system"');
+    expect(nextPrompt).toContain("No saved test run");
+    expect(db.testRun.findFirst).toHaveBeenLastCalledWith(expect.objectContaining({ where: { snapshotId: "snapshot-1", type: { in: ["JEST", "VITEST"] } } }));
+});
 const send = input => sendContextChat("project-1", "owner-1", { message: "Help with Jest", sessionId: "session-1", attachments: [], ...input }, { generate, quota, enqueue });
 
 it("uses stored history, approved guidance and current snapshot, ignoring supplied history", async () => {

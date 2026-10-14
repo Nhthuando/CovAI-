@@ -1,6 +1,6 @@
 /* eslint-disable no-unused-vars */
 /* eslint-disable react-hooks/set-state-in-effect */
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, useLocation } from "react-router-dom";
 import ActivityBar from "./ActivityBar";
@@ -149,6 +149,7 @@ function LayoutInner() {
   const [activeFileId, setActiveFileId] = useState(null);
   const initialCoverageType = searchParams.get("coverageType") || "unit";
   const [coverageType, setCoverageType] = useState(initialCoverageType);
+  const screenContext = useMemo(() => ({ activity: activeActivity, testType: activeActivity === "coverage" ? coverageType : undefined, filePath: activeActivity === "explorer" ? activeTabId || undefined : undefined }), [activeActivity, coverageType, activeTabId]);
   const [showImport, setShowImport] = useState(false);
   const [showQualityDashboard, setShowQualityDashboard] = useState(false);
   const [cfgInitialContext, setCfgInitialContext] = useState(null);
@@ -972,6 +973,7 @@ function LayoutInner() {
                 snapshotId={
                   searchParams.get("snapshotId") ||
                   project?.latestSnapshotId ||
+                  project?.snapshots?.[0]?.id ||
                   (project?.id
                     ? localStorage.getItem(`latestSnapshot_${project.id}`)
                     : null) ||
@@ -1007,6 +1009,7 @@ function LayoutInner() {
             <div className={coverageType === "system" ? "h-full overflow-y-auto" : "hidden"}>
               <SystemTestDashboard
                 snapshotId={
+                  project?.snapshots?.[0]?.id ||
                   project?.latestSnapshotId ||
                   (project?.id
                     ? localStorage.getItem(`latestSnapshot_${project.id}`)
@@ -1033,6 +1036,7 @@ function LayoutInner() {
                   isLoadingTree={isLoadingTree}
                   projectId={project?.id}
                   snapshotId={
+                    project?.snapshots?.[0]?.id ||
                     project?.latestSnapshotId ||
                     (project?.id
                       ? localStorage.getItem(`latestSnapshot_${project.id}`)
@@ -1093,8 +1097,10 @@ function LayoutInner() {
                 }
               >
                 <AIPanel
+                  screenContext={screenContext}
                   projectId={project?.id}
                   snapshotId={
+                    project?.snapshots?.[0]?.id ||
                     project?.latestSnapshotId ||
                     (project?.id
                       ? localStorage.getItem(`latestSnapshot_${project.id}`)
@@ -1192,7 +1198,7 @@ function LayoutInner() {
         <ProjectExportDialog
           key={project.id}
           project={project}
-          initialSnapshotId={project.latestSnapshotId || localStorage.getItem(`latestSnapshot_${project.id}`)}
+          initialSnapshotId={project.snapshots?.[0]?.id || project.latestSnapshotId || localStorage.getItem(`latestSnapshot_${project.id}`)}
           onClose={() => setShowExport(false)}
         />
       )}

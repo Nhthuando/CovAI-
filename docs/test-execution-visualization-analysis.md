@@ -1,7 +1,7 @@
 # Test Execution Visualization System — analysis and proposed design
 
 Date: 2026-10-11
-Status: System Test scope confirmed by user; proposed design awaiting approval.
+Status: First delivery approved and implemented on 2026-10-12.
 
 ## Repository findings
 
@@ -21,7 +21,7 @@ Status: System Test scope confirmed by user; proposed design awaiting approval.
 
 ## Proposed first delivery
 
-Confirmed scope: System Test (Playwright and Cypress), individual steps and screenshots. Proposed implementation: approach 1; design approval is pending.
+Approved scope: System Test (Playwright and Cypress), individual steps when reported and existing screenshots. Implementation: approach 1.
 
 - Add an Execution view reachable from the existing System Test dashboard, alongside its scenario view.
 - Show run outcome, real elapsed time and passed/failed/flaky/skipped counts. With no run, show an explicit empty state.
@@ -52,3 +52,26 @@ Confirmed scope: System Test (Playwright and Cypress), individual steps and scre
 ## Deferred work
 
 Per-step live streaming, video replay, importing Playwright trace archives, a new dedicated route, run-history comparison and visualization changes for Unit/Integration are outside the proposed first delivery.
+
+## Delivered behavior and verification (2026-10-12)
+
+- System dashboard offers Scenarios / Execution on the same pinned run and runner/mode selection. Execution shows attempt timing on a shared axis, name/outcome filters, nested reported steps, retry errors and existing authenticated screenshot evidence.
+- `TestScenario.executionDetails` is nullable versioned JSON; the additive migration was validated, generated and deployed. Existing results display an unavailable-detail message; rerunning collects new detail.
+- Normalization bounds 20 attempts, 200 total steps, depth 8 and 65,536 text characters per scenario; malformed timing is unavailable, zero durations are preserved, credentials/host paths are sanitized and truncation is visible. Truncation retains failed step status.
+- Playwright JSON emits named `test.step` blocks, not every browser command. Cypress Mocha JSON supplies flat scenario results without step/start-time detail; structured Cypress reports preserve reported attempts when available. Missing fields are not estimated.
+- 66 focused backend tests passed, plus 4 Node view-model tests. Comprehensive system service regression tests passed. Changed-file ESLint, frontend build and Prisma validate/generate passed; existing bundle-size/dynamic-import warnings remain.
+- A real Playwright browser report produced 1 passing, 1 failing, 1 flaky and 1 skipped scenario with nested steps, two workers and screenshots. It was persisted to PostgreSQL and read through the authenticated scenario API. Temporary run/evidence records were removed afterward, preserving original run history.
+- Browser verification passed for selection, nested steps, screenshots, filters, Frontend/Full Stack isolation, Cypress empty state, historical null detail, keyboard access, light/dark themes and 390px mobile layout. Error recovery and running progress were exercised with UI test responses without launching a fake backend job. A transient database connection timeout was resolved by retrying.
+- No real Cypress binary smoke run was performed; Cypress normalization is covered by report fixture tests.
+
+Screenshots: [Desktop](assets/system-test-execution-dark.png), [Mobile](assets/system-test-execution-mobile.png).
+
+## Automatic generated Playwright steps (2026-10-12)
+
+- User requested automatic step recording whenever System Test generation is invoked. Verified full-system, cold-start, legacy Playwright generation and AI Boost/Fix now share explicit prompt instructions for meaningful awaited `test.step` blocks.
+- A generation-boundary AST pass adds missing step wrappers before verification/storage/preview. It preserves named steps and is idempotent. Shared declarations stay in scenario scope, returned response values survive, and assertions, conditions, loops, throws and cleanup retain their behavior. Awaited operations inside a named step stay in that group.
+- Automatically derived titles describe operations without copying arguments or input values. Missing awaits on explicit steps, blank/empty steps, unsupported callback structure, nested scenarios and shadowed Playwright bindings fail validation instead of silently losing report detail.
+- Offline Playwright templates also record steps. Booster fallback insertion uses suite AST boundaries; files with top-level tests get top-level new scenarios instead of invalid nested declarations.
+- Cypress generation uses its own APIs and remains unchanged by Playwright instrumentation. Old saved files/results need regeneration or an AI Boost/Fix/save/run cycle to gain new step detail; no existing snapshot file is rewritten by this code change.
+- Real Playwright before/after verification preserved 1 passing and 1 failing scenario, shared response/input values and cleanup. The instrumented report contained 9 and 2 steps respectively, including the original failed assertion at its failed step. No Gemini call or source upload was needed for this verification.
+- Follow-up regression verification passed all 62 tests across 9 backend suites covering step instrumentation, generation, repair, prompts, editor/booster flows and result parsing.

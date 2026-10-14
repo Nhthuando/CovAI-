@@ -55,9 +55,10 @@ export const isPortInUse = async (port, host = "localhost", timeoutMs = 1000) =>
  * Tầng 1: Socket Check.
  * Polls the port until it opens or times out.
  */
-export const waitForPortOpen = async (port, timeoutMs = 45000, host = "localhost", intervalMs = 500) => {
+export const waitForPortOpen = async (port, timeoutMs = 45000, host = "localhost", intervalMs = 500, isExited = () => false) => {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
+    if (isExited()) throw new Error('AUT process exited before opening its port');
     const inUse = await isPortInUse(port, host);
     if (inUse) return true;
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
@@ -317,7 +318,8 @@ export const runSeedDataIfPresent = async ({ snapshotDir, jobId = null }) => {
 /**
  * Starts the application under test (AUT) web server and performs 2-tier healthcheck.
  */
-export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, healthTimeoutMs = 45000, env = {}, healthPath = "/", requireHealthy = false }) => {
+export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, healthTimeoutMs = 45000, env = {}, healthPath = "/", requireHealthy = false, preferStart = false, signal }) => {
+  if (signal?.aborted) throw new ServiceError('AUT startup canceled',409);
   const candidateDirs = ["", "client", "frontend", "web", "ui", "app"];
   let chosenDir = null;
   let command = null;
@@ -336,7 +338,8 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
 
     const scripts = pkg.scripts || {};
     let cmd = null;
-    if (typeof scripts.dev === "string") cmd = "npm run dev";
+    if (preferStart && typeof scripts.start === "string") cmd = "npm run start";
+    else if (typeof scripts.dev === "string") cmd = "npm run dev";
     else if (typeof scripts.preview === "string") cmd = "npm run preview";
     else if (typeof scripts.start === "string") cmd = "npm run start";
 
@@ -382,6 +385,7 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
 
   const child = spawn(command, {
     shell: true,
+    windowsHide: true,
     cwd: chosenDir,
     env: {
       ...process.env,
@@ -392,14 +396,20 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
     stdio: ["ignore", "pipe", "pipe"],
   });
 
+  const abortAut = () => { stopAutServer(child.pid,port,jobId).catch(()=>{}); };
+  signal?.addEventListener('abort',abortAut,{once:true});
+  child.once('close',()=>signal?.removeEventListener('abort',abortAut));
+  if(signal?.aborted) abortAut();
+
   let stderrBuffer = "";
-  child.stdout?.on("data", () => {});
+  let stdoutBuffer = "";
+  child.stdout?.on("data", chunk => { stdoutBuffer = (stdoutBuffer + chunk.toString()).slice(-16000); });
   child.once("error", (error) => {
     stderrBuffer += error.message;
     serverExited = true;
   });
   child.stderr?.on("data", (chunk) => {
-    stderrBuffer += chunk.toString();
+    stderrBuffer = (stderrBuffer + chunk.toString()).slice(-16000);
   });
 
   let serverExited = false;
@@ -412,11 +422,11 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
   // Tầng 1: Socket Check (polling waitForPortOpen)
   const readinessDeadline = Date.now() + healthTimeoutMs;
   try {
-    await waitForPortOpen(port, healthTimeoutMs, "127.0.0.1");
+    await waitForPortOpen(port, healthTimeoutMs, "127.0.0.1", 500, () => serverExited);
   } catch (error) {
     await stopAutServer(child.pid, port, jobId);
     if (serverExited) {
-      const details = stderrBuffer.trim().slice(-400);
+      const details = formatAutStartupFailure(stderrBuffer || stdoutBuffer, env);
       const msg = `AUT server process exited prematurely with code ${exitCode}.${details ? ` Details: ${details}` : ""}`;
       await safeAddJobLog(jobId, "ERROR", `[AUT Lifecycle] ${msg}`);
       throw new Error(msg);
@@ -455,6 +465,19 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
     command,
     httpStatus: httpResult.status,
   };
+};
+
+export const formatAutStartupFailure = (output, env = {}) => {
+  let clean = output.replace(/\x1b\[[0-9;]*m/g, '').trim();
+  for (const [key, value] of Object.entries({...process.env, ...env})) {
+    if (value && /PASSWORD|SECRET|TOKEN|KEY|URL/i.test(key)) clean = clean.replaceAll(value, '[redacted]');
+  }
+  clean = clean.replace(/(?:mysql|postgres(?:ql)?):\/\/[^\s'"`]+/gi, '[redacted database URL]');
+  if (/Neither apiKey nor config.authenticator provided/.test(clean)) {
+    return 'Stripe could not start because its test API key is missing. Set STRIPE_SECRET_KEY to a Stripe test key in the backend .env.test file and retry Full Stack. Choose Frontend Dev Server to test the UI without the payment service.';
+  }
+  const error = clean.search(/(?:^|\n)(?:Error|\w+Error)(?:\s*\[[^\]]+\])?:/);
+  return (error >= 0 ? clean.slice(error).trim() : clean).slice(0, 2000);
 };
 
 /**

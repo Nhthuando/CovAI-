@@ -1,4 +1,5 @@
 import SystemTestEvidencePreview from "./SystemTestEvidencePreview.jsx";
+import SystemTestProgress from "./SystemTestProgress.jsx";
 import { Fragment, useState, useMemo } from "react";
 import {
   FileCode2,
@@ -206,14 +207,15 @@ export default function SystemTestScenarioList({
                 {/* Scenarios Table / List */}
                 {!isCollapsed && (
                   <div className="overflow-x-auto">
+                    {!scenarios.length && <p className="px-4 py-3 text-xs text-[var(--color-text-muted)]">No executed scenarios for this file in the selected results. Open Edit Test to run this file directly.</p>}
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
                         <tr className="border-b border-[var(--color-border)] text-[11px] font-semibold text-[var(--color-text-muted)] bg-[var(--color-surface)] uppercase tracking-wider">
                           <th className="py-2 px-4 font-medium">Scenario Title</th>
                           <th className="py-2 px-4 font-medium w-28">Status</th>
                           <th className="py-2 px-4 font-medium w-24">Duration</th>
-                          <th className="py-2 px-4 font-medium w-28 text-right">
-                            Coverage Contrib
+                          <th className="py-2 px-4 font-medium min-w-44 w-44 text-right">
+                            Step Progress
                           </th>
                           <th className="py-2 px-4 font-medium w-36 text-right">
                             Actions
@@ -224,12 +226,6 @@ export default function SystemTestScenarioList({
                         {scenarios.map((sc) => {
                           const isFailed =
                             String(sc.status).toUpperCase() === "FAILED";
-                          const contribPct =
-                            sc.coverageContributionPct !== undefined
-                              ? `${Math.round(sc.coverageContributionPct)}%`
-                              : sc.coveragePoints
-                              ? `+${sc.coveragePoints} pts`
-                              : "—";
 
                           return (
                             <Fragment key={sc.id || sc.title}>
@@ -253,7 +249,7 @@ export default function SystemTestScenarioList({
                                 {formatMs(sc.executionTimeMs || sc.durationMs)}
                               </td>
                               <td className="py-2.5 px-4 text-right font-mono text-[11px] text-[var(--color-primary)] font-medium">
-                                {contribPct}
+                                <SystemTestProgress scenario={sc} compact />
                               </td>
                               <td className="py-2.5 px-4 text-right">
                                 <div className="flex items-center justify-end gap-1.5">
@@ -291,6 +287,7 @@ export default function SystemTestScenarioList({
                             </tr>
                             <tr>
                               <td colSpan={5}>
+                                {isFailed && <div className="px-4 py-3"><SystemTestProgress scenario={sc} showErrors /></div>}
                                 <SystemTestEvidencePreview
                                   key={`${snapshotId}:${sc.id}`}
                                   snapshotId={snapshotId}

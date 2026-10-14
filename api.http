@@ -275,3 +275,26 @@ Content-Type: application/json
 GET {{baseUrl}}/coverage/cmsi9ylbz001h0vpkt76dvghn/system/summary
 Authorization: Bearer {{token}}
 
+
+
+### System evidence assessment (requires migration and enabled evidence flags)
+@assessmentSnapshotId = replace-with-owned-snapshot-id
+@assessmentToken = replace-with-session-token
+POST http://localhost:5000/api/coverage/{{assessmentSnapshotId}}/system/assessments
+Authorization: Bearer {{assessmentToken}}
+Content-Type: application/json
+
+{
+  "testFiles": ["tests/system/app.spec.js"],
+  "runner": "playwright",
+  "executionMode": "full",
+  "repeatRuns": 2,
+  "coverageScope": {
+    "frontend": {"root": "client", "sourceDirectory": "src"},
+    "backend": {"root": "server", "sourceDirectory": "src"}
+  }
+}
+
+### Evidence capabilities: enabled flags and verified support are separate
+GET http://localhost:5000/api/coverage/{{assessmentSnapshotId}}/system/capabilities
+Authorization: Bearer {{assessmentToken}}

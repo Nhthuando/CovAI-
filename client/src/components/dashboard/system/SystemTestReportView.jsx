@@ -191,12 +191,10 @@ export default function SystemTestReportView({
 
           <div className="report-card p-4 rounded-[var(--radius-lg)] bg-[var(--color-surface)] border border-[var(--color-border)]">
             <div className="text-xs text-[var(--color-text-muted)] font-medium mb-1">
-              Stability Score
+              Repeat-run evidence
             </div>
             <div className="text-2xl font-bold text-[var(--color-text)]">
-              {summary?.stabilityScorePct !== undefined
-                ? `${summary.stabilityScorePct}%`
-                : `${passRate}%`}
+              {"Not measured"}
             </div>
             <div className="text-[11px] text-[var(--color-text-secondary)] font-mono mt-1">
               Flaky tests: {flaky}
@@ -320,7 +318,7 @@ export default function SystemTestReportView({
                                 {formatMs(sc.executionTimeMs || sc.durationMs)}
                               </td>
                               <td className="py-2 px-4 text-right font-mono text-[11px] text-[var(--color-primary)]">
-                                {sc.coverageContributionPct !== undefined
+                                {typeof sc.coverageContributionPct === "number"
                                   ? `${Math.round(sc.coverageContributionPct)}%`
                                   : "—"}
                               </td>

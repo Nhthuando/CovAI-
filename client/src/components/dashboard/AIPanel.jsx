@@ -2184,6 +2184,7 @@ const isTestFile = (filePath) => {
 export default function AIPanel({
   projectId,
   snapshotId,
+  screenContext,
   fileTree = [],
   pendingAiSuggestion,
   onClearPendingSuggestion,
@@ -2311,6 +2312,7 @@ export default function AIPanel({
     Promise.resolve().then(async () => {
       if (cancelled) return;
       setIsRestoring(true); setMessages(INITIAL_MESSAGES); setActiveSessionId(null); setActiveSessionMeta(null); setContextInfo(null);
+      if (!projectId) { setIsRestoring(false); return; }
       fetchSessions();
       getAiContext(projectId).then(config => { if (!cancelled) setMemoryAvailable(config.automaticMemory); }).catch(() => { if (!cancelled) setMemoryAvailable(false); });
       let stored = null;
@@ -3263,7 +3265,7 @@ export default function AIPanel({
         selectedModel.id,
         attachments || [],
         activeSessionId,
-        { snapshotId, useMemory: useProjectMemory },
+        { snapshotId, useMemory: useProjectMemory, screenContext },
       );
       if (requestScope !== contextRequestRef.current) return;
 
@@ -3414,7 +3416,7 @@ export default function AIPanel({
 
         {/* Header Actions */}
         <div className="flex items-center gap-1.5 flex-shrink-0">
-          <button type="button" aria-label="Choose AI conversation context" disabled={isTyping || isRestoring || isLoadingSession} onClick={() => setContextDialog("conversations")} className="px-2 py-1 rounded-md border border-[var(--color-border)] text-[11px] cursor-pointer disabled:opacity-50">Context</button>
+          <button type="button" aria-label="What AI knows" disabled={isTyping || isRestoring || isLoadingSession} onClick={() => setContextDialog("context")} className="px-2 py-1 rounded-md border border-[var(--color-border)] text-[11px] cursor-pointer disabled:opacity-50">What AI knows</button>
           <motion.button
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
@@ -3479,9 +3481,9 @@ export default function AIPanel({
       {/* ── Chat History Drawer (ChatGPT style) ──────────── */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 border-b border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)]">
         <span>{isRestoring ? "Restoring conversation..." : activeSessionMeta?.sourceSessionId ? "Branched conversation" : activeSessionId ? "Saved conversation" : "New conversation"}</span>
-        <span title={snapshotId || "No snapshot"}>Snapshot: {snapshotId?.slice(-8) || "none"}</span>
-        <label className="flex items-center gap-1"><input type="checkbox" aria-label="Use project memory for this conversation" checked={memoryAvailable && useProjectMemory} disabled={!memoryAvailable || isTyping || isRestoring || isLoadingSession} onChange={event => { setUseProjectMemory(event.target.checked); if (storageKey) localStorage.setItem(storageKey, JSON.stringify({ id: activeSessionId, useMemory: event.target.checked })); }} />Project memory</label>
-        <button type="button" className="underline cursor-pointer" disabled={isTyping || isRestoring} onClick={() => setContextDialog("context")}>Inspect</button>
+        <span>Current screen: {screenContext?.testType ? `${({ unit: 'Unit', integration: 'Integration', system: 'System' })[screenContext.testType]} Test` : ({ explorer: 'Code', jobs: 'Run history', architecture: 'Architecture', settings: 'Settings' })[screenContext?.activity] || 'Project'}</span>
+        <label className="flex items-center gap-1" title={memoryAvailable ? 'Use saved preferences in this chat' : 'Optional: enable memory in What AI knows. AI follows your screen even when memory is off.'}><input type="checkbox" aria-label="Use memory in this chat" checked={memoryAvailable && useProjectMemory} disabled={!memoryAvailable || isTyping || isRestoring || isLoadingSession} onChange={event => { setUseProjectMemory(event.target.checked); if (storageKey) localStorage.setItem(storageKey, JSON.stringify({ id: activeSessionId, useMemory: event.target.checked })); }} />Use memory</label>
+        <button type="button" className="underline cursor-pointer" disabled={isTyping || isRestoring} onClick={() => setContextDialog("context")}>View context</button>
         {contextInfo?.warnings?.map(warning => <span key={warning} className="w-full">{warning}</span>)}
       </div>
       <AnimatePresence>
@@ -4319,6 +4321,7 @@ export default function AIPanel({
       {/* ── Monaco Code Review Diff Modal ────────────────── */}
       {contextDialog && projectId && <AIContextDialog
         projectId={projectId} snapshotId={snapshotId} sessionId={activeSessionId} useMemory={useProjectMemory}
+        screenContext={screenContext}
         initialTab={contextDialog} onNew={handleNewChat} onSelect={id => handleSelectSession(id, true)}
         onClose={() => { setContextDialog(null); fetchSessions(); getAiContext(projectId).then(config => setMemoryAvailable(config.automaticMemory)).catch(() => {}); }}
       />}

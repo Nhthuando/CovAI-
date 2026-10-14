@@ -114,10 +114,23 @@ jest.unstable_mockModule('../services/applyTestSuggestion.service.js', () => ({
 }));
 
 const mockAddJobToQueue = jest.fn().mockResolvedValue(true);
+const evidenceRedisValues = new Map();
+const evidenceRedis = {
+    set: async (key, value) => { evidenceRedisValues.set(key, value); return 'OK'; },
+    get: async key => evidenceRedisValues.get(key),
+    eval: async () => 1,
+};
 jest.unstable_mockModule('../services/queue.service.js', () => ({
     addJobToQueue: mockAddJobToQueue,
     addSupertestCoveragePipeline: jest.fn(),
     jobQueue: {},
+    getSystemEvidenceRedis: () => evidenceRedis,
+}));
+
+jest.unstable_mockModule('../services/fullSystemConfig.service.js', () => ({
+    containedPath: (root, rel) => `${root}/${rel}`,
+    readFullSystemConfig: () => ({}),
+    resolveSystemRepositoryRoot: root => root,
 }));
 
 jest.unstable_mockModule('../services/fullSystemLifecycle.service.js', () => ({
@@ -126,7 +139,11 @@ jest.unstable_mockModule('../services/fullSystemLifecycle.service.js', () => ({
     startFullSystem: jest.fn(),
 }));
 
-// Mock gemini service so tests can test AI responses and fallback gracefully
+jest.unstable_mockModule('../services/systemGenerationContext.service.js', () => ({
+    collectSystemGenerationContext: () => ({ routes: ['/','/cart'], uiActions: [], clientApiCalls: [], sourceCode: [], omittedFiles: [] }),
+    observeSystemApplication: jest.fn(),
+}));
+// Mock provider to verify proposal and explicit provider-unavailable behavior.
 const mockGenerateText = jest.fn();
 jest.unstable_mockModule('../services/gemini.service.js', () => ({
     generateText: mockGenerateText,
@@ -412,63 +429,19 @@ test.describe('Menu', () => {
             expect(result.success).toBe(true);
             expect(result.mode).toBe('BOOST_COVERAGE');
             expect(result.optimizedCode).toContain('empty cart state');
+            expect(result.verificationStatus).toBe('NOT_VERIFIED');
+            expect(mockGenerateText.mock.calls.at(-1)[1]).toContain('Do not claim measured coverage');
             expect(result.addedScenarios).toEqual(['empty cart state']);
         });
 
-        it('boosts coverage using intelligent fallback when Gemini fails', async () => {
-            const initialCode = `import { test, expect } from '@playwright/test';
-test.describe('Menu', () => {
-  test('basic render', async ({ page }) => {
-    await page.goto('/');
-  });
-});`;
-            mockFiles.set('/repo/tests/e2e/menu.spec.js', initialCode);
-
-            mockGenerateText.mockRejectedValueOnce(new Error('Gemini API offline'));
-
-            const result = await optimizeSystemTest({
-                rootDir: '/repo',
-                filePath: 'tests/e2e/menu.spec.js',
-                mode: 'BOOST_COVERAGE',
-            });
-
-            expect(result.success).toBe(true);
-            expect(result.mode).toBe('BOOST_COVERAGE');
-            expect(result.optimizedCode).toContain('AI Boost: handles boundary conditions');
-            expect(result.addedScenarios.length).toBeGreaterThan(0);
+        it('does not fabricate improvement when the provider is unavailable', async () => {
+            mockFiles.set('/repo/tests/e2e/menu.spec.js', "import {test,expect} from '@playwright/test'; test('smoke',async({page})=>{await page.goto('/');});");
+            mockGenerateText.mockRejectedValueOnce(new Error('offline'));
+            await expect(optimizeSystemTest({rootDir:'/repo',filePath:'tests/e2e/menu.spec.js'})).rejects.toMatchObject({statusCode:503});
         });
-
-        it('fixes failure breakpoint using intelligent locator repair', async () => {
-            const initialCode = `import { test, expect } from '@playwright/test';
-test('checkout test', async ({ page }) => {
-  await page.goto('/cart');
-  await page.click('button#checkout');
-  await expect(page).toHaveURL('/success');
-});`;
-            mockFiles.set('/repo/tests/e2e/cart.spec.js', initialCode);
-
-            // Mock Gemini failure so deterministic breakpoint fixer is executed
-            mockGenerateText.mockRejectedValueOnce(new Error('AI offline'));
-
-            const result = await optimizeSystemTest({
-                rootDir: '/repo',
-                filePath: 'tests/e2e/cart.spec.js',
-                mode: 'FIX_BREAKPOINT',
-                scenarioData: {
-                    title: 'checkout test',
-                    failureCategory: 'TIMEOUT',
-                    failureStep: "await page.click('button#checkout')",
-                    failureCodeSnippet: "> 4 | await page.click('button#checkout');",
-                    failureMessages: ['Timeout 30000ms exceeded waiting for button#checkout'],
-                    domSnapshot: '<button class="checkout-btn" disabled>Checkout</button>',
-                },
-            });
-
-            expect(result.success).toBe(true);
-            expect(result.mode).toBe('FIX_BREAKPOINT');
-            expect(result.failureCategory).toBe('TIMEOUT');
-            expect(result.optimizedCode).toContain('timeout: 10000');
-            expect(result.fixedStep).toContain('timeout: 10000');
+        it('never applies rule-based fallback or weakens assertions', () => {
+            expect(() => generateFallbackBoosterScenarios({})).toThrow('unavailable');
+            expect(() => generateFallbackBreakpointFix({})).toThrow('safely');
         });
     });
 
@@ -493,14 +466,8 @@ test('sample', async ({ page }) => {
             const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
 
             await optimizeSystemTestController(req, res);
-            expect(res.status).toHaveBeenCalledWith(200);
-            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
-                success: true,
-                data: expect.objectContaining({
-                    mode: 'BOOST_COVERAGE',
-                    filePath: 'tests/e2e/sample.spec.js',
-                }),
-            }));
+            expect(res.status).toHaveBeenCalledWith(503);
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({success:false}));
         });
     });
 });

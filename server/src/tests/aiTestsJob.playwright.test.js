@@ -76,8 +76,9 @@ describe("processAiTestsJob - PLAYWRIGHT_E2E mode", () => {
     const generatedJs = `
       import { test, expect } from '@playwright/test';
       test('homepage smoke test', async ({ page }) => {
-        await page.goto('/');
-        await expect(page.getByRole('heading')).toBeVisible();
+        await test.step('Action: NAVIGATION - open homepage', async()=>{await page.goto('/');});
+        await test.step('Assert: heading visible', async()=>{await expect(page.getByRole('heading')).toBeVisible();});
+        await test.step('Evidence: verified outcome', async()=>{await test.info().attach('evidence',{body:await page.screenshot(),contentType:'image/png'});});
       });
     `;
 
@@ -102,7 +103,11 @@ describe("processAiTestsJob - PLAYWRIGHT_E2E mode", () => {
     // Verify file written to tests/e2e/ai-generated.spec.js
     const savedPath = path.join(tempRoot, "tests/e2e/ai-generated.spec.js");
     expect(fs.existsSync(savedPath)).toBe(true);
-    expect(fs.readFileSync(savedPath, "utf8")).toBe(generatedJs);
+    const savedCode = fs.readFileSync(savedPath, "utf8");
+    expect(savedCode).toContain("await test.step('Action: NAVIGATION - open homepage'");
+    expect(savedCode).toContain("await test.step('Assert: heading visible'");
+    expect(savedCode).toContain("page.goto('/')");
+    expect(savedCode).toContain("expect(page.getByRole('heading')).toBeVisible()");
 
     // Verify AiTest created in DB with VERIFIED status
     expect(prismaMock.aiTest.create).toHaveBeenCalledWith({
@@ -111,6 +116,7 @@ describe("processAiTestsJob - PLAYWRIGHT_E2E mode", () => {
         snapshotId: "snap-1",
         mode: "PLAYWRIGHT_E2E",
         status: "VERIFIED",
+        content: savedCode,
         filePath: "tests/e2e/ai-generated.spec.js",
       }),
     });
@@ -132,8 +138,10 @@ describe("processAiTestsJob - PLAYWRIGHT_E2E mode", () => {
     const generatedJs = `
       import { test, expect } from '@playwright/test';
       test('button click test', async ({ page }) => {
-        await page.goto('/');
-        await page.getByRole('button', { name: 'nonexistent' }).click();
+        await test.step('Setup: open homepage', async()=>{await page.goto('/');});
+        await test.step('Action: OTHER - click control', async()=>{await page.getByRole('button', { name: 'nonexistent' }).click();});
+        await test.step('Assert: heading visible', async()=>{await expect(page.getByRole('heading')).toBeVisible();});
+        await test.step('Evidence: verified outcome', async()=>{await test.info().attach('evidence',{body:await page.screenshot(),contentType:'image/png'});});
       });
     `;
 

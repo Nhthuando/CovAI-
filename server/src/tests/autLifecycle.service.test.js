@@ -21,6 +21,7 @@ const {
   runSeedDataIfPresent,
   startAutServer,
   stopAutServer,
+  formatAutStartupFailure,
 } = await import("../services/autLifecycle.service.js");
 
 const roots = [];
@@ -44,6 +45,15 @@ afterEach(() => {
 });
 
 describe("autLifecycle.service", () => {
+  it('keeps the original startup error, strips ANSI and redacts credentials', () => {
+    const message=formatAutStartupFailure('\x1b[31mError: Prisma initialization failed for secret-value\x1b[39m\n'+' at Module.load\n'.repeat(100),{DB_PASSWORD:'secret-value'});
+    expect(message).toContain('Error: Prisma initialization failed for [redacted]');
+    expect(message).not.toContain('\x1b');
+    expect(message).not.toContain('secret-value');
+  });
+  it('explains the missing Stripe test key', () => {
+    expect(formatAutStartupFailure('Error: Neither apiKey nor config.authenticator provided')).toContain('STRIPE_SECRET_KEY');
+  });
   beforeEach(() => {
     jest.clearAllMocks();
   });

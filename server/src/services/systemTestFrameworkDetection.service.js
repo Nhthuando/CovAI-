@@ -64,7 +64,7 @@ export async function detectSystemTestFrameworks(rootDir) {
     }
     for (const f of playwrightResult.testFiles || []) {
       const rel = typeof f === "string" ? f : f.path || f.filePath;
-      if (rel && !fileMap.has(rel)) {
+      if (rel && !rel.split(/[\\/]/).includes('.covai-system-test') && !fileMap.has(rel)) {
         fileMap.set(rel, parseTestFileDetails(rootDir, rel, "PLAYWRIGHT"));
       }
     }

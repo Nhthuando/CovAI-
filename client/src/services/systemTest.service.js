@@ -190,4 +190,9 @@ export const optimizeSystemTest = async (
   return response.data;
 };
 
+export const systemEvidenceRequest = async (snapshotId, path, { method = 'GET', data } = {}) => {
+  const response = await axios({ url: `${API_BASE}/coverage/${snapshotId}/system/${path}`, method, data, headers: getAuthHeaders() });
+  return response.data.data;
+};
+
 

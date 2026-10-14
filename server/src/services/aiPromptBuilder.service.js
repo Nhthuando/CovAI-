@@ -1,3 +1,6 @@
+import { SYSTEM_TEST_QUALITY_RULES } from './systemTestQuality.service.js';
+import { PLAYWRIGHT_EXECUTION_STEP_RULES } from './playwrightExecutionSteps.service.js';
+
 /**
  * SCRUM-386: Include source code
  * Formats the raw source code files into a readable markdown string.
@@ -286,18 +289,15 @@ export const buildPlaywrightPrompt = (payload = {}, { executionMode = "frontend"
     prompt += "   - Use assertions like `await expect(page.getByRole('heading')).toBeVisible()` or `await expect(page).toHaveTitle(...)`.\n";
     prompt += "   - Scope row actions to the actual row container in the component source, never a broad div with hasText. Hover that row before clicking controls hidden by opacity/group-hover. After entering edit mode, the title span may disappear: switch to a form/input locator rather than reusing a row filter requiring the old visible text.\n";
     prompt += "   - Keep timeouts reasonable (e.g. within 10-15 seconds).\n";
+    prompt += PLAYWRIGHT_EXECUTION_STEP_RULES + "\n" + SYSTEM_TEST_QUALITY_RULES + "\n";
     prompt += "4. **Output Format**:\n";
     prompt += "   You MUST return a JSON object with a `tests` array containing the generated Playwright test file.\n";
     prompt += "   Format:\n";
     prompt += "```json\n";
-    prompt += "{\n";
-    prompt += "  \"tests\": [\n";
-    prompt += "    {\n";
-    prompt += "      \"filePath\": \"tests/e2e/ai-generated.spec.js\",\n";
-    prompt += "      \"content\": \"import { test, expect } from '@playwright/test';\\n\\ntest.describe('Application E2E Tests', () => {\\n  test('homepage smoke test', async ({ page }) => {\\n    await page.goto('/');\\n    await expect(page).toHaveURL(/.*\\\\//);\\n  });\\n});\"\n";
-    prompt += "    }\n";
-    prompt += "  ]\n";
-    prompt += "}\n";
+    prompt += JSON.stringify({ tests: [{
+        filePath: "tests/e2e/ai-generated.spec.js",
+        content: "import { test, expect } from '@playwright/test';\n\ntest('homepage smoke test', async ({ page }) => {\n  await test.step('Action: NAVIGATION - open homepage', async () => { await page.goto('/'); });\n  await test.step('Assert: homepage is visible', async () => { await expect(page.locator('body')).toBeVisible(); });\n  await test.step('Evidence: verified outcome', async () => { await test.info().attach('evidence', { body: await page.screenshot(), contentType: 'image/png' }); });\n});",
+    }] }, null, 2) + "\n";
     prompt += "```\n\n";
     prompt += "Do not include any commentary outside the markdown code block.";
 

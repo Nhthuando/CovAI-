@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import dotenv from "dotenv";
+import { runGeminiRequest, isDailyQuotaError } from './geminiRequestPolicy.service.js';
 
 dotenv.config();
 
@@ -15,61 +16,16 @@ if (apiKey) {
   );
 }
 
-// Utility for delaying execution
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/**
- * Handle API errors & Handle rate limits
- * Wrapper to execute a Gemini API call with retry logic for rate limits.
- */
-async function executeWithRetry(apiCall, maxRetries = 3) {
-  let retries = 0;
-  while (retries < maxRetries) {
-    try {
-      return await apiCall();
-    } catch (error) {
-      const isRateLimit = error.status === 429 || error.message.includes("429");
-      const isDailyQuota = isRateLimit && (error.message.includes("PerDay") || error.message.includes("generate_content_free_tier_requests"));
-      const isUnavailable = error.status === 503 || error.message.includes("503");
-      const isServerError =
-        error.status >= 500 || error.message.includes("fetch failed");
-
-      if ((isRateLimit || isUnavailable || isServerError) && retries < maxRetries - 1) {
-        retries++;
-        
-        let waitTime = Math.pow(2, retries) * 1000 + (Math.random() * 500);
-        const retryMatch = error.message.match(/retry in ([\d\.]+)s/i);
-        
-        if (isDailyQuota) {
-           waitTime = 0; // Immediate retry to fallback model
-        } else if (isRateLimit && retryMatch && retryMatch[1]) {
-           waitTime = (parseFloat(retryMatch[1]) + 1) * 1000;
-           if (waitTime > 45000) waitTime = 45000;
-        } else if (isUnavailable) {
-           waitTime = Math.pow(2, retries) * 2000 + (Math.random() * 1000);
-        }
-
-        console.warn(
-          `[Gemini API] ${isDailyQuota ? 'Daily Quota Exhausted' : isRateLimit ? 'Rate limit (429)' : isUnavailable ? 'Service Unavailable (503)' : 'Server error'}. Retrying in ${Math.round(waitTime)}ms... (Attempt ${retries}/${maxRetries})`,
-        );
-        if (waitTime > 0) {
-          await delay(waitTime);
-        }
-      } else {
-        console.error("[Gemini API] Error:", error.message);
-        throw new Error(`Gemini API Error: ${error.message}`);
-      }
-    }
-  }
-}
-
 const VALID_MODELS = [
   "gemini-3.5-flash",
   "gemini-3.5-flash-lite",
   "gemini-3.6-flash",
   "gemini-3.7-flash",
+  "gemini-3.8-flash",
+  "gemini-3.1-pro-preview",
+  "gemini-3.1-flash-lite"
 ];
-const exhaustedModels = new Map(); // modelName -> timestamp when it can be retried
+const exhaustedModels = new Map();
 
 /**
  * Checks if a model is currently exhausted and cleans up expired entries.
@@ -166,8 +122,11 @@ export const generateMultimodalText = async (
     generationConfig = maybeConfig || {};
   } else if (modelNameOrConfig && typeof modelNameOrConfig === "object") {
     generationConfig = modelNameOrConfig;
+  } else {
+    generationConfig = maybeConfig || {};
   }
 
+  const {requestTimeoutMs,totalTimeoutMs,maxAttempts,onRetry,onWait,retryBaseDelayMs,...providerConfig}=generationConfig;
   let primaryModelName = resolveModelName(modelName);
   
   const createModelInstance = (mName) => {
@@ -197,7 +156,7 @@ export const generateMultimodalText = async (
 
   parts.push({ text: prompt });
 
-  const apiCall = async () => {
+  const apiCall = async ({signal}) => {
     primaryModelName = resolveModelName(modelName);
     try {
       const model = createModelInstance(primaryModelName);
@@ -205,25 +164,28 @@ export const generateMultimodalText = async (
         contents: [{ role: "user", parts }],
         generationConfig: {
           maxOutputTokens: 65536,
-          ...generationConfig,
+          ...providerConfig,
         },
-      });
+      }, {signal});
       console.log(`[Gemini API] Successfully generated response using primary model: ${primaryModelName}`);
       if (result.response && result.response.candidates && result.response.candidates.length > 0) {
         console.log(`[Gemini API] Provider returned version info (if any):`, result.response.modelVersion || 'N/A');
       }
       return result.response.text();
     } catch (primaryErr) {
-      const isRateLimit = primaryErr.message && (primaryErr.message.includes("Quota exceeded") || primaryErr.message.includes("429"));
-      const isDailyQuota = isRateLimit && (primaryErr.message.includes("PerDay") || primaryErr.message.includes("generate_content_free_tier_requests"));
-      const isUnavailable = primaryErr.message && (primaryErr.message.includes("503") || primaryErr.message.includes("Service Unavailable"));
+      if (signal.aborted) throw primaryErr;
+      const isRateLimit = primaryErr.status === 429 || (primaryErr.message && (primaryErr.message.includes("Quota exceeded") || primaryErr.message.includes("429")));
+      const isDailyQuota = isRateLimit && isDailyQuotaError(primaryErr);
+      const isUnavailable = primaryErr.status === 503 || (primaryErr.message && (primaryErr.message.includes("503") || primaryErr.message.includes("Service Unavailable")));
       
-      if (isRateLimit || isUnavailable) {
-        markModelExhausted(primaryModelName, isDailyQuota);
+      if (isDailyQuota) {
+        markModelExhausted(primaryModelName, true);
+      } else if (isRateLimit || isUnavailable) {
+        markModelExhausted(primaryModelName, false);
       }
       
-      // If it's a 503 or 429, we throw immediately so the outer executeWithRetry can handle backoff and pick a new model via resolveModelName
-      if (isUnavailable || isRateLimit) {
+      // Retry transient errors through the bounded request policy; 503 keeps the selected model.
+      if (isUnavailable || isRateLimit || primaryErr.status >= 500 || primaryErr.message?.includes('fetch failed')) {
          throw primaryErr;
       }
 
@@ -235,9 +197,9 @@ export const generateMultimodalText = async (
         contents: [{ role: "user", parts }],
         generationConfig: {
           maxOutputTokens: 65536,
-          ...generationConfig,
+          ...providerConfig,
         },
-      });
+      }, {signal});
       console.log(`[Gemini API] Successfully generated response using fallback model: ${fallbackModel}`);
       if (result.response && result.response.candidates && result.response.candidates.length > 0) {
         console.log(`[Gemini API] Provider returned version info (if any):`, result.response.modelVersion || 'N/A');
@@ -246,5 +208,5 @@ export const generateMultimodalText = async (
     }
   };
 
-  return executeWithRetry(apiCall, 4); // Use 4 max retries to give it more chances
+  return runGeminiRequest(apiCall,{requestTimeoutMs,totalTimeoutMs,maxAttempts,onRetry,onWait,retryBaseDelayMs});
 };

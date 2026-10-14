@@ -6,7 +6,7 @@ import { getAiContext, saveAiContext, getAiMemories, addAiMemory, editAiMemory, 
 import { getChatSessionsApi } from "../../services/project.service";
 
 const inputClass = "w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-text)] focus-visible:outline-2 focus-visible:outline-[var(--color-primary)]";
-export default function AIContextDialog({ projectId, snapshotId, sessionId, useMemory, onSelect, onNew, onClose, initialTab = "conversations" }) {
+export default function AIContextDialog({ projectId, snapshotId, sessionId, useMemory, screenContext, onSelect, onNew, onClose, initialTab = "context" }) {
   const dialogRef = useRef(null);
   const alive = useRef(true);
   const running = useRef(false);
@@ -17,7 +17,7 @@ export default function AIContextDialog({ projectId, snapshotId, sessionId, useM
   const [sessions, setSessions] = useState([]);
   const [preview, setPreview] = useState(null);
   const [search, setSearch] = useState("");
-  const [newUsesMemory, setNewUsesMemory] = useState(useMemory);
+  const newUsesMemory = useMemory;
   const [note, setNote] = useState("");
   const [editing, setEditing] = useState(null);
   const [pinned, setPinned] = useState(false);
@@ -41,14 +41,14 @@ export default function AIContextDialog({ projectId, snapshotId, sessionId, useM
   }, []);
   useEffect(() => {
     let cancelled = false;
-    Promise.all([getAiContext(projectId), getAiMemories(projectId), getChatSessionsApi(projectId), previewAiContext(projectId, { sessionId, snapshotId, useMemory })])
+    Promise.all([getAiContext(projectId), getAiMemories(projectId), getChatSessionsApi(projectId), previewAiContext(projectId, { sessionId, snapshotId, useMemory, screenContext })])
       .then(([config, memories, history, context]) => {
         if (cancelled) return;
         setSettings(config); setSaved(config); setNotes(memories); setSessions(history.data || []); setPreview(context);
       }).catch(err => { if (!cancelled) setError(err.message); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [projectId, sessionId, snapshotId, useMemory, reload]);
+  }, [projectId, sessionId, snapshotId, useMemory, screenContext, reload]);
 
   const run = async action => {
     if (running.current) return;
@@ -60,7 +60,7 @@ export default function AIContextDialog({ projectId, snapshotId, sessionId, useM
   const refreshNotes = async () => { const rows = await getAiMemories(projectId); if (alive.current) setNotes(rows); };
   const resetEditor = () => { setEditing(null); setNote(""); setPinned(false); };
   const inspectBranch = row => run(async () => {
-    const context = await previewAiContext(projectId, { sessionId: row.id, snapshotId, useMemory: newUsesMemory });
+    const context = await previewAiContext(projectId, { sessionId: row.id, snapshotId, useMemory: newUsesMemory, screenContext });
     if (alive.current) { setBranch(row); setBranchPreview(context); }
   });
   const canNavigate = () => { if (dirty || note.trim()) { setError("Save or discard your edits before switching conversations."); return false; } return true; };
@@ -81,11 +81,11 @@ export default function AIContextDialog({ projectId, snapshotId, sessionId, useM
       className="m-auto w-[calc(100%-24px)] max-w-[680px] max-h-[calc(100dvh-32px)] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] p-0 shadow-xl backdrop:bg-black/60">
       <div className="p-5 sm:p-6">
         <div className="flex items-start justify-between gap-3">
-          <div><h2 id="ai-context-title" className="text-lg font-semibold">Context & Memory</h2><p className="mt-1 text-xs text-[var(--color-text-muted)]">Choose a conversation and control what carries into the next request.</p></div>
+          <div><h2 id="ai-context-title" className="text-lg font-semibold">What AI knows</h2><p className="mt-1 text-xs text-[var(--color-text-muted)]">AI follows your current screen automatically. Ask a question — no setup needed.</p></div>
           <Button variant="ghost" size="sm" onClick={dismiss} aria-label="Close context dialog" disabled={busy}><X size={17} /></Button>
         </div>
         <div role="tablist" aria-label="Context sections" className="flex gap-4 mt-5 border-b border-[var(--color-border)]">
-          {[['conversations', 'Conversations'], ['memory', 'Memory & rules'], ['context', 'Current context']].map(([id, label]) => (
+          {[['context', 'Current context'], ['conversations', 'Chat history'], ['memory', 'Memory (optional)']].map(([id, label]) => (
             <button key={id} type="button" role="tab" aria-selected={tab === id} aria-controls={`context-panel-${id}`} id={`context-tab-${id}`} onClick={() => setTab(id)}
               className={`pb-3 text-xs font-medium cursor-pointer border-b-2 ${tab === id ? 'border-[var(--color-primary)] text-[var(--color-primary)]' : 'border-transparent text-[var(--color-text-muted)]'}`}>{label}</button>
           ))}
@@ -94,14 +94,12 @@ export default function AIContextDialog({ projectId, snapshotId, sessionId, useM
         {loading ? <p role="status" className="flex items-center gap-2 py-8 text-sm"><Loader2 size={16} className="animate-spin" />Loading saved context...</p> : <>
           {tab === "conversations" && <section role="tabpanel" id="context-panel-conversations" aria-labelledby="context-tab-conversations" className="pt-5 space-y-4">
             <div className="rounded-lg border border-[var(--color-border)] p-4">
-              <h3 className="text-sm font-semibold">Start a new conversation</h3>
-              <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)]">Keep your previous chats. Start with an empty transcript, with or without saved project memory.</p>
-              <label className="flex items-center gap-2 mt-3 text-xs"><input type="checkbox" checked={newUsesMemory && Boolean(settings?.automaticMemory)} disabled={!settings?.automaticMemory || busy} onChange={event => setNewUsesMemory(event.target.checked)} />Use saved project memory</label>
-              {!settings?.automaticMemory && <p className="mt-1 text-xs text-[var(--color-text-muted)]">Enable automatic memory under Memory & rules to use saved notes.</p>}
-              <Button size="sm" icon={Plus} className="mt-3" disabled={busy} onClick={() => { if (!canNavigate()) return; onNew(newUsesMemory && Boolean(settings?.automaticMemory)); onClose(); }}>New conversation</Button>
+              <h3 className="text-sm font-semibold">Start a new chat</h3>
+              <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)]">AI still knows your project and current screen. Previous chats stay in your history.</p>
+              <Button size="sm" icon={Plus} className="mt-3" disabled={busy} onClick={() => { if (!canNavigate()) return; onNew(newUsesMemory); onClose(); }}>New chat</Button>
             </div>
-            <label className="block text-xs font-medium">Find a previous conversation<input aria-label="Search conversations" value={search} onChange={event => setSearch(event.target.value)} className={`${inputClass} mt-2`} placeholder="Search titles or recent messages" /></label>
-            {!sessions.length && <p className="text-sm text-[var(--color-text-muted)]">No saved conversations yet.</p>}
+            <label className="block text-xs font-medium">Find a previous chat<input aria-label="Find a previous chat" value={search} onChange={event => setSearch(event.target.value)} className={`${inputClass} mt-2`} placeholder="Search chat titles or messages" /></label>
+            {!sessions.length && <p className="text-sm text-[var(--color-text-muted)]">No previous chats yet. Send your first question to get started.</p>}
             <div className="space-y-2">
               {sessions.filter(row => `${row.title} ${row.messages?.[0]?.content || ''}`.toLowerCase().includes(search.toLowerCase())).map(row => (
                 <div key={row.id} className={`rounded-lg border p-3 ${row.id === sessionId ? 'border-[var(--color-primary)]' : 'border-[var(--color-border)]'}`}>
@@ -121,13 +119,13 @@ export default function AIContextDialog({ projectId, snapshotId, sessionId, useM
           </section>}
           {tab === "memory" && <section role="tabpanel" id="context-panel-memory" aria-labelledby="context-tab-memory" className="pt-5 space-y-5">
             <form onSubmit={event => { event.preventDefault(); run(async () => { const result = await saveAiContext(projectId, { guidance: settings.guidance, automaticMemory: settings.automaticMemory, revision: saved.revision }); if (alive.current) { setSettings(result); setSaved(result); } }); }}>
-              <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={Boolean(settings?.automaticMemory)} disabled={busy || !settings} onChange={event => setSettings({ ...settings, automaticMemory: event.target.checked })} />Automatic project memory</label>
-              <p className="mt-2 text-xs leading-relaxed text-[var(--color-text-muted)]">Extract explicit decisions from successful chats and reuse relevant notes in later chats. Turning this off keeps your saved notes, but stops automatic saving and recall.</p>
-              <label className="block mt-4 text-xs font-medium">Approved project rules<textarea aria-label="Approved project rules" maxLength={8000} rows={5} value={settings?.guidance || ''} disabled={!settings || busy} onChange={event => setSettings({ ...settings, guidance: event.target.value })} className={`${inputClass} mt-2 resize-y`} placeholder="Business requirements, testing conventions and preferred response language. Do not enter credentials." /></label>
-              <div className="flex items-center gap-3 mt-3"><Button type="submit" size="sm" disabled={busy || !dirty}>Save settings</Button><span className="text-xs text-[var(--color-text-muted)]">{dirty ? 'Unsaved changes' : 'Settings saved'}</span></div>
+              <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={Boolean(settings?.automaticMemory)} disabled={busy || !settings} onChange={event => setSettings({ ...settings, automaticMemory: event.target.checked })} />Remember my preferences across chats</label>
+              <p className="mt-2 text-xs leading-relaxed text-[var(--color-text-muted)]">For example: prefer Jest or keep replies concise. AI saves explicit decisions from chats and recalls them when relevant. This is optional; AI already knows your current tab.</p>
+              <label className="block mt-4 text-xs font-medium">Additional instructions (optional)<textarea aria-label="Additional instructions" maxLength={8000} rows={3} value={settings?.guidance || ''} disabled={!settings || busy} onChange={event => setSettings({ ...settings, guidance: event.target.value })} className={`${inputClass} mt-2 resize-y`} placeholder="For example: keep replies concise and use Jest for unit tests. Do not enter passwords or API keys." /></label>
+              <div className="flex items-center gap-3 mt-3"><Button type="submit" size="sm" disabled={busy || !dirty}>Save</Button><span className="text-xs text-[var(--color-text-muted)]">{dirty ? 'Unsaved changes' : 'Saved'}</span></div>
             </form>
             <div className="border-t border-[var(--color-border)] pt-4">
-              <h3 className="text-sm font-semibold">{editing ? 'Edit saved memory' : 'Remember something explicitly'}</h3>
+              <h3 className="text-sm font-semibold">{editing ? 'Edit a saved note' : 'Add something for AI to remember'}</h3>
               {editing?.status === 'REVIEW' && editing.conflictsWithId && <p className="mt-2 text-xs">Saving accepts this decision and forgets the conflicting note: {notes.find(row => row.id === editing.conflictsWithId)?.content || 'Previous decision'}</p>}
               <form onSubmit={event => { event.preventDefault(); run(async () => { if (editing) await editAiMemory(projectId, editing.id, { content: note, pinned, revision: editing.revision }); else await addAiMemory(projectId, { content: note, pinned }); await refreshNotes(); resetEditor(); }); }}>
                 <textarea aria-label="Memory note" rows={3} maxLength={1000} value={note} disabled={busy} onChange={event => setNote(event.target.value)} className={`${inputClass} mt-2 resize-y`} placeholder="Example: completed todo items cannot be edited." />
@@ -147,15 +145,24 @@ export default function AIContextDialog({ projectId, snapshotId, sessionId, useM
             </div>
           </section>}
           {tab === "context" && <section role="tabpanel" id="context-panel-context" aria-labelledby="context-tab-context" className="pt-5 space-y-4">
-            <p className="text-xs text-[var(--color-text-muted)]">Preview of a request without a new message. Relevant memories may change with your question.</p>
-            <p className="text-xs">Context maintenance: {preview?.maintenanceStatus === 'PENDING' ? 'Processing summary and memory...' : preview?.maintenanceStatus === 'FAILED' ? 'Failed; recent saved messages remain available.' : 'Ready'}</p>
+            <div className="rounded-lg border border-[var(--color-border)] p-4 space-y-2">
+              <h3 className="text-sm font-semibold">Automatically follows your screen</h3>
+              <p className="text-sm">{screenContext?.testType ? `${({ unit: 'Unit', integration: 'Integration', system: 'System' })[screenContext.testType]} Test` : ({ explorer: 'Code', jobs: 'Run history', architecture: 'Architecture', settings: 'Settings' })[screenContext?.activity] || 'Project'}</p>
+              <p className="text-xs text-[var(--color-text-muted)]">Switch tabs to update the context for your next question. Your conversation history is kept.</p>
+              {screenContext?.testType && <p className="text-xs">{preview?.testResults ? `Latest run: ${preview.testResults.passedTests}/${preview.testResults.totalTests} tests passed, ${preview.testResults.failedTests} failed.` : 'No saved test results for this screen yet. Run tests so AI has results to analyze.'}</p>}
+              {screenContext?.filePath && <p className="text-xs break-all">Open file: {screenContext.filePath}. Attach the file if you want AI to read its contents.</p>}
+            </div>
+            <p className="text-xs text-[var(--color-text-muted)]">The information below is sent with your question. Long-term memory is optional; AI knows your current screen even when memory is off.</p>
+            <details className="text-xs"><summary className="cursor-pointer text-[var(--color-text-muted)]">View details sent to AI</summary>
+            <p className="mt-3 text-xs">Context maintenance: {preview?.maintenanceStatus === 'PENDING' ? 'Processing summary and memory...' : preview?.maintenanceStatus === 'FAILED' ? 'Failed; recent saved messages remain available.' : 'Ready'}</p>
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs"><dt>Snapshot</dt><dd className="break-all">{preview?.snapshot?.commitSha?.slice(0, 12) || preview?.snapshot?.id || 'No snapshot yet'}</dd><dt>Analysis package</dt><dd>{preview?.snapshot?.analysisPackage || 'Unavailable'}</dd><dt>Conversation</dt><dd>{sessionId ? `${preview?.recentTurnCount || 0} recent turns` : 'New conversation'}</dd><dt>Saved summary</dt><dd>{preview?.summaryIncluded ? 'Included' : 'None'}</dd><dt>Project memory</dt><dd>{preview?.memoryEnabled ? 'Enabled' : 'Off for this request'}</dd><dt>Coverage</dt><dd>{preview?.coverage ? `${preview.coverage.linesPct}% lines` : 'No saved results'}</dd></dl>
             {preview?.guidance && <div><h3 className="text-xs font-semibold">Approved rules</h3><p className="mt-2 text-xs whitespace-pre-wrap break-words">{preview.guidance}</p></div>}
             {preview?.summary && <div><h3 className="text-xs font-semibold">Earlier conversation summary</h3><p className="mt-2 text-xs whitespace-pre-wrap break-words">{preview.summary}</p></div>}
             {preview?.memories?.map(row => <p key={row.id} className="text-xs border-l-2 border-[var(--color-primary)] pl-3">{row.content}</p>)}
             {preview?.warnings?.map(warning => <p key={warning} className="text-xs text-[var(--color-text-muted)]">{warning}</p>)}
             <p className="text-xs text-[var(--color-text-muted)]">Context is bounded. Saved history is retained even when older turns are summarized or omitted.</p>
-            <Button size="sm" variant="secondary" disabled={busy} onClick={() => run(async () => { const context = await previewAiContext(projectId, { sessionId, snapshotId, useMemory }); if (alive.current) setPreview(context); })}>Refresh preview</Button>
+            <Button size="sm" variant="secondary" disabled={busy} onClick={() => run(async () => { const context = await previewAiContext(projectId, { sessionId, snapshotId, useMemory, screenContext }); if (alive.current) setPreview(context); })}>Refresh preview</Button>
+            </details>
           </section>}
         </>}
         {discardConfirm && <div className="mt-5 text-xs border-t border-[var(--color-border)] pt-4"><p>Discard your unsaved changes?</p><div className="flex gap-2 mt-2"><Button size="sm" variant="danger" onClick={onClose}>Discard and close</Button><Button size="sm" variant="secondary" onClick={() => setDiscardConfirm(false)}>Keep editing</Button></div></div>}

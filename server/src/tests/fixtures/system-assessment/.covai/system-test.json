@@ -1,0 +1,1 @@
+{"frontend":{"directory":"client"},"backend":{"directory":"server","healthPath":"/health"},"database":{"engine":"postgres","initSql":"schema.sql"}}

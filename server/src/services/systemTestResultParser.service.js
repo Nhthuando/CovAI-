@@ -1,6 +1,9 @@
 import fs from "fs";
+import path from "node:path";
 import { ServiceError } from "../utils/serviceError.js";
 import { analyzeFailureBreakpoint } from "./failureBreakpointAnalyzer.service.js";
+import { normalizeExecutionDetails } from "./systemTestExecutionDetails.service.js";
+import { readPlaywrightStepPlan } from "./systemTestStepPlan.service.js";
 
 const readReport = (resultPath) => {
   if (!fs.existsSync(resultPath)) {
@@ -87,10 +90,15 @@ const normalisePlaywright = (report, startedAt, finishedAt, rootDir = null) => {
           title: spec.title || "Unnamed Test",
           suiteName: suite.title || null,
           status: statusStr,
-          durationMs: totalDuration || null,
+          durationMs: results.some(r => typeof r.duration === 'number') ? totalDuration : null,
+          executionDetails: normalizeExecutionDetails({ runner: 'playwright', test, rootDir, plannedSteps: readPlaywrightStepPlan(rootDir, { ...spec, file: report.config?.rootDir ? path.resolve(report.config.rootDir, spec.file || currentFile) : spec.file || currentFile }) }),
           failureMessages,
           testFile: currentFile || spec.file || null,
-          screenshotSource: (results.at(-1)?.attachments?.find(attachment => attachment.name === "evidence" && attachment.contentType === "image/png" && attachment.path) || results.at(-1)?.attachments?.find(attachment => attachment.contentType === "image/png" && attachment.path))?.path || null,
+          screenshotSource: (() => {
+            const attachments=results.at(-1)?.attachments || [];
+            const attachment=attachments.find(item=>item.name==='evidence' && item.contentType==='image/png' && (item.path || item.body)) || attachments.find(item=>item.contentType==='image/png' && item.path);
+            return attachment?.path || (typeof attachment?.body==='string' ? {body:attachment.body} : null);
+          })(),
           failureStep: breakpoint.failureStep,
           failureCategory: breakpoint.failureCategory,
           failureCodeSnippet: breakpoint.failureCodeSnippet,
@@ -169,7 +177,7 @@ const normalisePlaywright = (report, startedAt, finishedAt, rootDir = null) => {
     totalTests = Math.max(totalTests, passedTests + failedTests + flakyTests + skippedTests);
   }
 
-  const stabilityScorePct = totalTests > 0 ? Number(((passedTests / totalTests) * 100).toFixed(1)) : 0;
+  const passRatePct = totalTests > 0 ? Number(((passedTests / totalTests) * 100).toFixed(1)) : null;
 
   return {
     totalTests,
@@ -177,7 +185,8 @@ const normalisePlaywright = (report, startedAt, finishedAt, rootDir = null) => {
     failedTests,
     flakyTests,
     skippedTests,
-    stabilityScorePct,
+    stabilityScorePct: null,
+    passRatePct,
     durationMs: Number(stats.duration) || Math.max(0, finishedAt - startedAt),
     status: (failedTests > 0 || runnerErrors.length > 0) ? "FAILED" : "PASSED",
     startedAt,
@@ -230,6 +239,7 @@ const normaliseCypress = (report, startedAt, finishedAt, rootDir = null) => {
           suiteName: Array.isArray(t.title) && t.title.length > 1 ? t.title[0] : null,
           status,
           durationMs: t.duration || 0,
+          executionDetails: normalizeExecutionDetails({ runner: 'cypress', test: t, rootDir }),
           failureMessages: t.displayError ? [t.displayError] : [],
           testFile,
           failureStep: breakpoint.failureStep,
@@ -241,7 +251,33 @@ const normaliseCypress = (report, startedAt, finishedAt, rootDir = null) => {
     }
   }
 
-  const stabilityScorePct = totalTests > 0 ? Number(((passedTests / totalTests) * 100).toFixed(1)) : 0;
+  // Cypress's Mocha JSON reporter supplies flat test records, not run/attempt trees.
+  if (!Array.isArray(report.runs)) {
+    const array = value => Array.isArray(value) ? value : [];
+    const key = t => `${t.file || ''}:${t.fullTitle || t.title || ''}`;
+    const pending = new Set(array(report.pending).map(key));
+    const failed = new Set(array(report.failures).map(key));
+    const passed = new Set(array(report.passes).map(key));
+    const records = Array.isArray(report.tests) ? report.tests : [
+      ...array(report.passes).map(t => ({ ...t, state: 'passed' })),
+      ...array(report.failures).map(t => ({ ...t, state: 'failed' })),
+      ...array(report.pending).map(t => ({ ...t, state: 'skipped' })),
+    ];
+    for (const t of records) {
+      const hasError = t.err && Object.keys(t.err).length > 0;
+      const status = t.state || (t.pending || pending.has(key(t)) ? 'skipped' : hasError || failed.has(key(t)) ? 'failed' : passed.has(key(t)) ? 'passed' : 'unknown');
+      scenarios.push({
+        title: t.fullTitle || t.title || 'Unnamed Test', suiteName: null, status,
+        durationMs: typeof t.duration === 'number' ? t.duration : null,
+        testFile: t.file || null, failureMessages: t.err?.message ? [t.err.message] : [],
+        executionDetails: normalizeExecutionDetails({ runner: 'cypress', rootDir, test: {
+          ...t, state: status, attempts: [{ status, duration: t.duration, error: t.err, startTime: t.startTime }],
+        } }),
+      });
+    }
+  }
+
+  const passRatePct = totalTests > 0 ? Number(((passedTests / totalTests) * 100).toFixed(1)) : null;
 
   return {
     totalTests,
@@ -249,7 +285,8 @@ const normaliseCypress = (report, startedAt, finishedAt, rootDir = null) => {
     failedTests,
     flakyTests,
     skippedTests,
-    stabilityScorePct,
+    stabilityScorePct: null,
+    passRatePct,
     durationMs: Number(stats.duration) || Math.max(0, finishedAt - startedAt),
     status: failedTests > 0 ? "FAILED" : "PASSED",
     startedAt,

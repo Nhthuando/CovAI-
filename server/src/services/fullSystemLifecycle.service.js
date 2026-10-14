@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { prepareFullSystemPackage, readApplicationEnvironment, readAssessmentTestEnvironment } from './fullSystemRuntime.service.js';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { startAutServer, stopAutServer, resolveAvailableAutPort } from './autLifecycle.service.js';
@@ -26,7 +28,7 @@ const writeSql = (container, engine, password, sql) => new Promise((resolve,reje
   child.once('close',code => {clearTimeout(timer);code === 0 ? resolve() : reject(new ServiceError(`Test database initialization failed: ${error.replaceAll(password,'[redacted]')}`,422));});
 });
 
-export const startFullSystem = async ({rootDir,jobId,onProgress}) => {
+export const startFullSystem = async ({rootDir,jobId,onProgress,measurementPreparation,signal}) => {
   const setup = await ensureFullSystemSetup({rootDir,onProgress});
   rootDir = setup.rootDir;
   const config = setup.config;
@@ -55,25 +57,41 @@ export const startFullSystem = async ({rootDir,jobId,onProgress}) => {
     const databasePort=Number(mapped.stdout.trim().split(':').at(-1));
     let ready=false;
     for (let attempt=0;attempt<90;attempt++) {
+      if(signal?.aborted) throw new ServiceError("System setup canceled",409);
       try {
         await docker(engine === 'mysql'
-          ? ['exec','-e',`MYSQL_PWD=${password}`,container,'mysql','-ucovai','covai_test','-e','SELECT 1']
-          : ['exec',container,'pg_isready','-U','covai','-d','covai_test'],{timeout:3000});
+          ? ['exec','-e',`MYSQL_PWD=${password}`,container,'mysql','-h127.0.0.1','-ucovai','covai_test','-e','SELECT 1']
+          : ['exec',container,'pg_isready','-h','127.0.0.1','-U','covai','-d','covai_test'],{timeout:3000});
         ready=true;break;
       } catch {await new Promise(resolve => setTimeout(resolve,1000));}
     }
     if (!ready) throw new ServiceError('Disposable test database did not become ready',408);
-    await writeSql(container,engine,password,fs.readFileSync(containedPath(rootDir,config.database.initSql),'utf8'));
     const backendDir=containedPath(rootDir,config.backend.directory);
+    const environment = directory => measurementPreparation?.workspace?.originalRoot
+      ? readAssessmentTestEnvironment(containedPath(measurementPreparation.workspace.originalRoot, directory))
+      : readApplicationEnvironment(containedPath(rootDir, directory));
     const backendPort=await resolveAvailableAutPort(backendDir,4500);
     const databaseUrl=`${engine === 'mysql' ? 'mysql' : 'postgresql'}://covai:${password}@127.0.0.1:${databasePort}/covai_test`;
-    const backend=await startAutServer({snapshotDir:backendDir,port:backendPort,jobId,healthPath:config.backend.healthPath,requireHealthy:true,env:{DATABASE_URL:databaseUrl,DB_HOST:'127.0.0.1',DB_PORT:String(databasePort),DB_USER:'covai',DB_PASSWORD:password,DB_NAME:'covai_test'}});
+    const backendEnv={...environment(config.backend.directory),NODE_ENV:'development',DATABASE_URL:databaseUrl,DB_HOST:'127.0.0.1',DB_PORT:String(databasePort),DB_USER:'covai',DB_PASSWORD:password,DB_NAME:'covai_test'};
+    const metadata=JSON.parse(fs.readFileSync(path.join(backendDir,'package.json'),'utf8'));
+    const usesPrisma=Boolean(metadata.dependencies?.['@prisma/client'] || metadata.devDependencies?.['@prisma/client']);
+    // Prisma owns its schema/migrations; generated SQL is for SQL-driver projects.
+    if (!usesPrisma) await writeSql(container,engine,password,fs.readFileSync(containedPath(rootDir,config.database.initSql),'utf8'));
+    await onProgress?.(28,'Installing backend dependencies and preparing the isolated database schema');
+    await prepareFullSystemPackage({directory:backendDir,env:backendEnv,jobId,database:true,signal});
+    const preload=fileURLToPath(new URL('../utils/autPortOverride.cjs',import.meta.url)).replaceAll('\\','/');
+    backendEnv.COVAI_AUT_PORT=String(backendPort);
+    backendEnv.NODE_OPTIONS=`${process.env.NODE_OPTIONS || ''} --require="${preload}"`.trim();
+    if (measurementPreparation?.backendPreload) backendEnv.NODE_OPTIONS += ` --require="${measurementPreparation.backendPreload.replaceAll('\\','/')}"`;
+    const backend=await startAutServer({snapshotDir:backendDir,port:backendPort,jobId,healthPath:config.backend.healthPath,requireHealthy:true,env:backendEnv,preferStart:true,signal});
     if (!backend.started) throw new ServiceError('No backend start script found',422);
     handles.push(backend);
     const frontendDir=containedPath(rootDir,config.frontend.directory);
     const frontendPort=await resolveAvailableAutPort(frontendDir,4173);
     const backendUrl=`http://127.0.0.1:${backendPort}`;
-    const frontend=await startAutServer({snapshotDir:frontendDir,port:frontendPort,jobId,requireHealthy:true,env:{VITE_API_URL:backendUrl,VITE_API_BASE_URL:backendUrl}});
+    const frontendEnv={...environment(config.frontend.directory),NODE_ENV:'development',VITE_API_URL:backendUrl,VITE_API_BASE_URL:backendUrl};
+    await prepareFullSystemPackage({directory:frontendDir,env:frontendEnv,jobId,signal});
+    const frontend=await startAutServer({snapshotDir:frontendDir,port:frontendPort,jobId,requireHealthy:true,env:frontendEnv,signal});
     if (!frontend.started) throw new ServiceError('No frontend start script found',422);
     handles.push(frontend);
     return {frontendPort,backendUrl,cleanup};

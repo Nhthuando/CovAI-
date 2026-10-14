@@ -16,9 +16,11 @@ import { resolveSystemTestExecution } from "./systemTestDetection.service.js";
 import { runSystemTests } from "./systemTestRunner.service.js";
 import { parseSystemTestResult } from "./systemTestResultParser.service.js";
 import { storeScenarioScreenshot } from "./systemTestEvidence.service.js";
+import { remapExecutionLocations } from "./systemTestExecutionDetails.service.js";
 import { calculateSystemCoverage } from "./systemCoverageEngine.service.js";
 import { collectSystemGenerationContext } from "./systemGenerationContext.service.js";
 import crypto from "node:crypto";
+import {prepareFullSystemExecution,resolveSystemTestFile} from './fullSystemExecutionPreparation.service.js';
 
 const readPayload = (payloadJson) => {
   if (!payloadJson) return {};
@@ -172,13 +174,16 @@ export const processSystemTestAnalysisJob = async (jobId) => {
         400,
       );
     }
-    const execution = resolveSystemTestExecution({
-      rootDir: job.snapshot.rootDir,
-      runner: payload.runner ?? null,
-    });
+    let execution;
+    try {
+      execution = resolveSystemTestExecution({rootDir:job.snapshot.rootDir,runner:payload.runner ?? null});
+    } catch(error) {
+      if(executionMode !== 'full' || (payload.runner && payload.runner !== 'playwright') || !/No executable/.test(error.message)) throw error;
+      execution={runner:'playwright',rootDir:job.snapshot.rootDir,testDirectory:'tests/system',coverageDir:path.join(job.snapshot.rootDir,'.covai-system-test/coverage'),reportDirectory:path.join(job.snapshot.rootDir,'.covai-system-test')};
+    }
 
     if (payload.testFile) {
-      execution.testFile = payload.testFile;
+      execution.testFile = resolveSystemTestFile(job.snapshot.rootDir, execution.rootDir || job.snapshot.rootDir, payload.testFile);
       if (execution.runner === "cypress" && !execution.command.includes("--spec")) {
         const redirection = execution.command.indexOf(" > ");
         const specArg = ` --spec "${payload.testFile}"`;
@@ -196,6 +201,12 @@ export const processSystemTestAnalysisJob = async (jobId) => {
       snapshotId: jobSnapshotId,
       runner: execution.runner,
     });
+    const onPreparing = (progress,message) => broadcastJobProgress(jobId,{progress,stage:'Preparing Full Stack',message,userId:job.userId,snapshotId:jobSnapshotId,runner:execution.runner});
+    if(executionMode === 'full' && execution.runner === 'playwright') {
+      const prepared=await prepareFullSystemExecution({rootDir:job.snapshot.rootDir,execution,jobId,onProgress:onPreparing});
+      execution=prepared.execution;
+      if(prepared.generated) await prisma.aiTest.create({data:{projectId:job.projectId,snapshotId:job.snapshotId,filePath:prepared.generated.filePath,content:prepared.generated.code,mode:'PLAYWRIGHT_E2E',status:'VERIFIED',metaJson:JSON.stringify({executionMode:'full',verificationRuns:prepared.generated.verificationRuns,attempts:prepared.generated.attempts,contextHash:prepared.generated.contextHash,quality:prepared.generated.quality})}});
+    }
 
     const startedAt = new Date();
     const executionResult = await runSystemTests({
@@ -203,7 +214,7 @@ export const processSystemTestAnalysisJob = async (jobId) => {
       rootDir: job.snapshot.rootDir,
       execution,
       executionMode,
-      onPreparing: (progress, message) => broadcastJobProgress(jobId, {progress, stage:'Preparing Full Stack', message, userId:job.userId, snapshotId:jobSnapshotId, runner:execution.runner}),
+      onPreparing,
       onReady: () =>
         broadcastJobProgress(jobId, {
           progress: 35,
@@ -281,7 +292,8 @@ export const processSystemTestAnalysisJob = async (jobId) => {
                 title: s.title,
                 suiteName: s.suiteName || null,
                 status: s.status,
-                durationMs: s.durationMs || null,
+                durationMs: s.durationMs ?? null,
+                ...(s.executionDetails ? { executionDetails: remapExecutionLocations(s.executionDetails, job.snapshot.rootDir, sourceMap) } : {}),
                 failureMessages: s.failureMessages || [],
                 testFile: sourceMap[path.basename(s.testFile || '')] || s.testFile || null,
                 screenshotPath: storeScenarioScreenshot({
@@ -330,8 +342,8 @@ export const processSystemTestAnalysisJob = async (jobId) => {
 
     await broadcastJobProgress(jobId, {
       progress: 85,
-      stage: "Measuring coverage...",
-      message: `System test coverage: ${systemCoverage.summary.linesPct}% lines, ${systemCoverage.summary.branchesPct}% branches`,
+      stage: "Finalizing evidence...",
+      message: "System results recorded. Source coverage requires run-specific instrumentation.",
       userId: job.userId,
       snapshotId: jobSnapshotId,
       runner: execution.runner,

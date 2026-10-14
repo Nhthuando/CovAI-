@@ -31,6 +31,9 @@ model User {
   chatSessions         ChatSession[]
   aiContextSettings    AiContextSettings[]
   projectMemories      ProjectMemory[]
+  requirementApprovals SystemRequirementRevision[] @relation("RequirementApprover")
+  bindingApprovals SystemAssertionBinding[] @relation("BindingApprover")
+  proposalApplications SystemTestProposal[] @relation("ProposalApplier")
 }
 
 model Project {
@@ -121,6 +124,10 @@ model ProjectSnapshot {
   @@unique([projectId, checksum])
   @@unique([projectId, commitSha])
   @@index([projectId])
+  systemRequirements SystemRequirementRevision[]
+  systemAssessments SystemTestAssessment[]
+  systemProposals SystemTestProposal[]
+
 }
 
 model ProjectStructureAnalysis {
@@ -351,6 +358,9 @@ model TestRun {
   testFiles             SystemTestFile[]
 
   @@index([snapshotId])
+  systemMeasurement Json?
+  systemAssessments SystemTestAssessment[]
+
 }
 
 model TestScenario {
@@ -367,6 +377,7 @@ model TestScenario {
   failureCodeSnippet  String?
   failureCategory     String?
   domSnapshot         String?
+  executionDetails    Json?
   coverageLinesPct    Float?
   coverageBranchesPct Float?
   createdAt           DateTime @default(now())
@@ -520,6 +531,9 @@ enum JobType {
   RUN_VITEST_TESTS
   VITEST_COVERAGE
   SYSTEM_TEST_ANALYSIS
+  SYSTEM_TEST_ASSESSMENT
+  SYSTEM_TEST_IMPROVEMENT
+  SYSTEM_TEST_MUTATION
   CYPRESS_SYSTEM_TEST
   CYPRESS_SYSTEM_COVERAGE
   PLAYWRIGHT_SYSTEM_TEST
@@ -573,4 +587,86 @@ enum Severity {
   WARNING
   HIGH
   CRITICAL
+}
+
+model SystemRequirementRevision {
+  id String @id @default(cuid())
+  snapshotId String
+  revisionNumber Int
+  status String @default("DRAFT")
+  contentHash String
+  contentJson Json
+  approvedByUserId String?
+  approvedAt DateTime?
+  createdAt DateTime @default(now())
+  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  approver User? @relation("RequirementApprover", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+  bindings SystemAssertionBinding[]
+  assessments SystemTestAssessment[]
+  @@unique([snapshotId, revisionNumber])
+}
+model SystemAssertionBinding {
+  id String @id @default(cuid())
+  revisionId String
+  criterionId String
+  testFile String
+  scenarioId String
+  assertionId String
+  testHash String
+  bindingJson Json
+  status String @default("DRAFT")
+  reviewedByUserId String?
+  reviewedAt DateTime?
+  revision SystemRequirementRevision @relation(fields: [revisionId], references: [id], onDelete: Cascade)
+  reviewer User? @relation("BindingApprover", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+  @@unique([revisionId, assertionId, testHash])
+}
+model SystemTestAssessment {
+  id String @id @default(cuid())
+  snapshotId String
+  jobId String @unique
+  testRunId String?
+  requirementRevisionId String?
+  sourceHash String
+  testHash String
+  scopeHash String
+  runner String
+  executionMode String
+  status String @default("QUEUED")
+  reportJson Json
+  createdAt DateTime @default(now())
+  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  testRun TestRun? @relation(fields: [testRunId], references: [id], onDelete: SetNull)
+  requirements SystemRequirementRevision? @relation(fields: [requirementRevisionId], references: [id], onDelete: SetNull)
+  proposals SystemTestProposal[]
+  mutations SystemMutationRun[]
+  @@index([snapshotId, createdAt])
+}
+model SystemTestProposal {
+  id String @id @default(cuid())
+  snapshotId String
+  assessmentId String
+  jobId String @unique
+  filePath String
+  baseTestHash String
+  candidateTestHash String?
+  state String @default("DRAFT")
+  proposedContent String @db.Text
+  verificationJson Json
+  appliedAt DateTime?
+  appliedByUserId String?
+  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  assessment SystemTestAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  applier User? @relation("ProposalApplier", fields: [appliedByUserId], references: [id], onDelete: SetNull)
+  @@index([snapshotId, state])
+}
+model SystemMutationRun {
+  id String @id @default(cuid())
+  assessmentId String
+  jobId String @unique
+  state String @default("QUEUED")
+  manifestJson Json
+  resultJson Json
+  createdAt DateTime @default(now())
+  assessment SystemTestAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
 }

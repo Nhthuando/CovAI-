@@ -1,3 +1,5 @@
+import { acquireSnapshotLease } from './systemAssessmentWorkspace.service.js';
+import { ServiceError } from '../utils/serviceError.js';
 import { Queue, Worker, FlowProducer } from 'bullmq';
 import { processChatContextMaintenance } from './chatMemoryMaintenance.service.js';
 import IORedis from 'ioredis';
@@ -68,6 +70,10 @@ if (connection && typeof connection.on === 'function') {
 }
 
 export const jobQueue = new Queue('covai-jobs', { connection });
+export const getSystemEvidenceRedis = () => {
+  if(connection.status !== 'ready') throw new ServiceError('Redis must be ready for system evidence operations',503);
+  return connection;
+};
 export const flowProducer = new FlowProducer({ connection });
 
 if (typeof connection?.on === 'function') {
@@ -214,6 +220,30 @@ export const executeJobDirectly = async (type, jobId, customData = {}) => {
       case 'VITEST_COVERAGE':
         await processVitestCoverageJob(jobId);
         break;
+      case 'SYSTEM_TEST_ASSESSMENT':
+      case 'SYSTEM_TEST_IMPROVEMENT':
+      case 'SYSTEM_TEST_MUTATION': {
+        const dbJob = await getJobById(jobId);
+        let lease;
+        for (let attempt = 0; attempt < 50; attempt++) {
+          try { lease = await acquireSnapshotLease({redis: connection, snapshotId: dbJob.snapshotId}); break; }
+          catch (error) { if (error.statusCode !== 409 || attempt === 49) throw error; await new Promise(resolve => setTimeout(resolve, 100)); }
+        }
+        const abortController = new AbortController();
+        lease.signal = abortController.signal;
+        const budget = setTimeout(()=>abortController.abort(),20*60*1000);budget.unref();
+        const heartbeat = setInterval(async () => {
+          try {await lease.assertHeld();const current=await getJobById(jobId);if(current.status === 'CANCELED') abortController.abort();else await (await import('./job.service.js')).addJobLog(jobId,'INFO','System evidence operation heartbeat');}
+          catch {abortController.abort();}
+        },15000);
+        heartbeat.unref();
+        try {
+          if (type === 'SYSTEM_TEST_ASSESSMENT') await (await import('./systemAssessmentJob.service.js')).processSystemAssessmentJob(jobId,lease);
+          if (type === 'SYSTEM_TEST_IMPROVEMENT') await (await import('./systemTestImprovementJob.service.js')).processSystemImprovementJob(jobId,lease);
+          if (type === 'SYSTEM_TEST_MUTATION') await (await import('./systemMutationJob.service.js')).processSystemMutationJob(jobId,lease);
+        } finally {clearTimeout(budget);clearInterval(heartbeat);await lease.release();}
+        break;
+      }
       case 'SYSTEM_TEST_ANALYSIS':
       case 'CYPRESS_SYSTEM_TEST':
       case 'CYPRESS_SYSTEM_COVERAGE':

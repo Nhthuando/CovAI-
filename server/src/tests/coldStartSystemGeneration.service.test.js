@@ -163,6 +163,14 @@ describe('Phase 2: Cold-Start AI System Test Generator', () => {
   });
 
   describe('Task 2.3: generateColdStartSystemTests with AST validation and file writing', () => {
+    it('refuses low-quality AI cases instead of saving a passing-looking combined scenario',async()=>{
+      const dir=createTempDir();
+      await expect(generateColdStartSystemTests({rootDir:dir,dependencies:{
+        collect:()=>({routes:['/'],uiActions:[],clientApiCalls:[],backendEndpoints:[],sourceCode:[]}),
+        generate:async()=>JSON.stringify({content:"import {test,expect} from '@playwright/test';test('add and delete task',async({page})=>{await page.goto('/');await expect(page.locator('body')).toBeVisible();});"}),
+      }})).rejects.toThrow(/quality validation/);
+      expect(fs.existsSync(path.join(dir,'tests/e2e/covai-generated.spec.js'))).toBe(false);
+    });
     it('generates, validates, and writes Playwright tests to tests/e2e', async () => {
       const dir = createTempDir();
       fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'zero-test-app' }));
@@ -188,13 +196,15 @@ describe('Phase 2: Cold-Start AI System Test Generator', () => {
 
             test.describe('App E2E Verification', () => {
               test('Smoke Test: App loads', async ({ page }) => {
-                await page.goto('/');
-                await expect(page.locator('body')).toBeVisible();
+                await test.step('Action: NAVIGATION - open home',async()=>{await page.goto('/');});
+                await test.step('Assert: page visible',async()=>{await expect(page.locator('body')).toBeVisible();});
+                await test.step('Evidence: verified outcome',async()=>{await test.info().attach('evidence',{body:await page.screenshot(),contentType:'image/png'});});
               });
 
               test('Navigation Test: Login route opens', async ({ page }) => {
-                await page.goto('/login');
-                await expect(page).toHaveURL(/\\/login/);
+                await test.step('Action: NAVIGATION - open login',async()=>{await page.goto('/login');});
+                await test.step('Assert: login URL',async()=>{await expect(page).toHaveURL(/\\/login/);});
+                await test.step('Evidence: verified outcome',async()=>{await test.info().attach('evidence',{body:await page.screenshot(),contentType:'image/png'});});
               });
             });
           `,
@@ -218,6 +228,10 @@ describe('Phase 2: Cold-Start AI System Test Generator', () => {
       expect(result.scenarios).toEqual(['Smoke Test: App loads', 'Navigation Test: Login route opens']);
 
       expect(fs.existsSync(path.join(dir, 'tests/e2e/covai-generated.spec.js'))).toBe(true);
+      const savedCode = fs.readFileSync(path.join(dir, result.filePath), 'utf8');
+      expect(savedCode.match(/test\.step\(/g)).toHaveLength(6);
+      expect(savedCode).toBe(result.code);
+      expect(mockGenerate.mock.calls[0][0]).toContain('In EVERY Playwright scenario');
       expect(progressLogs.some((p) => p.pct === 100)).toBe(true);
     });
 
@@ -294,6 +308,7 @@ describe('Phase 2: Cold-Start AI System Test Generator', () => {
       const savedCode = fs.readFileSync(path.join(dir, 'tests/e2e/covai-generated.spec.js'), 'utf8');
       expect(savedCode).not.toContain('child_process');
       expect(savedCode).toContain('@playwright/test');
+      expect(savedCode).toContain('await test.step(');
     });
   });
 });
