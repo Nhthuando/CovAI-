@@ -20,6 +20,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import { RunningProcessProvider } from "./contexts/RunningProcessContext";
 import GlobalProcessIndicator from "./components/GlobalProcessIndicator";
 import { useAuth } from "./hooks/useAuth";
+import GlobalErrorBoundary from "./components/common/GlobalErrorBoundary";
 
 /* ── Landing Page ─────────────────────────────────────────── */
 function LandingPage() {
@@ -139,7 +140,9 @@ function App() {
     <ThemeProvider>
       <NotificationProvider>
         <RunningProcessProvider>
-          <AppContent />
+          <GlobalErrorBoundary>
+            <AppContent />
+          </GlobalErrorBoundary>
         </RunningProcessProvider>
       </NotificationProvider>
     </ThemeProvider>

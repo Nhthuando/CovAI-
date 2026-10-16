@@ -1060,16 +1060,20 @@ export const getProjectTree = async (projectId, userId) => {
   return tree;
 };
 
-export const getFileContent = async (projectId, userId, filePath) => {
+export const getFileContent = async (projectId, userId, filePath, snapshotId = null) => {
   const project = await prisma.project.findFirst({
     where: { id: projectId, ownerId: userId },
   });
   if (!project) throw new ServiceError("Project not found", 404);
 
-  const snapshot = await prisma.projectSnapshot.findFirst({
-    where: { projectId },
-    orderBy: { createdAt: "desc" },
-  });
+  const snapshot = snapshotId
+    ? await prisma.projectSnapshot.findFirst({
+        where: { id: snapshotId, projectId },
+      })
+    : await prisma.projectSnapshot.findFirst({
+        where: { projectId },
+        orderBy: { createdAt: "desc" },
+      });
 
   if (!snapshot || !snapshot.rootDir) {
     throw new ServiceError("Project snapshot not ready", 404);

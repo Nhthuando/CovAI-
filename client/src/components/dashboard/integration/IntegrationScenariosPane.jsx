@@ -98,26 +98,6 @@ export default function IntegrationScenariosPane({
     });
   };
 
-  if (!hasGeneratedTests) {
-    return (
-      <div className="p-12 text-center flex flex-col items-center justify-center gap-3 text-[var(--color-text-secondary)] font-sans">
-        <Clock
-          size={32}
-          className="text-[var(--color-text-muted)] opacity-60"
-        />
-        <div className="text-xs">
-          <p className="font-semibold text-[var(--color-text)] mb-1">
-            No test scenarios have been generated yet.
-          </p>
-          <p>
-            Run <strong>Generate Tests</strong> to let AI create test cases for
-            your endpoints.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
   // Helper to match an executed request URL back to the declared API endpoint
   const findMatchingEndpoint = (method, reqPath) => {
     if (!endpoints || endpoints.length === 0) return null;
@@ -366,6 +346,26 @@ export default function IntegrationScenariosPane({
       });
     }
   };
+
+  if (!hasGeneratedTests) {
+    return (
+      <div className="p-12 text-center flex flex-col items-center justify-center gap-3 text-[var(--color-text-secondary)] font-sans">
+        <Clock
+          size={32}
+          className="text-[var(--color-text-muted)] opacity-60"
+        />
+        <div className="text-xs">
+          <p className="font-semibold text-[var(--color-text)] mb-1">
+            No test scenarios have been generated yet.
+          </p>
+          <p>
+            Run <strong>Generate Tests</strong> to let AI create test cases for
+            your endpoints.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full min-h-0 font-sans text-[var(--color-text)] overflow-hidden">

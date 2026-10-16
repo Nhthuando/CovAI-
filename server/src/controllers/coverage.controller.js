@@ -10,6 +10,15 @@ import { processCoverageJob } from "../services/coverageRunner.service.js";
 import { detectSupertest } from "../services/supertestDetection.service.js";
 import { detectCoverageFrameworks, selectCoverageFramework } from "../services/coverageFramework.service.js";
 import { buildIntegrationWorkspace, getIntegrationHistoryService } from "../services/integrationWorkspace.service.js";
+import {
+    getIntegrationVersionHistoryService,
+    compareVersionsService,
+    getHistoricalWorkspaceVersionService
+} from "../services/integrationVersionHistory.service.js";
+import {
+    getBeforeAfterComparisonService,
+    getSourceFileDiffService
+} from "../services/comparison.service.js";
 
 import { getFileCoverageDetails } from "../services/fileCoverage.service.js";
 import { suggestUnitTestcases } from "../services/unitTestSuggestion.service.js";
@@ -1803,12 +1812,167 @@ export const suggestUnitTestcase = async (req, res) => {
 };
 export const getIntegrationHistory = async (req, res) => {
     try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
+
         const { snapshotId } = req.params;
+        if (!snapshotId) return res.status(400).json({ success: false, message: "snapshotId is required." });
+
+        const snapshot = await prisma.projectSnapshot.findUnique({
+            where: { id: snapshotId },
+            select: { project: { select: { ownerId: true } } }
+        });
+
+        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
+        if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
+
         const result = await getIntegrationHistoryService(snapshotId);
         return res.status(200).json({ success: true, data: result });
     } catch (error) {
         console.error('[getIntegrationHistory] Error:', error);
         return res.status(error.statusCode || 500).json({ success: false, message: error.message || 'Failed to fetch history.' });
+    }
+};
+
+export const getIntegrationVersionHistory = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
+
+        const { snapshotId } = req.params;
+        if (!snapshotId) return res.status(400).json({ success: false, message: "snapshotId is required." });
+
+        const snapshot = await prisma.projectSnapshot.findUnique({
+            where: { id: snapshotId },
+            select: { project: { select: { ownerId: true } } }
+        });
+
+        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
+        if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
+
+        const result = await getIntegrationVersionHistoryService(snapshotId, req.query);
+        return res.status(200).json({ success: true, data: result });
+    } catch (error) {
+        console.error('[getIntegrationVersionHistory] Error:', error);
+        return res.status(error.statusCode || 500).json({ success: false, message: error.message || 'Failed to fetch version history.' });
+    }
+};
+
+export const compareIntegrationVersions = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
+
+        const { snapshotId } = req.params;
+        const { versionAId, versionBId, type } = req.query;
+
+        if (!snapshotId) return res.status(400).json({ success: false, message: "snapshotId is required." });
+        if (!versionAId || !versionBId) {
+            return res.status(400).json({ success: false, message: "versionAId and versionBId query parameters are required." });
+        }
+
+        const snapshot = await prisma.projectSnapshot.findUnique({
+            where: { id: snapshotId },
+            select: { project: { select: { ownerId: true } } }
+        });
+
+        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
+        if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
+
+        const result = await compareVersionsService(snapshotId, versionAId, versionBId, type);
+        return res.status(200).json({ success: true, data: result });
+    } catch (error) {
+        console.error('[compareIntegrationVersions] Error:', error);
+        return res.status(error.statusCode || 500).json({ success: false, message: error.message || 'Failed to compare versions.' });
+    }
+};
+
+export const getHistoricalWorkspaceVersion = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
+
+        const { snapshotId, versionId } = req.params;
+        const { type } = req.query;
+
+        if (!snapshotId) return res.status(400).json({ success: false, message: "snapshotId is required." });
+        if (!versionId) return res.status(400).json({ success: false, message: "versionId is required." });
+
+        const snapshot = await prisma.projectSnapshot.findUnique({
+            where: { id: snapshotId },
+            select: { project: { select: { ownerId: true } } }
+        });
+
+        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
+        if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
+
+        const result = await getHistoricalWorkspaceVersionService(snapshotId, versionId, type);
+        return res.status(200).json({ success: true, data: result });
+    } catch (error) {
+        console.error('[getHistoricalWorkspaceVersion] Error:', error);
+        return res.status(error.statusCode || 500).json({ success: false, message: error.message || 'Failed to fetch historical version.' });
+    }
+};
+
+export const getBeforeAfterComparison = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
+
+        const { projectId } = req.params;
+        const {
+            baselineSnapshotId,
+            currentSnapshotId,
+            baselineRunId,
+            currentRunId,
+            baselineJobId,
+            currentJobId
+        } = req.query;
+
+        if (!projectId) return res.status(400).json({ success: false, message: "projectId is required." });
+
+        const comparison = await getBeforeAfterComparisonService({
+            projectId,
+            baselineSnapshotId,
+            currentSnapshotId,
+            baselineRunId,
+            currentRunId,
+            baselineJobId,
+            currentJobId,
+            userId
+        });
+
+        return res.status(200).json({ success: true, data: comparison });
+    } catch (error) {
+        console.error('[getBeforeAfterComparison] Error:', error);
+        return res.status(error.statusCode || 500).json({ success: false, message: error.message || 'Failed to generate comparison.' });
+    }
+};
+
+export const getSourceFileDiff = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
+
+        const { projectId } = req.params;
+        const { baselineSnapshotId, currentSnapshotId, filePath } = req.query;
+
+        if (!projectId || !baselineSnapshotId || !currentSnapshotId || !filePath) {
+            return res.status(400).json({ success: false, message: "projectId, baselineSnapshotId, currentSnapshotId, and filePath are required." });
+        }
+
+        const diffResult = await getSourceFileDiffService({
+            projectId,
+            baselineSnapshotId,
+            currentSnapshotId,
+            filePath,
+            userId
+        });
+
+        return res.status(200).json({ success: true, data: diffResult });
+    } catch (error) {
+        console.error('[getSourceFileDiff] Error:', error);
+        return res.status(error.statusCode || 500).json({ success: false, message: error.message || 'Failed to fetch source file diff.' });
     }
 };
 

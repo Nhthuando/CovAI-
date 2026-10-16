@@ -32,6 +32,11 @@ import {
     startAutServer,
     stopAutServer,
 } from "./autLifecycle.service.js";
+import {
+    registerJobAbortController,
+    unregisterJobAbortController,
+    isJobCanceled,
+} from "./jobCancellation.service.js";
 
 const broadcastAiJobProgress = (jobId, { progress, stage, message, status = "RUNNING", userId = null }) => {
     try {
@@ -57,8 +62,16 @@ const broadcastAiJobProgress = (jobId, { progress, stage, message, status = "RUN
  * Orchestrates the full Skeleton Test Generation Pipeline
  */
 export const processAiTestsJob = async (jobId) => {
+    const abortController = new AbortController();
+    registerJobAbortController(jobId, abortController);
+
     try {
+        if (isJobCanceled(jobId, abortController.signal)) return { success: false, canceled: true };
+
         const job = await getJobById(jobId);
+        if (job.status === "CANCELED" || isJobCanceled(jobId, abortController.signal)) {
+            return { success: false, canceled: true };
+        }
 
         await updateJobStatus({
             jobId,
@@ -446,15 +459,21 @@ export const processAiTestsJob = async (jobId) => {
             let generationCycles = 0;
 
             while (currentQueue.length > 0 && generationCycles < 5) { // Limit total cycles to prevent infinite loops
+                if (isJobCanceled(jobId, abortController.signal)) {
+                    await addJobLog(jobId, "INFO", "Generation loop stopped due to job cancellation.");
+                    break;
+                }
                 generationCycles++;
                 await addJobLog(jobId, "INFO", `Generation Cycle ${generationCycles}. Endpoints in queue: ${currentQueue.length}`);
                 
                 let nextQueue = [];
                 for (let i = 0; i < currentQueue.length; i += CHUNK_SIZE) {
+                    if (isJobCanceled(jobId, abortController.signal)) break;
                     if (i > 0) {
                         // Rate limit backoff between batches to prevent burst 429
                         await new Promise(r => setTimeout(r, 2500));
                     }
+                    if (isJobCanceled(jobId, abortController.signal)) break;
                     const chunkKeys = currentQueue.slice(i, i + CHUNK_SIZE);
                     const chunkEndpoints = chunkKeys.map(k => endpointTracker.get(k).endpoint);
                     
@@ -719,6 +738,13 @@ export const processAiTestsJob = async (jobId) => {
                 } catch { }
             });
 
+            // Crucial: Check cancellation BEFORE persisting new results!
+            // If canceled, do NOT write partial files and do NOT delete old tests!
+            if (isJobCanceled(jobId, abortController.signal)) {
+                await addJobLog(jobId, "INFO", "Generation job was canceled. Skipping file saving and database commit to preserve existing test suite.");
+                return { success: false, canceled: true };
+            }
+
             // Step 1: Write NEW files to unique staging paths
             allTestsCombined.forEach(t => {
                 if (!t.id) t.id = crypto.randomUUID();
@@ -782,6 +808,14 @@ export const processAiTestsJob = async (jobId) => {
             }
 
             invalidateEndpointCache(snapshotId, job.snapshot?.rootDir);
+            try {
+                const { archiveVersionArtifact } = await import("./integrationVersionHistory.service.js");
+                archiveVersionArtifact(job.snapshot?.rootDir, jobId, "AI_TESTS", {
+                    count: allTestsCombined.length,
+                    tests: allTestsCombined.map(t => ({ id: t.id, filePath: t.filePath, metaJson: t.metaJson, content: t.content })),
+                    unresolvedEndpoints
+                });
+            } catch (_) {}
             if (unresolvedEndpoints.length > 0) {
                 await addJobLog(jobId, "WARN", `⚠️ ${unresolvedEndpoints.length} endpoint(s) could not be generated (due to Gemini quota exhaustion or provider errors). Unresolved: ${unresolvedEndpoints.join(", ")}`);
             }
@@ -919,6 +953,9 @@ export const processAiTestsJob = async (jobId) => {
 
         return { success: true, count: tests.length };
     } catch (error) {
+        if (isJobCanceled(jobId, abortController.signal)) {
+            return { success: false, canceled: true };
+        }
         // SCRUM-395: Handle generation errors
         console.error(`[AiTestsJob ${jobId}] Failed:`, error);
 
@@ -936,5 +973,7 @@ export const processAiTestsJob = async (jobId) => {
         } catch (_) {}
 
         throw error;
+    } finally {
+        unregisterJobAbortController(jobId);
     }
 };

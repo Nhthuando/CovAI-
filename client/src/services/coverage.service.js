@@ -215,3 +215,58 @@ export async function saveAiSystemTest(snapshotId) {
     });
     return handleResponse(res);
 }
+
+export async function getIntegrationHistory(snapshotId) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/history`, {
+        headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
+}
+
+export async function getIntegrationVersionHistory(snapshotId, options = {}) {
+    const params = new URLSearchParams(options);
+    const queryString = params.toString() ? `?${params.toString()}` : "";
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/version-history${queryString}`, {
+        headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
+}
+
+export async function compareIntegrationVersions(snapshotId, versionAId, versionBId, type = "ANALYZE") {
+    const params = new URLSearchParams({ versionAId, versionBId, type });
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/version-compare?${params.toString()}`, {
+        headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
+}
+
+export async function getHistoricalWorkspaceVersion(snapshotId, versionId, type = "ANALYZE") {
+    const params = new URLSearchParams({ type });
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/version/${versionId}?${params.toString()}`, {
+        headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
+}
+
+export async function getBeforeAfterComparison(projectId, options = {}) {
+    const cleanOptions = {};
+    for (const [k, v] of Object.entries(options)) {
+        if (v != null && v !== "") cleanOptions[k] = v;
+    }
+    const params = new URLSearchParams(cleanOptions);
+    const queryString = params.toString() ? `?${params.toString()}` : "";
+    const res = await fetch(`${BASE_URL}/coverage/project/${projectId}/comparison${queryString}`, {
+        headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
+}
+
+export async function getSourceFileDiff(projectId, options = {}) {
+    const params = new URLSearchParams(options);
+    const res = await fetch(`${BASE_URL}/coverage/project/${projectId}/comparison/source-file?${params.toString()}`, {
+        headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
+}
+
+

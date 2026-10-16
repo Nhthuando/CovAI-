@@ -16,6 +16,11 @@ import {
     applySuggestion,
     getCoverageTestSuites,
     getIntegrationHistory,
+    getIntegrationVersionHistory,
+    compareIntegrationVersions,
+    getHistoricalWorkspaceVersion,
+    getBeforeAfterComparison,
+    getSourceFileDiff,
     getSystemTestSummary,
     getSystemTestScenarios,
     getSystemTestEvidence,
@@ -76,8 +81,15 @@ router.get("/:snapshotId/integration/workspace", authMiddleware, getIntegrationW
 router.post("/:snapshotId/integration/approve", authMiddleware, approveIntegrationTests);
 router.get("/:snapshotId/test-suites", authMiddleware, getCoverageTestSuites);
 
-// Integration Workspace (Phase 2)
+// Integration Workspace (Phase 2 & 3: History & Provenance)
 router.get("/:snapshotId/integration/history", authMiddleware, getIntegrationHistory);
+router.get("/:snapshotId/integration/version-history", authMiddleware, getIntegrationVersionHistory);
+router.get("/:snapshotId/integration/version-compare", authMiddleware, compareIntegrationVersions);
+router.get("/:snapshotId/integration/version/:versionId", authMiddleware, getHistoricalWorkspaceVersion);
+
+// Before/After Comparison & Quality Analysis (Phase 4)
+router.get("/project/:projectId/comparison", authMiddleware, getBeforeAfterComparison);
+router.get("/project/:projectId/comparison/source-file", authMiddleware, getSourceFileDiff);
 
 // Integration Workspace (Phase 3)
 import {
