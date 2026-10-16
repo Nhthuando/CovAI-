@@ -5,12 +5,14 @@ import {
   runCoverageByType,
 } from "../../services/coverage.service.js";
 import { runProjectStructureAnalysisApi } from "../../services/project.service.js";
-import { Search, Zap, CheckCircle2, PlayCircle, BarChart3, ChevronRight, Play, ChevronDown, Clock, AlertTriangle, RefreshCw } from "lucide-react";
+import { cancelJobApi } from "../../services/job.service.js";
+import { Search, Zap, CheckCircle2, PlayCircle, BarChart3, ChevronRight, Play, ChevronDown, Clock, AlertTriangle, RefreshCw, X, GitCompare } from "lucide-react";
 
 import IntegrationTargetsPane from "./integration/IntegrationTargetsPane.jsx";
 import IntegrationScenariosPane from "./integration/IntegrationScenariosPane.jsx";
 import IntegrationLiveProgress from "./integration/IntegrationLiveProgress.jsx";
 import IntegrationHistoryPane from "./integration/IntegrationHistoryPane.jsx";
+import BeforeAfterComparisonView from "./integration/BeforeAfterComparisonView.jsx";
 import MetricProvenancePopover from "./integration/MetricProvenancePopover.jsx";
 import IntegrationEndpointDetail from "./integration/IntegrationEndpointDetail.jsx";
 import IntegrationErrorBoundary from "./integration/IntegrationErrorBoundary.jsx";
@@ -66,17 +68,19 @@ const disabledButtonStyle = {
   cursor: "not-allowed",
 };
 
-function useLiveJobLogs(jobId, onComplete, onError) {
+function useLiveJobLogs(jobId, onComplete, onError, onCanceled) {
   const [logs, setLogs] = useState([]);
   const logsEndRef = useRef(null);
 
   const onCompleteRef = useRef(onComplete);
   const onErrorRef = useRef(onError);
+  const onCanceledRef = useRef(onCanceled);
 
   useEffect(() => {
     onCompleteRef.current = onComplete;
     onErrorRef.current = onError;
-  }, [onComplete, onError]);
+    onCanceledRef.current = onCanceled;
+  }, [onComplete, onError, onCanceled]);
 
   useEffect(() => {
     if (!jobId) {
@@ -122,7 +126,11 @@ function useLiveJobLogs(jobId, onComplete, onError) {
         } else if (data.status === "CANCELED") {
           isClosed = true;
           eventSource.close();
-          onErrorRef.current(new Error("Job was canceled"));
+          if (onCanceledRef.current) {
+            onCanceledRef.current();
+          } else {
+            onErrorRef.current(new Error("Job was canceled"));
+          }
         }
       } catch (err) {
         console.error("Failed to parse SSE message:", err);
@@ -173,6 +181,8 @@ export default function IntegrationWorkspace({
   const [activeJobId, setActiveJobId] = useState(null);
   const [activeJobType, setActiveJobType] = useState(null);
   const [activeJobStatus, setActiveJobStatus] = useState("RUNNING");
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [cancellationNotice, setCancellationNotice] = useState("");
   const [selectedTestIds, setSelectedTestIds] = useState([]);
 
   // UI View State
@@ -309,7 +319,7 @@ export default function IntegrationWorkspace({
           setActiveStage(runningJobType === "EXECUTE" ? "RUN" : runningJobType);
         } else if (!initialContext || initialContext.snapshotId !== snapshotId) {
           setActiveStage((prev) => {
-            if (prev === "RUN" || prev === "REPORT") return prev;
+            if (prev === "RUN" || prev === "REPORT" || prev === "COMPARE" || prev === "HISTORY") return prev;
             if (res.data?.aiTests?.length > 0) return "GENERATE";
             if (fetchedJobs.analyze?.status === "SUCCESS") return "ANALYZE";
             return prev;
@@ -348,10 +358,55 @@ export default function IntegrationWorkspace({
       setTimeout(() => {
         setActiveJobId(null);
         setActiveJobType(null);
-        setActiveJobStatus("RUNNING");
+        setActiveJobStatus("SUCCESS");
+        setIsCancelling(false);
+        setPendingAction(null);
       }, 350);
     }
   }, [load]);
+
+  const handleJobCanceled = useCallback(async () => {
+    setActiveJobStatus("CANCELED");
+    setCancellationNotice("Tác vụ đã được hủy thành công.");
+    try {
+      await load();
+    } catch (err) {
+      console.error("[IntegrationWorkspace] Failed to reload workspace after cancel:", err);
+    } finally {
+      setTimeout(() => {
+        setActiveJobId(null);
+        setActiveJobType(null);
+        setActiveJobStatus("CANCELED");
+        setIsCancelling(false);
+        setPendingAction(null);
+      }, 500);
+    }
+  }, [load]);
+
+  const handleCancelActiveJob = useCallback(async (targetJobId = null) => {
+    const jId = targetJobId || activeJobId;
+    if (!jId || isCancelling) return;
+    setIsCancelling(true);
+    setError("");
+    try {
+      await cancelJobApi(jId);
+      setActiveJobStatus("CANCELED");
+      setCancellationNotice("Tác vụ đã được hủy thành công.");
+      await load();
+      setTimeout(() => {
+        setActiveJobId(null);
+        setActiveJobType(null);
+        setActiveJobStatus("RUNNING");
+        setIsCancelling(false);
+        setPendingAction(null);
+      }, 500);
+    } catch (err) {
+      console.error("[IntegrationWorkspace] Failed to cancel job:", err);
+      setError(err.message || "Không thể hủy tác vụ. Vui lòng thử lại.");
+      await load();
+      setIsCancelling(false);
+    }
+  }, [activeJobId, isCancelling, load]);
 
   const { logs: activeLogs, logsEndRef } = useLiveJobLogs(
     activeJobId,
@@ -359,7 +414,9 @@ export default function IntegrationWorkspace({
     (err) => {
       setActiveJobStatus("FAILED");
       setError(err.message);
+      setIsCancelling(false);
     },
+    handleJobCanceled,
   );
 
   const handleRunAnalysis = async () => {
@@ -468,7 +525,11 @@ export default function IntegrationWorkspace({
   };
 
   const handleRunApprovedTests = async () => {
-    if (!snapshotId || (activeJobId && activeJobStatus !== "FAILED")) return;
+    if (!snapshotId || pendingAction) return;
+    if (activeJobId && (activeJobStatus === "RUNNING" || activeJobStatus === "QUEUED")) {
+      setError("A test run is already in progress.");
+      return;
+    }
     setError("");
     setActiveStage("RUN");
     setPendingAction("RUN");
@@ -487,19 +548,30 @@ export default function IntegrationWorkspace({
   };
 
   const handleRunRemainingEndpoints = async (specificEndpoints = null) => {
-    if (!snapshotId || (activeJobId && activeJobStatus !== "FAILED") || pendingAction) return;
+    if (!snapshotId || pendingAction) return;
+    if (activeJobId && (activeJobStatus === "RUNNING" || activeJobStatus === "QUEUED")) {
+      setError("A test execution job is already in progress.");
+      return;
+    }
 
     setError("");
     setPendingAction("RUN_REMAINING");
 
     try {
-      const remainingList = specificEndpoints || (workspace?.endpoints || []).filter((ep) => ep.executedCount === 0);
+      const remainingList = specificEndpoints || (workspace?.endpoints || []).filter((ep) => 
+        (ep.unexecutedCount > 0) ||
+        (ep.generatedCount > 0 && ep.executedCount === 0) ||
+        (ep.executedCount === 0) ||
+        (ep.status === "Script Error") ||
+        (ep.status === "Partial" && ep.testScriptErrorCount > 0) ||
+        (!ep.hasGenuineApiCall && ep.generatedCount > 0)
+      );
       if (remainingList.length === 0) {
-        throw new Error("Không có endpoint nào còn lại để chạy.");
+        throw new Error("Không có endpoint hoặc kịch bản nào còn lại để chạy.");
       }
 
       // Check if any of these remaining endpoints do not have AI tests generated
-      const ungenerated = remainingList.filter((ep) => (ep.generatedCount || 0) === 0);
+      const ungenerated = remainingList.filter((ep) => (ep.generatedCount || 0) === 0 && (ep.unexecutedCount || 0) === 0 && (ep.scenarios || []).length === 0);
       if (ungenerated.length > 0) {
         setPendingAction(null);
         const targetIds = ungenerated.map((ep) => `${ep.method} ${ep.path || ep.route || ep.fullPath}`);
@@ -512,7 +584,7 @@ export default function IntegrationWorkspace({
       // Helper function to check if request matches an endpoint
       const isRequestMatchEp = (r, ep) => {
         if (!r || !ep) return false;
-        if ((r.method || "GET").toUpperCase() !== ep.method.toUpperCase()) return false;
+        if ((r.method || "GET").toUpperCase() !== (ep.method || "GET").toUpperCase()) return false;
         const cleanReq = (r.path || "").split("?")[0].replace(/\/+$/, "") || "/";
         const cleanRoute = (ep.path || ep.route || ep.fullPath || "").replace(/\/+$/, "") || "/";
         const regexStr = "^" + cleanRoute.replace(/\./g, "\\.").replace(/:[a-zA-Z0-9_]+/g, "[^/]+") + "$";
@@ -520,7 +592,7 @@ export default function IntegrationWorkspace({
 
         const suite = (r.suiteName || "").toUpperCase();
         const title = (r.testName || "").toUpperCase();
-        const epMethod = ep.method.toUpperCase();
+        const epMethod = (ep.method || "GET").toUpperCase();
         const epPath = cleanRoute.toUpperCase();
         if (suite.includes(epMethod) || title.includes(epMethod)) {
           if (epPath.includes(":")) {
@@ -534,18 +606,39 @@ export default function IntegrationWorkspace({
       };
 
       // 1. Gather all scenario identifiers for remaining endpoints
-      const remainingScenarioIds = [];
-      (workspace?.aiTests || []).forEach((t) => {
-        (t.requests || []).forEach((r) => {
-          const isTarget = remainingList.some((ep) => isRequestMatchEp(r, ep));
-          if (isTarget) {
-            if (r.scenarioId) remainingScenarioIds.push(`${t.id}::${r.scenarioId}`);
-            if (r.testName) remainingScenarioIds.push(`${t.id}::${r.testName}`);
+      const remainingScenarioIds = new Set();
+
+      // Priority 1: Direct endpoint scenarios mapping
+      remainingList.forEach((ep) => {
+        (ep.scenarios || []).forEach((s) => {
+          if (
+            s.status === "not_run" ||
+            s.executionVerdict === "NOT_EXECUTED" ||
+            !s.status ||
+            s.status === "pending" ||
+            s.executionVerdict === "SCRIPT_ERROR" ||
+            s.classification === "TEST_SCRIPT_ERROR" ||
+            (s.status === "failed" && s.isSuiteLevelFailure)
+          ) {
+            if (s.id) remainingScenarioIds.add(s.id);
+            if (s.testId && s.scenarioId) remainingScenarioIds.add(`${s.testId}::${s.scenarioId}`);
+            if (s.testId && s.testName) remainingScenarioIds.add(`${s.testId}::${s.testName}`);
           }
         });
       });
 
-      if (remainingScenarioIds.length === 0) {
+      // Priority 2: Fallback to matching against aiTests
+      (workspace?.aiTests || []).forEach((t) => {
+        (t.requests || []).forEach((r) => {
+          const isTarget = remainingList.some((ep) => isRequestMatchEp(r, ep));
+          if (isTarget) {
+            if (r.scenarioId) remainingScenarioIds.add(`${t.id}::${r.scenarioId}`);
+            if (r.testName) remainingScenarioIds.add(`${t.id}::${r.testName}`);
+          }
+        });
+      });
+
+      if (remainingScenarioIds.size === 0) {
         setPendingAction(null);
         const targetIds = remainingList.map((ep) => `${ep.method} ${ep.path || ep.route || ep.fullPath}`);
         setSelectedTargetEndpoints(new Set(targetIds));
@@ -596,12 +689,13 @@ export default function IntegrationWorkspace({
     }
   };
 
-  const parseProgressSteps = (jobType, logs) => {
-    const stages = logs.map((l) => l.parsedMessage?.stage).filter(Boolean);
+  const parseProgressSteps = (jobType, logs = []) => {
+    const safeLogs = Array.isArray(logs) ? logs : [];
+    const stages = safeLogs.map((l) => l.parsedMessage?.stage).filter(Boolean);
     const hasStage = (stageName) => stages.includes(stageName);
-    const textLogs = logs
+    const textLogs = safeLogs
       .map((l) =>
-        typeof l.message === "string" ? l.message : JSON.stringify(l.message),
+        typeof l?.message === "string" ? l.message : JSON.stringify(l?.message || l || "")
       )
       .join("\n");
     let steps = [];
@@ -801,9 +895,10 @@ export default function IntegrationWorkspace({
   } = workspace || {};
   const hasAnalysis = generation?.hasAnalysis;
   const hasGeneratedTests = generation?.hasGeneratedTests;
-  const isApproved = generation?.isApproved;
-  const isJobActive = activeJobId && activeJobStatus !== "FAILED";
-  const remainingEndpoints = endpoints.filter((ep) => ep.executedCount === 0);
+  const isApproved = Boolean(generation?.isApproved);
+  const isJobActive = Boolean((activeJobId && (activeJobStatus === "RUNNING" || activeJobStatus === "QUEUED")) || isCancelling);
+  const remainingEndpoints = (endpoints || []).filter((ep) => (ep.unexecutedCount > 0) || (ep.generatedCount > 0 && ep.executedCount === 0) || ep.executedCount === 0);
+  const totalRemainingScenarios = remainingEndpoints.reduce((acc, ep) => acc + (ep.unexecutedCount || (ep.generatedCount > 0 && ep.executedCount === 0 ? ep.generatedCount : 0)), 0);
 
   const selectedEndpoint =
     selectedEndpointId !== null ? endpoints.find(e => `${e.method} ${e.path}` === selectedEndpointId) : null;
@@ -831,11 +926,13 @@ export default function IntegrationWorkspace({
           background: "var(--color-surface)",
         }}
       >
-        <div className="flex gap-2 flex-1 items-center py-4">
+        <div className="flex gap-2 items-center py-4 overflow-x-auto" style={{ minWidth: 0, flexShrink: 1 }}>
           {[
             { id: "ANALYZE", label: "Analyze", icon: Search },
             { id: "GENERATE", label: "Generate & Review", icon: Zap },
             { id: "RUN", label: "Run Tests", icon: PlayCircle },
+            { id: "HISTORY", label: "Version History", icon: Clock },
+            { id: "COMPARE", label: "Before/After Comparison", icon: GitCompare },
             { id: "REPORT", label: "Report", icon: BarChart3 }
           ].map((stage, idx, arr) => {
             const isActive = activeStage === stage.id;
@@ -872,101 +969,186 @@ export default function IntegrationWorkspace({
         </div>
         
         {/* Commands (Action Buttons for Current Stage) */}
-        <div style={{ display: "flex", gap: 8, padding: "12px 0" }}>
+        <div style={{ display: "flex", gap: 8, padding: "12px 0", flexShrink: 0 }}>
           {activeStage === "ANALYZE" && (
-             <button
-               onClick={handleRunAnalysis}
-               disabled={isJobActive || pendingAction === "ANALYZE"}
-               style={isJobActive || pendingAction === "ANALYZE" ? disabledButtonStyle : buttonStyle("var(--color-text-secondary)", true)}
-             >
-               {pendingAction === "ANALYZE" ? "Analyzing..." : (hasAnalysis ? "Re-analyze Project" : "Analyze Project")}
-             </button>
+             activeJobId && activeJobType === "ANALYZE" ? (
+               <button
+                 type="button"
+                 onClick={() => handleCancelActiveJob(activeJobId)}
+                 disabled={isCancelling}
+                 style={{
+                   ...buttonStyle("var(--color-danger, #ef4444)", true),
+                   display: "flex",
+                   alignItems: "center",
+                   gap: 6
+                 }}
+                 title="Hủy tác vụ phân tích dự án"
+               >
+                 {isCancelling ? "Cancelling..." : "Cancel Analysis"}
+               </button>
+             ) : (
+               <button
+                 onClick={handleRunAnalysis}
+                 disabled={isJobActive || pendingAction === "ANALYZE"}
+                 style={isJobActive || pendingAction === "ANALYZE" ? disabledButtonStyle : buttonStyle("var(--color-text-secondary)", true)}
+               >
+                 {pendingAction === "ANALYZE" ? "Analyzing..." : (hasAnalysis ? "Re-analyze Project" : "Analyze Project")}
+               </button>
+             )
           )}
           {activeStage === "GENERATE" && (
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <button
-                onClick={() => handleGenerateClick()}
-                disabled={!hasAnalysis || isJobActive || pendingAction === "GENERATE"}
-                style={!hasAnalysis || isJobActive || pendingAction === "GENERATE" ? disabledButtonStyle : buttonStyle("var(--color-primary)", false)}
-              >
-                {pendingAction === "GENERATE"
-                  ? "Generating..."
-                  : selectedTargetEndpoints.size > 0
-                    ? `Generate Selected (${selectedTargetEndpoints.size})`
-                    : (hasGeneratedTests ? "Regenerate All Tests" : "Generate Tests")}
-              </button>
-              {selectedTargetEndpoints.size > 0 && (
+              {activeJobId && activeJobType === "GENERATE" ? (
                 <button
                   type="button"
-                  onClick={handleClearSelectedEndpoints}
-                  style={buttonStyle("var(--color-surface-secondary)", false)}
-                  title="Clear endpoint selections"
+                  onClick={() => handleCancelActiveJob(activeJobId)}
+                  disabled={isCancelling}
+                  style={{
+                    ...buttonStyle("var(--color-danger, #ef4444)", true),
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6
+                  }}
+                  title="Hủy tác vụ tạo kịch bản kiểm thử"
                 >
-                  Clear ({selectedTargetEndpoints.size})
+                  {isCancelling ? "Cancelling..." : "Cancel Generation"}
                 </button>
-              )}
-              {hasGeneratedTests && (
-                <button
-                  onClick={handleApproveAndRun}
-                  disabled={isJobActive || selectedTestIds.length === 0 || pendingAction === "APPROVE_AND_RUN"}
-                  style={
-                    isJobActive || selectedTestIds.length === 0 || pendingAction === "APPROVE_AND_RUN"
-                      ? disabledButtonStyle
-                      : buttonStyle("var(--color-success, #22c55e)", true)
-                  }
-                  title="Approve selected scenarios and execute tests immediately"
-                >
-                  {pendingAction === "APPROVE_AND_RUN"
-                    ? "Starting Run..."
-                    : `Approve & Run Selected (${selectedTestIds.length})`}
-                </button>
+              ) : (
+                <>
+                  <button
+                    onClick={() => handleGenerateClick()}
+                    disabled={!hasAnalysis || isJobActive || pendingAction === "GENERATE"}
+                    style={!hasAnalysis || isJobActive || pendingAction === "GENERATE" ? disabledButtonStyle : buttonStyle("var(--color-primary)", false)}
+                  >
+                    {pendingAction === "GENERATE"
+                      ? "Generating..."
+                      : selectedTargetEndpoints.size > 0
+                        ? `Generate Selected (${selectedTargetEndpoints.size})`
+                        : (hasGeneratedTests ? "Regenerate All Tests" : "Generate Tests")}
+                  </button>
+                  {selectedTargetEndpoints.size > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleClearSelectedEndpoints}
+                      style={buttonStyle("var(--color-surface-secondary)", false)}
+                      title="Clear endpoint selections"
+                    >
+                      Clear ({selectedTargetEndpoints.size})
+                    </button>
+                  )}
+                  {hasGeneratedTests && (
+                    <button
+                      onClick={handleApproveAndRun}
+                      disabled={isJobActive || selectedTestIds.length === 0 || pendingAction === "APPROVE_AND_RUN"}
+                      style={
+                        isJobActive || selectedTestIds.length === 0 || pendingAction === "APPROVE_AND_RUN"
+                          ? disabledButtonStyle
+                          : buttonStyle("var(--color-success, #22c55e)", true)
+                      }
+                      title="Approve selected scenarios and execute tests immediately"
+                    >
+                      {pendingAction === "APPROVE_AND_RUN"
+                        ? "Starting Run..."
+                        : `Approve & Run Selected (${selectedTestIds.length})`}
+                    </button>
+                  )}
+                </>
               )}
             </div>
           )}
           {activeStage === "RUN" && (
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              {remainingEndpoints.length > 0 && (
+              {activeJobId && activeJobType === "EXECUTE" ? (
                 <button
                   type="button"
-                  onClick={() => handleRunRemainingEndpoints()}
-                  disabled={isJobActive || pendingAction === "RUN_REMAINING" || pendingAction === "GENERATE"}
-                  style={
-                    isJobActive || pendingAction === "RUN_REMAINING" || pendingAction === "GENERATE"
-                      ? disabledButtonStyle
-                      : {
-                          ...buttonStyle("#22c55e", true),
-                          background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
-                          color: "#ffffff",
-                          border: "none",
-                          boxShadow: "0 2px 8px rgba(16, 185, 129, 0.25)",
-                        }
-                  }
-                  title={
-                    remainingEndpoints.some((ep) => (ep.generatedCount || 0) === 0)
-                      ? "Tự động tạo kịch bản và chạy nốt các endpoint chưa kiểm thử"
-                      : "Chạy nốt các endpoint chưa được kiểm thử trong đợt này"
-                  }
+                  onClick={() => handleCancelActiveJob(activeJobId)}
+                  disabled={isCancelling}
+                  style={{
+                    ...buttonStyle("var(--color-danger, #ef4444)", true),
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6
+                  }}
+                  title="Hủy tác vụ chạy kiểm thử"
                 >
-                  <Play size={13} style={{ display: "inline", verticalAlign: "middle", marginRight: 6 }} fill="#ffffff" />
-                  {pendingAction === "RUN_REMAINING" || pendingAction === "GENERATE"
-                    ? "Starting Remaining..."
-                    : remainingEndpoints.some((ep) => (ep.generatedCount || 0) === 0)
-                      ? `Generate & Run Remaining (${remainingEndpoints.length})`
-                      : `Run Remaining Endpoints (${remainingEndpoints.length})`}
+                  {isCancelling ? "Cancelling..." : "Cancel Run"}
                 </button>
+              ) : (
+                <>
+                  {remainingEndpoints.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => handleRunRemainingEndpoints()}
+                      disabled={isJobActive || pendingAction === "RUN_REMAINING" || pendingAction === "GENERATE"}
+                      style={
+                        isJobActive || pendingAction === "RUN_REMAINING" || pendingAction === "GENERATE"
+                          ? disabledButtonStyle
+                          : {
+                              ...buttonStyle("#22c55e", true),
+                              background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
+                              color: "#ffffff",
+                              border: "none",
+                              boxShadow: "0 2px 8px rgba(16, 185, 129, 0.25)",
+                            }
+                      }
+                      title={
+                        remainingEndpoints.some((ep) => (ep.generatedCount || 0) === 0)
+                          ? "Tự động tạo kịch bản và chạy nốt các endpoint chưa kiểm thử"
+                          : "Chạy nốt các endpoint chưa được kiểm thử trong đợt này"
+                      }
+                    >
+                      <Play size={13} style={{ display: "inline", verticalAlign: "middle", marginRight: 6 }} fill="#ffffff" />
+                      {pendingAction === "RUN_REMAINING" || pendingAction === "GENERATE"
+                        ? "Starting Remaining..."
+                        : remainingEndpoints.some((ep) => (ep.generatedCount || 0) === 0)
+                          ? `Generate & Run Remaining (${remainingEndpoints.length})`
+                          : `Run Remaining Tests (${totalRemainingScenarios > 0 ? totalRemainingScenarios : remainingEndpoints.length})`}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleRunApprovedTests}
+                    disabled={!isApproved || isJobActive || pendingAction === "RUN" || pendingAction === "RUN_REMAINING"}
+                    style={!isApproved || isJobActive || pendingAction === "RUN" || pendingAction === "RUN_REMAINING" ? disabledButtonStyle : buttonStyle("var(--color-info, #3b82f6)", false)}
+                  >
+                    {pendingAction === "RUN" ? "Starting..." : (execution ? "Run Tests Again" : "Run Tests")}
+                  </button>
+                </>
               )}
-              <button
-                type="button"
-                onClick={handleRunApprovedTests}
-                disabled={!isApproved || isJobActive || pendingAction === "RUN" || pendingAction === "RUN_REMAINING"}
-                style={!isApproved || isJobActive || pendingAction === "RUN" || pendingAction === "RUN_REMAINING" ? disabledButtonStyle : buttonStyle("var(--color-info, #3b82f6)", false)}
-              >
-                {pendingAction === "RUN" ? "Starting..." : (execution ? "Run Tests Again" : "Run Tests")}
-              </button>
             </div>
           )}
         </div>
       </div>
+
+      {cancellationNotice && (
+        <div
+          style={{
+            margin: "16px 24px 0",
+            padding: "10px 16px",
+            background: "rgba(245, 158, 11, 0.1)",
+            color: "var(--color-warning, #f59e0b)",
+            border: "1px solid rgba(245, 158, 11, 0.3)",
+            borderRadius: 8,
+            fontSize: 13,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          <span>{cancellationNotice}</span>
+          <button
+            onClick={() => setCancellationNotice("")}
+            style={{
+              background: "none",
+              border: "none",
+              color: "inherit",
+              cursor: "pointer",
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {error && (
         <div
@@ -1014,7 +1196,7 @@ export default function IntegrationWorkspace({
             overflow: "hidden",
           }}
         >
-          {activeStage === "ANALYZE" || activeStage === "GENERATE" || activeStage === "RUN" ? (
+          {activeStage === "ANALYZE" || activeStage === "GENERATE" || activeStage === "RUN" || activeStage === "HISTORY" || activeStage === "COMPARE" ? (
              <IntegrationTargetsPane
                endpoints={endpoints}
                selectedEndpointId={selectedEndpointId}
@@ -1028,8 +1210,6 @@ export default function IntegrationWorkspace({
                onGenerateSelected={() => handleGenerateClick()}
                isGenerating={pendingAction === "GENERATE" || (activeJobId && activeJobType === "GENERATE")}
              />
-          ) : activeStage === "HISTORY" ? (
-             <div style={{padding: 16, color: "var(--color-text-secondary)"}}>History Mode</div>
           ) : null}
         </div>
 
@@ -1047,7 +1227,7 @@ export default function IntegrationWorkspace({
           }}
         >
           <IntegrationErrorBoundary onRetry={load}>
-          {activeJobId && (activeJobType === activeStage || (activeStage === "RUN" && activeJobType === "EXECUTE")) ? (
+          {activeJobId && !selectedEndpointId && (activeJobType === activeStage || (activeStage === "RUN" && activeJobType === "EXECUTE")) ? (
              <IntegrationLiveProgress
                activeJobId={activeJobId}
                activeJobType={activeJobType}
@@ -1055,27 +1235,91 @@ export default function IntegrationWorkspace({
                error={error}
                activeLogs={activeLogs}
                parseProgressSteps={parseProgressSteps}
+               onCancel={() => handleCancelActiveJob(activeJobId)}
+               isCancelling={isCancelling}
+               onInspectEndpoints={() => {
+                 if (endpoints && endpoints.length > 0) {
+                   setSelectedEndpointId(`${endpoints[0].method} ${endpoints[0].path}`);
+                 }
+               }}
              />
           ) : selectedEndpointId !== null ? (
-            <IntegrationEndpointDetail
-              endpoint={selectedEndpoint}
-              aiTests={aiTests}
-              hasGeneratedTests={hasGeneratedTests}
-              isApproved={isApproved}
-              selectedTestIds={selectedTestIds}
-              setSelectedTestIds={setSelectedTestIds}
-              snapshotId={snapshotId}
-              projectId={projectId}
-              endpoints={endpoints}
-              onOpenCFG={onOpenCFG}
-              onSuggestTestcase={onSuggestTestcase}
-              onOpenArchitecture={onOpenArchitecture}
-              onScenarioChange={load}
-              onError={setError}
-              onGenerateThisEndpoint={(ep) => handleGenerateClick([`${ep.method} ${ep.path || ep.route}`])}
-              onOpenFile={onOpenFile}
-              isGenerating={pendingAction === "GENERATE" || (activeJobId && activeJobType === "GENERATE")}
-            />
+            <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+              {activeJobId && (
+                <div style={{
+                  padding: "8px 16px",
+                  background: "rgba(59,130,246,0.1)",
+                  borderBottom: "1px solid rgba(59,130,246,0.25)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  fontSize: 12,
+                  flexShrink: 0,
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <RefreshCw size={14} className="animate-spin text-blue-400" />
+                    <span>
+                      <strong>{activeJobType === "ANALYZE" ? "Analyzing Project" : activeJobType === "GENERATE" ? "Generating AI Tests" : "Running Test Suite"}</strong> in progress...
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedEndpointId(null)}
+                      style={{
+                        background: "transparent",
+                        border: "1px solid var(--color-primary)",
+                        borderRadius: 4,
+                        padding: "3px 10px",
+                        color: "var(--color-primary)",
+                        cursor: "pointer",
+                        fontSize: 12,
+                        fontWeight: 600,
+                      }}
+                    >
+                      View Live Logs
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleCancelActiveJob(activeJobId)}
+                      disabled={isCancelling}
+                      style={{
+                        background: "rgba(239,68,68,0.15)",
+                        border: "1px solid var(--color-danger, #ef4444)",
+                        borderRadius: 4,
+                        padding: "3px 10px",
+                        color: "var(--color-danger, #ef4444)",
+                        cursor: isCancelling ? "not-allowed" : "pointer",
+                        fontSize: 12,
+                        fontWeight: 600,
+                      }}
+                    >
+                      {isCancelling ? "Cancelling..." : "Cancel"}
+                    </button>
+                  </div>
+                </div>
+              )}
+              <IntegrationEndpointDetail
+                endpoint={selectedEndpoint}
+                aiTests={aiTests}
+                hasGeneratedTests={hasGeneratedTests}
+                isApproved={isApproved}
+                selectedTestIds={selectedTestIds}
+                setSelectedTestIds={setSelectedTestIds}
+                snapshotId={snapshotId}
+                projectId={projectId}
+                endpoints={endpoints}
+                onOpenCFG={onOpenCFG}
+                onSuggestTestcase={onSuggestTestcase}
+                onOpenArchitecture={onOpenArchitecture}
+                onScenarioChange={load}
+                onError={setError}
+                onGenerateThisEndpoint={(ep) => handleGenerateClick([`${ep.method} ${ep.path || ep.route}`])}
+                onOpenFile={onOpenFile}
+                onBackToTargets={() => setSelectedEndpointId(null)}
+                isGenerating={pendingAction === "GENERATE" || (activeJobId && activeJobType === "GENERATE")}
+              />
+            </div>
           ) : activeStage === "GENERATE" ? (
             <IntegrationScenariosPane
               aiTests={aiTests}
@@ -1968,7 +2212,18 @@ export default function IntegrationWorkspace({
                   </div>
                 )}
                 {activeStage === "HISTORY" && (
-                  <IntegrationHistoryPane snapshotId={snapshotId} />
+                  <IntegrationHistoryPane
+                    snapshotId={snapshotId}
+                    onOpenComparison={() => setActiveStage("COMPARE")}
+                  />
+                )}
+                {activeStage === "COMPARE" && (
+                  <BeforeAfterComparisonView
+                    projectId={projectId}
+                    snapshotId={snapshotId}
+                    initialBaselineId={new URLSearchParams(location.search).get("baselineId")}
+                    onBackToWorkspace={() => setActiveStage("ANALYZE")}
+                  />
                 )}
               </div>
             </div>

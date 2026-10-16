@@ -432,6 +432,7 @@ class ProjectController {
     try {
       const { id } = req.params;
       const filePath = req.query.path;
+      const snapshotId = req.query.snapshotId;
 
       if (!filePath) {
         return res.status(400).json({
@@ -440,7 +441,7 @@ class ProjectController {
         });
       }
 
-      const result = await getFileContent(id, req.user.id, filePath);
+      const result = await getFileContent(id, req.user.id, filePath, snapshotId);
       return res.status(200).json({ success: true, data: result });
     } catch (error) {
       if (error instanceof ServiceError) {

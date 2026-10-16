@@ -15,10 +15,16 @@ import { storeCoverageOutputs } from "./coverageStorage.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { detectSupertest } from "./supertestDetection.service.js";
 import { parseJestResults, formatScenariosForPrisma } from "./testResultParser.service.js";
+import { resolveAppImportPath } from "./aiTestStorage.service.js";
 import { dockerRunner } from "./dockerRunner.service.js";
 import babel from "@babel/core";
 import transformCommonJsPlugin from "@babel/plugin-transform-modules-commonjs";
 import prisma from "../config/prisma.js";
+import {
+    registerJobAbortController,
+    unregisterJobAbortController,
+    isJobCanceled,
+} from "./jobCancellation.service.js";
 
 /**
  * Ensure project and subproject dependencies (e.g. server/node_modules) are installed.
@@ -56,18 +62,9 @@ const ensureProjectDependencies = async (jobId, rootDir) => {
 /**
  * Automatically transform ESM test code to CommonJS if the project is CommonJS.
  */
-const transformTestCodeForProject = async (code, rootDir) => {
+export const transformTestCodeForProject = async (code, rootDir, filePath) => {
     try {
-        let transformedCode = code;
-
-        // Automatically resolve relative app import if pointing to non-existent ../../index when ../../server/index.js exists
-        if (
-            (transformedCode.includes('"../../index"') || transformedCode.includes("'../../index'") || transformedCode.includes('"../../index.js"') || transformedCode.includes("'../../index.js'")) &&
-            !fs.existsSync(path.join(rootDir, "index.js")) &&
-            fs.existsSync(path.join(rootDir, "server", "index.js"))
-        ) {
-            transformedCode = transformedCode.replace(/(['"])\.\.\/\.\.\/index(\.js)?(['"])/g, '$1../../server/index.js$3');
-        }
+        let transformedCode = resolveAppImportPath(code, rootDir, filePath);
 
         const checkIsEsm = (dir) => {
             const pkgPath = path.join(dir, "package.json");
@@ -93,9 +90,10 @@ const transformTestCodeForProject = async (code, rootDir) => {
         }
         return transformedCode;
     } catch (err) {
+        if (err.statusCode || err.name === "ServiceError") throw err;
         console.warn("[SupertestCoverageJob] Babel transform fallback:", err.message);
+        throw err;
     }
-    return code;
 };
 
 /**
@@ -105,9 +103,16 @@ const transformTestCodeForProject = async (code, rootDir) => {
  * 3. Save results to DB & Firebase
  */
 export const processSupertestCoverageJob = async (jobId) => {
+    const abortController = new AbortController();
+    registerJobAbortController(jobId, abortController);
+
     try {
+        if (isJobCanceled(jobId, abortController.signal)) return;
+
         await markJobRunning(jobId);
         const job = await getJobById(jobId);
+        if (isJobCanceled(jobId, abortController.signal) || job?.status === "CANCELED") return;
+
         if (!job?.snapshot?.rootDir) {
             throw new ServiceError("Snapshot is not ready to run Supertest.", 409);
         }
@@ -171,7 +176,7 @@ export const processSupertestCoverageJob = async (jobId) => {
             }
             
             const { code: finalCode } = generate(ast);
-            const executableCode = await transformTestCodeForProject(finalCode, rootDir);
+            const executableCode = await transformTestCodeForProject(finalCode, rootDir, filePath);
             fs.mkdirSync(path.dirname(filePath), { recursive: true });
             fs.writeFileSync(filePath, executableCode, 'utf8');
             supertestFiles.push(filePath);
@@ -185,8 +190,12 @@ export const processSupertestCoverageJob = async (jobId) => {
         await updateJobProgress(jobId, 10);
         await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'PREPARE_ENV', label: "Starting Supertest coverage pipeline...", progress: 10 }));
 
+        if (isJobCanceled(jobId, abortController.signal)) return;
+
         // Ensure dependencies exist (e.g. server/node_modules) before starting test suite
         await ensureProjectDependencies(jobId, rootDir);
+
+        if (isJobCanceled(jobId, abortController.signal)) return;
 
         // 1. Run Supertest
         await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'RUN_JEST', label: "Running Supertest test suite...", progress: 20 }));
@@ -194,7 +203,7 @@ export const processSupertestCoverageJob = async (jobId) => {
             jobId,
             rootDir,
             jestConfigPath ?? supertestInfo.configPath,
-            supertestFiles,
+            supertestFiles
         );
         // DockerRunner streams output live. Saving the final buffers also covers
         // alternative runners and guarantees a complete output record.
@@ -216,7 +225,7 @@ export const processSupertestCoverageJob = async (jobId) => {
         const summaryResult = await parseCoverageSummary(coverageDir, snapshotId);
 
         // Parse test results
-        const supertestResults = parseJestResults(coverageDir);
+        const supertestResults = parseJestResults(coverageDir, { aiTests, rootDir });
         // SCRUM-141: Persist Supertest test results
         if (supertestResults) {
             const formattedScenarios = formatScenariosForPrisma(supertestResults.scenarios);
@@ -303,7 +312,107 @@ export const processSupertestCoverageJob = async (jobId) => {
 
         await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'COMPLETE', label: "Supertest coverage pipeline completed.", progress: 100 }));
     } catch (error) {
+        if (isJobCanceled(jobId, abortController.signal) || error?.message?.includes("canceled") || error?.message?.includes("cancelled") || error?.statusCode === 409) {
+            await addJobLog(jobId, "INFO", "[SUPERTEST] Run Tests canceled by user. Preserving partial execution evidence.").catch(() => {});
+            
+            // Safely stage partial evidence without overwriting previous successful run
+            try {
+                const job = await getJobById(jobId).catch(() => null);
+                const snapshotId = job?.snapshotId;
+                const rootDir = job?.snapshot?.rootDir;
+                
+                if (snapshotId && rootDir) {
+                    const coverageDir = path.join(rootDir, "coverage");
+                    let scenarios = [];
+                    
+                    // 1. Try to read partial Jest results if Jest managed to output before abort
+                    try {
+                        const partialJest = parseJestResults(coverageDir, { rootDir });
+                        if (partialJest && Array.isArray(partialJest.scenarios)) {
+                            scenarios = partialJest.scenarios;
+                        }
+                    } catch (_) {}
+
+                    // 2. Read runtime evidence from coverage or temp dir
+                    const evidenceCandidates = [
+                        path.join(coverageDir, "runtime-evidence.json"),
+                        path.join(rootDir, ".covai-temp", "runtime-evidence.json")
+                    ];
+                    let rawEv = [];
+                    let foundEvPath = null;
+                    for (const p of evidenceCandidates) {
+                        if (fs.existsSync(p)) {
+                            try {
+                                rawEv = JSON.parse(fs.readFileSync(p, "utf8"));
+                                if (Array.isArray(rawEv) && rawEv.length > 0) {
+                                    foundEvPath = p;
+                                    break;
+                                }
+                            } catch (_) {}
+                        }
+                    }
+
+                    // If no Jest scenarios were parsed, but runtime evidence has captured tests:
+                    if (scenarios.length === 0 && rawEv.length > 0) {
+                        scenarios = rawEv.map(ev => ({
+                            title: ev.testTitle || "Executed Scenario",
+                            suiteName: "Integration Tests",
+                            status: ev.actualStatusFromRuntime ? "passed" : "failed",
+                            duration: 0,
+                            failureMessages: [],
+                            testFile: null
+                        }));
+                    }
+
+                    // Create a CANCELED TestRun record preserving evidence without fabricating unrun tests
+                    const formattedScenarios = formatScenariosForPrisma(scenarios);
+                    const passed = scenarios.filter(s => s.status === "passed").length;
+                    const failed = scenarios.filter(s => s.status === "failed").length;
+                    const skipped = scenarios.filter(s => s.status === "pending" || s.status === "skipped").length;
+
+                    const canceledTestRun = await prisma.testRun.create({
+                        data: {
+                            snapshotId,
+                            type: "SUPERTEST",
+                            totalTests: scenarios.length,
+                            passedTests: passed,
+                            failedTests: failed,
+                            skippedTests: skipped,
+                            durationMs: 0,
+                            status: "CANCELED",
+                            startedAt: new Date(),
+                            finishedAt: new Date(),
+                            ...(formattedScenarios ? { scenarios: formattedScenarios } : {})
+                        },
+                        include: { scenarios: true }
+                    });
+
+                    // Enrich runtime evidence with this canceled TestRun ID
+                    if (foundEvPath && rawEv.length > 0) {
+                        const scenarioMap = new Map((canceledTestRun.scenarios || []).map(s => [s.title, s]));
+                        const enriched = rawEv.map(ev => {
+                            const sc = scenarioMap.get(ev.testTitle) || (canceledTestRun.scenarios || []).find(s =>
+                                (ev.testTitle && s.title && (ev.testTitle.includes(s.title) || s.title.includes(ev.testTitle)))
+                            );
+                            return {
+                                ...ev,
+                                testRunId: canceledTestRun.id,
+                                scenarioId: sc?.id || null,
+                                runnerVerdict: sc ? (sc.status === 'passed' ? 'PASS' : (sc.status === 'failed' ? 'FAIL' : 'SKIPPED')) : (ev.actualStatusFromRuntime ? 'PASS' : 'UNKNOWN'),
+                                statusAssertionResult: sc ? (sc.status === 'passed' ? 'PASS' : (sc.status === 'failed' ? 'FAIL' : 'NOT_EVALUATED')) : (ev.actualStatusFromRuntime ? 'PASS' : 'NOT_EVALUATED')
+                            };
+                        });
+                        fs.writeFileSync(foundEvPath, JSON.stringify(enriched, null, 2), "utf8");
+                    }
+                }
+            } catch (stageErr) {
+                console.warn("[SupertestCoverageJob] Error saving partial canceled run evidence:", stageErr.message);
+            }
+            return;
+        }
         console.error(`[SupertestCoverageJob ${jobId}] Error:`, error);
         await markJobFailed(jobId, error).catch(() => { });
+    } finally {
+        unregisterJobAbortController(jobId);
     }
 };

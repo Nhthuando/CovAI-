@@ -74,6 +74,7 @@ export default function IntegrationTargetsPane({
 }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedMethod, setSelectedMethod] = useState("ALL");
+  const [diffFilter, setDiffFilter] = useState("ALL");
   const [isGroupedView, setIsGroupedView] = useState(true);
   const [collapsedModules, setCollapsedModules] = useState(new Set());
 
@@ -88,6 +89,12 @@ export default function IntegrationTargetsPane({
     [endpoints]
   );
 
+  // Phase 3 Old/New Diff counts
+  const newCount = useMemo(() => endpoints.filter((ep) => ep.diffStatus === "NEW").length, [endpoints]);
+  const changedCount = useMemo(() => endpoints.filter((ep) => ep.diffStatus === "CHANGED").length, [endpoints]);
+  const removedCount = useMemo(() => endpoints.filter((ep) => ep.diffStatus === "REMOVED").length, [endpoints]);
+  const hasDiffStatuses = newCount > 0 || changedCount > 0 || removedCount > 0;
+
   // Available methods in the dataset for quick filter buttons
   const availableMethods = useMemo(() => {
     const methods = new Set(endpoints.map((ep) => ep.method).filter(Boolean));
@@ -101,7 +108,11 @@ export default function IntegrationTargetsPane({
       if (selectedMethod !== "ALL" && ep.method !== selectedMethod) {
         return false;
       }
-      // 2. Search query filter
+      // 2. Diff status filter
+      if (diffFilter !== "ALL" && ep.diffStatus !== diffFilter) {
+        return false;
+      }
+      // 3. Search query filter
       if (searchQuery.trim()) {
         const query = searchQuery.trim().toLowerCase();
         const pathMatches = (ep.path || "").toLowerCase().includes(query);
@@ -113,7 +124,7 @@ export default function IntegrationTargetsPane({
       }
       return true;
     });
-  }, [endpoints, selectedMethod, searchQuery]);
+  }, [endpoints, selectedMethod, diffFilter, searchQuery]);
 
   // Grouped by Module
   const groupedModules = useMemo(() => {
@@ -200,11 +211,19 @@ export default function IntegrationTargetsPane({
       <div
         key={id}
         onClick={() => onSelectEndpoint(id)}
-        className={`px-3 py-2 cursor-pointer transition-colors flex flex-col gap-1 rounded-sm mx-1 my-0.5 ${
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            onSelectEndpoint(id);
+          }
+        }}
+        className={`group px-3 py-2 cursor-pointer transition-colors flex flex-col gap-1 rounded-sm mx-1 my-0.5 ${
           isSelected
             ? "bg-[var(--color-primary-light)]/40 text-[var(--color-text)] border-l-2 border-[var(--color-primary)] font-medium"
             : "text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)] hover:text-[var(--color-text)] border-l-2 border-transparent"
         }`}
+        title={`Click to inspect evidence for ${ep.method} ${ep.path}`}
       >
         <div className="flex items-center gap-2">
           {onToggleSelectEndpoint && (
@@ -225,10 +244,33 @@ export default function IntegrationTargetsPane({
             {ep.method}
           </span>
           <span
-            className="font-mono text-xs truncate flex-1"
+            className="font-mono text-xs truncate flex-1 group-hover:text-[var(--color-primary)] transition-colors"
             title={ep.path}
           >
             {ep.path}
+          </span>
+          {ep.diffStatus && ep.diffStatus !== "UNCHANGED" && (
+            <span
+              className={`px-1.5 py-0.2 rounded text-[9px] font-bold font-mono uppercase shrink-0 border ${
+                ep.diffStatus === "NEW"
+                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                  : ep.diffStatus === "CHANGED"
+                  ? "bg-amber-500/10 text-amber-400 border-amber-500/30"
+                  : ep.diffStatus === "REMOVED"
+                  ? "bg-rose-500/10 text-rose-400 border-rose-500/30"
+                  : "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]"
+              }`}
+              title={
+                ep.diffStatus === "CHANGED" && ep.changedFields?.length
+                  ? `Changed fields: ${ep.changedFields.join(", ")}`
+                  : `${ep.diffStatus} in current analysis session`
+              }
+            >
+              {ep.diffStatus}
+            </span>
+          )}
+          <span className="text-[11px] text-[var(--color-text-muted)] opacity-60 group-hover:opacity-100 group-hover:text-[var(--color-primary)] shrink-0" title="Inspect Evidence">
+            →
           </span>
         </div>
 
@@ -297,6 +339,21 @@ export default function IntegrationTargetsPane({
           <div className="bg-[var(--color-surface-secondary)] px-1.5 py-0.5 rounded border border-[var(--color-border)]">
             <span className="font-semibold text-[var(--color-text)]">{totalFiles}</span> Files
           </div>
+          {newCount > 0 && (
+            <div className="bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-500/25">
+              <span className="font-semibold">{newCount}</span> New
+            </div>
+          )}
+          {changedCount > 0 && (
+            <div className="bg-amber-500/10 text-amber-400 px-1.5 py-0.5 rounded border border-amber-500/25">
+              <span className="font-semibold">{changedCount}</span> Changed
+            </div>
+          )}
+          {removedCount > 0 && (
+            <div className="bg-rose-500/10 text-rose-400 px-1.5 py-0.5 rounded border border-rose-500/25">
+              <span className="font-semibold">{removedCount}</span> Removed
+            </div>
+          )}
         </div>
       </div>
 
@@ -360,6 +417,26 @@ export default function IntegrationTargetsPane({
             </button>
           </div>
         </div>
+
+        {/* Phase 3: Diff Filter Pills */}
+        {hasDiffStatuses && (
+          <div className="flex items-center gap-1 overflow-x-auto pb-0.5 text-[9px] font-mono border-t border-[var(--color-border)]/50 pt-1.5">
+            <span className="text-[var(--color-text-muted)] text-[10px] font-semibold mr-1">Diff:</span>
+            {["ALL", "NEW", "CHANGED", "UNCHANGED", "REMOVED"].map((df) => (
+              <button
+                key={df}
+                onClick={() => setDiffFilter(df)}
+                className={`px-1.5 py-0.5 font-bold rounded transition-colors border ${
+                  diffFilter === df
+                    ? "bg-[var(--color-primary)] text-white border-[var(--color-primary)]"
+                    : "bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]"
+                }`}
+              >
+                {df}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 3. Endpoint Targets List */}

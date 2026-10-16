@@ -5,6 +5,7 @@ import { addJobLog } from "./job.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 import { ensureSupertestDatabaseSetupFile } from "./databaseMockTemplate.service.js";
+import { getJobAbortSignal } from "./jobCancellation.service.js";
 
 const SUPERTEST_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -60,7 +61,7 @@ const assertValidRootDir = (rootDir) => {
 };
 
 /** Execute only Supertest test files in an isolated test environment. */
-export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFiles = []) => {
+export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFiles = [], options = {}) => {
     if (!Array.isArray(supertestFiles)) {
         throw new ServiceError("supertestFiles must be an array", 400);
     }
@@ -167,8 +168,9 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
     await addJobLog(jobId, "INFO", "[SUPERTEST] Starting isolated integration tests.").catch(() => { });
     const startedAt = Date.now();
     let result;
+    const abortSignal = options?.signal || getJobAbortSignal(jobId);
     try {
-        result = await dockerRunner.run({ snapshotPath: resolvedRoot, command: jestCmd, timeoutMs: SUPERTEST_TIMEOUT_MS, jobId, env });
+        result = await dockerRunner.run({ snapshotPath: resolvedRoot, command: jestCmd, timeoutMs: SUPERTEST_TIMEOUT_MS, jobId, env, signal: abortSignal });
     } catch (error) {
         await addJobLog(jobId, "ERROR", `[SUPERTEST] Runner error: ${error.message}`).catch(() => { });
         throw error;

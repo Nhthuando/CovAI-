@@ -301,14 +301,18 @@ export const classifyScenarioFailure = (scenario, parsedReq) => {
     if (status === "pending" || status === "skipped") return "SKIPPED";
     if (status === "not_run") return "NOT_EXECUTED";
 
-    // 2. TEST_SCRIPT_ERROR: Syntax, runtime, or broken mock function in test script
+    // 2. TEST_SCRIPT_ERROR: Syntax, runtime, module load failure, or broken mock function in test script
     if (
+        scenario?.isSuiteLevelFailure ||
         /TypeError|ReferenceError|SyntaxError/i.test(text) ||
         text.includes("is not a function") ||
         text.includes("mockResolvedValue") ||
         text.includes("mockRejectedValue") ||
         text.includes("Cannot read propert") ||
-        text.includes("is not defined")
+        text.includes("is not defined") ||
+        text.includes("Cannot find module") ||
+        text.includes("MODULE_NOT_FOUND") ||
+        text.includes("ERR_MODULE_NOT_FOUND")
     ) {
         return "TEST_SCRIPT_ERROR";
     }
@@ -467,6 +471,9 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
     ]);
     const dbTime = Date.now() - startDb;
     const latestRun = (testRuns && testRuns[0]) || null;
+    const analyzeJob = (jobs || []).find(j => j.type === "ANALYSIS");
+    const generateJob = (jobs || []).find(j => j.type === "AI_TESTS");
+    const executeJob = (jobs || []).find(j => j.type === "SUPERTEST_COVERAGE" || j.type === "COVERAGE_PIPELINE" || j.type === "RUN_TESTS" || j.type === "SYSTEM_TEST_ANALYSIS" || j.type === "PLAYWRIGHT_SYSTEM_TEST" || j.type === "CYPRESS_SYSTEM_TEST");
 
     // 2. Load API Endpoints (Cached by snapshotId in memory and fs)
     const startAst = Date.now();
@@ -531,6 +538,9 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             title: s.title,
             suiteName: s.suiteName,
             status: s.status,
+            actualStatus: s.actualStatus !== undefined ? s.actualStatus : (s.actualStatusFromRuntime !== undefined ? s.actualStatusFromRuntime : (s.responseStatus !== undefined ? s.responseStatus : null)),
+            actualStatusFromRuntime: s.actualStatusFromRuntime !== undefined ? s.actualStatusFromRuntime : (s.actualStatus !== undefined ? s.actualStatus : (s.responseStatus !== undefined ? s.responseStatus : null)),
+            responseStatus: s.responseStatus !== undefined ? s.responseStatus : (s.actualStatusFromRuntime !== undefined ? s.actualStatusFromRuntime : (s.actualStatus !== undefined ? s.actualStatus : null)),
             duration: typeof s.duration === 'number' ? s.duration : (s.durationMs || 0),
             failureMessages: s.failureMessages || [],
             testFile: s.testFile || null
@@ -655,7 +665,18 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
         if (cacheEntry && cacheEntry.updatedAt === currentUpdatedAt) {
             requests = cacheEntry.requests;
         } else {
-            requests = extractValidatedTestRequests(t);
+            const tMeta = (typeof t.metaJson === 'string' ? JSON.parse(t.metaJson) : t.metaJson) || {};
+            requests = extractValidatedTestRequests(t).map(r => {
+                const metaReq = tMeta.requests ? tMeta.requests.find(mr => mr.testName === r.testName) : null;
+                const fallbackId = crypto.createHash('md5').update(r.testName).digest('hex').substring(0, 8);
+                const scenarioId = metaReq?.scenarioId || fallbackId;
+                return {
+                    ...r,
+                    testId: t.id,
+                    scenarioId,
+                    id: `${t.id}::${scenarioId}`
+                };
+            });
             snapshotParseCache.set(t.id, { updatedAt: currentUpdatedAt, requests });
         }
 
@@ -696,10 +717,16 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
     const testParseTime = Date.now() - startTestParse;
 
     const enrichedScenarios = testScenarios.map(s => {
-        const matchingRequests = allParsedRequests.filter(pr => 
+        let matchingRequests = allParsedRequests.filter(pr => 
             pr.testName === s.title && 
             (s.suiteName?.includes(pr.suiteName) || pr.suiteName?.includes(s.suiteName) || s.suiteName === pr.suiteName)
         );
+        if (matchingRequests.length === 0 && s.scenarioId) {
+            matchingRequests = allParsedRequests.filter(pr => pr.scenarioId === s.scenarioId);
+        }
+        if (matchingRequests.length === 0 && s.title) {
+            matchingRequests = allParsedRequests.filter(pr => pr.testName === s.title);
+        }
         return {
             ...s,
             requests: matchingRequests
@@ -761,6 +788,9 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
         for (const genReq of epGeneratedRequests) {
             if (!executedTitles.has(genReq.testName)) {
                 allScenariosForEndpoint.push({
+                    id: genReq.id || `${genReq.testId}::${genReq.scenarioId || genReq.testName}`,
+                    scenarioId: genReq.scenarioId,
+                    testId: genReq.testId,
                     title: genReq.testName,
                     suiteName: genReq.suiteName || "",
                     status: "not_run",
@@ -856,6 +886,14 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             } else if (rest.actualStatus !== undefined && rest.actualStatus !== null) {
                 actualStatus = Number(rest.actualStatus);
                 actualStatusFromRuntime = Number(rest.actualStatus);
+                evidenceSource = 'TEST_SERVER_HTTP_RESPONSE';
+            } else if (rest.actualStatusFromRuntime !== undefined && rest.actualStatusFromRuntime !== null) {
+                actualStatus = Number(rest.actualStatusFromRuntime);
+                actualStatusFromRuntime = Number(rest.actualStatusFromRuntime);
+                evidenceSource = 'TEST_SERVER_HTTP_RESPONSE';
+            } else if (rest.responseStatus !== undefined && rest.responseStatus !== null) {
+                actualStatus = Number(rest.responseStatus);
+                actualStatusFromRuntime = Number(rest.responseStatus);
                 evidenceSource = 'TEST_SERVER_HTTP_RESPONSE';
             } else if (parsedFailure?.received && /^\d{3}$/.test(parsedFailure.received.trim())) {
                 actualStatus = Number(parsedFailure.received.trim());
@@ -1076,8 +1114,10 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
         }, 0);
 
         return {
+            id: ep.id || `${ep.method}:${ep.fullPath}`,
             method: ep.method,
             path: ep.fullPath,
+            route: ep.fullPath,
             status,
             testCount: executedCount, // Legacy for UI if needed
             executedCount,
@@ -1109,14 +1149,63 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             source: {
                 sourceFile: ep.sourceFile,
                 sourceLine: ep.provenance?.sourceLine || ep.sourceLine || null,
+                sourceLineStart: ep.sourceLineStart || ep.sourceLine || null,
+                sourceLineEnd: ep.sourceLineEnd || ep.sourceLine || null,
+                routeSnippet: ep.routeSnippet || null,
                 controllerFile: ep.controllerFile || null,
                 controllerLine: ep.controllerLine || null,
+                controllerLineStart: ep.controllerLineStart || ep.controllerLine || null,
+                controllerLineEnd: ep.controllerLineEnd || null,
                 controllerMethod: ep.controllerMethod,
+                controllerSnippet: ep.controllerSnippet || null,
                 middleware: ep.middleware,
+                middlewares: ep.middlewares || [],
                 params: ep.params,
+                queryParams: ep.queryParams,
                 requestBodySchema: ep.requestBodySchema,
                 databaseModels: ep.databaseModels,
+                responseStatusCodes: ep.responseStatusCodes,
+                errorHandling: ep.errorHandling,
+                requestProcessingChain: ep.requestProcessingChain,
+                behaviorEvidence: ep.behaviorEvidence,
             },
+            verification: {
+                source: {
+                    status: (ep.sourceFile || ep.provenance?.resolutionStatus === "FULLY_RESOLVED") ? "FOUND_IN_SOURCE" : "SOURCE_UNVERIFIED",
+                    description: ep.sourceFile 
+                        ? `Route definition confirmed in ${ep.sourceFile}${ep.sourceLine ? ` at line ${ep.sourceLine}` : ""}`
+                        : "No matching route definition was located in source code",
+                    detectionType: ep.provenance?.detectionType || "AST",
+                    sourceFile: ep.sourceFile || null,
+                    sourceLine: ep.sourceLine || null,
+                },
+                runtime: {
+                    status: (executedCount > 0 && hasGenuineApiCall) ? "RUNTIME_VERIFIED" : "NOT_EXECUTED",
+                    description: (executedCount > 0 && hasGenuineApiCall)
+                        ? `Observed HTTP test server execution evidence (${passedCount} passed, ${failedCount} failed)`
+                        : (executedCount > 0 ? "Scenarios executed but without observed live HTTP server response" : "No integration test has been executed for this endpoint yet"),
+                    executedCount,
+                    passedCount,
+                    failedCount,
+                    avgDurationMs,
+                    latencyStatus,
+                },
+                contract: {
+                    status: isContractVerified ? "CONTRACT_VERIFIED" : "CONTRACT_UNVERIFIED",
+                    description: isContractVerified
+                        ? "Validated against independent authoritative API contract specification"
+                        : "No independent API contract specification (e.g. OpenAPI/Swagger spec) was provided in this project snapshot",
+                    contractSource: isContractVerified ? (cleanScenarios[0]?.contractSource || "OPENAPI_SPEC") : null,
+                },
+                discovery: {
+                    snapshotId,
+                    analyzedAt: snapshot?.createdAt ? new Date(snapshot.createdAt).toISOString() : new Date().toISOString(),
+                    analysisSessionId: analyzeJob?.id || snapshotId,
+                    framework: snapshot?.framework || "Express",
+                }
+            },
+            requestProcessingChain: ep.requestProcessingChain,
+            behaviorEvidence: ep.behaviorEvidence,
             provenance: ep.provenance,
             generatedCount,
             approvedCount,
@@ -1161,9 +1250,17 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
         if (classifiedExecutedTitles.has(sc.title)) return;
         classifiedExecutedTitles.add(sc.title);
 
-        qualityClassification.total++;
         const req = sc.requests && sc.requests[0] ? sc.requests[0] : null;
         const cls = classifyScenarioFailure(sc, req);
+
+        // If this was an unmatched synthetic suite-level failure (e.g. filename placeholder when no scenarios could be recovered), record it under testScriptErrors without treating the file as an extra scenario
+        const isUnmatchedSuiteFailure = sc.isSuiteLevelFailure && !allParsedRequests.some(r => r.testName === sc.title);
+        if (isUnmatchedSuiteFailure && sc.status === 'failed') {
+            qualityClassification.testScriptErrors++;
+            return;
+        }
+
+        qualityClassification.total++;
 
         if (sc.status === 'passed') {
             if (cls === 'CONTRACT_UNVERIFIED') {
@@ -1191,11 +1288,6 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
     qualityClassification.total += uniqueUnexecutedTitles.size;
 
     qualityClassification.validExecuted = qualityClassification.passed + qualityClassification.assertionFailures;
-
-    const analyzeJob = jobs.find(j => j.type === "ANALYSIS");
-    const generateJob = jobs.find(j => j.type === "AI_TESTS");
-    // Execution pipeline jobs
-    const executeJob = jobs.find(j => j.type === "SUPERTEST_COVERAGE" || j.type === "COVERAGE_PIPELINE" || j.type === "RUN_TESTS" || j.type === "SYSTEM_TEST_ANALYSIS" || j.type === "PLAYWRIGHT_SYSTEM_TEST" || j.type === "CYPRESS_SYSTEM_TEST");
 
     // Phase 6B: Execution Semantics
     let semanticState = "NOT_EXECUTED";
@@ -1274,6 +1366,7 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             contractUnverifiedApis: discoveredEndpoints.length - verifiedTestedApis,
             uncoveredApis,
             notExecutedApis,
+            scriptErrorApis: endpoints.filter(e => e.status === "Script Error").length,
             positiveScenarioCount: endpoints.flatMap(e => e.scenarios || []).filter(s => s.scenarioType === 'HAPPY_PATH').length,
             negativeBoundaryScenarioCount: endpoints.flatMap(e => e.scenarios || []).filter(s => s.scenarioType === 'NEGATIVE' || s.scenarioType === 'EDGE_CASE' || s.scenarioType === 'VALIDATION' || (s.expectedStatus && s.expectedStatus >= 400)).length,
             endpointsWithPositiveCoverage: endpoints.filter(e => (e.scenarios || []).some(s => s.scenarioType === 'HAPPY_PATH')).length,

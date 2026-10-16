@@ -8,6 +8,7 @@ import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { notificationService } from "./notification.service.js";
 import { reuseSnapshotHistory } from "./snapshotReuse.service.js";
+import { abortJob, isJobCanceled } from "./jobCancellation.service.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -589,6 +590,9 @@ export const markJobSuccess = async (jobId, resultJson) => {
   });
 
   if (!currentJob) throw new ServiceError("Job not found", 404);
+  if (isJobCanceled(jobId) || currentJob.status === "CANCELED") {
+    throw new ServiceError("Cannot mark a canceled job as succeeded", 400);
+  }
   if (currentJob.status !== "RUNNING")
     throw new ServiceError("Only running jobs can be marked as succeeded", 400);
 
@@ -705,10 +709,22 @@ export const cancelJob = async (jobId) => {
 
   const currentJob = await prisma.job.findUnique({
     where: { id: jobId },
-    select: { id: true, status: true },
+    select: { id: true, status: true, userId: true, projectId: true },
   });
 
   if (!currentJob) throw new ServiceError("Job not found", 404);
+
+  // Idempotent: repeated cancel requests return the canceled job safely
+  if (currentJob.status === "CANCELED") {
+    abortJob(jobId);
+    return currentJob;
+  }
+
+  // Finished jobs cannot be canceled
+  if (currentJob.status === "SUCCESS") {
+    throw new ServiceError("Cannot cancel a job that has already completed successfully", 400);
+  }
+
   if (!["QUEUED", "RUNNING"].includes(currentJob.status)) {
     throw new ServiceError("Only queued or running jobs can be canceled", 400);
   }
@@ -719,6 +735,7 @@ export const cancelJob = async (jobId) => {
   });
 
   await addJobLog(jobId, "INFO", "Job canceled");
+  abortJob(jobId);
   return job;
 };
 

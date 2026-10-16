@@ -133,9 +133,10 @@ export async function getGithubRepositoriesApi() {
   }
 }
 
-export async function getFileContentApi(projectId, filePath) {
+export async function getFileContentApi(projectId, filePath, snapshotId = null) {
+  const query = snapshotId ? `&snapshotId=${encodeURIComponent(snapshotId)}` : "";
   const res = await fetch(
-    `${BASE_URL}/projects/${projectId}/file-content?path=${encodeURIComponent(filePath)}`,
+    `${BASE_URL}/projects/${projectId}/file-content?path=${encodeURIComponent(filePath)}${query}`,
     {
       headers: getAuthHeaders(),
     },

@@ -28,6 +28,7 @@ export default function SourceCodeViewerModal({
   isOpen,
   onClose,
   projectId,
+  snapshotId,
   fileOptions = [], // [{ label, filePath, line, method }]
   initialIndex = 0,
   onOpenFile, // optional callback to jump to main editor
@@ -60,7 +61,7 @@ export default function SourceCodeViewerModal({
     setLoading(true);
     setError(null);
 
-    getFileContentApi(projectId, currentPath)
+    getFileContentApi(projectId, currentPath, snapshotId)
       .then((res) => {
         if (!isMounted) return;
         const raw = res?.data?.content ?? res?.content ?? "";

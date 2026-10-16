@@ -1,7 +1,43 @@
 /* eslint-disable no-unused-vars */
 import { useState } from "react";
-import { Database, FileCode, Shield, Sparkles, Clock, CheckCircle, XCircle, Eye, Activity } from "lucide-react";
+import {
+  Database,
+  FileCode,
+  Shield,
+  Sparkles,
+  Clock,
+  CheckCircle,
+  XCircle,
+  Eye,
+  Activity,
+  ArrowLeft,
+  CheckCircle2,
+  AlertTriangle,
+  HelpCircle,
+  Layers,
+  Server,
+  Code,
+  ExternalLink,
+  Copy,
+  Check,
+  ChevronRight,
+  Hash,
+} from "lucide-react";
 import SourceCodeViewerModal from "./SourceCodeViewerModal.jsx";
+
+const HTTP_STATUS_LABELS = {
+  200: "200 OK",
+  201: "201 Created",
+  202: "202 Accepted",
+  204: "204 No Content",
+  400: "400 Bad Request",
+  401: "401 Unauthorized",
+  403: "403 Forbidden",
+  404: "404 Not Found",
+  409: "409 Conflict",
+  422: "422 Unprocessable Entity",
+  500: "500 Internal Server Error",
+};
 
 export default function IntegrationEndpointDetail({
   endpoint,
@@ -12,7 +48,7 @@ export default function IntegrationEndpointDetail({
   setSelectedTestIds,
   snapshotId,
   projectId,
-  endpoints, // full list just in case
+  endpoints,
   onOpenCFG,
   onSuggestTestcase,
   onOpenArchitecture,
@@ -20,52 +56,115 @@ export default function IntegrationEndpointDetail({
   onError,
   onGenerateThisEndpoint,
   onOpenFile,
+  onBackToTargets,
   isGenerating = false,
 }) {
-  const [tab, setTab] = useState("OVERVIEW"); // OVERVIEW | EXECUTION
+  const [tab, setTab] = useState("EVIDENCE"); // EVIDENCE | EXECUTION
   const [codeModalOpen, setCodeModalOpen] = useState(false);
   const [codeModalInitialIdx, setCodeModalInitialIdx] = useState(0);
+  const [copiedSnippet, setCopiedSnippet] = useState(null);
 
   if (!endpoint) return null;
 
+  // Extract source & verification data with safe fallbacks
+  const source = endpoint.source || {};
+  const verification = endpoint.verification || {};
+  const processingChain = endpoint.requestProcessingChain || source.requestProcessingChain || null;
+  const behavior = endpoint.behaviorEvidence || source.behaviorEvidence || {};
+
   // Build files available for quick inspection in the code viewer modal
   const fileOptions = [];
-  if (endpoint.source?.controllerFile) {
+  if (source.controllerFile) {
     fileOptions.push({
       label: "Controller Handler",
-      filePath: endpoint.source.controllerFile,
-      line: endpoint.source.controllerLine,
-      method: endpoint.source.controllerMethod,
+      filePath: source.controllerFile,
+      line: source.controllerLineStart || source.controllerLine,
+      method: source.controllerMethod,
     });
   }
-  if (endpoint.source?.sourceFile) {
+  if (source.sourceFile) {
     fileOptions.push({
       label: "Route Declaration",
-      filePath: endpoint.source.sourceFile,
-      line: endpoint.source.sourceLine || endpoint.provenance?.sourceLine,
+      filePath: source.sourceFile,
+      line: source.sourceLineStart || source.sourceLine || endpoint.provenance?.sourceLine,
       method: `${endpoint.method} ${endpoint.path || ""}`,
     });
   }
+  if (processingChain?.service?.file) {
+    fileOptions.push({
+      label: "Service Layer",
+      filePath: processingChain.service.file,
+      line: processingChain.service.lineStart || 1,
+      method: processingChain.service.name,
+    });
+  }
+
+  const handleCopy = (text, key) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    setCopiedSnippet(key);
+    setTimeout(() => setCopiedSnippet(null), 2000);
+  };
+
+  // Verification status facets
+  const sourceStatus = verification.source?.status || (source.sourceFile ? "FOUND_IN_SOURCE" : "SOURCE_UNVERIFIED");
+  const runtimeStatus = verification.runtime?.status || (endpoint.executedCount > 0 ? "RUNTIME_VERIFIED" : "NOT_EXECUTED");
+  const contractStatus = verification.contract?.status || "CONTRACT_UNVERIFIED";
+
+  // Formatted discovery timestamp
+  const analyzedAtFormatted = verification.discovery?.analyzedAt
+    ? new Date(verification.discovery.analyzedAt).toLocaleString("vi-VN", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "Current Session";
 
   return (
-    <div className="flex flex-col h-full min-h-0 font-sans text-[var(--color-text)] overflow-hidden">
-      {/* Header */}
-      <div className="px-6 py-5 border-b border-[var(--color-border)] bg-[var(--color-surface)] shrink-0">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <span className={`px-2 py-1 rounded text-xs font-bold border font-mono
-              ${endpoint.method === 'GET' ? 'bg-[var(--color-info)]/10 text-[var(--color-info)] border-[var(--color-info)]/20' : ''}
-              ${endpoint.method === 'POST' ? 'bg-[var(--color-success)]/10 text-[var(--color-success)] border-[var(--color-success)]/20' : ''}
-              ${endpoint.method === 'PUT' ? 'bg-[var(--color-warning)]/10 text-[var(--color-warning)] border-[var(--color-warning)]/20' : ''}
-              ${endpoint.method === 'DELETE' ? 'bg-[var(--color-danger)]/10 text-[var(--color-danger)] border-[var(--color-danger)]/20' : ''}
-              ${!['GET','POST','PUT','DELETE'].includes(endpoint.method) ? 'bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]' : ''}
-            `}>
+    <div className="flex flex-col h-full min-h-0 font-sans text-[var(--color-text)] overflow-hidden bg-[var(--color-bg)]">
+      {/* Top Identity & Action Header */}
+      <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface)] shrink-0">
+        <div className="flex items-center justify-between gap-4 mb-3">
+          <div className="flex items-center gap-3 min-w-0">
+            {onBackToTargets && (
+              <button
+                type="button"
+                onClick={onBackToTargets}
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] transition-colors cursor-pointer shrink-0"
+                title="Return to full endpoint targets list"
+              >
+                <ArrowLeft size={13} />
+                <span>All Targets</span>
+              </button>
+            )}
+
+            <span
+              className={`px-2 py-0.5 rounded text-xs font-bold border font-mono tracking-tight shrink-0
+              ${endpoint.method === "GET" ? "bg-[var(--color-info)]/10 text-[var(--color-info)] border-[var(--color-info)]/20" : ""}
+              ${endpoint.method === "POST" ? "bg-[var(--color-success)]/10 text-[var(--color-success)] border-[var(--color-success)]/20" : ""}
+              ${endpoint.method === "PUT" ? "bg-[var(--color-warning)]/10 text-[var(--color-warning)] border-[var(--color-warning)]/20" : ""}
+              ${endpoint.method === "PATCH" ? "bg-purple-500/10 text-purple-400 border-purple-500/20" : ""}
+              ${endpoint.method === "DELETE" ? "bg-[var(--color-danger)]/10 text-[var(--color-danger)] border-[var(--color-danger)]/20" : ""}
+              ${!["GET", "POST", "PUT", "PATCH", "DELETE"].includes(endpoint.method) ? "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]" : ""}
+            `}
+            >
               {endpoint.method}
             </span>
-            <h2 className="text-xl font-bold font-mono text-[var(--color-text)] m-0">{endpoint.path}</h2>
+
+            <h2 className="text-lg font-bold font-mono text-[var(--color-text)] m-0 truncate" title={endpoint.path}>
+              {endpoint.path}
+            </h2>
+
+            {source.controllerMethod && (
+              <span className="text-xs font-mono text-[var(--color-primary)] bg-[var(--color-primary)]/10 px-2 py-0.5 rounded border border-[var(--color-primary)]/20 hidden md:inline truncate">
+                #{source.controllerMethod}
+              </span>
+            )}
           </div>
-          
-          <div className="flex items-center gap-2">
+
+          <div className="flex items-center gap-2 shrink-0">
             {onGenerateThisEndpoint && (
               <button
                 type="button"
@@ -75,464 +174,710 @@ export default function IntegrationEndpointDetail({
                 title={`Generate tests for ${endpoint.method} ${endpoint.path}`}
               >
                 <Sparkles size={13} />
-                {isGenerating ? "Generating..." : "Generate This API"}
+                <span>{isGenerating ? "Generating..." : "Generate This API"}</span>
               </button>
             )}
           </div>
         </div>
 
-        {/* Nav Tabs */}
-        <div className="flex items-center gap-6 mt-4">
+        {/* 3 Distinct Verification Status Chips + Provenance Bar */}
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[var(--color-border)]/60 text-xs">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* 1. Source Verification Chip */}
+            <div
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full font-mono text-[11px] font-semibold border ${
+                sourceStatus === "FOUND_IN_SOURCE"
+                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
+                  : "bg-amber-500/10 text-amber-400 border-amber-500/25"
+              }`}
+              title={
+                sourceStatus === "FOUND_IN_SOURCE"
+                  ? `Route definition confirmed in ${source.sourceFile || "source"}`
+                  : "Route definition not located in static source code"
+              }
+            >
+              {sourceStatus === "FOUND_IN_SOURCE" ? (
+                <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
+              ) : (
+                <AlertTriangle size={13} className="text-amber-400 shrink-0" />
+              )}
+              <span>{sourceStatus === "FOUND_IN_SOURCE" ? "FOUND_IN_SOURCE" : "SOURCE_UNVERIFIED"}</span>
+            </div>
+
+            {/* 2. Runtime Verification Chip */}
+            <div
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full font-mono text-[11px] font-semibold border ${
+                runtimeStatus === "RUNTIME_VERIFIED"
+                  ? "bg-blue-500/10 text-blue-400 border-blue-500/25"
+                  : "bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] border-[var(--color-border)]"
+              }`}
+              title={
+                runtimeStatus === "RUNTIME_VERIFIED"
+                  ? `Runtime evidence observed (${endpoint.passedCount || 0} passed, ${endpoint.failedCount || 0} failed)`
+                  : "No live test execution observed for this endpoint yet"
+              }
+            >
+              <Activity size={13} className={runtimeStatus === "RUNTIME_VERIFIED" ? "text-blue-400 shrink-0" : "text-[var(--color-text-muted)] shrink-0"} />
+              <span>{runtimeStatus}</span>
+            </div>
+
+            {/* 3. Contract Verification Chip */}
+            <div
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full font-mono text-[11px] font-semibold border ${
+                contractStatus === "CONTRACT_VERIFIED"
+                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
+                  : "bg-amber-500/10 text-amber-400 border-amber-500/25"
+              }`}
+              title={
+                contractStatus === "CONTRACT_VERIFIED"
+                  ? "Validated against independent authoritative API contract (e.g. OpenAPI spec)"
+                  : "No independent API contract specification (OpenAPI/Swagger) provided in repository. Contract is unverified independently."
+              }
+            >
+              {contractStatus === "CONTRACT_VERIFIED" ? (
+                <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
+              ) : (
+                <HelpCircle size={13} className="text-amber-400 shrink-0" />
+              )}
+              <span>{contractStatus}</span>
+            </div>
+
+            {/* 4. Phase 3: Version Diff Chip */}
+            {endpoint.diffStatus && (
+              <div
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full font-mono text-[11px] font-semibold border ${
+                  endpoint.diffStatus === "NEW"
+                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
+                    : endpoint.diffStatus === "CHANGED"
+                    ? "bg-amber-500/10 text-amber-400 border-amber-500/25"
+                    : endpoint.diffStatus === "REMOVED"
+                    ? "bg-rose-500/10 text-rose-400 border-rose-500/25"
+                    : "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]"
+                }`}
+                title={
+                  endpoint.diffStatus === "CHANGED" && endpoint.changedFields?.length
+                    ? `Differences detected: ${endpoint.changedFields.join(", ")}`
+                    : `Version tracking: ${endpoint.diffStatus}`
+                }
+              >
+                <Hash size={13} className="shrink-0" />
+                <span>VERSION: {endpoint.diffStatus}</span>
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3 text-[11px] font-mono text-[var(--color-text-muted)]">
+            <span title="Analyze Session Snapshot ID">
+              Snapshot: <strong className="text-[var(--color-text)]">{snapshotId ? snapshotId.substring(0, 8) : "Active"}</strong>
+            </span>
+            <span>•</span>
+            <span title="Discovered at">{analyzedAtFormatted}</span>
+          </div>
+        </div>
+
+        {/* Phase 3: Version Diff Banner if CHANGED or REMOVED */}
+        {endpoint.diffStatus === "CHANGED" && endpoint.diffDetails && (
+          <div className="mt-2.5 p-3 rounded-md bg-amber-500/10 border border-amber-500/25 text-xs font-mono flex flex-col gap-1.5">
+            <div className="flex items-center justify-between text-amber-400 font-bold">
+              <span>Endpoint Modified Across Analyze Versions:</span>
+              <span className="text-[10px] uppercase font-semibold">Previous vs Current</span>
+            </div>
+            <div className="grid grid-cols-1 gap-1 text-[11px] text-[var(--color-text-secondary)]">
+              {Object.entries(endpoint.diffDetails).map(([field, detail]) => (
+                <div key={field} className="flex items-start gap-2 bg-[var(--color-bg)]/60 p-1.5 rounded border border-[var(--color-border)]/40">
+                  <span className="text-amber-400 font-semibold min-w-[120px]">{field}:</span>
+                  <span className="line-through text-rose-400/80">{JSON.stringify(detail.previous)}</span>
+                  <span className="text-[var(--color-text-muted)]">→</span>
+                  <span className="text-emerald-400 font-semibold">{JSON.stringify(detail.current)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {endpoint.diffStatus === "REMOVED" && (
+          <div className="mt-2.5 p-3 rounded-md bg-rose-500/10 border border-rose-500/25 text-xs font-mono text-rose-400 flex items-center justify-between">
+            <span>Notice: This endpoint was present in a previous analysis inventory but is absent from the latest completed analysis run.</span>
+            <span className="font-bold uppercase text-[10px] px-2 py-0.5 rounded bg-rose-500/20 border border-rose-500/40">REMOVED</span>
+          </div>
+        )}
+
+        {/* Navigation Tabs */}
+        <div className="flex items-center gap-6 mt-3">
           <button
-            onClick={() => setTab("OVERVIEW")}
-            className={`pb-3 text-sm font-semibold transition-colors border-b-2 ${tab === "OVERVIEW" ? "text-[var(--color-primary)] border-[var(--color-primary)]" : "text-[var(--color-text-secondary)] border-transparent hover:text-[var(--color-text)]"}`}
+            onClick={() => setTab("EVIDENCE")}
+            className={`pb-2 text-xs font-semibold uppercase tracking-wider transition-colors border-b-2 cursor-pointer ${
+              tab === "EVIDENCE"
+                ? "text-[var(--color-primary)] border-[var(--color-primary)]"
+                : "text-[var(--color-text-secondary)] border-transparent hover:text-[var(--color-text)]"
+            }`}
           >
-            Source Mapping
+            Source Evidence & Traceability Chain
           </button>
           <button
             onClick={() => setTab("EXECUTION")}
-            className={`pb-3 text-sm font-semibold transition-colors border-b-2 ${tab === "EXECUTION" ? "text-[var(--color-primary)] border-[var(--color-primary)]" : "text-[var(--color-text-secondary)] border-transparent hover:text-[var(--color-text)]"}`}
+            className={`pb-2 text-xs font-semibold uppercase tracking-wider transition-colors border-b-2 cursor-pointer flex items-center gap-1.5 ${
+              tab === "EXECUTION"
+                ? "text-[var(--color-primary)] border-[var(--color-primary)]"
+                : "text-[var(--color-text-secondary)] border-transparent hover:text-[var(--color-text)]"
+            }`}
           >
-            Execution Results
+            <span>Runtime Execution & Scenarios</span>
+            {endpoint.executedCount > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full bg-[var(--color-primary)]/15 text-[var(--color-primary)] font-mono text-[10px]">
+                {endpoint.executedCount}
+              </span>
+            )}
           </button>
         </div>
       </div>
 
       {/* Content Area */}
-      <div className="flex-1 min-h-0 overflow-y-auto bg-[var(--color-bg)] custom-scrollbar">
-        
-        {tab === "OVERVIEW" && (
-          <div className="p-6 max-w-4xl">
-            <div className="grid grid-cols-2 gap-6 mb-8">
-              <div>
-                <h3 className="text-sm font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-4">AST Discovered Context</h3>
-                {endpoint.source ? (
-                  <div className="space-y-4">
-                <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-4 transition-all">
-                  <div className="flex items-center justify-between mb-3 text-[var(--color-text-secondary)] text-xs font-semibold">
-                    <div className="flex items-center gap-2">
-                      <FileCode size={14} className="text-[var(--color-primary)]" />
-                      <span>SOURCE CONTROLLER & ROUTE</span>
-                    </div>
-                    {fileOptions.length > 0 && (
-                      <span className="text-[11px] text-[var(--color-primary)] font-normal flex items-center gap-1">
-                        <Eye size={12} /> Bấm để xem code
+      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-6">
+        {tab === "EVIDENCE" && (
+          <div className="max-w-5xl mx-auto space-y-6">
+            {/* 1. Request Processing Chain */}
+            <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-5">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[var(--color-text-secondary)]">
+                  <Layers size={15} className="text-[var(--color-primary)]" />
+                  <span>Request Processing Chain (Static Traceability)</span>
+                </div>
+                <span className="text-[11px] text-[var(--color-text-muted)] font-mono">
+                  Route Registration → Middleware → Handler → Service → Data Model
+                </span>
+              </div>
+
+              {/* Chain Steps Horizontal Visualization */}
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+                {/* 1. Route Registration */}
+                <div className="p-3 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
+                        1. Route Mount
                       </span>
-                    )}
-                  </div>
-
-                  <div className="space-y-2.5">
-                    {/* Controller Handler Card */}
-                    {endpoint.source.controllerFile ? (
-                      <div
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => {
-                          setCodeModalInitialIdx(0);
-                          setCodeModalOpen(true);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            setCodeModalInitialIdx(0);
-                            setCodeModalOpen(true);
-                          }
-                        }}
-                        className="group flex items-center justify-between p-3 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] hover:border-[var(--color-primary)]/50 hover:bg-[var(--color-primary)]/5 cursor-pointer transition-all shadow-xs"
-                        title="Bấm để xem code hàm Controller"
-                      >
-                        <div className="min-w-0 flex-1 pr-3">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="text-[10px] uppercase font-bold tracking-wider text-[var(--color-primary)] px-1.5 py-0.5 rounded bg-[var(--color-primary)]/10">
-                              Controller Logic
-                            </span>
-                            {endpoint.source.controllerLine && (
-                              <span className="text-[11px] font-mono font-semibold text-blue-400">
-                                Line {endpoint.source.controllerLine}
-                              </span>
-                            )}
-                          </div>
-                          <div className="font-mono text-xs text-[var(--color-text)] truncate group-hover:text-[var(--color-primary)] transition-colors">
-                            {endpoint.source.controllerFile}
-                            {endpoint.source.controllerMethod && (
-                              <span className="text-[var(--color-primary)] ml-1 font-bold">
-                                #{endpoint.source.controllerMethod}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          {endpoint.source.controllerLine && (
-                            <span className="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                              L{endpoint.source.controllerLine}
-                            </span>
-                          )}
-                          <Eye size={15} className="text-[var(--color-text-muted)] group-hover:text-[var(--color-primary)] transition-colors" />
-                        </div>
-                      </div>
-                    ) : null}
-
-                    {/* Route Declaration Card */}
-                    {endpoint.source.sourceFile ? (
-                      <div
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => {
-                          // If controller file exists, route is index 1; otherwise index 0
-                          setCodeModalInitialIdx(endpoint.source.controllerFile ? 1 : 0);
-                          setCodeModalOpen(true);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            setCodeModalInitialIdx(endpoint.source.controllerFile ? 1 : 0);
-                            setCodeModalOpen(true);
-                          }
-                        }}
-                        className="group flex items-center justify-between p-3 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] hover:border-[var(--color-primary)]/50 hover:bg-[var(--color-primary)]/5 cursor-pointer transition-all shadow-xs"
-                        title="Bấm để xem code định nghĩa Route"
-                      >
-                        <div className="min-w-0 flex-1 pr-3">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="text-[10px] uppercase font-bold tracking-wider text-emerald-400 px-1.5 py-0.5 rounded bg-emerald-500/10">
-                              Route Definition
-                            </span>
-                            {(endpoint.source.sourceLine || endpoint.provenance?.sourceLine) && (
-                              <span className="text-[11px] font-mono font-semibold text-emerald-400">
-                                Line {endpoint.source.sourceLine || endpoint.provenance?.sourceLine}
-                              </span>
-                            )}
-                          </div>
-                          <div className="font-mono text-xs text-[var(--color-text)] truncate group-hover:text-[var(--color-primary)] transition-colors">
-                            {endpoint.source.sourceFile}
-                            {!endpoint.source.controllerFile && endpoint.source.controllerMethod && (
-                              <span className="text-[var(--color-primary)] ml-1 font-bold">
-                                #{endpoint.source.controllerMethod}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          {(endpoint.source.sourceLine || endpoint.provenance?.sourceLine) && (
-                            <span className="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                              L{endpoint.source.sourceLine || endpoint.provenance?.sourceLine}
-                            </span>
-                          )}
-                          <Eye size={15} className="text-[var(--color-text-muted)] group-hover:text-[var(--color-primary)] transition-colors" />
-                        </div>
-                      </div>
-                    ) : null}
-
-                    {!endpoint.source.controllerFile && !endpoint.source.sourceFile && (
-                      <div className="text-xs text-[var(--color-text-muted)] italic">
-                        Không tìm thấy tệp mã nguồn tương ứng.
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-4">
-                  <div className="flex items-center gap-2 mb-2 text-[var(--color-text-secondary)] text-xs font-semibold">
-                    <Shield size={14} /> MIDDLEWARE
-                  </div>
-                  {endpoint.source.middleware && endpoint.source.middleware.length > 0 ? (
-                    <div className="flex flex-wrap gap-2">
-                      {endpoint.source.middleware.map((m, i) => (
-                        <span key={i} className="px-2 py-1 bg-[var(--color-bg)] border border-[var(--color-border)] rounded text-xs font-mono">{m}</span>
-                      ))}
+                      <CheckCircle2 size={13} className="text-emerald-400" />
                     </div>
-                  ) : (
-                    <div className="text-xs text-[var(--color-text-muted)] italic">No middleware detected</div>
+                    <div className="font-mono text-xs font-semibold text-[var(--color-text)] truncate" title={processingChain?.routeRegistration?.mountPrefix || "/"}>
+                      Prefix: {processingChain?.routeRegistration?.mountPrefix || "/"}
+                    </div>
+                    <div className="text-[11px] font-mono text-[var(--color-text-muted)] truncate mt-1" title={source.sourceFile || "Route file"}>
+                      {source.sourceFile ? source.sourceFile.split("/").pop() : "Direct app file"}
+                    </div>
+                  </div>
+                  {source.sourceLine && (
+                    <div className="mt-2 pt-2 border-t border-[var(--color-border)] text-[10px] font-mono text-emerald-400 font-semibold flex items-center justify-between">
+                      <span>Line {source.sourceLineStart || source.sourceLine}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCodeModalInitialIdx(fileOptions.findIndex((f) => f.filePath === source.sourceFile) >= 0 ? fileOptions.findIndex((f) => f.filePath === source.sourceFile) : 0);
+                          setCodeModalOpen(true);
+                        }}
+                        className="text-[10px] text-[var(--color-primary)] hover:underline flex items-center gap-0.5 cursor-pointer"
+                      >
+                        <Eye size={11} /> View
+                      </button>
+                    </div>
                   )}
                 </div>
 
-                <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-4">
-                  <div className="flex items-center gap-2 mb-2 text-[var(--color-text-secondary)] text-xs font-semibold">
-                    <Database size={14} /> DATABASE MODELS
-                  </div>
-                  {endpoint.source.databaseModels && endpoint.source.databaseModels.length > 0 ? (
-                    <div className="flex flex-wrap gap-2">
-                      {endpoint.source.databaseModels.map((m, i) => (
-                        <span key={i} className="px-2 py-1 bg-[#10b981]/10 text-[#10b981] border border-[#10b981]/20 rounded text-xs font-mono">{m}</span>
-                      ))}
+                {/* 2. Middleware */}
+                <div className="p-3 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded">
+                        2. Middleware
+                      </span>
+                      <Shield size={13} className="text-purple-400" />
                     </div>
-                  ) : (
-                    <div className="text-xs text-[var(--color-text-muted)] italic">No database interactions detected</div>
+                    {source.middlewares && source.middlewares.length > 0 ? (
+                      <div className="space-y-1">
+                        {source.middlewares.map((m, i) => (
+                          <div key={i} className="flex items-center justify-between text-[11px] font-mono">
+                            <span className="truncate text-[var(--color-text)]" title={m.name}>
+                              {m.name}
+                            </span>
+                            <span className="text-[9px] px-1 py-0.2 rounded bg-purple-500/10 text-purple-300 font-semibold uppercase">
+                              {m.type === "AUTHENTICATION" ? "AUTH" : m.type === "VALIDATION" ? "VAL" : "MID"}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-[var(--color-text-muted)] italic">
+                        No custom middleware detected (Direct Route)
+                      </div>
+                    )}
+                  </div>
+                  <div className="mt-2 pt-2 border-t border-[var(--color-border)] text-[10px] font-mono text-[var(--color-text-muted)]">
+                    {source.middlewares?.length ? `${source.middlewares.length} middleware(s)` : "None"}
+                  </div>
+                </div>
+
+                {/* 3. Controller Handler */}
+                <div className="p-3 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded">
+                        3. Controller
+                      </span>
+                      <FileCode size={13} className="text-blue-400" />
+                    </div>
+                    <div className="font-mono text-xs font-semibold text-[var(--color-text)] truncate" title={source.controllerMethod || "Inline Route Handler"}>
+                      {source.controllerMethod || "Inline Handler"}
+                    </div>
+                    <div className="text-[11px] font-mono text-[var(--color-text-muted)] truncate mt-1" title={source.controllerFile || "Source file"}>
+                      {source.controllerFile ? source.controllerFile.split("/").pop() : "Inline in route"}
+                    </div>
+                  </div>
+                  {source.controllerLine && (
+                    <div className="mt-2 pt-2 border-t border-[var(--color-border)] text-[10px] font-mono text-blue-400 font-semibold flex items-center justify-between">
+                      <span>Line {source.controllerLineStart || source.controllerLine}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCodeModalInitialIdx(fileOptions.findIndex((f) => f.filePath === source.controllerFile) >= 0 ? fileOptions.findIndex((f) => f.filePath === source.controllerFile) : 0);
+                          setCodeModalOpen(true);
+                        }}
+                        className="text-[10px] text-[var(--color-primary)] hover:underline flex items-center gap-0.5 cursor-pointer"
+                      >
+                        <Eye size={11} /> View
+                      </button>
+                    </div>
                   )}
                 </div>
+
+                {/* 4. Service Layer */}
+                <div className="p-3 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">
+                        4. Service Layer
+                      </span>
+                      <Server size={13} className="text-amber-400" />
+                    </div>
+                    {processingChain?.service?.status === "FOUND_IN_SOURCE" ? (
+                      <div>
+                        <div className="font-mono text-xs font-semibold text-[var(--color-text)] truncate" title={processingChain.service.name}>
+                          {processingChain.service.name}
+                        </div>
+                        <div className="text-[11px] font-mono text-[var(--color-text-muted)] truncate mt-1">
+                          {processingChain.service.file?.split("/").pop()}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-[var(--color-text-muted)] italic leading-tight" title="Controller directly accesses models/logic">
+                        Direct Controller execution (No separate service layer)
+                      </div>
+                    )}
+                  </div>
+                  <div className="mt-2 pt-2 border-t border-[var(--color-border)] text-[10px] font-mono text-[var(--color-text-muted)]">
+                    {processingChain?.service?.status === "FOUND_IN_SOURCE" ? "Verified Service" : "Verified Direct"}
+                  </div>
+                </div>
+
+                {/* 5. Data Access / Model */}
+                <div className="p-3 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-teal-400 bg-teal-500/10 px-1.5 py-0.5 rounded">
+                        5. Data Model
+                      </span>
+                      <Database size={13} className="text-teal-400" />
+                    </div>
+                    {source.databaseModels && source.databaseModels.length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {source.databaseModels.map((m, i) => (
+                          <span key={i} className="px-1.5 py-0.5 bg-teal-500/10 text-teal-300 border border-teal-500/20 rounded font-mono text-[10px]">
+                            {m}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-[var(--color-text-muted)] italic">
+                        No direct ORM models detected
+                      </div>
+                    )}
+                  </div>
+                  <div className="mt-2 pt-2 border-t border-[var(--color-border)] text-[10px] font-mono text-teal-400 font-semibold">
+                    {source.databaseModels?.length ? "ORM: Prisma" : "None"}
+                  </div>
+                </div>
               </div>
-            ) : (
-              <div className="p-4 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm text-[var(--color-text-secondary)] italic">
-                Source mapping context is unavailable for this endpoint.
-              </div>
-            )}
             </div>
-            
-            {endpoint.provenance && (
-              <div>
-                <h3 className="text-sm font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-4">Discovery Provenance</h3>
-                <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-4">
-                  <div className="grid grid-cols-2 gap-y-3 text-sm">
-                    <div className="text-[var(--color-text-secondary)]">Detection Mechanism</div>
-                    <div className="font-mono text-[var(--color-text)]">{endpoint.provenance.detectionType}</div>
-                    
-                    <div className="text-[var(--color-text-secondary)]">Resolution Status</div>
-                    <div className="font-mono text-[var(--color-text)]">{endpoint.provenance.resolutionStatus}</div>
-                    
-                    <div className="text-[var(--color-text-secondary)]">Source Line</div>
-                    <div className="font-mono text-[var(--color-text)]">{endpoint.provenance.sourceLine || 'Unknown'}</div>
+
+            {/* 2. Source Code Snippets with Line Highlighting */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Card A: Route Declaration Snippet */}
+              <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-4 flex flex-col">
+                <div className="flex items-center justify-between mb-2 pb-2 border-b border-[var(--color-border)]">
+                  <div className="flex items-center gap-2">
+                    <FileCode size={14} className="text-emerald-400" />
+                    <span className="text-xs font-bold uppercase tracking-wider text-[var(--color-text)]">
+                      Route Declaration
+                    </span>
                   </div>
+                  {source.sourceLine && (
+                    <span className="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/25">
+                      Line {source.sourceLineStart || source.sourceLine}{source.sourceLineEnd && source.sourceLineEnd !== source.sourceLineStart ? `-${source.sourceLineEnd}` : ""}
+                    </span>
+                  )}
+                </div>
+
+                <div className="font-mono text-xs text-[var(--color-text-muted)] mb-3 truncate" title={source.sourceFile || "Route file"}>
+                  {source.sourceFile || "Route declaration file not located"}
+                </div>
+
+                {source.routeSnippet ? (
+                  <div className="relative group/code flex-1 min-h-[90px] mb-3">
+                    <pre className="p-3 rounded bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-xs text-emerald-300 overflow-x-auto whitespace-pre-wrap leading-relaxed custom-scrollbar">
+                      <code>{source.routeSnippet}</code>
+                    </pre>
+                    <button
+                      type="button"
+                      onClick={() => handleCopy(source.routeSnippet, "route")}
+                      className="absolute top-2 right-2 p-1.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] opacity-0 group-hover/code:opacity-100 transition-opacity cursor-pointer"
+                      title="Copy route snippet"
+                    >
+                      {copiedSnippet === "route" ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="p-3 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] italic mb-3">
+                    Route declaration source code snippet not available in cached AST.
+                  </div>
+                )}
+
+                <div className="mt-auto pt-2 flex items-center justify-between">
+                  <span className="text-[11px] text-[var(--color-text-muted)]">Verified AST Node</span>
+                  {source.sourceFile && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCodeModalInitialIdx(fileOptions.findIndex((f) => f.filePath === source.sourceFile) >= 0 ? fileOptions.findIndex((f) => f.filePath === source.sourceFile) : 0);
+                        setCodeModalOpen(true);
+                      }}
+                      className="flex items-center gap-1 text-xs text-[var(--color-primary)] font-semibold hover:underline cursor-pointer"
+                    >
+                      <Eye size={13} />
+                      <span>Open in Full Viewer</span>
+                    </button>
+                  )}
                 </div>
               </div>
-            )}
+
+              {/* Card B: Controller Handler Snippet */}
+              <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-4 flex flex-col">
+                <div className="flex items-center justify-between mb-2 pb-2 border-b border-[var(--color-border)]">
+                  <div className="flex items-center gap-2">
+                    <Code size={14} className="text-blue-400" />
+                    <span className="text-xs font-bold uppercase tracking-wider text-[var(--color-text)]">
+                      Controller Handler
+                    </span>
+                  </div>
+                  {source.controllerLine && (
+                    <span className="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-blue-500/10 text-blue-400 border border-blue-500/25">
+                      Line {source.controllerLineStart || source.controllerLine}{source.controllerLineEnd && source.controllerLineEnd !== source.controllerLineStart ? `-${source.controllerLineEnd}` : ""}
+                    </span>
+                  )}
+                </div>
+
+                <div className="font-mono text-xs text-[var(--color-text-muted)] mb-3 truncate" title={source.controllerFile || "Controller file"}>
+                  {source.controllerFile || "Controller file not referenced"}
+                  {source.controllerMethod && (
+                    <span className="text-[var(--color-primary)] ml-1 font-bold">#{source.controllerMethod}</span>
+                  )}
+                </div>
+
+                {source.controllerSnippet ? (
+                  <div className="relative group/code flex-1 min-h-[90px] mb-3">
+                    <pre className="p-3 rounded bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-xs text-blue-300 overflow-x-auto whitespace-pre-wrap max-h-[160px] leading-relaxed custom-scrollbar">
+                      <code>{source.controllerSnippet}</code>
+                    </pre>
+                    <button
+                      type="button"
+                      onClick={() => handleCopy(source.controllerSnippet, "ctrl")}
+                      className="absolute top-2 right-2 p-1.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] opacity-0 group-hover/code:opacity-100 transition-opacity cursor-pointer"
+                      title="Copy controller snippet"
+                    >
+                      {copiedSnippet === "ctrl" ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="p-3 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] italic mb-3">
+                    Controller implementation snippet is not extracted or route uses inline function.
+                  </div>
+                )}
+
+                <div className="mt-auto pt-2 flex items-center justify-between">
+                  <span className="text-[11px] text-[var(--color-text-muted)]">
+                    {source.controllerMethod ? `Function: ${source.controllerMethod}` : "Inline callback"}
+                  </span>
+                  {source.controllerFile && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCodeModalInitialIdx(fileOptions.findIndex((f) => f.filePath === source.controllerFile) >= 0 ? fileOptions.findIndex((f) => f.filePath === source.controllerFile) : 0);
+                        setCodeModalOpen(true);
+                      }}
+                      className="flex items-center gap-1 text-xs text-[var(--color-primary)] font-semibold hover:underline cursor-pointer"
+                    >
+                      <Eye size={13} />
+                      <span>Open in Full Viewer</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* 3. Behavioral Evidence Grid */}
+            <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-5">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[var(--color-text-secondary)]">
+                  <Activity size={15} className="text-[var(--color-primary)]" />
+                  <span>Behavioral Evidence (Static AST Inferences)</span>
+                </div>
+                <span className="text-[11px] text-[var(--color-text-muted)]">
+                  Inferred from AST static analysis of routes and handlers
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                {/* Path Parameters */}
+                <div className="p-3 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)]">
+                  <div className="text-[11px] font-bold text-[var(--color-text-secondary)] uppercase tracking-wider mb-2">
+                    Path Parameters
+                  </div>
+                  {source.params && source.params.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {source.params.map((p, i) => (
+                        <span key={i} className="px-2 py-0.5 rounded font-mono text-xs bg-[var(--color-surface)] text-purple-400 border border-purple-500/20">
+                          :{p}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-[var(--color-text-muted)] italic">No path parameters</div>
+                  )}
+                </div>
+
+                {/* Query Parameters */}
+                <div className="p-3 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)]">
+                  <div className="text-[11px] font-bold text-[var(--color-text-secondary)] uppercase tracking-wider mb-2">
+                    Query Parameters
+                  </div>
+                  {source.queryParams && source.queryParams.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {source.queryParams.map((q, i) => (
+                        <span key={i} className="px-2 py-0.5 rounded font-mono text-xs bg-[var(--color-surface)] text-blue-400 border border-blue-500/20">
+                          ?{q}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-[var(--color-text-muted)] italic">No query parameters inferred</div>
+                  )}
+                </div>
+
+                {/* Request Body Fields */}
+                <div className="p-3 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)]">
+                  <div className="text-[11px] font-bold text-[var(--color-text-secondary)] uppercase tracking-wider mb-2">
+                    Request Body Fields
+                  </div>
+                  {source.requestBodySchema && source.requestBodySchema.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {source.requestBodySchema.map((field, i) => (
+                        <span key={i} className="px-2 py-0.5 rounded font-mono text-xs bg-[var(--color-surface)] text-emerald-400 border border-emerald-500/20">
+                          {field}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-[var(--color-text-muted)] italic">No request body accessed</div>
+                  )}
+                </div>
+
+                {/* Response Status Codes */}
+                <div className="p-3 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)]">
+                  <div className="text-[11px] font-bold text-[var(--color-text-secondary)] uppercase tracking-wider mb-2">
+                    Response Status Codes
+                  </div>
+                  {source.responseStatusCodes && source.responseStatusCodes.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {source.responseStatusCodes.map((code, i) => (
+                        <span
+                          key={i}
+                          className={`px-2 py-0.5 rounded font-mono text-xs border font-semibold ${
+                            code >= 200 && code < 300
+                              ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                              : code >= 400 && code < 500
+                              ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                              : "bg-red-500/10 text-red-400 border-red-500/20"
+                          }`}
+                        >
+                          {HTTP_STATUS_LABELS[code] || `${code} HTTP`}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-[var(--color-text-muted)] italic">200 OK (Implicit)</div>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         )}
 
         {tab === "EXECUTION" && (
-          <div className="p-6 max-w-4xl">
-             <h3 className="text-sm font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-4">Endpoint Performance</h3>
-             {endpoint.executedCount > 0 ? (
-               <div className="mb-6 space-y-4">
-                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                   <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-3">
-                     <div className="text-xs text-[var(--color-text-secondary)] mb-1">Total Executed</div>
-                     <div className="text-lg font-bold text-[#e6edf3]">{endpoint.executedCount}</div>
-                   </div>
-                   <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-3">
-                     <div className="text-xs text-[var(--color-success)] mb-1">Passed</div>
-                     <div className="text-lg font-bold text-[var(--color-success)]">{endpoint.passedCount || 0}</div>
-                   </div>
-                   <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-3">
-                     <div className="text-xs text-[var(--color-danger)] mb-1">Failed</div>
-                     <div className="text-lg font-bold text-[#f87171]">{endpoint.failedCount || 0}</div>
-                   </div>
-                   <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-3">
-                     <div className="text-xs text-[#38bdf8] mb-1">Avg Latency</div>
-                     <div className="text-lg font-bold text-[#e6edf3] flex items-center gap-1.5">
-                       <Clock size={15} className="text-[#38bdf8]" />
-                       <span>{endpoint.avgDurationMs || 0}ms</span>
-                       {endpoint.latencyStatus === "SLOW" && (
-                         <span className="text-[10px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded font-bold">Chậm</span>
-                       )}
-                     </div>
-                   </div>
-                 </div>
-
-                 {endpoint.scenarios && endpoint.scenarios.length > 0 && (
-                   <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-4">
-                     <div className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-3">
-                       Scenarios ({endpoint.scenarios.length})
-                     </div>
-                     <div className="space-y-2">
-                        {endpoint.scenarios.map((sc, i) => {
-                          const sType = sc.scenarioType || (sc.title?.toLowerCase().includes("happy") ? "HAPPY_PATH" : "NEGATIVE");
-                          const sTypeColor = sType === "HAPPY_PATH" ? "#38bdf8" : sType === "VALIDATION" ? "#c084fc" : sType === "EDGE_CASE" ? "#818cf8" : "#fb923c";
-                          const sTypeBg = sType === "HAPPY_PATH" ? "rgba(56,189,248,0.12)" : sType === "VALIDATION" ? "rgba(192,132,252,0.12)" : sType === "EDGE_CASE" ? "rgba(129,140,248,0.12)" : "rgba(251,146,60,0.12)";
-
-                          return (
-                            <div key={i} className="flex flex-col gap-2 p-2.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-xs">
-                              <div className="flex items-center justify-between flex-wrap gap-2">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  {sc.status === "passed" ? (
-                                    <CheckCircle size={13} className="text-[var(--color-success)] shrink-0" />
-                                  ) : sc.status === "failed" ? (
-                                    <XCircle size={13} className="text-[#f87171] shrink-0" />
-                                  ) : (
-                                    <span className="text-yellow-400 font-bold shrink-0">○</span>
-                                  )}
-                                  <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 3, fontWeight: 700, background: sTypeBg, color: sTypeColor, border: `1px solid ${sTypeColor}33` }}>
-                                    {sType.replace(/_/g, " ")}
-                                  </span>
-                                  <code className="text-[10px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded font-mono" title="Request URL Template">
-                                    {sc.urlTemplate || sc.resolvedUrl || endpoint.path}
-                                  </code>
-                                  <span className="font-medium text-[#e6edf3]">{sc.title}</span>
-                                </div>
-                                <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
-                                  {sc.durationMs > 0 && (
-                                    <span className="text-[var(--color-text-secondary)] font-mono text-[11px] mr-1">⏱️ {sc.durationMs}ms</span>
-                                  )}
-                                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                    sc.executionVerdict === 'PASS' ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20' :
-                                    sc.executionVerdict === 'FAIL' ? 'bg-red-500/15 text-red-400 border border-red-500/20' :
-                                    'bg-yellow-500/15 text-yellow-400 border border-yellow-500/20'
-                                  }`}>
-                                    RUNNER: {sc.executionVerdict || (sc.status === 'passed' ? 'PASS' : 'FAIL')}
-                                  </span>
-                                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                    sc.testValidity === 'VALID' ? 'bg-sky-500/15 text-sky-400 border border-sky-500/20' :
-                                    'bg-purple-500/15 text-purple-400 border border-purple-500/20'
-                                  }`} title="Tính hợp lệ của kịch bản và test oracle">
-                                    VALIDITY: {sc.testValidity || 'VALID'}
-                                  </span>
-                                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                    sc.implementationConsistency === 'CONSISTENT' ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20' :
-                                    sc.implementationConsistency === 'INCONSISTENT' ? 'bg-red-500/15 text-red-400 border border-red-500/20' :
-                                    'bg-slate-500/15 text-slate-400 border border-slate-500/20'
-                                  }`} title="Độ khớp với mã nguồn backend hiện tại">
-                                    CODE: {sc.implementationConsistency || 'CONSISTENT'}
-                                  </span>
-                                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                    sc.contractVerification === 'VERIFIED' ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20' :
-                                    'bg-amber-500/15 text-amber-400 border border-amber-500/20'
-                                  }`} title={sc.contractEvidence || sc.classificationReason || ""}>
-                                    CONTRACT: {sc.contractVerification || 'UNVERIFIED'}
-                                  </span>
-                                </div>
-                              </div>
-                              <div className="flex flex-col gap-1.5 text-[11px] text-[var(--color-text-secondary)] pl-5 pt-1.5 border-t border-[var(--color-border)]/50">
-                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 py-1.5 bg-[var(--color-surface)]/60 px-2.5 rounded border border-[var(--color-border)]/30">
-                                  <div>
-                                    <span className="text-slate-400">Expected HTTP Status: </span>
-                                    <strong className="text-emerald-400 font-mono">
-                                      {sc.expectedStatus != null ? `HTTP ${sc.expectedStatus}` : 'NOT_CAPTURED'}
-                                    </strong>
-                                  </div>
-                                  <div>
-                                    <span className="text-slate-400">Actual HTTP Status: </span>
-                                    <strong className={sc.actualStatus != null ? (sc.actualStatus < 400 ? 'text-emerald-400 font-mono' : 'text-amber-400 font-mono') : 'text-slate-500 font-mono'}>
-                                      {sc.actualStatus != null ? `HTTP ${sc.actualStatus}` : 'NOT_CAPTURED'}
-                                    </strong>
-                                  </div>
-                                  <div>
-                                    <span className="text-slate-400">Status Assertion: </span>
-                                    <strong className={sc.statusAssertion === 'PASS' ? 'text-emerald-400 font-mono' : sc.statusAssertion === 'FAIL' ? 'text-red-400 font-mono' : 'text-slate-500 font-mono'}>
-                                      {sc.statusAssertion || 'NOT_CAPTURED'}
-                                    </strong>
-                                  </div>
-                                  <div>
-                                    <span className="text-slate-400">Runner Verdict: </span>
-                                    <strong className={sc.executionVerdict === 'PASS' ? 'text-emerald-400 font-mono' : sc.executionVerdict === 'FAIL' ? 'text-red-400 font-mono' : 'text-yellow-400 font-mono'}>
-                                      {sc.executionVerdict || 'NOT_CAPTURED'}
-                                    </strong>
-                                  </div>
-                                </div>
-
-                                <div className="flex items-center justify-between flex-wrap gap-2 text-[10px] text-[var(--color-text-muted)]">
-                                  <div>
-                                    <span className="font-semibold text-slate-400">Request URL Template: </span>
-                                    <code className="text-emerald-400/90 font-mono">{sc.urlTemplate || sc.requestUrlTemplate || endpoint.path || 'NOT_CAPTURED'}</code>
-                                    <span className="mx-1 text-slate-600">|</span>
-                                    <span className="font-semibold text-slate-400">Resolved URL: </span>
-                                    <code className={sc.resolvedUrl ? "text-cyan-400 font-mono" : "text-slate-500 font-mono"}>
-                                      {sc.resolvedUrl ? sc.resolvedUrl : 'NOT_CAPTURED'}
-                                    </code>
-                                    <span className="mx-1 text-slate-600">|</span>
-                                    <span className="font-semibold text-slate-400">Resolution Source: </span>
-                                    <span className="font-mono text-amber-300/80">{sc.resolutionSource || (sc.resolvedUrl ? 'RUNTIME_RESOLVED_ROUTE' : 'NOT_CAPTURED')}</span>
-                                  </div>
-                                  <div>
-                                    <span className="font-semibold text-slate-400">Evidence Source: </span>
-                                    <span className="font-mono text-cyan-300 font-semibold">{sc.evidenceSource || (sc.actualStatus != null ? 'TEST_SERVER_HTTP_RESPONSE' : 'NOT_CAPTURED')}</span>
-                                  </div>
-                                </div>
-
-                                {sc.setupRequests && sc.setupRequests.length > 0 && (
-                                  <div className="flex flex-col gap-1 text-[10px] bg-sky-950/20 border border-sky-800/30 rounded p-1.5">
-                                    <span className="font-bold text-sky-400 flex items-center gap-1">
-                                      🔧 Setup Requests ({sc.setupRequests.length}):
-                                    </span>
-                                    {sc.setupRequests.map((sReq, sIdx) => (
-                                      <div key={sIdx} className="font-mono text-[10px] text-slate-300 flex items-center gap-2 pl-2">
-                                        <span className="px-1 py-0.2 bg-sky-500/10 text-sky-300 rounded font-bold">{sReq.requestMethod || sReq.method}</span>
-                                        <span className="text-cyan-300">{sReq.resolvedUrl || sReq.requestUrl || sReq.url}</span>
-                                        <span className="text-emerald-400">→ HTTP {sReq.actualStatusFromRuntime ?? sReq.status ?? 'NOT_CAPTURED'}</span>
-                                        <span className="text-amber-300/70 text-[9px]">[{sReq.fixtureSource || 'fixture seeding'}]</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-
-                                {sc.teardownRequests && sc.teardownRequests.length > 0 && (
-                                  <div className="flex flex-col gap-1 text-[10px] bg-slate-900/40 border border-slate-700/30 rounded p-1.5">
-                                    <span className="font-bold text-slate-400 flex items-center gap-1">
-                                      🧹 Teardown Requests ({sc.teardownRequests.length}):
-                                    </span>
-                                    {sc.teardownRequests.map((tReq, tIdx) => (
-                                      <div key={tIdx} className="font-mono text-[10px] text-slate-400 flex items-center gap-2 pl-2">
-                                        <span className="px-1 py-0.2 bg-slate-700/30 text-slate-300 rounded font-bold">{tReq.requestMethod || tReq.method}</span>
-                                        <span className="text-slate-300">{tReq.resolvedUrl || tReq.requestUrl || tReq.url}</span>
-                                        <span className="text-emerald-400">→ HTTP {tReq.actualStatusFromRuntime ?? tReq.status ?? 'NOT_CAPTURED'}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-
-                                <div className="text-[10px] text-[var(--color-text-muted)]">
-                                  <span className="font-semibold text-slate-400">Evidence / Reason: </span>
-                                  {sc.contractEvidence || sc.classificationReason || 'NOT_CAPTURED'}
-                                </div>
-                                {sc.requestPayload && Object.keys(sc.requestPayload).length > 0 && (
-                                  <div className="text-[10px] font-mono text-slate-400 bg-black/20 p-1 rounded max-w-full overflow-x-auto">
-                                    Payload: {JSON.stringify(sc.requestPayload)}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                     </div>
-                   </div>
-                 )}
-               </div>
-             ) : (
-               <div className="p-4 mb-6 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm text-[var(--color-text-secondary)]">
-                 <div style={{ color: "#e6edf3", fontWeight: 600, marginBottom: 4 }}>Endpoint Chưa Được Test Đợt Này</div>
-                 <p className="mb-4">
-                   Endpoint này chưa có kịch bản nào được thực thi trong đợt chạy gần nhất. Hãy chạy lại kiểm thử để cập nhật số liệu.
-                 </p>
-                 <button 
-                   onClick={() => {
-                     const params = new URLSearchParams(window.location.search);
-                     params.set("subtab", "history");
-                     window.history.pushState(null, '', `${window.location.pathname}?${params.toString()}`);
-                     window.dispatchEvent(new PopStateEvent('popstate'));
-                   }}
-                   className="flex items-center gap-2 px-3 py-1.5 rounded bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/25 text-xs font-semibold hover:bg-[var(--color-primary)]/20 transition-colors"
-                 >
-                   <Activity size={14} /> View Global Execution History
-                 </button>
-               </div>
-             )}
-
-             <h3 className="text-sm font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-4">Controller Coverage (Mapped)</h3>
-             {endpoint.mappedCodeCoverage ? (
-                <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-4">
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                     <div>
-                       <div className="text-xs text-[var(--color-text-secondary)] mb-1">Statements</div>
-                       <div className={`text-xl font-bold ${endpoint.mappedCodeCoverage.statement > 80 ? 'text-[var(--color-success)]' : 'text-[var(--color-warning)]'}`}>{endpoint.mappedCodeCoverage.statement}%</div>
-                     </div>
-                     <div>
-                       <div className="text-xs text-[var(--color-text-secondary)] mb-1">Branches</div>
-                       <div className={`text-xl font-bold ${endpoint.mappedCodeCoverage.branch > 80 ? 'text-[var(--color-success)]' : 'text-[var(--color-warning)]'}`}>{endpoint.mappedCodeCoverage.branch}%</div>
-                     </div>
-                     <div>
-                       <div className="text-xs text-[var(--color-text-secondary)] mb-1">Functions</div>
-                       <div className={`text-xl font-bold ${endpoint.mappedCodeCoverage.function > 80 ? 'text-[var(--color-success)]' : 'text-[var(--color-warning)]'}`}>{endpoint.mappedCodeCoverage.function}%</div>
-                     </div>
-                     <div>
-                       <div className="text-xs text-[var(--color-text-secondary)] mb-1">Lines</div>
-                       <div className={`text-xl font-bold ${endpoint.mappedCodeCoverage.line > 80 ? 'text-[var(--color-success)]' : 'text-[var(--color-warning)]'}`}>{endpoint.mappedCodeCoverage.line}%</div>
-                     </div>
-                  </div>
+          <div className="max-w-5xl mx-auto space-y-6">
+            {/* Executive Runtime Metrics */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-4">
+                <div className="text-xs text-[var(--color-text-secondary)] font-semibold uppercase tracking-wider mb-1">
+                  Total Executed
                 </div>
-             ) : (
-                <div className="p-4 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm text-[var(--color-text-secondary)] italic">
-                  No Istanbul/Jest coverage was mapped to the source file for this endpoint in the latest run.
+                <div className="text-2xl font-bold font-mono text-[var(--color-text)]">
+                  {endpoint.executedCount || 0}
                 </div>
-             )}
+              </div>
+
+              <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-4">
+                <div className="text-xs text-emerald-400 font-semibold uppercase tracking-wider mb-1">
+                  Passed Tests
+                </div>
+                <div className="text-2xl font-bold font-mono text-emerald-400">
+                  {endpoint.passedCount || 0}
+                </div>
+              </div>
+
+              <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-4">
+                <div className="text-xs text-red-400 font-semibold uppercase tracking-wider mb-1">
+                  Failed Tests
+                </div>
+                <div className="text-2xl font-bold font-mono text-red-400">
+                  {endpoint.failedCount || 0}
+                </div>
+              </div>
+
+              <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-4">
+                <div className="text-xs text-blue-400 font-semibold uppercase tracking-wider mb-1">
+                  Avg Latency
+                </div>
+                <div className="text-2xl font-bold font-mono text-blue-400 flex items-center gap-1.5">
+                  <Clock size={18} />
+                  <span>{endpoint.avgDurationMs || 0}ms</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Runtime Disclaimer Banner */}
+            <div className="px-4 py-3 rounded-md bg-blue-500/10 border border-blue-500/25 flex items-center justify-between text-xs text-blue-300">
+              <div className="flex items-center gap-2">
+                <Activity size={15} className="shrink-0 text-blue-400" />
+                <span>
+                  <strong>Runtime Observed Evidence:</strong> Results captured directly from in-process Supertest execution against the isolated application test server. Distinct from static source code inferences.
+                </span>
+              </div>
+            </div>
+
+            {/* Mapped Integration Scenarios */}
+            <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-5">
+              <div className="flex items-center justify-between mb-4">
+                <div className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-secondary)]">
+                  Associated Integration Scenarios ({endpoint.scenarios?.length || 0})
+                </div>
+                <span className="text-[11px] text-[var(--color-text-muted)] font-mono">
+                  Framework: Supertest (Jest Test Environment)
+                </span>
+              </div>
+
+              {endpoint.scenarios && endpoint.scenarios.length > 0 ? (
+                <div className="space-y-2.5">
+                  {endpoint.scenarios.map((sc, i) => {
+                    const sType = sc.scenarioType || (sc.title?.toLowerCase().includes("happy") ? "HAPPY_PATH" : "NEGATIVE");
+                    const sTypeColor =
+                      sType === "HAPPY_PATH" ? "#38bdf8" : sType === "VALIDATION" ? "#c084fc" : sType === "EDGE_CASE" ? "#818cf8" : "#fb923c";
+                    const sTypeBg =
+                      sType === "HAPPY_PATH"
+                        ? "rgba(56,189,248,0.12)"
+                        : sType === "VALIDATION"
+                        ? "rgba(192,132,252,0.12)"
+                        : sType === "EDGE_CASE"
+                        ? "rgba(129,140,248,0.12)"
+                        : "rgba(251,146,60,0.12)";
+
+                    return (
+                      <div key={i} className="p-3 rounded bg-[var(--color-bg)] border border-[var(--color-border)] flex flex-col gap-2 text-xs">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {sc.status === "passed" ? (
+                              <CheckCircle2 size={15} className="text-emerald-400 shrink-0" />
+                            ) : sc.status === "failed" ? (
+                              <XCircle size={15} className="text-red-400 shrink-0" />
+                            ) : (
+                              <span className="text-yellow-400 font-bold shrink-0">○</span>
+                            )}
+                            <span
+                              style={{
+                                fontSize: 9,
+                                padding: "2px 6px",
+                                borderRadius: 4,
+                                fontWeight: 700,
+                                background: sTypeBg,
+                                color: sTypeColor,
+                                border: `1px solid ${sTypeColor}33`,
+                              }}
+                            >
+                              {sType.replace(/_/g, " ")}
+                            </span>
+                            <span className="font-medium text-[var(--color-text)]">{sc.title}</span>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0 font-mono text-[11px]">
+                            {sc.actualStatusFromRuntime && (
+                              <span className="px-1.5 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)]">
+                                Status: <strong>{sc.actualStatusFromRuntime}</strong>
+                              </span>
+                            )}
+                            <span className="text-[var(--color-text-muted)] flex items-center gap-1">
+                              <Clock size={12} />
+                              {sc.duration || sc.durationMs || 0}ms
+                            </span>
+                          </div>
+                        </div>
+
+                        {sc.failureMessages && (Array.isArray(sc.failureMessages) ? sc.failureMessages.length > 0 : Boolean(sc.failureMessages)) && (
+                          <pre className="p-2.5 rounded bg-red-950/20 border border-red-500/20 font-mono text-[11px] text-red-300 overflow-x-auto whitespace-pre-wrap mt-1">
+                            {Array.isArray(sc.failureMessages) ? sc.failureMessages.join("\n") : String(sc.failureMessages)}
+                          </pre>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="p-6 text-center text-xs text-[var(--color-text-muted)] italic">
+                  No integration test scenarios have been generated or mapped for this endpoint yet.
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
 
-      <SourceCodeViewerModal
-        isOpen={codeModalOpen}
-        onClose={() => setCodeModalOpen(false)}
-        projectId={projectId}
-        fileOptions={fileOptions}
-        initialIndex={codeModalInitialIdx}
-        onOpenFile={onOpenFile}
-      />
+      {/* Code Viewer Modal */}
+      {codeModalOpen && (
+        <SourceCodeViewerModal
+          isOpen={codeModalOpen}
+          onClose={() => setCodeModalOpen(false)}
+          projectId={projectId}
+          snapshotId={snapshotId}
+          fileOptions={fileOptions}
+          initialIndex={codeModalInitialIdx}
+          onOpenFile={onOpenFile}
+        />
+      )}
     </div>
   );
 }
