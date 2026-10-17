@@ -8,9 +8,10 @@ const prismaMock = {
     projectSnapshot: { findUnique: jest.fn(), findMany: jest.fn() },
     project: { findUnique: jest.fn() },
     job: { findMany: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn() },
-    testRun: { findMany: jest.fn(), findUnique: jest.fn() },
+    testRun: { findMany: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn() },
     aiTest: { findMany: jest.fn() },
-    projectStructureAnalysis: { findUnique: jest.fn() }
+    projectStructureAnalysis: { findUnique: jest.fn() },
+    coverageSummary: { findUnique: jest.fn() }
 };
 
 jest.unstable_mockModule("../config/prisma.js", () => ({ default: prismaMock }));
@@ -30,6 +31,7 @@ const {
     detectTestAnomalies,
     compareEndpointCoverageDetailed,
     generateComparisonConclusions,
+    generateActionableFindings,
     getBeforeAfterComparisonService
 } = await import("../services/comparison.service.js");
 
@@ -510,5 +512,359 @@ describe("COVAI Phase 4 — Before/After Comparison & Quality Analysis Regressio
         expect(comparison.conclusions.hasImprovements).toBe(true);
         expect(comparison.conclusions.warnings.length).toBeGreaterThan(0);
         expect(comparison.conclusions.warnings[0]).toContain("different snapshot source revisions");
+    });
+
+    // 15. Same snapshot comparisons identify identical revisions and enter SAME_SNAPSHOT_RUN_DIFF
+    it("Requirement 15: Same-snapshot comparisons identify identical revisions and NO_SOURCE_CODE_CHANGES", async () => {
+        fs.writeFileSync(path.join(tempDirA, "index.js"), "console.log('covai');", "utf8");
+
+        prismaMock.project.findUnique.mockResolvedValue({ id: "proj-1", ownerId: "user-1" });
+        prismaMock.projectSnapshot.findUnique.mockResolvedValue({
+            id: "snap-same",
+            projectId: "proj-1",
+            rootDir: tempDirA,
+            commitSha: "sha-same"
+        });
+        prismaMock.job.findFirst.mockResolvedValue(null);
+        prismaMock.aiTest.findMany.mockResolvedValue([]);
+        prismaMock.projectStructureAnalysis.findUnique.mockResolvedValue(null);
+        prismaMock.testRun.findMany.mockResolvedValue([]);
+
+        const comparison = await getBeforeAfterComparisonService({
+            projectId: "proj-1",
+            baselineSnapshotId: "snap-same",
+            currentSnapshotId: "snap-same",
+            userId: "user-1"
+        });
+
+        expect(comparison.isSameSnapshot).toBe(true);
+        expect(comparison.comparisonMode).toBe("SAME_SNAPSHOT_RUN_DIFF");
+        expect(comparison.sourceDiff.status).toBe("NO_SOURCE_CODE_CHANGES");
+        expect(comparison.sourceDiff.sourceChanged).toBe(false);
+        expect(comparison.conclusions.sourceStatus).toBe("NO_SOURCE_CODE_CHANGES");
+    });
+
+    // 16. Same snapshot with only 1 test run returns comparisonAvailable: false with nextAction, never compares with itself
+    it("Requirement 16: Same snapshot with 1 test run does NOT compare run with itself and states nextAction", async () => {
+        fs.writeFileSync(path.join(tempDirA, "server.js"), "const app = null;", "utf8");
+
+        prismaMock.project.findUnique.mockResolvedValue({ id: "proj-1", ownerId: "user-1" });
+        prismaMock.projectSnapshot.findUnique.mockResolvedValue({
+            id: "snap-single-run",
+            projectId: "proj-1",
+            rootDir: tempDirA,
+            commitSha: "sha-1"
+        });
+        prismaMock.job.findFirst.mockResolvedValue(null);
+        prismaMock.aiTest.findMany.mockResolvedValue([]);
+        prismaMock.projectStructureAnalysis.findUnique.mockResolvedValue(null);
+
+        // Only 1 test run exists
+        prismaMock.testRun.findMany.mockResolvedValue([
+            { id: "run-single", snapshotId: "snap-single-run", totalTests: 5, passedTests: 5, failedTests: 0, scenarios: [] }
+        ]);
+
+        const comparison = await getBeforeAfterComparisonService({
+            projectId: "proj-1",
+            baselineSnapshotId: "snap-single-run",
+            currentSnapshotId: "snap-single-run",
+            userId: "user-1"
+        });
+
+        expect(comparison.runtimeDiff.comparisonAvailable).toBe(false);
+        expect(comparison.runtimeDiff.reason).toContain("Only 1 test run exists");
+        expect(comparison.runtimeDiff.nextAction).toBeDefined();
+        expect(comparison.testRunComparison.comparisonAvailable).toBe(false);
+        expect(comparison.conclusions.runtimeStatus).toBe("INSUFFICIENT_EVIDENCE");
+    });
+
+    // 17. Same snapshot with 2 distinct test runs tracks scenario transitions correctly
+    it("Requirement 17: Same snapshot with 2 distinct test runs compares execution transitions accurately", async () => {
+        fs.writeFileSync(path.join(tempDirA, "main.js"), "module.exports = {};", "utf8");
+
+        prismaMock.project.findUnique.mockResolvedValue({ id: "proj-1", ownerId: "user-1" });
+        prismaMock.projectSnapshot.findUnique.mockResolvedValue({
+            id: "snap-two-runs",
+            projectId: "proj-1",
+            rootDir: tempDirA,
+            commitSha: "sha-2"
+        });
+        prismaMock.job.findFirst.mockResolvedValue(null);
+        prismaMock.aiTest.findMany.mockResolvedValue([]);
+        prismaMock.projectStructureAnalysis.findUnique.mockResolvedValue(null);
+
+        // Two runs on the same snapshot: newer (run-2) and older (run-1)
+        prismaMock.testRun.findMany.mockResolvedValue([
+            {
+                id: "run-2",
+                snapshotId: "snap-two-runs",
+                totalTests: 2,
+                passedTests: 2,
+                failedTests: 0,
+                durationMs: 250,
+                coverageLinesPct: 80.0,
+                scenarios: [
+                    { testName: "Auth Login", status: "PASSED", durationMs: 120 },
+                    { testName: "Auth Register", status: "PASSED", durationMs: 130 }
+                ]
+            },
+            {
+                id: "run-1",
+                snapshotId: "snap-two-runs",
+                totalTests: 2,
+                passedTests: 1,
+                failedTests: 1,
+                durationMs: 300,
+                coverageLinesPct: 60.0,
+                scenarios: [
+                    { testName: "Auth Login", status: "PASSED", durationMs: 140 },
+                    { testName: "Auth Register", status: "FAILED", durationMs: 160 }
+                ]
+            }
+        ]);
+
+        const comparison = await getBeforeAfterComparisonService({
+            projectId: "proj-1",
+            baselineSnapshotId: "snap-two-runs",
+            currentSnapshotId: "snap-two-runs",
+            userId: "user-1"
+        });
+
+        expect(comparison.runtimeDiff.comparisonAvailable).toBe(true);
+        expect(comparison.runtimeDiff.summary.fixesCount).toBe(1); // Auth Register: FAILED -> PASSED
+        expect(comparison.runtimeDiff.summary.regressionsCount).toBe(0);
+        expect(comparison.runtimeDiff.summary.stablePassCount).toBe(1); // Auth Login: PASSED -> PASSED
+        expect(comparison.conclusions.runtimeStatus).toBe("RUNTIME_IMPROVEMENT_OBSERVED");
+        expect(comparison.testRunComparison.coverageArtifactDiff.comparable).toBe(true);
+        expect(comparison.testRunComparison.coverageArtifactDiff.deltaLinesPct).toBe(20.0);
+    });
+
+    // 18. Never report TEST_COVERAGE_UNCHANGED for 0/0 endpoints or missing artifacts
+    it("Requirement 18: Never reports TEST_COVERAGE_UNCHANGED for 0/0 endpoints; emits INSUFFICIENT_EVIDENCE", () => {
+        const coverageDiff = compareEndpointCoverageDetailed([], [], [], []);
+
+        expect(coverageDiff.comparisonAvailable).toBe(false);
+        expect(coverageDiff.reason).toContain("Neither baseline nor current snapshot has discovered API endpoints");
+        expect(coverageDiff.nextAction).toBeDefined();
+        expect(coverageDiff.metrics.endpointCoverage.deltaPct).toBeNull();
+
+        const conclusions = generateComparisonConclusions({
+            coverageDiff
+        });
+
+        expect(conclusions.testCoverageStatus).toBe("INSUFFICIENT_EVIDENCE");
+        expect(conclusions.testCoverageStatus).not.toBe("TEST_COVERAGE_UNCHANGED");
+        expect(conclusions.reasons.testCoverage).toBeDefined();
+        expect(conclusions.nextActions.testCoverage).toBeDefined();
+    });
+
+    // 19. Incompatible coverage evidence marks comparable: false and deltaLinesPct: null
+    it("Requirement 19: Incompatible coverage evidence marks comparable: false and deltaLinesPct: null", () => {
+        const runA = { id: "run-a", coverageLinesPct: 75.0, scenarios: [] };
+        const runB = { id: "run-b", coverageLinesPct: null, coveragePct: null, scenarios: [] };
+
+        const runDiff = compareTestRuns(runA, runB);
+
+        expect(runDiff.coverageComparable).toBe(false);
+        expect(runDiff.coverageDelta).toBeNull();
+        expect(runDiff.coverageArtifacts.comparable).toBe(false);
+        expect(runDiff.coverageArtifacts.deltaPct).toBeNull();
+        expect(runDiff.coverageArtifacts.reason).toContain("lack line coverage artifacts");
+    });
+
+    // 20. Segregates projectVersionComparison and testRunComparison cleanly
+    it("Requirement 20: Segregates projectVersionComparison and testRunComparison cleanly", async () => {
+        fs.mkdirSync(path.join(tempDirA, "src"), { recursive: true });
+        fs.mkdirSync(path.join(tempDirA, "tests"), { recursive: true });
+        fs.mkdirSync(path.join(tempDirB, "src"), { recursive: true });
+        fs.mkdirSync(path.join(tempDirB, "tests"), { recursive: true });
+
+        fs.writeFileSync(path.join(tempDirA, "src", "api.js"), "const v = 1;\n", "utf8");
+        fs.writeFileSync(path.join(tempDirA, "tests", "api.test.js"), "test('v1', () => {});\n", "utf8");
+
+        fs.writeFileSync(path.join(tempDirB, "src", "api.js"), "const v = 2;\n", "utf8");
+        fs.writeFileSync(path.join(tempDirB, "tests", "api.test.js"), "test('v2', () => {});\n", "utf8");
+
+        prismaMock.project.findUnique.mockResolvedValue({ id: "proj-1", ownerId: "user-1" });
+        prismaMock.projectSnapshot.findUnique
+            .mockResolvedValueOnce({ id: "snap-a", projectId: "proj-1", rootDir: tempDirA, commitSha: "sha-a" })
+            .mockResolvedValueOnce({ id: "snap-b", projectId: "proj-1", rootDir: tempDirB, commitSha: "sha-b" });
+        prismaMock.job.findFirst.mockResolvedValue(null);
+        prismaMock.aiTest.findMany.mockResolvedValue([]);
+        prismaMock.projectStructureAnalysis.findUnique.mockResolvedValue(null);
+        prismaMock.testRun.findFirst.mockResolvedValue(null);
+
+        const comparison = await getBeforeAfterComparisonService({
+            projectId: "proj-1",
+            baselineSnapshotId: "snap-a",
+            currentSnapshotId: "snap-b",
+            userId: "user-1"
+        });
+
+        expect(comparison.projectVersionComparison).toBeDefined();
+        expect(comparison.projectVersionComparison.sourceFilesDiff.files.length).toBe(1);
+        expect(comparison.projectVersionComparison.sourceFilesDiff.files[0].filePath).toBe("src/api.js");
+        expect(comparison.projectVersionComparison.testFilesDiff.files.length).toBe(1);
+        expect(comparison.projectVersionComparison.testFilesDiff.files[0].filePath).toBe("tests/api.test.js");
+
+        expect(comparison.testRunComparison).toBeDefined();
+        expect(comparison.testRunComparison.comparisonAvailable).toBe(false); // No test runs exist
+        expect(comparison.testRunComparison.status).toBe("INSUFFICIENT_EVIDENCE");
+    });
+
+    // 21. Never classify an unexecuted scenario as removed when run was cancelled, partial, or failed
+    it("Requirement 21: Never classifies an unexecuted scenario as removed when current run is partial or failed", () => {
+        const runA = {
+            id: "run-complete",
+            status: "SUCCESS",
+            scenarios: [
+                { testFile: "tests/auth.test.js", suiteName: "Auth", title: "login success", status: "PASSED" },
+                { testFile: "tests/user.test.js", suiteName: "User", title: "get profile", status: "PASSED" }
+            ]
+        };
+
+        // runB is partial or failed: only ran auth.test.js, did not run user.test.js
+        const runB = {
+            id: "run-partial",
+            status: "FAILED",
+            executionMode: "partial",
+            scenarios: [
+                { testFile: "tests/auth.test.js", suiteName: "Auth", title: "login success", status: "PASSED" }
+            ]
+        };
+
+        const diff = compareTestRuns(runA, runB);
+        expect(diff.summary.removedTestsCount).toBe(0);
+        expect(diff.summary.unexecutedTestsCount).toBe(1);
+
+        const unexecutedItem = diff.matrix.unexecutedTests.find(t => t.testName.includes("get profile"));
+        expect(unexecutedItem).toBeDefined();
+        expect(unexecutedItem.unexecutedReason).toContain("partial");
+    });
+
+    // 22. Never label runtime as stable merely because evidence is missing
+    it("Requirement 22: Never labels runtime as stable when all compared scenarios were skipped or unexecuted", () => {
+        const runA = {
+            id: "run-a",
+            status: "SUCCESS",
+            scenarios: [
+                { testName: "Scenario 1", status: "SKIPPED" },
+                { testName: "Scenario 2", status: "PENDING" }
+            ]
+        };
+        const runB = {
+            id: "run-b",
+            status: "SUCCESS",
+            scenarios: [
+                { testName: "Scenario 1", status: "SKIPPED" },
+                { testName: "Scenario 2", status: "UNEXECUTED" }
+            ]
+        };
+
+        const diff = compareTestRuns(runA, runB);
+        expect(diff.summary.totalExecuted).toBe(0);
+        expect(diff.summary.unexecutedTestsCount).toBe(2);
+
+        const conclusions = generateComparisonConclusions({ runtimeDiff: diff });
+        expect(conclusions.runtimeStatus).toBe("INSUFFICIENT_EVIDENCE");
+        expect(conclusions.runtimeStatus).not.toBe("RUNTIME_STABLE");
+        expect(conclusions.reasons.runtime).toContain("No scenarios were successfully executed");
+    });
+
+    // 23. Detects identical run IDs and rejects comparison with informative diagnostics
+    it("Requirement 23: Detects identical run IDs and returns comparisonAvailable: false with message", () => {
+        const run = { id: "same-run-id", status: "SUCCESS", scenarios: [] };
+        const diff = compareTestRuns(run, run);
+
+        expect(diff.comparisonAvailable).toBe(false);
+        expect(diff.isSameRun).toBe(true);
+        expect(diff.reason).toContain("identical (same run ID)");
+        expect(diff.nextAction).toContain("Select two distinct test runs");
+    });
+
+    // 24. Actionable findings generation correctly identifies regressions, impact, and deep evidence links
+    it("Requirement 24: Actionable findings engine generates structured, deep-linkable findings", () => {
+        const runtimeDiff = {
+            comparisonAvailable: true,
+            summary: {
+                totalCompared: 2,
+                totalExecuted: 2,
+                regressionsCount: 1,
+                fixesCount: 1,
+                unexecutedTestsCount: 0
+            },
+            matrix: {
+                passToFail: [{ testName: "POST /login", suiteName: "Auth", failureMessages: ["500 Internal Error"] }],
+                failToPass: [{ testName: "GET /users", suiteName: "Users" }],
+                unexecutedTests: []
+            }
+        };
+
+        const sourceDiff = {
+            status: "SOURCE_CHANGED",
+            summary: { newFilesCount: 0, modifiedFilesCount: 1, deletedFilesCount: 0, totalAdditions: 5, totalDeletions: 2 },
+            files: [{ filePath: "src/auth.js", isTestFile: false, status: "MODIFIED" }]
+        };
+
+        const findings = generateActionableFindings({
+            sourceDiff,
+            testDiff: { summary: {} },
+            runtimeDiff,
+            coverageDiff: null,
+            coverageArtifactDiff: null,
+            isSameSnapshot: false
+        });
+
+        expect(findings.length).toBeGreaterThanOrEqual(3);
+
+        const regressionFinding = findings.find(f => f.type === "REGRESSION");
+        expect(regressionFinding).toBeDefined();
+        expect(regressionFinding.severity).toBe("CRITICAL");
+        expect(regressionFinding.evidenceItems.length).toBe(1);
+        expect(regressionFinding.evidenceItems[0].targetTab).toBe("OUTCOMES");
+        expect(regressionFinding.evidenceItems[0].filter).toBe("REGRESSIONS");
+
+        const fixFinding = findings.find(f => f.type === "FIX");
+        expect(fixFinding).toBeDefined();
+        expect(fixFinding.severity).toBe("POSITIVE");
+
+        const sourceFinding = findings.find(f => f.type === "SOURCE_DIFF");
+        expect(sourceFinding).toBeDefined();
+        expect(sourceFinding.targetTab).toBe("CODE");
+    });
+
+    // 25. Normalizes and unpacks test scenarios from metaJson for accurate endpoint coverage
+    it("Requirement 25: Unpacks metaJson requests to map endpoint coverage accurately", () => {
+        const endpoints = [
+            { method: "POST", path: "/api/auth/login" },
+            { method: "GET", path: "/api/users" }
+        ];
+
+        // Tests with metaJson requests
+        const tests = [
+            {
+                id: "ai-test-1",
+                filePath: "auth.integration.test.js",
+                metaJson: JSON.stringify({
+                    framework: "SUPERTEST",
+                    requests: [
+                        { method: "POST", path: "/api/auth/login", testName: "successful login", expectedStatus: 200 },
+                        { method: "POST", path: "/api/auth/login", testName: "invalid credentials", expectedStatus: 401 }
+                    ]
+                })
+            }
+        ];
+
+        const coverageDiff = compareEndpointCoverageDetailed([], endpoints, [], tests);
+
+        expect(coverageDiff.comparisonAvailable).toBe(false); // baseline has no endpoints
+        const currentCoverage = coverageDiff.metrics.endpointCoverage.current;
+        expect(currentCoverage.covered).toBe(1); // /api/auth/login is covered
+        expect(currentCoverage.total).toBe(2);
+
+        const authEp = coverageDiff.endpointComparisons.find(e => e.identity === "POST /api/auth/login");
+        expect(authEp).toBeDefined();
+        expect(authEp.testCountB).toBe(2); // 2 scenarios unpacked from metaJson!
+        expect(authEp.scenariosB.length).toBe(2);
     });
 });

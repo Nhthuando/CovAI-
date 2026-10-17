@@ -486,4 +486,73 @@ describe("COVAI Phase 3 — Version History, Provenance & Old/New Tracking Regre
         expect(history.timeline[0].artifactCount).toBeNull();
         expect(history.diffs.analyze).toBeNull(); // Safely null instead of error or fake data
     });
+
+    // 14. Historical artifact inspection falls back gracefully to DB job records when disk artifact is absent
+    it("Requirement 14: Historical artifact inspection falls back gracefully to DB job records when disk artifact is absent, retaining read-only guarantees and provenance", async () => {
+        prismaMock.projectSnapshot.findUnique.mockResolvedValue({
+            id: "snap-disk-missing",
+            projectId: "proj-1",
+            rootDir: path.join(tempDir, "non_existent_subdir")
+        });
+
+        // Job exists in DB with resultJson but file is NOT on disk
+        const analysisJob = {
+            id: "job-db-only",
+            type: "ANALYSIS",
+            status: "SUCCESS",
+            resultJson: JSON.stringify({
+                endpoints: [
+                    { method: "GET", path: "/api/products", controllerMethod: "listProducts" }
+                ],
+                count: 1
+            }),
+            computeTimeMs: 420,
+            createdAt: new Date("2026-10-15T08:00:00Z"),
+            finishedAt: new Date("2026-10-15T08:00:01Z")
+        };
+
+        prismaMock.job.findUnique.mockResolvedValue(analysisJob);
+
+        const historical = await getHistoricalWorkspaceVersionService("snap-disk-missing", "job-db-only", "ANALYZE");
+
+        expect(historical.targetId).toBe("job-db-only");
+        expect(historical.source).toBe("DATABASE_JOB_RECORD");
+        expect(historical.isReadOnly).toBe(true);
+        expect(historical.data.endpoints).toHaveLength(1);
+        expect(historical.data.endpoints[0].path).toBe("/api/products");
+        expect(historical.jobMetadata.durationMs).toBe(420);
+    });
+
+    // 15. Timeline items accurately expose unified durationMs and artifact evidence counts without synthesizing fake data
+    it("Requirement 15: Timeline items accurately expose unified durationMs and artifact evidence counts", async () => {
+        prismaMock.projectSnapshot.findUnique.mockResolvedValue({
+            id: "snap-timeline-meta",
+            projectId: "proj-1",
+            rootDir: tempDir,
+            commitSha: "sha-12345"
+        });
+
+        prismaMock.job.findMany.mockResolvedValue([
+            {
+                id: "job-with-calc-duration",
+                type: "ANALYSIS",
+                status: "SUCCESS",
+                computeTimeMs: null, // missing computeTimeMs
+                startedAt: new Date("2026-10-15T10:00:00Z"),
+                finishedAt: new Date("2026-10-15T10:00:05Z"), // 5000ms duration
+                resultJson: JSON.stringify({ endpoints: [{ path: "/api/test" }] }),
+                createdAt: new Date("2026-10-15T10:00:00Z")
+            }
+        ]);
+        prismaMock.testRun.findMany.mockResolvedValue([]);
+
+        const history = await getIntegrationVersionHistoryService("snap-timeline-meta");
+        const item = history.timeline[0];
+
+        expect(item.durationMs).toBe(5000); // accurately calculated from finishedAt - startedAt
+        expect(item.artifactCount).toBe(1); // accurately counted from endpoints array
+        expect(item.revision).toBe("sha-12345");
+        expect(item.isLatestSuccess).toBe(true);
+    });
 });
+

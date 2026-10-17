@@ -69,15 +69,28 @@ export const processAiTestsJob = async (jobId) => {
         if (isJobCanceled(jobId, abortController.signal)) return { success: false, canceled: true };
 
         const job = await getJobById(jobId);
-        if (job.status === "CANCELED" || isJobCanceled(jobId, abortController.signal)) {
-            return { success: false, canceled: true };
+        if (!job) return { success: false, error: "Job not found" };
+
+        if (["CANCELED", "SUCCESS", "FAILED"].includes(job.status) || isJobCanceled(jobId, abortController.signal)) {
+            return { success: false, canceled: job.status === "CANCELED" };
         }
 
-        await updateJobStatus({
-            jobId,
-            status: "RUNNING",
-            progress: 5,
-        });
+        // Only transition status to RUNNING if it is currently QUEUED
+        if (job.status === "QUEUED") {
+            try {
+                await updateJobStatus({
+                    jobId,
+                    status: "RUNNING",
+                    progress: 5,
+                });
+            } catch (err) {
+                if (["Only queued jobs can start", "Cannot start a canceled job", "Job not found"].includes(err.message)) {
+                    console.warn(`[AiTestsJob ${jobId}] Job status transition skipped: ${err.message}`);
+                    return { success: false, skipped: true };
+                }
+                throw err;
+            }
+        }
 
         const { snapshotId, projectId } = job;
 
@@ -955,6 +968,10 @@ export const processAiTestsJob = async (jobId) => {
     } catch (error) {
         if (isJobCanceled(jobId, abortController.signal)) {
             return { success: false, canceled: true };
+        }
+        if (["Only queued jobs can start", "Cannot start a canceled job", "Job not found"].includes(error.message)) {
+            console.warn(`[AiTestsJob ${jobId}] Ignored queue state error: ${error.message}`);
+            return { success: false, skipped: true };
         }
         // SCRUM-395: Handle generation errors
         console.error(`[AiTestsJob ${jobId}] Failed:`, error);

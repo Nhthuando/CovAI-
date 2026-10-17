@@ -196,11 +196,7 @@ export default function DiffReviewModal({
                   type="button"
                   disabled={isApplying}
                   onClick={() => onApplyFile?.(activeFile, currentSuggestion)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-all cursor-pointer"
-                  style={{
-                    background: "linear-gradient(135deg, #7c3aed, #9333ea)",
-                    boxShadow: "0 0 14px rgba(124, 58, 237, 0.4)",
-                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--color-primary)] text-[var(--color-primary-foreground)] hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-50"
                 >
                   {isApplying ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
                   <span>Apply this file</span>
@@ -209,12 +205,7 @@ export default function DiffReviewModal({
                 <button
                   type="button"
                   onClick={() => onUndoFile?.(activeFile, currentSuggestion)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer"
-                  style={{
-                    background: "rgba(239, 68, 68, 0.15)",
-                    color: "#f87171",
-                    border: "1px solid rgba(239, 68, 68, 0.35)",
-                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--color-danger)]/15 text-[var(--color-danger)] border border-[var(--color-danger)]/35 hover:bg-[var(--color-danger)]/25 transition-colors cursor-pointer"
                   title="Undo added test cases"
                 >
                   <RotateCcw size={13} />

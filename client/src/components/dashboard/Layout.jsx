@@ -876,7 +876,8 @@ function LayoutInner() {
                     maxWidth: "85vw",
                     overflow: "hidden",
                     zIndex: 35,
-                    boxShadow: "4px 0 24px rgba(0,0,0,0.4)",
+                    borderRight: "1px solid var(--color-border-strong)",
+                    boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.25)",
                   }
                   : {
                     overflow: "hidden",

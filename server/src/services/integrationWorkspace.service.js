@@ -13,8 +13,44 @@ export const extractValidatedTestRequests = (t) => {
     try {
         const meta = typeof t.metaJson === 'string' ? JSON.parse(t.metaJson) : t.metaJson;
         if (meta?.requests && Array.isArray(meta.requests)) {
+            const metaMap = new Map(meta.requests.map(r => [r.testName, r]));
             const validNames = new Set(meta.requests.map(r => r.testName));
-            return reqs.filter(r => validNames.has(r.testName));
+            const filteredReqs = reqs.filter(r => validNames.has(r.testName)).map(r => {
+                const mr = metaMap.get(r.testName);
+                return {
+                    ...r,
+                    scenarioId: mr?.scenarioId || r.scenarioId,
+                    userEdited: Boolean(mr?.userEdited),
+                    origin: mr?.origin || (mr?.userEdited ? "USER_MODIFIED" : "AI_GENERATED"),
+                    createdAt: mr?.createdAt || null,
+                    lastModifiedAt: mr?.lastModifiedAt || null,
+                    originalTestName: mr?.originalTestName || null
+                };
+            });
+            const presentNames = new Set(filteredReqs.map(r => r.testName));
+
+            // Include any scenario in meta.requests (e.g. user-added or custom) that AST didn't capture
+            for (const mr of meta.requests) {
+                if (mr?.testName && !presentNames.has(mr.testName)) {
+                    filteredReqs.push({
+                        testName: mr.testName,
+                        suiteName: mr.suiteName || "Integration Test Suite",
+                        method: (mr.method || "GET").toUpperCase(),
+                        path: mr.path || "/",
+                        testFile: t.filePath,
+                        scenarioId: mr.scenarioId,
+                        enabled: mr.enabled !== false,
+                        userEdited: Boolean(mr.userEdited),
+                        origin: mr.origin || (mr.userEdited ? "USER_ADDED" : "AI_GENERATED"),
+                        createdAt: mr.createdAt || null,
+                        lastModifiedAt: mr.lastModifiedAt || null,
+                        originalTestName: mr.originalTestName || null,
+                        expectedStatus: mr.expectedStatus || 200,
+                    });
+                    presentNames.add(mr.testName);
+                }
+            }
+            return filteredReqs;
         }
     } catch {}
     return reqs;
@@ -220,9 +256,10 @@ export function evaluateEndpointMetrics({
     verifiedPassedCount = 0,
     verifiedAssertionFailedCount = 0,
     consistentPassedCount = 0,
-    hasRelevantTestFile = false
+    hasRelevantTestFile = false,
+    hasObservedServerResponse = false
 } = {}) {
-    const hasGenuineApiCall = executedCount > 0 && (passedCount > 0 || (failedCount > testScriptErrorCount));
+    const hasGenuineApiCall = executedCount > 0 && (hasObservedServerResponse || (passedCount > 0 && testScriptErrorCount < executedCount) || (failedCount > testScriptErrorCount));
     const isContractVerified = executedCount > 0 && (verifiedPassedCount > 0 || verifiedAssertionFailedCount > 0);
     const isVerifiedTested = isContractVerified;
     const isImplementationConsistent = executedCount > 0 && (consistentPassedCount > 0);
@@ -276,7 +313,7 @@ export const classifyScenarioFailure = (scenario, parsedReq) => {
 
         const pathLower = (parsedReq?.path || "").toLowerCase();
         const isClientInputError = 
-            title.includes("invalid") || title.includes("non-existent") || title.includes("not-found") || title.includes("not found") ||
+            title.includes("invalid") || title.includes("malformed") || title.includes("non-existent") || title.includes("not-found") || title.includes("not found") ||
             title.includes("missing") || title.includes("fails to create") || title.includes("database fails") ||
             pathLower.includes("invalid") || pathLower.includes("99999") || pathLower.includes("non-existent") || pathLower.includes("not-found");
         const expects500 = title.includes("500") || parsedReq?.expectedStatus === 500;
@@ -529,8 +566,12 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
     // 3. Gather Scenarios (Cached by snapshotId + latestRun)
     const startFb = Date.now();
     let testScenarios = [];
+    const executeFailedBeforeTests = executeJob && executeJob.status === "FAILED" && (!latestRun || latestRun.createdAt < executeJob.createdAt);
     const firebaseCacheKey = `${snapshotId}_${latestRun?.id || 'none'}`;
-    if (firebaseCache.has(firebaseCacheKey)) {
+    if (executeFailedBeforeTests) {
+        // Current execution job failed before tests could execute; do not load stale prior scenarios
+        testScenarios = [];
+    } else if (firebaseCache.has(firebaseCacheKey)) {
         testScenarios = firebaseCache.get(firebaseCacheKey);
     } else if (latestRun?.scenarios?.length > 0) {
         // FAST PATH 1: Directly use scenarios already retrieved from PostgreSQL DB (0ms network)
@@ -638,6 +679,11 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
         }
     }
 
+    // Isolate runtime evidence to the active testRun to prevent mixing historical runs
+    if (latestRun?.id && Array.isArray(runtimeEvidences)) {
+        runtimeEvidences = runtimeEvidences.filter(ev => !ev.testRunId || ev.testRunId === latestRun.id);
+    }
+
     // We filter only SUPERTEST framework tests
     const integrationTests = aiTests.filter(t => {
         if (!t.metaJson) return false;
@@ -658,26 +704,31 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
 
     // Precompute parsed integration tests once for all endpoints
     const parsedTests = integrationTests.map(t => {
-        const currentUpdatedAt = t.updatedAt ? t.updatedAt.getTime() : 0;
+        const currentVersionKey = crypto.createHash('md5').update((t.content || '') + '::' + (t.metaJson || '')).digest('hex');
         let requests;
         const cacheEntry = snapshotParseCache.get(t.id);
         
-        if (cacheEntry && cacheEntry.updatedAt === currentUpdatedAt) {
+        if (cacheEntry && cacheEntry.versionKey === currentVersionKey) {
             requests = cacheEntry.requests;
         } else {
             const tMeta = (typeof t.metaJson === 'string' ? JSON.parse(t.metaJson) : t.metaJson) || {};
             requests = extractValidatedTestRequests(t).map(r => {
-                const metaReq = tMeta.requests ? tMeta.requests.find(mr => mr.testName === r.testName) : null;
+                const metaReq = tMeta.requests ? tMeta.requests.find(mr => (mr.scenarioId && (mr.scenarioId === r.scenarioId || mr.scenarioId === r.id)) || mr.testName === r.testName) : null;
                 const fallbackId = crypto.createHash('md5').update(r.testName).digest('hex').substring(0, 8);
                 const scenarioId = metaReq?.scenarioId || fallbackId;
                 return {
                     ...r,
                     testId: t.id,
                     scenarioId,
-                    id: `${t.id}::${scenarioId}`
+                    id: `${t.id}::${scenarioId}`,
+                    userEdited: metaReq ? Boolean(metaReq.userEdited) : Boolean(r.userEdited),
+                    origin: metaReq?.origin || r.origin || (metaReq?.userEdited ? "USER_MODIFIED" : "AI_GENERATED"),
+                    createdAt: metaReq?.createdAt || r.createdAt || null,
+                    lastModifiedAt: metaReq?.lastModifiedAt || r.lastModifiedAt || null,
+                    originalTestName: metaReq?.originalTestName || r.originalTestName || null
                 };
             });
-            snapshotParseCache.set(t.id, { updatedAt: currentUpdatedAt, requests });
+            snapshotParseCache.set(t.id, { versionKey: currentVersionKey, requests });
         }
 
         let meta = null;
@@ -1070,6 +1121,7 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
         const consistentPassedCount = cleanScenarios.filter(s => s.implementationConsistency === 'CONSISTENT').length;
         const invalidOrUnverifiedCount = cleanScenarios.filter(s => s.classification === 'INVALID_TEST' || s.classification === 'CONTRACT_UNVERIFIED').length;
         const hasRelevantTestFile = parsedTests.some(pt => pt.requests.some(r => isMatch(r, ep)));
+        const hasObservedServerResponse = cleanScenarios.some(s => s.evidenceSource === 'TEST_SERVER_HTTP_RESPONSE' || (s.actualStatus !== null && s.actualStatus !== undefined) || (s.actualStatusFromRuntime !== null && s.actualStatusFromRuntime !== undefined));
         const metrics = evaluateEndpointMetrics({
             executedCount,
             passedCount,
@@ -1078,7 +1130,8 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             verifiedPassedCount,
             verifiedAssertionFailedCount,
             consistentPassedCount,
-            hasRelevantTestFile
+            hasRelevantTestFile,
+            hasObservedServerResponse
         });
         const hasGenuineApiCall = metrics.hasGenuineApiCall;
         const isVerifiedTested = metrics.isVerifiedTested;
@@ -1278,6 +1331,10 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             else if (cls === 'INFRASTRUCTURE_FAILED') qualityClassification.infrastructureFailures++;
             else qualityClassification.assertionFailures++;
         }
+
+        if (isScenarioContractVerified(sc) || sc.contractVerification === 'VERIFIED') {
+            qualityClassification.contractVerified++;
+        }
     });
 
     // 2. Count unexecuted generated scenarios
@@ -1406,6 +1463,28 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
                 function: cf.funcsPct,
                 line: cf.linesPct
             })),
+            metricDefinitions: {
+                runnerPassRate: {
+                    meaning: "Percentage of executed test scenarios that passed without assertion errors or uncaught runtime exceptions.",
+                    formula: "passed / (passed + failed) × 100",
+                    denominator: "executed scenarios"
+                },
+                validExecuted: {
+                    meaning: "Scenarios testing genuine, contract-consistent API behavior (excluding unverified HTTP 500 catch-alls and test script errors).",
+                    formula: "passed + assertionFailures",
+                    denominator: "total scenarios"
+                },
+                contractUnverified: {
+                    meaning: "Test scenarios that asserted HTTP 500 for client-side errors without an explicit OpenAPI or Swagger contract requiring a 500.",
+                    formula: "scenarios with catch-all 500 without contract",
+                    denominator: "total scenarios"
+                },
+                endpointCoverage: {
+                    meaning: "Percentage of distinct discovered API endpoints supported by genuine execution evidence.",
+                    formula: "testedApis / discoveredApis × 100",
+                    denominator: "discovered API endpoints"
+                }
+            },
             provenance: {
                 apiCoverage: {
                     source: "Endpoint Analysis + Test Scenario Mapping",
@@ -1475,14 +1554,18 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
                 status: meta.status || "DRAFT",
                 isValid: meta.isValid !== false,
                 requests: cachedRequests.map(r => {
-                    const metaReq = meta.requests ? meta.requests.find(mr => mr.testName === r.testName) : null;
+                    const metaReq = meta.requests ? meta.requests.find(mr => (mr.scenarioId && (mr.scenarioId === r.scenarioId || mr.scenarioId === r.id)) || mr.testName === r.testName) : null;
                     const fallbackId = crypto.createHash('md5').update(r.testName).digest('hex').substring(0, 8);
                     return { 
                         ...r, 
-                        scenarioId: metaReq?.scenarioId || fallbackId,
+                        scenarioId: metaReq?.scenarioId || r.scenarioId || fallbackId,
                         category: categorizeScenario(r.testName),
-                        enabled: metaReq ? metaReq.enabled : true,
-                        userEdited: metaReq ? metaReq.userEdited : false
+                        enabled: metaReq ? metaReq.enabled !== false : true,
+                        userEdited: metaReq ? Boolean(metaReq.userEdited) : false,
+                        origin: metaReq?.origin || (metaReq?.userEdited ? "USER_MODIFIED" : "AI_GENERATED"),
+                        createdAt: metaReq?.createdAt || null,
+                        lastModifiedAt: metaReq?.lastModifiedAt || null,
+                        originalTestName: metaReq?.originalTestName || null
                     };
                 })
             };

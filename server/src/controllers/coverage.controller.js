@@ -9,7 +9,7 @@ import { jobQueue, addJobToQueue, addSupertestCoveragePipeline } from "../servic
 import { processCoverageJob } from "../services/coverageRunner.service.js";
 import { detectSupertest } from "../services/supertestDetection.service.js";
 import { detectCoverageFrameworks, selectCoverageFramework } from "../services/coverageFramework.service.js";
-import { buildIntegrationWorkspace, getIntegrationHistoryService } from "../services/integrationWorkspace.service.js";
+import { buildIntegrationWorkspace, getIntegrationHistoryService, invalidateEndpointCache } from "../services/integrationWorkspace.service.js";
 import {
     getIntegrationVersionHistoryService,
     compareVersionsService,
@@ -1998,12 +1998,15 @@ const verifyAiTestOwnership = async (aiTestId, userId, res, expectedSnapshotId =
 
 export const updateScenario = async (req, res) => {
     try {
-        const { aiTestId, scenarioId } = req.params;
+        const { snapshotId, aiTestId, scenarioId } = req.params;
         const { code } = req.body;
 
-        if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res))) return;
+        if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res, snapshotId))) return;
 
         const updatedTest = await updateScenarioService(aiTestId, decodeURIComponent(scenarioId), code);
+        if (snapshotId) {
+            invalidateEndpointCache(snapshotId);
+        }
         return res.status(200).json({ success: true, data: updatedTest });
     } catch (error) {
         console.error('[updateScenario] Error:', error);
@@ -2013,12 +2016,15 @@ export const updateScenario = async (req, res) => {
 
 export const addScenario = async (req, res) => {
     try {
-        const { aiTestId } = req.params;
+        const { snapshotId, aiTestId } = req.params;
         const { code, endpoint } = req.body;
 
-        if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res))) return;
+        if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res, snapshotId))) return;
 
         const updatedTest = await addScenarioService(aiTestId, code, endpoint);
+        if (snapshotId) {
+            invalidateEndpointCache(snapshotId);
+        }
         return res.status(200).json({ success: true, data: updatedTest });
     } catch (error) {
         console.error('[addScenario] Error:', error);
@@ -2028,11 +2034,14 @@ export const addScenario = async (req, res) => {
 
 export const deleteScenario = async (req, res) => {
     try {
-        const { aiTestId, scenarioId } = req.params;
+        const { snapshotId, aiTestId, scenarioId } = req.params;
 
-        if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res))) return;
+        if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res, snapshotId))) return;
 
         const updatedTest = await deleteScenarioService(aiTestId, decodeURIComponent(scenarioId));
+        if (snapshotId) {
+            invalidateEndpointCache(snapshotId);
+        }
         return res.status(200).json({ success: true, data: updatedTest });
     } catch (error) {
         console.error('[deleteScenario] Error:', error);
@@ -2042,20 +2051,21 @@ export const deleteScenario = async (req, res) => {
 
 export const toggleScenario = async (req, res) => {
     try {
-        const { aiTestId, scenarioId } = req.params;
+        const { snapshotId, aiTestId, scenarioId } = req.params;
         const { enable } = req.body;
 
-        if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res))) return;
+        if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res, snapshotId))) return;
 
         const updatedTest = await toggleScenarioService(aiTestId, decodeURIComponent(scenarioId), enable);
+        if (snapshotId) {
+            invalidateEndpointCache(snapshotId);
+        }
         return res.status(200).json({ success: true, data: updatedTest });
     } catch (error) {
         console.error('[toggleScenario] Error:', error);
         return res.status(500).json({ success: false, message: error.message });
     }
 };
-
-
 
 export const regenerateScenario = async (req, res) => {
     try {
@@ -2066,16 +2076,23 @@ export const regenerateScenario = async (req, res) => {
         const snapshot = await prisma.projectSnapshot.findUnique({ where: { id: snapshotId } });
         if (!snapshot) throw new Error("Snapshot not found");
 
+        const decodedScenarioId = decodeURIComponent(scenarioId);
+
         const job = await prisma.job.create({
             data: {
+                userId: req.user.id,
                 projectId: snapshot.projectId,
                 snapshotId,
                 type: 'AI_TESTS',
                 status: 'QUEUED',
-                payloadJson: JSON.stringify({ mode: 'SUPERTEST_REGENERATE', aiTestId, scenarioId: decodeURIComponent(scenarioId) })
+                payloadJson: JSON.stringify({ mode: 'SUPERTEST_REGENERATE', aiTestId, scenarioId: decodedScenarioId })
             }
         });
-        await jobQueue.add('covai-jobs', { type: 'AI_TESTS', jobId: job.id });
+
+        await addJobToQueue('AI_TESTS', job.id, { mode: 'SUPERTEST_REGENERATE', aiTestId, scenarioId: decodedScenarioId });
+        if (snapshotId) {
+            invalidateEndpointCache(snapshotId);
+        }
 
         return res.status(200).json({ success: true, message: "Regeneration job queued", jobId: job.id });
     } catch (error) {
@@ -2287,7 +2304,7 @@ export const getSystemTestSummary = async (req, res) => {
 
         const { snapshotId } = req.params;
         if (!snapshotId || typeof snapshotId !== "string" || snapshotId.trim().length === 0) {
-            return res.status(400).json({ success: false, message: "snapshotId không hợp lệ." });
+            return res.status(400).json({ success: false, message: "Invalid snapshotId." });
         }
 
         const snapshot = await prisma.projectSnapshot.findUnique({
@@ -2301,7 +2318,7 @@ export const getSystemTestSummary = async (req, res) => {
         });
 
         if (!snapshot) {
-            return res.status(404).json({ success: false, message: "Snapshot không tồn tại." });
+            return res.status(404).json({ success: false, message: "Snapshot not found." });
         }
 
         if (snapshot.project.ownerId !== userId) {

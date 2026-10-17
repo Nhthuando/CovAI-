@@ -47,10 +47,8 @@ export default function GlobalProcessIndicator() {
 
     content = {
       type: "suggestion",
-      badgeColor: "#38bdf8",
-      borderColor: "rgba(56, 189, 248, 0.4)",
-      glowColor: "rgba(56, 189, 248, 0.15)",
-      icon: <Sparkles size={16} className="text-sky-400 animate-pulse" />,
+      badgeColor: "var(--color-primary)",
+      icon: <Sparkles size={16} className="text-[var(--color-primary)]" />,
       title: "Generating Inline Unit Tests",
       progressPct: pct,
       stats: `${completed}/${total} files (${pct}%)`,
@@ -61,10 +59,8 @@ export default function GlobalProcessIndicator() {
   } else if (analysis.isRunning) {
     content = {
       type: "analysis",
-      badgeColor: "#a855f7",
-      borderColor: "rgba(168, 85, 247, 0.4)",
-      glowColor: "rgba(168, 85, 247, 0.15)",
-      icon: <Activity size={16} className="text-purple-400 animate-spin" />,
+      badgeColor: "var(--color-primary)",
+      icon: <Activity size={16} className="text-[var(--color-primary)] animate-spin" />,
       title: "Running Coverage Analysis",
       progressPct: analysis.progress || 10,
       stats: `${analysis.progress || 10}%`,
@@ -80,10 +76,8 @@ export default function GlobalProcessIndicator() {
 
     content = {
       type: "bulkApply",
-      badgeColor: "#22c55e",
-      borderColor: "rgba(34, 197, 94, 0.4)",
-      glowColor: "rgba(34, 197, 94, 0.15)",
-      icon: <Zap size={16} className="text-green-400 animate-bounce" />,
+      badgeColor: "var(--color-success)",
+      icon: <Zap size={16} className="text-[var(--color-success)]" />,
       title: `Applying ${bulkApply.totalCount || ""} Test Suggestions`,
       progressPct: progressPct,
       stats: statsText,
@@ -94,10 +88,8 @@ export default function GlobalProcessIndicator() {
   } else if (bulkApply.completedAt && Date.now() - bulkApply.completedAt < 12000) {
     content = {
       type: "completed_bulkApply",
-      badgeColor: "#22c55e",
-      borderColor: "rgba(34, 197, 94, 0.5)",
-      glowColor: "rgba(34, 197, 94, 0.2)",
-      icon: <CheckCircle2 size={16} className="text-green-400" />,
+      badgeColor: "var(--color-success)",
+      icon: <CheckCircle2 size={16} className="text-[var(--color-success)]" />,
       title: "Test Application Complete",
       progressPct: 100,
       stats: "Done",
@@ -112,10 +104,8 @@ export default function GlobalProcessIndicator() {
   } else if (suggestion.completedMessage && suggestion.completedAt && Date.now() - suggestion.completedAt < 12000) {
     content = {
       type: "completed_suggestion",
-      badgeColor: "#22c55e",
-      borderColor: "rgba(34, 197, 94, 0.5)",
-      glowColor: "rgba(34, 197, 94, 0.2)",
-      icon: <CheckCircle2 size={16} className="text-green-400" />,
+      badgeColor: "var(--color-success)",
+      icon: <CheckCircle2 size={16} className="text-[var(--color-success)]" />,
       title: "Test Generation Complete",
       progressPct: 100,
       stats: "Done",
@@ -130,10 +120,8 @@ export default function GlobalProcessIndicator() {
   } else if (analysis.error && analysis.completedAt && Date.now() - analysis.completedAt < 12000) {
     content = {
       type: "error_analysis",
-      badgeColor: "#ef4444",
-      borderColor: "rgba(239, 68, 68, 0.5)",
-      glowColor: "rgba(239, 68, 68, 0.2)",
-      icon: <AlertTriangle size={16} className="text-red-400" />,
+      badgeColor: "var(--color-danger)",
+      icon: <AlertTriangle size={16} className="text-[var(--color-danger)]" />,
       title: "Coverage Analysis Error",
       progressPct: null,
       stats: "Failed",
@@ -148,10 +136,8 @@ export default function GlobalProcessIndicator() {
   } else if (analysis.completedAt && !analysis.error && Date.now() - analysis.completedAt < 8000) {
     content = {
       type: "completed_analysis",
-      badgeColor: "#22c55e",
-      borderColor: "rgba(34, 197, 94, 0.5)",
-      glowColor: "rgba(34, 197, 94, 0.2)",
-      icon: <CheckCircle2 size={16} className="text-green-400" />,
+      badgeColor: "var(--color-success)",
+      icon: <CheckCircle2 size={16} className="text-[var(--color-success)]" />,
       title: "Analysis Succeeded",
       progressPct: 100,
       stats: "100%",
@@ -176,14 +162,12 @@ export default function GlobalProcessIndicator() {
         zIndex: 9999,
         maxWidth: minimized ? 260 : 380,
         width: "calc(100vw - 48px)",
-        background: "rgba(11, 15, 25, 0.95)",
-        backdropFilter: "blur(14px)",
-        WebkitBackdropFilter: "blur(14px)",
-        border: `1px solid ${content.borderColor}`,
-        boxShadow: `0 12px 32px rgba(0, 0, 0, 0.6), 0 0 20px ${content.glowColor}`,
-        borderRadius: 12,
+        background: "var(--color-surface-raised)",
+        border: "1px solid var(--color-border)",
+        boxShadow: "0 8px 24px rgba(0, 0, 0, 0.2)",
+        borderRadius: 8,
         overflow: "hidden",
-        transition: "all 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
+        transition: "all 0.2s ease",
       }}
     >
       {/* Header bar */}
@@ -193,8 +177,8 @@ export default function GlobalProcessIndicator() {
           alignItems: "center",
           justifyContent: "space-between",
           padding: "10px 14px",
-          background: "rgba(255, 255, 255, 0.03)",
-          borderBottom: minimized ? "none" : "1px solid rgba(255, 255, 255, 0.06)",
+          background: "var(--color-surface-secondary)",
+          borderBottom: minimized ? "none" : "1px solid var(--color-border)",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
@@ -203,7 +187,7 @@ export default function GlobalProcessIndicator() {
             style={{
               fontSize: 12,
               fontWeight: 700,
-              color: "#f1f5f9",
+              color: "var(--color-text)",
               whiteSpace: "nowrap",
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -219,10 +203,10 @@ export default function GlobalProcessIndicator() {
               fontSize: 10,
               fontWeight: 700,
               padding: "1px 6px",
-              borderRadius: 10,
-              background: `${content.badgeColor}22`,
+              borderRadius: 4,
+              background: "var(--color-surface)",
               color: content.badgeColor,
-              border: `1px solid ${content.badgeColor}44`,
+              border: "1px solid var(--color-border)",
             }}
           >
             {content.stats}
@@ -233,13 +217,13 @@ export default function GlobalProcessIndicator() {
             style={{
               background: "transparent",
               border: "none",
-              color: "#94a3b8",
+              color: "var(--color-text-secondary)",
               cursor: "pointer",
               padding: 2,
               display: "flex",
               alignItems: "center",
             }}
-            className="hover:text-white"
+            className="hover:text-[var(--color-text)]"
             title={minimized ? "Expand" : "Minimize"}
           >
             {minimized ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -251,13 +235,13 @@ export default function GlobalProcessIndicator() {
               style={{
                 background: "transparent",
                 border: "none",
-                color: "#94a3b8",
+                color: "var(--color-text-secondary)",
                 cursor: "pointer",
                 padding: 2,
                 display: "flex",
                 alignItems: "center",
               }}
-              className="hover:text-white"
+              className="hover:text-[var(--color-text)]"
               title="Close"
             >
               <X size={14} />
@@ -273,7 +257,7 @@ export default function GlobalProcessIndicator() {
           <div
             style={{
               fontSize: 11,
-              color: "#94a3b8",
+              color: "var(--color-text-secondary)",
               lineHeight: 1.4,
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -291,18 +275,19 @@ export default function GlobalProcessIndicator() {
               style={{
                 height: 4,
                 width: "100%",
-                background: "rgba(255, 255, 255, 0.08)",
-                borderRadius: 9999,
+                background: "var(--color-surface-secondary)",
+                borderRadius: 2,
                 overflow: "hidden",
+                border: "1px solid var(--color-border)",
               }}
             >
               <div
                 style={{
                   height: "100%",
                   width: `${content.progressPct}%`,
-                  background: `linear-gradient(90deg, ${content.badgeColor}, #c084fc)`,
-                  borderRadius: 9999,
-                  transition: "width 0.35s ease",
+                  background: content.badgeColor,
+                  borderRadius: 2,
+                  transition: "width 0.3s ease",
                 }}
               />
             </div>
@@ -314,19 +299,19 @@ export default function GlobalProcessIndicator() {
               onClick={content.onAction}
               style={{
                 padding: "5px 12px",
-                background: `linear-gradient(135deg, ${content.badgeColor}22, ${content.badgeColor}33)`,
-                border: `1px solid ${content.badgeColor}66`,
-                borderRadius: 6,
-                color: "#ffffff",
+                background: "var(--color-primary)",
+                border: "1px solid var(--color-primary)",
+                borderRadius: 4,
+                color: "var(--color-primary-foreground)",
                 fontSize: 11,
                 fontWeight: 600,
                 cursor: "pointer",
                 display: "flex",
                 alignItems: "center",
                 gap: 5,
-                transition: "all 0.15s ease",
+                transition: "opacity 0.15s ease",
               }}
-              className="hover:brightness-125"
+              className="hover:opacity-90"
             >
               <span>{content.actionLabel}</span>
               <ArrowRight size={12} />
