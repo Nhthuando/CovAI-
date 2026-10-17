@@ -101,6 +101,32 @@ it("should work renamed", async () => {
             await expect(updateScenarioService('123', 'scenario1', invalidCode)).rejects.toThrow();
             expect(prisma.aiTest.update).not.toHaveBeenCalled(); // Atomicity
         });
+
+        it('should strictly reject invalid Jest matcher (e.g. toBee)', async () => {
+            prisma.aiTest.findUnique.mockResolvedValue(mockAiTest);
+            
+            const typoCode = `it("should fail on typo", async () => {
+                await request(app).get('/test');
+                expect(res.status).toBee(200);
+            });`;
+            
+            await expect(updateScenarioService('123', 'scenario1', typoCode))
+                .rejects.toThrow("Invalid Jest matcher '.toBee()'. Did you mean '.toBe()'?");
+            expect(prisma.aiTest.update).not.toHaveBeenCalled();
+        });
+
+        it('should strictly reject invalid HTTP status code (e.g. 2000)', async () => {
+            prisma.aiTest.findUnique.mockResolvedValue(mockAiTest);
+            
+            const invalidStatusCode = `it("should fail on 2000 status", async () => {
+                await request(app).get('/test');
+                expect(response.status).toBe(2000);
+            });`;
+            
+            await expect(updateScenarioService('123', 'scenario1', invalidStatusCode))
+                .rejects.toThrow("Invalid HTTP status code 2000. Standard HTTP status codes must be between 100 and 599.");
+            expect(prisma.aiTest.update).not.toHaveBeenCalled();
+        });
     });
 
     describe('deleteScenarioService', () => {

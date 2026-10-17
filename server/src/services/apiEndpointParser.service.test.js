@@ -234,4 +234,75 @@ export const deleteUser = async (req, res) => {
         expect(endpoints.find(e => e.method === 'POST' && e.fullPath === '/api/food-items/create')).toBeDefined();
         expect(endpoints.find(e => e.method === 'POST' && e.fullPath === '/api/cart/validate')).toBeDefined();
     });
+
+    it('8. Scopes requestBodySchema, databaseModels, and responseStatusCodes to function scope without cross-contamination', () => {
+        const sourceCode = [
+            {
+                path: 'server/index.js',
+                content: `
+                    const express = require('express');
+                    const app = express();
+                    const cartRoutes = require('./routes/cartRoutes');
+                    app.use('/api/cart', cartRoutes);
+                `
+            },
+            {
+                path: 'server/routes/cartRoutes.js',
+                content: `
+                    const express = require('express');
+                    const router = express.Router();
+                    const { validateCart, checkoutCart } = require('../controllers/cartController');
+                    router.post('/validate', validateCart);
+                    router.post('/checkout', checkoutCart);
+                    module.exports = router;
+                `
+            },
+            {
+                path: 'server/controllers/cartController.js',
+                content: `
+                    const prisma = require('../prisma');
+
+                    exports.validateCart = async (req, res) => {
+                        try {
+                            const items = req.body.items || [];
+                            const food = await prisma.food.findUnique({ where: { id: '1' } });
+                            res.json({ success: true, items });
+                        } catch (err) {
+                            res.status(500).json({ error: err.message });
+                        }
+                    };
+
+                    exports.checkoutCart = async (req, res) => {
+                        try {
+                            const { items, paymentIntentId, totalPaid, currency } = req.body;
+                            const order = await prisma.order.create({ data: {} });
+                            res.status(201).json({ success: true, order });
+                        } catch (err) {
+                            res.status(400).json({ error: err.message });
+                        }
+                    };
+                `
+            }
+        ];
+
+        const endpoints = extractValidEndpoints(sourceCode);
+        const validateEp = endpoints.find(e => e.method === 'POST' && e.fullPath === '/api/cart/validate');
+        const checkoutEp = endpoints.find(e => e.method === 'POST' && e.fullPath === '/api/cart/checkout');
+
+        expect(validateEp).toBeDefined();
+        expect(checkoutEp).toBeDefined();
+
+        // ValidateCart must ONLY have 'items', 'food', and status [200, 500]
+        expect(validateEp.requestBodySchema).toEqual(['items']);
+        expect(validateEp.databaseModels).toEqual(['food']);
+        expect(validateEp.responseStatusCodes).toEqual(expect.arrayContaining([200, 500]));
+        expect(validateEp.responseStatusCodes).not.toContain(400);
+        expect(validateEp.responseStatusCodes).not.toContain(201);
+
+        // CheckoutCart has its own parameters
+        expect(checkoutEp.requestBodySchema).toEqual(expect.arrayContaining(['items', 'paymentIntentId', 'totalPaid', 'currency']));
+        expect(checkoutEp.databaseModels).toEqual(['order']);
+        expect(checkoutEp.responseStatusCodes).toEqual(expect.arrayContaining([201, 400]));
+    });
 });
+

@@ -85,6 +85,7 @@ export const processSingleSupertestTest = (rawTest, { projectId, snapshotId }) =
         testName: block.testName,
         enabled: true,
         userEdited: false,
+        origin: "AI_GENERATED",
         method: block.method,
         path: block.path,
         createdAt: new Date().toISOString()

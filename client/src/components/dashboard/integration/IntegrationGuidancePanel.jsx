@@ -1,30 +1,29 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { AlertTriangle, CheckCircle, Info, XCircle, Activity, ChevronDown, ChevronRight, ArrowRight } from 'lucide-react';
+import { AlertTriangle, CheckCircle, Info, XCircle, Activity, ArrowRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { fetchIntegrationGuidance } from '../../../services/report.service';
 
 const getSeverityIcon = (severity) => {
   switch (severity) {
-    case 'ERROR': return <XCircle className="text-red-400" size={20} />;
-    case 'WARNING': return <AlertTriangle className="text-yellow-400" size={20} />;
-    case 'SUCCESS': return <CheckCircle className="text-green-400" size={20} />;
-    case 'INFO': return <Info className="text-blue-400" size={20} />;
-    default: return <Info className="text-[var(--text-secondary)]" size={20} />;
+    case 'ERROR': return <XCircle className="text-[var(--color-danger)]" size={20} />;
+    case 'WARNING': return <AlertTriangle className="text-[var(--color-warning)]" size={20} />;
+    case 'SUCCESS': return <CheckCircle className="text-[var(--color-success)]" size={20} />;
+    case 'INFO': return <Info className="text-[var(--color-info)]" size={20} />;
+    default: return <Info className="text-[var(--color-text-secondary)]" size={20} />;
   }
 };
 
 const getSeverityColor = (severity) => {
   switch (severity) {
-    case 'ERROR': return 'border-red-400/30 bg-red-400/5';
-    case 'WARNING': return 'border-yellow-400/30 bg-yellow-400/5';
-    case 'SUCCESS': return 'border-green-400/30 bg-green-400/5';
-    case 'INFO': return 'border-blue-400/30 bg-blue-400/5';
-    default: return 'border-[var(--border-main)] bg-[var(--surface-main)]';
+    case 'ERROR': return 'border-[var(--color-danger)]/30 bg-[var(--color-danger)]/5';
+    case 'WARNING': return 'border-[var(--color-warning)]/30 bg-[var(--color-warning)]/5';
+    case 'SUCCESS': return 'border-[var(--color-success)]/30 bg-[var(--color-success)]/5';
+    case 'INFO': return 'border-[var(--color-info)]/30 bg-[var(--color-info)]/5';
+    default: return 'border-[var(--color-border)] bg-[var(--color-surface-secondary)]';
   }
 };
 
 function GuidanceRule({ rule, projectId }) {
-  const [expanded, setExpanded] = useState(false);
   const navigate = useNavigate();
 
   const handleAction = () => {
@@ -49,47 +48,47 @@ function GuidanceRule({ rule, projectId }) {
         </div>
         <div className="flex-grow">
           <div className="flex justify-between items-start">
-            <h3 className="font-semibold text-white text-lg">{rule.finding}</h3>
-            <span className="text-xs px-2 py-1 rounded bg-[var(--surface-hover)] border border-[var(--border-main)] font-mono text-[var(--text-secondary)]">
+            <h3 className="font-semibold text-[var(--color-text)] text-lg">{rule.finding}</h3>
+            <span className="text-xs px-2 py-1 rounded bg-[var(--color-surface-hover)] border border-[var(--color-border)] font-mono text-[var(--color-text-secondary)] font-medium">
               {rule.severity}
             </span>
           </div>
           
-          <p className="text-[var(--text-secondary)] font-medium mt-1 mb-3">{rule.meaning}</p>
+          <p className="text-[var(--color-text-secondary)] font-medium mt-1 mb-3">{rule.meaning}</p>
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            <div className="p-3 bg-[var(--surface-main)] rounded border border-[var(--border-main)]">
-              <p className="text-sm font-semibold text-white mb-1">Evidence</p>
-              <ul className="text-xs text-[var(--text-secondary)] space-y-1">
-                {rule.evidence?.source && <li><strong className="text-[var(--text-muted)]">Source:</strong> {rule.evidence.source}</li>}
-                {rule.evidence?.snapshotId && <li><strong className="text-[var(--text-muted)]">Snapshot:</strong> <span className="font-mono">{rule.evidence.snapshotId.slice(-6)}</span></li>}
-                {rule.evidence?.jobId && <li><strong className="text-[var(--text-muted)]">Job:</strong> <span className="font-mono">{rule.evidence.jobId.slice(-6)}</span></li>}
-                {rule.evidence?.testRunId && <li><strong className="text-[var(--text-muted)]">TestRun:</strong> <span className="font-mono">{rule.evidence.testRunId.slice(-6)}</span></li>}
-                {rule.evidence?.details && <li><strong className="text-[var(--text-muted)]">Details:</strong> {rule.evidence.details}</li>}
+            <div className="p-3 bg-[var(--color-surface-secondary)] rounded border border-[var(--color-border)]">
+              <p className="text-sm font-semibold text-[var(--color-text)] mb-1">Evidence</p>
+              <ul className="text-xs text-[var(--color-text-secondary)] space-y-1">
+                {rule.evidence?.source && <li><strong className="text-[var(--color-text-muted)]">Source:</strong> {rule.evidence.source}</li>}
+                {rule.evidence?.snapshotId && <li><strong className="text-[var(--color-text-muted)]">Snapshot:</strong> <span className="font-mono">{rule.evidence.snapshotId.slice(-6)}</span></li>}
+                {rule.evidence?.jobId && <li><strong className="text-[var(--color-text-muted)]">Job:</strong> <span className="font-mono">{rule.evidence.jobId.slice(-6)}</span></li>}
+                {rule.evidence?.testRunId && <li><strong className="text-[var(--color-text-muted)]">TestRun:</strong> <span className="font-mono">{rule.evidence.testRunId.slice(-6)}</span></li>}
+                {rule.evidence?.details && <li><strong className="text-[var(--color-text-muted)]">Details:</strong> {rule.evidence.details}</li>}
               </ul>
               {rule.calculation && (
-                 <p className="text-xs text-[var(--text-secondary)] mt-2 pt-2 border-t border-[var(--border-main)]">
-                   <strong className="text-[var(--text-muted)]">Formula:</strong> {rule.calculation}
+                 <p className="text-xs text-[var(--color-text-secondary)] mt-2 pt-2 border-t border-[var(--color-border)]">
+                   <strong className="text-[var(--color-text-muted)]">Formula:</strong> {rule.calculation}
                  </p>
               )}
               {rule.scope && (
-                 <p className="text-xs text-[var(--text-secondary)] mt-1">
-                   <strong className="text-[var(--text-muted)]">Scope:</strong> {rule.scope}
+                 <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+                   <strong className="text-[var(--color-text-muted)]">Scope:</strong> {rule.scope}
                  </p>
               )}
             </div>
 
-            <div className="p-3 bg-[var(--surface-main)] rounded border border-[var(--border-main)] flex flex-col justify-between">
+            <div className="p-3 bg-[var(--color-surface-secondary)] rounded border border-[var(--color-border)] flex flex-col justify-between">
               <div>
-                 <p className="text-sm font-semibold text-white mb-1">Impact & Recommended Action</p>
-                 <p className="text-xs text-red-300 mb-2">{rule.impact}</p>
-                 <p className="text-sm text-[var(--text-secondary)] mb-2">{rule.recommendedAction}</p>
+                 <p className="text-sm font-semibold text-[var(--color-text)] mb-1">Impact & Recommended Action</p>
+                 <p className="text-xs text-[var(--color-danger)] font-medium mb-2">{rule.impact}</p>
+                 <p className="text-sm text-[var(--color-text-secondary)] mb-2">{rule.recommendedAction}</p>
               </div>
               
               {rule.actionType && (
                 <button 
                   onClick={handleAction}
-                  className="self-start flex items-center px-4 py-1.5 bg-[var(--accent-primary)] text-white text-xs font-semibold rounded hover:bg-opacity-90 transition-colors"
+                  className="self-start flex items-center px-4 py-1.5 bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold rounded hover:opacity-90 transition-opacity"
                 >
                   {rule.actionType.replace(/_/g, ' ')} <ArrowRight size={14} className="ml-1" />
                 </button>
@@ -98,8 +97,8 @@ function GuidanceRule({ rule, projectId }) {
           </div>
 
           {rule.verification && (
-             <div className="mt-2 text-xs text-[var(--text-secondary)] flex items-start gap-1">
-               <strong className="text-green-400">Verification:</strong> {rule.verification}
+             <div className="mt-2 text-xs text-[var(--color-text-secondary)] flex items-start gap-1">
+               <strong className="text-[var(--color-success)]">Verification:</strong> {rule.verification}
              </div>
           )}
         </div>
@@ -136,12 +135,12 @@ export default function IntegrationGuidancePanel({ projectId }) {
 
   if (loading) {
     return (
-      <div className="bg-[var(--surface-card)] border border-[var(--border-main)] rounded-lg p-6 my-8">
-        <h2 className="text-xl font-bold mb-4 flex items-center border-b border-[var(--border-main)] pb-2 text-white">
-          <Activity className="mr-2 text-[var(--accent-primary)]" size={20} /> Integration Guidance
+      <div className="bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded-lg p-6 my-8">
+        <h2 className="text-xl font-bold mb-4 flex items-center border-b border-[var(--color-border)] pb-2 text-[var(--color-text)]">
+          <Activity className="mr-2 text-[var(--color-primary)]" size={20} /> Integration Guidance
         </h2>
         <div className="flex justify-center py-8">
-          <Activity className="animate-spin text-[var(--accent-primary)]" size={24} />
+          <Activity className="animate-spin text-[var(--color-primary)]" size={24} />
         </div>
       </div>
     );
@@ -149,11 +148,11 @@ export default function IntegrationGuidancePanel({ projectId }) {
 
   if (error) {
     return (
-      <div className="bg-[var(--surface-card)] border border-[var(--border-main)] rounded-lg p-6 my-8">
-        <h2 className="text-xl font-bold mb-4 flex items-center border-b border-[var(--border-main)] pb-2 text-white">
-          <Activity className="mr-2 text-[var(--accent-primary)]" size={20} /> Integration Guidance
+      <div className="bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded-lg p-6 my-8">
+        <h2 className="text-xl font-bold mb-4 flex items-center border-b border-[var(--color-border)] pb-2 text-[var(--color-text)]">
+          <Activity className="mr-2 text-[var(--color-primary)]" size={20} /> Integration Guidance
         </h2>
-        <div className="p-4 bg-red-400/10 border border-red-400/20 rounded text-red-400 text-sm">
+        <div className="p-4 bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/25 rounded text-[var(--color-danger)] text-sm">
           {error}
         </div>
       </div>
@@ -161,13 +160,13 @@ export default function IntegrationGuidancePanel({ projectId }) {
   }
 
   return (
-    <div className="bg-[var(--surface-card)] border border-[var(--border-main)] rounded-lg p-6 my-8">
-      <h2 className="text-xl font-bold mb-4 flex items-center border-b border-[var(--border-main)] pb-2 text-white">
-        <Activity className="mr-2 text-[var(--accent-primary)]" size={20} /> Integration Guidance
+    <div className="bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded-lg p-6 my-8">
+      <h2 className="text-xl font-bold mb-4 flex items-center border-b border-[var(--color-border)] pb-2 text-[var(--color-text)]">
+        <Activity className="mr-2 text-[var(--color-primary)]" size={20} /> Integration Guidance
       </h2>
       
       {rules.length === 0 ? (
-        <div className="py-8 text-center text-[var(--text-secondary)] italic border border-dashed border-[var(--border-main)] rounded bg-[var(--surface-main)]">
+        <div className="py-8 text-center text-[var(--color-text-secondary)] italic border border-dashed border-[var(--color-border)] rounded bg-[var(--color-surface-secondary)]">
           No guidance is currently available.
         </div>
       ) : (

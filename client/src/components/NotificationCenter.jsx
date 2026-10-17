@@ -195,16 +195,10 @@ export const NotificationCenter = ({ userId, theme = "dark", size = 14 }) => {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -6, scale: 0.98 }}
             transition={{ duration: 0.15, ease: "easeOut" }}
-            className="absolute top-full right-0 mt-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-md)] shadow-2xl w-[360px] sm:w-[380px] max-h-[480px] flex flex-col overflow-hidden z-[1000] text-[var(--color-text)]"
-            style={{
-              backgroundColor: "var(--color-surface)",
-              boxShadow:
-                "0 14px 28px rgba(0, 0, 0, 0.22), 0 10px 10px rgba(0, 0, 0, 0.15)",
-            }}
+            className="absolute top-full right-0 mt-2 bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded-[var(--radius-md)] shadow-xl w-[360px] sm:w-[380px] max-h-[480px] flex flex-col overflow-hidden z-[1000] text-[var(--color-text)]"
           >
             <div
-              className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between shrink-0"
-              style={{ backgroundColor: "var(--color-surface)" }}
+              className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between shrink-0 bg-[var(--color-surface-raised)]"
             >
               <span className="font-semibold text-xs text-[var(--color-text)] tracking-tight">
                 Notifications
@@ -220,8 +214,7 @@ export const NotificationCenter = ({ userId, theme = "dark", size = 14 }) => {
             </div>
 
             <div
-              className="max-h-[360px] overflow-y-auto divide-y divide-[var(--color-border)] custom-scrollbar"
-              style={{ backgroundColor: "var(--color-surface)" }}
+              className="max-h-[360px] overflow-y-auto divide-y divide-[var(--color-border)] custom-scrollbar bg-[var(--color-surface-raised)]"
             >
               {error ? (
                 <div className="p-4 text-center text-xs text-[var(--color-danger)]">
@@ -232,21 +225,16 @@ export const NotificationCenter = ({ userId, theme = "dark", size = 14 }) => {
                   No notifications
                 </div>
               ) : (
-                <div style={{ backgroundColor: "var(--color-surface)" }}>
+                <div>
                   {notifications.map((notification) => (
                     <div
                       key={notification.id}
                       onClick={() => handleMarkAsRead(notification.id)}
                       className={`p-3.5 cursor-pointer transition-colors ${
                         !notification.readAt
-                          ? "hover:bg-[var(--color-surface-secondary)]"
-                          : "hover:bg-[var(--color-surface-secondary)]"
+                          ? "bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-muted)]"
+                          : "bg-[var(--color-surface-raised)] hover:bg-[var(--color-surface-secondary)]"
                       }`}
-                      style={{
-                        backgroundColor: !notification.readAt
-                          ? "rgba(109, 93, 251, 0.08)"
-                          : "var(--color-surface)",
-                      }}
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-semibold text-xs text-[var(--color-text)] truncate flex items-center gap-1.5">

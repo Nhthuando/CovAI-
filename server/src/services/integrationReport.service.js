@@ -99,7 +99,7 @@ export const getIntegrationAnalytics = async (projectId) => {
     const snapshotId = latestSnapshot.id;
 
     // Latest Execution
-    const latestRun = testRuns.filter(tr => tr.snapshotId === snapshotId && (tr.status === 'SUCCESS' || tr.status === 'FAILED')).pop();
+    const latestRun = testRuns.filter(tr => tr.snapshotId === snapshotId && (tr.status === 'PASSED' || tr.status === 'SUCCESS' || tr.status === 'FAILED')).pop();
     if (latestRun) {
         report.latestExecution = {
             testRunId: latestRun.id,

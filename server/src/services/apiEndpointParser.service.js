@@ -374,40 +374,67 @@ export function findControllerLocation(sourceCode, controllerName, methodName, r
             const endLine = controllerEndLine || Math.min(startLine + 25, cLines.length);
             const snippet = cLines.slice(startLine - 1, endLine).join('\n');
 
-            // Static behavioral analysis:
+            // Static behavioral analysis scoped strictly to the function snippet
             // 1. Query parameters
             const queryParams = [];
             const queryRegex = /req\.query\.([a-zA-Z0-9_]+)/g;
             let qm;
-            while ((qm = queryRegex.exec(cFile.content)) !== null) {
+            while ((qm = queryRegex.exec(snippet)) !== null) {
                 queryParams.push(qm[1]);
             }
             const queryDestructRegex = /(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*req\.query/g;
             let qdm;
-            while ((qdm = queryDestructRegex.exec(cFile.content)) !== null) {
+            while ((qdm = queryDestructRegex.exec(snippet)) !== null) {
                 const fields = qdm[1].split(',').map(s => s.trim().split(':')[0].trim()).filter(Boolean);
                 queryParams.push(...fields);
             }
 
-            // 2. Response status codes
+            // 2. Response status codes (scoped to function snippet)
             const responseStatusCodes = [];
             const statusRegex = /res\.(?:status|sendStatus)\(\s*(\d{3})\s*\)/g;
             let sm;
-            while ((sm = statusRegex.exec(cFile.content)) !== null) {
-                responseStatusCodes.push(Number(sm[1]));
+            while ((sm = statusRegex.exec(snippet)) !== null) {
+                const code = Number(sm[1]);
+                if (!responseStatusCodes.includes(code)) {
+                    responseStatusCodes.push(code);
+                }
             }
-            if (responseStatusCodes.length === 0 && (cFile.content.includes("res.json") || cFile.content.includes("res.send"))) {
+            // Include default 200 if res.json or res.send is called without an explicit status prefix
+            const snippetWithoutChainedStatus = snippet.replace(/res\.(?:status|sendStatus)\s*\([^)]*\)\s*\.\s*(?:json|send)/g, '');
+            if (!responseStatusCodes.includes(200) && (snippetWithoutChainedStatus.includes("res.json") || snippetWithoutChainedStatus.includes("res.send"))) {
                 responseStatusCodes.push(200);
             }
 
-            // 3. Error handling
+            // 3. Request body parameters (scoped to function snippet)
+            const bodyParams = [];
+            const bodyRegex = /req\.body\.([a-zA-Z0-9_]+)/g;
+            let bm;
+            while ((bm = bodyRegex.exec(snippet)) !== null) {
+                bodyParams.push(bm[1]);
+            }
+            const destructureRegex = /(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*req\.body/g;
+            let bdm;
+            while ((bdm = destructureRegex.exec(snippet)) !== null) {
+                const fields = bdm[1].split(',').map(s => s.trim().split(':')[0].trim()).filter(Boolean);
+                bodyParams.push(...fields);
+            }
+
+            // 4. Prisma database models (scoped to function snippet)
+            const databaseModels = [];
+            const prismaRegex = /prisma\.([a-zA-Z0-9_]+)\./g;
+            let pm;
+            while ((pm = prismaRegex.exec(snippet)) !== null) {
+                databaseModels.push(pm[1]);
+            }
+
+            // 5. Error handling
             const errorHandling = {
                 hasTryCatch: snippet.includes("try") && snippet.includes("catch"),
                 callsNext: snippet.includes("next(")
             };
 
-            // 4. Service layer discovery
-            const serviceLayer = findServiceLocation(sourceCode, cFile.content, cFile.path);
+            // 6. Service layer discovery
+            const serviceLayer = findServiceLocation(sourceCode, snippet, cFile.path) || findServiceLocation(sourceCode, cFile.content, cFile.path);
 
             return {
                 controllerFile: cFile.path,
@@ -417,6 +444,8 @@ export function findControllerLocation(sourceCode, controllerName, methodName, r
                 controllerSnippet: snippet,
                 queryParams: [...new Set(queryParams)],
                 responseStatusCodes: [...new Set(responseStatusCodes)],
+                requestBodySchema: bodyParams.length > 0 ? [...new Set(bodyParams)] : null,
+                databaseModels: [...new Set(databaseModels)],
                 errorHandling,
                 serviceLayer,
                 matchedFile: cFile
@@ -581,33 +610,58 @@ export const extractValidEndpoints = (sourceCode) => {
                                 responseStatusCodes = location.responseStatusCodes || [];
                                 errorHandling = location.errorHandling || { hasTryCatch: false, callsNext: false };
                                 serviceLayer = location.serviceLayer;
+                                requestBodySchema = location.requestBodySchema || null;
+                                databaseModels = location.databaseModels || [];
                             }
+                        } else if (handlerNode.type === "FunctionExpression" || handlerNode.type === "ArrowFunctionExpression") {
+                            // Inline route handler: scope behavioral extraction strictly to the inline function snippet
+                            const inlineStart = handlerNode.loc?.start?.line;
+                            const inlineEnd = handlerNode.loc?.end?.line;
+                            if (inlineStart && inlineEnd) {
+                                const rLines = routeFile.content.split('\n');
+                                controllerFile = null;
+                                controllerLine = null;
+                                controllerLineStart = inlineStart;
+                                controllerLineEnd = inlineEnd;
+                                controllerSnippet = rLines.slice(inlineStart - 1, inlineEnd).join('\n');
 
-                            const cFile = location.matchedFile;
-                            if (cFile && cFile.content) {
-                                // Heuristic for req.body.xxx
-                                const bodyRegex = /req\.body\.([a-zA-Z0-9_]+)/g;
-                                let bMatch;
                                 const bodyParams = [];
-                                while ((bMatch = bodyRegex.exec(cFile.content)) !== null) {
-                                    bodyParams.push(bMatch[1]);
+                                const bodyRegex = /req\.body\.([a-zA-Z0-9_]+)/g;
+                                let bm;
+                                while ((bm = bodyRegex.exec(controllerSnippet)) !== null) {
+                                    bodyParams.push(bm[1]);
+                                }
+                                const destructureRegex = /(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*req\.body/g;
+                                let bdm;
+                                while ((bdm = destructureRegex.exec(controllerSnippet)) !== null) {
+                                    const fields = bdm[1].split(',').map(s => s.trim().split(':')[0].trim()).filter(Boolean);
+                                    bodyParams.push(...fields);
                                 }
                                 if (bodyParams.length > 0) requestBodySchema = [...new Set(bodyParams)];
 
-                                // Heuristic for const { x, y } = req.body;
-                                const destructureRegex = /(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*req\.body/g;
-                                let dMatch;
-                                while ((dMatch = destructureRegex.exec(cFile.content)) !== null) {
-                                    const fields = dMatch[1].split(',').map(s => s.trim().split(':')[0].trim()).filter(Boolean);
-                                    requestBodySchema = requestBodySchema ? [...new Set([...requestBodySchema, ...fields])] : fields;
+                                const prismaRegex = /prisma\.([a-zA-Z0-9_]+)\./g;
+                                let pm;
+                                while ((pm = prismaRegex.exec(controllerSnippet)) !== null) {
+                                    databaseModels.push(pm[1]);
                                 }
 
-                                // Heuristic for Prisma ORM (prisma.model.method)
-                                const prismaRegex = /prisma\.([a-zA-Z0-9_]+)\./g;
-                                let pMatch;
-                                while ((pMatch = prismaRegex.exec(cFile.content)) !== null) {
-                                    databaseModels.push(pMatch[1]);
+                                const statusRegex = /res\.(?:status|sendStatus)\(\s*(\d{3})\s*\)/g;
+                                let sm;
+                                while ((sm = statusRegex.exec(controllerSnippet)) !== null) {
+                                    const code = Number(sm[1]);
+                                    if (!responseStatusCodes.includes(code)) {
+                                        responseStatusCodes.push(code);
+                                    }
                                 }
+                                const snippetWithoutChainedStatus = controllerSnippet.replace(/res\.(?:status|sendStatus)\s*\([^)]*\)\s*\.\s*(?:json|send)/g, '');
+                                if (!responseStatusCodes.includes(200) && (snippetWithoutChainedStatus.includes("res.json") || snippetWithoutChainedStatus.includes("res.send"))) {
+                                    responseStatusCodes.push(200);
+                                }
+
+                                errorHandling = {
+                                    hasTryCatch: controllerSnippet.includes("try") && controllerSnippet.includes("catch"),
+                                    callsNext: controllerSnippet.includes("next(")
+                                };
                             }
                         }
 

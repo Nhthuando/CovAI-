@@ -3,8 +3,30 @@ import _traverse from '@babel/traverse';
 import _generate from '@babel/generator';
 import prisma from '../config/prisma.js';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import { invalidateEndpointCache } from './integrationWorkspace.service.js';
+
 const traverse = _traverse.default || _traverse;
 const generate = _generate.default || _generate;
+
+async function syncAiTestToDisk(aiTest, content) {
+    if (!aiTest?.snapshotId || !aiTest?.filePath || !prisma.projectSnapshot?.findUnique) return;
+    try {
+        const snapshot = await prisma.projectSnapshot.findUnique({
+            where: { id: aiTest.snapshotId },
+            select: { rootDir: true }
+        });
+        if (snapshot?.rootDir) {
+            const diskPath = path.join(snapshot.rootDir, aiTest.filePath);
+            if (fs.existsSync(diskPath)) {
+                fs.writeFileSync(diskPath, content, 'utf8');
+            }
+        }
+    } catch (e) {
+        // Non-fatal disk sync
+    }
+}
 
 export function parseCode(code) {
     return parse(code, { 
@@ -107,14 +129,133 @@ export const getScenarioService = async (aiTestId, scenarioId) => {
     return { code, aiTest };
 };
 
+export const VALID_JEST_MATCHERS = new Set([
+    'toBe', 'toEqual', 'toStrictEqual', 'toBeNull', 'toBeUndefined', 'toBeDefined',
+    'toBeTruthy', 'toBeFalsy', 'toBeNaN', 'toBeGreaterThan', 'toBeGreaterThanOrEqual',
+    'toBeLessThan', 'toBeLessThanOrEqual', 'toBeCloseTo', 'toMatch', 'toContain',
+    'toContainEqual', 'toHaveLength', 'toHaveProperty', 'toBeInstanceOf', 'toThrow',
+    'toThrowError', 'toMatchObject', 'toMatchSnapshot', 'toMatchInlineSnapshot',
+    'toHaveBeenCalled', 'toBeCalled', 'toHaveBeenCalledTimes', 'toBeCalledTimes',
+    'toHaveBeenCalledWith', 'toBeCalledWith', 'toHaveBeenLastCalledWith',
+    'toHaveReturned', 'toHaveReturnedTimes', 'toHaveReturnedWith',
+    'any', 'anything', 'arrayContaining', 'objectContaining', 'stringContaining', 'stringMatching'
+]);
+
+export const JEST_MODIFIERS = new Set(['not', 'resolves', 'rejects']);
+
+function levenshtein(a, b) {
+    const matrix = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0));
+    for (let i = 0; i <= a.length; i++) matrix[i][0] = i;
+    for (let j = 0; j <= b.length; j++) matrix[0][j] = j;
+    for (let i = 1; i <= a.length; i++) {
+        for (let j = 1; j <= b.length; j++) {
+            const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+            matrix[i][j] = Math.min(matrix[i - 1][j] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j - 1] + cost);
+        }
+    }
+    return matrix[a.length][b.length];
+}
+
+export function findClosestMatcher(name) {
+    let closest = 'toBe';
+    let minDistance = Infinity;
+    for (const m of VALID_JEST_MATCHERS) {
+        const dist = levenshtein(name.toLowerCase(), m.toLowerCase());
+        if (dist < minDistance) {
+            minDistance = dist;
+            closest = m;
+        }
+    }
+    return closest;
+}
+
+export function validateScenarioAst(ast) {
+    let hasTest = false;
+
+    traverse(ast, {
+        CallExpression(path) {
+            const { callee, arguments: args } = path.node;
+
+            // 1. Check test definition
+            if (
+                (callee.type === 'Identifier' && (callee.name === 'it' || callee.name === 'test')) ||
+                (callee.type === 'MemberExpression' && (callee.object?.name === 'it' || callee.object?.name === 'test'))
+            ) {
+                hasTest = true;
+            }
+
+            // 2. Check supertest request call
+            if (callee.type === 'MemberExpression') {
+                const propName = callee.property?.name;
+                if (
+                    callee.object?.type === 'CallExpression' &&
+                    callee.object?.callee?.name === 'request'
+                ) {
+                    const validMethods = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'];
+                    if (propName && !validMethods.includes(propName.toLowerCase())) {
+                        throw new Error(`Invalid Supertest HTTP method '.${propName}()'. Valid methods are: ${validMethods.join(', ')}.`);
+                    }
+                }
+            }
+
+            // 3. Check Jest matcher calls chained to expect(...)
+            if (callee.type === 'MemberExpression') {
+                let current = callee;
+                let expectFound = false;
+                const chainProps = [];
+
+                while (current && current.type === 'MemberExpression') {
+                    if (current.property?.name) {
+                        chainProps.push(current.property.name);
+                    }
+                    if (current.object?.type === 'CallExpression' && current.object?.callee?.name === 'expect') {
+                        expectFound = true;
+                        break;
+                    }
+                    current = current.object;
+                }
+
+                if (expectFound && chainProps.length > 0) {
+                    const matcherName = chainProps[0];
+                    if (!VALID_JEST_MATCHERS.has(matcherName) && !JEST_MODIFIERS.has(matcherName)) {
+                        const closest = findClosestMatcher(matcherName);
+                        throw new Error(`Invalid Jest matcher '.${matcherName}()'. Did you mean '.${closest}()'?`);
+                    }
+
+                    // Check HTTP status code bounds if checking response.status or res.status
+                    if (matcherName === 'toBe' || matcherName === 'toEqual' || matcherName === 'toStrictEqual') {
+                        if (args.length > 0 && args[0].type === 'NumericLiteral') {
+                            const val = args[0].value;
+                            const expectArg = current.object?.arguments?.[0];
+                            if (
+                                expectArg?.type === 'MemberExpression' &&
+                                (expectArg.property?.name === 'status' || expectArg.property?.name === 'statusCode')
+                            ) {
+                                if (val < 100 || val > 599) {
+                                    throw new Error(`Invalid HTTP status code ${val}. Standard HTTP status codes must be between 100 and 599.`);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    if (!hasTest) {
+        throw new Error("Scenario code must contain an 'it(...)' or 'test(...)' statement");
+    }
+}
+
 export const updateScenarioService = async (aiTestId, scenarioId, updatedCode) => {
     const aiTest = await prisma.aiTest.findUnique({ where: { id: aiTestId } });
     if (!aiTest) throw new Error("AiTest not found");
 
     const { testName, nameIndex } = getScenarioIdentity(aiTest, scenarioId);
 
-    // Ensure the updated code is valid JS/TS
+    // Ensure the updated code is valid JS/TS and structurally sound
     const updatedAst = parseCode(updatedCode);
+    validateScenarioAst(updatedAst);
     
     // Check if it actually contains a test
     let updatedNode = null;
@@ -145,14 +286,30 @@ export const updateScenarioService = async (aiTestId, scenarioId, updatedCode) =
     }
     meta.userModified = true; // Mark artifact as dirty
     const requests = Array.isArray(meta.requests) ? meta.requests : [];
+    const nowIso = new Date().toISOString();
     const updatedRequests = requests.map(r => {
         if (r.scenarioId === scenarioId || (r.testName === testName && nameIndex === 0 && !r.scenarioId)) {
-            return { ...r, testName: newTestName, scenarioId, userEdited: true, lastModifiedAt: new Date().toISOString() };
+            const isUserAdded = r.origin === 'USER_ADDED';
+            return {
+                ...r,
+                testName: newTestName,
+                scenarioId,
+                userEdited: true,
+                origin: isUserAdded ? 'USER_ADDED' : 'USER_MODIFIED',
+                originalTestName: r.originalTestName || r.testName,
+                lastModifiedAt: nowIso
+            };
         }
         return r;
     });
     if (!updatedRequests.find(r => r.scenarioId === scenarioId || r.testName === newTestName)) {
-        updatedRequests.push({ scenarioId, testName: newTestName, userEdited: true, lastModifiedAt: new Date().toISOString() });
+        updatedRequests.push({
+            scenarioId,
+            testName: newTestName,
+            userEdited: true,
+            origin: 'USER_MODIFIED',
+            lastModifiedAt: nowIso
+        });
     }
     meta.requests = updatedRequests;
 
@@ -163,6 +320,9 @@ export const updateScenarioService = async (aiTestId, scenarioId, updatedCode) =
             metaJson: JSON.stringify(meta)
         }
     });
+
+    await syncAiTestToDisk(aiTest, finalCode);
+    if (aiTest.snapshotId) invalidateEndpointCache(aiTest.snapshotId);
 
     return updatedTest;
 };
@@ -195,6 +355,9 @@ export const deleteScenarioService = async (aiTestId, scenarioId) => {
             metaJson: JSON.stringify(meta)
         }
     });
+
+    await syncAiTestToDisk(aiTest, finalCode);
+    if (aiTest.snapshotId) invalidateEndpointCache(aiTest.snapshotId);
 
     return updatedTest;
 };
@@ -290,6 +453,9 @@ export const toggleScenarioService = async (aiTestId, scenarioId, enable) => {
         }
     });
 
+    await syncAiTestToDisk(aiTest, finalCode);
+    if (aiTest.snapshotId) invalidateEndpointCache(aiTest.snapshotId);
+
     return updatedTest;
 };
 
@@ -298,6 +464,8 @@ export const addScenarioService = async (aiTestId, newScenarioCode, endpoint) =>
     if (!aiTest) throw new Error("AiTest not found");
 
     const newAst = parseCode(newScenarioCode);
+    validateScenarioAst(newAst);
+
     let newScenarioNode = null;
     traverse(newAst, {
         CallExpression(path) {
@@ -323,8 +491,12 @@ export const addScenarioService = async (aiTestId, newScenarioCode, endpoint) =>
     
     // Add to describe block
     const bodyNode = describePath.node.arguments[1];
-    if (bodyNode && bodyNode.body && bodyNode.body.body) {
-        bodyNode.body.body.push({ type: 'ExpressionStatement', expression: newScenarioNode });
+    if (bodyNode) {
+        if (bodyNode.body && Array.isArray(bodyNode.body.body)) {
+            bodyNode.body.body.push({ type: 'ExpressionStatement', expression: newScenarioNode });
+        } else if (Array.isArray(bodyNode.body)) {
+            bodyNode.body.push({ type: 'ExpressionStatement', expression: newScenarioNode });
+        }
     }
 
     const { code: finalCode } = generate(ast);
@@ -336,14 +508,20 @@ export const addScenarioService = async (aiTestId, newScenarioCode, endpoint) =>
     meta.userModified = true; // Mark artifact as dirty
     const requests = Array.isArray(meta.requests) ? meta.requests : [];
     const newScenarioId = crypto.randomUUID();
+    const cleanMethod = (endpoint?.method || "GET").toUpperCase();
+    const cleanPath = endpoint?.path || endpoint?.route || endpoint?.fullPath || "/";
+    const nowIso = new Date().toISOString();
+    
     requests.push({
         scenarioId: newScenarioId,
-        method: endpoint.method,
-        path: endpoint.path,
+        method: cleanMethod,
+        path: cleanPath,
         testName: testName,
         enabled: true,
         userEdited: true,
-        lastModifiedAt: new Date().toISOString()
+        origin: "USER_ADDED",
+        createdAt: nowIso,
+        lastModifiedAt: nowIso
     });
     meta.requests = requests;
 
@@ -354,6 +532,9 @@ export const addScenarioService = async (aiTestId, newScenarioCode, endpoint) =>
             metaJson: JSON.stringify(meta)
         }
     });
+
+    await syncAiTestToDisk(aiTest, finalCode);
+    if (aiTest.snapshotId) invalidateEndpointCache(aiTest.snapshotId);
 
     return updatedTest;
 };
@@ -393,7 +574,31 @@ Please improve it, fix potential issues, or make it more robust based on the API
 
     const cleanText = generatedText.replace(/```(javascript|js|typescript|ts)?/g, '').replace(/```/g, '').trim();
     
-    return await updateScenarioService(aiTestId, scenarioId, cleanText);
+    const updatedTest = await updateScenarioService(aiTestId, scenarioId, cleanText);
+
+    // Reset origin back to AI_GENERATED and userEdited back to false
+    try {
+        let meta = JSON.parse(updatedTest.metaJson || "{}");
+        if (Array.isArray(meta.requests)) {
+            meta.requests = meta.requests.map(r => {
+                if (r.scenarioId === scenarioId || r.testName === testName) {
+                    return {
+                        ...r,
+                        origin: "AI_GENERATED",
+                        userEdited: false,
+                        lastModifiedAt: new Date().toISOString()
+                    };
+                }
+                return r;
+            });
+            return await prisma.aiTest.update({
+                where: { id: aiTestId },
+                data: { metaJson: JSON.stringify(meta) }
+            });
+        }
+    } catch {}
+
+    return updatedTest;
 };
 
 /**

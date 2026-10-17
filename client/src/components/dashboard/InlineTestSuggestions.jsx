@@ -405,18 +405,17 @@ export default function InlineTestSuggestions({
                             }}
                             style={{
                                 padding: "5px 12px",
-                                background: "linear-gradient(135deg, #0284c7 0%, #0369a1 100%)",
-                                border: "1px solid rgba(56, 189, 248, 0.5)",
+                                background: "var(--color-primary)",
+                                border: "1px solid var(--color-primary)",
                                 borderRadius: 6,
-                                color: "#ffffff",
+                                color: "var(--color-primary-foreground)",
                                 fontSize: 11,
                                 fontWeight: 600,
                                 cursor: "pointer",
                                 display: "flex",
                                 alignItems: "center",
                                 gap: 6,
-                                boxShadow: "0 2px 8px rgba(2, 132, 199, 0.25)",
-                                transition: "all 0.15s ease",
+                                transition: "opacity 0.15s ease",
                             }}
                             className="hover:opacity-90"
                         >
@@ -680,25 +679,23 @@ export default function InlineTestSuggestions({
                                             padding: "5px 14px",
                                             background:
                                                 status === "PASSED"
-                                                    ? "rgba(34, 197, 94, 0.15)"
+                                                    ? "rgba(16, 185, 129, 0.15)"
                                                     : isApplying
-                                                    ? "rgba(2, 132, 199, 0.5)"
-                                                    : "linear-gradient(135deg, #0284c7 0%, #0369a1 100%)",
+                                                    ? "var(--color-surface-secondary)"
+                                                    : "var(--color-primary)",
                                             border:
                                                 status === "PASSED"
-                                                    ? "1px solid rgba(34, 197, 94, 0.4)"
-                                                    : "1px solid rgba(56, 189, 248, 0.4)",
-                                            borderRadius: 5,
-                                            color: status === "PASSED" ? "#4ade80" : "#ffffff",
+                                                    ? "1px solid rgba(16, 185, 129, 0.4)"
+                                                    : "1px solid var(--color-primary)",
+                                            borderRadius: 4,
+                                            color: status === "PASSED" ? "var(--color-success)" : "var(--color-primary-foreground)",
                                             fontSize: 11,
                                             fontWeight: 600,
                                             cursor: isApplying || status === "PASSED" ? "not-allowed" : "pointer",
                                             display: "flex",
                                             alignItems: "center",
                                             gap: 6,
-                                            boxShadow:
-                                                status === "PASSED" ? "none" : "0 2px 6px rgba(2, 132, 199, 0.2)",
-                                            transition: "all 0.15s ease",
+                                            transition: "opacity 0.15s ease",
                                         }}
                                         className={status !== "PASSED" && !isApplying ? "hover:opacity-90" : ""}
                                     >

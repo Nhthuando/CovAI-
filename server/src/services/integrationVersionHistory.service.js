@@ -273,6 +273,35 @@ export function compareEndpointInventories(previousEndpoints = [], currentEndpoi
 }
 
 /**
+ * Generates a stable unique identity string for a scenario across test runs.
+ */
+export function getScenarioIdentity(sc) {
+    if (!sc) return "UNKNOWN";
+    const rawTitle = (sc.testName || sc.title || sc.name || "").trim();
+    const rawSuite = (sc.suiteName || "").trim();
+    const rawFile = (sc.testFile || sc.filePath || "").replace(/\\/g, "/").trim();
+
+    // If rawTitle already contains "::" or full hierarchy:
+    if (rawTitle.includes(" :: ")) {
+        if (rawFile && !rawTitle.includes(rawFile)) {
+            return `${rawFile} :: ${rawTitle}`;
+        }
+        return rawTitle;
+    }
+
+    if (rawSuite && rawTitle) {
+        if (rawFile) return `${rawFile} :: ${rawSuite} :: ${rawTitle}`;
+        return `${rawSuite} :: ${rawTitle}`;
+    }
+
+    if (rawFile && rawTitle) {
+        return `${rawFile} :: ${rawTitle}`;
+    }
+
+    return rawTitle || rawSuite || rawFile || "UNKNOWN";
+}
+
+/**
  * Compares two test suites (AiTest records) at both file and test case granularity.
  */
 export function compareTestSuites(previousTests = [], currentTests = []) {
@@ -345,10 +374,13 @@ export function compareTestSuites(previousTests = [], currentTests = []) {
                 }
             } else if (t.testName || t.title || t.name) {
                 const title = t.testName || t.title || t.name;
-                const key = `${t.filePath || ""} :: ${title}`;
+                const key = t.filePath ? `${t.filePath} :: ${title}` : title;
                 scenarios.set(key, {
                     key,
                     testName: title,
+                    method: t.method || null,
+                    path: t.path || t.endpoint || null,
+                    expectedStatus: t.expectedStatus || null,
                     filePath: t.filePath,
                     hash: crypto.createHash("sha256").update(t.code || t.content || JSON.stringify(t)).digest("hex").slice(0, 12)
                 });
@@ -372,7 +404,16 @@ export function compareTestSuites(previousTests = [], currentTests = []) {
         if (!prevSc) {
             testCases.newTests.push(currSc);
         } else if (prevSc.hash !== currSc.hash || prevSc.expectedStatus !== currSc.expectedStatus) {
-            testCases.modifiedTests.push({ ...currSc, prevExpectedStatus: prevSc.expectedStatus });
+            const changedFields = [];
+            if (prevSc.expectedStatus !== currSc.expectedStatus) changedFields.push("expectedStatus");
+            if (prevSc.hash !== currSc.hash) changedFields.push("testLogic");
+            testCases.modifiedTests.push({
+                ...currSc,
+                prevExpectedStatus: prevSc.expectedStatus,
+                changedFields,
+                before: { expectedStatus: prevSc.expectedStatus, hash: prevSc.hash },
+                after: { expectedStatus: currSc.expectedStatus, hash: currSc.hash }
+            });
         } else {
             testCases.unchangedTests.push(currSc);
         }
@@ -429,25 +470,41 @@ export function compareTestSuites(previousTests = [], currentTests = []) {
 }
 
 /**
- * Compares two TestRun records to track PASS/FAIL transitions and runtime metrics.
+ * Compares two TestRun records to track PASS/FAIL transitions, unexecuted scenarios, and runtime metrics.
  */
-export function compareTestRuns(previousRun, currentRun) {
+export function compareTestRuns(previousRun, currentRun, options = {}) {
     if (!previousRun || !currentRun) {
         return {
             comparisonAvailable: false,
-            message: "Both a previous and current TestRun are required for comparison."
+            reason: "Both a previous and current TestRun are required for comparison.",
+            message: "Both a previous and current TestRun are required for comparison.",
+            nextAction: "Execute Run Tests to produce runtime execution records."
+        };
+    }
+
+    if (previousRun.id && currentRun.id && previousRun.id === currentRun.id) {
+        return {
+            comparisonAvailable: false,
+            isSameRun: true,
+            reason: "Baseline and current test run are identical (same run ID). Cannot compare a test run with itself.",
+            message: "Cannot compare a test run with itself. Select two distinct test runs.",
+            nextAction: "Select two distinct test runs to compare execution transitions.",
+            runA: previousRun,
+            runB: currentRun,
+            previousRunId: previousRun.id,
+            currentRunId: currentRun.id
         };
     }
 
     const prevScenarios = new Map();
     for (const sc of previousRun.scenarios || []) {
-        const key = sc.testName || sc.title || `${sc.suiteName || ""} :: ${sc.testName || ""}`;
+        const key = getScenarioIdentity(sc);
         prevScenarios.set(key, sc);
     }
 
     const currScenarios = new Map();
     for (const sc of currentRun.scenarios || []) {
-        const key = sc.testName || sc.title || `${sc.suiteName || ""} :: ${sc.testName || ""}`;
+        const key = getScenarioIdentity(sc);
         currScenarios.set(key, sc);
     }
 
@@ -458,67 +515,152 @@ export function compareTestRuns(previousRun, currentRun) {
         failToFail: [],
         newTests: [],
         removedTests: [],
-        skippedTests: []
+        skippedTests: [],
+        unexecutedTests: []
     };
 
     const transitionsList = [];
+    const isCurrentRunAborted = ["CANCELED", "CANCELLED", "ABORTED"].includes((currentRun.status || "").toUpperCase());
+    const isCurrentRunFailed = (currentRun.status || "").toUpperCase() === "FAILED";
+    const isPartialExecution = currentRun.executionMode === "partial" ||
+                               currentRun.executionMode === "remaining" ||
+                               (currentRun.scenarios?.length || 0) < (previousRun.scenarios?.length || 0);
 
     for (const [key, currSc] of currScenarios.entries()) {
         const prevSc = prevScenarios.get(key);
         const currStatus = (currSc.status || "").toUpperCase();
+        const prevStatus = prevSc ? (prevSc.status || "").toUpperCase() : null;
 
-        if (currStatus === "PENDING" || currStatus === "SKIPPED") {
-            matrix.skippedTests.push(currSc);
-            transitionsList.push({
+        const baseTransition = {
+            testName: key,
+            suiteName: currSc.suiteName || prevSc?.suiteName || null,
+            testFile: currSc.testFile || prevSc?.testFile || null,
+            statusA: prevStatus,
+            statusB: currStatus,
+            durationMsA: prevSc?.durationMs ?? null,
+            durationMsB: currSc.durationMs ?? null,
+            durationMs: currSc.durationMs,
+            durationDeltaMs: currSc.durationMs != null && prevSc?.durationMs != null ? (currSc.durationMs - prevSc.durationMs) : null,
+            failureMessages: Array.isArray(currSc.failureMessages) ? currSc.failureMessages : (currSc.error ? [currSc.error] : []),
+            failureStep: currSc.failureStep || null,
+            failureCategory: currSc.failureCategory || null
+        };
+
+        const isUnexecuted = ["PENDING", "SKIPPED", "UNEXECUTED", "CANCELLED", "CANCELED", "RUNNING", "NOT_RUN"].includes(currStatus);
+
+        if (isUnexecuted) {
+            const unexecutedItem = {
+                ...currSc,
                 testName: key,
-                statusA: prevSc ? (prevSc.status || "").toUpperCase() : null,
-                statusB: currStatus,
-                durationMs: currSc.durationMs
+                unexecutedReason: currStatus === "SKIPPED"
+                    ? "Scenario skipped by test runner"
+                    : ["CANCELLED", "CANCELED"].includes(currStatus)
+                    ? "Scenario execution was cancelled"
+                    : currStatus === "RUNNING"
+                    ? "Scenario was left in running/pending state"
+                    : "Scenario pending or unexecuted"
+            };
+            matrix.skippedTests.push(unexecutedItem);
+            matrix.unexecutedTests.push(unexecutedItem);
+            transitionsList.push({
+                ...baseTransition,
+                transitionType: "UNEXECUTED",
+                unexecutedReason: unexecutedItem.unexecutedReason
             });
             continue;
         }
 
         if (!prevSc) {
-            matrix.newTests.push(currSc);
+            matrix.newTests.push({ ...currSc, testName: key });
             transitionsList.push({
-                testName: key,
+                ...baseTransition,
                 statusA: null,
-                statusB: currStatus,
-                durationMs: currSc.durationMs
+                transitionType: "NEW_EXECUTION"
             });
         } else {
-            const prevStatus = (prevSc.status || "").toUpperCase();
-            if (prevStatus === "PASSED" && currStatus === "PASSED") matrix.passToPass.push(currSc);
-            else if (prevStatus === "PASSED" && currStatus === "FAILED") matrix.passToFail.push(currSc);
-            else if (prevStatus === "FAILED" && currStatus === "PASSED") matrix.failToPass.push(currSc);
-            else if (prevStatus === "FAILED" && currStatus === "FAILED") matrix.failToFail.push(currSc);
+            let transitionType = "UNCHANGED";
+            if (prevStatus === "PASSED" && currStatus === "PASSED") {
+                matrix.passToPass.push({ ...currSc, testName: key });
+                transitionType = "STABLE_PASS";
+            } else if (prevStatus === "PASSED" && currStatus === "FAILED") {
+                matrix.passToFail.push({ ...currSc, testName: key });
+                transitionType = "REGRESSION";
+            } else if (prevStatus === "FAILED" && currStatus === "PASSED") {
+                matrix.failToPass.push({ ...currSc, testName: key });
+                transitionType = "FIX";
+            } else if (prevStatus === "FAILED" && currStatus === "FAILED") {
+                matrix.failToFail.push({ ...currSc, testName: key });
+                transitionType = "STABLE_FAIL";
+            }
 
             transitionsList.push({
-                testName: key,
-                statusA: prevStatus,
-                statusB: currStatus,
-                durationMs: currSc.durationMs
+                ...baseTransition,
+                transitionType
             });
         }
     }
 
     for (const [key, prevSc] of prevScenarios.entries()) {
         if (!currScenarios.has(key)) {
-            matrix.removedTests.push(prevSc);
-            transitionsList.push({
-                testName: key,
-                statusA: (prevSc.status || "").toUpperCase(),
-                statusB: null,
-                durationMs: prevSc.durationMs
-            });
+            const prevStatus = (prevSc.status || "").toUpperCase();
+            // Never classify an unexecuted scenario as removed unless genuine deletion is verified
+            const isGenuineRemoval = options.isGenuineRemoval === true ||
+                (options.activeScenarios && !options.activeScenarios.has(key) && !isCurrentRunAborted && !isPartialExecution && !isCurrentRunFailed);
+
+            if (!isGenuineRemoval || isCurrentRunAborted || isPartialExecution || isCurrentRunFailed) {
+                let unexecutedReason = "Scenario omitted from current execution run";
+                if (isCurrentRunAborted) {
+                    unexecutedReason = "Test run was cancelled or aborted before executing this scenario";
+                } else if (isPartialExecution) {
+                    unexecutedReason = "Scenario was not targeted in this partial test run";
+                } else if (isCurrentRunFailed) {
+                    unexecutedReason = "Test run terminated early due to errors before executing this scenario";
+                }
+
+                const unexecutedItem = {
+                    ...prevSc,
+                    testName: key,
+                    unexecutedReason
+                };
+                matrix.unexecutedTests.push(unexecutedItem);
+                transitionsList.push({
+                    testName: key,
+                    suiteName: prevSc.suiteName || null,
+                    testFile: prevSc.testFile || null,
+                    statusA: prevStatus,
+                    statusB: "UNEXECUTED",
+                    durationMsA: prevSc.durationMs ?? null,
+                    durationMsB: null,
+                    durationMs: prevSc.durationMs,
+                    transitionType: "UNEXECUTED",
+                    unexecutedReason
+                });
+            } else {
+                matrix.removedTests.push({ ...prevSc, testName: key });
+                transitionsList.push({
+                    testName: key,
+                    suiteName: prevSc.suiteName || null,
+                    testFile: prevSc.testFile || null,
+                    statusA: prevStatus,
+                    statusB: null,
+                    durationMsA: prevSc.durationMs ?? null,
+                    durationMsB: null,
+                    durationMs: prevSc.durationMs,
+                    transitionType: "REMOVED_EXECUTION"
+                });
+            }
         }
     }
 
-    const prevCov = previousRun.coveragePct ?? previousRun.coverageLinesPct ?? 0;
-    const currCov = currentRun.coveragePct ?? currentRun.coverageLinesPct ?? 0;
-    const coverageDelta = currCov - prevCov;
+    const hasPrevCov = previousRun.coverageLinesPct != null || previousRun.coveragePct != null;
+    const hasCurrCov = currentRun.coverageLinesPct != null || currentRun.coveragePct != null;
+    const coverageComparable = hasPrevCov && hasCurrCov;
+    const prevCov = hasPrevCov ? (previousRun.coverageLinesPct ?? previousRun.coveragePct) : null;
+    const currCov = hasCurrCov ? (currentRun.coverageLinesPct ?? currentRun.coveragePct) : null;
+    const coverageDelta = coverageComparable ? parseFloat((currCov - prevCov).toFixed(2)) : null;
 
     const durationDiffMs = (currentRun.durationMs || 0) - (previousRun.durationMs || 0);
+    const totalExecuted = matrix.passToPass.length + matrix.failToFail.length + matrix.passToFail.length + matrix.failToPass.length;
 
     return {
         comparisonAvailable: true,
@@ -531,16 +673,27 @@ export function compareTestRuns(previousRun, currentRun) {
         transitions: transitionsList,
         matrix,
         coverageDelta,
+        coverageComparable,
+        coverageArtifacts: {
+            baseline: { linesPct: prevCov },
+            current: { linesPct: currCov },
+            comparable: coverageComparable,
+            deltaPct: coverageDelta,
+            reason: !coverageComparable ? "One or both test runs lack line coverage artifacts." : null
+        },
         durationDiffMs,
         summary: {
             totalCompared: transitionsList.length,
+            totalExecuted,
             fixesCount: matrix.failToPass.length,
             regressionsCount: matrix.passToFail.length,
             passToPassCount: matrix.passToPass.length,
             stablePassCount: matrix.passToPass.length,
             failToFailCount: matrix.failToFail.length,
+            stableFailCount: matrix.failToFail.length,
             newTestsCount: matrix.newTests.length,
             removedTestsCount: matrix.removedTests.length,
+            unexecutedTestsCount: matrix.unexecutedTests.length,
             coverageDelta,
             durationDeltaMs: durationDiffMs
         }
@@ -653,6 +806,23 @@ export const getIntegrationVersionHistoryService = async (snapshotId, options = 
             (opType === "GENERATE" && currentVersions.generate?.jobId === job.id)
         );
 
+        let durationMs = job.computeTimeMs ?? null;
+        if (durationMs == null && job.finishedAt && (job.startedAt || job.createdAt)) {
+            const start = new Date(job.startedAt || job.createdAt).getTime();
+            const finish = new Date(job.finishedAt).getTime();
+            if (finish >= start) durationMs = finish - start;
+        }
+
+        let artifactCount = null;
+        if (parsedResult) {
+            if (typeof parsedResult.count === "number") artifactCount = parsedResult.count;
+            else if (Array.isArray(parsedResult.endpoints)) artifactCount = parsedResult.endpoints.length;
+            else if (Array.isArray(parsedResult.tests)) artifactCount = parsedResult.tests.length;
+            else if (parsedResult.summary?.totalFiles != null) artifactCount = parsedResult.summary.totalFiles;
+            else if (parsedResult.summary?.totalEndpoints != null) artifactCount = parsedResult.summary.totalEndpoints;
+            else if (parsedResult.summary?.totalTests != null) artifactCount = parsedResult.summary.totalTests;
+        }
+
         timeline.push({
             id: job.id,
             entityType: "JOB",
@@ -665,11 +835,14 @@ export const getIntegrationVersionHistoryService = async (snapshotId, options = 
             finishedAt: job.finishedAt,
             createdAt: job.createdAt,
             computeTimeMs: job.computeTimeMs,
+            durationMs,
             errorMessage: job.errorMessage,
             isCurrent,
             isLatest: jobs[0]?.id === job.id,
+            isLatestSuccess: isCurrent,
             revision: snapshot.commitSha || snapshot.id,
-            artifactCount: parsedResult?.count || parsedResult?.summary?.totalFiles || null,
+            inputRevision: snapshot.commitSha || snapshot.id,
+            artifactCount,
             resultSummary: parsedResult?.summary || null
         });
     }
@@ -687,9 +860,12 @@ export const getIntegrationVersionHistoryService = async (snapshotId, options = 
             finishedAt: tr.finishedAt,
             createdAt: tr.createdAt,
             durationMs: tr.durationMs,
+            computeTimeMs: tr.durationMs,
             isCurrent,
             isLatest: testRuns[0]?.id === tr.id,
+            isLatestSuccess: isCurrent,
             revision: snapshot.commitSha || snapshot.id,
+            inputRevision: snapshot.commitSha || snapshot.id,
             artifactCount: tr.totalTests,
             resultSummary: {
                 totalTests: tr.totalTests,
@@ -796,21 +972,54 @@ export const compareVersionsService = async (snapshotId, versionAId, versionBId,
     if (type.toUpperCase() === "GENERATE" || type.toUpperCase() === "AI_TESTS") {
         const artifactA = getArchivedVersionArtifact(snapshot.rootDir, versionAId);
         const artifactB = getArchivedVersionArtifact(snapshot.rootDir, versionBId);
-        return compareTestSuites(artifactA?.data?.tests || [], artifactB?.data?.tests || []);
+        let testsA = artifactA?.data?.tests;
+        let testsB = artifactB?.data?.tests;
+
+        if (!testsA) {
+            const jobA = await prisma.job.findUnique({ where: { id: versionAId } });
+            if (jobA?.resultJson) {
+                try { testsA = JSON.parse(jobA.resultJson).tests; } catch (_) {}
+            }
+        }
+        if (!testsB) {
+            const jobB = await prisma.job.findUnique({ where: { id: versionBId } });
+            if (jobB?.resultJson) {
+                try { testsB = JSON.parse(jobB.resultJson).tests; } catch (_) {}
+            }
+        }
+
+        return compareTestSuites(testsA || [], testsB || []);
     }
 
     // Default: ANALYZE
     const artifactA = getArchivedVersionArtifact(snapshot.rootDir, versionAId);
     const artifactB = getArchivedVersionArtifact(snapshot.rootDir, versionBId);
+    let endpointsA = artifactA?.data?.endpoints;
+    let endpointsB = artifactB?.data?.endpoints;
+
+    if (!endpointsA) {
+        const jobA = await prisma.job.findUnique({ where: { id: versionAId } });
+        if (jobA?.resultJson) {
+            try { endpointsA = JSON.parse(jobA.resultJson).endpoints; } catch (_) {}
+        }
+    }
+    if (!endpointsB) {
+        const jobB = await prisma.job.findUnique({ where: { id: versionBId } });
+        if (jobB?.resultJson) {
+            try { endpointsB = JSON.parse(jobB.resultJson).endpoints; } catch (_) {}
+        }
+    }
+
     return compareEndpointInventories(
-        artifactA?.data?.endpoints || [],
-        artifactB?.data?.endpoints || [],
+        endpointsA || [],
+        endpointsB || [],
         { isCurrentSuccess: true, previousSessionId: versionAId, currentSessionId: versionBId }
     );
 };
 
 /**
  * Retrieves a historical version artifact or TestRun for in-memory inspection.
+ * Guarantees read-only behavior without mutating the workspace or triggering any jobs.
  */
 export const getHistoricalWorkspaceVersionService = async (snapshotId, targetId, type = "ANALYZE") => {
     if (!snapshotId || !targetId) {
@@ -823,18 +1032,130 @@ export const getHistoricalWorkspaceVersionService = async (snapshotId, targetId,
     });
     if (!snapshot) throw new ServiceError("Snapshot not found", 404);
 
-    if (type.toUpperCase() === "RUN_TESTS" || type.toUpperCase() === "SUPERTEST_COVERAGE") {
+    const normType = (type || "").toUpperCase();
+
+    // 1. If explicit RUN_TESTS or SUPERTEST_COVERAGE, or inspecting a TestRun
+    if (normType === "RUN_TESTS" || normType === "SUPERTEST_COVERAGE") {
         const testRun = await prisma.testRun.findUnique({
             where: { id: targetId },
             include: { scenarios: true, testFiles: true }
         });
-        if (!testRun) throw new ServiceError("Historical TestRun not found", 404);
-        return { type: "RUN_TESTS", targetId, data: testRun };
+        if (testRun) {
+            return {
+                type: "RUN_TESTS",
+                targetId,
+                snapshotId,
+                data: testRun,
+                timestamp: testRun.finishedAt || testRun.createdAt,
+                source: "TESTRUN_RECORD",
+                isReadOnly: true
+            };
+        }
     }
 
+    // 2. Check disk artifact first
     const artifact = getArchivedVersionArtifact(snapshot.rootDir, targetId);
-    if (!artifact) {
-        throw new ServiceError("Historical version artifact not found on disk", 404);
+    if (artifact && artifact.data) {
+        return {
+            type: artifact.type || type,
+            targetId,
+            snapshotId,
+            data: artifact.data,
+            timestamp: artifact.timestamp,
+            source: "ARCHIVED_DISK_ARTIFACT",
+            isReadOnly: true
+        };
     }
-    return { type, targetId, data: artifact.data, timestamp: artifact.timestamp };
+
+    // 3. Fallback to database Job record
+    const job = await prisma.job.findUnique({
+        where: { id: targetId }
+    });
+
+    if (job) {
+        let parsedData = null;
+        if (job.resultJson) {
+            try {
+                parsedData = JSON.parse(job.resultJson);
+            } catch (_) {}
+        }
+
+        let resolvedType = "ANALYZE";
+        if (job.type === "AI_TESTS") resolvedType = "GENERATE";
+        else if (["SUPERTEST_COVERAGE", "RUN_TESTS", "COVERAGE_PIPELINE", "SYSTEM_TEST_ANALYSIS"].includes(job.type)) {
+            resolvedType = "RUN_TESTS";
+        }
+
+        // If job was AI_TESTS and resultJson didn't contain full test array, check AiTest table
+        if (resolvedType === "GENERATE" && (!parsedData || !parsedData.tests || parsedData.tests.length === 0)) {
+            const aiTests = await prisma.aiTest?.findMany?.({
+                where: { snapshotId }
+            }).catch(() => []);
+            if (aiTests && aiTests.length > 0) {
+                parsedData = {
+                    ...(parsedData || {}),
+                    tests: aiTests,
+                    count: aiTests.length
+                };
+            }
+        }
+
+        // If job was ANALYSIS and resultJson didn't contain endpoints, check ProjectStructureAnalysis table
+        if (resolvedType === "ANALYZE" && (!parsedData || !parsedData.endpoints || parsedData.endpoints.length === 0)) {
+            const struct = await prisma.projectStructureAnalysis?.findUnique?.({
+                where: { snapshotId }
+            }).catch(() => null);
+            if (struct?.resultJson) {
+                try {
+                    const parsedStruct = JSON.parse(struct.resultJson);
+                    if (parsedStruct.endpoints || parsedStruct.routes) {
+                        parsedData = {
+                            ...(parsedData || {}),
+                            endpoints: parsedStruct.endpoints || parsedStruct.routes || [],
+                            summary: parsedStruct.summary || null
+                        };
+                    }
+                } catch (_) {}
+            }
+        }
+
+        return {
+            type: resolvedType,
+            targetId,
+            snapshotId,
+            data: parsedData || {},
+            timestamp: job.finishedAt || job.createdAt,
+            source: "DATABASE_JOB_RECORD",
+            isReadOnly: true,
+            jobMetadata: {
+                id: job.id,
+                type: job.type,
+                status: job.status,
+                progress: job.progress,
+                durationMs: job.computeTimeMs,
+                startedAt: job.startedAt || job.createdAt,
+                finishedAt: job.finishedAt,
+                errorMessage: job.errorMessage
+            }
+        };
+    }
+
+    // 4. Fallback check for TestRun (in case targetId was a testRunId without explicit type)
+    const testRun = await prisma.testRun.findUnique({
+        where: { id: targetId },
+        include: { scenarios: true, testFiles: true }
+    });
+    if (testRun) {
+        return {
+            type: "RUN_TESTS",
+            targetId,
+            snapshotId,
+            data: testRun,
+            timestamp: testRun.finishedAt || testRun.createdAt,
+            source: "TESTRUN_RECORD",
+            isReadOnly: true
+        };
+    }
+
+    throw new ServiceError("Historical version artifact or database record not found", 404);
 };
