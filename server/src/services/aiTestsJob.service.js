@@ -413,6 +413,26 @@ export const processAiTestsJob = async (jobId) => {
             await updateJobStatus({ jobId, progress: 40 });
             await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'GENERATE_AI_TESTS', label: "Regenerating scenario using AI...", progress: 40 }));
             
+            const { resolvePathConstraintsForProject } = await import("./integrationGuidance.service.js");
+            const diagnostics = [];
+            const pathConstraints = await resolvePathConstraintsForProject(
+                { snapshotId, projectId },
+                { sourceFiles: payload.sourceCode, diagnostics }
+            ).catch(err => {
+                console.warn("[BackwardPathSlicing] Unexpected failure during constraint resolution in regenerate:", err.message);
+                diagnostics.push({ type: 'INTERNAL_ERROR', error: err.message });
+                return [];
+            });
+            payload.pathConstraints = pathConstraints;
+
+            const realIssues = diagnostics.filter(d => d.type !== 'FIRST_RUN_NO_COVERAGE');
+            if (realIssues.length > 0) {
+                const issueSummary = realIssues.map(d => `${d.type}: ${d.error || d.filePath || d.path}`).join("; ");
+                await addJobLog(jobId, "WARN", `[Backward Path Slicing] Diagnostics encountered during regenerate: ${issueSummary}`);
+            } else if (pathConstraints.length > 0) {
+                await addJobLog(jobId, "INFO", `[Backward Path Slicing] Loaded ${pathConstraints.length} uncovered branch path constraint(s) to guide scenario regeneration.`);
+            }
+
             const { regenerateScenarioService } = await import("./scenarioManager.service.js");
             await regenerateScenarioService(aiTestId, scenarioId, payload);
             
@@ -427,6 +447,27 @@ export const processAiTestsJob = async (jobId) => {
             const allTestsCombined = [];
             const suggestionsCombined = [];
             let summaryCombined = { message: "" };
+
+            // Load Backward Path Slicing constraints for uncovered branches in the snapshot
+            const { resolvePathConstraintsForProject } = await import("./integrationGuidance.service.js");
+            const diagnostics = [];
+            const pathConstraints = await resolvePathConstraintsForProject(
+                { snapshotId, projectId },
+                { sourceFiles: payload.sourceCode, diagnostics }
+            ).catch(err => {
+                console.warn("[BackwardPathSlicing] Unexpected failure during constraint resolution:", err.message);
+                return [];
+            });
+            payload.pathConstraints = pathConstraints;
+
+            // Expose actionable diagnostics for unexpected issues without failing graceful first-runs
+            const realIssues = diagnostics.filter(d => d.type !== 'FIRST_RUN_NO_COVERAGE');
+            if (realIssues.length > 0) {
+                const issueSummary = realIssues.map(d => `${d.type}: ${d.error || d.filePath || d.path}`).join("; ");
+                await addJobLog(jobId, "WARN", `[Backward Path Slicing] Diagnostics encountered: ${issueSummary}`);
+            } else if (pathConstraints.length > 0) {
+                await addJobLog(jobId, "INFO", `[Backward Path Slicing] Loaded ${pathConstraints.length} uncovered branch path constraint(s) to guide scenario generation.`);
+            }
 
             // Selective Generation: filter to targetEndpoints if specified
             let targetEndpoints = allEndpoints;
@@ -509,7 +550,31 @@ export const processAiTestsJob = async (jobId) => {
                         return { ...ep, missingCoverageRequested: missing };
                     });
 
-                    const supertestPrompt = buildSupertestPrompt(payload, promptChunk);
+                    // Correlate constraints relevant to the current batch endpoints
+                    const chunkFiles = new Set();
+                    chunkEndpoints.forEach(ep => {
+                        if (ep.controllerFile) chunkFiles.add(ep.controllerFile.replace(/\\/g, '/').toLowerCase());
+                        if (ep.routeFile) chunkFiles.add(ep.routeFile.replace(/\\/g, '/').toLowerCase());
+                        if (ep.serviceLayer?.file) chunkFiles.add(ep.serviceLayer.file.replace(/\\/g, '/').toLowerCase());
+                    });
+
+                    let chunkConstraints = [];
+                    if (Array.isArray(pathConstraints) && pathConstraints.length > 0) {
+                        if (chunkFiles.size > 0) {
+                            chunkConstraints = pathConstraints.filter(c => {
+                                const cPath = (c.filePath || "").replace(/\\/g, '/').toLowerCase();
+                                for (const cf of chunkFiles) {
+                                    if (cPath.includes(cf) || cf.includes(cPath)) return true;
+                                }
+                                return false;
+                            });
+                        }
+                        if (chunkConstraints.length === 0) {
+                            chunkConstraints = pathConstraints.slice(0, 5);
+                        }
+                    }
+
+                    const supertestPrompt = buildSupertestPrompt(payload, promptChunk, chunkConstraints);
                     
                     let batchStatus = "SUCCESS";
                     let acceptedScenarios = 0;

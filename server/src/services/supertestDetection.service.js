@@ -93,6 +93,7 @@ export const detectSupertest = async (rootDir) => {
         detected: Boolean(version || supertestFiles.length),
         version,
         framework,
+        pathway: supertestFiles.length > 0 ? 'BROWNFIELD' : 'GREENFIELD', // V2: Dual-Mode routing
         testFiles,
         supertestFiles,
         configFile: configPath ? path.relative(effectiveRootDir, configPath).replace(/\\/g, "/") : null,

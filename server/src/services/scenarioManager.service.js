@@ -559,11 +559,16 @@ export const regenerateScenarioService = async (aiTestId, scenarioId, payload = 
         apiContext = `Available API Endpoints:\n${JSON.stringify(payload.apiDefinitions, null, 2)}\n\n`;
     }
 
+    let constraintsContext = "";
+    if (Array.isArray(payload.pathConstraints) && payload.pathConstraints.length > 0) {
+        const { includePathConstraints } = await import("./supertestPromptBuilder.service.js");
+        constraintsContext = `\n${includePathConstraints(payload.pathConstraints)}\n`;
+    }
+
     const prompt = `You are an expert testing engineer. The user wants to regenerate a specific Integration Test scenario.
 Keep the same test framework and style. Return ONLY the new test code block, without markdown formatting if possible.
 
-${apiContext}
-Original scenario code:
+${apiContext}${constraintsContext}Original scenario code:
 ${originalCode}
 
 Please improve it, fix potential issues, or make it more robust based on the API context if relevant. Do NOT output a full file, ONLY the test block (e.g. it(...) {...}).

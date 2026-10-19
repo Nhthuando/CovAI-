@@ -302,12 +302,69 @@ export const includeSupertestOutputFormat = () => {
 };
 
 /**
+ * Formats backward path constraints and uncovered branch conditions for AI test generation.
+ * @param {Array<{type: string, condition: string, requiredBranch: string, line: number, uncoveredLine?: number, filePath?: string, status?: string}>} pathConstraints
+ * @returns {string}
+ */
+export const includePathConstraints = (pathConstraints = []) => {
+    if (!pathConstraints || !Array.isArray(pathConstraints) || pathConstraints.length === 0) {
+        return "";
+    }
+
+    let segment = "### Backward Path Slicing & Uncovered Branch Constraints (Target Execution Paths)\n\n";
+    segment += "The following uncovered code branches and their gating conditions have been traced back to source code via AST backward path slicing.\n";
+    segment += "Your generated Supertest scenarios **MUST target these specific branch conditions** to execute previously uncovered lines:\n\n";
+
+    pathConstraints.slice(0, 10).forEach((pc, idx) => {
+        const fileRef = pc.filePath ? `File: \`${pc.filePath}\` | ` : "";
+        const targetLineRef = pc.uncoveredLine ? ` (Uncovered target line ${pc.uncoveredLine})` : "";
+        const lineRef = pc.line ? `Line ${pc.line}` : "Unknown line";
+
+        segment += `${idx + 1}. **${fileRef}${lineRef}${targetLineRef}**\n`;
+        segment += `   - **Branch Construct**: \`${pc.type || 'CONTROL_FLOW'}\`\n`;
+
+        if (pc.status === 'UNRESOLVED' || pc.condition === 'unresolved') {
+            segment += `   - **Condition**: Unresolved expression at line ${pc.line || 'unknown'} (ambiguous, dynamic, or non-static branch)\n`;
+            segment += `   - **Status**: UNRESOLVED (not a verified deterministic path constraint)\n`;
+            segment += `   - **Testing Guidance**: Do NOT assume a verified condition. Test this endpoint with exploratory edge-case inputs to probe this unreached path.\n`;
+        } else {
+            segment += `   - **Condition Expression**: \`${pc.condition}\`\n`;
+            segment += `   - **Required Branch Outcome**: **\`${pc.requiredBranch}\`**\n`;
+            if (pc.type === 'IF') {
+                const isServerContext = /req\.(user|session|auth|token|claims)/i.test(pc.condition);
+                if (isServerContext) {
+                    segment += `   - **Testing Action**: Server-side auth context condition! DO NOT pass this in \`req.body\`. Set proper \`Authorization\` headers (e.g. \`.set('Authorization', 'Bearer ...')\`) or authenticate through the project's auth route/helper to ensure \`${pc.condition}\` evaluates to **${pc.requiredBranch}**.\n`;
+                } else {
+                    segment += `   - **Testing Action**: Send request data causing \`${pc.condition}\` to evaluate to **${pc.requiredBranch}**.\n`;
+                }
+            } else if (pc.type === 'SWITCH') {
+                segment += `   - **Testing Action**: Supply request parameters matching switch case: \`${pc.condition}\`.\n`;
+            } else if (pc.type === 'TRY_CATCH') {
+                segment += `   - **Testing Action**: ${pc.requiredBranch === 'CATCH' ? 'Trigger an exception in the tested route to exercise this catch handler.' : 'Ensure smooth execution without throwing.'}\n`;
+            } else if (pc.type === 'TERNARY') {
+                segment += `   - **Testing Action**: Supply input causing ternary condition \`${pc.condition}\` to evaluate to **${pc.requiredBranch}**.\n`;
+            }
+        }
+        segment += "\n";
+    });
+
+    if (pathConstraints.length > 10) {
+        segment += `_... and ${pathConstraints.length - 10} more branch constraints omitted for brevity._\n\n`;
+    }
+
+    segment += "**CRITICAL INSTRUCTION:** For every branch condition above, create at least one dedicated test scenario explicitly engineered to fulfill that branch requirement!\n\n";
+
+    return segment;
+};
+
+/**
  * Main function: builds the complete Supertest generation prompt.
  * @param {Object} payload - AI context payload
  * @param {Array} targetEndpoints - Optional array of endpoints to restrict generation to
+ * @param {Array} pathConstraints - Optional array of backward path slicing constraints
  * @returns {string} The complete prompt string
  */
-export const buildSupertestPrompt = (payload, targetEndpoints = null) => {
+export const buildSupertestPrompt = (payload, targetEndpoints = null, pathConstraints = []) => {
     let prompt = "You are an expert Backend QA Engineer. Your task is to analyze the provided source code, API contracts, existing test suites, and client consumers to generate comprehensive Supertest integration test files for the API endpoints.\n\n";
 
     prompt += "---\n\n";
@@ -317,6 +374,14 @@ export const buildSupertestPrompt = (payload, targetEndpoints = null) => {
         prompt += includeDatabaseSchemaContext(payload.sourceCode);
         prompt += includeContractContext(payload.sourceCode, payload.testFiles);
         prompt += includeRouteContext(payload.sourceCode, targetEndpoints);
+    }
+
+    const effectiveConstraints = (Array.isArray(pathConstraints) && pathConstraints.length > 0)
+        ? pathConstraints
+        : (Array.isArray(payload?.pathConstraints) ? payload.pathConstraints : []);
+
+    if (effectiveConstraints.length > 0) {
+        prompt += includePathConstraints(effectiveConstraints);
     }
 
     prompt += includeSupertestInstructions(payload.sourceCode);

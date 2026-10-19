@@ -96,6 +96,78 @@ function GuidanceRule({ rule, projectId }) {
             </div>
           </div>
 
+          {/* V2: Backward Path Slicing - Branch Constraints */}
+          {Array.isArray(rule.pathConstraints) && rule.pathConstraints.length > 0 && (
+            <div className="mb-4 p-3 bg-[var(--color-surface-secondary)] rounded border border-[var(--color-border)]">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold text-[var(--color-text)] flex items-center gap-1.5">
+                  <span className="inline-block w-2 h-2 rounded-full bg-[var(--color-primary)]"></span>
+                  Branch Conditions Required for Target Execution
+                </p>
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
+                  {rule.pathConstraints.length} condition{rule.pathConstraints.length > 1 ? 's' : ''}
+                </span>
+              </div>
+              
+              <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                {rule.pathConstraints.map((pc, idx) => {
+                  const isUnresolved = pc.status === 'UNRESOLVED' || pc.condition === 'unresolved';
+                  const typeColors = {
+                    IF: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+                    SWITCH: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
+                    TRY_CATCH: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+                    TERNARY: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+                    default: 'bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] border-[var(--color-border)]'
+                  };
+                  const badgeClass = typeColors[pc.type] || typeColors.default;
+
+                  return (
+                    <div 
+                      key={idx} 
+                      className="p-2 rounded bg-[var(--color-surface-hover)]/40 border border-[var(--color-border)]/60 text-xs flex flex-col gap-1"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border ${badgeClass}`}>
+                            {pc.type || 'BRANCH'}
+                          </span>
+                          {pc.filePath && (
+                            <span className="text-[11px] font-mono text-[var(--color-text-muted)] truncate max-w-[220px]" title={pc.filePath}>
+                              {pc.filePath}
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-[var(--color-text-secondary)] font-mono">
+                          {pc.line ? `Line ${pc.line}` : 'Line ?'}
+                          {pc.uncoveredLine && pc.uncoveredLine !== pc.line ? ` → Target L${pc.uncoveredLine}` : ''}
+                        </span>
+                      </div>
+
+                      <div className="flex items-baseline gap-2 mt-0.5">
+                        {isUnresolved ? (
+                          <span className="text-[var(--color-warning)] italic text-[11px] flex items-center gap-1">
+                            ⚠️ Condition unresolved (ambiguous or dynamic path)
+                          </span>
+                        ) : (
+                          <code className="text-[var(--color-text)] font-mono text-[11px] bg-[var(--color-surface-hover)] px-1.5 py-0.5 rounded border border-[var(--color-border)] break-all">
+                            {pc.condition}
+                          </code>
+                        )}
+                        <span className="text-[var(--color-text-secondary)] text-[11px] whitespace-nowrap ml-auto">
+                          {isUnresolved ? (
+                            <span className="text-[var(--color-warning)] font-mono font-semibold">UNRESOLVED</span>
+                          ) : (
+                            <>Requires: <strong className="text-[var(--color-primary)] font-mono">{pc.requiredBranch || 'COVER'}</strong></>
+                          )}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {rule.verification && (
              <div className="mt-2 text-xs text-[var(--color-text-secondary)] flex items-start gap-1">
                <strong className="text-[var(--color-success)]">Verification:</strong> {rule.verification}
