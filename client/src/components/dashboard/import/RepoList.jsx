@@ -38,10 +38,19 @@ function getLangColor(lang) {
 /* ── Single Repo Row ─────────────────────────────────────── */
 function RepoItem({ repo, onClose, onSuccess, showToast }) {
   const [importing, setImporting] = useState(false);
-  const isSupported =
-    !repo.language ||
-    repo.language === "JavaScript" ||
-    repo.language === "TypeScript";
+  const isSupported = Boolean(
+    repo.hasJsOrTs ??
+      (!repo.language ||
+        repo.language === "JavaScript" ||
+        repo.language === "TypeScript" ||
+        (Array.isArray(repo.languages) &&
+          repo.languages.some(
+            (l) =>
+              l.toLowerCase() === "javascript" ||
+              l.toLowerCase() === "typescript",
+          )) ||
+        ["HTML", "CSS", "Vue", "Unknown"].includes(repo.language)),
+  );
 
   const handleImport = async () => {
     if (importing) return;
@@ -50,7 +59,7 @@ function RepoItem({ repo, onClose, onSuccess, showToast }) {
       showToast({
         type: "error",
         title: "Unsupported Language",
-        message: `CovAI only supports projects with JavaScript or TypeScript as primary language. This repository has language: ${repo.language}.`,
+        message: `CovAI requires JavaScript or TypeScript. This repository does not contain JS/TS.`,
       });
       return;
     }
@@ -148,6 +157,13 @@ function RepoItem({ repo, onClose, onSuccess, showToast }) {
                   style={{ backgroundColor: repo.langColor }}
                 />
                 {repo.language}
+                {isSupported &&
+                  repo.language !== "JavaScript" &&
+                  repo.language !== "TypeScript" && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-[var(--radius-sm)] bg-emerald-500/10 text-emerald-500 font-medium">
+                      JS/TS Supported
+                    </span>
+                  )}
                 {!isSupported && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded-[var(--radius-sm)] bg-[var(--color-danger)]/10 text-[var(--color-danger)] font-medium">
                     Unsupported
@@ -200,17 +216,34 @@ export default function RepoList({ onClose, onSuccess, hasGithub }) {
     getGithubRepositoriesApi()
       .then((data) => {
         const mapped = Array.isArray(data)
-          ? data.map((r) => ({
-              id: r.id,
-              name: r.name,
-              language: r.language || "Unknown",
-              langColor: getLangColor(r.language),
-              updatedAt: new Date(
-                r.updated_at || new Date(),
-              ).toLocaleDateString(),
-              isPrivate: r.private,
-              owner: r.owner?.login,
-            }))
+          ? data.map((r) => {
+              const hasJsOrTs =
+                r.hasJsOrTs ??
+                (!r.language ||
+                  r.language === "JavaScript" ||
+                  r.language === "TypeScript" ||
+                  (Array.isArray(r.languages) &&
+                    r.languages.some(
+                      (l) =>
+                        l.toLowerCase() === "javascript" ||
+                        l.toLowerCase() === "typescript",
+                    )) ||
+                  ["HTML", "CSS", "Vue", "Unknown"].includes(r.language));
+
+              return {
+                id: r.id,
+                name: r.name,
+                language: r.language || "Unknown",
+                langColor: getLangColor(r.language),
+                updatedAt: new Date(
+                  r.updated_at || new Date(),
+                ).toLocaleDateString(),
+                isPrivate: r.private,
+                owner: r.owner?.login,
+                languages: r.languages || [],
+                hasJsOrTs,
+              };
+            })
           : [];
         setRepos(mapped);
       })

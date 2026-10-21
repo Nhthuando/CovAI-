@@ -43,9 +43,7 @@ describe("languageDetector", () => {
       const result = detectLanguageFromPaths(paths);
       expect(result.isSupported).toBe(false);
       expect(result.primaryLanguage).toBe("Python");
-      expect(result.reason).toContain(
-        "CovAI only supports projects whose primary language is JavaScript or TypeScript",
-      );
+      expect(result.reason).toContain("JavaScript or TypeScript");
     });
 
     it("should reject a pure Java project", () => {
@@ -57,21 +55,33 @@ describe("languageDetector", () => {
       const result = detectLanguageFromPaths(paths);
       expect(result.isSupported).toBe(false);
       expect(result.primaryLanguage).toBe("Java");
-      expect(result.reason).toContain(
-        "CovAI only supports projects whose primary language is JavaScript or TypeScript",
-      );
+      expect(result.reason).toContain("JavaScript or TypeScript");
     });
 
-    it("should reject a project where Python dominates without package.json", () => {
+    it("should accept a project that uses JavaScript even if another language has more files", () => {
       const paths = [
         "main.py",
         "api/endpoints.py",
         "services/db.py",
-        "static/helper.js", // 1 incidental script
+        "static/helper.js", // Uses JavaScript
       ];
       const result = detectLanguageFromPaths(paths);
-      expect(result.isSupported).toBe(false);
-      expect(result.primaryLanguage).toBe("Python");
+      expect(result.isSupported).toBe(true);
+      expect(result.primaryLanguage).toBe("JavaScript");
+    });
+
+    it("should accept an HTML project with JavaScript files", () => {
+      const paths = [
+        "index.html",
+        "about.html",
+        "menu.html",
+        "contact.html",
+        "js/main.js",
+        "js/cart.js",
+      ];
+      const result = detectLanguageFromPaths(paths);
+      expect(result.isSupported).toBe(true);
+      expect(result.primaryLanguage).toBe("JavaScript");
     });
 
     it("should reject empty project with no code files", () => {
