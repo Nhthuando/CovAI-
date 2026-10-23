@@ -302,21 +302,26 @@ export default function IntegrationRunResultsPane({
           </div>
         </div>
 
-        {/* Card 3: Code Coverage (Istanbul) */}
+        {/* Card 3: Uncovered API Endpoints */}
         <div className="p-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xs flex flex-col justify-between">
           <div>
             <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
-              Code Coverage (Istanbul)
+              Uncovered API Endpoints
             </div>
-            <div className="grid grid-cols-2 gap-1 text-xs font-mono mt-0.5">
-              <div>Lines: <strong className="text-[var(--color-success)]">{Number(summary?.codeCoverage?.line || 0).toFixed(0)}%</strong></div>
-              <div>Branches: <strong className="text-amber-400">{Number(summary?.codeCoverage?.branch || 0).toFixed(0)}%</strong></div>
-              <div>Funcs: <strong className="text-sky-400">{Number(summary?.codeCoverage?.function || 0).toFixed(0)}%</strong></div>
-              <div>Stmts: <strong className="text-purple-400">{Number(summary?.codeCoverage?.statement || 0).toFixed(0)}%</strong></div>
+            <div className="flex items-baseline gap-2">
+              <span className={`text-2xl font-bold font-mono ${apiStats.uncoveredApis > 0 ? "text-amber-400" : "text-[var(--color-success)]"}`}>
+                {apiStats.uncoveredApis}
+              </span>
+              <span className="text-xs text-[var(--color-text-muted)] font-mono">
+                / {apiStats.totalApis} routes
+              </span>
             </div>
           </div>
-          <div className="text-[10px] text-[var(--color-text-muted)] mt-1.5">
-            Đo lường cờ thực thi qua Istanbul V8
+          <div className="text-[10px] text-[var(--color-text-secondary)] mt-2 flex items-center justify-between">
+            <span>Chưa kích hoạt qua kịch bản</span>
+            <span className="font-semibold text-[var(--color-primary)] font-mono">
+              {Number(apiStats.apiCoverageRate).toFixed(0)}% Covered
+            </span>
           </div>
         </div>
 
@@ -1030,133 +1035,133 @@ export default function IntegrationRunResultsPane({
         </div>
       )}
 
-      {/* 6. Code Coverage Section */}
-      {summary?.codeCoverage && (
-        <div className="border border-[var(--color-border)] rounded-[var(--radius-md)] bg-[var(--color-surface)] overflow-hidden shadow-xs">
-          <div
-            onClick={() => setCoverageOpen(!coverageOpen)}
-            className="px-4 py-3 bg-[var(--color-surface-secondary)]/40 flex items-center justify-between cursor-pointer select-none hover:bg-[var(--color-surface-secondary)] transition-colors"
-          >
-            <div className="flex items-center gap-2">
-              <Layers size={16} className="text-[var(--color-info)]" />
-              <div>
-                <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text)] m-0">
-                  Integration Code Coverage
-                </h4>
-                <p className="text-[11px] text-[var(--color-text-secondary)] m-0 mt-0.5">
-                  Istanbul/Jest collected statement, branch, function, and line coverage
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <span className="text-xs font-mono text-[var(--color-text-secondary)]">
-                Lines: <strong className="text-[var(--color-success)] font-semibold">{Number(summary.codeCoverage.line || 0).toFixed(1)}%</strong>
-              </span>
-              <span className="text-[var(--color-text-muted)]">
-                {coverageOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-              </span>
+      {/* 6. Controller Handler Execution Tracing */}
+      <div className="border border-[var(--color-border)] rounded-[var(--radius-md)] bg-[var(--color-surface)] overflow-hidden shadow-xs">
+        <div
+          onClick={() => setCoverageOpen(!coverageOpen)}
+          className="px-4 py-3 bg-[var(--color-surface-secondary)]/40 flex items-center justify-between cursor-pointer select-none hover:bg-[var(--color-surface-secondary)] transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <Layers size={16} className="text-[var(--color-info)]" />
+            <div>
+              <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text)] m-0">
+                Controller Handler Execution Tracing
+              </h4>
+              <p className="text-[11px] text-[var(--color-text-secondary)] m-0 mt-0.5">
+                Bóc tách thực thi các Controller Handler qua CovAI Tracing Engine
+              </p>
             </div>
           </div>
 
-          {coverageOpen && (
-            <div className="p-4 border-t border-[var(--color-border)] flex flex-col gap-4 text-xs font-mono">
-              {/* Aggregate KPI Cards */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                {[
-                  { label: "Statements", val: summary.codeCoverage.statement },
-                  { label: "Branches", val: summary.codeCoverage.branch },
-                  { label: "Functions", val: summary.codeCoverage.function },
-                  { label: "Lines", val: summary.codeCoverage.line },
-                ].map(({ label, val }) => {
-                  const num = Number(val || 0);
-                  const color = num >= 80 ? "text-[var(--color-success)]" : num > 0 ? "text-amber-400" : "text-[var(--color-danger)]";
-                  return (
-                    <div key={label} className="p-3 rounded border border-[var(--color-border)] bg-[var(--color-surface-secondary)]/30">
-                      <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] mb-1">{label}</div>
-                      <div className={`text-lg font-bold ${color}`}>{num.toFixed(1)}%</div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* File-Level Drill-Down Table */}
-              {summary?.fileCoverages && summary.fileCoverages.length > 0 ? (
-                <div className="border border-[var(--color-border)] rounded-[var(--radius-sm)] overflow-hidden">
-                  <div className="px-3 py-2 bg-[var(--color-surface-secondary)]/50 border-b border-[var(--color-border)] flex items-center justify-between">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text)]">
-                      File-Level Coverage Artifacts ({summary.fileCoverages.length} files)
-                    </span>
-                    <span className="text-[10px] font-mono text-[var(--color-text-muted)]">
-                      Evidence from Istanbul coverage collector
-                    </span>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse text-[11px]">
-                      <thead>
-                        <tr className="border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)]/30 text-[10px] uppercase font-bold text-[var(--color-text-secondary)]">
-                          <th className="py-2 px-3">Source File</th>
-                          <th className="py-2 px-3">Statements</th>
-                          <th className="py-2 px-3">Branches</th>
-                          <th className="py-2 px-3">Functions</th>
-                          <th className="py-2 px-3">Lines</th>
-                          <th className="py-2 px-3">Mapped Endpoints</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[var(--color-border)] font-mono">
-                        {summary.fileCoverages.map((fc, idx) => {
-                          const linked = endpoints.filter((ep) => 
-                            ep.sourceFile === fc.filePath || 
-                            (fc.filePath && ep.sourceFile && (fc.filePath.endsWith(ep.sourceFile) || ep.sourceFile.endsWith(fc.filePath)))
-                          );
-                          const lineNum = Number(fc.line || 0);
-                          const lineCol = lineNum >= 80 ? "text-[var(--color-success)]" : lineNum >= 50 ? "text-amber-400" : "text-[var(--color-danger)]";
-                          
-                          // Format clean relative path: e.g. server/controllers/cartController.js
-                          const parts = (fc.filePath || "").split(/[\\/]/);
-                          const serverIdx = parts.lastIndexOf("server");
-                          const displayPath = serverIdx !== -1 
-                            ? parts.slice(serverIdx).join("/") 
-                            : parts.length > 3 ? parts.slice(-3).join("/") : fc.filePath;
-
-                          return (
-                            <tr key={idx} className="hover:bg-[var(--color-surface-secondary)]/20 transition-colors">
-                              <td className="py-2 px-3 font-medium text-[var(--color-text)] max-w-[220px] truncate" title={fc.filePath}>
-                                {displayPath}
-                              </td>
-                              <td className="py-2 px-3">{Number(fc.statement || 0).toFixed(1)}%</td>
-                              <td className="py-2 px-3">{Number(fc.branch || 0).toFixed(1)}%</td>
-                              <td className="py-2 px-3">{Number(fc.function || 0).toFixed(1)}%</td>
-                              <td className={`py-2 px-3 font-bold ${lineCol}`}>{lineNum.toFixed(1)}%</td>
-                              <td className="py-2 px-3 text-[10px]">
-                                {linked.length > 0 ? (
-                                  <div className="flex flex-wrap gap-1">
-                                    {linked.map((lep) => (
-                                      <span key={`${lep.method}-${lep.path}`} className="px-1 py-0.2 rounded bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)]">
-                                        {lep.method} {lep.path}
-                                      </span>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <span className="text-[var(--color-text-muted)] italic">No direct route mapped</span>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              ) : (
-                <div className="p-3 rounded bg-[var(--color-surface-secondary)]/30 border border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] italic">
-                  File-level coverage artifacts were not emitted for this run. Run tests with coverage collection enabled to inspect individual file and branch coverage.
-                </div>
-              )}
-            </div>
-          )}
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-mono text-[var(--color-text-secondary)]">
+              API Coverage: <strong className="text-[var(--color-primary)] font-semibold">{apiStats.apiCoverageRate}%</strong>
+            </span>
+            <span className="text-[var(--color-text-muted)]">
+              {coverageOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            </span>
+          </div>
         </div>
-      )}
+
+        {coverageOpen && (
+          <div className="p-4 border-t border-[var(--color-border)] flex flex-col gap-4 text-xs font-mono">
+            {/* Aggregate KPI Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="p-3 rounded border border-[var(--color-border)] bg-[var(--color-surface-secondary)]/30">
+                <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] mb-1">Total Endpoints</div>
+                <div className="text-lg font-bold text-[var(--color-text)]">{apiStats.totalApis}</div>
+              </div>
+              <div className="p-3 rounded border border-[var(--color-border)] bg-[var(--color-surface-secondary)]/30">
+                <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] mb-1">Covered Routes</div>
+                <div className="text-lg font-bold text-[var(--color-success)]">{apiStats.testedApis}</div>
+              </div>
+              <div className="p-3 rounded border border-[var(--color-border)] bg-[var(--color-surface-secondary)]/30">
+                <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] mb-1">Uncovered Routes</div>
+                <div className={`text-lg font-bold ${apiStats.uncoveredApis > 0 ? "text-amber-400" : "text-[var(--color-success)]"}`}>
+                  {apiStats.uncoveredApis}
+                </div>
+              </div>
+              <div className="p-3 rounded border border-[var(--color-border)] bg-[var(--color-surface-secondary)]/30">
+                <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] mb-1">Coverage Rate</div>
+                <div className="text-lg font-bold text-[var(--color-primary)]">{apiStats.apiCoverageRate}%</div>
+              </div>
+            </div>
+
+            {/* Controller File Drill-down */}
+            {summary?.fileCoverages && summary.fileCoverages.length > 0 ? (
+              <div className="border border-[var(--color-border)] rounded-[var(--radius-sm)] overflow-hidden">
+                <div className="px-3 py-2 bg-[var(--color-surface-secondary)]/50 border-b border-[var(--color-border)] flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text)]">
+                    Controller Files & Route Mappings ({summary.fileCoverages.length} files)
+                  </span>
+                  <span className="text-[10px] font-mono text-[var(--color-text-muted)]">
+                    CovAI Endpoint Trace Engine
+                  </span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-[11px]">
+                    <thead>
+                      <tr className="border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)]/30 text-[10px] uppercase font-bold text-[var(--color-text-secondary)]">
+                        <th className="py-2 px-3">Controller File</th>
+                        <th className="py-2 px-3">Mapped API Endpoints</th>
+                        <th className="py-2 px-3">Handler Hit Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--color-border)] font-mono">
+                      {summary.fileCoverages.map((fc, idx) => {
+                        const linked = endpoints.filter((ep) => 
+                          ep.sourceFile === fc.filePath || 
+                          (fc.filePath && ep.sourceFile && (fc.filePath.endsWith(ep.sourceFile) || ep.sourceFile.endsWith(fc.filePath)))
+                        );
+                        
+                        const parts = (fc.filePath || "").split(/[/\\]/);
+                        const serverIdx = parts.lastIndexOf("server");
+                        const displayPath = serverIdx !== -1 
+                          ? parts.slice(serverIdx).join("/") 
+                          : parts.length > 3 ? parts.slice(-3).join("/") : fc.filePath;
+
+                        const isHit = (Number(fc.line || 0) > 0) || linked.some(l => (l.executedCount || 0) > 0);
+
+                        return (
+                          <tr key={idx} className="hover:bg-[var(--color-surface-secondary)]/20 transition-colors">
+                            <td className="py-2 px-3 font-medium text-[var(--color-text)] max-w-[260px] truncate" title={fc.filePath}>
+                              {displayPath}
+                            </td>
+                            <td className="py-2 px-3 text-[10px]">
+                              {linked.length > 0 ? (
+                                <div className="flex flex-wrap gap-1">
+                                  {linked.map((lep) => (
+                                    <span key={`${lep.method}-${lep.path}`} className="px-1.5 py-0.5 rounded bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)]">
+                                      <strong className="text-[var(--color-primary)]">{lep.method}</strong> {lep.path}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="text-[var(--color-text-muted)] italic">No direct endpoint mapped</span>
+                              )}
+                            </td>
+                            <td className="py-2 px-3">
+                              {isHit ? (
+                                <span className="inline-flex items-center gap-1 text-[var(--color-success)] font-semibold">
+                                  ✓ EXECUTED
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-amber-400 font-semibold">
+                                  ○ UNHIT
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

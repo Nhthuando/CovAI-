@@ -191,7 +191,7 @@ export default function IntegrationApplyTestsModal({
                   Bạn có muốn chạy lại phân tích để kiểm tra độ bao phủ mới không?
                 </span>
                 <p className="text-[11px] text-[var(--color-text-muted)] m-0">
-                  Hệ thống sẽ chạy bộ test vừa apply qua Istanbul Tracer và tính toán lại Line / Branch / API Coverage % thực tế của dự án.
+                  Hệ thống sẽ chạy bộ test vừa apply qua CovAI Tracing Engine và tính toán lại API Coverage % thực tế của dự án.
                 </p>
               </div>
             </div>

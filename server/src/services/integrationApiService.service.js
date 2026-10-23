@@ -265,7 +265,7 @@ export const runIntegrationGenerationPipeline = async ({
     await updateJobStatus({ jobId, progress: 70 }).catch(() => {});
     await addJobLog(jobId, "INFO", "[Integration AI] Đang gửi yêu cầu tới mô hình AI LLM...").catch(() => {});
 
-    const aiResponseText = await generateText(prompt, process.env.GEMINI_MODEL || "gemini-2.5-flash");
+    const aiResponseText = await generateText(prompt, process.env.GEMINI_MODEL || "gemini-3.8-flash");
     if (!aiResponseText || !aiResponseText.trim()) {
         throw new ServiceError("Mô hình AI trả về phản hồi rỗng", 500);
     }
@@ -438,7 +438,7 @@ export const runRegenerateScenarioPipeline = async ({
     }
 
     await updateJobStatus({ jobId, progress: 75 }).catch(() => {});
-    const aiResponseText = await generateText(prompt, process.env.GEMINI_MODEL || "gemini-2.5-flash");
+    const aiResponseText = await generateText(prompt, process.env.GEMINI_MODEL || "gemini-3.8-flash");
 
     let cleanedCode = aiResponseText.trim();
     const codeMatch = cleanedCode.match(/```(?:javascript|js|typescript|ts)?\s*([\s\S]*?)```/);

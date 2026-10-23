@@ -838,6 +838,13 @@ export default function IntegrationScenariosPane({
     }
   };
 
+  const handleSaveAndApplyEditor = async (code) => {
+    await handleSaveEditor(code);
+    if (onOpenApplyModal) {
+      onOpenApplyModal();
+    }
+  };
+
   if (!hasAnalysis) {
     return (
       <div className="p-12 text-center flex flex-col items-center justify-center h-full gap-3 text-[var(--color-text-secondary)] font-sans">

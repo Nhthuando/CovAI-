@@ -281,14 +281,14 @@ export default function IntegrationReportPage() {
           <div className="bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-4 shadow-xs print:border-gray-300">
             <MetricProvenancePopover provenance={report.projectCodeCoverage?.provenance}>
               <p className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider mb-1">
-                Code Coverage
+                Uncovered Endpoints
               </p>
             </MetricProvenancePopover>
-            <p className="text-2xl font-bold font-mono text-emerald-500 print:text-black">
-              {report.projectCodeCoverage ? `${report.projectCodeCoverage.stmtsPct}%` : "N/A"}
+            <p className="text-2xl font-bold font-mono text-amber-400 print:text-black">
+              {report.uncoveredEndpointsCount ?? (routeMatrix.filter(r => !r.tested).length)}
             </p>
             <div className="text-[10px] text-[var(--color-text-secondary)] mt-1 font-mono truncate">
-              Istanbul Statement Coverage
+              / {routeMatrix.length} routes discovered
             </div>
           </div>
         </div>
