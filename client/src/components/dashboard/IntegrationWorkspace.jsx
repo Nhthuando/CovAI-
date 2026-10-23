@@ -18,6 +18,8 @@ import IntegrationEndpointDetail from "./integration/IntegrationEndpointDetail.j
 import IntegrationErrorBoundary from "./integration/IntegrationErrorBoundary.jsx";
 import IntegrationAnalysisOverview from "./integration/IntegrationAnalysisOverview.jsx";
 import IntegrationRunResultsPane from "./integration/IntegrationRunResultsPane.jsx";
+import IntegrationFrameworkDetectionBanner from "./integration/IntegrationFrameworkDetectionBanner.jsx";
+import IntegrationApplyTestsModal from "./integration/IntegrationApplyTestsModal.jsx";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
@@ -186,6 +188,11 @@ export default function IntegrationWorkspace({
   const [isCancelling, setIsCancelling] = useState(false);
   const [cancellationNotice, setCancellationNotice] = useState("");
   const [selectedTestIds, setSelectedTestIds] = useState([]);
+  const [detectionInfo, setDetectionInfo] = useState(null);
+  const [isInstallingDeps, setIsInstallingDeps] = useState(false);
+  const [isGeneratingWithBanner, setIsGeneratingWithBanner] = useState(false);
+  const [applyModalOpen, setApplyModalOpen] = useState(false);
+  const [applyModalTestIds, setApplyModalTestIds] = useState([]);
 
   // UI View State
   const [selectedEndpointId, setSelectedEndpointId] = useState(() => {
@@ -422,6 +429,71 @@ export default function IntegrationWorkspace({
     },
     handleJobCanceled,
   );
+
+  const handleInstallDependencies = async () => {
+    if (!snapshotId || isInstallingDeps) return;
+    setIsInstallingDeps(true);
+    setError("");
+    try {
+      await installIntegrationDependencies(snapshotId);
+      await load();
+    } catch (err) {
+      setError(err.message || "Failed to install test libraries.");
+    } finally {
+      setIsInstallingDeps(false);
+    }
+  };
+
+  const handleGenerateByBannerFramework = async (targetFramework) => {
+    if (!snapshotId || isGeneratingWithBanner) return;
+    setIsGeneratingWithBanner(true);
+    setError("");
+    try {
+      const res = await generateIntegrationTests(snapshotId, {
+        framework: targetFramework,
+        force: true,
+      });
+      const jId = res?.data?.jobId || res?.jobId;
+      if (jId) {
+        setActiveJobId(jId);
+        setActiveJobType("GENERATE");
+        setActiveJobStatus("RUNNING");
+        setActiveStage("GENERATE");
+      } else {
+        await load();
+      }
+    } catch (err) {
+      setError(err.message || "Failed to generate tests via AI Cold-Start.");
+    } finally {
+      setIsGeneratingWithBanner(false);
+    }
+  };
+
+  const handleAIFixScenario = async (ep, sc) => {
+    if (!snapshotId) return;
+    setError("");
+    try {
+      await regenerateIntegrationScenario(snapshotId, {
+        scenarioId: sc.id || sc.scenarioId,
+        framework: detectionInfo?.targetFramework || "supertest",
+        failureContext: {
+          failureLayer: sc.failureLayer,
+          actualStatus: sc.actualStatus ?? sc.actualStatusFromRuntime,
+          expectedStatus: sc.expectedStatus,
+          errorMessage: (sc.failureMessages || []).join("\n") || sc.failureDetails?.raw || "",
+        },
+      });
+      await load();
+    } catch (err) {
+      setError(err.message || "Failed to repair test scenario with AI.");
+    }
+  };
+
+  const handleOpenApplyModal = (targetIds = null) => {
+    const ids = (targetIds && targetIds.length > 0) ? targetIds : selectedTestIds;
+    setApplyModalTestIds(ids);
+    setApplyModalOpen(true);
+  };
 
   const handleRunAnalysis = async () => {
     if (
@@ -1025,7 +1097,8 @@ export default function IntegrationWorkspace({
           {activeStage === "ANALYZE" || activeStage === "GENERATE" || activeStage === "RUN" || activeStage === "HISTORY" || activeStage === "COMPARE" ? (
              <IntegrationTargetsPane
                endpoints={endpoints}
-               selectedEndpointId={selectedEndpointId}
+               onAIFixScenario={handleAIFixScenario}
+                      selectedEndpointId={selectedEndpointId}
                onSelectEndpoint={setSelectedEndpointId}
                hasAnalysis={hasAnalysis}
                selectedTargetEndpoints={selectedTargetEndpoints}
@@ -1170,6 +1243,7 @@ export default function IntegrationWorkspace({
               isGenerating={pendingAction === "GENERATE" || (activeJobId && activeJobType === "GENERATE")}
               onApproveAndRun={handleApproveAndRun}
               isApprovingAndRunning={pendingAction === "APPROVE_AND_RUN"}
+              onOpenApplyModal={handleOpenApplyModal}
               onReGenerateSelected={(explicitTargets = null) =>
                 handleGenerateClick(
                   explicitTargets ||
@@ -1183,6 +1257,19 @@ export default function IntegrationWorkspace({
             <div className="flex flex-col h-full bg-[var(--color-surface)]">
 
 
+
+              {/* Task 5.2: Framework Detection Banner (Zero-Test & Missing Dependencies) */}
+              {detectionInfo && (detectionInfo.isZeroTestProject || detectionInfo.needsDependencyInstall) && (
+                <div className="p-3 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
+                  <IntegrationFrameworkDetectionBanner
+                    detectionInfo={detectionInfo}
+                    onGenerateTests={handleGenerateByBannerFramework}
+                    onInstallDependencies={handleInstallDependencies}
+                    isInstalling={isInstallingDeps}
+                    isGenerating={isGeneratingWithBanner}
+                  />
+                </div>
+              )}
 
               <div style={{ flex: 1, overflow: "hidden" }}>
                 {activeStage === "ANALYZE" && !selectedEndpointId ? (
@@ -1281,6 +1368,7 @@ export default function IntegrationWorkspace({
                       onRunRemaining={() => handleRunRemainingEndpoints()}
                       onRunEndpoint={(ep) => handleRunRemainingEndpoints([ep])}
                       onRetryScenario={(ep, sc) => handleRunRemainingEndpoints([ep], sc.id || (sc.testId && sc.scenarioId ? `${sc.testId}::${sc.scenarioId}` : null))}
+                      onAIFixScenario={handleAIFixScenario}
                       selectedEndpointId={selectedEndpointId}
                       onSelectEndpoint={setSelectedEndpointId}
                     />
@@ -1303,6 +1391,17 @@ export default function IntegrationWorkspace({
               </div>
             </div>
           )}
+          {/* Task 5.4: Apply Tests To Source Code Modal */}
+            <IntegrationApplyTestsModal
+              isOpen={applyModalOpen}
+              onClose={() => setApplyModalOpen(false)}
+              snapshotId={snapshotId}
+              testIds={applyModalTestIds}
+              onTriggerRerun={() => {
+                setApplyModalOpen(false);
+                handleRunApprovedTests();
+              }}
+            />
           </IntegrationErrorBoundary>
         </div>
       </div>

@@ -444,3 +444,10 @@ export async function getArchitectureAiSummaryApi(
   );
   return handleResponse(res);
 }
+
+export async function getProjectIntegrationDetection(projectId) {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/integration/frameworks`, {
+    headers: getAuthHeaders(),
+  });
+  return handleResponse(res);
+}

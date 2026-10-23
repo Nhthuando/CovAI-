@@ -5,6 +5,10 @@ import { loadSourceCode } from "./aiContextBuilder.service.js";
 import { extractValidEndpoints } from "./apiEndpointParser.service.js";
 import { getBucket } from "../config/firebase.js";
 import { extractTestRequests } from "./testSourceParser.service.js";
+import { parseUnifiedCoverage } from "./unifiedCoverageEngine.service.js";
+import { diagnoseApiFailureLayer, traceApiEndpointCoverage, buildApiCoverageReport } from "./apiCoverageTracer.service.js";
+
+export { diagnoseApiFailureLayer, traceApiEndpointCoverage, buildApiCoverageReport };
 import crypto from 'crypto';
 
 export const extractValidatedTestRequests = (t) => {
@@ -499,7 +503,7 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
     const startDb = Date.now();
     // 1. Run all DB queries concurrently
     const [testRuns, coverageSummary, coverageFiles, aiTests, snapshot, jobs] = await Promise.all([
-        prisma.testRun.findMany({ where: { snapshotId, type: "SUPERTEST" }, orderBy: { createdAt: "desc" }, take: 1, include: { scenarios: true } }),
+        prisma.testRun.findMany({ where: { snapshotId, type: { in: ["SUPERTEST", "PLAYWRIGHT_API"] } }, orderBy: { createdAt: "desc" }, take: 1, include: { scenarios: true } }),
         prisma.coverageSummary.findUnique({ where: { snapshotId } }),
         prisma.coverageFile.findMany({ where: { snapshotId } }),
         prisma.aiTest.findMany({ where: { snapshotId } }),
@@ -689,9 +693,47 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
         if (!t.metaJson) return false;
         try {
             const meta = typeof t.metaJson === 'string' ? JSON.parse(t.metaJson) : t.metaJson;
-            return meta.framework === "SUPERTEST";
+            return meta.framework === "SUPERTEST" || meta.framework === "PLAYWRIGHT_API";
         } catch { return false; }
     });
+
+    // 5.5 Load Unified Coverage and Trace API Coverage
+    let fileCoverageMap = {};
+    if (snapshot?.rootDir) {
+        const candidateCovPaths = [
+            path.join(snapshot.rootDir, "coverage", "coverage-final.json"),
+            path.join(snapshot.rootDir, ".covai-temp", "coverage-final.json")
+        ];
+        for (const cp of candidateCovPaths) {
+            try {
+                if (fs.existsSync(cp)) {
+                    const parsed = parseUnifiedCoverage(cp, snapshot.rootDir);
+                    if (parsed && parsed.files) {
+                        fileCoverageMap = parsed.files;
+                        break;
+                    }
+                }
+            } catch (_) {}
+        }
+    }
+
+    let sourceCodeList = [];
+    try {
+        sourceCodeList = await loadSourceCode(snapshotId);
+    } catch (_) {}
+
+    const apiTraceResult = traceApiEndpointCoverage({
+        endpoints: discoveredEndpoints,
+        fileCoverageMap,
+        sourceCode: sourceCodeList
+    });
+
+    const endpointTraceMap = new Map();
+    if (apiTraceResult?.endpointsTraceability) {
+        for (const item of apiTraceResult.endpointsTraceability) {
+            endpointTraceMap.set(`${(item.method || "").toUpperCase()} ${item.path}`, item);
+        }
+    }
 
     // 6. Map Endpoints
     // Parse all integration tests to extract Supertest calls (using AST cache)
@@ -793,6 +835,8 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
 
     const endpoints = discoveredEndpoints.map(ep => {
         const controllerCoverage = coverageFiles.find(cf => cf.filePath === ep.sourceFile || cf.filePath?.endsWith(ep.sourceFile));
+        const epKey = `${(ep.method || "").toUpperCase()} ${ep.fullPath || ep.path}`;
+        const epTrace = endpointTraceMap.get(epKey) || endpointTraceMap.get(`${(ep.method || "").toUpperCase()} ${ep.path}`) || null;
         
         // Multi-level mapping with strict precedence:
         // 1. If scenario has extracted AST requests, ONLY use verified request matching
@@ -860,6 +904,19 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
                 ? parseFailureMessages(rest.failureMessages, req)
                 : null;
             const scDuration = rest.duration || rest.durationMs || 0;
+            const failureDiagnostics = (rest.status === 'failed') ? diagnoseApiFailureLayer({
+                endpoint: ep,
+                scenario: {
+                    ...rest,
+                    actualStatus: rest.actualStatus !== undefined ? rest.actualStatus : null,
+                    expectedStatus: (req?.expectedStatus !== undefined && req?.expectedStatus !== null)
+                        ? req.expectedStatus
+                        : (rest.title.match(/(?:should return|returns?|status)\s+(\d{3})/i) ? Number(rest.title.match(/(?:should return|returns?|status)\s+(\d{3})/i)[1]) : null)
+                },
+                failureMessages: rest.failureMessages || [],
+                fileCoverageMap,
+                sourceCode: sourceCodeList
+            }) : null;
             const classification = classifyScenarioFailure(rest, req);
             const classificationReason = getClassificationReason(classification, rest, req, parsedFailure);
             const expectedStatus = (req?.expectedStatus !== undefined && req?.expectedStatus !== null)
@@ -1078,6 +1135,10 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
 
             return {
                 ...rest,
+                targetEndpoint: `${ep.method.toUpperCase()} ${ep.fullPath || ep.path}`,
+                failureLayer: failureDiagnostics?.failureLayer || (rest.status === 'failed' ? 'ASSERTION_FAILED' : null),
+                failureDiagnostics: failureDiagnostics || null,
+                isFaultyExistingTest: Boolean(rest.isFaultyExistingTest || (rest.status === 'failed' && (!rest.origin || !rest.origin.includes('AI_GENERATED'))) || classification === 'INVALID_TEST' || classification === 'TEST_SCRIPT_ERROR'),
                 rawJestStatus: rest.status,
                 scenarioType: sType,
                 executionVerdict,
@@ -1193,11 +1254,30 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             minDurationMs,
             maxDurationMs,
             latencyStatus,
-            mappedCodeCoverage: controllerCoverage ? {
+            mappedCodeCoverage: epTrace ? {
+                statement: controllerCoverage?.stmtsPct || epTrace.coveragePct,
+                branch: controllerCoverage?.branchesPct || 0,
+                function: controllerCoverage?.funcsPct || 0,
+                line: epTrace.coveragePct,
+                linesCovered: epTrace.coveredLinesCount,
+                totalLines: epTrace.totalLinesCount,
+                uncoveredLines: epTrace.uncoveredLines || [],
+                missingBranches: epTrace.missingBranches || [],
+                status: epTrace.status
+            } : (controllerCoverage ? {
                 statement: controllerCoverage.stmtsPct,
                 branch: controllerCoverage.branchesPct,
                 function: controllerCoverage.funcsPct,
-                line: controllerCoverage.linesPct
+                line: controllerCoverage.linesPct,
+                status: controllerCoverage.linesPct > 0 ? "COVERED" : "UNCOVERED"
+            } : null),
+            lineCoverage: epTrace ? {
+                status: epTrace.status,
+                coveragePct: epTrace.coveragePct,
+                coveredLinesCount: epTrace.coveredLinesCount,
+                totalLinesCount: epTrace.totalLinesCount,
+                uncoveredLines: epTrace.uncoveredLines || [],
+                missingBranches: epTrace.missingBranches || []
             } : null,
             source: {
                 sourceFile: ep.sourceFile,
@@ -1450,6 +1530,14 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             semanticState,
             executionJobId,
             testRunId,
+            endpointCoverageMetrics: apiTraceResult?.summary || {
+                totalEndpoints: discoveredEndpoints.length,
+                coveredEndpoints: 0,
+                uncoveredEndpoints: discoveredEndpoints.length,
+                endpointCoveragePct: 0,
+                effectiveCoveragePct: 0
+            },
+            endpointsTraceability: apiTraceResult?.endpointsTraceability || [],
             codeCoverage: coverageSummary ? {
                 statement: coverageSummary.stmtsPct,
                 branch: coverageSummary.branchesPct,

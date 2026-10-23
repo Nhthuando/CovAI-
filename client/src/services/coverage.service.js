@@ -270,3 +270,54 @@ export async function getSourceFileDiff(projectId, options = {}) {
 }
 
 
+
+export async function getIntegrationDetection(snapshotId) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/frameworks`, {
+        headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
+}
+
+export async function installIntegrationDependencies(snapshotId) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/install-dependencies`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
+}
+
+export async function generateIntegrationTests(snapshotId, { framework = "supertest", targetEndpoints = [], force = false } = {}) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/generate-tests`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ framework, targetEndpoints, force }),
+    });
+    return handleResponse(res);
+}
+
+export async function regenerateIntegrationScenario(snapshotId, { scenarioId, framework, failureContext } = {}) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/regenerate-scenario`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ scenarioId, framework, failureContext }),
+    });
+    return handleResponse(res);
+}
+
+export async function updateIntegrationScenario(snapshotId, scenarioId, updateData = {}) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/scenarios/${scenarioId}`, {
+        method: "PUT",
+        headers: getAuthHeaders(),
+        body: JSON.stringify(updateData),
+    });
+    return handleResponse(res);
+}
+
+export async function applyIntegrationTests(snapshotId, { testIds = [], targetFilePath = "", fileName = "" } = {}) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/apply-tests`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ testIds, targetFilePath, fileName }),
+    });
+    return handleResponse(res);
+}

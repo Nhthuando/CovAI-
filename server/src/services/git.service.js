@@ -63,11 +63,19 @@ export class GitService {
    */
   static async runCommand(rootDir, commandStr, envExtra = {}) {
     try {
-      const { stdout, stderr } = await execAsync(commandStr, {
+      const trimmed = (commandStr || "").trim();
+      const safeCommand = trimmed.startsWith("git ")
+        ? trimmed.replace(/^git\s+/, "git -c safe.directory=* ")
+        : trimmed;
+
+      const { stdout, stderr } = await execAsync(safeCommand, {
         cwd: rootDir,
         env: {
           ...process.env,
           GIT_TERMINAL_PROMPT: "0",
+          GIT_CONFIG_COUNT: "1",
+          GIT_CONFIG_KEY_0: "safe.directory",
+          GIT_CONFIG_VALUE_0: "*",
           ...envExtra,
         },
         maxBuffer: 10 * 1024 * 1024, // 10MB

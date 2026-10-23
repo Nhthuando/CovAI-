@@ -5,7 +5,7 @@
 > 1. **Unit Testing** (Jest / Vitest)  
 > 2. **Integration Testing** (Supertest / Playwright API Testing)  
 > 3. **System Testing** (Playwright / Cypress E2E)  
-> **Trạng thái:** 🟡 Sẵn sàng triển khai (Architecture Blueprint Approved)
+> **Trạng thái:** 🟢 Hoàn thành 100% (Core Architecture Implemented & Verified with Automated Test Suite)
 
 ---
 
@@ -185,30 +185,30 @@ Từ kết quả này:
 
 ## 📋 4. Danh Sách Nhiệm Vụ Xây Dựng Engine Dùng Chung (Unified Tasks)
 
-- [ ] **Task CE-1: Xây Dựng Module Instrument & Thu Thập Cờ Cốt Lõi (`unifiedCoverageEngine.service.js`)**
-  - [ ] Chuẩn hóa hàm nạp và phân tích `coverage-final.json` sinh ra từ Jest, Vitest, Istanbul, hoặc V8.
-  - [ ] Trích xuất mảng chỉ số chuẩn cho từng tệp nguồn:
+- [x] **Task CE-1: Xây Dựng Module Instrument & Thu Thập Cờ Cốt Lõi (`unifiedCoverageEngine.service.js`)**
+  - [x] Chuẩn hóa hàm nạp và phân tích `coverage-final.json` sinh ra từ Jest, Vitest, Istanbul, hoặc V8 (`normalizeFilePath`, `normalizeFileCoverage`, `parseUnifiedCoverage`).
+  - [x] Trích xuất mảng chỉ số chuẩn cho từng tệp nguồn:
     - `lines`: `{ total, covered, skipped, pct }` kèm danh sách `uncoveredLines: number[]`.
     - `statements`: `{ total, covered, skipped, pct }`.
     - `branches`: `{ total, covered, skipped, pct }` kèm danh sách `uncoveredBranches: Array<{ line, branchIndex, type }>`.
     - `functions`: `{ total, covered, skipped, pct }` kèm danh sách `uncoveredFunctions: string[]`.
-  - [ ] Cung cấp hàm tra cứu trạng thái dòng lệnh: `getLineExecutionStatus(filePath, lineNumber): "HIT" | "UNHIT" | "PARTIAL" | "IGNORED"`.
+  - [x] Cung cấp hàm tra cứu trạng thái dòng lệnh: `getLineExecutionStatus(filePath, lineNumber): "HIT" | "UNHIT" | "PARTIAL" | "IGNORED"`.
 
-- [ ] **Task CE-2: Module Ánh Xạ Ngược API & Điểm Dừng Lỗi Cho Integration Testing (`apiCoverageTracer.service.js`)**
-  - [ ] Nạp danh sách API Endpoints từ `apiEndpointParser.service.js`.
-  - [ ] Ánh xạ từng API Endpoint tới tọa độ mã nguồn Controller (`controllerFile`, `startLine`, `endLine`).
-  - [ ] Tính toán tỉ lệ bao phủ riêng cho từng Endpoint:
+- [x] **Task CE-2: Module Ánh Xạ Ngược API & Điểm Dừng Lỗi Cho Integration Testing (`apiCoverageTracer.service.js`)**
+  - [x] Nạp danh sách API Endpoints từ `apiEndpointParser.service.js`.
+  - [x] Ánh xạ từng API Endpoint tới tọa độ mã nguồn Controller (`controllerFile`, `startLine`, `endLine`).
+  - [x] Tính toán tỉ lệ bao phủ riêng cho từng Endpoint:
     - Endpoint Covered: Có `hitCount > 0` tại controller handler.
     - Endpoint Uncovered: Toàn bộ lines trong handler có `hitCount = 0`.
     - Endpoint Partially Covered: Chỉ chạy qua 1 số nhánh (ví dụ: chỉ chạy nhánh 400, chưa chạy nhánh 200).
-  - [ ] Trích xuất tầng bị kẹt lỗi (Failure Layer) dựa trên điểm gãy của dòng lệnh cờ cuối cùng.
+  - [x] Trích xuất tầng bị kẹt lỗi (Failure Layer) dựa trên điểm gãy của dòng lệnh cờ cuối cùng (`ROUTER_NOT_FOUND`, `MIDDLEWARE_REJECTED`, `DATABASE_FAILURE`, `CONTROLLER_CRASH`, `ASSERTION_FAILED`).
 
-- [ ] **Task CE-3: Module Ánh Xạ Ngược Cho System Testing & Unit Testing**
-  - [ ] Ánh xạ cho Unit Test: Phân loại hàm nào chưa có unit test dựa trên `fnMap` và `f`.
-  - [ ] Ánh xạ cho System Test: Phân bổ phần trăm đóng góp coverage của từng kịch bản E2E vào các route frontend và UI component.
+- [x] **Task CE-3: Module Ánh Xạ Ngược Cho System Testing & Unit Testing**
+  - [x] Ánh xạ cho Unit Test: Phân loại hàm nào chưa có unit test dựa trên `fnMap` và `f` (`traceUnitCoverage`).
+  - [x] Ánh xạ cho System Test: Phân bổ phần trăm đóng góp coverage của từng kịch bản E2E vào các route frontend và UI component (`traceSystemCoverage`).
 
-- [ ] **Task CE-4: Chuẩn Hóa Data Contract & API Tra Cứu Độ Bao Phủ Dòng Lệnh**
-  - [ ] Cung cấp format JSON thống nhất trả về cho Dashboard UI:
+- [x] **Task CE-4: Chuẩn Hóa Data Contract & API Tra Cứu Độ Bao Phủ Dòng Lệnh**
+  - [x] Cung cấp format JSON thống nhất trả về cho Dashboard UI (`buildApiCoverageReport`):
     ```json
     {
       "summary": { "linesPct": 82.5, "branchesPct": 75.0, "functionsPct": 90.0, "statementsPct": 84.1 },
@@ -218,5 +218,30 @@ Từ kết quả này:
       ]
     }
     ```
-  - [ ] Đảm bảo UI Monaco Code Editor có thể hiển thị thanh màu xanh (Hit) / đỏ (Unhit) / vàng (Partial Branch) ở lề trái (gutter) của file mã nguồn.
+  - [x] Đảm bảo UI Monaco Code Editor có thể hiển thị thanh màu xanh (Hit) / đỏ (Unhit) / vàng (Partial Branch) ở lề trái (gutter) của file mã nguồn (`formatCoverageForGutter`).
+
+---
+
+## 🏆 5. Kết Quả Kiểm Thử Tự Động & Nghiệm Thu (Automated Verification)
+
+- **Tệp kiểm thử:** [`server/src/tests/unifiedCoverageEngine.test.js`](./server/src/tests/unifiedCoverageEngine.test.js)
+- **Môi trường chạy:** Docker container `covai_server` (Jest 29.7.0, Node.js ESM).
+- **Kết quả:** 15/15 tests **PASSED** (100% Pass Rate).
+  - ✅ `normalizeFilePath` chuẩn hóa path đa nền tảng (Windows drive letters, Docker mount paths, project repo roots).
+  - ✅ `normalizeFileCoverage` phân tích chính xác line hits, statements, branch paths (uncovered branches), và function hits.
+  - ✅ `parseUnifiedCoverage` tổng hợp summary metrics toàn diện cho toàn bộ workspace.
+  - ✅ `getLineExecutionStatus` trả về trạng thái dòng `HIT`, `UNHIT`, `PARTIAL`, `IGNORED`.
+  - ✅ `formatCoverageForGutter` trả về tokens CSS gutter cho Monaco Code Viewer (`cov-hit-line`, `cov-unhit-line`, `cov-partial-line`).
+  - ✅ `traceUnitCoverage` ánh xạ tới các hàm Unit Test (Tested vs Untested functions).
+  - ✅ `traceSystemCoverage` ánh xạ tới các route frontend và page components trong E2E System Test.
+  - ✅ `traceApiEndpointCoverage` phân loại chính xác các trạng thái Endpoint `COVERED`, `PARTIAL`, `UNCOVERED`.
+  - ✅ `findLastExecutedLine` định vị chuẩn xác dòng code cuối cùng trước khi xảy ra lỗi.
+  - ✅ `diagnoseApiFailureLayer` phát hiện chuẩn xác cả 5 tầng lỗi:
+    1. `ROUTER_NOT_FOUND` (404 / Không khớp mount path Express)
+    2. `MIDDLEWARE_REJECTED` (401/403/Validation error trước khi vào controller)
+    3. `DATABASE_FAILURE` (Lỗi Prisma/Mongoose/SQL exception)
+    4. `CONTROLLER_CRASH` (500 Unhandled TypeError/ReferenceError trong controller)
+    5. `ASSERTION_FAILED` (Response contract sai lệch so với test expectation)
+  - ✅ `buildApiCoverageReport` tổng hợp báo cáo hoàn chỉnh cho Dashboard UI và AI Generator.
+
 

@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   XCircle,
   AlertTriangle,
+  Sparkles,
   Clock,
   ChevronDown,
   ChevronRight,
@@ -16,6 +17,54 @@ import {
   Layers,
   Info
 } from "lucide-react";
+
+
+const FAILURE_LAYERS_META = {
+  ROUTER_NOT_FOUND: {
+    label: "Router",
+    code: "[ROUTER_NOT_FOUND]",
+    style: "bg-orange-500/15 text-orange-400 border-orange-500/30",
+    desc: "Đường dẫn Route hoặc URL mount point không khớp router Express.",
+  },
+  MIDDLEWARE_REJECTED: {
+    label: "Middleware",
+    code: "[MIDDLEWARE_REJECTED]",
+    style: "bg-amber-500/15 text-amber-400 border-amber-500/30",
+    desc: "Bị chặn bởi Authentication, JWT token, CORS hoặc Request Validator.",
+  },
+  CONTROLLER_CRASH: {
+    label: "Controller",
+    code: "[CONTROLLER_CRASH]",
+    style: "bg-rose-500/15 text-rose-400 border-rose-500/30",
+    desc: "Lỗi runtime crash (TypeError, ReferenceError) trong controller handler.",
+  },
+  DATABASE_FAILURE: {
+    label: "Database",
+    code: "[DATABASE_FAILURE]",
+    style: "bg-purple-500/15 text-purple-400 border-purple-500/30",
+    desc: "Lỗi kết nối database, schema constraint hoặc Prisma query failure.",
+  },
+  ASSERTION_FAILED: {
+    label: "Assertion",
+    code: "[ASSERTION_FAILED]",
+    style: "bg-sky-500/15 text-sky-400 border-sky-500/30",
+    desc: "HTTP response status code hoặc JSON body không khớp với giá trị mong đợi.",
+  },
+};
+
+function getScenarioFailureLayer(sc, actualHttp) {
+  if (sc.failureLayer && FAILURE_LAYERS_META[sc.failureLayer]) return sc.failureLayer;
+  if (actualHttp === 404) return "ROUTER_NOT_FOUND";
+  if (actualHttp === 401 || actualHttp === 403) return "MIDDLEWARE_REJECTED";
+  const msg = ((sc.failureMessages && sc.failureMessages.join(" ")) || sc.failureDetails?.raw || "").toLowerCase();
+  if (msg.includes("prisma") || msg.includes("mongo") || msg.includes("database") || msg.includes("econnrefused")) {
+    return "DATABASE_FAILURE";
+  }
+  if (actualHttp === 500 || msg.includes("typeerror") || msg.includes("referenceerror")) {
+    return "CONTROLLER_CRASH";
+  }
+  return "ASSERTION_FAILED";
+}
 
 export default function IntegrationRunResultsPane({
   workspace,
@@ -31,6 +80,7 @@ export default function IntegrationRunResultsPane({
   onRunRemaining,
   onRunEndpoint = () => {},
   onRetryScenario = () => {},
+  onAIFixScenario = () => {},
   selectedEndpointId = null,
   onSelectEndpoint = () => {},
 }) {
@@ -91,6 +141,41 @@ export default function IntegrationRunResultsPane({
       });
     });
     return list;
+  }, [endpoints]);
+
+  
+  // Audited API level pass/fail/uncovered stats
+  const apiStats = useMemo(() => {
+    let passedApis = 0;
+    let failedApis = 0;
+    let uncoveredApis = 0;
+
+    (endpoints || []).forEach((ep) => {
+      const hasExecuted = (ep.executedCount || 0) > 0 || (ep.scenarios || []).some((s) => s.status === "passed" || s.status === "failed");
+      const hasFail = (ep.failedCount || 0) > 0 || (ep.scenarios || []).some((s) => s.status === "failed" || s.rawJestStatus === "failed" || s.executionVerdict === "FAIL");
+      if (!hasExecuted) {
+        uncoveredApis++;
+      } else if (hasFail) {
+        failedApis++;
+      } else {
+        passedApis++;
+      }
+    });
+
+    const totalApis = (endpoints || []).length;
+    const testedApis = passedApis + failedApis;
+    const apiPassRate = testedApis > 0 ? Math.round((passedApis / testedApis) * 100) : 0;
+    const apiCoverageRate = totalApis > 0 ? Math.round((testedApis / totalApis) * 100) : 0;
+
+    return {
+      totalApis,
+      testedApis,
+      passedApis,
+      failedApis,
+      uncoveredApis,
+      apiPassRate,
+      apiCoverageRate,
+    };
   }, [endpoints]);
 
   // Metric calculations
@@ -171,6 +256,91 @@ export default function IntegrationRunResultsPane({
                   : "Run All Tests"}
             </span>
           </button>
+        </div>
+      </div>
+
+      
+      {/* Task 5.3: Overview Metric Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+        {/* Card 1: API Pass Rate */}
+        <div className="p-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xs flex flex-col justify-between">
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+              API Pass Rate
+            </div>
+            <div className="flex items-baseline gap-2">
+              <span className={`text-2xl font-bold font-mono ${apiStats.apiPassRate >= 80 ? "text-[var(--color-success)]" : apiStats.apiPassRate > 0 ? "text-amber-400" : "text-[var(--color-text-muted)]"}`}>
+                {apiStats.apiPassRate}%
+              </span>
+              <span className="text-xs text-[var(--color-text-muted)] font-mono">
+                ({apiStats.passedApis}/{apiStats.testedApis} tested APIs)
+              </span>
+            </div>
+          </div>
+          <div className="text-[10px] text-[var(--color-text-secondary)] mt-2">
+            Tỉ lệ API endpoint vượt qua toàn bộ kịch bản kiểm thử
+          </div>
+        </div>
+
+        {/* Card 2: API Coverage */}
+        <div className="p-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xs flex flex-col justify-between">
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+              API Coverage
+            </div>
+            <div className="flex items-baseline gap-2">
+              <span className="text-2xl font-bold font-mono text-[var(--color-primary)]">
+                {apiStats.apiCoverageRate}%
+              </span>
+              <span className="text-xs text-[var(--color-text-muted)] font-mono">
+                ({apiStats.testedApis}/{apiStats.totalApis} routes)
+              </span>
+            </div>
+          </div>
+          <div className="w-full bg-[var(--color-surface-secondary)] h-1.5 rounded-full overflow-hidden mt-2">
+            <div className="bg-[var(--color-primary)] h-full transition-all" style={{ width: `${apiStats.apiCoverageRate}%` }} />
+          </div>
+        </div>
+
+        {/* Card 3: Code Coverage (Istanbul) */}
+        <div className="p-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xs flex flex-col justify-between">
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+              Code Coverage (Istanbul)
+            </div>
+            <div className="grid grid-cols-2 gap-1 text-xs font-mono mt-0.5">
+              <div>Lines: <strong className="text-[var(--color-success)]">{Number(summary?.codeCoverage?.line || 0).toFixed(0)}%</strong></div>
+              <div>Branches: <strong className="text-amber-400">{Number(summary?.codeCoverage?.branch || 0).toFixed(0)}%</strong></div>
+              <div>Funcs: <strong className="text-sky-400">{Number(summary?.codeCoverage?.function || 0).toFixed(0)}%</strong></div>
+              <div>Stmts: <strong className="text-purple-400">{Number(summary?.codeCoverage?.statement || 0).toFixed(0)}%</strong></div>
+            </div>
+          </div>
+          <div className="text-[10px] text-[var(--color-text-muted)] mt-1.5">
+            Đo lường cờ thực thi qua Istanbul V8
+          </div>
+        </div>
+
+        {/* Card 4: Status Triage */}
+        <div className="p-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xs flex flex-col justify-between">
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+              Endpoint Status Triage
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5 mt-1 font-mono text-xs">
+              <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-[var(--color-success)] border border-emerald-500/20 font-bold">
+                ✓ {apiStats.passedApis} Passed
+              </span>
+              <span className="px-2 py-0.5 rounded bg-rose-500/10 text-[var(--color-danger)] border border-rose-500/20 font-bold">
+                ✗ {apiStats.failedApis} Failed
+              </span>
+              <span className="px-2 py-0.5 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)] font-semibold">
+                ? {apiStats.uncoveredApis} Uncovered
+              </span>
+            </div>
+          </div>
+          <div className="text-[10px] text-[var(--color-text-secondary)] mt-2">
+            Phân loại trạng thái kiểm thử theo từng route
+          </div>
         </div>
       </div>
 
@@ -317,6 +487,18 @@ export default function IntegrationRunResultsPane({
                         <RefreshCw size={10} />
                         <span>Retry Scenario</span>
                       </button>
+                      {onAIFixScenario && (
+                        <button
+                          type="button"
+                          onClick={() => onAIFixScenario(ep, sc)}
+                          disabled={isJobActive || pendingAction === "RUN_REMAINING"}
+                          className="px-2 py-0.5 rounded text-[10px] font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/25 hover:bg-purple-500/20 transition-colors cursor-pointer flex items-center gap-1"
+                          title="Sửa kịch bản bằng AI"
+                        >
+                          <Sparkles size={10} />
+                          <span>Sửa bằng AI</span>
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => onRunEndpoint(ep)}

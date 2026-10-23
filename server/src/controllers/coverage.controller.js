@@ -8,6 +8,7 @@ import { createInstallDepsJob, createRunTestsJob, createSupertestCoverageJob, cr
 import { jobQueue, addJobToQueue, addSupertestCoveragePipeline } from "../services/queue.service.js";
 import { processCoverageJob } from "../services/coverageRunner.service.js";
 import { detectSupertest } from "../services/supertestDetection.service.js";
+import { detectIntegrationFrameworks, installIntegrationDependencies } from "../services/integrationDetection.service.js";
 import { detectCoverageFrameworks, selectCoverageFramework } from "../services/coverageFramework.service.js";
 import { buildIntegrationWorkspace, getIntegrationHistoryService, invalidateEndpointCache } from "../services/integrationWorkspace.service.js";
 import {
@@ -1669,6 +1670,216 @@ export const getCoverageFunctions = async (req, res) => {
  * GET /api/coverage/:snapshotId/integration/workspace
  * Retrieves the data for the new Integration Test Workspace
  */
+/**
+ * GET /api/coverage/:snapshotId/integration/detection
+ * Detects integration testing frameworks (Supertest & Playwright API) and determines 4 Permutations
+ */
+export const getIntegrationDetectionController = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
+
+        const { snapshotId } = req.params;
+        if (!snapshotId) return res.status(400).json({ success: false, message: "snapshotId is required." });
+
+        const snapshot = await prisma.projectSnapshot.findUnique({
+            where: { id: snapshotId },
+            select: { id: true, rootDir: true, storagePath: true, project: { select: { ownerId: true } } }
+        });
+
+        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
+        if (snapshot.project?.ownerId && snapshot.project.ownerId !== userId) {
+            return res.status(403).json({ success: false, message: "Forbidden." });
+        }
+
+        const rootDir = snapshot.rootDir || snapshot.storagePath;
+        const detection = await detectIntegrationFrameworks(rootDir);
+
+        return res.status(200).json({ success: true, data: detection });
+    } catch (error) {
+        console.error("[getIntegrationDetectionController] Error:", error);
+        return res.status(500).json({ success: false, message: error.message || "Failed to detect integration frameworks." });
+    }
+};
+
+/**
+ * POST /api/coverage/:snapshotId/integration/install-dependencies
+ * Installs missing integration testing dependencies (Supertest/Jest or Playwright API)
+ */
+/**
+ * POST /api/coverage/:snapshotId/integration/generate-tests
+ * Task 4.3: Generate AI integration test suites (Cold-Start & Multi-Endpoint)
+ */
+export const generateIntegrationTestsController = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
+
+        const { snapshotId } = req.params;
+        const { framework, targetEndpoints, force } = req.body || {};
+
+        const { queueIntegrationTestGenerationService } = await import("../services/integrationApiService.service.js");
+        const result = await queueIntegrationTestGenerationService({
+            snapshotId,
+            userId,
+            framework: framework || "supertest",
+            targetEndpoints: targetEndpoints || [],
+            force: Boolean(force)
+        });
+
+        return res.status(202).json({
+            success: true,
+            data: result
+        });
+    } catch (error) {
+        console.error("[generateIntegrationTestsController] Error:", error);
+        return res.status(error.statusCode || 500).json({
+            success: false,
+            message: error.message || "Failed to queue integration test generation."
+        });
+    }
+};
+
+/**
+ * POST /api/coverage/:snapshotId/integration/regenerate-scenario
+ * Task 4.3: Regenerate single test scenario or fix faulty test
+ */
+export const regenerateIntegrationScenarioController = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
+
+        const { snapshotId } = req.params;
+        const { scenarioId, framework, failureContext } = req.body || {};
+
+        const { queueRegenerateScenarioService } = await import("../services/integrationApiService.service.js");
+        const result = await queueRegenerateScenarioService({
+            snapshotId,
+            userId,
+            scenarioId: scenarioId || req.params.scenarioId,
+            framework: framework || "supertest",
+            failureContext: failureContext || null
+        });
+
+        return res.status(202).json({
+            success: true,
+            data: result
+        });
+    } catch (error) {
+        console.error("[regenerateIntegrationScenarioController] Error:", error);
+        return res.status(error.statusCode || 500).json({
+            success: false,
+            message: error.message || "Failed to queue scenario regeneration."
+        });
+    }
+};
+
+/**
+ * PUT /api/coverage/:snapshotId/integration/scenarios/:scenarioId
+ * Task 4.4: Update an integration scenario
+ */
+export const updateIntegrationScenarioController = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
+
+        const { snapshotId, scenarioId } = req.params;
+        const updates = req.body || {};
+
+        const { updateIntegrationScenarioService } = await import("../services/integrationApiService.service.js");
+        const result = await updateIntegrationScenarioService({
+            snapshotId,
+            scenarioId,
+            userId,
+            updates
+        });
+
+        return res.status(200).json({
+            success: true,
+            data: result
+        });
+    } catch (error) {
+        console.error("[updateIntegrationScenarioController] Error:", error);
+        return res.status(error.statusCode || 500).json({
+            success: false,
+            message: error.message || "Failed to update integration scenario."
+        });
+    }
+};
+
+/**
+ * POST /api/coverage/:snapshotId/integration/apply-tests
+ * Task 4.4: Apply approved/selected integration tests directly into source code
+ */
+export const applyIntegrationTestsController = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
+
+        const { snapshotId } = req.params;
+        const { testIds, targetFilePath, fileName } = req.body || {};
+
+        const { applyIntegrationTestsService } = await import("../services/integrationApiService.service.js");
+        const result = await applyIntegrationTestsService({
+            snapshotId,
+            userId,
+            testIds: testIds || [],
+            targetFilePath: targetFilePath || null,
+            fileName: fileName || null
+        });
+
+        return res.status(200).json({
+            success: true,
+            data: result
+        });
+    } catch (error) {
+        console.error("[applyIntegrationTestsController] Error:", error);
+        return res.status(error.statusCode || 500).json({
+            success: false,
+            message: error.message || "Failed to apply integration tests to source code."
+        });
+    }
+};
+
+export const installIntegrationDependenciesController = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
+
+        const { snapshotId } = req.params;
+        const { packages, framework } = req.body || {};
+
+        const snapshot = await prisma.projectSnapshot.findUnique({
+            where: { id: snapshotId },
+            select: { id: true, rootDir: true, storagePath: true, project: { select: { ownerId: true } } }
+        });
+
+        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
+        if (snapshot.project?.ownerId && snapshot.project.ownerId !== userId) {
+            return res.status(403).json({ success: false, message: "Forbidden." });
+        }
+
+        const rootDir = snapshot.rootDir || snapshot.storagePath;
+        const installResult = await installIntegrationDependencies({
+            rootDir,
+            packages,
+            framework: framework || "supertest",
+        });
+
+        const updatedDetection = await detectIntegrationFrameworks(rootDir);
+
+        return res.status(200).json({
+            success: true,
+            message: "Integration dependencies installed successfully.",
+            installResult,
+            detection: updatedDetection,
+        });
+    } catch (error) {
+        console.error("[installIntegrationDependenciesController] Error:", error);
+        return res.status(500).json({ success: false, message: error.message || "Failed to install dependencies." });
+    }
+};
+
 export const getIntegrationWorkspace = async (req, res) => {
     try {
         const userId = req.user?.id;

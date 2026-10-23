@@ -31,6 +31,12 @@ import {
     updateSystemTestFileContent,
     runSingleSystemTest,
     optimizeSystemTestController,
+    getIntegrationDetectionController,
+    generateIntegrationTestsController,
+    regenerateIntegrationScenarioController,
+    updateIntegrationScenarioController,
+    applyIntegrationTestsController,
+    installIntegrationDependenciesController,
 } from "../controllers/coverage.controller.js";
 
 const router = express.Router();
@@ -77,6 +83,14 @@ router.get("/:snapshotId/functions", authMiddleware, getCoverageFunctions);
 router.get("/:snapshotId/test-execution", authMiddleware, getTestExecution);
 
 // Integration Workspace (Phase 1)
+router.get("/:snapshotId/integration/detection", authMiddleware, getIntegrationDetectionController);
+router.get("/:snapshotId/integration/frameworks", authMiddleware, getIntegrationDetectionController);
+router.post("/:snapshotId/integration/run", authMiddleware, runSupertestCoverage);
+router.post("/:snapshotId/integration/generate-tests", authMiddleware, generateIntegrationTestsController);
+router.post("/:snapshotId/integration/regenerate-scenario", authMiddleware, regenerateIntegrationScenarioController);
+router.put("/:snapshotId/integration/scenarios/:scenarioId", authMiddleware, updateIntegrationScenarioController);
+router.post("/:snapshotId/integration/apply-tests", authMiddleware, applyIntegrationTestsController);
+router.post("/:snapshotId/integration/install-dependencies", authMiddleware, installIntegrationDependenciesController);
 router.get("/:snapshotId/integration/workspace", authMiddleware, getIntegrationWorkspace);
 router.post("/:snapshotId/integration/approve", authMiddleware, approveIntegrationTests);
 router.get("/:snapshotId/test-suites", authMiddleware, getCoverageTestSuites);
