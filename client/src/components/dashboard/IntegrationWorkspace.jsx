@@ -778,14 +778,17 @@ export default function IntegrationWorkspace({
     let failedScenariosCount = 0;
 
     endpoints.forEach((ep) => {
-      const scenarios = ep.scenarios || [];
-      const hasTests = scenarios.length > 0 || (ep.generatedCount || 0) > 0;
+      const epScenarios = ep.scenarios || [];
+      const hasTests = epScenarios.length > 0 || (ep.generatedCount || 0) > 0;
       if (hasTests) testedApis++;
 
-      const epFailed = (ep.failedCount || 0) + scenarios.filter((s) => s.status === "failed" || s.rawJestStatus === "failed" || s.executionVerdict === "FAIL").length;
-      const epPassed = (ep.passedCount || 0) + scenarios.filter((s) => s.status === "passed" || s.rawJestStatus === "passed" || s.executionVerdict === "PASS").length;
+      const scFailed = epScenarios.filter((s) => s.status === "failed" || s.rawJestStatus === "failed" || s.executionVerdict === "FAIL").length;
+      const scPassed = epScenarios.filter((s) => s.status === "passed" || s.rawJestStatus === "passed" || s.executionVerdict === "PASS").length;
 
-      totalScenariosCount += scenarios.length || ep.generatedCount || 0;
+      const epFailed = epScenarios.length > 0 ? scFailed : (ep.failedCount || 0);
+      const epPassed = epScenarios.length > 0 ? scPassed : (ep.passedCount || 0);
+
+      totalScenariosCount += epScenarios.length > 0 ? epScenarios.length : (ep.generatedCount || 0);
       passedScenariosCount += epPassed;
       failedScenariosCount += epFailed;
 
@@ -796,6 +799,14 @@ export default function IntegrationWorkspace({
     const uncoveredApis = Math.max(0, totalApis - testedApis);
     const apiPassRate = testedApis > 0 ? Math.round((passedApis / testedApis) * 100) : 0;
     const apiCoverageRate = totalApis > 0 ? Math.round((testedApis / totalApis) * 100) : 0;
+
+    const totalExecutedScenarios = passedScenariosCount + failedScenariosCount;
+    const scenarioPassRate = totalScenariosCount > 0
+      ? Math.round((passedScenariosCount / totalScenariosCount) * 100)
+      : 0;
+    const scenarioCoverageRate = totalScenariosCount > 0
+      ? Math.round((totalExecutedScenarios / totalScenariosCount) * 100)
+      : 0;
 
     return {
       totalApis,
@@ -808,6 +819,8 @@ export default function IntegrationWorkspace({
       totalScenariosCount,
       passedScenariosCount,
       failedScenariosCount,
+      scenarioPassRate,
+      scenarioCoverageRate,
     };
   }, [endpoints]);
 
@@ -1156,11 +1169,11 @@ export default function IntegrationWorkspace({
                 </div>
                 <div className="p-2.5">
                   <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">Pass Rate</div>
-                  <div className={`text-base font-bold font-mono ${overallStats.apiPassRate >= 80 ? "text-[var(--color-success)]" : "text-amber-400"} mt-0.5`}>{overallStats.apiPassRate}%</div>
+                  <div className={`text-base font-bold font-mono ${overallStats.scenarioPassRate >= 80 ? "text-[var(--color-success)]" : overallStats.scenarioPassRate > 0 ? "text-amber-400" : "text-[var(--color-text-muted)]"} mt-0.5`}>{overallStats.scenarioPassRate}%</div>
                 </div>
                 <div className="p-2.5">
                   <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">Độ bao phủ</div>
-                  <div className="text-base font-bold font-mono text-[var(--color-text)] mt-0.5">{overallStats.apiCoverageRate}%</div>
+                  <div className="text-base font-bold font-mono text-[var(--color-text)] mt-0.5">{overallStats.scenarioCoverageRate}%</div>
                 </div>
                 <div className="p-2.5">
                   <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">Thời lượng</div>
@@ -1241,7 +1254,7 @@ export default function IntegrationWorkspace({
                       Hệ Thống Sẵn Sàng Thực Thi Kiểm Thử
                     </div>
                     <div className="text-[11px] text-[var(--color-text-secondary)] font-mono mt-0.5">
-                      Lần chạy gần nhất: {execution?.timestamp ? new Date(execution.timestamp).toLocaleTimeString() : "Chưa chạy"} • {execution?.totalTests || 0} tests ({execution?.passedTests || 0} pass, {execution?.failedTests || 0} fail)
+                      Lần chạy gần nhất: {execution?.timestamp ? new Date(execution.timestamp).toLocaleTimeString() : "Chưa chạy"} • {execution?.totalTests ?? overallStats.totalScenariosCount} tests ({execution?.passedTests ?? overallStats.passedScenariosCount} pass, {execution?.failedTests ?? overallStats.failedScenariosCount} fail)
                     </div>
                   </div>
                 </div>
