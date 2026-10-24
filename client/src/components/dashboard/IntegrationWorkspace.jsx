@@ -773,9 +773,9 @@ export default function IntegrationWorkspace({
     let testedApis = 0;
     let passedApis = 0;
     let failedApis = 0;
-    let totalScenariosCount = 0;
-    let passedScenariosCount = 0;
-    let failedScenariosCount = 0;
+
+    // Collect deduplicated scenarios across endpoints to prevent duplicate counts
+    const uniqueScenariosMap = new Map();
 
     endpoints.forEach((ep) => {
       const epScenarios = ep.scenarios || [];
@@ -788,25 +788,48 @@ export default function IntegrationWorkspace({
       const epFailed = epScenarios.length > 0 ? scFailed : (ep.failedCount || 0);
       const epPassed = epScenarios.length > 0 ? scPassed : (ep.passedCount || 0);
 
-      totalScenariosCount += epScenarios.length > 0 ? epScenarios.length : (ep.generatedCount || 0);
-      passedScenariosCount += epPassed;
-      failedScenariosCount += epFailed;
-
       if (epFailed > 0) failedApis++;
       else if (epPassed > 0) passedApis++;
+
+      epScenarios.forEach((sc) => {
+        const key = sc.id || sc.scenarioId || sc.title;
+        if (key && !uniqueScenariosMap.has(key)) {
+          uniqueScenariosMap.set(key, sc);
+        }
+      });
     });
 
     const uncoveredApis = Math.max(0, totalApis - testedApis);
     const apiPassRate = testedApis > 0 ? Math.round((passedApis / testedApis) * 100) : 0;
     const apiCoverageRate = totalApis > 0 ? Math.round((testedApis / totalApis) * 100) : 0;
 
+    const dedupedScenarios = Array.from(uniqueScenariosMap.values());
+    const dedupPassed = dedupScenarios.filter((s) => s.status === "passed" || s.rawJestStatus === "passed" || s.executionVerdict === "PASS").length;
+    const dedupFailed = dedupScenarios.filter((s) => s.status === "failed" || s.rawJestStatus === "failed" || s.executionVerdict === "FAIL").length;
+
+    // Synchronize with authoritative test runner execution object if available
+    const hasExecutionRun = Boolean(execution && (execution.totalTests > 0 || execution.passedTests > 0 || execution.failedTests > 0));
+    const totalScenariosCount = hasExecutionRun
+      ? execution.totalTests
+      : (dedupedScenarios.length > 0 ? dedupedScenarios.length : (generation?.generatedScenarios || 0));
+
+    const passedScenariosCount = hasExecutionRun
+      ? execution.passedTests
+      : dedupPassed;
+
+    const failedScenariosCount = hasExecutionRun
+      ? execution.failedTests
+      : dedupFailed;
+
     const totalExecutedScenarios = passedScenariosCount + failedScenariosCount;
     const scenarioPassRate = totalScenariosCount > 0
       ? Math.round((passedScenariosCount / totalScenariosCount) * 100)
       : 0;
-    const scenarioCoverageRate = totalScenariosCount > 0
-      ? Math.round((totalExecutedScenarios / totalScenariosCount) * 100)
-      : 0;
+
+    const totalAvailableScenarios = generation?.generatedScenarios || totalScenariosCount;
+    const scenarioCoverageRate = totalAvailableScenarios > 0
+      ? Math.min(100, Math.round((totalExecutedScenarios / totalAvailableScenarios) * 100))
+      : (totalExecutedScenarios > 0 ? 100 : 0);
 
     return {
       totalApis,
@@ -822,7 +845,7 @@ export default function IntegrationWorkspace({
       scenarioPassRate,
       scenarioCoverageRate,
     };
-  }, [endpoints]);
+  }, [endpoints, execution, generation]);
 
   // Loading State
   if (loading && !workspace) {
@@ -1254,7 +1277,7 @@ export default function IntegrationWorkspace({
                       Hệ Thống Sẵn Sàng Thực Thi Kiểm Thử
                     </div>
                     <div className="text-[11px] text-[var(--color-text-secondary)] font-mono mt-0.5">
-                      Lần chạy gần nhất: {execution?.timestamp ? new Date(execution.timestamp).toLocaleTimeString() : "Chưa chạy"} • {execution?.totalTests ?? overallStats.totalScenariosCount} tests ({execution?.passedTests ?? overallStats.passedScenariosCount} pass, {execution?.failedTests ?? overallStats.failedScenariosCount} fail)
+                      Lần chạy gần nhất: {execution?.timestamp ? new Date(execution.timestamp).toLocaleTimeString() : (overallStats.passedScenariosCount > 0 || overallStats.failedScenariosCount > 0 ? "Vừa hoàn tất" : "Chưa chạy")} • {overallStats.totalScenariosCount} tests ({overallStats.passedScenariosCount} pass, {overallStats.failedScenariosCount} fail)
                     </div>
                   </div>
                 </div>
@@ -1337,8 +1360,8 @@ export default function IntegrationWorkspace({
                   {filteredFailures.map(({ endpoint: ep, scenario: sc, layer, key }) => {
                     const layerMeta = FAILURE_LAYERS_META[layer] || FAILURE_LAYERS_META.ASSERTION_FAILED;
                     const methodClass = METHOD_STYLES[ep.method] || METHOD_STYLES.DEFAULT;
-                    const actualHttp = sc.actualStatus ?? sc.actualStatusFromRuntime ?? 500;
-                    const expectedHttp = sc.expectedStatus ?? 200;
+                    const actualHttp = sc.actualStatus ?? sc.actualStatusFromRuntime ?? (sc.failureDetails?.received && /^\d{3}$/.test(String(sc.failureDetails.received).trim()) ? Number(sc.failureDetails.received) : 500);
+                    const expectedHttp = sc.expectedStatus ?? (sc.failureDetails?.expected && /^\d{3}$/.test(String(sc.failureDetails.expected).trim()) ? Number(sc.failureDetails.expected) : 200);
                     const failDetails = sc.failureDetails || {};
                     const isCallstackOpen = Boolean(expandedCallstacks[key]);
 

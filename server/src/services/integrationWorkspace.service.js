@@ -904,14 +904,23 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
                 ? parseFailureMessages(rest.failureMessages, req)
                 : null;
             const scDuration = rest.duration || rest.durationMs || 0;
+
+            const expectedFromFailure = (parsedFailure?.expected && /^\d{3}$/.test(String(parsedFailure.expected).trim()))
+                ? Number(parsedFailure.expected)
+                : null;
+            const expectedFromTitle = rest.title.match(/(?:should return|returns?|status|mong đợi|kỳ vọng)\s*[:=]?\s*(\d{3})/i)
+                ? Number(rest.title.match(/(?:should return|returns?|status|mong đợi|kỳ vọng)\s*[:=]?\s*(\d{3})/i)[1])
+                : null;
+            const expectedStatus = (req?.expectedStatus !== undefined && req?.expectedStatus !== null)
+                ? req.expectedStatus
+                : (expectedFromFailure || expectedFromTitle);
+
             const failureDiagnostics = (rest.status === 'failed') ? diagnoseApiFailureLayer({
                 endpoint: ep,
                 scenario: {
                     ...rest,
                     actualStatus: rest.actualStatus !== undefined ? rest.actualStatus : null,
-                    expectedStatus: (req?.expectedStatus !== undefined && req?.expectedStatus !== null)
-                        ? req.expectedStatus
-                        : (rest.title.match(/(?:should return|returns?|status)\s+(\d{3})/i) ? Number(rest.title.match(/(?:should return|returns?|status)\s+(\d{3})/i)[1]) : null)
+                    expectedStatus: expectedStatus
                 },
                 failureMessages: rest.failureMessages || [],
                 fileCoverageMap,
@@ -919,9 +928,6 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             }) : null;
             const classification = classifyScenarioFailure(rest, req);
             const classificationReason = getClassificationReason(classification, rest, req, parsedFailure);
-            const expectedStatus = (req?.expectedStatus !== undefined && req?.expectedStatus !== null)
-                ? req.expectedStatus
-                : (rest.title.match(/(?:should return|returns?|status)\s+(\d{3})/i) ? Number(rest.title.match(/(?:should return|returns?|status)\s+(\d{3})/i)[1]) : null);
 
             // Match runtime evidence items for this scenario title
             const scenarioTitleLower = (rest.title || "").trim().toLowerCase();
@@ -986,7 +992,11 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             let evidenceSource = 'NOT_CAPTURED';
             let evidenceCapturedAt = null;
 
-            if (mainEv && mainEv.actualStatusFromRuntime !== undefined && mainEv.actualStatusFromRuntime !== null) {
+            if (parsedFailure?.received && /^\d{3}$/.test(parsedFailure.received.trim())) {
+                actualStatus = Number(parsedFailure.received.trim());
+                actualStatusFromRuntime = Number(parsedFailure.received.trim());
+                evidenceSource = 'TEST_RUNNER_ASSERTION_CAPTURE';
+            } else if (mainEv && mainEv.actualStatusFromRuntime !== undefined && mainEv.actualStatusFromRuntime !== null) {
                 actualStatus = Number(mainEv.actualStatusFromRuntime);
                 actualStatusFromRuntime = Number(mainEv.actualStatusFromRuntime);
                 evidenceSource = 'TEST_SERVER_HTTP_RESPONSE';
@@ -1003,10 +1013,6 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
                 actualStatus = Number(rest.responseStatus);
                 actualStatusFromRuntime = Number(rest.responseStatus);
                 evidenceSource = 'TEST_SERVER_HTTP_RESPONSE';
-            } else if (parsedFailure?.received && /^\d{3}$/.test(parsedFailure.received.trim())) {
-                actualStatus = Number(parsedFailure.received.trim());
-                actualStatusFromRuntime = Number(parsedFailure.received.trim());
-                evidenceSource = 'TEST_RUNNER_ASSERTION_CAPTURE';
             }
 
             // DO NOT assign VERIFIED_CONTRACT when there is no traceable contract source.
