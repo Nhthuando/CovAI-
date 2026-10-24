@@ -102,6 +102,8 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
         CI: "true",
         NODE_ENV: "test",
         COVAI_JOB_ID: jobId || "",
+        DATABASE_URL: options?.databaseUrl || process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || "postgresql://test:test@localhost:5432/test_db",
+        PORT: options?.port ? String(options.port) : "0",
         STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY || "sk_test_covai_mock_secret_key_12345",
         STRIPE_API_KEY: process.env.STRIPE_API_KEY || "sk_test_covai_mock_api_key_12345",
         ...(nodePathCandidates.length > 0 ? { NODE_PATH: nodePathCandidates.join(path.delimiter) } : {}),

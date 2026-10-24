@@ -137,7 +137,8 @@ export const processSupertestCoverageJob = async (jobId) => {
             if (!t.metaJson) continue;
             let meta;
             try { meta = typeof t.metaJson === 'string' ? JSON.parse(t.metaJson) : t.metaJson; } catch(e) { continue; }
-            if (meta.framework !== "SUPERTEST" || meta.status !== "APPROVED") continue;
+            if (meta.framework && String(meta.framework).toUpperCase() !== "SUPERTEST") continue;
+            if (meta.status === "REJECTED" || meta.status === "DISABLED") continue;
             
             const filePath = path.join(rootDir, t.filePath);
             
@@ -153,7 +154,8 @@ export const processSupertestCoverageJob = async (jobId) => {
                 const { testName, nameIndex } = getScenarioIdentity(t, r.scenarioId);
                 const scenarioPath = findScenarioPath(ast, testName, nameIndex);
                 if (scenarioPath) {
-                    const isApproved = approvedScenarios.has(r.scenarioId) || approvedScenarios.has(r.testName);
+                    const isExplicitlyApproved = approvedScenarios.has(r.scenarioId) || approvedScenarios.has(r.testName);
+                    const isApproved = approvedScenarios.size === 0 || isExplicitlyApproved;
                     const isEnabled = r.enabled !== false;
                     const shouldRun = isApproved && isEnabled;
 
@@ -183,7 +185,19 @@ export const processSupertestCoverageJob = async (jobId) => {
         }
 
         if (supertestFiles.length === 0) {
-            throw new ServiceError("No valid AI-generated Supertest files were found in this snapshot.", 422);
+            const projectTestFiles = (supertestInfo.supertestFiles && supertestInfo.supertestFiles.length > 0)
+                ? supertestInfo.supertestFiles
+                : (supertestInfo.testFiles || []);
+            for (const f of projectTestFiles) {
+                const fullF = path.isAbsolute(f) ? f : path.join(rootDir, f);
+                if (fs.existsSync(fullF)) {
+                    supertestFiles.push(fullF);
+                }
+            }
+        }
+
+        if (supertestFiles.length === 0) {
+            throw new ServiceError("Không tìm thấy tệp kiểm thử Supertest hợp lệ trong snapshot này. Vui lòng bấm 'Sinh test AI' để tạo kịch bản kiểm thử API.", 422);
         }
 
         await saveJobOutput(jobId, { stdout: "", stderr: "" }).catch(() => { });

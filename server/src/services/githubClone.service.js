@@ -45,23 +45,35 @@ export class GitHubCloneService {
       ? `https://x-access-token:${accessToken}@github.com/${owner}/${repo}.git`
       : `https://github.com/${owner}/${repo}.git`;
 
+    const gitEnv = {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "safe.directory",
+      GIT_CONFIG_VALUE_0: "*",
+    };
+
+    // Ensure safe.directory is configured globally in environment / container
+    await execAsync('git config --global --add safe.directory "*"', { env: gitEnv }).catch(() => {});
+
     try {
       // 1. Clone repository into a 'repo' subfolder to avoid messing with current directory
       const repoDir = path.join(baseDir, "repo");
       fs.mkdirSync(repoDir, { recursive: true });
-      await execAsync(`git clone ${cloneUrl} .`, { cwd: repoDir });
+      await execAsync(`git -c safe.directory=* clone ${cloneUrl} .`, { cwd: repoDir, env: gitEnv });
 
       // 2. Get latest commit SHA from the repo folder
-      const { stdout: commitSha } = await execAsync(`git rev-parse HEAD`, {
+      const { stdout: commitSha } = await execAsync(`git -c safe.directory=* rev-parse HEAD`, {
         cwd: repoDir,
+        env: gitEnv,
       });
 
       // 3. Get default branch
       let defaultBranch = "main";
       try {
         const { stdout: branchOut } = await execAsync(
-          `git rev-parse --abbrev-ref HEAD`,
-          { cwd: repoDir },
+          `git -c safe.directory=* rev-parse --abbrev-ref HEAD`,
+          { cwd: repoDir, env: gitEnv },
         );
         if (branchOut && branchOut.trim()) {
           defaultBranch = branchOut.trim();
@@ -74,13 +86,18 @@ export class GitHubCloneService {
         const authorEmail = owner
           ? `${owner}@users.noreply.github.com`
           : "developer@covai.dev";
-        await execAsync(`git config user.name "${authorName}"`, {
+        await execAsync(`git -c safe.directory=* config user.name "${authorName}"`, {
           cwd: repoDir,
+          env: gitEnv,
         });
-        await execAsync(`git config user.email "${authorEmail}"`, {
+        await execAsync(`git -c safe.directory=* config user.email "${authorEmail}"`, {
           cwd: repoDir,
+          env: gitEnv,
         });
-        await execAsync(`git config commit.gpgsign false`, { cwd: repoDir });
+        await execAsync(`git -c safe.directory=* config commit.gpgsign false`, {
+          cwd: repoDir,
+          env: gitEnv,
+        });
       } catch (_) {}
 
       // IMPORTANT: DO NOT remove .git! Keeping .git preserves the repository history,

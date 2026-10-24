@@ -150,16 +150,23 @@ export function detectLanguageFromPaths(filePaths = []) {
     }
   }
 
-  // 1. If no code files found at all
-  if (jsTsCount === 0 && (!dominantLanguage || maxCount === 0)) {
-    if (hasPackageJson) {
-      return {
-        isSupported: true,
-        primaryLanguage: "JavaScript",
-        reason: "Detected package.json in workspace.",
-        stats: { jsCount, tsCount, hasPackageJson, countsByLang },
-      };
-    }
+  // 1. If project uses JavaScript or TypeScript (files present or package.json present)
+  // CovAI supports any project containing JS/TS code, regardless of other language percentages
+  if (jsTsCount > 0 || hasPackageJson) {
+    const primaryLanguage = tsCount > jsCount ? "TypeScript" : "JavaScript";
+    return {
+      isSupported: true,
+      primaryLanguage,
+      reason:
+        hasPackageJson && jsTsCount === 0
+          ? "Detected package.json in workspace."
+          : `JavaScript/TypeScript detected in project (${jsTsCount} JS/TS files).`,
+      stats: { jsCount, tsCount, hasPackageJson, countsByLang },
+    };
+  }
+
+  // 2. If no code files found at all
+  if (!dominantLanguage || maxCount === 0) {
     return {
       isSupported: false,
       primaryLanguage: "Unknown",
@@ -169,37 +176,11 @@ export function detectLanguageFromPaths(filePaths = []) {
     };
   }
 
-  // 2. If 0 JS/TS files, but other languages exist (e.g. Python, Java, C#, Go...)
-  if (jsTsCount === 0) {
-    return {
-      isSupported: false,
-      primaryLanguage: dominantLanguage || "Other",
-      reason: `Unsupported project. CovAI only supports projects whose primary language is JavaScript or TypeScript (detected language: ${dominantLanguage || "Other"}).`,
-      stats: { jsCount, tsCount, hasPackageJson, countsByLang },
-    };
-  }
-
-  // 3. Both JS/TS and other languages exist:
-  // If another language strictly dominates JS/TS and there's no package.json
-  const otherLanguagesCount = Object.entries(countsByLang)
-    .filter(([lang]) => lang !== "JavaScript" && lang !== "TypeScript")
-    .reduce((acc, [_, count]) => acc + count, 0);
-
-  if (!hasPackageJson && otherLanguagesCount > jsTsCount * 2) {
-    return {
-      isSupported: false,
-      primaryLanguage: dominantLanguage || "Other",
-      reason: `Unsupported project. The primary language of this project is ${dominantLanguage} (${maxCount} files vs ${jsTsCount} JS/TS files). CovAI only supports JavaScript/TypeScript.`,
-      stats: { jsCount, tsCount, hasPackageJson, countsByLang },
-    };
-  }
-
-  // 4. Valid JS/TS project
-  const primaryLanguage = tsCount > jsCount ? "TypeScript" : "JavaScript";
+  // 3. Project only contains other languages with zero JS/TS
   return {
-    isSupported: true,
-    primaryLanguage,
-    reason: `Valid language detected: ${primaryLanguage} (${jsTsCount} source files).`,
+    isSupported: false,
+    primaryLanguage: dominantLanguage || "Other",
+    reason: `Unsupported project. CovAI requires JavaScript or TypeScript in the project (detected language: ${dominantLanguage || "Other"}).`,
     stats: { jsCount, tsCount, hasPackageJson, countsByLang },
   };
 }
@@ -245,7 +226,36 @@ export function detectLanguageFromDirectory(dirPath) {
   }
 
   walk(dirPath);
-  return detectLanguageFromPaths(collectedPaths);
+  const result = detectLanguageFromPaths(collectedPaths);
+
+  // If not supported yet, check if any HTML files contain inline JavaScript <script> tags
+  if (!result.isSupported && dirPath && fs.existsSync(dirPath)) {
+    const htmlFiles = collectedPaths.filter((p) => {
+      const ext = path.extname(p).toLowerCase();
+      return ext === ".html" || ext === ".htm";
+    });
+
+    for (const relHtml of htmlFiles) {
+      try {
+        const content = fs.readFileSync(path.join(dirPath, relHtml), "utf8");
+        if (/<script\b/i.test(content)) {
+          return {
+            isSupported: true,
+            primaryLanguage: "JavaScript",
+            reason: `JavaScript detected via <script> tags in ${relHtml}.`,
+            stats: {
+              jsCount: 1,
+              tsCount: 0,
+              hasPackageJson: false,
+              countsByLang: { JavaScript: 1 },
+            },
+          };
+        }
+      } catch (_) {}
+    }
+  }
+
+  return result;
 }
 
 /**

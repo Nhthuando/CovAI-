@@ -301,6 +301,7 @@ export default function IntegrationScenarioEditorModal({
   onSelectTargetEndpoint,
   existingScenarioTitles = [],
   isAddMode = false,
+  onSaveAndApply,
 }) {
   const [code, setCode] = useState(initialCode || "");
   const [scenarioName, setScenarioName] = useState("");

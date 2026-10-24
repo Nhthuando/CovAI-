@@ -1,6 +1,11 @@
 import dotenv from "dotenv";
 dotenv.config();
 
+import { exec } from "child_process";
+try {
+  exec('git config --global --add safe.directory "*"', () => {});
+} catch (_) {}
+
 import express from "express";
 import cors from "cors";
 import { createServer } from "http";

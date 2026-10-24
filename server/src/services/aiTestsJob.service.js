@@ -407,6 +407,32 @@ export const processAiTestsJob = async (jobId) => {
         }
 
         // ── Supertest Integration Generation Branch ────────────────────────
+        if (mode === "INTEGRATION_GENERATION") {
+            const { runIntegrationGenerationPipeline } = await import("./integrationApiService.service.js");
+            const result = await runIntegrationGenerationPipeline({
+                jobId,
+                snapshotId,
+                projectId,
+                framework: payloadJsonObj.framework || "SUPERTEST",
+                targetEndpoints: payloadJsonObj.targetEndpoints || [],
+                abortSignal: abortController.signal
+            });
+            return { success: true, ...result };
+        }
+
+        if (mode === "INTEGRATION_REGENERATE") {
+            const { runRegenerateScenarioPipeline } = await import("./integrationApiService.service.js");
+            const result = await runRegenerateScenarioPipeline({
+                jobId,
+                snapshotId,
+                scenarioId: payloadJsonObj.scenarioId,
+                framework: payloadJsonObj.framework || "SUPERTEST",
+                failureContext: payloadJsonObj.failureContext || null,
+                abortSignal: abortController.signal
+            });
+            return { success: true, ...result };
+        }
+
         if (mode === "SUPERTEST_REGENERATE") {
             const { aiTestId, scenarioId } = payloadJsonObj;
             

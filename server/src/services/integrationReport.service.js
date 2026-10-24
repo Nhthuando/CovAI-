@@ -244,5 +244,42 @@ export const getIntegrationAnalytics = async (projectId) => {
         }
     };
 
+    
+    // 5. Route Coverage Matrix & Failure Logs
+    const latestRunScenarios = (latestRun && prisma.testScenario?.findMany) ? await prisma.testScenario.findMany({
+        where: { testRunId: latestRun.id }
+    }) : [];
+
+    const failureLogs = latestRunScenarios.filter(s => s.status === 'failed' || s.executionVerdict === 'FAIL').map(s => ({
+        id: s.id,
+        targetEndpoint: s.targetEndpoint || s.testFile,
+        title: s.title,
+        failureLayer: s.failureLayer || 'ASSERTION_FAILED',
+        responseStatus: s.responseStatus,
+        expectedStatus: s.expectedStatus,
+        errorMessage: s.failureMessage || 'Assertion or runtime failure during API test execution.',
+    }));
+
+    const routeMatrix = (discoveredEndpoints || []).map(ep => {
+        const isTested = allParsedRequests.some(req => isMatch(req, ep));
+        const matchedScenarios = latestRunScenarios.filter(s => s.targetEndpoint && s.targetEndpoint.includes(ep.fullPath));
+        const hasFail = matchedScenarios.some(s => s.status === 'failed' || s.executionVerdict === 'FAIL');
+        let status = 'UNCOVERED';
+        if (isTested || matchedScenarios.length > 0) {
+            status = hasFail ? 'FAILED' : 'COVERED';
+        }
+        return {
+            method: ep.method,
+            path: ep.fullPath,
+            handler: ep.controllerMethod || 'Inline Handler',
+            sourceFile: ep.sourceFile || 'routes/api.js',
+            status,
+            scenarioCount: matchedScenarios.length,
+        };
+    });
+
+    report.routeMatrix = routeMatrix;
+    report.failureLogs = failureLogs;
+
     return report;
 };

@@ -143,4 +143,25 @@ router.get(
   projectController.detectSystemTestFrameworks.bind(projectController),
 );
 
+router.get(
+  "/:id/integration/detection",
+  authMiddleware,
+  projectController.detectIntegrationFrameworks.bind(projectController),
+);
+router.get(
+  "/:id/integration/frameworks",
+  authMiddleware,
+  projectController.detectIntegrationFrameworks.bind(projectController),
+);
+router.post(
+  "/:id/integration/generate-tests",
+  authMiddleware,
+  projectController.generateIntegrationTest.bind(projectController),
+);
+router.post(
+  "/:id/integration/install-dependencies",
+  authMiddleware,
+  projectController.installIntegrationDependencies.bind(projectController),
+);
+
 export default router;

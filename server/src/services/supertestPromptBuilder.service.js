@@ -3,6 +3,7 @@
  * Builds AI prompts specifically for generating Supertest integration tests.
  */
 import { extractValidEndpoints } from "./apiEndpointParser.service.js";
+import { extractDatabaseSchemaConstraints } from "./integrationAiTestGenerator.service.js";
 
 
 /**
@@ -103,12 +104,15 @@ export const includeDatabaseSchemaContext = (sourceCode = []) => {
 
     if (hasSchema) {
         segment += "**CRITICAL DATABASE SCHEMA VALIDATION RULES:**\n";
-        segment += "- In-memory database mocks automatically enforce schema constraints at runtime.\n";
-        segment += "- When writing happy-path tests for POST creation endpoints (such as `POST /api/food-items/create/`), your request body MUST provide ALL required non-nullable fields defined in the model without `@default`.\n";
-        segment += "- Specifically for the `Food` model (`model Food`):\n";
-        segment += "  * REQUIRED non-nullable fields without `@default`: `name` (String), `image` (String), `price` (Float/Int), `rating` (Float/Int).\n";
-        segment += "  * OPTIONAL fields: `description` (String?), `category` (String?), `isAvailable` (Boolean or String?). Always supply boolean `true` for `isAvailable`.\n";
-        segment += "  * The happy-path creation request payload MUST contain `name`, `image`, `price`, AND `rating` (e.g. `{ name: 'Delicious Pizza', image: 'https://example.com/pizza.jpg', price: 60000, rating: 4.5, category: 'Fast Food', isAvailable: true }`). Omitting `image` or `rating` will trigger runtime validation errors and cause tests to fail.\n\n";
+        segment += "- When writing happy-path tests for POST/PUT creation endpoints, your request body MUST provide all required non-nullable fields defined in the database schema without @default.\n";
+        try {
+            const models = extractDatabaseSchemaConstraints(sourceCode);
+            models.forEach(m => {
+                const reqList = m.requiredFields.map(f => `${f.name} (${f.type})`).join(", ");
+                segment += `- Model \`${m.modelName}\`: Required non-nullable fields: [${reqList || 'none'}]\n`;
+            });
+            segment += "\n";
+        } catch (_) {}
     }
 
     return hasSchema ? segment : "";
@@ -225,37 +229,13 @@ export const includeSupertestInstructions = (sourceCode) => {
     segment += "- If the source code uses ES modules (`import`/`export`), use standard `import request from 'supertest';` and `import app from '...';`.\n";
     segment += "- If the source code uses CommonJS (`require`), use `const request = require('supertest');` and `const app = require('...');`.\n\n";
 
-    segment += "#### 3. Test Scenarios & Contract-Driven Oracle\n";
-    segment += "- **COVERAGE BREADTH:** You MUST generate at least one \"Happy Path\" (200/201) AND one \"Error Edge Case\" (400/404) per endpoint.\n";
-    segment += "- **REQUIRED FIELDS FOR RESOURCE CREATION (CRITICAL):**\n";
-    segment += "  * When generating happy-path tests for POST creation endpoints (e.g., `POST /api/food-items/create/`), you MUST supply all required non-nullable fields defined in the database schema (`name`, `image`, `price`, `rating`, with `isAvailable: true`). Never omit required schema fields like `image` or `rating` in happy-path tests!\n";
-    segment += "  * When testing missing required fields or empty payload `{}` for `POST /api/food-items/create/`, name the scenario accurately: `validation edge case: should return 500 when required fields are missing`. DO NOT name it 'database creation fails' because it is testing missing required fields constraint validation, not database infrastructure failure.\n";
-    segment += "- **EMPTY CART VALIDATION BEHAVIOR:**\n";
-    segment += "  * When testing `POST /api/cart/validate` with an empty items array (`{ items: [] }`), this is valid empty-cart edge case behavior returning 200 with total 0: name the scenario `edge case: should return 200 with 0 total for empty cart`.\n";
-    segment += "- **ROOT ENDPOINT HEALTH CHECK (GET /):**\n";
-    segment += "  * For the static root endpoint `GET /`, generate exactly ONE concise happy-path test (`happy path: GET / should return 200`). Do not generate redundant duplicate tests for the static root endpoint.\n";
-    segment += "- **DETERMINISTIC ASSERTIONS FOR PARAMETERIZED ROUTES (:id):**\n";
-    segment += "  * For routes with `:id` parameters (e.g. `GET /api/food-items/get/:id`, `PUT /api/food-items/update/:id`, `DELETE /api/food-items/delete/:id`), ALWAYS use deterministic assertions. NEVER write conditional assertions like `if (res.status === 200) { ... } else { expect(res.status).toBe(404); }`.\n";
-    segment += "  * When testing happy path for `GET /api/food-items/get/:id`, you MUST query a valid item (e.g. create one first via `POST /api/food-items/create/` or fetch the first item from `GET /api/food-items`) to obtain a verified existing ID, then expect 200 with matching properties (`id`, `name`). For negative case, explicitly query a non-existent ID like `999999` and expect 404 (`Food item not found`).\n";
-    segment += "- **THIRD-PARTY SDK & PAYMENT ASSERTIONS (CRITICAL):**\n";
-    segment += "  * For external service integrations such as Stripe (`/api/payments/create-payment-intent`):\n";
-    segment += "    - For `amount > 0`: assert property existence and boolean flag: `expect(res.status).toBe(200); expect(res.body).toHaveProperty('clientSecret'); expect(res.body.free).toBe(false);`. DO NOT assert arbitrary hardcoded mock secrets like `expect(res.body).toHaveProperty('clientSecret', 'pi_test_secret_456')` because secret strings vary by environment!\n";
-    segment += "    - For `amount === 0`: assert `expect(res.status).toBe(200); expect(res.body.free).toBe(true); expect(res.body).toHaveProperty('url');`. DO NOT assert hardcoded arbitrary checkout URLs like `'https://checkout.stripe.com/c/pay/cs_test_123'`.\n";
-    segment += "- **RESPONSE SCHEMA CONTRACT (CRITICAL):** Inspect the controller and service return statements, existing test suites, and frontend API consumers provided above before writing assertions.\n";
-    segment += "  * If the service/tests return `{ data: [...], total, page, totalPages }`, your assertion MUST expect `res.body.data` (e.g. `expect(res.body).toHaveProperty('data')` or `expect(Array.isArray(res.body.data)).toBe(true)`). NEVER guess or hallucinate unverified property names like `items`!\n";
-    segment += "- **QUERY PARAMETER FALLBACKS:**\n";
-    segment += "  * If the controller uses fallback defaults for query params (e.g. `page: parseInt(page) || 1`), testing `?page=invalid` MUST verify that the endpoint gracefully falls back to page 1 and returns HTTP 200 with default page data. Do NOT expect HTTP 500 for non-numeric query parameters when the code has graceful fallback logic!\n";
-    segment += "- **CLIENT INPUT ERRORS vs UNHANDLED SERVER ERRORS:**\n";
-    segment += "  * Client input errors (such as malformed IDs, missing required fields) belong to HTTP 400 Bad Request or HTTP 404 Not Found according to standard REST contracts.\n";
-    segment += "  * NEVER write tests that expect HTTP 500 as the intended, valid business contract for client input errors. If the backend implementation currently catches all errors and returns 500 due to unhandled database exceptions, write assertions checking for proper contract status (400/404) or document the discrepancy.\n";
-    segment += "- **EXTERNAL SERVICE FAILURE BOUNDARIES (STRIPE):**\n";
-    segment += "  * When testing error conditions for external integrations (such as Stripe `POST /api/payments/create-payment-intent`):\n";
-    segment += "    - The application converts amount from VND to USD cents via `Math.round((amount / 23000) * 100)`.\n";
-    segment += "    - Small amounts like `amount: -100` VND round to `0 USD cents` and trigger free order (HTTP 200) instead of an error! DO NOT send small numbers like `-100`.\n";
-    segment += "    - To genuinely trigger a Stripe SDK amount error at the external boundary, provide a realistic negative amount like `{ amount: -50000 }` (which evaluates to `-217 USD cents` < 0) or non-numeric `{ amount: 'invalid-amount' }` (which evaluates to `NaN`).\n";
-    segment += "    - The mock will throw `StripeInvalidRequestError`, and the controller catch block returns HTTP 500 (`res.status(500).json({ error: error.message })`).\n";
-    segment += "  * All assertions must check exact status codes (`expect(res.status).toBe(200)` or `500`) and expected response fields based on the actual API contract. Do NOT write loose assertions like `expect([200, 500]).toContain(res.status)`.\n\n";
-
+    segment += "#### 3. Multi-Scenario 5-Tier Testing Strategy (Ground Truth & Contract-Driven)\n";
+    segment += "- **TIER 1 — Happy Path (200/201)**: Provide valid payloads fulfilling all non-nullable database and schema constraints. Assert exact success status and returned payload fields.\n";
+    segment += "- **TIER 2 — Negative Validation (400)**: Intentionally omit required schema fields or send invalid data types to test rejection and error messaging.\n";
+    segment += "- **TIER 3 — Authentication & Authorization (401/403)**: For endpoints with auth middlewares, verify that missing or invalid tokens return 401, and unauthorized roles return 403.\n";
+    segment += "- **TIER 4 — Not Found & Conflicts (404/409)**: Query non-existent entities (such as non-existent IDs like 999999) to verify 404, and duplicate unique records to verify 409.\n";
+    segment += "- **TIER 5 — Edge Cases & Boundary Values**: Test boundary conditions such as empty collections, zero/negative quantities, and special characters.\n";
+    segment += "- **RESPONSE SCHEMA CONTRACT**: Inspect the controller return statements, service handlers, and frontend callers provided above before writing assertions. Always assert real payload properties returned by the code rather than guessing.\n\n";
     segment += "#### 4. Security & Authentication\n";
     segment += "- **SECURITY (CRITICAL):** Explicitly DO NOT hardcode real production credentials, API keys, or JWT tokens in the test files.\n";
     segment += "- Require the use of environment variables (e.g., `process.env.TEST_JWT_SECRET`) or inject a mocked auth context to bypass middlewares safely.\n\n";

@@ -18,6 +18,7 @@ import {
   Filter,
   X,
   Layers,
+  HardDriveDownload,
 } from "lucide-react";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
@@ -253,6 +254,7 @@ export default function IntegrationScenariosPane({
   onApproveAndRun,
   isApprovingAndRunning = false,
   onReGenerateSelected,
+  onOpenApplyModal,
 }) {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorCode, setEditorCode] = useState("");
@@ -836,6 +838,13 @@ export default function IntegrationScenariosPane({
     }
   };
 
+  const handleSaveAndApplyEditor = async (code) => {
+    await handleSaveEditor(code);
+    if (onOpenApplyModal) {
+      onOpenApplyModal();
+    }
+  };
+
   if (!hasAnalysis) {
     return (
       <div className="p-12 text-center flex flex-col items-center justify-center h-full gap-3 text-[var(--color-text-secondary)] font-sans">
@@ -966,6 +975,24 @@ export default function IntegrationScenariosPane({
             <Plus size={13} />
             <span>Add Scenario</span>
           </button>
+
+          {/* Apply to Source Code Button */}
+          {onOpenApplyModal && (
+            <button
+              type="button"
+              onClick={() => onOpenApplyModal(visibleSelectedIds)}
+              disabled={selectedCount === 0 || isGenerating}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-sm)] bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition-opacity shadow-xs disabled:opacity-40 cursor-pointer"
+              title={
+                selectedCount > 0
+                  ? `Apply ${selectedCount} kịch bản đã chọn vào mã nguồn dự án`
+                  : "Chọn ít nhất 1 kịch bản để apply"
+              }
+            >
+              <HardDriveDownload size={13} />
+              <span>Apply vào Mã Nguồn ({selectedCount})</span>
+            </button>
+          )}
 
           {onApproveAndRun && (
             <button
@@ -1614,6 +1641,7 @@ export default function IntegrationScenariosPane({
           setEditingScenario(null);
         }}
         onSave={handleSaveEditor}
+        onSaveAndApply={handleSaveAndApplyEditor}
         initialCode={editorCode}
         title={editorTitle}
         loading={editorLoading}

@@ -190,7 +190,12 @@ export const formatScenariosForPrisma = (scenarios) => {
             status: s.status || "UNKNOWN",
             durationMs: typeof s.duration === "number" ? s.duration : (typeof s.durationMs === "number" ? s.durationMs : 0),
             failureMessages: (Array.isArray(s.failureMessages) ? s.failureMessages : (s.failureMessages ? [String(s.failureMessages)] : [])).map(m => cleanStorageText(m)),
-            testFile: cleanStoragePath(s.testFile) || null
+            testFile: cleanStoragePath(s.testFile) || null,
+            targetEndpoint: s.targetEndpoint || null,
+            failureLayer: s.failureLayer || null,
+            responseStatus: typeof s.responseStatus === 'number' ? s.responseStatus : null,
+            responseData: s.responseData ? (typeof s.responseData === 'object' ? s.responseData : null) : null,
+            isFaultyExistingTest: Boolean(s.isFaultyExistingTest)
         }))
     };
 };

@@ -18,6 +18,7 @@ import {
   detectSystemTestFrameworksForSnapshot,
 } from "../services/systemTestFrameworkDetection.service.js";
 import prisma from "../config/prisma.js";
+import { detectIntegrationFrameworks as scanIntegration, installIntegrationDependencies as runInstallIntegration } from "../services/integrationDetection.service.js";
 import {
   ServiceError,
   createProject,
@@ -1977,7 +1978,72 @@ class ProjectController {
       next(error);
     }
   }
+  /**
+   * GET /api/projects/:id/integration/detection
+   * Detects integration test frameworks and 4 Permutations state.
+   */
+  async detectIntegrationFrameworks(req, res, next) {
+    try {
+      const { id } = req.params;
+      const project = await prisma.project.findUnique({
+        where: { id },
+        include: {
+          snapshots: { orderBy: { createdAt: "desc" }, take: 1 },
+        },
+      });
+      if (!project) return res.status(404).json({ success: false, message: "Project not found" });
+
+      const latest = project.snapshots[0];
+      const rootDir = latest?.rootDir || latest?.storagePath || project.rootDir;
+      const data = await scanIntegration(rootDir);
+
+      return res.status(200).json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/projects/:id/integration/install-dependencies
+   * Installs missing dependencies (Supertest/Jest or Playwright API) after user confirmation.
+   */
+  async installIntegrationDependencies(req, res, next) {
+    try {
+      const { id } = req.params;
+      const { packages, framework } = req.body || {};
+
+      const project = await prisma.project.findUnique({
+        where: { id },
+        include: {
+          snapshots: { orderBy: { createdAt: "desc" }, take: 1 },
+        },
+      });
+      if (!project) return res.status(404).json({ success: false, message: "Project not found" });
+
+      const latest = project.snapshots[0];
+      const rootDir = latest?.rootDir || latest?.storagePath || project.rootDir;
+      if (!rootDir) return res.status(400).json({ success: false, message: "Project storage path not available" });
+
+      const installResult = await runInstallIntegration({
+        rootDir,
+        packages,
+        framework: framework || "supertest",
+      });
+
+      const updatedDetection = await scanIntegration(rootDir);
+
+      return res.status(200).json({
+        success: true,
+        message: "Dependencies installed successfully",
+        installResult,
+        detection: updatedDetection,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export default new ProjectController();
+
 

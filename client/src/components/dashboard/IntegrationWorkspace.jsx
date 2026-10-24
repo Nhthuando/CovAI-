@@ -3,26 +3,60 @@ import { useNavigate, useLocation } from "react-router-dom";
 import {
   getIntegrationWorkspace,
   runCoverageByType,
+  getIntegrationDetection,
+  installIntegrationDependencies,
+  generateIntegrationTests,
+  regenerateIntegrationScenario,
+  updateIntegrationScenario,
 } from "../../services/coverage.service.js";
+import { fetchIntegrationReport } from "../../services/report.service.js";
 import { runProjectStructureAnalysisApi } from "../../services/project.service.js";
 import { cancelJobApi } from "../../services/job.service.js";
-import { Search, Zap, CheckCircle2, PlayCircle, BarChart3, ChevronRight, Play, ChevronDown, Clock, AlertTriangle, RefreshCw, X, GitCompare } from "lucide-react";
+import {
+  Search,
+  Zap,
+  CheckCircle2,
+  XCircle,
+  PlayCircle,
+  BarChart3,
+  ChevronRight,
+  ChevronDown,
+  Play,
+  Clock,
+  AlertTriangle,
+  RefreshCw,
+  X,
+  GitCompare,
+  Layers,
+  Terminal,
+  FileCode,
+  HardDriveDownload,
+  Printer,
+  Download,
+  SlidersHorizontal,
+  Code2,
+  FileCheck,
+  ShieldCheck,
+  Activity,
+  ExternalLink,
+} from "lucide-react";
 
-import IntegrationTargetsPane from "./integration/IntegrationTargetsPane.jsx";
+import IntegrationFrameworkDetectionBanner from "./integration/IntegrationFrameworkDetectionBanner.jsx";
+import IntegrationRouteMatrixTable from "./integration/IntegrationRouteMatrixTable.jsx";
+import IntegrationReportEmbed from "./integration/IntegrationReportEmbed.jsx";
 import IntegrationScenariosPane from "./integration/IntegrationScenariosPane.jsx";
 import IntegrationLiveProgress from "./integration/IntegrationLiveProgress.jsx";
 import IntegrationHistoryPane from "./integration/IntegrationHistoryPane.jsx";
 import BeforeAfterComparisonView from "./integration/BeforeAfterComparisonView.jsx";
 import MetricProvenancePopover from "./integration/MetricProvenancePopover.jsx";
-import IntegrationEndpointDetail from "./integration/IntegrationEndpointDetail.jsx";
 import IntegrationErrorBoundary from "./integration/IntegrationErrorBoundary.jsx";
-import IntegrationAnalysisOverview from "./integration/IntegrationAnalysisOverview.jsx";
-import IntegrationRunResultsPane from "./integration/IntegrationRunResultsPane.jsx";
+import IntegrationApplyTestsModal from "./integration/IntegrationApplyTestsModal.jsx";
+import IntegrationScenarioEditorModal from "./integration/IntegrationScenarioEditorModal.jsx";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 function getAuthHeaders() {
-  const token = localStorage.getItem("token");
+  const token = localStorage.getItem("token") || (localStorage.getItem("user") ? JSON.parse(localStorage.getItem("user")).token : null);
   return {
     "Content-Type": "application/json",
     ...(token && { Authorization: `Bearer ${token}` }),
@@ -47,27 +81,46 @@ async function approveIntegrationTestsApi(snapshotId, approvedTestIds) {
   return handleResponse(res);
 }
 
-const buttonStyle = (color, isActive = false) => ({
-  background: isActive ? `color-mix(in srgb, ${color} 22%, transparent)` : `color-mix(in srgb, ${color} 10%, transparent)`,
-  color,
-  border: `1px solid color-mix(in srgb, ${color} 35%, transparent)`,
-  borderRadius: "var(--radius-md)",
-  padding: "6px 12px",
-  fontSize: 13,
-  fontWeight: 600,
-  cursor: "pointer",
-  transition: "all 0.15s ease",
-});
+const FAILURE_LAYERS_META = {
+  ROUTER_NOT_FOUND: {
+    label: "Router (404)",
+    code: "[ROUTER_NOT_FOUND]",
+    style: "bg-orange-500/10 text-orange-400 border-orange-500/25",
+    desc: "Đường dẫn Route hoặc URL mount point không khớp router Express.",
+  },
+  MIDDLEWARE_REJECTED: {
+    label: "Middleware (401/403)",
+    code: "[MIDDLEWARE_REJECTED]",
+    style: "bg-amber-500/10 text-amber-400 border-amber-500/25",
+    desc: "Bị chặn bởi Authentication, JWT token, CORS hoặc Request Validator.",
+  },
+  CONTROLLER_CRASH: {
+    label: "Controller (500)",
+    code: "[CONTROLLER_CRASH]",
+    style: "bg-rose-500/10 text-rose-400 border-rose-500/25",
+    desc: "Lỗi runtime crash (TypeError, ReferenceError) trong controller handler.",
+  },
+  DATABASE_FAILURE: {
+    label: "Database / ORM",
+    code: "[DATABASE_FAILURE]",
+    style: "bg-purple-500/10 text-purple-400 border-purple-500/25",
+    desc: "Lỗi kết nối database, schema constraint hoặc Prisma query failure.",
+  },
+  ASSERTION_FAILED: {
+    label: "Assertion Mismatch",
+    code: "[ASSERTION_FAILED]",
+    style: "bg-sky-500/10 text-sky-400 border-sky-500/25",
+    desc: "HTTP response status code hoặc JSON body không khớp với giá trị mong đợi.",
+  },
+};
 
-const disabledButtonStyle = {
-  background: "var(--color-surface-secondary)",
-  color: "var(--color-text-disabled)",
-  border: "1px solid var(--color-border)",
-  borderRadius: "var(--radius-md)",
-  padding: "6px 12px",
-  fontSize: 13,
-  fontWeight: 600,
-  cursor: "not-allowed",
+const METHOD_STYLES = {
+  GET: "bg-sky-500/10 text-sky-400 border-sky-500/25",
+  POST: "bg-emerald-500/10 text-emerald-400 border-emerald-500/25",
+  PUT: "bg-amber-500/10 text-amber-400 border-amber-500/25",
+  PATCH: "bg-purple-500/10 text-purple-400 border-purple-500/25",
+  DELETE: "bg-rose-500/10 text-rose-400 border-rose-500/25",
+  DEFAULT: "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]",
 };
 
 function useLiveJobLogs(jobId, onComplete, onError, onCanceled) {
@@ -95,6 +148,7 @@ function useLiveJobLogs(jobId, onComplete, onError, onCanceled) {
     const eventSource = new EventSource(
       `${BASE_URL}/job/${jobId}/stream?token=${token}`,
     );
+
     eventSource.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data);
@@ -166,16 +220,15 @@ export default function IntegrationWorkspace({
   onSuggestTestcase,
   onOpenArchitecture,
   initialContext,
-  onContextChange
+  onContextChange,
 }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const [workspace, setWorkspace] = useState(() => {
-    return (initialContext && initialContext.snapshotId === snapshotId && initialContext.projectId === projectId)
-      ? (initialContext.cachedWorkspace || null)
-      : null;
-  });
-  const [loading, setLoading] = useState(!workspace);
+
+  const [workspace, setWorkspace] = useState(null);
+  const [reportData, setReportData] = useState(null);
+  const [detectionInfo, setDetectionInfo] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
 
@@ -186,96 +239,42 @@ export default function IntegrationWorkspace({
   const [isCancelling, setIsCancelling] = useState(false);
   const [cancellationNotice, setCancellationNotice] = useState("");
   const [selectedTestIds, setSelectedTestIds] = useState([]);
-
-  // UI View State
-  const [selectedEndpointId, setSelectedEndpointId] = useState(() => {
-    return (initialContext && initialContext.snapshotId === snapshotId) 
-      ? (initialContext.selectedEndpointId ?? null) 
-      : null;
-  });
-  const [activeStage, setActiveStage] = useState(() => {
-    const params = new URLSearchParams(location.search);
-    const s = params.get("stage") || "ANALYZE";
-    return s === "APPROVE" ? "GENERATE" : s;
-  });
   const [pendingAction, setPendingAction] = useState(null);
-  const [selectedTargetEndpoints, setSelectedTargetEndpoints] = useState(new Set());
-  const [expandedScenarios, setExpandedScenarios] = useState({});
-  const [isLeftPaneCollapsed, setIsLeftPaneCollapsed] = useState(false);
-  const [activeScopeFilter, setActiveScopeFilter] = useState({ type: "ALL", value: null });
 
-  const toggleExpandScenario = (scenarioKey) => {
-    setExpandedScenarios((prev) => ({
+  // Framework Installation & Banner
+  const [isInstallingDeps, setIsInstallingDeps] = useState(false);
+  const [isGeneratingWithBanner, setIsGeneratingWithBanner] = useState(false);
+
+  // Modals & Drawer State
+  const [applyModalOpen, setApplyModalOpen] = useState(false);
+  const [applyModalTestIds, setApplyModalTestIds] = useState([]);
+  const [editorModalOpen, setEditorModalOpen] = useState(false);
+  const [editorModalScenario, setEditorModalScenario] = useState(null);
+  const [editorModalEndpoint, setEditorModalEndpoint] = useState(null);
+  const [isAddScenarioMode, setIsAddScenarioMode] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(null); // 'history' | 'compare' | null
+  const [activeFailureLayerFilter, setActiveFailureLayerFilter] = useState("ALL");
+  const [expandedCallstacks, setExpandedCallstacks] = useState({});
+
+  // Active navigation anchor
+  const [activeAnchor, setActiveAnchor] = useState("kpis");
+
+  const scrollToSection = (id) => {
+    setActiveAnchor(id);
+    const element = document.getElementById(id);
+    if (element) {
+      element.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+
+  const toggleCallstack = (key) => {
+    setExpandedCallstacks((prev) => ({
       ...prev,
-      [scenarioKey]: !prev[scenarioKey]
+      [key]: !prev[key],
     }));
   };
 
-  const handleToggleSelectEndpoint = (endpointKey) => {
-    setSelectedTargetEndpoints((prev) => {
-      const next = new Set(prev);
-      if (next.has(endpointKey)) {
-        next.delete(endpointKey);
-      } else {
-        next.add(endpointKey);
-      }
-      return next;
-    });
-  };
-
-  const handleToggleSelectModule = (moduleEndpoints) => {
-    setSelectedTargetEndpoints((prev) => {
-      const next = new Set(prev);
-      const allSelected = moduleEndpoints.every((ep) => next.has(`${ep.method} ${ep.path}`));
-      if (allSelected) {
-        moduleEndpoints.forEach((ep) => next.delete(`${ep.method} ${ep.path}`));
-      } else {
-        moduleEndpoints.forEach((ep) => next.add(`${ep.method} ${ep.path}`));
-      }
-      return next;
-    });
-  };
-
-  const handleSelectAllEndpoints = (allList) => {
-    setSelectedTargetEndpoints(new Set(allList.map((ep) => `${ep.method} ${ep.path}`)));
-  };
-
-  const handleClearSelectedEndpoints = () => {
-    setSelectedTargetEndpoints(new Set());
-  };
-
-  // 1. Sync context upwards when it changes
-  useEffect(() => {
-    if (onContextChange && snapshotId && projectId) {
-      onContextChange({
-        snapshotId,
-        projectId,
-        activeStage,
-        selectedEndpointId,
-        cachedWorkspace: workspace
-      });
-    }
-  }, [activeStage, selectedEndpointId, snapshotId, projectId, workspace, onContextChange]);
-
-  useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    if (params.get("stage") !== activeStage) {
-      params.set("stage", activeStage);
-      navigate(`${location.pathname}?${params.toString()}`, { replace: true });
-    }
-  }, [activeStage, navigate, location.search, location.pathname]);
-
-
-  // 3. Fallback safely if selected endpoint id is out of bounds
-  useEffect(() => {
-    if (workspace?.endpoints && selectedEndpointId !== null) {
-      const exists = workspace.endpoints.some(e => `${e.method} ${e.path}` === selectedEndpointId);
-      if (!exists) {
-        setSelectedEndpointId(null);
-      }
-    }
-  }, [workspace?.endpoints, selectedEndpointId]);
-
+  // 1. Data Loader: Workspace, Detection, Report
   const load = useCallback(async () => {
     if (!snapshotId) {
       setLoading(false);
@@ -287,70 +286,93 @@ export default function IntegrationWorkspace({
     } else {
       setLoading(true);
     }
+    setError("");
+
     try {
-      const res = await getIntegrationWorkspace(snapshotId);
-      setWorkspace(res.data);
+      const [workspaceRes, detectionRes, reportRes] = await Promise.allSettled([
+        getIntegrationWorkspace(snapshotId),
+        getIntegrationDetection(snapshotId),
+        projectId ? fetchIntegrationReport(projectId) : Promise.resolve({ data: null }),
+      ]);
 
-      if (!activeJobId) {
-        const fetchedJobs = res.data.jobs || {};
-        let runningJobId = null;
-        let runningJobType = null;
+      if (workspaceRes.status === "fulfilled") {
+        setWorkspace(workspaceRes.value.data);
 
-        if (
-          fetchedJobs.analyze?.status === "RUNNING" ||
-          fetchedJobs.analyze?.status === "QUEUED"
-        ) {
-          runningJobId = fetchedJobs.analyze.id;
-          runningJobType = "ANALYZE";
-        } else if (
-          fetchedJobs.generate?.status === "RUNNING" ||
-          fetchedJobs.generate?.status === "QUEUED"
-        ) {
-          runningJobId = fetchedJobs.generate.id;
-          runningJobType = "GENERATE";
-        } else if (
-          fetchedJobs.execute?.status === "RUNNING" ||
-          fetchedJobs.execute?.status === "QUEUED"
-        ) {
-          runningJobId = fetchedJobs.execute.id;
-          runningJobType = "EXECUTE";
+        // Check running background jobs
+        if (!activeJobId) {
+          const fetchedJobs = workspaceRes.value.data.jobs || {};
+          let runningJobId = null;
+          let runningJobType = null;
+
+          if (
+            fetchedJobs.analyze?.status === "RUNNING" ||
+            fetchedJobs.analyze?.status === "QUEUED"
+          ) {
+            runningJobId = fetchedJobs.analyze.id;
+            runningJobType = "ANALYZE";
+          } else if (
+            fetchedJobs.generate?.status === "RUNNING" ||
+            fetchedJobs.generate?.status === "QUEUED"
+          ) {
+            runningJobId = fetchedJobs.generate.id;
+            runningJobType = "GENERATE";
+          } else if (
+            fetchedJobs.execute?.status === "RUNNING" ||
+            fetchedJobs.execute?.status === "QUEUED"
+          ) {
+            runningJobId = fetchedJobs.execute.id;
+            runningJobType = "EXECUTE";
+          }
+
+          if (runningJobId) {
+            setActiveJobId(runningJobId);
+            setActiveJobType(runningJobType);
+            setActiveJobStatus("RUNNING");
+          }
         }
 
-        if (runningJobId) {
-          setActiveJobId(runningJobId);
-          setActiveJobType(runningJobType);
-          setActiveJobStatus("RUNNING");
-          setActiveStage(runningJobType === "EXECUTE" ? "RUN" : runningJobType);
-        } else if (!initialContext || initialContext.snapshotId !== snapshotId) {
-          setActiveStage((prev) => {
-            if (prev === "RUN" || prev === "REPORT" || prev === "COMPARE" || prev === "HISTORY") return prev;
-            if (res.data?.aiTests?.length > 0) return "GENERATE";
-            if (fetchedJobs.analyze?.status === "SUCCESS") return "ANALYZE";
-            return prev;
-          });
+        // Initialize selectedTestIds
+        if (workspaceRes.value.data?.aiTests && selectedTestIds.length === 0) {
+          const allIds = (workspaceRes.value.data.aiTests || []).flatMap((t) =>
+            (t?.requests || []).map((r) => `${t.id}::${r.scenarioId || r.testName}`),
+          );
+          setSelectedTestIds(allIds);
         }
+      } else {
+        throw new Error(workspaceRes.reason?.message || "Failed to load workspace.");
       }
 
-      // Preserve previously selected test ids if they still exist, otherwise reset to all
-      if (res.data?.aiTests && selectedTestIds.length === 0) {
-        const allIds = (res.data.aiTests || []).flatMap((t) =>
-          (t?.requests || []).map((r) => `${t.id}::${r.scenarioId || r.testName}`),
-        );
-        setSelectedTestIds(allIds);
+      if (detectionRes.status === "fulfilled") {
+        setDetectionInfo(detectionRes.value.data || detectionRes.value);
       }
-      setError("");
+
+      if (reportRes.status === "fulfilled" && reportRes.value?.data) {
+        setReportData(reportRes.value.data);
+      }
     } catch (err) {
-      setError(err.message || "Failed to load workspace.");
+      setError(err.message || "Failed to load integration test workspace.");
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [snapshotId, activeJobId]);
+  }, [snapshotId, projectId, activeJobId]);
 
   useEffect(() => {
     load();
   }, [load]);
 
+  // Sync upwards context
+  useEffect(() => {
+    if (onContextChange && snapshotId && projectId) {
+      onContextChange({
+        snapshotId,
+        projectId,
+        cachedWorkspace: workspace,
+      });
+    }
+  }, [snapshotId, projectId, workspace, onContextChange]);
+
+  // Job completion handlers
   const handleJobComplete = useCallback(async () => {
     setActiveJobStatus("SUCCESS");
     try {
@@ -358,20 +380,19 @@ export default function IntegrationWorkspace({
     } catch (err) {
       console.error("[IntegrationWorkspace] Failed to reload workspace after job:", err);
     } finally {
-      // Graceful transition: small delay so user sees 100% completed state before switching view
       setTimeout(() => {
         setActiveJobId(null);
         setActiveJobType(null);
         setActiveJobStatus("SUCCESS");
         setIsCancelling(false);
         setPendingAction(null);
-      }, 350);
+      }, 500);
     }
   }, [load]);
 
   const handleJobCanceled = useCallback(async () => {
     setActiveJobStatus("CANCELED");
-    setCancellationNotice("Task successfully cancelled.");
+    setCancellationNotice("Tác vụ đã được hủy bỏ thành công.");
     try {
       await load();
     } catch (err) {
@@ -395,7 +416,7 @@ export default function IntegrationWorkspace({
     try {
       await cancelJobApi(jId);
       setActiveJobStatus("CANCELED");
-      setCancellationNotice("Task successfully cancelled.");
+      setCancellationNotice("Tác vụ đã được hủy bỏ thành công.");
       await load();
       setTimeout(() => {
         setActiveJobId(null);
@@ -406,13 +427,13 @@ export default function IntegrationWorkspace({
       }, 500);
     } catch (err) {
       console.error("[IntegrationWorkspace] Failed to cancel job:", err);
-      setError(err.message || "Failed to cancel task. Please try again.");
+      setError(err.message || "Không thể hủy tác vụ. Vui lòng thử lại.");
       await load();
       setIsCancelling(false);
     }
   }, [activeJobId, isCancelling, load]);
 
-  const { logs: activeLogs, logsEndRef } = useLiveJobLogs(
+  const { logs: activeLogs } = useLiveJobLogs(
     activeJobId,
     handleJobComplete,
     (err) => {
@@ -423,21 +444,53 @@ export default function IntegrationWorkspace({
     handleJobCanceled,
   );
 
-  const handleRunAnalysis = async () => {
-    if (
-      !projectId ||
-      !snapshotId ||
-      (activeJobId && activeJobStatus !== "FAILED")
-    )
-      return;
+  // Install missing test libraries
+  const handleInstallDependencies = async () => {
+    if (!snapshotId || isInstallingDeps) return;
+    setIsInstallingDeps(true);
     setError("");
-    setActiveStage("ANALYZE");
+    try {
+      await installIntegrationDependencies(snapshotId);
+      await load();
+    } catch (err) {
+      setError(err.message || "Cài đặt thư viện kiểm thử thất bại.");
+    } finally {
+      setIsInstallingDeps(false);
+    }
+  };
+
+  // Generate tests via framework detection banner
+  const handleGenerateByBannerFramework = async (targetFramework) => {
+    if (!snapshotId || isGeneratingWithBanner) return;
+    setIsGeneratingWithBanner(true);
+    setError("");
+    try {
+      const res = await generateIntegrationTests(snapshotId, {
+        framework: targetFramework,
+        force: true,
+      });
+      const jId = res?.data?.jobId || res?.jobId;
+      if (jId) {
+        setActiveJobId(jId);
+        setActiveJobType("GENERATE");
+        setActiveJobStatus("RUNNING");
+      } else {
+        await load();
+      }
+    } catch (err) {
+      setError(err.message || "Không thể sinh kiểm thử tự động.");
+    } finally {
+      setIsGeneratingWithBanner(false);
+    }
+  };
+
+  // Run AST Project Analysis
+  const handleRunAnalysis = async () => {
+    if (!projectId || !snapshotId || (activeJobId && activeJobStatus !== "FAILED")) return;
+    setError("");
     setPendingAction("ANALYZE");
     try {
-      const response = await runProjectStructureAnalysisApi(
-        projectId,
-        snapshotId,
-      );
+      const response = await runProjectStructureAnalysisApi(projectId, snapshotId);
       const jobId = response?.data?.job?.id || response?.job?.id;
       if (jobId) {
         setActiveJobId(jobId);
@@ -445,213 +498,208 @@ export default function IntegrationWorkspace({
         setActiveJobStatus("RUNNING");
       }
     } catch (err) {
-      setError(err.message || "Project analysis failed.");
+      setError(err.message || "Phân tích cấu trúc dự án thất bại.");
     } finally {
       setPendingAction(null);
     }
   };
 
+  // Run AI Test Generator
   const handleGenerateClick = async (explicitTargets = null) => {
-    if (
-      !workspace?.generation?.hasAnalysis ||
-      (activeJobId && activeJobStatus !== "FAILED")
-    )
-      return;
+    if (!workspace?.generation?.hasAnalysis || (activeJobId && activeJobStatus !== "FAILED")) return;
     setError("");
-    setActiveStage("GENERATE");
     setPendingAction("GENERATE");
     try {
-      let targets = explicitTargets;
-      if (!targets && selectedTargetEndpoints.size > 0) {
-        targets = Array.from(selectedTargetEndpoints);
-      }
-      const res = await onGenerate(targets);
-      if (res === undefined) return; // User was shown the overwrite confirm modal
-      const jobId = res?.data?.job?.id;
+      const res = await onGenerate(explicitTargets);
+      if (res === undefined) return;
+      const jobId = res?.data?.job?.id || res?.jobId;
       if (jobId) {
         setActiveJobId(jobId);
         setActiveJobType("GENERATE");
         setActiveJobStatus("RUNNING");
-      } else throw new Error("Backend failed to return a generation Job ID.");
-    } catch (err) {
-      setError(err.message || "Generation failed.");
-    } finally {
-      setPendingAction(null);
-    }
-  };
-
-  const handleApprove = async () => {
-    if (
-      !snapshotId ||
-      (activeJobId && activeJobStatus !== "FAILED") ||
-      selectedTestIds.length === 0
-    )
-      return;
-    setError("");
-    setPendingAction("APPROVE");
-    try {
-      await approveIntegrationTestsApi(snapshotId, selectedTestIds);
-      await load();
-    } catch (err) {
-      setError(err.message || "Approval failed.");
-    } finally {
-      setPendingAction(null);
-    }
-  };
-
-  const handleApproveAndRun = async (targetIds = null) => {
-    const idsToRun = targetIds && Array.isArray(targetIds) && targetIds.length > 0 ? targetIds : selectedTestIds;
-    if (
-      !snapshotId ||
-      (activeJobId && activeJobStatus !== "FAILED") ||
-      idsToRun.length === 0
-    )
-      return;
-    setError("");
-    setPendingAction("APPROVE_AND_RUN");
-    try {
-      // 1. Approve selected scenarios
-      await approveIntegrationTestsApi(snapshotId, idsToRun);
-      // 2. Trigger test execution
-      const response = await runCoverageByType(snapshotId, "integration");
-      if (response?.data?.job?.id) {
-        setActiveJobId(response.data.job.id);
-        setActiveJobType("EXECUTE");
-        setActiveJobStatus("RUNNING");
-        setActiveStage("RUN");
       } else {
-        throw new Error("Backend failed to start test execution job.");
+        await load();
       }
     } catch (err) {
-      setError(err.message || "Failed to approve and run tests.");
+      setError(err.message || "Sinh kịch bản kiểm thử thất bại.");
     } finally {
       setPendingAction(null);
     }
   };
 
+  // Run All Approved Tests
   const handleRunApprovedTests = async () => {
     if (!snapshotId || pendingAction) return;
     if (activeJobId && (activeJobStatus === "RUNNING" || activeJobStatus === "QUEUED")) {
-      setError("A test run is already in progress.");
+      setError("Một tác vụ kiểm thử đang được thực thi.");
       return;
     }
     setError("");
-    setActiveStage("RUN");
+
+    const allAiTests = workspace?.aiTests || [];
+    const allScenarioIds = allAiTests.flatMap((t) => {
+      let meta = {};
+      try { meta = typeof t.metaJson === "string" ? JSON.parse(t.metaJson) : (t.metaJson || {}); } catch(e) {}
+      return (meta.requests || []).map((r) => `${t.id}::${r.scenarioId || r.testName}`);
+    });
+    const hasProjectTests = (detectionInfo?.testFiles || []).length > 0 || (detectionInfo?.supertestFiles || []).length > 0;
+
+    if (allScenarioIds.length === 0 && !hasProjectTests) {
+      await handleGenerateClick();
+      return;
+    }
+
     setPendingAction("RUN");
     try {
+      if (allScenarioIds.length > 0) {
+        await approveIntegrationTestsApi(snapshotId, allScenarioIds).catch(() => {});
+      }
       const response = await runCoverageByType(snapshotId, "integration");
-      if (response.data?.job?.id) {
-        setActiveJobId(response.data.job.id);
-        setActiveJobType("EXECUTE");
-        setActiveJobStatus("RUNNING");
-      }
-    } catch (err) {
-      setError(err.message || "Test execution failed.");
-    } finally {
-      setPendingAction(null);
-    }
-  };
-
-  const handleRunRemainingEndpoints = async (specificEndpoints = null, targetScenarioId = null) => {
-    if (!snapshotId || pendingAction) return;
-    if (activeJobId && (activeJobStatus === "RUNNING" || activeJobStatus === "QUEUED")) {
-      setError("A test execution job is already in progress.");
-      return;
-    }
-
-    setError("");
-    setPendingAction("RUN_REMAINING");
-
-    try {
-      const remainingList = specificEndpoints || (workspace?.endpoints || []).filter((ep) => {
-        const hasTests = (ep.generatedCount > 0) || (ep.scenarios && ep.scenarios.length > 0);
-        if (!hasTests) return false;
-        const hasUnexecuted = (ep.unexecutedCount > 0) || (ep.generatedCount > 0 && ep.executedCount === 0);
-        const hasFailures = (ep.failedCount > 0) || (ep.testScriptErrorCount > 0);
-        const hasUnrunInScenarios = (ep.scenarios || []).some((s) => 
-          s.status === "not_run" || s.executionVerdict === "NOT_EXECUTED" || !s.status || s.status === "pending" || s.status === "skipped" ||
-          s.status === "failed" || s.executionVerdict === "FAIL" || s.executionVerdict === "SCRIPT_ERROR" || s.classification === "TEST_SCRIPT_ERROR"
-        );
-        return hasUnexecuted || hasFailures || hasUnrunInScenarios;
-      });
-
-      if (remainingList.length === 0 && !targetScenarioId) {
-        setError("All generated scenarios have already been executed with no retryable failures.");
-        setPendingAction(null);
-        return;
-      }
-
-      // Check if any of these remaining endpoints do not have AI tests generated
-      const ungenerated = remainingList.filter((ep) => (ep.generatedCount || 0) === 0 && (ep.unexecutedCount || 0) === 0 && (ep.scenarios || []).length === 0);
-      if (ungenerated.length > 0 && !targetScenarioId) {
-        setPendingAction(null);
-        const targetIds = ungenerated.map((ep) => `${ep.method} ${ep.path || ep.route || ep.fullPath}`);
-        setSelectedTargetEndpoints(new Set(targetIds));
-        setActiveStage("GENERATE");
-        await handleGenerateClick(targetIds);
-        return;
-      }
-
-      // 1. Gather all scenario identifiers for remaining / retryable endpoints
-      const remainingScenarioIds = new Set();
-
-      if (targetScenarioId) {
-        remainingScenarioIds.add(targetScenarioId);
-      } else {
-        remainingList.forEach((ep) => {
-          (ep.scenarios || []).forEach((s) => {
-            const isUnexecuted = s.status === "not_run" || s.executionVerdict === "NOT_EXECUTED" || !s.status || s.status === "pending" || s.status === "skipped";
-            const isRetryableFailure = s.status === "failed" || s.executionVerdict === "FAIL" || s.executionVerdict === "SCRIPT_ERROR" || s.classification === "TEST_SCRIPT_ERROR" || (s.status === "failed" && s.isSuiteLevelFailure);
-            if (isUnexecuted || isRetryableFailure) {
-              if (s.id) remainingScenarioIds.add(s.id);
-              if (s.testId && s.scenarioId) remainingScenarioIds.add(`${s.testId}::${s.scenarioId}`);
-              if (s.testId && s.testName) remainingScenarioIds.add(`${s.testId}::${s.testName}`);
-            }
-          });
-        });
-      }
-
-      if (remainingScenarioIds.size === 0) {
-        setPendingAction(null);
-        const targetIds = remainingList.map((ep) => `${ep.method} ${ep.path || ep.route || ep.fullPath}`);
-        if (targetIds.length > 0) {
-          setSelectedTargetEndpoints(new Set(targetIds));
-          setActiveStage("GENERATE");
-          await handleGenerateClick(targetIds);
-        } else {
-          setError("No unexecuted or retryable test scenarios remain.");
-        }
-        return;
-      }
-
-      const finalApprovedIds = Array.from(remainingScenarioIds);
-
-      // 2. Update selectedTestIds state
-      setSelectedTestIds(finalApprovedIds);
-
-      // 3. Approve targeted scenarios for runner
-      await approveIntegrationTestsApi(snapshotId, finalApprovedIds);
-
-      // 4. Trigger test execution
-      const response = await runCoverageByType(snapshotId, "integration");
-      const jobId = response?.data?.job?.id || response?.job?.id;
-
+      const jobId = response.data?.job?.id || response.data?.jobId || response.jobId;
       if (jobId) {
         setActiveJobId(jobId);
         setActiveJobType("EXECUTE");
         setActiveJobStatus("RUNNING");
-        setActiveStage("RUN");
-      } else {
-        throw new Error("Backend did not return a Job ID when starting test execution.");
       }
     } catch (err) {
-      console.error("[handleRunRemainingEndpoints] Error:", err);
-      setError(err.message || "Unable to execute remaining endpoints.");
+      setError(err.message || "Khởi chạy kiểm thử tích hợp thất bại.");
     } finally {
       setPendingAction(null);
     }
   };
 
+  // Run Specific Endpoint
+  const handleRunEndpoint = async (ep) => {
+    if (!snapshotId || pendingAction || !ep) return;
+    const epScenarios = ep.scenarios || [];
+    const scenarioIds = epScenarios.map((s) => s.id || `${s.testId}::${s.scenarioId || s.testName}`).filter(Boolean);
+    if (scenarioIds.length === 0) {
+      setError(`Endpoint ${ep.method} ${ep.path} chưa có kịch bản kiểm thử nào.`);
+      return;
+    }
+    setError("");
+    setPendingAction("RUN_ENDPOINT");
+    try {
+      await approveIntegrationTestsApi(snapshotId, scenarioIds);
+      const response = await runCoverageByType(snapshotId, "integration");
+      const jobId = response.data?.job?.id || response.data?.jobId || response.jobId;
+      if (jobId) {
+        setActiveJobId(jobId);
+        setActiveJobType("EXECUTE");
+        setActiveJobStatus("RUNNING");
+      }
+    } catch (err) {
+      setError(err.message || "Không thể thực thi kiểm thử cho endpoint này.");
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  // Retry Single Scenario
+  const handleRetryScenario = async (ep, sc) => {
+    if (!snapshotId || pendingAction || !sc) return;
+    const scId = sc.id || `${sc.testId}::${sc.scenarioId || sc.testName}`;
+    if (!scId) return;
+    setError("");
+    setPendingAction("RETRY_SCENARIO");
+    try {
+      await approveIntegrationTestsApi(snapshotId, [scId]);
+      const response = await runCoverageByType(snapshotId, "integration");
+      const jobId = response.data?.job?.id || response.data?.jobId || response.jobId;
+      if (jobId) {
+        setActiveJobId(jobId);
+        setActiveJobType("EXECUTE");
+        setActiveJobStatus("RUNNING");
+      }
+    } catch (err) {
+      setError(err.message || "Không thể chạy lại kịch bản này.");
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  // AI Booster Repair Scenario
+  const handleAIFixScenario = async (ep, sc) => {
+    if (!snapshotId || !sc) return;
+    setError("");
+    try {
+      await regenerateIntegrationScenario(snapshotId, {
+        scenarioId: sc.id || sc.scenarioId,
+        framework: detectionInfo?.targetFramework || "supertest",
+        failureContext: {
+          failureLayer: sc.failureLayer,
+          actualStatus: sc.actualStatus ?? sc.actualStatusFromRuntime,
+          expectedStatus: sc.expectedStatus,
+          errorMessage: (sc.failureMessages || []).join("\n") || sc.failureDetails?.raw || "",
+        },
+      });
+      await load();
+    } catch (err) {
+      setError(err.message || "Không thể sửa kịch bản bằng AI.");
+    }
+  };
+
+  // Open Apply Tests Modal
+  const handleOpenApplyModal = (targetIds = null) => {
+    const ids = targetIds && targetIds.length > 0 ? targetIds : selectedTestIds;
+    setApplyModalTestIds(ids);
+    setApplyModalOpen(true);
+  };
+
+  // Open Scenario Monaco Editor Modal
+  const handleOpenEditScenario = (sc, ep = null) => {
+    setEditorModalScenario(sc);
+    setEditorModalEndpoint(ep);
+    setIsAddScenarioMode(false);
+    setEditorModalOpen(true);
+  };
+
+  const handleOpenAddScenario = (ep) => {
+    setEditorModalScenario(null);
+    setEditorModalEndpoint(ep);
+    setIsAddScenarioMode(true);
+    setEditorModalOpen(true);
+  };
+
+  const handleSaveScenario = async (savedData) => {
+    if (!snapshotId) return;
+    setError("");
+    try {
+      if (isAddScenarioMode) {
+        // Add new scenario via API
+        const targetEp = editorModalEndpoint;
+        const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/scenarios`, {
+          method: "POST",
+          headers: getAuthHeaders(),
+          body: JSON.stringify({
+            endpointId: `${targetEp?.method} ${targetEp?.path}`,
+            title: savedData.name,
+            category: savedData.category,
+            expectedStatus: savedData.expectedStatus,
+            code: savedData.code,
+          }),
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.message || "Thêm kịch bản thất bại.");
+        }
+      } else if (editorModalScenario) {
+        const scId = editorModalScenario.id || editorModalScenario.scenarioId;
+        await updateIntegrationScenario(snapshotId, scId, {
+          title: savedData.name,
+          category: savedData.category,
+          expectedStatus: savedData.expectedStatus,
+          code: savedData.code,
+        });
+      }
+      setEditorModalOpen(false);
+      await load();
+    } catch (err) {
+      setError(err.message || "Lưu kịch bản thất bại.");
+    }
+  };
+
+  // Parse progress steps for active running job
   const parseProgressSteps = (jobType, logs = []) => {
     const safeLogs = Array.isArray(logs) ? logs : [];
     const stages = safeLogs.map((l) => l.parsedMessage?.stage).filter(Boolean);
@@ -661,651 +709,919 @@ export default function IntegrationWorkspace({
         typeof l?.message === "string" ? l.message : JSON.stringify(l?.message || l || "")
       )
       .join("\n");
-    let steps = [];
 
     if (jobType === "ANALYZE") {
-      steps = [
-        { label: "Load project snapshot", done: true },
-        {
-          label: "Analyze source structure",
-          done:
-            hasStage("LOAD_SOURCE") ||
-            textLogs.includes("Scanning") ||
-            textLogs.includes("Analyzed"),
-        },
-        {
-          label: "Detect framework",
-          done: hasStage("DETECT_ENDPOINTS") || textLogs.includes("Analyzed"),
-        },
-        {
-          label: "Discover API endpoints",
-          done:
-            hasStage("DETECT_ENDPOINTS") ||
-            textLogs.includes("Analyzed") ||
-            textLogs.includes("Saving"),
-        },
-        {
-          label: "Analyze route/controller/service flow",
-          done: hasStage("MAP_DEPENDENCIES") || textLogs.includes("Saving"),
-        },
-        {
-          label: "Build AI test context",
-          done:
-            hasStage("MAP_DEPENDENCIES") ||
-            textLogs.includes("Saving") ||
-            textLogs.includes("completed"),
-        },
-        {
-          label: "Complete",
-          done: hasStage("COMPLETE") || textLogs.includes("completed"),
-        },
+      return [
+        { label: "Nạp snapshot dự án", done: true },
+        { label: "Quét cấu trúc mã nguồn AST", done: hasStage("LOAD_SOURCE") || textLogs.includes("Scanning") || textLogs.includes("Analyzed") },
+        { label: "Nhận diện framework kiểm thử", done: hasStage("DETECT_ENDPOINTS") || textLogs.includes("Analyzed") },
+        { label: "Khám phá endpoint API Express/Node", done: hasStage("DETECT_ENDPOINTS") || textLogs.includes("Saving") },
+        { label: "Lập bản đồ phụ thuộc route/controller", done: hasStage("MAP_DEPENDENCIES") || textLogs.includes("Saving") },
+        { label: "Hoàn tất phân tích", done: hasStage("COMPLETE") || textLogs.includes("completed") },
       ];
     } else if (jobType === "GENERATE") {
-      steps = [
-        {
-          label: "Build AI test context",
-          done:
-            hasStage("BUILD_CONTEXT") ||
-            textLogs.includes("Building AI Context") ||
-            textLogs.includes("Calling Gemini"),
-        },
-        {
-          label: "Generate AI tests",
-          done:
-            hasStage("GENERATE_AI_TESTS") ||
-            textLogs.includes("Calling Gemini"),
-        },
-        {
-          label: "Validate test scenarios",
-          done:
-            hasStage("VALIDATE_SCENARIOS") ||
-            textLogs.includes("Parsing") ||
-            textLogs.includes("validating") ||
-            textLogs.includes("Saved") ||
-            textLogs.includes("Generated") ||
-            textLogs.includes("No Supertest"),
-        },
-        {
-          label: "Complete",
-          done:
-            hasStage("COMPLETE") ||
-            activeJobStatus === "SUCCESS" ||
-            textLogs.includes("Saved") ||
-            textLogs.includes("Generated") ||
-            textLogs.includes("No Supertest") ||
-            textLogs.toLowerCase().includes("complete") ||
-            textLogs.toLowerCase().includes("finish"),
-        },
+      return [
+        { label: "Xây dựng AI context cho API", done: hasStage("BUILD_CONTEXT") || textLogs.includes("Calling Gemini") },
+        { label: "Sinh bộ test đa kịch bản với LLM", done: hasStage("GENERATE_AI_TESTS") || textLogs.includes("Calling Gemini") },
+        { label: "Xác thực cú pháp & Jest assertions", done: hasStage("VALIDATE_SCENARIOS") || textLogs.includes("Saved") || textLogs.includes("Generated") },
+        { label: "Hoàn tất sinh kiểm thử", done: hasStage("COMPLETE") || activeJobStatus === "SUCCESS" },
       ];
-    } else if (jobType === "EXECUTE") {
-      steps = [
-        { label: "Load approved tests", done: true },
-        { label: "Validate snapshot", done: true },
-        {
-          label: "Prepare environment",
-          done:
-            hasStage("PREPARE_ENV") ||
-            textLogs.toLowerCase().includes("start") ||
-            textLogs.includes("TestRun"),
-        },
-        {
-          label: "Execute tests",
-          done:
-            hasStage("RUN_JEST") ||
-            textLogs.toLowerCase().includes("start") ||
-            textLogs.includes("TestRun"),
-        },
-        {
-          label: "Collect results",
-          done:
-            hasStage("PARSE_COVERAGE") ||
-            textLogs.includes("TestRun") ||
-            textLogs.toLowerCase().includes("complete"),
-        },
-        {
-          label: "Map tests to endpoints",
-          done:
-            hasStage("MAP_RESULTS") ||
-            textLogs.includes("TestRun") ||
-            textLogs.toLowerCase().includes("complete"),
-        },
-        {
-          label: "Collect coverage",
-          done:
-            hasStage("MAP_RESULTS") ||
-            textLogs.includes("TestRun") ||
-            textLogs.toLowerCase().includes("complete"),
-        },
-        {
-          label: "Build report",
-          done: hasStage("COMPLETE") || textLogs.toLowerCase().includes("complete"),
-        },
+    } else {
+      return [
+        { label: "Nạp danh sách kịch bản đã duyệt", done: true },
+        { label: "Khởi tạo môi trường cô lập", done: hasStage("PREPARE_ENV") || textLogs.includes("start") || textLogs.includes("TestRun") },
+        { label: "Thực thi Jest & Supertest runner", done: hasStage("RUN_JEST") || textLogs.includes("TestRun") },
+        { label: "Bóc tách độ bao phủ API & Tracing", done: hasStage("PARSE_COVERAGE") || textLogs.includes("complete") },
+        { label: "Bóc tách 5 tầng lỗi & Báo cáo", done: hasStage("COMPLETE") || textLogs.includes("complete") },
       ];
     }
-    return steps;
   };
 
-  if (!snapshotId && !workspace) {
+  // Calculate failed scenarios list across all endpoints
+  const { endpoints = [], summary, execution, generation } = workspace || {};
+  const isJobActive = Boolean((activeJobId && (activeJobStatus === "RUNNING" || activeJobStatus === "QUEUED")) || isCancelling);
+
+  const failedScenariosList = useMemo(() => {
+    const list = [];
+    endpoints.forEach((ep) => {
+      (ep.scenarios || []).forEach((sc) => {
+        const isFail = sc.status === "failed" || sc.rawJestStatus === "failed" || sc.executionVerdict === "FAIL";
+        if (isFail) {
+          const actualHttp = sc.actualStatus ?? sc.actualStatusFromRuntime ?? null;
+          let layer = sc.failureLayer;
+          if (!layer || !FAILURE_LAYERS_META[layer]) {
+            if (actualHttp === 404) layer = "ROUTER_NOT_FOUND";
+            else if (actualHttp === 401 || actualHttp === 403) layer = "MIDDLEWARE_REJECTED";
+            else if (actualHttp === 500) layer = "CONTROLLER_CRASH";
+            else layer = "ASSERTION_FAILED";
+          }
+          list.push({ endpoint: ep, scenario: sc, layer, key: `${ep.method} ${ep.path}::${sc.id || sc.title}` });
+        }
+      });
+    });
+    return list;
+  }, [endpoints]);
+
+  const filteredFailures = useMemo(() => {
+    if (activeFailureLayerFilter === "ALL") return failedScenariosList;
+    return failedScenariosList.filter((f) => f.layer === activeFailureLayerFilter);
+  }, [failedScenariosList, activeFailureLayerFilter]);
+
+  // Overall statistics
+  const overallStats = useMemo(() => {
+    const totalApis = endpoints.length;
+    let testedApis = 0;
+    let passedApis = 0;
+    let failedApis = 0;
+    let totalScenariosCount = 0;
+    let passedScenariosCount = 0;
+    let failedScenariosCount = 0;
+
+    endpoints.forEach((ep) => {
+      const scenarios = ep.scenarios || [];
+      const hasTests = scenarios.length > 0 || (ep.generatedCount || 0) > 0;
+      if (hasTests) testedApis++;
+
+      const epFailed = (ep.failedCount || 0) + scenarios.filter((s) => s.status === "failed" || s.rawJestStatus === "failed" || s.executionVerdict === "FAIL").length;
+      const epPassed = (ep.passedCount || 0) + scenarios.filter((s) => s.status === "passed" || s.rawJestStatus === "passed" || s.executionVerdict === "PASS").length;
+
+      totalScenariosCount += scenarios.length || ep.generatedCount || 0;
+      passedScenariosCount += epPassed;
+      failedScenariosCount += epFailed;
+
+      if (epFailed > 0) failedApis++;
+      else if (epPassed > 0) passedApis++;
+    });
+
+    const uncoveredApis = Math.max(0, totalApis - testedApis);
+    const apiPassRate = testedApis > 0 ? Math.round((passedApis / testedApis) * 100) : 0;
+    const apiCoverageRate = totalApis > 0 ? Math.round((testedApis / totalApis) * 100) : 0;
+
+    return {
+      totalApis,
+      testedApis,
+      passedApis,
+      failedApis,
+      uncoveredApis,
+      apiPassRate,
+      apiCoverageRate,
+      totalScenariosCount,
+      passedScenariosCount,
+      failedScenariosCount,
+    };
+  }, [endpoints]);
+
+  // Loading State
+  if (loading && !workspace) {
     return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 360, padding: 40, textAlign: "center", color: "var(--color-text)" }}>
-        <AlertTriangle size={36} style={{ color: "var(--color-warning)", marginBottom: 14 }} />
-        <h3 style={{ fontSize: 16, fontWeight: 600, color: "var(--color-text)", marginBottom: 8 }}>No Project Snapshot Selected</h3>
-        <p style={{ fontSize: 13, color: "var(--color-text-secondary)", maxWidth: 440, lineHeight: 1.6, marginBottom: 16 }}>
-          Please select a snapshot from the list or run project analysis before using Integration Testing.
+      <div className="flex flex-col items-center justify-center min-h-[400px] p-8 text-[var(--color-text)]">
+        <div className="w-10 h-10 border-3 border-[var(--color-primary)]/20 border-t-[var(--color-primary)] rounded-full animate-spin mb-4" />
+        <h3 className="text-sm font-semibold text-[var(--color-text)] mb-1">
+          Đang nạp Integration Testing Workbench...
+        </h3>
+        <p className="text-xs text-[var(--color-text-secondary)] font-mono">
+          Kết nối Snapshot #{snapshotId?.substring(0, 8)} • Quét ma trận API và kết quả kiểm thử
         </p>
       </div>
     );
   }
 
-  if (error && !workspace) {
+  // Empty Snapshot State
+  if (!snapshotId && !workspace) {
     return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 360, padding: 40, textAlign: "center", color: "var(--color-text)" }}>
-        <AlertTriangle size={36} style={{ color: "var(--color-danger)", marginBottom: 14 }} />
-        <h3 style={{ fontSize: 16, fontWeight: 600, color: "var(--color-text)", marginBottom: 8 }}>Failed to Load Integration Workspace Data</h3>
-        <p style={{ fontSize: 13, color: "var(--color-danger)", maxWidth: 440, lineHeight: 1.6, marginBottom: 18 }}>{error}</p>
-        <button
-          type="button"
-          onClick={() => { setError(""); load(); }}
-          style={{
-            padding: "8px 18px",
-            background: "var(--color-primary)",
-            color: "var(--color-primary-foreground)",
-            border: "none",
-            borderRadius: "var(--radius-md)",
-            fontSize: 13,
-            fontWeight: 600,
-            cursor: "pointer",
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 6
-          }}
-        >
-          <RefreshCw size={14} /> Retry
-        </button>
+      <div className="flex flex-col items-center justify-center min-h-[400px] p-8 text-center text-[var(--color-text)]">
+        <AlertTriangle size={36} className="text-[var(--color-warning)] mb-3" />
+        <h3 className="text-base font-bold text-[var(--color-text)] mb-1">Chưa chọn Snapshot dự án</h3>
+        <p className="text-xs text-[var(--color-text-secondary)] max-w-md mb-4 leading-relaxed">
+          Vui lòng chọn một snapshot hợp lệ từ danh sách dự án trước khi sử dụng tính năng Kiểm thử Tích hợp API.
+        </p>
       </div>
     );
   }
-
-  if (loading && !workspace) {
-    return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 360, padding: 40, color: "var(--color-text)" }}>
-        <div style={{
-          width: 38,
-          height: 38,
-          border: "3px solid color-mix(in srgb, var(--color-primary) 20%, transparent)",
-          borderTopColor: "var(--color-primary)",
-          borderRadius: "50%",
-          animation: "spin 1s linear infinite",
-          marginBottom: 16
-        }} />
-        <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
-        <div style={{ fontSize: 15, fontWeight: 600, color: "var(--color-text)", marginBottom: 6 }}>
-          Loading Integration Test Workspace...
-        </div>
-        <div style={{ fontSize: 12, color: "var(--color-text-secondary)", maxWidth: 400, textAlign: "center", lineHeight: 1.5 }}>
-          Connecting Snapshot ({snapshotId ? snapshotId.substring(0, 10) + "..." : ""}) and preparing API endpoint data...
-        </div>
-      </div>
-    );
-  }
-
-  const {
-    generation,
-    endpoints = [],
-    aiTests = [],
-    summary,
-    execution,
-  } = workspace || {};
-  const hasAnalysis = generation?.hasAnalysis;
-  const hasGeneratedTests = generation?.hasGeneratedTests;
-  const isApproved = Boolean(generation?.isApproved);
-  const isJobActive = Boolean((activeJobId && (activeJobStatus === "RUNNING" || activeJobStatus === "QUEUED")) || isCancelling);
-  const remainingEndpoints = (endpoints || []).filter((ep) => {
-    const hasTests = (ep.generatedCount > 0) || (ep.scenarios && ep.scenarios.length > 0);
-    if (!hasTests) return false;
-    const hasUnexecuted = (ep.unexecutedCount > 0) || (ep.generatedCount > 0 && ep.executedCount === 0);
-    const hasFailures = (ep.failedCount > 0) || (ep.testScriptErrorCount > 0);
-    const hasUnrunInScenarios = (ep.scenarios || []).some((s) => 
-      s.status === "not_run" || s.executionVerdict === "NOT_EXECUTED" || !s.status || s.status === "pending" || s.status === "skipped" ||
-      s.status === "failed" || s.executionVerdict === "FAIL" || s.executionVerdict === "SCRIPT_ERROR" || s.classification === "TEST_SCRIPT_ERROR"
-    );
-    return hasUnexecuted || hasFailures || hasUnrunInScenarios;
-  });
-
-  const totalRemainingScenarios = remainingEndpoints.reduce((acc, ep) => {
-    const remainingInScenarios = (ep.scenarios || []).filter((s) => {
-      const isUnexecuted = s.status === "not_run" || s.executionVerdict === "NOT_EXECUTED" || !s.status || s.status === "pending" || s.status === "skipped";
-      const isRetryable = s.status === "failed" || s.executionVerdict === "FAIL" || s.executionVerdict === "SCRIPT_ERROR" || s.classification === "TEST_SCRIPT_ERROR";
-      return isUnexecuted || isRetryable;
-    }).length;
-    if (remainingInScenarios > 0) return acc + remainingInScenarios;
-    if (ep.unexecutedCount > 0) return acc + ep.unexecutedCount;
-    if (ep.failedCount > 0) return acc + ep.failedCount;
-    if (ep.generatedCount > 0 && ep.executedCount === 0) return acc + ep.generatedCount;
-    return acc;
-  }, 0);
-
-  const selectedEndpoint =
-    selectedEndpointId !== null ? endpoints.find(e => `${e.method} ${e.path}` === selectedEndpointId) : null;
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100%",
-        minHeight: 0,
-        overflow: "hidden",
-        background: "var(--color-bg)",
-        color: "var(--color-text)",
-      }}
-    >
-      {/* DEVELOPER COMMAND BAR & PIPELINE TABS */}
-      <div className="h-12 px-6 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center shrink-0 select-none">
-        <div className="flex items-center gap-1 h-full overflow-x-auto custom-scrollbar">
-          {[
-            { id: "ANALYZE", label: "Analyze", icon: Search, step: "1" },
-            { id: "GENERATE", label: "Generate & Review", icon: Zap, step: "2" },
-            { id: "RUN", label: "Run Tests", icon: PlayCircle, step: "3" },
-            { id: "HISTORY", label: "Version History", icon: Clock },
-            { id: "COMPARE", label: "Before/After Comparison", icon: GitCompare },
-            { id: "REPORT", label: "Report", icon: BarChart3 }
-          ].map((stage) => {
-            const isActive = activeStage === stage.id;
-            const Icon = stage.icon;
-            
-            return (
-              <button
-                key={stage.id}
-                onClick={() => {
-                  if (stage.id === "REPORT") {
-                    navigate(`/project/${projectId}/reports/integration`);
-                  } else {
-                    setActiveStage(stage.id);
-                  }
-                }}
-                className={`relative flex items-center gap-2 px-3.5 h-full text-xs font-semibold tracking-wide transition-colors cursor-pointer border-b-2 ${
-                  isActive 
-                    ? "text-[var(--color-primary)] border-[var(--color-primary)] bg-[var(--color-surface)]" 
-                    : "text-[var(--color-text-secondary)] border-transparent hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)]/50"
-                }`}
-              >
-                <Icon size={14} className={isActive ? "text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"} />
-                <span>{stage.label}</span>
-                {stage.step && (
-                  <span className={`text-[10px] font-mono px-1 rounded ${
-                    isActive ? "bg-[var(--color-primary)]/15 text-[var(--color-primary)] font-bold" : "text-[var(--color-text-muted)] bg-[var(--color-surface-secondary)]"
-                  }`}>
-                    0{stage.step}
+    <div className="flex flex-col h-full min-h-0 bg-[var(--color-bg)] text-[var(--color-text)] font-sans select-text overflow-hidden">
+      {/* 1. TOP STICKY COCKPIT HEADER */}
+      <header className="shrink-0 bg-[var(--color-surface)] border-b border-[var(--color-border)] z-20 shadow-xs no-print">
+        {/* Main Header Row */}
+        <div className="px-6 py-3 flex flex-wrap items-center justify-between gap-4">
+          {/* Left: Title & Metadata Badge */}
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-[var(--radius-sm)] bg-[var(--color-primary)]/10 text-[var(--color-primary)] flex items-center justify-center">
+              <Layers size={18} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-sm font-bold text-[var(--color-text)] tracking-tight m-0">
+                  Integration Test Cockpit
+                </h1>
+                <span className="px-2 py-0.5 rounded font-mono text-[10px] font-semibold bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)]">
+                  #{snapshotId?.substring(0, 8) || "active"}
+                </span>
+                {detectionInfo?.targetFramework && (
+                  <span className="px-2 py-0.5 rounded font-mono text-[10px] font-bold bg-sky-500/10 text-sky-400 border border-sky-500/25">
+                    {detectionInfo.targetFramework.toUpperCase()}
                   </span>
                 )}
-              </button>
-            );
-          })}
-        </div>
-      </div>
+              </div>
+              <p className="text-[11px] text-[var(--color-text-muted)] font-mono m-0 mt-0.5">
+                Kiểm thử tích hợp API endpoint tự động • Trực quan hóa độ bao phủ & Chẩn đoán 5 tầng lỗi
+              </p>
+            </div>
+          </div>
 
+          {/* Right: Primary Command Buttons */}
+          <div className="flex items-center gap-2">
+            {/* Run All Tests */}
+            <button
+              type="button"
+              onClick={handleRunApprovedTests}
+              disabled={isJobActive || pendingAction === "RUN"}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-xs disabled:opacity-50"
+            >
+              <Play size={13} fill="currentColor" />
+              <span>{isJobActive && activeJobType === "EXECUTE" ? "Đang chạy test..." : "Chạy tất cả test"}</span>
+            </button>
+
+            {/* AI Test Generation */}
+            <button
+              type="button"
+              onClick={() => handleGenerateClick()}
+              disabled={isJobActive || pendingAction === "GENERATE"}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-semibold transition-colors cursor-pointer shadow-xs disabled:opacity-50"
+              title="Sinh thêm kịch bản API test bằng AI"
+            >
+              <Zap size={13} className="text-[var(--color-primary)]" />
+              <span>Sinh test AI</span>
+            </button>
+
+            {/* Apply to Repo */}
+            <button
+              type="button"
+              onClick={() => handleOpenApplyModal()}
+              disabled={isJobActive}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-semibold transition-colors cursor-pointer shadow-xs"
+              title="Ghi các kịch bản test vào file trong thư mục dự án"
+            >
+              <HardDriveDownload size={13} />
+              <span>Áp dụng vào Repo</span>
+            </button>
+
+            {/* Print / PDF Report */}
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-semibold transition-colors cursor-pointer shadow-xs"
+              title="In hoặc xuất file PDF báo cáo này"
+            >
+              <Printer size={13} />
+              <span>In PDF</span>
+            </button>
+
+            {/* Version History & Diff Drawer Toggle */}
+            <button
+              type="button"
+              onClick={() => setDrawerOpen(drawerOpen ? null : "history")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-sm)] text-xs font-semibold border transition-colors cursor-pointer shadow-xs ${
+                drawerOpen
+                  ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] border-[var(--color-primary)]/30"
+                  : "bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)]"
+              }`}
+              title="Xem lịch sử các lần chạy và so sánh phiên bản Trước/Sau"
+            >
+              <Clock size={13} />
+              <span>Lịch sử & So sánh</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Anchor Quick-Jump Strip */}
+        <div className="px-6 py-1.5 border-t border-[var(--color-border)]/60 bg-[var(--color-surface-secondary)]/30 flex items-center justify-between overflow-x-auto custom-scrollbar">
+          <div className="flex items-center gap-1 text-xs">
+            <span className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider mr-2 shrink-0">
+              Chuyển nhanh:
+            </span>
+
+            {[
+              { id: "section-kpis", label: "Tổng quan & KPIs" },
+              ...(detectionInfo?.isZeroTestProject || detectionInfo?.needsDependencyInstall
+                ? [{ id: "section-framework", label: "Cài đặt & Thư viện", alert: true }]
+                : []),
+              {
+                id: "section-execution",
+                label: "Thực thi & Logs",
+                pulsing: isJobActive,
+              },
+              {
+                id: "section-failures",
+                label: "Chẩn đoán lỗi (5 Tầng)",
+                badge: failedScenariosList.length,
+                badgeColor: "bg-rose-500/20 text-[var(--color-danger)]",
+              },
+              { id: "section-matrix", label: "Ma trận API Endpoints", count: endpoints.length },
+              { id: "section-scenarios", label: "Kịch bản Test & Monaco" },
+              { id: "section-report", label: "Báo cáo Tích hợp & In ấn" },
+            ].map((nav) => {
+              const isActive = activeAnchor === nav.id;
+              return (
+                <button
+                  key={nav.id}
+                  type="button"
+                  onClick={() => scrollToSection(nav.id)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-[var(--radius-sm)] text-xs font-medium transition-colors cursor-pointer whitespace-nowrap ${
+                    isActive
+                      ? "bg-[var(--color-primary)]/15 text-[var(--color-primary)] font-bold border border-[var(--color-primary)]/30"
+                      : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)]"
+                  }`}
+                >
+                  {nav.pulsing && <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />}
+                  <span>{nav.label}</span>
+                  {nav.badge != null && nav.badge > 0 && (
+                    <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${nav.badgeColor}`}>
+                      {nav.badge}
+                    </span>
+                  )}
+                  {nav.count != null && (
+                    <span className="text-[10px] font-mono text-[var(--color-text-muted)]">
+                      ({nav.count})
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] shrink-0 font-mono">
+            {refreshing && (
+              <span className="flex items-center gap-1 text-[var(--color-primary)]">
+                <RefreshCw size={11} className="animate-spin" /> Đang đồng bộ...
+              </span>
+            )}
+          </div>
+        </div>
+      </header>
+
+      {/* Cancellation Notice Banner */}
       {cancellationNotice && (
-        <div
-          style={{
-            margin: "16px 24px 0",
-            padding: "10px 16px",
-            background: "rgba(245, 158, 11, 0.1)",
-            color: "var(--color-warning, #f59e0b)",
-            border: "1px solid rgba(245, 158, 11, 0.3)",
-            borderRadius: 8,
-            fontSize: 13,
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-          }}
-        >
+        <div className="px-6 py-2.5 bg-amber-500/10 border-b border-amber-500/20 text-xs text-[var(--color-warning)] flex items-center justify-between no-print">
           <span>{cancellationNotice}</span>
-          <button
-            onClick={() => setCancellationNotice("")}
-            style={{
-              background: "none",
-              border: "none",
-              color: "inherit",
-              cursor: "pointer",
-            }}
-          >
-            ✕
-          </button>
+          <button type="button" onClick={() => setCancellationNotice("")} className="cursor-pointer text-inherit">✕</button>
         </div>
       )}
 
+      {/* Global Error Banner */}
       {error && (
-        <div
-          style={{
-            margin: "16px 24px 0",
-            padding: "12px 16px",
-            background: "rgba(248,113,113,.1)",
-            color: "var(--color-danger)",
-            border: "1px solid var(--color-danger)",
-            borderRadius: 8,
-            fontSize: 13,
-            display: "flex",
-            justifyContent: "space-between",
-          }}
-        >
-          <span>{error}</span>
-          <button
-            onClick={() => setError("")}
-            style={{
-              background: "none",
-              border: "none",
-              color: "var(--color-danger)",
-              cursor: "pointer",
-            }}
-          >
-            ✕
-          </button>
+        <div className="px-6 py-2.5 bg-rose-500/10 border-b border-rose-500/20 text-xs text-[var(--color-danger)] flex items-center justify-between no-print">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={14} />
+            <span>{error}</span>
+          </div>
+          <button type="button" onClick={() => setError("")} className="cursor-pointer text-inherit">✕</button>
         </div>
       )}
 
-      {/* MASTER-DETAIL LAYOUT */}
-      <div style={{ display: "flex", flex: 1, minHeight: 0, overflow: "hidden" }}>
-        {/* LEFT PANE (MASTER): Targets */}
-        <div
-          style={{
-            flexShrink: 0,
-            width: isLeftPaneCollapsed ? 40 : 250,
-            minWidth: 0,
-            minHeight: 0,
-            height: "100%",
-            borderRight: "1px solid var(--color-border)",
-            background: "var(--color-surface)",
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-            transition: "width 0.2s ease-in-out",
-          }}
-        >
-          {activeStage === "ANALYZE" || activeStage === "GENERATE" || activeStage === "RUN" || activeStage === "HISTORY" || activeStage === "COMPARE" ? (
-             <IntegrationTargetsPane
-               endpoints={endpoints}
-               selectedEndpointId={selectedEndpointId}
-               onSelectEndpoint={setSelectedEndpointId}
-               hasAnalysis={hasAnalysis}
-               selectedTargetEndpoints={selectedTargetEndpoints}
-               onToggleSelectEndpoint={handleToggleSelectEndpoint}
-               onToggleSelectModule={handleToggleSelectModule}
-               onSelectAllEndpoints={handleSelectAllEndpoints}
-               onClearSelectedEndpoints={handleClearSelectedEndpoints}
-               activeScopeFilter={activeScopeFilter}
-               onSelectScopeFilter={setActiveScopeFilter}
-               isCollapsed={isLeftPaneCollapsed}
-               onToggleCollapse={() => setIsLeftPaneCollapsed(!isLeftPaneCollapsed)}
-             />
-          ) : null}
-        </div>
+      {/* 2. MAIN SCROLLABLE DASHBOARD VIEW */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar scroll-smooth px-6 py-6 space-y-8">
+        <IntegrationErrorBoundary onRetry={load}>
+          {/* SECTION 1: Framework Detection & Auto-Setup Banner */}
+          {detectionInfo && (detectionInfo.isZeroTestProject || detectionInfo.needsDependencyInstall) && (
+            <section id="section-framework" className="scroll-mt-24">
+              <IntegrationFrameworkDetectionBanner
+                detectionInfo={detectionInfo}
+                onGenerateTests={handleGenerateByBannerFramework}
+                onInstallDependencies={handleInstallDependencies}
+                isInstalling={isInstallingDeps}
+                isGenerating={isGeneratingWithBanner}
+              />
+            </section>
+          )}
 
-        {/* RIGHT PANE (DETAIL): Context */}
-        <div
-          style={{
-            flex: 1,
-            minWidth: 0,
-            minHeight: 0,
-            height: "100%",
-            background: "var(--color-bg)",
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden"
-          }}
-        >
-          <IntegrationErrorBoundary onRetry={load}>
-          {activeJobId && !selectedEndpointId && (activeJobType === activeStage || (activeStage === "RUN" && activeJobType === "EXECUTE")) ? (
-             <IntegrationLiveProgress
-               activeJobId={activeJobId}
-               activeJobType={activeJobType}
-               activeJobStatus={activeJobStatus}
-               error={error}
-               activeLogs={activeLogs}
-               parseProgressSteps={parseProgressSteps}
-               onCancel={() => handleCancelActiveJob(activeJobId)}
-               isCancelling={isCancelling}
-               onInspectEndpoints={() => {
-                 if (endpoints && endpoints.length > 0) {
-                   setSelectedEndpointId(`${endpoints[0].method} ${endpoints[0].path}`);
-                 }
-               }}
-             />
-          ) : selectedEndpointId !== null ? (
-            <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-              {activeJobId && (
-                <div style={{
-                  padding: "8px 16px",
-                  background: "rgba(59,130,246,0.1)",
-                  borderBottom: "1px solid rgba(59,130,246,0.25)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  fontSize: 12,
-                  flexShrink: 0,
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <RefreshCw size={14} className="animate-spin text-blue-400" />
-                    <span>
-                      <strong>{activeJobType === "ANALYZE" ? "Analyzing Project" : activeJobType === "GENERATE" ? "Generating AI Tests" : "Running Test Suite"}</strong> in progress...
+          {/* SECTION 2: High-Density Metric Overview Cards */}
+          <section id="section-kpis" className="scroll-mt-24 space-y-3.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+              {/* Card 1: API Pass Rate */}
+              <div className="p-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xs flex flex-col justify-between">
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+                    API Pass Rate
+                  </div>
+                  <div className="flex items-baseline gap-2">
+                    <span className={`text-2xl font-bold font-mono ${overallStats.apiPassRate >= 80 ? "text-[var(--color-success)]" : overallStats.apiPassRate > 0 ? "text-amber-400" : "text-[var(--color-text-muted)]"}`}>
+                      {overallStats.apiPassRate}%
+                    </span>
+                    <span className="text-xs text-[var(--color-text-muted)] font-mono">
+                      ({overallStats.passedApis}/{overallStats.testedApis} tested APIs)
                     </span>
                   </div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedEndpointId(null)}
-                      style={{
-                        background: "transparent",
-                        border: "1px solid var(--color-primary)",
-                        borderRadius: 4,
-                        padding: "3px 10px",
-                        color: "var(--color-primary)",
-                        cursor: "pointer",
-                        fontSize: 12,
-                        fontWeight: 600,
-                      }}
-                    >
-                      View Live Logs
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleCancelActiveJob(activeJobId)}
-                      disabled={isCancelling}
-                      style={{
-                        background: "rgba(239,68,68,0.12)",
-                        border: "1px solid var(--color-danger, #ef4444)",
-                        borderRadius: 4,
-                        padding: "3px 10px",
-                        color: "var(--color-danger, #ef4444)",
-                        cursor: isCancelling ? "not-allowed" : "pointer",
-                        fontSize: 12,
-                        fontWeight: 600,
-                      }}
-                    >
-                      {isCancelling ? "Cancelling..." : "Cancel"}
-                    </button>
+                </div>
+                <div className="text-[10px] text-[var(--color-text-secondary)] mt-2">
+                  Tỉ lệ endpoint API vượt qua 100% kịch bản kiểm thử
+                </div>
+              </div>
+
+              {/* Card 2: API Coverage */}
+              <div className="p-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xs flex flex-col justify-between">
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+                    API Endpoint Coverage
+                  </div>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-2xl font-bold font-mono text-[var(--color-primary)]">
+                      {overallStats.apiCoverageRate}%
+                    </span>
+                    <span className="text-xs text-[var(--color-text-muted)] font-mono">
+                      ({overallStats.testedApis}/{overallStats.totalApis} routes)
+                    </span>
                   </div>
                 </div>
-              )}
-              <IntegrationEndpointDetail
-                endpoint={selectedEndpoint}
-                aiTests={aiTests}
-                hasGeneratedTests={hasGeneratedTests}
-              hasAnalysis={hasAnalysis}
-              onRunAnalysis={handleRunAnalysis}
-                isApproved={isApproved}
-                selectedTestIds={selectedTestIds}
-                setSelectedTestIds={setSelectedTestIds}
-                snapshotId={snapshotId}
-                projectId={projectId}
-                endpoints={endpoints}
-                onOpenCFG={onOpenCFG}
-                onSuggestTestcase={onSuggestTestcase}
-                onOpenArchitecture={onOpenArchitecture}
-                onScenarioChange={load}
-                onError={setError}
-                onGenerateThisEndpoint={(ep) => handleGenerateClick([`${ep.method} ${ep.path || ep.route}`])}
-                onOpenFile={onOpenFile}
-                onBackToTargets={() => setSelectedEndpointId(null)}
-                isGenerating={pendingAction === "GENERATE" || (activeJobId && activeJobType === "GENERATE")}
-              />
-            </div>
-          ) : activeStage === "GENERATE" ? (
-            <IntegrationScenariosPane
-              aiTests={aiTests}
-              selectedEndpoint={selectedEndpoint}
-              onClearSelectedEndpoint={() => setSelectedEndpointId(null)}
-              hasGeneratedTests={hasGeneratedTests}
-              isApproved={isApproved}
-              selectedTestIds={selectedTestIds}
-              setSelectedTestIds={setSelectedTestIds}
-              snapshotId={snapshotId}
-              endpoints={endpoints}
-              onOpenCFG={onOpenCFG}
-              onSuggestTestcase={onSuggestTestcase}
-              onOpenArchitecture={onOpenArchitecture}
-              onScenarioChange={load}
-              onError={setError}
-              onGenerateThisEndpoint={(key) => handleGenerateClick([key])}
-              isGenerating={pendingAction === "GENERATE" || (activeJobId && activeJobType === "GENERATE")}
-              onApproveAndRun={handleApproveAndRun}
-              isApprovingAndRunning={pendingAction === "APPROVE_AND_RUN"}
-              onReGenerateSelected={(explicitTargets = null) =>
-                handleGenerateClick(
-                  explicitTargets ||
-                    (selectedTargetEndpoints && selectedTargetEndpoints.size > 0
-                      ? Array.from(selectedTargetEndpoints)
-                      : null)
-                )
-              }
-            />
-          ) : (
-            <div className="flex flex-col h-full bg-[var(--color-surface)]">
-
-
-
-              <div style={{ flex: 1, overflow: "hidden" }}>
-                {activeStage === "ANALYZE" && !selectedEndpointId ? (
-                   !hasAnalysis ? (
-                     <div className="flex flex-col items-center justify-center h-full p-8 text-center font-sans">
-                       <div className="w-14 h-14 rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)] flex items-center justify-center mb-4">
-                         <Search size={26} />
-                       </div>
-                       <h3 className="text-base font-bold text-[var(--color-text)] mb-2">
-                         API Endpoint Analysis Required
-                       </h3>
-                       <p className="text-xs text-[var(--color-text-secondary)] max-w-md mb-6 leading-relaxed">
-                         CovAI needs to scan your project's codebase AST to discover Express/Node routes, controller handlers, middleware chains, and data models.
-                       </p>
-                       <button
-                         type="button"
-                         onClick={handleRunAnalysis}
-                         disabled={isJobActive || pendingAction === "ANALYZE"}
-                         className="px-5 py-2.5 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer inline-flex items-center gap-2 shadow-sm disabled:opacity-50"
-                       >
-                         <Search size={14} />
-                         <span>{pendingAction === "ANALYZE" ? "Analyzing Project..." : "Analyze Project"}</span>
-                       </button>
-                     </div>
-                   ) : (
-                     <IntegrationAnalysisOverview
-                       endpoints={endpoints}
-                       snapshotId={snapshotId}
-                       selectedEndpointId={selectedEndpointId}
-                       onSelectEndpoint={setSelectedEndpointId}
-                       onGenerateSelected={() => handleGenerateClick()}
-                       selectedTargetEndpoints={selectedTargetEndpoints}
-                       onToggleSelectEndpoint={handleToggleSelectEndpoint}
-                       onRunAnalysis={handleRunAnalysis}
-                       isAnalyzing={pendingAction === "ANALYZE" || (activeJobId && activeJobType === "ANALYZE")}
-                       activeScopeFilter={activeScopeFilter}
-                       onClearScopeFilter={() => setActiveScopeFilter({ type: "ALL", value: null })}
-                     />
-                   )
-                ) : activeStage === "REPORT" ? (
-                   <div style={{padding: 24, color: "var(--color-text-secondary)"}}>Redirecting to Report...</div>
-                ) : activeStage === "RUN" && (
-                  !hasAnalysis ? (
-                    <div className="flex flex-col items-center justify-center h-full p-8 text-center font-sans">
-                      <div className="w-14 h-14 rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)] flex items-center justify-center mb-4">
-                        <Search size={26} />
-                      </div>
-                      <h3 className="text-base font-bold text-[var(--color-text)] mb-2">
-                        API Endpoint Analysis Required
-                      </h3>
-                      <p className="text-xs text-[var(--color-text-secondary)] max-w-md mb-6 leading-relaxed">
-                        Please analyze the project and generate test scenarios before executing tests.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={handleRunAnalysis}
-                        disabled={isJobActive || pendingAction === "ANALYZE"}
-                        className="px-5 py-2.5 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer inline-flex items-center gap-2 shadow-sm disabled:opacity-50"
-                      >
-                        <Search size={14} />
-                        <span>{pendingAction === "ANALYZE" ? "Analyzing Project..." : "Analyze Project"}</span>
-                      </button>
-                    </div>
-                  ) : !hasGeneratedTests ? (
-                    <div className="flex flex-col items-center justify-center h-full p-8 text-center font-sans">
-                      <div className="w-14 h-14 rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)] flex items-center justify-center mb-4">
-                        <Zap size={26} />
-                      </div>
-                      <h3 className="text-base font-bold text-[var(--color-text)] mb-2">
-                        Test Scenarios Required
-                      </h3>
-                      <p className="text-xs text-[var(--color-text-secondary)] max-w-md mb-6 leading-relaxed">
-                        Generate integration test scenarios before executing test suites.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => setActiveStage("GENERATE")}
-                        className="px-5 py-2.5 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer inline-flex items-center gap-2 shadow-sm"
-                      >
-                        <Zap size={14} />
-                        <span>Go to Generate & Review</span>
-                      </button>
-                    </div>
-                  ) : (
-                    <IntegrationRunResultsPane
-                      workspace={workspace}
-                      summary={summary}
-                      execution={execution}
-                      endpoints={endpoints}
-                      isApproved={isApproved}
-                      isJobActive={isJobActive}
-                      pendingAction={pendingAction}
-                      remainingEndpoints={remainingEndpoints}
-                      totalRemainingScenarios={totalRemainingScenarios}
-                      onRunAllTests={handleRunApprovedTests}
-                      onRunRemaining={() => handleRunRemainingEndpoints()}
-                      onRunEndpoint={(ep) => handleRunRemainingEndpoints([ep])}
-                      onRetryScenario={(ep, sc) => handleRunRemainingEndpoints([ep], sc.id || (sc.testId && sc.scenarioId ? `${sc.testId}::${sc.scenarioId}` : null))}
-                      selectedEndpointId={selectedEndpointId}
-                      onSelectEndpoint={setSelectedEndpointId}
-                    />
-                  )
-                )}
-                {activeStage === "HISTORY" && (
-                  <IntegrationHistoryPane
-                    snapshotId={snapshotId}
-                    onOpenComparison={() => setActiveStage("COMPARE")}
+                <div className="w-full bg-[var(--color-surface-secondary)] h-1.5 rounded-full overflow-hidden mt-2">
+                  <div
+                    className="bg-[var(--color-primary)] h-full transition-all duration-300"
+                    style={{ width: `${overallStats.apiCoverageRate}%` }}
                   />
-                )}
-                {activeStage === "COMPARE" && (
-                  <BeforeAfterComparisonView
-                    projectId={projectId}
-                    snapshotId={snapshotId}
-                    initialBaselineId={new URLSearchParams(location.search).get("baselineId")}
-                    onBackToWorkspace={() => setActiveStage("ANALYZE")}
-                  />
-                )}
+                </div>
+              </div>
+
+              {/* Card 3: Uncovered API Endpoints */}
+              <div className="p-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xs flex flex-col justify-between">
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+                    Uncovered API Endpoints
+                  </div>
+                  <div className="flex items-baseline gap-2">
+                    <span className={`text-2xl font-bold font-mono ${overallStats.uncoveredApis > 0 ? "text-amber-400" : "text-[var(--color-success)]"}`}>
+                      {overallStats.uncoveredApis}
+                    </span>
+                    <span className="text-xs text-[var(--color-text-muted)] font-mono">
+                      / {overallStats.totalApis} endpoints
+                    </span>
+                  </div>
+                </div>
+                <div className="text-[10px] text-[var(--color-text-secondary)] mt-2 flex items-center justify-between">
+                  <span>Chưa có kịch bản test</span>
+                  {overallStats.uncoveredApis > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => handleGenerateClick()}
+                      className="text-[var(--color-primary)] hover:underline font-semibold cursor-pointer"
+                    >
+                      + Sinh test AI
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Card 4: Endpoint Status Triage */}
+              <div className="p-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xs flex flex-col justify-between">
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+                    Endpoint Status Triage
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 mt-1 font-mono text-xs">
+                    <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-[var(--color-success)] border border-emerald-500/20 font-bold">
+                      ✓ {overallStats.passedApis} Passed
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-rose-500/10 text-[var(--color-danger)] border border-rose-500/20 font-bold">
+                      ✗ {overallStats.failedApis} Failed
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)] font-semibold">
+                      ○ {overallStats.uncoveredApis} Uncovered
+                    </span>
+                  </div>
+                </div>
+                <div className="text-[10px] text-[var(--color-text-secondary)] mt-2">
+                  Phân loại trạng thái kiểm thử theo từng route
+                </div>
               </div>
             </div>
-          )}
-          </IntegrationErrorBoundary>
-        </div>
+
+            {/* Compact Execution Summary Bar */}
+            <div className="border border-[var(--color-border)] rounded-[var(--radius-md)] bg-[var(--color-surface)] overflow-hidden shadow-xs">
+              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 divide-x divide-y sm:divide-y-0 divide-[var(--color-border)] text-center text-xs">
+                <div className="p-2.5">
+                  <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">Tổng kịch bản</div>
+                  <div className="text-base font-bold font-mono text-[var(--color-text)] mt-0.5">{overallStats.totalScenariosCount}</div>
+                </div>
+                <div className="p-2.5 bg-emerald-500/5">
+                  <div className="text-[10px] uppercase font-bold text-[var(--color-success)] tracking-wider">Passed</div>
+                  <div className="text-base font-bold font-mono text-[var(--color-success)] mt-0.5">{overallStats.passedScenariosCount}</div>
+                </div>
+                <div className={`p-2.5 ${overallStats.failedScenariosCount > 0 ? "bg-rose-500/10" : ""}`}>
+                  <div className={`text-[10px] uppercase font-bold tracking-wider ${overallStats.failedScenariosCount > 0 ? "text-[var(--color-danger)]" : "text-[var(--color-text-muted)]"}`}>Failed</div>
+                  <div className={`text-base font-bold font-mono ${overallStats.failedScenariosCount > 0 ? "text-[var(--color-danger)]" : "text-[var(--color-text-muted)]"} mt-0.5`}>{overallStats.failedScenariosCount}</div>
+                </div>
+                <div className="p-2.5">
+                  <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">Skipped</div>
+                  <div className="text-base font-bold font-mono text-[var(--color-text-secondary)] mt-0.5">{execution?.skippedTests || 0}</div>
+                </div>
+                <div className="p-2.5">
+                  <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">Pass Rate</div>
+                  <div className={`text-base font-bold font-mono ${overallStats.apiPassRate >= 80 ? "text-[var(--color-success)]" : "text-amber-400"} mt-0.5`}>{overallStats.apiPassRate}%</div>
+                </div>
+                <div className="p-2.5">
+                  <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">Độ bao phủ</div>
+                  <div className="text-base font-bold font-mono text-[var(--color-text)] mt-0.5">{overallStats.apiCoverageRate}%</div>
+                </div>
+                <div className="p-2.5">
+                  <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">Thời lượng</div>
+                  <div className="text-base font-bold font-mono text-[var(--color-text)] mt-0.5">{((execution?.durationMs || 0) / 1000).toFixed(1)}s</div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* SECTION 3: Live Execution Pipeline & Terminal Logs */}
+          <section id="section-execution" className="scroll-mt-24">
+            {isJobActive ? (
+              <div className="rounded-[var(--radius-md)] border border-sky-500/30 bg-[var(--color-surface)] shadow-xs overflow-hidden">
+                <div className="px-4 py-3 bg-sky-500/10 border-b border-sky-500/20 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <RefreshCw size={16} className="animate-spin text-sky-400" />
+                    <span className="text-xs font-bold uppercase tracking-wider text-sky-400">
+                      Tác Vụ Đang Thực Thi: {activeJobType === "ANALYZE" ? "Phân tích dự án" : activeJobType === "GENERATE" ? "Sinh kiểm thử AI" : "Chạy bộ kiểm thử"}
+                    </span>
+                    <span className="text-xs font-mono text-[var(--color-text-secondary)]">
+                      Job #{activeJobId?.substring(0, 8)}
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleCancelActiveJob(activeJobId)}
+                    disabled={isCancelling}
+                    className="px-3 py-1 rounded bg-rose-500/10 text-[var(--color-danger)] border border-rose-500/30 hover:bg-rose-500/20 text-xs font-semibold cursor-pointer disabled:opacity-50"
+                  >
+                    {isCancelling ? "Đang hủy..." : "Hủy tác vụ"}
+                  </button>
+                </div>
+
+                {/* Pipeline Steps Tracker */}
+                <div className="p-4 border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)]/30">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {parseProgressSteps(activeJobType, activeLogs).map((st, i) => (
+                      <div key={i} className="flex items-center gap-2">
+                        <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-mono font-medium ${
+                          st.done
+                            ? "bg-emerald-500/10 text-[var(--color-success)] border border-emerald-500/25"
+                            : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border border-[var(--color-border)]"
+                        }`}>
+                          {st.done ? <CheckCircle2 size={13} /> : <span className="w-2 h-2 rounded-full border border-current animate-pulse" />}
+                          <span>{st.label}</span>
+                        </span>
+                        {i < parseProgressSteps(activeJobType, activeLogs).length - 1 && (
+                          <ChevronRight size={13} className="text-[var(--color-border)]" />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Terminal Console Logs */}
+                <div className="p-4 bg-[#090D12] text-slate-300 font-mono text-xs max-h-64 overflow-y-auto custom-scrollbar">
+                  {activeLogs.length === 0 ? (
+                    <div className="text-slate-500 italic">Đang thiết lập kết nối luồng sự kiện SSE...</div>
+                  ) : (
+                    activeLogs.map((log, idx) => (
+                      <div key={idx} className="leading-relaxed hover:bg-slate-800/40 px-1 rounded flex items-start gap-2">
+                        <span className="text-slate-600 select-none text-[10px] w-8 shrink-0">{idx + 1}</span>
+                        <span className="text-slate-300 break-all">{typeof log.message === "string" ? log.message : JSON.stringify(log.message)}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="p-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] flex flex-wrap items-center justify-between gap-3 shadow-xs">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-emerald-500/10 text-[var(--color-success)] flex items-center justify-center">
+                    <CheckCircle2 size={18} />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-[var(--color-text)]">
+                      Hệ Thống Sẵn Sàng Thực Thi Kiểm Thử
+                    </div>
+                    <div className="text-[11px] text-[var(--color-text-secondary)] font-mono mt-0.5">
+                      Lần chạy gần nhất: {execution?.timestamp ? new Date(execution.timestamp).toLocaleTimeString() : "Chưa chạy"} • {execution?.totalTests || 0} tests ({execution?.passedTests || 0} pass, {execution?.failedTests || 0} fail)
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleRunAnalysis}
+                    className="px-3 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-semibold transition-colors cursor-pointer"
+                  >
+                    Quét lại cấu trúc AST
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRunApprovedTests}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
+                  >
+                    <Play size={12} fill="currentColor" />
+                    <span>Chạy lại kiểm thử ngay</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+
+          {/* SECTION 4: Failure Inspector (Chẩn Đoán 5 Tầng Lỗi) */}
+          <section id="section-failures" className="scroll-mt-24">
+            {failedScenariosList.length > 0 ? (
+              <div className="rounded-[var(--radius-md)] border border-rose-500/30 bg-[var(--color-surface)] shadow-xs overflow-hidden">
+                {/* Failure Header */}
+                <div className="px-4 py-3 bg-rose-500/10 border-b border-rose-500/20 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle size={18} className="text-[var(--color-danger)]" />
+                    <div>
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-danger)] m-0">
+                        Chẩn Đoán 5 Tầng Lỗi ({failedScenariosList.length} Thất bại)
+                      </h3>
+                      <p className="text-[11px] text-[var(--color-text-secondary)] m-0 mt-0.5">
+                        Phân tầng Router, Middleware, Controller, Database và Assertion kèm vị trí dòng mã gãy
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Filter by failure layer */}
+                  <div className="flex items-center gap-1 font-mono text-[11px] bg-[var(--color-surface)] p-0.5 rounded border border-[var(--color-border)]">
+                    <button
+                      type="button"
+                      onClick={() => setActiveFailureLayerFilter("ALL")}
+                      className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
+                        activeFailureLayerFilter === "ALL"
+                          ? "bg-[var(--color-primary)] text-[var(--color-primary-foreground)] font-bold"
+                          : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+                      }`}
+                    >
+                      Tất cả ({failedScenariosList.length})
+                    </button>
+                    {Object.entries(FAILURE_LAYERS_META).map(([layerKey, meta]) => {
+                      const count = failedScenariosList.filter((f) => f.layer === layerKey).length;
+                      if (count === 0) return null;
+                      return (
+                        <button
+                          key={layerKey}
+                          type="button"
+                          onClick={() => setActiveFailureLayerFilter(layerKey)}
+                          className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
+                            activeFailureLayerFilter === layerKey
+                              ? "bg-[var(--color-primary)] text-[var(--color-primary-foreground)] font-bold"
+                              : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+                          }`}
+                        >
+                          {meta.label} ({count})
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Failure Cards List */}
+                <div className="divide-y divide-[var(--color-border)]">
+                  {filteredFailures.map(({ endpoint: ep, scenario: sc, layer, key }) => {
+                    const layerMeta = FAILURE_LAYERS_META[layer] || FAILURE_LAYERS_META.ASSERTION_FAILED;
+                    const methodClass = METHOD_STYLES[ep.method] || METHOD_STYLES.DEFAULT;
+                    const actualHttp = sc.actualStatus ?? sc.actualStatusFromRuntime ?? 500;
+                    const expectedHttp = sc.expectedStatus ?? 200;
+                    const failDetails = sc.failureDetails || {};
+                    const isCallstackOpen = Boolean(expandedCallstacks[key]);
+
+                    return (
+                      <div key={key} className="p-4 space-y-3 bg-[var(--color-surface)]">
+                        {/* Title Bar */}
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div className="flex items-center gap-2 flex-wrap min-w-0">
+                            <span className={`px-2 py-0.5 rounded font-mono text-[10px] font-bold border tracking-tight ${methodClass}`}>
+                              {ep.method}
+                            </span>
+                            <span className="font-mono text-xs font-semibold text-[var(--color-text)]">
+                              {ep.path}
+                            </span>
+                            <span className="text-[var(--color-text-muted)]">•</span>
+                            <span className="text-xs font-medium text-[var(--color-text)] truncate max-w-sm">
+                              {sc.title}
+                            </span>
+                            <span className={`px-2 py-0.5 rounded font-mono text-[10px] font-bold border ${layerMeta.style}`}>
+                              {layerMeta.code}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleAIFixScenario(ep, sc)}
+                              className="flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
+                              title="Tự động sửa kịch bản bằng AI"
+                            >
+                              <Zap size={12} />
+                              <span>Sửa bằng AI</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRetryScenario(ep, sc)}
+                              className="flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] text-xs font-semibold transition-colors cursor-pointer"
+                              title="Chạy lại kịch bản này"
+                            >
+                              <Play size={11} fill="currentColor" />
+                              <span>Chạy lại</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditScenario(sc, ep)}
+                              className="flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] text-xs font-semibold transition-colors cursor-pointer"
+                              title="Mở trình soạn thảo Monaco Editor"
+                            >
+                              <Code2 size={12} />
+                              <span>Sửa Monaco</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Expected vs Actual Status Banner */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                          <div className="p-2.5 rounded bg-[var(--color-surface-secondary)]/50 border border-[var(--color-border)]">
+                            <span className="text-[10px] font-semibold text-[var(--color-text-secondary)]">HTTP Status Mong Đợi (Expected):</span>
+                            <div className="font-mono font-bold text-xs text-[var(--color-success)] mt-0.5">
+                              HTTP {expectedHttp}
+                            </div>
+                          </div>
+                          <div className="p-2.5 rounded bg-rose-500/5 border border-rose-500/20">
+                            <span className="text-[10px] font-semibold text-[var(--color-danger)]">HTTP Status Thực Tế (Received):</span>
+                            <div className="font-mono font-bold text-xs text-[var(--color-danger)] mt-0.5">
+                              HTTP {actualHttp}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Code Frame with line highlight */}
+                        {failDetails.codeFrame && (
+                          <div className="rounded border border-[var(--color-border)] bg-[#0B0F14] text-slate-300 font-mono text-[11px] p-3 overflow-x-auto custom-scrollbar">
+                            <div className="text-[10px] text-slate-500 mb-1">
+                              File: {failDetails.file ? failDetails.file.split(/[\\/]/).slice(-2).join("/") : "test"}:{failDetails.line || 1}
+                            </div>
+                            <pre className="whitespace-pre-wrap text-rose-300 leading-relaxed m-0">
+                              {failDetails.codeFrame}
+                            </pre>
+                          </div>
+                        )}
+
+                        {/* Error Message & Callstack */}
+                        <div className="text-xs">
+                          <button
+                            type="button"
+                            onClick={() => toggleCallstack(key)}
+                            className="text-[11px] font-semibold text-[var(--color-text-secondary)] hover:text-[var(--color-text)] inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            {isCallstackOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                            <span>{isCallstackOpen ? "Ẩn callstack chi tiết" : "Xem callstack lỗi chi tiết"}</span>
+                          </button>
+
+                          {isCallstackOpen && (
+                            <div className="mt-2 p-3 rounded bg-[var(--color-surface-secondary)]/50 border border-[var(--color-border)] font-mono text-[11px] text-rose-400 whitespace-pre-wrap overflow-x-auto max-h-48 custom-scrollbar">
+                              {(sc.failureMessages || []).join("\n") || failDetails.raw || "Không có thông tin callstack chi tiết."}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="p-4 rounded-[var(--radius-md)] border border-emerald-500/30 bg-emerald-500/5 flex items-center justify-between gap-3 shadow-xs">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-emerald-500/15 text-[var(--color-success)] flex items-center justify-center">
+                    <CheckCircle2 size={18} />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-[var(--color-success)] uppercase tracking-wider m-0">
+                      Không Có Lỗi Phát Sinh (Zero Failures)
+                    </h4>
+                    <p className="text-[11px] text-[var(--color-text-secondary)] m-0 mt-0.5">
+                      Toàn bộ {overallStats.passedScenariosCount} kịch bản đã thực thi đều vượt qua bài kiểm tra thành công!
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+
+          {/* SECTION 5: Route Coverage Matrix Table */}
+          <section id="section-matrix" className="scroll-mt-24">
+            <IntegrationRouteMatrixTable
+              endpoints={endpoints}
+              onRunEndpoint={handleRunEndpoint}
+              onGenerateThisEndpoint={(key) => handleGenerateClick([key])}
+              onOpenFile={onOpenFile}
+              onAddScenario={handleOpenAddScenario}
+              onEditScenario={handleOpenEditScenario}
+              onRetryScenario={handleRetryScenario}
+              onAIFixScenario={handleAIFixScenario}
+              isJobActive={isJobActive}
+              pendingAction={pendingAction}
+            />
+          </section>
+
+          {/* SECTION 6: Test Scenarios Management & Monaco Editor */}
+          <section id="section-scenarios" className="scroll-mt-24">
+            <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xs overflow-hidden">
+              <div className="p-4 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-bold uppercase tracking-wider text-[var(--color-text)] m-0">
+                    Bộ Kịch Bản Test (Test Scenarios Suite)
+                  </h3>
+                  <p className="text-xs text-[var(--color-text-secondary)] m-0 mt-0.5">
+                    Quản lý danh sách test case, lọc theo danh mục, chỉnh sửa mã nguồn Monaco và áp dụng vào dự án
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-4">
+                <IntegrationScenariosPane
+                  aiTests={workspace?.aiTests || []}
+                  selectedEndpoint={null}
+                  onClearSelectedEndpoint={() => {}}
+                  hasGeneratedTests={generation?.hasGeneratedTests}
+                  hasAnalysis={generation?.hasAnalysis}
+                  onRunAnalysis={handleRunAnalysis}
+                  isApproved={Boolean(generation?.isApproved)}
+                  selectedTestIds={selectedTestIds}
+                  setSelectedTestIds={setSelectedTestIds}
+                  snapshotId={snapshotId}
+                  endpoints={endpoints}
+                  onOpenCFG={onOpenCFG}
+                  onSuggestTestcase={onSuggestTestcase}
+                  onOpenArchitecture={onOpenArchitecture}
+                  onScenarioChange={load}
+                  onError={setError}
+                  onGenerateThisEndpoint={(key) => handleGenerateClick([key])}
+                  isGenerating={pendingAction === "GENERATE" || (activeJobId && activeJobType === "GENERATE")}
+                  onApproveAndRun={async (ids) => {
+                    setSelectedTestIds(ids);
+                    await approveIntegrationTestsApi(snapshotId, ids);
+                    await handleRunApprovedTests();
+                  }}
+                  isApprovingAndRunning={pendingAction === "RUN"}
+                  onOpenApplyModal={handleOpenApplyModal}
+                  onReGenerateSelected={(targets) => handleGenerateClick(targets)}
+                />
+              </div>
+            </div>
+          </section>
+
+          {/* SECTION 7: Comprehensive Embedded Report & PDF Print */}
+          <section id="section-report" className="scroll-mt-24">
+            <IntegrationReportEmbed
+              projectId={projectId}
+              snapshotId={snapshotId}
+              report={reportData}
+              workspace={workspace}
+              loading={loading}
+              onRefreshReport={load}
+            />
+          </section>
+        </IntegrationErrorBoundary>
       </div>
+
+      {/* 3. SLIDE-OVER DRAWER (Lịch Sử Phiên Bản & So Sánh Trước/Sau) */}
+      {drawerOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-xs transition-opacity animate-in fade-in duration-200 no-print">
+          <div className="w-full max-w-2xl h-full bg-[var(--color-surface)] border-l border-[var(--color-border)] shadow-2xl flex flex-col overflow-hidden">
+            {/* Drawer Header */}
+            <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface)]">
+              <div className="flex items-center gap-2">
+                <Clock size={16} className="text-[var(--color-primary)]" />
+                <h3 className="text-sm font-bold text-[var(--color-text)] m-0">
+                  Lịch Sử Phiên Bản & So Sánh
+                </h3>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {/* Tabs */}
+                <div className="flex items-center gap-1 bg-[var(--color-surface-secondary)] p-0.5 rounded-[var(--radius-sm)] border border-[var(--color-border)] text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setDrawerOpen("history")}
+                    className={`px-3 py-1 rounded transition-colors cursor-pointer ${
+                      drawerOpen === "history"
+                        ? "bg-[var(--color-surface)] text-[var(--color-text)] font-bold shadow-xs border border-[var(--color-border)]"
+                        : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+                    }`}
+                  >
+                    Lịch sử Snapshots
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDrawerOpen("compare")}
+                    className={`px-3 py-1 rounded transition-colors cursor-pointer ${
+                      drawerOpen === "compare"
+                        ? "bg-[var(--color-surface)] text-[var(--color-text)] font-bold shadow-xs border border-[var(--color-border)]"
+                        : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+                    }`}
+                  >
+                    So sánh Before / After
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setDrawerOpen(null)}
+                  className="p-1 rounded text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] cursor-pointer"
+                  title="Đóng (Esc)"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+
+            {/* Drawer Content */}
+            <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+              {drawerOpen === "history" && (
+                <IntegrationHistoryPane
+                  snapshotId={snapshotId}
+                  onOpenComparison={() => setDrawerOpen("compare")}
+                />
+              )}
+              {drawerOpen === "compare" && (
+                <BeforeAfterComparisonView
+                  projectId={projectId}
+                  snapshotId={snapshotId}
+                  initialBaselineId={new URLSearchParams(location.search).get("baselineId")}
+                  onBackToWorkspace={() => setDrawerOpen("history")}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 4. MODALS */}
+      {/* Apply Tests to Source Code Modal */}
+      <IntegrationApplyTestsModal
+        isOpen={applyModalOpen}
+        onClose={() => setApplyModalOpen(false)}
+        snapshotId={snapshotId}
+        testIds={applyModalTestIds}
+        onTriggerRerun={() => {
+          setApplyModalOpen(false);
+          handleRunApprovedTests();
+        }}
+      />
+
+      {/* Monaco Scenario Editor Modal */}
+      <IntegrationScenarioEditorModal
+        isOpen={editorModalOpen}
+        onClose={() => setEditorModalOpen(false)}
+        onSave={handleSaveScenario}
+        initialCode={editorModalScenario?.code || ""}
+        title={editorModalScenario?.title || (editorModalEndpoint ? `Thêm kịch bản cho ${editorModalEndpoint.method} ${editorModalEndpoint.path}` : "Soạn thảo kịch bản")}
+        targetEndpoint={editorModalEndpoint}
+        availableEndpoints={endpoints}
+        isAddMode={isAddScenarioMode}
+      />
     </div>
   );
 }
