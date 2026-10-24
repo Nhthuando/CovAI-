@@ -1659,9 +1659,16 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             };
         }),
         execution: latestRun ? {
+            id: latestRun.id,
             status: latestRun.status,
             startedAt: latestRun.startedAt,
             completedAt: latestRun.finishedAt || null,
+            totalTests: latestRun.totalTests ?? ((latestRun.passedTests || 0) + (latestRun.failedTests || 0)),
+            passedTests: latestRun.passedTests || 0,
+            failedTests: latestRun.failedTests || 0,
+            skippedTests: latestRun.skippedTests || 0,
+            durationMs: latestRun.durationMs || 0,
+            timestamp: latestRun.finishedAt || latestRun.createdAt || null,
         } : null,
         semanticState
     };
