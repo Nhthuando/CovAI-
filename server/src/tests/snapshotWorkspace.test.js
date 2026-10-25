@@ -7,7 +7,7 @@ import { snapshotWorkspaceRoot, resolveSnapshotFile } from "../utils/snapshotWor
 const prisma = { project: { findFirst: jest.fn() }, projectSnapshot: { findFirst: jest.fn(), create: jest.fn(), findMany: jest.fn() } };
 jest.unstable_mockModule("../config/prisma.js", () => ({ default: prisma }));
 jest.unstable_mockModule("../config/firebase.js", () => ({ getBucket: jest.fn() }));
-jest.unstable_mockModule("../services/job.service.js", () => ({ createAnalysisJob: jest.fn(), createSnapshotIngestJob: jest.fn(), createRunTestsJob: jest.fn() }));
+jest.unstable_mockModule("../services/job.service.js", () => ({ createAnalysisJob: jest.fn(), createSnapshotIngestJob: jest.fn(), createRunTestsJob: jest.fn(), addJobLog: jest.fn() }));
 jest.unstable_mockModule("../services/jestDetection.service.js", () => ({ detectAndSaveProject: jest.fn() }));
 jest.unstable_mockModule("../services/vitestDetection.service.js", () => ({ detectAndSaveProject: jest.fn() }));
 jest.unstable_mockModule("../services/testDetection.service.js", () => ({ detectFrameworks: jest.fn() }));

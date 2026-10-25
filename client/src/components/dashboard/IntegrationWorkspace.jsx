@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useState, useRef, useMemo } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useState,
+  useRef,
+  useMemo,
+} from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   getIntegrationWorkspace,
@@ -56,7 +62,11 @@ import IntegrationScenarioEditorModal from "./integration/IntegrationScenarioEdi
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 function getAuthHeaders() {
-  const token = localStorage.getItem("token") || (localStorage.getItem("user") ? JSON.parse(localStorage.getItem("user")).token : null);
+  const token =
+    localStorage.getItem("token") ||
+    (localStorage.getItem("user")
+      ? JSON.parse(localStorage.getItem("user")).token
+      : null);
   return {
     "Content-Type": "application/json",
     ...(token && { Authorization: `Bearer ${token}` }),
@@ -120,7 +130,8 @@ const METHOD_STYLES = {
   PUT: "bg-amber-500/10 text-amber-400 border-amber-500/25",
   PATCH: "bg-purple-500/10 text-purple-400 border-purple-500/25",
   DELETE: "bg-rose-500/10 text-rose-400 border-rose-500/25",
-  DEFAULT: "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]",
+  DEFAULT:
+    "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]",
 };
 
 function useLiveJobLogs(jobId, onComplete, onError, onCanceled) {
@@ -253,7 +264,8 @@ export default function IntegrationWorkspace({
   const [editorModalEndpoint, setEditorModalEndpoint] = useState(null);
   const [isAddScenarioMode, setIsAddScenarioMode] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(null); // 'history' | 'compare' | null
-  const [activeFailureLayerFilter, setActiveFailureLayerFilter] = useState("ALL");
+  const [activeFailureLayerFilter, setActiveFailureLayerFilter] =
+    useState("ALL");
   const [expandedCallstacks, setExpandedCallstacks] = useState({});
 
   // Active navigation anchor
@@ -292,7 +304,9 @@ export default function IntegrationWorkspace({
       const [workspaceRes, detectionRes, reportRes] = await Promise.allSettled([
         getIntegrationWorkspace(snapshotId),
         getIntegrationDetection(snapshotId),
-        projectId ? fetchIntegrationReport(projectId) : Promise.resolve({ data: null }),
+        projectId
+          ? fetchIntegrationReport(projectId)
+          : Promise.resolve({ data: null }),
       ]);
 
       if (workspaceRes.status === "fulfilled") {
@@ -334,12 +348,16 @@ export default function IntegrationWorkspace({
         // Initialize selectedTestIds
         if (workspaceRes.value.data?.aiTests && selectedTestIds.length === 0) {
           const allIds = (workspaceRes.value.data.aiTests || []).flatMap((t) =>
-            (t?.requests || []).map((r) => `${t.id}::${r.scenarioId || r.testName}`),
+            (t?.requests || []).map(
+              (r) => `${t.id}::${r.scenarioId || r.testName}`,
+            ),
           );
           setSelectedTestIds(allIds);
         }
       } else {
-        throw new Error(workspaceRes.reason?.message || "Failed to load workspace.");
+        throw new Error(
+          workspaceRes.reason?.message || "Failed to load workspace.",
+        );
       }
 
       if (detectionRes.status === "fulfilled") {
@@ -378,7 +396,10 @@ export default function IntegrationWorkspace({
     try {
       await load();
     } catch (err) {
-      console.error("[IntegrationWorkspace] Failed to reload workspace after job:", err);
+      console.error(
+        "[IntegrationWorkspace] Failed to reload workspace after job:",
+        err,
+      );
     } finally {
       setTimeout(() => {
         setActiveJobId(null);
@@ -396,7 +417,10 @@ export default function IntegrationWorkspace({
     try {
       await load();
     } catch (err) {
-      console.error("[IntegrationWorkspace] Failed to reload workspace after cancel:", err);
+      console.error(
+        "[IntegrationWorkspace] Failed to reload workspace after cancel:",
+        err,
+      );
     } finally {
       setTimeout(() => {
         setActiveJobId(null);
@@ -408,30 +432,33 @@ export default function IntegrationWorkspace({
     }
   }, [load]);
 
-  const handleCancelActiveJob = useCallback(async (targetJobId = null) => {
-    const jId = targetJobId || activeJobId;
-    if (!jId || isCancelling) return;
-    setIsCancelling(true);
-    setError("");
-    try {
-      await cancelJobApi(jId);
-      setActiveJobStatus("CANCELED");
-      setCancellationNotice("Tác vụ đã được hủy bỏ thành công.");
-      await load();
-      setTimeout(() => {
-        setActiveJobId(null);
-        setActiveJobType(null);
-        setActiveJobStatus("RUNNING");
+  const handleCancelActiveJob = useCallback(
+    async (targetJobId = null) => {
+      const jId = targetJobId || activeJobId;
+      if (!jId || isCancelling) return;
+      setIsCancelling(true);
+      setError("");
+      try {
+        await cancelJobApi(jId);
+        setActiveJobStatus("CANCELED");
+        setCancellationNotice("Tác vụ đã được hủy bỏ thành công.");
+        await load();
+        setTimeout(() => {
+          setActiveJobId(null);
+          setActiveJobType(null);
+          setActiveJobStatus("RUNNING");
+          setIsCancelling(false);
+          setPendingAction(null);
+        }, 500);
+      } catch (err) {
+        console.error("[IntegrationWorkspace] Failed to cancel job:", err);
+        setError(err.message || "Không thể hủy tác vụ. Vui lòng thử lại.");
+        await load();
         setIsCancelling(false);
-        setPendingAction(null);
-      }, 500);
-    } catch (err) {
-      console.error("[IntegrationWorkspace] Failed to cancel job:", err);
-      setError(err.message || "Không thể hủy tác vụ. Vui lòng thử lại.");
-      await load();
-      setIsCancelling(false);
-    }
-  }, [activeJobId, isCancelling, load]);
+      }
+    },
+    [activeJobId, isCancelling, load],
+  );
 
   const { logs: activeLogs } = useLiveJobLogs(
     activeJobId,
@@ -486,11 +513,19 @@ export default function IntegrationWorkspace({
 
   // Run AST Project Analysis
   const handleRunAnalysis = async () => {
-    if (!projectId || !snapshotId || (activeJobId && activeJobStatus !== "FAILED")) return;
+    if (
+      !projectId ||
+      !snapshotId ||
+      (activeJobId && activeJobStatus !== "FAILED")
+    )
+      return;
     setError("");
     setPendingAction("ANALYZE");
     try {
-      const response = await runProjectStructureAnalysisApi(projectId, snapshotId);
+      const response = await runProjectStructureAnalysisApi(
+        projectId,
+        snapshotId,
+      );
       const jobId = response?.data?.job?.id || response?.job?.id;
       if (jobId) {
         setActiveJobId(jobId);
@@ -506,7 +541,11 @@ export default function IntegrationWorkspace({
 
   // Run AI Test Generator
   const handleGenerateClick = async (explicitTargets = null) => {
-    if (!workspace?.generation?.hasAnalysis || (activeJobId && activeJobStatus !== "FAILED")) return;
+    if (
+      !workspace?.generation?.hasAnalysis ||
+      (activeJobId && activeJobStatus !== "FAILED")
+    )
+      return;
     setError("");
     setPendingAction("GENERATE");
     try {
@@ -530,7 +569,10 @@ export default function IntegrationWorkspace({
   // Run All Approved Tests
   const handleRunApprovedTests = async () => {
     if (!snapshotId || pendingAction) return;
-    if (activeJobId && (activeJobStatus === "RUNNING" || activeJobStatus === "QUEUED")) {
+    if (
+      activeJobId &&
+      (activeJobStatus === "RUNNING" || activeJobStatus === "QUEUED")
+    ) {
       setError("Một tác vụ kiểm thử đang được thực thi.");
       return;
     }
@@ -539,10 +581,19 @@ export default function IntegrationWorkspace({
     const allAiTests = workspace?.aiTests || [];
     const allScenarioIds = allAiTests.flatMap((t) => {
       let meta = {};
-      try { meta = typeof t.metaJson === "string" ? JSON.parse(t.metaJson) : (t.metaJson || {}); } catch(e) {}
-      return (meta.requests || []).map((r) => `${t.id}::${r.scenarioId || r.testName}`);
+      try {
+        meta =
+          typeof t.metaJson === "string"
+            ? JSON.parse(t.metaJson)
+            : t.metaJson || {};
+      } catch (e) {}
+      return (meta.requests || []).map(
+        (r) => `${t.id}::${r.scenarioId || r.testName}`,
+      );
     });
-    const hasProjectTests = (detectionInfo?.testFiles || []).length > 0 || (detectionInfo?.supertestFiles || []).length > 0;
+    const hasProjectTests =
+      (detectionInfo?.testFiles || []).length > 0 ||
+      (detectionInfo?.supertestFiles || []).length > 0;
 
     if (allScenarioIds.length === 0 && !hasProjectTests) {
       await handleGenerateClick();
@@ -552,10 +603,13 @@ export default function IntegrationWorkspace({
     setPendingAction("RUN");
     try {
       if (allScenarioIds.length > 0) {
-        await approveIntegrationTestsApi(snapshotId, allScenarioIds).catch(() => {});
+        await approveIntegrationTestsApi(snapshotId, allScenarioIds).catch(
+          () => {},
+        );
       }
       const response = await runCoverageByType(snapshotId, "integration");
-      const jobId = response.data?.job?.id || response.data?.jobId || response.jobId;
+      const jobId =
+        response.data?.job?.id || response.data?.jobId || response.jobId;
       if (jobId) {
         setActiveJobId(jobId);
         setActiveJobType("EXECUTE");
@@ -572,9 +626,13 @@ export default function IntegrationWorkspace({
   const handleRunEndpoint = async (ep) => {
     if (!snapshotId || pendingAction || !ep) return;
     const epScenarios = ep.scenarios || [];
-    const scenarioIds = epScenarios.map((s) => s.id || `${s.testId}::${s.scenarioId || s.testName}`).filter(Boolean);
+    const scenarioIds = epScenarios
+      .map((s) => s.id || `${s.testId}::${s.scenarioId || s.testName}`)
+      .filter(Boolean);
     if (scenarioIds.length === 0) {
-      setError(`Endpoint ${ep.method} ${ep.path} chưa có kịch bản kiểm thử nào.`);
+      setError(
+        `Endpoint ${ep.method} ${ep.path} chưa có kịch bản kiểm thử nào.`,
+      );
       return;
     }
     setError("");
@@ -582,7 +640,8 @@ export default function IntegrationWorkspace({
     try {
       await approveIntegrationTestsApi(snapshotId, scenarioIds);
       const response = await runCoverageByType(snapshotId, "integration");
-      const jobId = response.data?.job?.id || response.data?.jobId || response.jobId;
+      const jobId =
+        response.data?.job?.id || response.data?.jobId || response.jobId;
       if (jobId) {
         setActiveJobId(jobId);
         setActiveJobType("EXECUTE");
@@ -605,7 +664,8 @@ export default function IntegrationWorkspace({
     try {
       await approveIntegrationTestsApi(snapshotId, [scId]);
       const response = await runCoverageByType(snapshotId, "integration");
-      const jobId = response.data?.job?.id || response.data?.jobId || response.jobId;
+      const jobId =
+        response.data?.job?.id || response.data?.jobId || response.jobId;
       if (jobId) {
         setActiveJobId(jobId);
         setActiveJobType("EXECUTE");
@@ -630,7 +690,10 @@ export default function IntegrationWorkspace({
           failureLayer: sc.failureLayer,
           actualStatus: sc.actualStatus ?? sc.actualStatusFromRuntime,
           expectedStatus: sc.expectedStatus,
-          errorMessage: (sc.failureMessages || []).join("\n") || sc.failureDetails?.raw || "",
+          errorMessage:
+            (sc.failureMessages || []).join("\n") ||
+            sc.failureDetails?.raw ||
+            "",
         },
       });
       await load();
@@ -668,17 +731,20 @@ export default function IntegrationWorkspace({
       if (isAddScenarioMode) {
         // Add new scenario via API
         const targetEp = editorModalEndpoint;
-        const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/scenarios`, {
-          method: "POST",
-          headers: getAuthHeaders(),
-          body: JSON.stringify({
-            endpointId: `${targetEp?.method} ${targetEp?.path}`,
-            title: savedData.name,
-            category: savedData.category,
-            expectedStatus: savedData.expectedStatus,
-            code: savedData.code,
-          }),
-        });
+        const res = await fetch(
+          `${BASE_URL}/coverage/${snapshotId}/integration/scenarios`,
+          {
+            method: "POST",
+            headers: getAuthHeaders(),
+            body: JSON.stringify({
+              endpointId: `${targetEp?.method} ${targetEp?.path}`,
+              title: savedData.name,
+              category: savedData.category,
+              expectedStatus: savedData.expectedStatus,
+              code: savedData.code,
+            }),
+          },
+        );
         if (!res.ok) {
           const errData = await res.json().catch(() => ({}));
           throw new Error(errData.message || "Thêm kịch bản thất bại.");
@@ -706,56 +772,123 @@ export default function IntegrationWorkspace({
     const hasStage = (stageName) => stages.includes(stageName);
     const textLogs = safeLogs
       .map((l) =>
-        typeof l?.message === "string" ? l.message : JSON.stringify(l?.message || l || "")
+        typeof l?.message === "string"
+          ? l.message
+          : JSON.stringify(l?.message || l || ""),
       )
       .join("\n");
 
     if (jobType === "ANALYZE") {
       return [
         { label: "Nạp snapshot dự án", done: true },
-        { label: "Quét cấu trúc mã nguồn AST", done: hasStage("LOAD_SOURCE") || textLogs.includes("Scanning") || textLogs.includes("Analyzed") },
-        { label: "Nhận diện framework kiểm thử", done: hasStage("DETECT_ENDPOINTS") || textLogs.includes("Analyzed") },
-        { label: "Khám phá endpoint API Express/Node", done: hasStage("DETECT_ENDPOINTS") || textLogs.includes("Saving") },
-        { label: "Lập bản đồ phụ thuộc route/controller", done: hasStage("MAP_DEPENDENCIES") || textLogs.includes("Saving") },
-        { label: "Hoàn tất phân tích", done: hasStage("COMPLETE") || textLogs.includes("completed") },
+        {
+          label: "Quét cấu trúc mã nguồn AST",
+          done:
+            hasStage("LOAD_SOURCE") ||
+            textLogs.includes("Scanning") ||
+            textLogs.includes("Analyzed"),
+        },
+        {
+          label: "Nhận diện framework kiểm thử",
+          done: hasStage("DETECT_ENDPOINTS") || textLogs.includes("Analyzed"),
+        },
+        {
+          label: "Khám phá endpoint API Express/Node",
+          done: hasStage("DETECT_ENDPOINTS") || textLogs.includes("Saving"),
+        },
+        {
+          label: "Lập bản đồ phụ thuộc route/controller",
+          done: hasStage("MAP_DEPENDENCIES") || textLogs.includes("Saving"),
+        },
+        {
+          label: "Hoàn tất phân tích",
+          done: hasStage("COMPLETE") || textLogs.includes("completed"),
+        },
       ];
     } else if (jobType === "GENERATE") {
       return [
-        { label: "Xây dựng AI context cho API", done: hasStage("BUILD_CONTEXT") || textLogs.includes("Calling Gemini") },
-        { label: "Sinh bộ test đa kịch bản với LLM", done: hasStage("GENERATE_AI_TESTS") || textLogs.includes("Calling Gemini") },
-        { label: "Xác thực cú pháp & Jest assertions", done: hasStage("VALIDATE_SCENARIOS") || textLogs.includes("Saved") || textLogs.includes("Generated") },
-        { label: "Hoàn tất sinh kiểm thử", done: hasStage("COMPLETE") || activeJobStatus === "SUCCESS" },
+        {
+          label: "Xây dựng AI context cho API",
+          done:
+            hasStage("BUILD_CONTEXT") || textLogs.includes("Calling Gemini"),
+        },
+        {
+          label: "Sinh bộ test đa kịch bản với LLM",
+          done:
+            hasStage("GENERATE_AI_TESTS") ||
+            textLogs.includes("Calling Gemini"),
+        },
+        {
+          label: "Xác thực cú pháp & Jest assertions",
+          done:
+            hasStage("VALIDATE_SCENARIOS") ||
+            textLogs.includes("Saved") ||
+            textLogs.includes("Generated"),
+        },
+        {
+          label: "Hoàn tất sinh kiểm thử",
+          done: hasStage("COMPLETE") || activeJobStatus === "SUCCESS",
+        },
       ];
     } else {
       return [
         { label: "Nạp danh sách kịch bản đã duyệt", done: true },
-        { label: "Khởi tạo môi trường cô lập", done: hasStage("PREPARE_ENV") || textLogs.includes("start") || textLogs.includes("TestRun") },
-        { label: "Thực thi Jest & Supertest runner", done: hasStage("RUN_JEST") || textLogs.includes("TestRun") },
-        { label: "Bóc tách độ bao phủ API & Tracing", done: hasStage("PARSE_COVERAGE") || textLogs.includes("complete") },
-        { label: "Bóc tách 5 tầng lỗi & Báo cáo", done: hasStage("COMPLETE") || textLogs.includes("complete") },
+        {
+          label: "Khởi tạo môi trường cô lập",
+          done:
+            hasStage("PREPARE_ENV") ||
+            textLogs.includes("start") ||
+            textLogs.includes("TestRun"),
+        },
+        {
+          label: "Thực thi Jest & Supertest runner",
+          done: hasStage("RUN_JEST") || textLogs.includes("TestRun"),
+        },
+        {
+          label: "Bóc tách độ bao phủ API & Tracing",
+          done: hasStage("PARSE_COVERAGE") || textLogs.includes("complete"),
+        },
+        {
+          label: "Bóc tách 5 tầng lỗi & Báo cáo",
+          done: hasStage("COMPLETE") || textLogs.includes("complete"),
+        },
       ];
     }
   };
 
   // Calculate failed scenarios list across all endpoints
   const { endpoints = [], summary, execution, generation } = workspace || {};
-  const isJobActive = Boolean((activeJobId && (activeJobStatus === "RUNNING" || activeJobStatus === "QUEUED")) || isCancelling);
+  const isJobActive = Boolean(
+    (activeJobId &&
+      (activeJobStatus === "RUNNING" || activeJobStatus === "QUEUED")) ||
+    isCancelling,
+  );
 
   const failedScenariosList = useMemo(() => {
     const list = [];
     endpoints.forEach((ep) => {
       (ep.scenarios || []).forEach((sc) => {
-        const isFail = sc.status === "failed" || sc.rawJestStatus === "failed" || sc.executionVerdict === "FAIL";
+        const isFail =
+          sc.status === "failed" ||
+          sc.rawJestStatus === "failed" ||
+          sc.executionVerdict === "FAIL";
         if (isFail) {
-          const actualHttp = sc.actualStatus ?? sc.actualStatusFromRuntime ?? null;
+          const actualHttp =
+            sc.actualStatus ?? sc.actualStatusFromRuntime ?? null;
           let layer = sc.failureLayer;
           if (!layer || !FAILURE_LAYERS_META[layer]) {
             if (actualHttp === 404) layer = "ROUTER_NOT_FOUND";
-            else if (actualHttp === 401 || actualHttp === 403) layer = "MIDDLEWARE_REJECTED";
+            else if (actualHttp === 401 || actualHttp === 403)
+              layer = "MIDDLEWARE_REJECTED";
             else if (actualHttp === 500) layer = "CONTROLLER_CRASH";
             else layer = "ASSERTION_FAILED";
           }
-          list.push({ endpoint: ep, scenario: sc, layer, key: `${ep.method} ${ep.path}::${sc.id || sc.title}` });
+          list.push({
+            endpoint: ep,
+            scenario: sc,
+            layer,
+            key: `${ep.method} ${ep.path}::${sc.id || sc.title}`,
+          });
         }
       });
     });
@@ -764,7 +897,9 @@ export default function IntegrationWorkspace({
 
   const filteredFailures = useMemo(() => {
     if (activeFailureLayerFilter === "ALL") return failedScenariosList;
-    return failedScenariosList.filter((f) => f.layer === activeFailureLayerFilter);
+    return failedScenariosList.filter(
+      (f) => f.layer === activeFailureLayerFilter,
+    );
   }, [failedScenariosList, activeFailureLayerFilter]);
 
   // Overall statistics
@@ -782,11 +917,21 @@ export default function IntegrationWorkspace({
       const hasTests = epScenarios.length > 0 || (ep.generatedCount || 0) > 0;
       if (hasTests) testedApis++;
 
-      const scFailed = epScenarios.filter((s) => s.status === "failed" || s.rawJestStatus === "failed" || s.executionVerdict === "FAIL").length;
-      const scPassed = epScenarios.filter((s) => s.status === "passed" || s.rawJestStatus === "passed" || s.executionVerdict === "PASS").length;
+      const scFailed = epScenarios.filter(
+        (s) =>
+          s.status === "failed" ||
+          s.rawJestStatus === "failed" ||
+          s.executionVerdict === "FAIL",
+      ).length;
+      const scPassed = epScenarios.filter(
+        (s) =>
+          s.status === "passed" ||
+          s.rawJestStatus === "passed" ||
+          s.executionVerdict === "PASS",
+      ).length;
 
-      const epFailed = epScenarios.length > 0 ? scFailed : (ep.failedCount || 0);
-      const epPassed = epScenarios.length > 0 ? scPassed : (ep.passedCount || 0);
+      const epFailed = epScenarios.length > 0 ? scFailed : ep.failedCount || 0;
+      const epPassed = epScenarios.length > 0 ? scPassed : ep.passedCount || 0;
 
       if (epFailed > 0) failedApis++;
       else if (epPassed > 0) passedApis++;
@@ -800,18 +945,37 @@ export default function IntegrationWorkspace({
     });
 
     const uncoveredApis = Math.max(0, totalApis - testedApis);
-    const apiPassRate = testedApis > 0 ? Math.round((passedApis / testedApis) * 100) : 0;
-    const apiCoverageRate = totalApis > 0 ? Math.round((testedApis / totalApis) * 100) : 0;
+    const apiPassRate =
+      testedApis > 0 ? Math.round((passedApis / testedApis) * 100) : 0;
+    const apiCoverageRate =
+      totalApis > 0 ? Math.round((testedApis / totalApis) * 100) : 0;
 
     const dedupedScenarios = Array.from(uniqueScenariosMap.values());
-    const dedupPassed = dedupScenarios.filter((s) => s.status === "passed" || s.rawJestStatus === "passed" || s.executionVerdict === "PASS").length;
-    const dedupFailed = dedupScenarios.filter((s) => s.status === "failed" || s.rawJestStatus === "failed" || s.executionVerdict === "FAIL").length;
+    const dedupPassed = dedupScenarios.filter(
+      (s) =>
+        s.status === "passed" ||
+        s.rawJestStatus === "passed" ||
+        s.executionVerdict === "PASS",
+    ).length;
+    const dedupFailed = dedupScenarios.filter(
+      (s) =>
+        s.status === "failed" ||
+        s.rawJestStatus === "failed" ||
+        s.executionVerdict === "FAIL",
+    ).length;
 
     // Synchronize with authoritative test runner execution object if available
-    const hasExecutionRun = Boolean(execution && (execution.totalTests > 0 || execution.passedTests > 0 || execution.failedTests > 0));
+    const hasExecutionRun = Boolean(
+      execution &&
+      (execution.totalTests > 0 ||
+        execution.passedTests > 0 ||
+        execution.failedTests > 0),
+    );
     const totalScenariosCount = hasExecutionRun
       ? execution.totalTests
-      : (dedupedScenarios.length > 0 ? dedupedScenarios.length : (generation?.generatedScenarios || 0));
+      : dedupedScenarios.length > 0
+        ? dedupedScenarios.length
+        : generation?.generatedScenarios || 0;
 
     const passedScenariosCount = hasExecutionRun
       ? execution.passedTests
@@ -822,14 +986,24 @@ export default function IntegrationWorkspace({
       : dedupFailed;
 
     const totalExecutedScenarios = passedScenariosCount + failedScenariosCount;
-    const scenarioPassRate = totalScenariosCount > 0
-      ? Math.round((passedScenariosCount / totalScenariosCount) * 100)
-      : 0;
+    const scenarioPassRate =
+      totalScenariosCount > 0
+        ? Math.round((passedScenariosCount / totalScenariosCount) * 100)
+        : 0;
 
-    const totalAvailableScenarios = generation?.generatedScenarios || totalScenariosCount;
-    const scenarioCoverageRate = totalAvailableScenarios > 0
-      ? Math.min(100, Math.round((totalExecutedScenarios / totalAvailableScenarios) * 100))
-      : (totalExecutedScenarios > 0 ? 100 : 0);
+    const totalAvailableScenarios =
+      generation?.generatedScenarios || totalScenariosCount;
+    const scenarioCoverageRate =
+      totalAvailableScenarios > 0
+        ? Math.min(
+            100,
+            Math.round(
+              (totalExecutedScenarios / totalAvailableScenarios) * 100,
+            ),
+          )
+        : totalExecutedScenarios > 0
+          ? 100
+          : 0;
 
     return {
       totalApis,
@@ -856,7 +1030,8 @@ export default function IntegrationWorkspace({
           Đang nạp Integration Testing Workbench...
         </h3>
         <p className="text-xs text-[var(--color-text-secondary)] font-mono">
-          Kết nối Snapshot #{snapshotId?.substring(0, 8)} • Quét ma trận API và kết quả kiểm thử
+          Kết nối Snapshot #{snapshotId?.substring(0, 8)} • Quét ma trận API và
+          kết quả kiểm thử
         </p>
       </div>
     );
@@ -867,9 +1042,12 @@ export default function IntegrationWorkspace({
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] p-8 text-center text-[var(--color-text)]">
         <AlertTriangle size={36} className="text-[var(--color-warning)] mb-3" />
-        <h3 className="text-base font-bold text-[var(--color-text)] mb-1">Chưa chọn Snapshot dự án</h3>
+        <h3 className="text-base font-bold text-[var(--color-text)] mb-1">
+          Chưa chọn Snapshot dự án
+        </h3>
         <p className="text-xs text-[var(--color-text-secondary)] max-w-md mb-4 leading-relaxed">
-          Vui lòng chọn một snapshot hợp lệ từ danh sách dự án trước khi sử dụng tính năng Kiểm thử Tích hợp API.
+          Vui lòng chọn một snapshot hợp lệ từ danh sách dự án trước khi sử dụng
+          tính năng Kiểm thử Tích hợp API.
         </p>
       </div>
     );
@@ -901,7 +1079,8 @@ export default function IntegrationWorkspace({
                 )}
               </div>
               <p className="text-[11px] text-[var(--color-text-muted)] font-mono m-0 mt-0.5">
-                Kiểm thử tích hợp API endpoint tự động • Trực quan hóa độ bao phủ & Chẩn đoán 5 tầng lỗi
+                Kiểm thử tích hợp API endpoint tự động • Trực quan hóa độ bao
+                phủ & Chẩn đoán 5 tầng lỗi
               </p>
             </div>
           </div>
@@ -916,7 +1095,11 @@ export default function IntegrationWorkspace({
               className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-xs disabled:opacity-50"
             >
               <Play size={13} fill="currentColor" />
-              <span>{isJobActive && activeJobType === "EXECUTE" ? "Đang chạy test..." : "Chạy tất cả test"}</span>
+              <span>
+                {isJobActive && activeJobType === "EXECUTE"
+                  ? "Đang chạy test..."
+                  : "Chạy tất cả test"}
+              </span>
             </button>
 
             {/* AI Test Generation */}
@@ -980,8 +1163,15 @@ export default function IntegrationWorkspace({
 
             {[
               { id: "section-kpis", label: "Tổng quan & KPIs" },
-              ...(detectionInfo?.isZeroTestProject || detectionInfo?.needsDependencyInstall
-                ? [{ id: "section-framework", label: "Cài đặt & Thư viện", alert: true }]
+              ...(detectionInfo?.isZeroTestProject ||
+              detectionInfo?.needsDependencyInstall
+                ? [
+                    {
+                      id: "section-framework",
+                      label: "Cài đặt & Thư viện",
+                      alert: true,
+                    },
+                  ]
                 : []),
               {
                 id: "section-execution",
@@ -994,7 +1184,11 @@ export default function IntegrationWorkspace({
                 badge: failedScenariosList.length,
                 badgeColor: "bg-rose-500/20 text-[var(--color-danger)]",
               },
-              { id: "section-matrix", label: "Ma trận API Endpoints", count: endpoints.length },
+              {
+                id: "section-matrix",
+                label: "Ma trận API Endpoints",
+                count: endpoints.length,
+              },
               { id: "section-scenarios", label: "Kịch bản Test & Monaco" },
               { id: "section-report", label: "Báo cáo Tích hợp & In ấn" },
             ].map((nav) => {
@@ -1010,10 +1204,14 @@ export default function IntegrationWorkspace({
                       : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)]"
                   }`}
                 >
-                  {nav.pulsing && <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />}
+                  {nav.pulsing && (
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  )}
                   <span>{nav.label}</span>
                   {nav.badge != null && nav.badge > 0 && (
-                    <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${nav.badgeColor}`}>
+                    <span
+                      className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${nav.badgeColor}`}
+                    >
                       {nav.badge}
                     </span>
                   )}
@@ -1041,7 +1239,13 @@ export default function IntegrationWorkspace({
       {cancellationNotice && (
         <div className="px-6 py-2.5 bg-amber-500/10 border-b border-amber-500/20 text-xs text-[var(--color-warning)] flex items-center justify-between no-print">
           <span>{cancellationNotice}</span>
-          <button type="button" onClick={() => setCancellationNotice("")} className="cursor-pointer text-inherit">✕</button>
+          <button
+            type="button"
+            onClick={() => setCancellationNotice("")}
+            className="cursor-pointer text-inherit"
+          >
+            ✕
+          </button>
         </div>
       )}
 
@@ -1052,7 +1256,13 @@ export default function IntegrationWorkspace({
             <AlertTriangle size={14} />
             <span>{error}</span>
           </div>
-          <button type="button" onClick={() => setError("")} className="cursor-pointer text-inherit">✕</button>
+          <button
+            type="button"
+            onClick={() => setError("")}
+            className="cursor-pointer text-inherit"
+          >
+            ✕
+          </button>
         </div>
       )}
 
@@ -1060,17 +1270,19 @@ export default function IntegrationWorkspace({
       <div className="flex-1 overflow-y-auto custom-scrollbar scroll-smooth px-6 py-6 space-y-8">
         <IntegrationErrorBoundary onRetry={load}>
           {/* SECTION 1: Framework Detection & Auto-Setup Banner */}
-          {detectionInfo && (detectionInfo.isZeroTestProject || detectionInfo.needsDependencyInstall) && (
-            <section id="section-framework" className="scroll-mt-24">
-              <IntegrationFrameworkDetectionBanner
-                detectionInfo={detectionInfo}
-                onGenerateTests={handleGenerateByBannerFramework}
-                onInstallDependencies={handleInstallDependencies}
-                isInstalling={isInstallingDeps}
-                isGenerating={isGeneratingWithBanner}
-              />
-            </section>
-          )}
+          {detectionInfo &&
+            (detectionInfo.isZeroTestProject ||
+              detectionInfo.needsDependencyInstall) && (
+              <section id="section-framework" className="scroll-mt-24">
+                <IntegrationFrameworkDetectionBanner
+                  detectionInfo={detectionInfo}
+                  onGenerateTests={handleGenerateByBannerFramework}
+                  onInstallDependencies={handleInstallDependencies}
+                  isInstalling={isInstallingDeps}
+                  isGenerating={isGeneratingWithBanner}
+                />
+              </section>
+            )}
 
           {/* SECTION 2: High-Density Metric Overview Cards */}
           <section id="section-kpis" className="scroll-mt-24 space-y-3.5">
@@ -1082,11 +1294,14 @@ export default function IntegrationWorkspace({
                     API Pass Rate
                   </div>
                   <div className="flex items-baseline gap-2">
-                    <span className={`text-2xl font-bold font-mono ${overallStats.apiPassRate >= 80 ? "text-[var(--color-success)]" : overallStats.apiPassRate > 0 ? "text-amber-400" : "text-[var(--color-text-muted)]"}`}>
+                    <span
+                      className={`text-2xl font-bold font-mono ${overallStats.apiPassRate >= 80 ? "text-[var(--color-success)]" : overallStats.apiPassRate > 0 ? "text-amber-400" : "text-[var(--color-text-muted)]"}`}
+                    >
                       {overallStats.apiPassRate}%
                     </span>
                     <span className="text-xs text-[var(--color-text-muted)] font-mono">
-                      ({overallStats.passedApis}/{overallStats.testedApis} tested APIs)
+                      ({overallStats.passedApis}/{overallStats.testedApis}{" "}
+                      tested APIs)
                     </span>
                   </div>
                 </div>
@@ -1106,7 +1321,8 @@ export default function IntegrationWorkspace({
                       {overallStats.apiCoverageRate}%
                     </span>
                     <span className="text-xs text-[var(--color-text-muted)] font-mono">
-                      ({overallStats.testedApis}/{overallStats.totalApis} routes)
+                      ({overallStats.testedApis}/{overallStats.totalApis}{" "}
+                      routes)
                     </span>
                   </div>
                 </div>
@@ -1125,7 +1341,9 @@ export default function IntegrationWorkspace({
                     Uncovered API Endpoints
                   </div>
                   <div className="flex items-baseline gap-2">
-                    <span className={`text-2xl font-bold font-mono ${overallStats.uncoveredApis > 0 ? "text-amber-400" : "text-[var(--color-success)]"}`}>
+                    <span
+                      className={`text-2xl font-bold font-mono ${overallStats.uncoveredApis > 0 ? "text-amber-400" : "text-[var(--color-success)]"}`}
+                    >
                       {overallStats.uncoveredApis}
                     </span>
                     <span className="text-xs text-[var(--color-text-muted)] font-mono">
@@ -1175,32 +1393,68 @@ export default function IntegrationWorkspace({
             <div className="border border-[var(--color-border)] rounded-[var(--radius-md)] bg-[var(--color-surface)] overflow-hidden shadow-xs">
               <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 divide-x divide-y sm:divide-y-0 divide-[var(--color-border)] text-center text-xs">
                 <div className="p-2.5">
-                  <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">Tổng kịch bản</div>
-                  <div className="text-base font-bold font-mono text-[var(--color-text)] mt-0.5">{overallStats.totalScenariosCount}</div>
+                  <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">
+                    Tổng kịch bản
+                  </div>
+                  <div className="text-base font-bold font-mono text-[var(--color-text)] mt-0.5">
+                    {overallStats.totalScenariosCount}
+                  </div>
                 </div>
                 <div className="p-2.5 bg-emerald-500/5">
-                  <div className="text-[10px] uppercase font-bold text-[var(--color-success)] tracking-wider">Passed</div>
-                  <div className="text-base font-bold font-mono text-[var(--color-success)] mt-0.5">{overallStats.passedScenariosCount}</div>
+                  <div className="text-[10px] uppercase font-bold text-[var(--color-success)] tracking-wider">
+                    Passed
+                  </div>
+                  <div className="text-base font-bold font-mono text-[var(--color-success)] mt-0.5">
+                    {overallStats.passedScenariosCount}
+                  </div>
                 </div>
-                <div className={`p-2.5 ${overallStats.failedScenariosCount > 0 ? "bg-rose-500/10" : ""}`}>
-                  <div className={`text-[10px] uppercase font-bold tracking-wider ${overallStats.failedScenariosCount > 0 ? "text-[var(--color-danger)]" : "text-[var(--color-text-muted)]"}`}>Failed</div>
-                  <div className={`text-base font-bold font-mono ${overallStats.failedScenariosCount > 0 ? "text-[var(--color-danger)]" : "text-[var(--color-text-muted)]"} mt-0.5`}>{overallStats.failedScenariosCount}</div>
+                <div
+                  className={`p-2.5 ${overallStats.failedScenariosCount > 0 ? "bg-rose-500/10" : ""}`}
+                >
+                  <div
+                    className={`text-[10px] uppercase font-bold tracking-wider ${overallStats.failedScenariosCount > 0 ? "text-[var(--color-danger)]" : "text-[var(--color-text-muted)]"}`}
+                  >
+                    Failed
+                  </div>
+                  <div
+                    className={`text-base font-bold font-mono ${overallStats.failedScenariosCount > 0 ? "text-[var(--color-danger)]" : "text-[var(--color-text-muted)]"} mt-0.5`}
+                  >
+                    {overallStats.failedScenariosCount}
+                  </div>
                 </div>
                 <div className="p-2.5">
-                  <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">Skipped</div>
-                  <div className="text-base font-bold font-mono text-[var(--color-text-secondary)] mt-0.5">{execution?.skippedTests || 0}</div>
+                  <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">
+                    Skipped
+                  </div>
+                  <div className="text-base font-bold font-mono text-[var(--color-text-secondary)] mt-0.5">
+                    {execution?.skippedTests || 0}
+                  </div>
                 </div>
                 <div className="p-2.5">
-                  <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">Pass Rate</div>
-                  <div className={`text-base font-bold font-mono ${overallStats.scenarioPassRate >= 80 ? "text-[var(--color-success)]" : overallStats.scenarioPassRate > 0 ? "text-amber-400" : "text-[var(--color-text-muted)]"} mt-0.5`}>{overallStats.scenarioPassRate}%</div>
+                  <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">
+                    Pass Rate
+                  </div>
+                  <div
+                    className={`text-base font-bold font-mono ${overallStats.scenarioPassRate >= 80 ? "text-[var(--color-success)]" : overallStats.scenarioPassRate > 0 ? "text-amber-400" : "text-[var(--color-text-muted)]"} mt-0.5`}
+                  >
+                    {overallStats.scenarioPassRate}%
+                  </div>
                 </div>
                 <div className="p-2.5">
-                  <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">Độ bao phủ</div>
-                  <div className="text-base font-bold font-mono text-[var(--color-text)] mt-0.5">{overallStats.scenarioCoverageRate}%</div>
+                  <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">
+                    Độ bao phủ
+                  </div>
+                  <div className="text-base font-bold font-mono text-[var(--color-text)] mt-0.5">
+                    {overallStats.scenarioCoverageRate}%
+                  </div>
                 </div>
                 <div className="p-2.5">
-                  <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">Thời lượng</div>
-                  <div className="text-base font-bold font-mono text-[var(--color-text)] mt-0.5">{((execution?.durationMs || 0) / 1000).toFixed(1)}s</div>
+                  <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">
+                    Thời lượng
+                  </div>
+                  <div className="text-base font-bold font-mono text-[var(--color-text)] mt-0.5">
+                    {((execution?.durationMs || 0) / 1000).toFixed(1)}s
+                  </div>
                 </div>
               </div>
             </div>
@@ -1212,9 +1466,17 @@ export default function IntegrationWorkspace({
               <div className="rounded-[var(--radius-md)] border border-sky-500/30 bg-[var(--color-surface)] shadow-xs overflow-hidden">
                 <div className="px-4 py-3 bg-sky-500/10 border-b border-sky-500/20 flex items-center justify-between">
                   <div className="flex items-center gap-2.5">
-                    <RefreshCw size={16} className="animate-spin text-sky-400" />
+                    <RefreshCw
+                      size={16}
+                      className="animate-spin text-sky-400"
+                    />
                     <span className="text-xs font-bold uppercase tracking-wider text-sky-400">
-                      Tác Vụ Đang Thực Thi: {activeJobType === "ANALYZE" ? "Phân tích dự án" : activeJobType === "GENERATE" ? "Sinh kiểm thử AI" : "Chạy bộ kiểm thử"}
+                      Tác Vụ Đang Thực Thi:{" "}
+                      {activeJobType === "ANALYZE"
+                        ? "Phân tích dự án"
+                        : activeJobType === "GENERATE"
+                          ? "Sinh kiểm thử AI"
+                          : "Chạy bộ kiểm thử"}
                     </span>
                     <span className="text-xs font-mono text-[var(--color-text-secondary)]">
                       Job #{activeJobId?.substring(0, 8)}
@@ -1234,33 +1496,58 @@ export default function IntegrationWorkspace({
                 {/* Pipeline Steps Tracker */}
                 <div className="p-4 border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)]/30">
                   <div className="flex flex-wrap items-center gap-2">
-                    {parseProgressSteps(activeJobType, activeLogs).map((st, i) => (
-                      <div key={i} className="flex items-center gap-2">
-                        <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-mono font-medium ${
-                          st.done
-                            ? "bg-emerald-500/10 text-[var(--color-success)] border border-emerald-500/25"
-                            : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border border-[var(--color-border)]"
-                        }`}>
-                          {st.done ? <CheckCircle2 size={13} /> : <span className="w-2 h-2 rounded-full border border-current animate-pulse" />}
-                          <span>{st.label}</span>
-                        </span>
-                        {i < parseProgressSteps(activeJobType, activeLogs).length - 1 && (
-                          <ChevronRight size={13} className="text-[var(--color-border)]" />
-                        )}
-                      </div>
-                    ))}
+                    {parseProgressSteps(activeJobType, activeLogs).map(
+                      (st, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <span
+                            className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-mono font-medium ${
+                              st.done
+                                ? "bg-emerald-500/10 text-[var(--color-success)] border border-emerald-500/25"
+                                : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border border-[var(--color-border)]"
+                            }`}
+                          >
+                            {st.done ? (
+                              <CheckCircle2 size={13} />
+                            ) : (
+                              <span className="w-2 h-2 rounded-full border border-current animate-pulse" />
+                            )}
+                            <span>{st.label}</span>
+                          </span>
+                          {i <
+                            parseProgressSteps(activeJobType, activeLogs)
+                              .length -
+                              1 && (
+                            <ChevronRight
+                              size={13}
+                              className="text-[var(--color-border)]"
+                            />
+                          )}
+                        </div>
+                      ),
+                    )}
                   </div>
                 </div>
 
                 {/* Terminal Console Logs */}
                 <div className="p-4 bg-[#090D12] text-slate-300 font-mono text-xs max-h-64 overflow-y-auto custom-scrollbar">
                   {activeLogs.length === 0 ? (
-                    <div className="text-slate-500 italic">Đang thiết lập kết nối luồng sự kiện SSE...</div>
+                    <div className="text-slate-500 italic">
+                      Đang thiết lập kết nối luồng sự kiện SSE...
+                    </div>
                   ) : (
                     activeLogs.map((log, idx) => (
-                      <div key={idx} className="leading-relaxed hover:bg-slate-800/40 px-1 rounded flex items-start gap-2">
-                        <span className="text-slate-600 select-none text-[10px] w-8 shrink-0">{idx + 1}</span>
-                        <span className="text-slate-300 break-all">{typeof log.message === "string" ? log.message : JSON.stringify(log.message)}</span>
+                      <div
+                        key={idx}
+                        className="leading-relaxed hover:bg-slate-800/40 px-1 rounded flex items-start gap-2"
+                      >
+                        <span className="text-slate-600 select-none text-[10px] w-8 shrink-0">
+                          {idx + 1}
+                        </span>
+                        <span className="text-slate-300 break-all">
+                          {typeof log.message === "string"
+                            ? log.message
+                            : JSON.stringify(log.message)}
+                        </span>
                       </div>
                     ))
                   )}
@@ -1277,7 +1564,16 @@ export default function IntegrationWorkspace({
                       Hệ Thống Sẵn Sàng Thực Thi Kiểm Thử
                     </div>
                     <div className="text-[11px] text-[var(--color-text-secondary)] font-mono mt-0.5">
-                      Lần chạy gần nhất: {execution?.timestamp ? new Date(execution.timestamp).toLocaleTimeString() : (overallStats.passedScenariosCount > 0 || overallStats.failedScenariosCount > 0 ? "Vừa hoàn tất" : "Chưa chạy")} • {overallStats.totalScenariosCount} tests ({overallStats.passedScenariosCount} pass, {overallStats.failedScenariosCount} fail)
+                      Lần chạy gần nhất:{" "}
+                      {execution?.timestamp
+                        ? new Date(execution.timestamp).toLocaleTimeString()
+                        : overallStats.passedScenariosCount > 0 ||
+                            overallStats.failedScenariosCount > 0
+                          ? "Vừa hoàn tất"
+                          : "Chưa chạy"}{" "}
+                      • {overallStats.totalScenariosCount} tests (
+                      {overallStats.passedScenariosCount} pass,{" "}
+                      {overallStats.failedScenariosCount} fail)
                     </div>
                   </div>
                 </div>
@@ -1310,13 +1606,18 @@ export default function IntegrationWorkspace({
                 {/* Failure Header */}
                 <div className="px-4 py-3 bg-rose-500/10 border-b border-rose-500/20 flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
-                    <AlertTriangle size={18} className="text-[var(--color-danger)]" />
+                    <AlertTriangle
+                      size={18}
+                      className="text-[var(--color-danger)]"
+                    />
                     <div>
                       <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-danger)] m-0">
-                        Chẩn Đoán 5 Tầng Lỗi ({failedScenariosList.length} Thất bại)
+                        Chẩn Đoán 5 Tầng Lỗi ({failedScenariosList.length} Thất
+                        bại)
                       </h3>
                       <p className="text-[11px] text-[var(--color-text-secondary)] m-0 mt-0.5">
-                        Phân tầng Router, Middleware, Controller, Database và Assertion kèm vị trí dòng mã gãy
+                        Phân tầng Router, Middleware, Controller, Database và
+                        Assertion kèm vị trí dòng mã gãy
                       </p>
                     </div>
                   </div>
@@ -1334,136 +1635,192 @@ export default function IntegrationWorkspace({
                     >
                       Tất cả ({failedScenariosList.length})
                     </button>
-                    {Object.entries(FAILURE_LAYERS_META).map(([layerKey, meta]) => {
-                      const count = failedScenariosList.filter((f) => f.layer === layerKey).length;
-                      if (count === 0) return null;
-                      return (
-                        <button
-                          key={layerKey}
-                          type="button"
-                          onClick={() => setActiveFailureLayerFilter(layerKey)}
-                          className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
-                            activeFailureLayerFilter === layerKey
-                              ? "bg-[var(--color-primary)] text-[var(--color-primary-foreground)] font-bold"
-                              : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
-                          }`}
-                        >
-                          {meta.label} ({count})
-                        </button>
-                      );
-                    })}
+                    {Object.entries(FAILURE_LAYERS_META).map(
+                      ([layerKey, meta]) => {
+                        const count = failedScenariosList.filter(
+                          (f) => f.layer === layerKey,
+                        ).length;
+                        if (count === 0) return null;
+                        return (
+                          <button
+                            key={layerKey}
+                            type="button"
+                            onClick={() =>
+                              setActiveFailureLayerFilter(layerKey)
+                            }
+                            className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
+                              activeFailureLayerFilter === layerKey
+                                ? "bg-[var(--color-primary)] text-[var(--color-primary-foreground)] font-bold"
+                                : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+                            }`}
+                          >
+                            {meta.label} ({count})
+                          </button>
+                        );
+                      },
+                    )}
                   </div>
                 </div>
 
                 {/* Failure Cards List */}
                 <div className="divide-y divide-[var(--color-border)]">
-                  {filteredFailures.map(({ endpoint: ep, scenario: sc, layer, key }) => {
-                    const layerMeta = FAILURE_LAYERS_META[layer] || FAILURE_LAYERS_META.ASSERTION_FAILED;
-                    const methodClass = METHOD_STYLES[ep.method] || METHOD_STYLES.DEFAULT;
-                    const actualHttp = sc.actualStatus ?? sc.actualStatusFromRuntime ?? (sc.failureDetails?.received && /^\d{3}$/.test(String(sc.failureDetails.received).trim()) ? Number(sc.failureDetails.received) : 500);
-                    const expectedHttp = sc.expectedStatus ?? (sc.failureDetails?.expected && /^\d{3}$/.test(String(sc.failureDetails.expected).trim()) ? Number(sc.failureDetails.expected) : 200);
-                    const failDetails = sc.failureDetails || {};
-                    const isCallstackOpen = Boolean(expandedCallstacks[key]);
+                  {filteredFailures.map(
+                    ({ endpoint: ep, scenario: sc, layer, key }) => {
+                      const layerMeta =
+                        FAILURE_LAYERS_META[layer] ||
+                        FAILURE_LAYERS_META.ASSERTION_FAILED;
+                      const methodClass =
+                        METHOD_STYLES[ep.method] || METHOD_STYLES.DEFAULT;
+                      const actualHttp =
+                        sc.actualStatus ??
+                        sc.actualStatusFromRuntime ??
+                        (sc.failureDetails?.received &&
+                        /^\d{3}$/.test(
+                          String(sc.failureDetails.received).trim(),
+                        )
+                          ? Number(sc.failureDetails.received)
+                          : 500);
+                      const expectedHttp =
+                        sc.expectedStatus ??
+                        (sc.failureDetails?.expected &&
+                        /^\d{3}$/.test(
+                          String(sc.failureDetails.expected).trim(),
+                        )
+                          ? Number(sc.failureDetails.expected)
+                          : 200);
+                      const failDetails = sc.failureDetails || {};
+                      const isCallstackOpen = Boolean(expandedCallstacks[key]);
 
-                    return (
-                      <div key={key} className="p-4 space-y-3 bg-[var(--color-surface)]">
-                        {/* Title Bar */}
-                        <div className="flex flex-wrap items-center justify-between gap-3">
-                          <div className="flex items-center gap-2 flex-wrap min-w-0">
-                            <span className={`px-2 py-0.5 rounded font-mono text-[10px] font-bold border tracking-tight ${methodClass}`}>
-                              {ep.method}
-                            </span>
-                            <span className="font-mono text-xs font-semibold text-[var(--color-text)]">
-                              {ep.path}
-                            </span>
-                            <span className="text-[var(--color-text-muted)]">•</span>
-                            <span className="text-xs font-medium text-[var(--color-text)] truncate max-w-sm">
-                              {sc.title}
-                            </span>
-                            <span className={`px-2 py-0.5 rounded font-mono text-[10px] font-bold border ${layerMeta.style}`}>
-                              {layerMeta.code}
-                            </span>
-                          </div>
+                      return (
+                        <div
+                          key={key}
+                          className="p-4 space-y-3 bg-[var(--color-surface)]"
+                        >
+                          {/* Title Bar */}
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="flex items-center gap-2 flex-wrap min-w-0">
+                              <span
+                                className={`px-2 py-0.5 rounded font-mono text-[10px] font-bold border tracking-tight ${methodClass}`}
+                              >
+                                {ep.method}
+                              </span>
+                              <span className="font-mono text-xs font-semibold text-[var(--color-text)]">
+                                {ep.path}
+                              </span>
+                              <span className="text-[var(--color-text-muted)]">
+                                •
+                              </span>
+                              <span className="text-xs font-medium text-[var(--color-text)] truncate max-w-sm">
+                                {sc.title}
+                              </span>
+                              <span
+                                className={`px-2 py-0.5 rounded font-mono text-[10px] font-bold border ${layerMeta.style}`}
+                              >
+                                {layerMeta.code}
+                              </span>
+                            </div>
 
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => handleAIFixScenario(ep, sc)}
-                              className="flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
-                              title="Tự động sửa kịch bản bằng AI"
-                            >
-                              <Zap size={12} />
-                              <span>Sửa bằng AI</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleRetryScenario(ep, sc)}
-                              className="flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] text-xs font-semibold transition-colors cursor-pointer"
-                              title="Chạy lại kịch bản này"
-                            >
-                              <Play size={11} fill="currentColor" />
-                              <span>Chạy lại</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleOpenEditScenario(sc, ep)}
-                              className="flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] text-xs font-semibold transition-colors cursor-pointer"
-                              title="Mở trình soạn thảo Monaco Editor"
-                            >
-                              <Code2 size={12} />
-                              <span>Sửa Monaco</span>
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Expected vs Actual Status Banner */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                          <div className="p-2.5 rounded bg-[var(--color-surface-secondary)]/50 border border-[var(--color-border)]">
-                            <span className="text-[10px] font-semibold text-[var(--color-text-secondary)]">HTTP Status Mong Đợi (Expected):</span>
-                            <div className="font-mono font-bold text-xs text-[var(--color-success)] mt-0.5">
-                              HTTP {expectedHttp}
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleAIFixScenario(ep, sc)}
+                                className="flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
+                                title="Tự động sửa kịch bản bằng AI"
+                              >
+                                <Zap size={12} />
+                                <span>Sửa bằng AI</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRetryScenario(ep, sc)}
+                                className="flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] text-xs font-semibold transition-colors cursor-pointer"
+                                title="Chạy lại kịch bản này"
+                              >
+                                <Play size={11} fill="currentColor" />
+                                <span>Chạy lại</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditScenario(sc, ep)}
+                                className="flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] text-xs font-semibold transition-colors cursor-pointer"
+                                title="Mở trình soạn thảo Monaco Editor"
+                              >
+                                <Code2 size={12} />
+                                <span>Sửa Monaco</span>
+                              </button>
                             </div>
                           </div>
-                          <div className="p-2.5 rounded bg-rose-500/5 border border-rose-500/20">
-                            <span className="text-[10px] font-semibold text-[var(--color-danger)]">HTTP Status Thực Tế (Received):</span>
-                            <div className="font-mono font-bold text-xs text-[var(--color-danger)] mt-0.5">
-                              HTTP {actualHttp}
+
+                          {/* Expected vs Actual Status Banner */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                            <div className="p-2.5 rounded bg-[var(--color-surface-secondary)]/50 border border-[var(--color-border)]">
+                              <span className="text-[10px] font-semibold text-[var(--color-text-secondary)]">
+                                HTTP Status Mong Đợi (Expected):
+                              </span>
+                              <div className="font-mono font-bold text-xs text-[var(--color-success)] mt-0.5">
+                                HTTP {expectedHttp}
+                              </div>
+                            </div>
+                            <div className="p-2.5 rounded bg-rose-500/5 border border-rose-500/20">
+                              <span className="text-[10px] font-semibold text-[var(--color-danger)]">
+                                HTTP Status Thực Tế (Received):
+                              </span>
+                              <div className="font-mono font-bold text-xs text-[var(--color-danger)] mt-0.5">
+                                HTTP {actualHttp}
+                              </div>
                             </div>
                           </div>
-                        </div>
 
-                        {/* Code Frame with line highlight */}
-                        {failDetails.codeFrame && (
-                          <div className="rounded border border-[var(--color-border)] bg-[#0B0F14] text-slate-300 font-mono text-[11px] p-3 overflow-x-auto custom-scrollbar">
-                            <div className="text-[10px] text-slate-500 mb-1">
-                              File: {failDetails.file ? failDetails.file.split(/[\\/]/).slice(-2).join("/") : "test"}:{failDetails.line || 1}
-                            </div>
-                            <pre className="whitespace-pre-wrap text-rose-300 leading-relaxed m-0">
-                              {failDetails.codeFrame}
-                            </pre>
-                          </div>
-                        )}
-
-                        {/* Error Message & Callstack */}
-                        <div className="text-xs">
-                          <button
-                            type="button"
-                            onClick={() => toggleCallstack(key)}
-                            className="text-[11px] font-semibold text-[var(--color-text-secondary)] hover:text-[var(--color-text)] inline-flex items-center gap-1 cursor-pointer"
-                          >
-                            {isCallstackOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                            <span>{isCallstackOpen ? "Ẩn callstack chi tiết" : "Xem callstack lỗi chi tiết"}</span>
-                          </button>
-
-                          {isCallstackOpen && (
-                            <div className="mt-2 p-3 rounded bg-[var(--color-surface-secondary)]/50 border border-[var(--color-border)] font-mono text-[11px] text-rose-400 whitespace-pre-wrap overflow-x-auto max-h-48 custom-scrollbar">
-                              {(sc.failureMessages || []).join("\n") || failDetails.raw || "Không có thông tin callstack chi tiết."}
+                          {/* Code Frame with line highlight */}
+                          {failDetails.codeFrame && (
+                            <div className="rounded border border-[var(--color-border)] bg-[#0B0F14] text-slate-300 font-mono text-[11px] p-3 overflow-x-auto custom-scrollbar">
+                              <div className="text-[10px] text-slate-500 mb-1">
+                                File:{" "}
+                                {failDetails.file
+                                  ? failDetails.file
+                                      .split(/[\\/]/)
+                                      .slice(-2)
+                                      .join("/")
+                                  : "test"}
+                                :{failDetails.line || 1}
+                              </div>
+                              <pre className="whitespace-pre-wrap text-rose-300 leading-relaxed m-0">
+                                {failDetails.codeFrame}
+                              </pre>
                             </div>
                           )}
+
+                          {/* Error Message & Callstack */}
+                          <div className="text-xs">
+                            <button
+                              type="button"
+                              onClick={() => toggleCallstack(key)}
+                              className="text-[11px] font-semibold text-[var(--color-text-secondary)] hover:text-[var(--color-text)] inline-flex items-center gap-1 cursor-pointer"
+                            >
+                              {isCallstackOpen ? (
+                                <ChevronDown size={12} />
+                              ) : (
+                                <ChevronRight size={12} />
+                              )}
+                              <span>
+                                {isCallstackOpen
+                                  ? "Ẩn callstack chi tiết"
+                                  : "Xem callstack lỗi chi tiết"}
+                              </span>
+                            </button>
+
+                            {isCallstackOpen && (
+                              <div className="mt-2 p-3 rounded bg-[var(--color-surface-secondary)]/50 border border-[var(--color-border)] font-mono text-[11px] text-rose-400 whitespace-pre-wrap overflow-x-auto max-h-48 custom-scrollbar">
+                                {(sc.failureMessages || []).join("\n") ||
+                                  failDetails.raw ||
+                                  "Không có thông tin callstack chi tiết."}
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    },
+                  )}
                 </div>
               </div>
             ) : (
@@ -1477,7 +1834,8 @@ export default function IntegrationWorkspace({
                       Không Có Lỗi Phát Sinh (Zero Failures)
                     </h4>
                     <p className="text-[11px] text-[var(--color-text-secondary)] m-0 mt-0.5">
-                      Toàn bộ {overallStats.passedScenariosCount} kịch bản đã thực thi đều vượt qua bài kiểm tra thành công!
+                      Toàn bộ {overallStats.passedScenariosCount} kịch bản đã
+                      thực thi đều vượt qua bài kiểm tra thành công!
                     </p>
                   </div>
                 </div>
@@ -1510,7 +1868,8 @@ export default function IntegrationWorkspace({
                     Bộ Kịch Bản Test (Test Scenarios Suite)
                   </h3>
                   <p className="text-xs text-[var(--color-text-secondary)] m-0 mt-0.5">
-                    Quản lý danh sách test case, lọc theo danh mục, chỉnh sửa mã nguồn Monaco và áp dụng vào dự án
+                    Quản lý danh sách test case, lọc theo danh mục, chỉnh sửa mã
+                    nguồn Monaco và áp dụng vào dự án
                   </p>
                 </div>
               </div>
@@ -1534,7 +1893,10 @@ export default function IntegrationWorkspace({
                   onScenarioChange={load}
                   onError={setError}
                   onGenerateThisEndpoint={(key) => handleGenerateClick([key])}
-                  isGenerating={pendingAction === "GENERATE" || (activeJobId && activeJobType === "GENERATE")}
+                  isGenerating={
+                    pendingAction === "GENERATE" ||
+                    (activeJobId && activeJobType === "GENERATE")
+                  }
                   onApproveAndRun={async (ids) => {
                     setSelectedTestIds(ids);
                     await approveIntegrationTestsApi(snapshotId, ids);
@@ -1542,7 +1904,9 @@ export default function IntegrationWorkspace({
                   }}
                   isApprovingAndRunning={pendingAction === "RUN"}
                   onOpenApplyModal={handleOpenApplyModal}
-                  onReGenerateSelected={(targets) => handleGenerateClick(targets)}
+                  onReGenerateSelected={(targets) =>
+                    handleGenerateClick(targets)
+                  }
                 />
               </div>
             </div>
@@ -1625,7 +1989,9 @@ export default function IntegrationWorkspace({
                 <BeforeAfterComparisonView
                   projectId={projectId}
                   snapshotId={snapshotId}
-                  initialBaselineId={new URLSearchParams(location.search).get("baselineId")}
+                  initialBaselineId={new URLSearchParams(location.search).get(
+                    "baselineId",
+                  )}
                   onBackToWorkspace={() => setDrawerOpen("history")}
                 />
               )}
@@ -1653,7 +2019,12 @@ export default function IntegrationWorkspace({
         onClose={() => setEditorModalOpen(false)}
         onSave={handleSaveScenario}
         initialCode={editorModalScenario?.code || ""}
-        title={editorModalScenario?.title || (editorModalEndpoint ? `Thêm kịch bản cho ${editorModalEndpoint.method} ${editorModalEndpoint.path}` : "Soạn thảo kịch bản")}
+        title={
+          editorModalScenario?.title ||
+          (editorModalEndpoint
+            ? `Thêm kịch bản cho ${editorModalEndpoint.method} ${editorModalEndpoint.path}`
+            : "Soạn thảo kịch bản")
+        }
         targetEndpoint={editorModalEndpoint}
         availableEndpoints={endpoints}
         isAddMode={isAddScenarioMode}

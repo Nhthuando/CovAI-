@@ -36,10 +36,17 @@ export { ServiceError };
 function buildTree(dirPath, rootPath = dirPath) {
   const result = [];
   try {
-    if (!fs.existsSync(dirPath)) return result;
+    if (!dirPath || !fs.existsSync(dirPath)) return result;
     const items = fs.readdirSync(dirPath);
     for (const item of items) {
-      if (item === "node_modules" || item === ".git") continue;
+      if (
+        item === "node_modules" ||
+        item === ".git" ||
+        item === "__MACOSX" ||
+        item === ".DS_Store" ||
+        item === ".covai-checkpoint.json"
+      )
+        continue;
 
       const itemPath = path.join(dirPath, item);
       const stat = fs.lstatSync(itemPath);
@@ -58,15 +65,26 @@ function buildTree(dirPath, rootPath = dirPath) {
         });
       } else {
         let lang = "file";
+        const lowerName = item.toLowerCase();
         const ext = path.extname(item).toLowerCase();
-        if (ext === ".js" || ext === ".jsx") lang = "js";
-        else if (ext === ".ts" || ext === ".tsx") lang = "ts";
-        else if (ext === ".json") lang = "json";
-        else if (ext === ".css") lang = "css";
-        else if (ext === ".md") lang = "md";
-        else if (ext.includes("test") || ext.includes("spec")) lang = "test";
 
-        if (ext === ".jsx" || ext === ".tsx") lang = "react";
+        if (lowerName.includes(".test.") || lowerName.includes(".spec.")) lang = "test";
+        else if (ext === ".jsx" || ext === ".tsx") lang = "react";
+        else if (ext === ".js" || ext === ".mjs" || ext === ".cjs") lang = "js";
+        else if (ext === ".ts") lang = "ts";
+        else if (ext === ".json") lang = "json";
+        else if (ext === ".css" || ext === ".scss" || ext === ".sass" || ext === ".less") lang = "css";
+        else if (ext === ".html" || ext === ".htm") lang = "html";
+        else if (ext === ".md") lang = "md";
+        else if (
+          ext === ".png" ||
+          ext === ".jpg" ||
+          ext === ".jpeg" ||
+          ext === ".svg" ||
+          ext === ".gif" ||
+          ext === ".ico"
+        )
+          lang = "image";
 
         result.push({
           id: relativePath,
@@ -333,7 +351,7 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
       }
 
       const resolvedRootDir = resolveProjectRoot(sourcePath);
-      const validation = await validateNodeProject(resolvedRootDir);
+      const validation = await validateNodeProject(resolvedRootDir, { autoCreate: true });
 
       await prisma.projectSnapshot.update({
         where: { id: snapshot.id },

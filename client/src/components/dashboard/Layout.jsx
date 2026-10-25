@@ -340,7 +340,7 @@ function LayoutInner() {
                   const res = await getProjectTreeApi(targetProj.id);
                   return res?.data || [];
                 },
-                staleTime: 5 * 60 * 1000,
+                staleTime: 10 * 1000,
               });
               setFileTree(tree || []);
               if (tree && tree.length > 0) {
@@ -573,6 +573,9 @@ function LayoutInner() {
   };
 
   const refreshProjectFiles = async () => {
+    if (project?.id) {
+      queryClient.invalidateQueries({ queryKey: ["projectTree", project.id] });
+    }
     await loadData(project?.id, 1, 0);
   };
 
