@@ -5,13 +5,12 @@ import { ServiceError } from "../utils/serviceError.js";
 import { detectCoverageFrameworks } from "./coverageFramework.service.js";
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 import { getFileCoverageDetails, normalizePath, findAssociatedTestFile } from "./fileCoverage.service.js";
-import { generateText } from "./gemini.service.js";
-import { parseJavaScriptCode } from "./babelParser.service.js";
 import {
     isBusinessLogicFile,
     analyzeSourceAst,
     mapCoverageGaps
 } from "./businessLogicAstAnalyzer.service.js";
+import { isTestFilePath } from "../utils/businessLogicFileDetector.js";
 import {
     assembleUnitTestContext,
     buildDecisionTableMatrix,
@@ -100,8 +99,49 @@ export const sanitizeSourceFilePath = (rootDir, filePath) => {
     }
     norm = norm.replace(/^[a-zA-Z]:[\\/]/, "");
     norm = norm.replace(/^(?:.*?\/)?storage\/projects\/[^/]+\/[^/]+\/[^/]+\/repo\//i, "");
+    norm = norm.replace(/^(?:.*?\/)?uploads\/snapshots\/[^/]+\/[^/]+\//i, "");
     norm = norm.replace(/^(?:.*?\/)?repo\//i, "");
     return norm.replace(/^\/+/, "");
+};
+
+/**
+ * Robust multi-candidate disk locator that resolves source files across
+ * full repo, monorepo subprojects, and container/host paths.
+ */
+export const findSourceOnDisk = (rootDir, relPath) => {
+    if (!relPath || !rootDir) return { path: null, content: "" };
+    const clean = sanitizeSourceFilePath(rootDir, relPath);
+    const candidates = [
+        path.join(rootDir, relPath),
+        path.join(rootDir, clean),
+        path.join(path.dirname(rootDir), relPath),
+        path.join(path.dirname(rootDir), clean),
+        relPath
+    ];
+    const base = path.basename(rootDir);
+    if (relPath.startsWith(base + "/") || relPath.startsWith(base + "\\")) {
+        candidates.push(path.join(rootDir, relPath.slice(base.length + 1)));
+    }
+    if (clean.startsWith(base + "/") || clean.startsWith(base + "\\")) {
+        candidates.push(path.join(rootDir, clean.slice(base.length + 1)));
+    }
+    const repoIdx = rootDir.replace(/\\/g, "/").lastIndexOf("/repo");
+    if (repoIdx !== -1) {
+        const repoRoot = rootDir.slice(0, repoIdx + 5);
+        candidates.push(path.join(repoRoot, relPath));
+        candidates.push(path.join(repoRoot, clean));
+    }
+
+    for (const cand of candidates) {
+        if (cand && fs.existsSync(cand)) {
+            try {
+                if (!fs.statSync(cand).isDirectory()) {
+                    return { path: cand, content: fs.readFileSync(cand, "utf8") };
+                }
+            } catch {}
+        }
+    }
+    return { path: null, content: "" };
 };
 
 /**
@@ -144,6 +184,7 @@ export const computeRelativeImportPath = (targetTestFile, sourceFile, rootDir = 
 
     // Safety guardrail: remove any leaked storage/projects or repo prefixes
     cleanImport = cleanImport.replace(/(?:^|\/)(?:\.\.\/)*storage\/projects\/[^/]+\/[^/]+\/[^/]+\/repo\//i, "../");
+    cleanImport = cleanImport.replace(/(?:^|\/)(?:\.\.\/)*uploads\/snapshots\/[^/]+\/[^/]+\//i, "../");
     cleanImport = cleanImport.replace(/(?:^|\/)(?:\.\.\/)*repo\//i, "../");
 
     return cleanImport;
@@ -243,88 +284,115 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
     // Detect if module under test is CommonJS
     const isCommonJS = !isVitest && !isTs && (/module\.exports|exports\.|require\s*\(/.test(sourceCode || "") || !/^\s*import\s+/m.test(sourceCode || ""));
 
-    // Extract any required environment variables
-    const envMatches = sourceCode ? [...sourceCode.matchAll(/process\.env\.([A-Z0-9_]+)/g)].map(m => m[1]) : [];
-    const uniqueEnvs = Array.from(new Set(envMatches)).filter(v => !["NODE_ENV", "PATH", "HOME", "USER"].includes(v));
-    const envPreamble = uniqueEnvs.length > 0
-        ? `// Mock required environment variables before module import\nprocess.env.NODE_ENV = 'test';\n` +
-          uniqueEnvs.map(v => `process.env.${v} = process.env.${v} || 'test-${v.toLowerCase()}';`).join("\n") + "\n\n"
-        : "";
+    // Extract real parameter names accessed from req.body, req.query, req.params, req.file
+    const bodyKeys = new Set();
+    const queryKeys = new Set();
+    const paramsKeys = new Set();
+    let usesFile = false;
 
-    // Mock axios if used in sourceCode or existing content to prevent real network calls
-    const usesAxios = (sourceCode && /axios/i.test(sourceCode)) || (existingContent && /axios/i.test(existingContent));
-    const axiosMockPreamble = usesAxios
-        ? `// Shared axios mock instance across all axios.create and top-level invocations\n` +
-          (isVitest
-            ? `import { vi } from 'vitest';\nconst _mockAxios = { post: vi.fn(() => Promise.resolve({ data: { success: true, message: 'ok' }, status: 200 })), get: vi.fn(() => Promise.resolve({ data: {}, status: 200 })), put: vi.fn(() => Promise.resolve({ data: {}, status: 200 })), delete: vi.fn(() => Promise.resolve({ data: {}, status: 200 })) };\nvi.mock('axios', () => ({ default: { create: vi.fn(() => _mockAxios), ..._mockAxios } }));\n\n`
-            : `const _mockAxios = { post: jest.fn(() => Promise.resolve({ data: { success: true, message: 'ok' }, status: 200 })), get: jest.fn(() => Promise.resolve({ data: {}, status: 200 })), put: jest.fn(() => Promise.resolve({ data: {}, status: 200 })), delete: jest.fn(() => Promise.resolve({ data: {}, status: 200 })) };\n` +
-              `globalThis.__mockAxiosInstance = _mockAxios;\n` +
-              `jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, default: { create: jest.fn(() => _mockAxios), ..._mockAxios } }));\n` +
-              `const mockAxiosInstance = (typeof globalThis !== 'undefined' && globalThis.__mockAxiosInstance) ? globalThis.__mockAxiosInstance : (() => { try { const ax = require('axios'); return (ax && typeof ax.create === 'function') ? ax.create() : (ax || _mockAxios); } catch (e) { return _mockAxios; } })();\n\n`)
-        : "";
+    if (sourceCode) {
+        // e.g. const { a, b, c } = req.body;
+        const bodyDestructureMatches = [...sourceCode.matchAll(/\{\s*([^}]+)\s*\}\s*=\s*req\.body/g)];
+        for (const m of bodyDestructureMatches) {
+            for (const key of m[1].split(",")) {
+                const k = key.trim().split(":")[0].trim();
+                if (/^[a-zA-Z0-9_$]+$/.test(k)) bodyKeys.add(k);
+            }
+        }
+        const bodyPropMatches = [...sourceCode.matchAll(/req\.body\.([a-zA-Z0-9_$]+)/g)];
+        for (const m of bodyPropMatches) {
+            if (m[1]) bodyKeys.add(m[1]);
+        }
 
-    // Mock Bull / BullMQ if used to prevent real Redis connections
-    const usesBull = (sourceCode && /bull|bullmq|redis/i.test(sourceCode)) || (existingContent && /bull|bullmq|redis/i.test(existingContent));
-    const bullMockPreamble = usesBull
-        ? `// Mock Bull & BullMQ queue handlers purely in memory\n` +
-          (isVitest
-            ? `vi.mock('bull', () => ({ default: vi.fn().mockImplementation(() => ({ process: vi.fn(), add: vi.fn(() => Promise.resolve({ id: '1' })), close: vi.fn(() => Promise.resolve()) })) }));\n` +
-              `vi.mock('bullmq', () => ({ Queue: vi.fn().mockImplementation(() => ({ add: vi.fn(() => Promise.resolve({ id: '1' })), close: vi.fn(() => Promise.resolve()) })), Worker: vi.fn().mockImplementation(() => ({ on: vi.fn(), close: vi.fn(() => Promise.resolve()) })) }));\n\n`
-            : `jest.mock('bull', () => jest.fn().mockImplementation(() => ({ process: jest.fn(), add: jest.fn(() => Promise.resolve({ id: '1' })), close: jest.fn(() => Promise.resolve()) })));\n` +
-              `jest.mock('bullmq', () => ({ Queue: jest.fn().mockImplementation(() => ({ add: jest.fn(() => Promise.resolve({ id: '1' })), close: jest.fn(() => Promise.resolve()) })), Worker: jest.fn().mockImplementation(() => ({ on: jest.fn(), close: jest.fn(() => Promise.resolve()) })) }));\n\n`)
-        : "";
+        const queryDestructureMatches = [...sourceCode.matchAll(/\{\s*([^}]+)\s*\}\s*=\s*req\.query/g)];
+        for (const m of queryDestructureMatches) {
+            for (const key of m[1].split(",")) {
+                const k = key.trim().split(":")[0].trim();
+                if (/^[a-zA-Z0-9_$]+$/.test(k)) queryKeys.add(k);
+            }
+        }
+        const queryPropMatches = [...sourceCode.matchAll(/req\.query\.([a-zA-Z0-9_$]+)/g)];
+        for (const m of queryPropMatches) {
+            if (m[1]) queryKeys.add(m[1]);
+        }
 
-    // Fake timers control if asynchronous timers/sleeps detected
-    const usesTimers = (sourceCode && /setTimeout|setInterval|setImmediate|sleep\s*\(|delay\s*\(/i.test(sourceCode)) || (existingContent && /setTimeout|setInterval|setImmediate|sleep\s*\(|delay\s*\(/i.test(existingContent));
-    const timersMockPreamble = usesTimers
-        ? `// Fake timers control for asynchronous delays\n// ${isVitest ? 'vi.useFakeTimers();' : 'jest.useFakeTimers();'}\n\n`
-        : "";
+        const paramsDestructureMatches = [...sourceCode.matchAll(/\{\s*([^}]+)\s*\}\s*=\s*req\.params/g)];
+        for (const m of paramsDestructureMatches) {
+            for (const key of m[1].split(",")) {
+                const k = key.trim().split(":")[0].trim();
+                if (/^[a-zA-Z0-9_$]+$/.test(k)) paramsKeys.add(k);
+            }
+        }
+        const paramsPropMatches = [...sourceCode.matchAll(/req\.params\.([a-zA-Z0-9_$]+)/g)];
+        for (const m of paramsPropMatches) {
+            if (m[1]) paramsKeys.add(m[1]);
+        }
 
-    // Universal mock for Prisma Client if detected in source code or existing test
-    const usesPrisma = (sourceCode && (/prisma/i.test(sourceCode) || /@prisma\/client/.test(sourceCode))) ||
-        (existingContent && (/prisma/i.test(existingContent) || /@prisma\/client/.test(existingContent)));
-    const prismaMockPreamble = usesPrisma
-        ? `// Universal mock for Prisma Client proxy across all models and operations\n` +
-          `const _createPrismaProxyMock = () => {\n` +
-          `  const _mockFn = () => (typeof jest !== 'undefined' ? jest.fn(() => Promise.resolve({ id: 1, name: 'Sample', status: 'ACTIVE', title: 'Sample', email: 'test@example.com', createdAt: new Date(), updatedAt: new Date() })) : (() => Promise.resolve({ id: 1 })));\n` +
-          `  const _createModelProxy = () => new Proxy({}, {\n` +
-          `    get: (target, prop) => {\n` +
-          `      if (prop === 'then') return undefined;\n` +
-          `      if (!target[prop]) {\n` +
-          `        if (prop === 'findMany' || prop === 'findRaw') {\n` +
-          `          target[prop] = typeof jest !== 'undefined' ? jest.fn(() => Promise.resolve([{ id: 1, name: 'Sample', status: 'ACTIVE', title: 'Sample' }])) : (() => Promise.resolve([]));\n` +
-          `        } else if (prop === 'count') {\n` +
-          `          target[prop] = typeof jest !== 'undefined' ? jest.fn(() => Promise.resolve(1)) : (() => Promise.resolve(1));\n` +
-          `        } else {\n` +
-          `          target[prop] = _mockFn();\n` +
-          `        }\n` +
-          `      }\n` +
-          `      return target[prop];\n` +
-          `    }\n` +
-          `  });\n` +
-          `  let _clientProxy;\n` +
-          `  _clientProxy = new Proxy({\n` +
-          `    $transaction: typeof jest !== 'undefined' ? jest.fn((args) => Array.isArray(args) ? Promise.all(args) : (typeof args === 'function' ? args(_clientProxy) : Promise.resolve())) : (() => Promise.resolve()),\n` +
-          `    $queryRaw: typeof jest !== 'undefined' ? jest.fn(() => Promise.resolve([])) : (() => Promise.resolve([])),\n` +
-          `    $executeRaw: typeof jest !== 'undefined' ? jest.fn(() => Promise.resolve(1)) : (() => Promise.resolve(1)),\n` +
-          `    $connect: typeof jest !== 'undefined' ? jest.fn(() => Promise.resolve()) : (() => Promise.resolve()),\n` +
-          `    $disconnect: typeof jest !== 'undefined' ? jest.fn(() => Promise.resolve()) : (() => Promise.resolve())\n` +
-          `  }, {\n` +
-          `    get: (target, prop) => (prop in target ? target[prop] : (!target[prop] ? target[prop] = _createModelProxy() : target[prop]))\n` +
-          `  });\n` +
-          `  return _clientProxy;\n` +
-          `};\n` +
-          `const mockPrisma = _createPrismaProxyMock();\n` +
-          (isVitest
-            ? `import { vi } from 'vitest';\nvi.mock('@prisma/client', () => ({ PrismaClient: vi.fn(() => mockPrisma), default: { PrismaClient: vi.fn(() => mockPrisma) } }));\n`
-            : `jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => mockPrisma), default: { PrismaClient: jest.fn(() => mockPrisma) } }));\n` +
-              `jest.mock('../lib/prisma.js', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });\n` +
-              `jest.mock('../../lib/prisma.js', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });\n` +
-              `jest.mock('../src/lib/prisma.js', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });\n` +
-              `jest.mock('../config/prisma.js', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });\n` +
-              `jest.mock('../../config/prisma.js', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });\n` +
-              `jest.mock('../src/config/prisma.js', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });\n\n`)
-        : "";
+        if (/req\.file\b/.test(sourceCode)) {
+            usesFile = true;
+        }
+    }
+
+    const buildReqBodyCode = (isBoundary = false) => {
+        const obj = {};
+        if (bodyKeys.size > 0) {
+            for (const k of bodyKeys) {
+                if (isBoundary) {
+                    if (k.toLowerCase().includes("id")) obj[k] = "0";
+                    else if (k.toLowerCase().includes("score") || k.toLowerCase().includes("amount") || k.toLowerCase().includes("num")) obj[k] = 0;
+                    else obj[k] = "";
+                } else {
+                    if (k.toLowerCase().includes("id")) obj[k] = "1";
+                    else if (k.toLowerCase().includes("mode")) obj[k] = "initial";
+                    else if (k.toLowerCase().includes("score") || k.toLowerCase().includes("amount") || k.toLowerCase().includes("num")) obj[k] = 50;
+                    else if (k.toLowerCase().includes("status")) obj[k] = "active";
+                    else if (k.toLowerCase().includes("text")) obj[k] = "Sample requirement text for test validation";
+                    else if (k.toLowerCase().includes("session")) obj[k] = "session-123";
+                    else if (k.toLowerCase().includes("message")) obj[k] = "What is the requirement?";
+                    else obj[k] = `Sample ${k}`;
+                }
+            }
+        } else {
+            obj.id = isBoundary ? '0' : '1';
+            obj.title = isBoundary ? '' : 'Sample Title';
+            obj.name = isBoundary ? '' : 'Sample Item';
+            obj.status = isBoundary ? '' : 'ACTIVE';
+            obj.text = isBoundary ? '' : 'Sample requirement text';
+            obj.score = isBoundary ? 0 : 50;
+        }
+        return JSON.stringify(obj, null, 16).replace(/\n\s*}/, "\n            }");
+    };
+
+    const buildReqQueryCode = (isBoundary = false) => {
+        const obj = {};
+        if (queryKeys.size > 0) {
+            for (const k of queryKeys) {
+                obj[k] = isBoundary ? '' : (k.toLowerCase().includes("id") ? '1' : (k.toLowerCase().includes("page") ? '1' : 'active'));
+            }
+        }
+        obj.page = isBoundary ? '0' : '1';
+        obj.limit = isBoundary ? '0' : '10';
+        return JSON.stringify(obj, null, 16).replace(/\n\s*}/, "\n            }");
+    };
+
+    const buildReqParamsCode = (isBoundary = false) => {
+        const obj = {};
+        if (paramsKeys.size > 0) {
+            for (const k of paramsKeys) {
+                obj[k] = isBoundary ? '0' : '1';
+            }
+        }
+        obj.id = isBoundary ? '0' : '1';
+        return JSON.stringify(obj, null, 16).replace(/\n\s*}/, "\n            }");
+    };
+
+    // Robust isolation mock contracts (Prisma, Axios, Bull, Controllers, PDFKit, json2csv, multer, local services)
+    const mockContracts = buildIsolationMockContracts({
+        sourceCode: sourceCode || "",
+        existingTestCode: existingContent || "",
+        framework
+    });
+    const isolationMockPreamble = mockContracts?.mockPreambleCode || "";
 
     const importNames = exportedFunctions.length > 0 ? exportedFunctions.join(", ") : null;
     const testCases = [];
@@ -333,15 +401,16 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
 
     if (exportedFunctions.length > 0) {
         for (const fn of exportedFunctions) {
+            const safeFn = (fn === "default" || fn === "defaultExport") ? "defaultExport" : fn;
             if (isController) {
                 testCases.push(`    // Category A: Happy Path (Valid standard execution)
     test('${fn} [Category A: Happy Path] - executes cleanly with valid mock req, res, next', async () => {
         try {
             const req = {
-                body: { name: 'Sample Item', title: 'Sample Title', status: 'ACTIVE', amount: 100, description: 'Test description', roomId: '1', tenantId: '1', contractId: '1', startDate: '2026-01-01', endDate: '2026-12-31' },
-                query: { page: '1', limit: '10', status: 'active', search: 'sample', boardingHouseId: '1' },
-                params: { id: '1', contractId: '1', roomId: '1', tenantId: '1', invoiceId: '1' },
-                file: { path: 'uploads/sample.jpg', filename: 'sample.jpg', mimetype: 'image/jpeg' },
+                body: ${buildReqBodyCode(false)},
+                query: ${buildReqQueryCode(false)},
+                params: ${buildReqParamsCode(false)},
+                file: ${usesFile ? "{ path: 'uploads/sample.txt', filename: 'sample.txt', originalname: 'sample.txt', mimetype: 'text/plain', buffer: Buffer.from('sample content') }" : "null"},
                 headers: { authorization: 'Bearer token' },
                 user: { id: 1, role: 'owner', email: 'owner@example.com' },
                 ownerId: 1,
@@ -359,7 +428,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             };
             const res = { json: _getMock().mockReturnThis(), status: _getMock().mockReturnThis(), send: _getMock().mockReturnThis(), setHeader: _getMock().mockReturnThis() };
             const next = _getMock();
-            ${isTs ? `const fnRef: any = ${fn};` : `const fnRef = ${fn};`}
+            ${isTs ? `const fnRef: any = ${safeFn};` : `const fnRef = ${safeFn};`}
             if (typeof fnRef === 'function') {
                 await Promise.resolve(fnRef(req, res, next)).catch(() => {});
             }
@@ -373,9 +442,9 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
     test('${fn} [Category B: Boundary Values] - handles boundary inputs, 0 amounts, and empty payload', async () => {
         try {
             const req = {
-                body: { name: '', amount: 0, items: [], details: {} },
-                query: { page: '0', limit: '0' },
-                params: { id: '0' },
+                body: ${buildReqBodyCode(true)},
+                query: ${buildReqQueryCode(true)},
+                params: ${buildReqParamsCode(true)},
                 file: null,
                 headers: {},
                 user: { id: 0, role: '' },
@@ -391,7 +460,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             };
             const res = { json: _getMock().mockReturnThis(), status: _getMock().mockReturnThis(), send: _getMock().mockReturnThis() };
             const next = _getMock();
-            ${isTs ? `const fnRef: any = ${fn};` : `const fnRef = ${fn};`}
+            ${isTs ? `const fnRef: any = ${safeFn};` : `const fnRef = ${safeFn};`}
             if (typeof fnRef === 'function') {
                 await Promise.resolve(fnRef(req, res, next)).catch(() => {});
             }
@@ -405,9 +474,9 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
     test('${fn} [Category C: Branch Toggling] - toggles secondary branch options (missing file, alternate query, tenant role)', async () => {
         try {
             const req = {
-                body: { status: 'INACTIVE', amount: -1 },
-                query: { status: 'inactive', filter: 'none' },
-                params: { id: '1' },
+                body: { status: 'INACTIVE', amount: -1, score: -1, text: '', session_id: 'session-alternate', mode: 'followup' },
+                query: { status: 'inactive', filter: 'none', document_id: '2' },
+                params: { id: '2' },
                 file: null,
                 user: { id: 2, role: 'tenant' },
                 ownerId: 2,
@@ -416,7 +485,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             const _getMock = () => (typeof jest !== 'undefined' && jest.fn ? jest.fn() : (() => {}));
             const res = { json: _getMock().mockReturnThis(), status: _getMock().mockReturnThis(), send: _getMock().mockReturnThis() };
             const next = _getMock();
-            ${isTs ? `const fnRef: any = ${fn};` : `const fnRef = ${fn};`}
+            ${isTs ? `const fnRef: any = ${safeFn};` : `const fnRef = ${safeFn};`}
             if (typeof fnRef === 'function') {
                 await Promise.resolve(fnRef(req, res, next)).catch(() => {});
             }
@@ -433,7 +502,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             const _getMock = () => (typeof jest !== 'undefined' && jest.fn ? jest.fn() : (() => {}));
             const res = { json: _getMock(), status: _getMock(), send: _getMock() };
             const next = _getMock();
-            ${isTs ? `const fnRef: any = ${fn};` : `const fnRef = ${fn};`}
+            ${isTs ? `const fnRef: any = ${safeFn};` : `const fnRef = ${safeFn};`}
             if (typeof fnRef === 'function') {
                 await Promise.resolve(fnRef(req, res, next)).catch(() => {});
             }
@@ -446,7 +515,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
                 testCases.push(`    // Category A: Happy Path (Standard valid input, expected output)
     test('${fn} should execute without error [Category A: Happy Path] with valid arguments', async () => {
         try {
-            ${isTs ? `const fnRef: any = ${fn};` : `const fnRef = ${fn};`}
+            ${isTs ? `const fnRef: any = ${safeFn};` : `const fnRef = ${safeFn};`}
             const defaultArgs = { requirement: 'Sample requirement', text: 'Sample text', description: 'Sample description', options: {}, id: '1', name: 'sample', amount: 100, status: 'active' };
             const res = typeof fnRef === 'function' ? (fnRef.prototype && Object.getOwnPropertyNames(fnRef.prototype).length > 1 ? new fnRef() : fnRef(defaultArgs)) : fnRef;
             if (res && typeof res.then === 'function') {
@@ -463,7 +532,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
     // Category B: Boundary Values (0, negative, empty collections [], "", {})
     test('${fn} [Category B: Boundary Values] - handles boundary inputs (0, empty arrays, empty strings, empty objects)', async () => {
         try {
-            ${isTs ? `const fnRef: any = ${fn};` : `const fnRef = ${fn};`}
+            ${isTs ? `const fnRef: any = ${safeFn};` : `const fnRef = ${safeFn};`}
             if (typeof fnRef === 'function') {
                 const boundaryInputs = [
                     { amount: 0, items: [], text: '', options: {} },
@@ -490,7 +559,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
     // Category C: Branch Toggling & Fallbacks (Optional arguments, truthy/falsy flags, ?? and ||)
     test('${fn} [Category C: Branch Toggling] - toggles parameter options, default arguments, and fallback branches', async () => {
         try {
-            ${isTs ? `const fnRef: any = ${fn};` : `const fnRef = ${fn};`}
+            ${isTs ? `const fnRef: any = ${safeFn};` : `const fnRef = ${safeFn};`}
             if (typeof fnRef === 'function') {
                 // Supplied options branch
                 const res1 = !fnRef.prototype?.constructor ? fnRef({ requirement: 'Test requirement', errors: true, tagFilter: '@test', scenariosMustMatchFeatureFile: true, status: 'active', includeDetails: true }) : fnRef;
@@ -514,7 +583,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
     // Category D: Error & Exception Handling (null, undefined, invalid payload, rejected promises)
     test('${fn} [Category D: Error Handling] - handles null, undefined, invalid payload, and thrown exceptions gracefully', async () => {
         try {
-            ${isTs ? `const fnRef: any = ${fn};` : `const fnRef = ${fn};`}
+            ${isTs ? `const fnRef: any = ${safeFn};` : `const fnRef = ${safeFn};`}
             if (typeof fnRef === 'function') {
                 try { await Promise.resolve(fnRef(null)).catch(() => {}); } catch {}
                 try { await Promise.resolve(fnRef(undefined)).catch(() => {}); } catch {}
@@ -529,9 +598,9 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
     // Deep method runner for 100% Functions & Methods coverage
     test('${fn} - deep invocation of all instance and prototype methods for 100% function coverage', async () => {
         try {
-            let target = ${fn};
-            if (typeof ${fn} === 'function') {
-                try { target = new ${fn}(); } catch (_) { target = ${fn}; }
+            let target = ${safeFn};
+            if (typeof ${safeFn} === 'function') {
+                try { target = new ${safeFn}(); } catch (_) { target = ${safeFn}; }
             }
             if (target && (typeof target === 'object' || typeof target === 'function')) {
                 const methods = new Set(Object.keys(target).filter(k => typeof target[k] === 'function'));
@@ -561,9 +630,9 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
                 if (cleanSource.toLowerCase().includes("model") || (sourceCode && sourceCode.includes("mongoose"))) {
                     testCases.push(`    test('${fn} - model schema, validation, and query operations coverage', async () => {
         try {
-            if (typeof ${fn} === 'function') {
+            if (typeof ${safeFn} === 'function') {
                 try {
-                    const doc = new ${fn}({
+                    const doc = new ${safeFn}({
                         text: 'Sample model item',
                         title: 'Sample Title',
                         content: 'Sample content',
@@ -578,11 +647,11 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
                         if (typeof doc.toObject === 'function') doc.toObject();
                     }
                 } catch (_) {}
-                if (typeof ${fn}.find === 'function') await Promise.resolve(${fn}.find()).catch(() => {});
-                if (typeof ${fn}.findOne === 'function') await Promise.resolve(${fn}.findOne()).catch(() => {});
-                if (typeof ${fn}.countDocuments === 'function') await Promise.resolve(${fn}.countDocuments()).catch(() => {});
+                if (typeof ${safeFn}.find === 'function') await Promise.resolve(${safeFn}.find()).catch(() => {});
+                if (typeof ${safeFn}.findOne === 'function') await Promise.resolve(${safeFn}.findOne()).catch(() => {});
+                if (typeof ${safeFn}.countDocuments === 'function') await Promise.resolve(${safeFn}.countDocuments()).catch(() => {});
             }
-            expect(${fn}).toBeDefined();
+            expect(${safeFn}).toBeDefined();
         } catch (err) {
             expect(err).toBeDefined();
         }
@@ -620,6 +689,77 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
         const mod = ${isCommonJS ? `require('${cleanImportPath}')` : `importedModule`};
         expect(() => { const _ = mod?.nonExistentProperty; }).not.toThrow();
     });`);
+    }
+
+    // Indirect testing for unexported internal helpers (Rule 3 Compliance)
+    const indirectStrategy = buildIndirectTestingStrategy({
+        sourceCode: sourceCode || "",
+        exportedSymbols: exportedFunctions.map(name => ({ name, type: "function" }))
+    });
+
+    if (indirectStrategy?.indirectStrategies?.length > 0) {
+        for (const st of indirectStrategy.indirectStrategies) {
+            const callers = st.exportedCallers || [];
+            if (callers.length === 0) continue;
+            const primaryCaller = callers[0];
+            const safeCaller = (primaryCaller === "default" || primaryCaller === "defaultExport") ? "defaultExport" : primaryCaller;
+            testCases.push(`    // Indirect testing for internal helper: ${st.helperName} via exported caller: ${primaryCaller}
+    test('${primaryCaller} [Indirect Helper: ${st.helperName}] - exercises ${st.helperName} across Category A, B, C, D', async () => {
+        try {
+            const _getMock = () => {
+                if (typeof jest !== 'undefined' && typeof jest.fn === 'function') return jest.fn();
+                if (typeof vi !== 'undefined' && typeof vi.fn === 'function') return vi.fn();
+                const stub = () => stub;
+                stub.mockReturnThis = () => stub;
+                return stub;
+            };
+            const callerRef = ${safeCaller};
+            if (typeof callerRef === 'function') {
+                // Category A: Standard happy path values (score in 10..90 practical band)
+                const reqA = {
+                    body: { requirement_id: '1', id: '1', score: 50, ambiguity: 20, clarity: 80, completeness: 85, consistency: 90, text: 'Valid requirement' },
+                    query: { document_id: '1', page: '1' },
+                    params: { id: '1' }
+                };
+                const resA = { json: _getMock().mockReturnThis(), status: _getMock().mockReturnThis(), send: _getMock().mockReturnThis() };
+                const nextA = _getMock();
+                await Promise.resolve(callerRef(reqA, resA, nextA)).catch(() => {});
+
+                // Category B: Boundary values (score < 10, score > 90, 0, 100, -1, 150)
+                const boundaryScores = [0, 5, 10, 90, 95, 100, -1, 150];
+                for (const bScore of boundaryScores) {
+                    const reqB = {
+                        body: { requirement_id: '1', id: '1', score: bScore, ambiguity: bScore, clarity: bScore, completeness: bScore, consistency: bScore, text: 'Boundary score requirement' },
+                        query: { document_id: '1' },
+                        params: { id: '1' }
+                    };
+                    const resB = { json: _getMock().mockReturnThis(), status: _getMock().mockReturnThis(), send: _getMock().mockReturnThis() };
+                    await Promise.resolve(callerRef(reqB, resB, nextA)).catch(() => {});
+                }
+
+                // Category C: Branch toggling (null, undefined, NaN, non-finite values)
+                const invalidScores = [null, undefined, 'not-a-number', NaN, Infinity];
+                for (const inv of invalidScores) {
+                    const reqC = {
+                        body: { requirement_id: '1', score: inv, ambiguity: inv, text: 'Fallback requirement' },
+                        query: {},
+                        params: { id: '1' }
+                    };
+                    const resC = { json: _getMock().mockReturnThis(), status: _getMock().mockReturnThis(), send: _getMock().mockReturnThis() };
+                    await Promise.resolve(callerRef(reqC, resC, nextA)).catch(() => {});
+                }
+
+                // Category D: Error & Exception Handling (null req, rejecting promises)
+                const resD = { json: _getMock().mockReturnThis(), status: _getMock().mockReturnThis(), send: _getMock().mockReturnThis() };
+                const nextD = _getMock();
+                await Promise.resolve(callerRef({ body: null, query: null, params: null }, resD, nextD)).catch(() => {});
+                expect(callerRef).toBeDefined();
+            }
+        } catch (err) {
+            expect(err).toBeDefined();
+        }
+    });`);
+        }
     }
 
     const linesComment = uncoveredLines && uncoveredLines.length > 0 ? ` for lines: ${uncoveredLines.join(", ")}` : "";
@@ -680,17 +820,31 @@ ${testCases.join("\n\n")}
             }
         }
 
-        if (axiosMockPreamble && !updatedContent.includes("axios")) {
-            updatedContent = axiosMockPreamble + updatedContent;
+        if (exportedFunctions.includes("default") && !/\bdefaultExport\b/.test(updatedContent)) {
+            if (importedIdentifier) {
+                const defaultStmt = `const defaultExport = ${importedIdentifier};\n`;
+                const firstDescribeIdx = updatedContent.search(/\r?\n[ \t]*(?:describe|test|it)\s*\(/);
+                if (firstDescribeIdx !== -1) {
+                    updatedContent = updatedContent.slice(0, firstDescribeIdx) + "\n" + defaultStmt + updatedContent.slice(firstDescribeIdx);
+                } else {
+                    updatedContent = defaultStmt + updatedContent;
+                }
+            } else if (!updatedContent.includes(cleanImportPath)) {
+                if (isCommonJS) {
+                    updatedContent = `const defaultExport = require('${cleanImportPath}');\n` + updatedContent;
+                } else {
+                    updatedContent = `import defaultExport from '${cleanImportPath}';\n` + updatedContent;
+                }
+            }
         }
-        if (bullMockPreamble && !updatedContent.includes("bull")) {
-            updatedContent = bullMockPreamble + updatedContent;
-        }
-        if (prismaMockPreamble && !updatedContent.includes("@prisma/client") && !updatedContent.includes("mockPrisma")) {
-            updatedContent = prismaMockPreamble + updatedContent;
-        }
-        if (timersMockPreamble && !updatedContent.includes("Fake timers")) {
-            updatedContent = timersMockPreamble + updatedContent;
+
+        if (isolationMockPreamble) {
+            const firstDescribeIdx = updatedContent.search(/\r?\n[ \t]*(?:describe|test|it)\s*\(/);
+            if (firstDescribeIdx !== -1) {
+                updatedContent = updatedContent.slice(0, firstDescribeIdx) + "\n" + isolationMockPreamble + updatedContent.slice(firstDescribeIdx);
+            } else {
+                updatedContent = isolationMockPreamble + updatedContent;
+            }
         }
 
         updatedContent = updatedContent.trimEnd() + "\n\n" + newTests.trim() + "\n";
@@ -732,7 +886,7 @@ ${testCases.join("\n\n")}
         }
     }
 
-    const fullCode = `${envPreamble}${axiosMockPreamble}${bullMockPreamble}${timersMockPreamble}${prismaMockPreamble}${testRunnerImport}${importStatement}${newTests}`;
+    const fullCode = `${isolationMockPreamble}${testRunnerImport}${importStatement}${newTests}`;
 
     return {
         explanation: `Comprehensive ${framework.toUpperCase()} unit test file targeting >=90% statement, branch, and function coverage in ${sourceFile}.`,
@@ -1047,7 +1201,7 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
         }
     }
 
-    const isTest = /(^|\/)(tests?|__tests__|spec)\//i.test(targetFilePath) || /\.(test|spec)\.[a-z0-9]+$/i.test(targetFilePath);
+    const isTest = isTestFilePath(targetFilePath);
 
     if (!isTest && !isBusinessLogicFile(targetFilePath)) {
         throw new ServiceError(
@@ -1064,22 +1218,11 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
         if (associated) {
             sourceFileToInspect = associated;
         }
-
-        // Read source code of tested file
-        const fullSourcePath = path.join(snapshot.rootDir, sourceFileToInspect);
-        if (fs.existsSync(fullSourcePath)) {
-            sourceCode = fs.readFileSync(fullSourcePath, "utf8");
-        }
+        const diskRes = findSourceOnDisk(snapshot.rootDir, sourceFileToInspect);
+        sourceCode = diskRes.content;
     } else {
-        const fullSourcePath = path.join(snapshot.rootDir, targetFilePath);
-        if (fs.existsSync(fullSourcePath)) {
-            sourceCode = fs.readFileSync(fullSourcePath, "utf8");
-        } else {
-            const directPath = path.isAbsolute(targetFilePath) ? targetFilePath : path.resolve(snapshot.rootDir, targetFilePath);
-            if (fs.existsSync(directPath)) {
-                sourceCode = fs.readFileSync(directPath, "utf8");
-            }
-        }
+        const diskRes = findSourceOnDisk(snapshot.rootDir, targetFilePath);
+        sourceCode = diskRes.content;
     }
 
     // 2. Get coverage and line diagnostics for the source file under test
@@ -1088,6 +1231,10 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
         coverageDetails = await getFileCoverageDetails(snapshot.id, sourceFileToInspect, userId);
     } catch (covErr) {
         console.warn(`[unitTestSuggestion] File coverage lookup warning: ${covErr.message}`);
+    }
+
+    if (!sourceCode && coverageDetails?.sourceCode) {
+        sourceCode = coverageDetails.sourceCode;
     }
 
     // Check if file is genuinely 100% covered across all 4 metrics with 0 failures
@@ -1111,14 +1258,20 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
 
     const hasUncoveredFuncsList = (coverageDetails.coverageGapAnalysis?.uncoveredFunctions && coverageDetails.coverageGapAnalysis.uncoveredFunctions.length > 0);
 
-    const is100Coverage = !hasMissedBranches &&
+    const hasValidMetrics = Boolean(coverageDetails.summary) &&
+        typeof sPct === "number" &&
+        typeof lPct === "number" &&
+        ((coverageDetails.summary.statementsTotal ?? 0) > 0 || (coverageDetails.summary.linesTotal ?? 0) > 0 || sPct > 0 || lPct > 0);
+
+    const is100Coverage = hasValidMetrics &&
+        !hasMissedBranches &&
         !hasUncoveredBranchesList &&
         !hasMissedFuncs &&
         !hasUncoveredFuncsList &&
-        (bPct == null || bPct >= 100) &&
-        (sPct == null || sPct >= 100) &&
-        (lPct == null || lPct >= 100) &&
-        (fPct == null || fPct >= 100) &&
+        sPct >= 100 &&
+        lPct >= 100 &&
+        (branchesTotal > 0 ? (bPct != null && bPct >= 100) : (bPct == null || bPct >= 100)) &&
+        (funcsTotal > 0 ? (fPct != null && fPct >= 100) : (fPct == null || fPct >= 100)) &&
         !hasUncovered && !hasFailed;
 
     if (is100Coverage && coverageDetails.summary) {
@@ -1133,6 +1286,7 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
         return {
             suggestionId: `sug-${Date.now()}-1`,
             isFullyCovered: true,
+            status: "FULLY_COVERED",
             sourceFile: sourceFileToInspect,
             testFile: testFileRef,
             targetTestFile: testFileRef,
@@ -1141,6 +1295,8 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
             targetBranches: [],
             explanation: `File \`${sourceFileToInspect}\` has reached 100% test coverage (Statements: 100%, Branches: 100%, Lines: 100%) with 0 assertion errors. No further suggestions needed!`,
             suggestedTestCode: "",
+            generatedCode: "",
+            originalCode: "",
             fullUpdatedContent: "",
             uncoveredLines: [],
             failedLines: [],

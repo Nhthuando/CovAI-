@@ -10,7 +10,8 @@ import {
     mergeCoverageSummaries,
     buildJestModuleNameMapper,
     readProjectJestConfig,
-    isEsmProjectForRepo
+    isEsmProjectForRepo,
+    resolveTestEnvironment
 } from "../services/runTestsJob.service.js";
 import { isApiFilePath } from "../utils/apiFileDetector.js";
 
@@ -278,6 +279,40 @@ describe("readProjectJestConfig & isEsmProjectForRepo", () => {
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }
+    });
+});
+
+describe("resolveTestEnvironment", () => {
+    it("defaults to node when configuredEnv is undefined or node", () => {
+        expect(resolveTestEnvironment("/nonexistent", "/nonexistent", undefined)).toBe("node");
+        expect(resolveTestEnvironment("/nonexistent", "/nonexistent", "node")).toBe("node");
+    });
+
+    it("returns jsdom if local project directory contains jest-environment-jsdom", () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "covai-local-jsdom-"));
+        try {
+            const fakeJsdomDir = path.join(tempDir, "node_modules", "jest-environment-jsdom");
+            fs.mkdirSync(fakeJsdomDir, { recursive: true });
+            expect(resolveTestEnvironment(tempDir, tempDir, "jsdom")).toBe("jsdom");
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it("resolves to host/container absolute path or node when local project directory lacks jest-environment-jsdom", () => {
+        const tempEmptyDir = fs.mkdtempSync(path.join(os.tmpdir(), "covai-empty-dir-"));
+        try {
+            const resolved = resolveTestEnvironment(tempEmptyDir, tempEmptyDir, "jsdom");
+            expect(typeof resolved).toBe("string");
+            // Either resolved to server's installed jest-environment-jsdom absolute path or safe fallback 'node'
+            expect(resolved.includes("jest-environment-jsdom") || resolved === "node").toBe(true);
+        } finally {
+            fs.rmSync(tempEmptyDir, { recursive: true, force: true });
+        }
+    });
+
+    it("preserves custom test environments", () => {
+        expect(resolveTestEnvironment("/nonexistent", "/nonexistent", "custom-env")).toBe("custom-env");
     });
 });
 

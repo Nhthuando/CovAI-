@@ -63,6 +63,10 @@ export default function FileCodeExecutionView({
   onOpenFile,
   onSuggestTestcase,
   onFileSaved,
+  initialTargetLine = null,
+  functionName = null,
+  targetEndLine = null,
+  testInfo = null,
   suggestions = [],
   isLoadingSuggestions = false,
   applyingSuggestionIds = new Set(),
@@ -91,13 +95,22 @@ export default function FileCodeExecutionView({
   useEffect(() => {
     if (linkedTestFiles.length > 0) {
       setSelectedTestFilePath((prev) => {
+        if (testInfo?.testFilePath) {
+          const cleanTarget = testInfo.testFilePath.replace(/\\/g, "/").toLowerCase();
+          const targetBase = cleanTarget.split("/").pop();
+          const match = linkedTestFiles.find((f) => {
+            const cleanF = (f.filePath || "").replace(/\\/g, "/").toLowerCase();
+            return cleanF === cleanTarget || cleanF.endsWith(cleanTarget) || cleanTarget.endsWith(cleanF) || cleanF.endsWith("/" + targetBase);
+          });
+          if (match) return match.filePath;
+        }
         if (prev && linkedTestFiles.some((f) => f.filePath === prev)) return prev;
         return linkedTestFiles[0].filePath;
       });
     } else {
       setSelectedTestFilePath(null);
     }
-  }, [linkedTestFiles]);
+  }, [linkedTestFiles, testInfo]);
 
   const activeTestFile = useMemo(() => {
     if (selectedTestFilePath) {
@@ -325,7 +338,44 @@ export default function FileCodeExecutionView({
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       handleSaveBothRef.current?.();
     });
+    if (initialTargetLine && Number(initialTargetLine) > 0) {
+      setTimeout(() => {
+        try {
+          editor.revealLineInCenter(Number(initialTargetLine));
+          editor.setPosition({ lineNumber: Number(initialTargetLine), column: 1 });
+          const safeEnd = targetEndLine && Number(targetEndLine) >= Number(initialTargetLine)
+            ? Number(targetEndLine)
+            : Number(initialTargetLine);
+          editor.deltaDecorations([], [
+            {
+              range: new monaco.Range(Number(initialTargetLine), 1, safeEnd, 1),
+              options: {
+                isWholeLine: true,
+                className: "monaco-test-highlight-line",
+                linesDecorationsClassName: "monaco-test-glyph-marker",
+                overviewRuler: {
+                  color: "#6366f1",
+                  position: monaco.editor.OverviewRulerLane.Full,
+                },
+              },
+            },
+          ]);
+        } catch (_) {}
+      }, 150);
+    }
   };
+
+  // Scroll to initialTargetLine in coverage view
+  useEffect(() => {
+    if (initialTargetLine && Number(initialTargetLine) > 0 && viewMode === "coverage") {
+      setTimeout(() => {
+        const el = document.getElementById(`cov-line-${initialTargetLine}`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }, 250);
+    }
+  }, [initialTargetLine, targetEndLine, viewMode]);
 
   // Global window listener: Ctrl+S saves both files regardless of which element has focus
   useEffect(() => {
@@ -801,7 +851,15 @@ export default function FileCodeExecutionView({
                 let rowBg = "transparent";
                 let borderLeft = "3px solid transparent";
 
-                if (isFailed) {
+                const isFunctionTargetLine = initialTargetLine && Number(initialTargetLine) > 0 &&
+                  lineNum >= Number(initialTargetLine) &&
+                  lineNum <= Number(targetEndLine || initialTargetLine);
+                const isFunctionStartLine = initialTargetLine && Number(initialTargetLine) === lineNum;
+
+                if (isFunctionTargetLine) {
+                  rowBg = isLight ? "rgba(99, 102, 241, 0.05)" : "rgba(99, 102, 241, 0.07)";
+                  borderLeft = isLight ? "3px solid #818cf8" : "3px solid #6366f1";
+                } else if (isFailed) {
                   rowBg = isLight ? "rgba(239, 68, 68, 0.12)" : "rgba(239, 68, 68, 0.12)";
                   borderLeft = "3px solid #ef4444";
                 } else if (isMissed) {
@@ -815,6 +873,7 @@ export default function FileCodeExecutionView({
                 return (
                   <div
                     key={lineNum}
+                    id={`cov-line-${lineNum}`}
                     style={{
                       display: "flex",
                       alignItems: "center",
@@ -825,27 +884,31 @@ export default function FileCodeExecutionView({
                     }}
                     className={isLight ? "hover:bg-slate-100" : "hover:bg-white/[0.04]"}
                     title={
-                      error
-                        ? `Error: ${error}`
-                        : reason
-                          ? reason
-                          : isCovered
-                            ? `Executed ${hits} times`
-                            : ""
+                      isFunctionTargetLine
+                        ? `Target Function: ${functionName || "Function"} (L${initialTargetLine}-${targetEndLine || initialTargetLine}) · Executed ${hits} times`
+                        : error
+                          ? `Error: ${error}`
+                          : reason
+                            ? reason
+                            : isCovered
+                              ? `Executed ${hits} times`
+                              : ""
                     }
                   >
                     {/* Line number */}
                     <span
                       style={{
                         width: 30,
-                        color: isMissed || isFailed
-                          ? (isLight ? "#dc2626" : "#f87171")
-                          : isCovered
-                            ? (isLight ? "#475569" : "#8b949e")
-                            : (isLight ? "#94a3b8" : "#484f58"),
+                        color: isFunctionTargetLine
+                          ? (isLight ? "#4f46e5" : "#a5b4fc")
+                          : isMissed || isFailed
+                            ? (isLight ? "#dc2626" : "#f87171")
+                            : isCovered
+                              ? (isLight ? "#475569" : "#8b949e")
+                              : (isLight ? "#94a3b8" : "#484f58"),
                         textAlign: "right",
                         userSelect: "none",
-                        fontWeight: isCovered || isMissed ? 600 : 400,
+                        fontWeight: isFunctionTargetLine ? 650 : isCovered || isMissed ? 600 : 400,
                         marginRight: 10,
                       }}
                     >
@@ -855,13 +918,37 @@ export default function FileCodeExecutionView({
                     {/* Separator */}
                     <span
                       style={{
-                        color: isLight ? "#cbd5e1" : "rgba(255, 255, 255, 0.12)",
+                        color: isFunctionTargetLine ? (isLight ? "#818cf8" : "#6366f1") : (isLight ? "#cbd5e1" : "rgba(255, 255, 255, 0.12)"),
                         userSelect: "none",
                         marginRight: 12,
+                        fontWeight: isFunctionTargetLine ? 650 : 400,
                       }}
                     >
                       │
                     </span>
+
+                    {/* Function Start Badge */}
+                    {isFunctionStartLine && (
+                      <span
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          fontSize: 10,
+                          fontFamily: "var(--font-mono)",
+                          fontWeight: 600,
+                          padding: "1px 6px",
+                          borderRadius: 3,
+                          background: isLight ? "rgba(99, 102, 241, 0.08)" : "rgba(99, 102, 241, 0.12)",
+                          color: isLight ? "#4338ca" : "#a5b4fc",
+                          border: isLight ? "1px solid rgba(99, 102, 241, 0.22)" : "1px solid rgba(99, 102, 241, 0.28)",
+                          marginRight: 8,
+                          flexShrink: 0,
+                        }}
+                        title={`Function: ${functionName || "Function"}`}
+                      >
+                        {functionName ? `${functionName}()` : `L${initialTargetLine}`}
+                      </span>
+                    )}
 
                     {/* Code text */}
                     <span
@@ -1001,6 +1088,9 @@ export default function FileCodeExecutionView({
       onRegisterTestSaver={handleRegisterTestSaver}
       onTestDirtyChange={handleTestDirtyChange}
       onSaveBoth={handleSaveBoth}
+      targetTestTitle={testInfo?.testTitle}
+      targetTestLine={testInfo?.testLine}
+      targetFunction={functionName}
     />
   );
 

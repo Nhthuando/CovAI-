@@ -546,26 +546,28 @@ export default function UnitTestExecutionProcess({
           </button>
 
           <button
-            onClick={() => onRunTests && onRunTests()}
-            disabled={running}
+            onClick={() => onRunTests && onRunTests({ restart: !!running })}
             style={{
               fontSize: 12.5,
               fontWeight: 700,
               padding: "7px 16px",
               borderRadius: 8,
-              cursor: running ? "not-allowed" : "pointer",
-              background: "#4f46e5",
+              cursor: "pointer",
+              background: running ? "#6366f1" : "#4f46e5",
               color: "#ffffff",
-              border: "1px solid #4338ca",
+              border: running ? "1px solid #4f46e5" : "1px solid #4338ca",
               display: "flex",
               alignItems: "center",
               gap: 6,
-              boxShadow: "0 1px 2px rgba(79, 70, 229, 0.2)",
+              boxShadow: running
+                ? "0 0 10px rgba(99, 102, 241, 0.4), 0 1px 2px rgba(79, 70, 229, 0.2)"
+                : "0 1px 2px rgba(79, 70, 229, 0.2)",
               transition: "all 0.15s ease",
             }}
+            title={running ? "Process is running. Click to restart test execution." : "Run unit tests and collect coverage."}
           >
-            {running ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} fill="#ffffff" />}
-            <span>{running ? "Running..." : "Run Unit Tests"}</span>
+            {running ? <RotateCcw size={13} className="animate-spin" /> : <Play size={13} fill="#ffffff" />}
+            <span>{running ? "Re-run Unit Tests" : "Run Unit Tests"}</span>
           </button>
         </div>
       </div>
@@ -1082,7 +1084,7 @@ export default function UnitTestExecutionProcess({
 
                   return (
                     <div
-                      key={suite.filePath || idx}
+                      key={suite.id || `${suite.filePath || 'suite'}-${idx}`}
                       style={{
                         border: isLight ? "1px solid #e2e8f0" : "1px solid #21262d",
                         borderRadius: 8,

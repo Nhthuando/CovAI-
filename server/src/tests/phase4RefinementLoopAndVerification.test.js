@@ -35,7 +35,8 @@ const mockPrisma = {
     aiTest: {
         findFirst: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockResolvedValue({ id: "ai-1" })
-    }
+    },
+    $transaction: jest.fn(async (cb) => (typeof cb === "function" ? cb(mockPrisma) : cb))
 };
 
 await jest.unstable_mockModule("../config/prisma.js", () => ({

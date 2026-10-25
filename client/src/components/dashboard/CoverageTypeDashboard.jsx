@@ -70,6 +70,7 @@ import { useRunningProcess } from "../../contexts/RunningProcessContext.jsx";
 import UnitTestGuidedWorkflow from "./UnitTestGuidedWorkflow.jsx";
 import UnitTestTraceabilityMatrix from "./UnitTestTraceabilityMatrix.jsx";
 import DiffReviewModal from "./DiffReviewModal.jsx";
+import InPlaceCoverageFileModal from "./InPlaceCoverageFileModal.jsx";
 
 const CONFIG = {
   unit: {
@@ -141,13 +142,27 @@ const apiFile = (file) =>
   /(^|\/)(api|routes?|controllers?|services?|endpoints?)(\/|\.|$)/i.test(
     file.filePath,
   );
-const isTestFile = (filePath) => {
+export const isTestFile = (filePath) => {
   if (!filePath) return false;
   const normalized = filePath.replace(/\\/g, "/").toLowerCase();
-  return (
-    /(^|\/)(tests?|__tests__|spec|cypress|e2e)\//i.test(normalized) ||
-    /\.(test|spec)\.[a-z0-9]+$/i.test(normalized)
-  );
+  const rawBase = filePath.split(/[/\\]/).pop();
+
+  // 1. Test directory pattern
+  if (
+    /(^|\/)(?:tests?|__tests__|specs?|__specs__|e2e|cypress|playwright|step-definitions?|step_definitions|fixtures?|mocks?|__mocks__|test[-_]data|test[-_]utils?|testing|test[-_]helpers?|(?:[a-z0-9_-]+[-_])?tests?)(?:\/|$)/i.test(normalized)
+  ) return true;
+
+  // 2. Token-separated test file name (e.g. test-api.ts, api-test.ts, test.ts, auth.test.js, test_runner.js)
+  if (/(?:^|[._-])(?:tests?|specs?|testcase|steps?)(?:[._-]|$)/i.test(rawBase)) {
+    return true;
+  }
+
+  // 3. CamelCase / PascalCase test file names (e.g. testApi.ts, apiTest.ts, calculationServiceTest.ts)
+  if (/^tests?[A-Z]/.test(rawBase) || /[a-z0-9](?:Tests?|Specs?)\.[a-z0-9]+$/.test(rawBase)) {
+    return true;
+  }
+
+  return false;
 };
 const isFrontendFile = (filePath) => {
   if (!filePath) return false;
@@ -176,12 +191,54 @@ export const cleanDisplayPath = (fullPath = "") => {
   const storageMatch = normalized.match(/(?:^|\/)storage\/projects\/[^/]+(?:\/[^/]+)*?\/(.+)$/i);
   if (storageMatch) return storageMatch[1].replace(/^\/+/, "");
 
-  const uploadMatch = normalized.match(/(?:^|\/)uploads\/snapshots\/[^/]+(?:\/[^/]+)*?\/(.+)$/i);
+  const uploadProjMatch = normalized.match(/(?:^|\/)uploads\/snapshots\/[^/]+\/[^/]+\/(.+)$/i);
+  if (uploadProjMatch) return uploadProjMatch[1].replace(/^\/+/, "");
+
+  const uploadMatch = normalized.match(/(?:^|\/)uploads\/snapshots\/[^/]+\/(.+)$/i);
   if (uploadMatch) return uploadMatch[1].replace(/^\/+/, "");
 
+  // Strip leading project name prefix if it wraps standard package directories (e.g. "Online-Food-Ordering-System/server/...")
+  const projPrefixMatch = normalized.match(/^[^/]+(?:\/)(server|client|src|tests?|__tests__|packages|apps|lib|dist)\/(.+)$/i);
+  if (projPrefixMatch) {
+    return `${projPrefixMatch[1]}/${projPrefixMatch[2]}`;
+  }
+
   normalized = normalized.replace(/^[a-zA-Z]:\//, "");
-  normalized = normalized.replace(/^\/app\/storage\/?/i, "");
+  normalized = normalized.replace(/^\/app\/(?:storage|uploads)\/?/i, "");
   return normalized.replace(/^\/+/, "");
+};
+
+const isBusinessLogicClientFile = (filePath) => {
+  if (!filePath) return false;
+  const cleanP = cleanDisplayPath(filePath);
+  if (!cleanP) return false;
+  const normalized = cleanP.toLowerCase();
+  const rawBase = cleanP.split("/").pop();
+  const base = rawBase.toLowerCase();
+
+  // 1. Must be .js, .ts, .mjs, .cjs
+  if (!/\.[cm]?[jt]s$/i.test(normalized)) return false;
+
+  if (isTestFile(normalized)) return false;
+  if (/(^|\/)(node_modules|coverage|dist|build|out|\.next|\.nuxt|\.turbo|\.git|\.cache|\.covai-temp|\.covai_journal)\//i.test(normalized)) return false;
+  if (/(?:^|\/)storage\/projects\//i.test(normalized) || /(?:^|\/)server\/storage\//i.test(normalized)) return false;
+  if (/(^|\/)(examples?|demos?|samples?)\//i.test(normalized)) return false;
+  if (normalized.includes(".config.") || base.includes("config")) return false;
+  if (/\.d\.ts$/i.test(normalized) || /(^|\/)(types?|interfaces?)\.[cm]?[jt]s$/i.test(normalized) || /\.types\.[cm]?[jt]s$/i.test(normalized) || /(^|\/)types\//i.test(normalized)) return false;
+  if (
+    /(^|\/)presets\/tier[0-9]+[a-z0-9_-]*\.[cm]?[jt]s$/i.test(normalized) ||
+    /(^|\/)presets\/(data|catalogs?|fixtures?|definitions?)\//i.test(normalized)
+  ) return false;
+  if (/(^|\/)(client|frontend|components|views|pages|hooks|context|contexts|i18n|locales?|translations?)\//i.test(normalized)) return false;
+  if (/\.[jt]sx$/i.test(normalized) || /^use[A-Z]/.test(rawBase)) return false;
+  if (
+    /(^|\/)(routes?|endpoints?)(\/|\.|$)/i.test(normalized) ||
+    /\.(route|routes)\.[cm]?[jt]sx?$/i.test(normalized) ||
+    /(^|\/)(app|server)\.[cm]?[jt]sx?$/i.test(normalized) ||
+    /^(?:[a-z0-9_-]+\/)?(?:src\/)?(index|main)\.[cm]?[jt]sx?$/i.test(normalized.replace(/^\.?\//, ""))
+  ) return false;
+
+  return true;
 };
 
 export const sanitizeErrorText = (text = "") => {
@@ -451,8 +508,8 @@ async function waitForJob(jobId, onProgress) {
     if (["FAILED", "CANCELED"].includes(job?.status)) {
       throw new Error(
         job?.errorMessage ||
-          job?.error ||
-          `${job.status}: coverage analysis failed.`,
+        job?.error ||
+        `${job.status}: coverage analysis failed.`,
       );
     }
 
@@ -499,24 +556,24 @@ export default function CoverageTypeDashboard({
 
   const summary = type === "system" && systemSummary
     ? {
-        coverage: {
-          statements: 0,
-          branches: 0,
-          functions: 0,
-          lines: systemSummary.featureCoverage || 0,
-        },
-        rawTotals: null,
-        ...systemSummary,
-      }
+      coverage: {
+        statements: 0,
+        branches: 0,
+        functions: 0,
+        lines: systemSummary.featureCoverage || 0,
+      },
+      rawTotals: null,
+      ...systemSummary,
+    }
     : (coverageData?.summary || null);
   const files = (type === "system" && systemSummary?.files?.length)
     ? systemSummary.files
     : (coverageData?.files || []);
   const executions = (type === "system" && systemSummary?.latestRun)
     ? {
-        playwright: systemSummary.latestRun.type === "PLAYWRIGHT" ? systemSummary.latestRun : null,
-        cypress: systemSummary.latestRun.type === "CYPRESS" ? systemSummary.latestRun : null,
-      }
+      playwright: systemSummary.latestRun.type === "PLAYWRIGHT" ? systemSummary.latestRun : null,
+      cypress: systemSummary.latestRun.type === "CYPRESS" ? systemSummary.latestRun : null,
+    }
     : (coverageData?.executions || {});
   const frameworks = coverageData?.frameworks || null;
   const functionsList = coverageData?.functionsList || [];
@@ -715,6 +772,23 @@ export default function CoverageTypeDashboard({
   const [loadingFlow, setLoadingFlow] = useState(false);
   const [showCfgModal, setShowCfgModal] = useState(false);
   const [cfgModalContext, setCfgModalContext] = useState(null);
+
+  // In-place file viewer state to view source and test files directly inside Unit Test without redirecting
+  const [inPlaceOpenFileTarget, setInPlaceOpenFileTarget] = useState(null);
+
+  const handleOpenFileInPlace = useCallback(
+    (filePath, targetLine = null, functionName = null, endLine = null, testInfo = null) => {
+      if (!filePath) return;
+      setInPlaceOpenFileTarget({
+        filePath,
+        targetLine: targetLine ? Number(targetLine) : null,
+        functionName: functionName || null,
+        endLine: endLine ? Number(endLine) : null,
+        testInfo: testInfo || null,
+      });
+    },
+    [],
+  );
 
   // Multi-accordion state: Set of expanded filePaths (supports opening File A, File B, File C simultaneously)
   const [expandedFiles, setExpandedFiles] = useState(new Set());
@@ -1000,7 +1074,7 @@ export default function CoverageTypeDashboard({
               completeAnalysis("✓ Full project unit test analysis completed! All metrics updated.");
               invalidateCoverageQueries(snapshotId);
               await refetchCoverage();
-            } catch (_) {}
+            } catch (_) { }
           })();
         }
 
@@ -1154,7 +1228,7 @@ export default function CoverageTypeDashboard({
               completeAnalysis("✓ Full project unit test analysis completed! All metrics updated.");
               invalidateCoverageQueries(snapshotId);
               await refetchCoverage();
-            } catch (_) {}
+            } catch (_) { }
           })();
         }
 
@@ -1263,7 +1337,14 @@ export default function CoverageTypeDashboard({
     const list = [];
     Object.entries(inlineSuggestions).forEach(([fPath, sugs]) => {
       (sugs || []).forEach((s) => {
-        if (s.status !== "REJECTED" && s.status !== "PASSED" && s.status !== "APPLIED") {
+        if (
+          s.status !== "REJECTED" &&
+          s.status !== "PASSED" &&
+          s.status !== "APPLIED" &&
+          s.status !== "FULLY_COVERED" &&
+          !s.isFullyCovered &&
+          Boolean(s.suggestedTestCode || s.generatedCode || s.fullUpdatedContent)
+        ) {
           list.push({ ...s, sourceFile: s.sourceFile || fPath });
         }
       });
@@ -1273,9 +1354,29 @@ export default function CoverageTypeDashboard({
 
   const filesWithPendingSuggestions = useMemo(() => {
     const set = new Set();
-    allPendingSuggestions.forEach((s) => set.add(s.sourceFile || s.filePath));
+    allPendingSuggestions.forEach((s) => {
+      const src = s.sourceFile || s.filePath;
+      if (src) set.add(src);
+    });
     return Array.from(set);
   }, [allPendingSuggestions]);
+
+  // All suggestions with diff content (both pending and applied/passed) for persistent diff review
+  const allReviewSuggestions = useMemo(() => {
+    if (type !== "unit") return [];
+    const list = [];
+    Object.entries(inlineSuggestions).forEach(([fPath, sugs]) => {
+      (sugs || []).forEach((s) => {
+        if (
+          s.status !== "REJECTED" &&
+          Boolean(s.suggestedTestCode || s.generatedCode || s.fullUpdatedContent)
+        ) {
+          list.push({ ...s, sourceFile: s.sourceFile || fPath });
+        }
+      });
+    });
+    return list;
+  }, [inlineSuggestions, type]);
 
   // Diff Review Modal state & data mapping for Unit Test Workflow (Step 3)
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
@@ -1285,10 +1386,14 @@ export default function CoverageTypeDashboard({
     if (type !== "unit") return [];
     const fileMap = new Map();
 
-    allPendingSuggestions.forEach((sug) => {
+    // Prioritize pending suggestions if available, otherwise preserve applied suggestions for diff review
+    const targetList = allPendingSuggestions.length > 0 ? allPendingSuggestions : allReviewSuggestions;
+
+    targetList.forEach((sug) => {
       const fPath = sug.sourceFile || sug.filePath;
       if (!fPath) return;
       const testFile = sug.testFile || sug.targetTestFile || fPath.replace(/\.[cm]?[jt]sx?$/, ".test.js");
+      const isApplied = sug.status === "PASSED" || sug.status === "APPLIED" || sug.applied === true;
       if (!fileMap.has(fPath)) {
         fileMap.set(fPath, {
           fileName: cleanDisplayPath(testFile || fPath),
@@ -1298,12 +1403,13 @@ export default function CoverageTypeDashboard({
           fullUpdatedContent: sug.fullUpdatedContent || sug.suggestedTestCode || sug.generatedCode || "",
           suggestedTestCode: sug.suggestedTestCode || sug.generatedCode || "",
           framework: sug.framework || "jest",
-          applied: sug.status === "PASSED" || sug.status === "APPLIED",
+          applied: isApplied,
           suggestions: [sug],
         });
       } else {
         const existing = fileMap.get(fPath);
         existing.suggestions.push(sug);
+        if (isApplied) existing.applied = true;
         if (sug.fullUpdatedContent) {
           existing.fullUpdatedContent = sug.fullUpdatedContent;
         } else if (sug.suggestedTestCode && !existing.fullUpdatedContent.includes(sug.suggestedTestCode)) {
@@ -1313,7 +1419,7 @@ export default function CoverageTypeDashboard({
     });
 
     return Array.from(fileMap.values());
-  }, [allPendingSuggestions, type]);
+  }, [allPendingSuggestions, allReviewSuggestions, type]);
 
   const openReviewForFile = useCallback((fPath) => {
     if (!fPath) {
@@ -1369,7 +1475,11 @@ export default function CoverageTypeDashboard({
     try {
       for (let i = 0; i < totalFiles; i++) {
         const fPath = filesWithPendingSuggestions[i];
-        const fileSugs = allPendingSuggestions.filter((s) => (s.sourceFile || s.filePath) === fPath);
+        const cleanTarget = cleanDisplayPath(fPath);
+        const fileSugs = allPendingSuggestions.filter((s) => {
+          const sPath = s.sourceFile || s.filePath;
+          return sPath === fPath || cleanDisplayPath(sPath) === cleanTarget;
+        });
         if (!fileSugs || fileSugs.length === 0) continue;
 
         completedCount++;
@@ -1509,7 +1619,7 @@ export default function CoverageTypeDashboard({
             completeAnalysis("✓ Full project unit test analysis completed! All metrics updated.");
             invalidateCoverageQueries(snapshotId);
             await refetchCoverage();
-          } catch (_) {}
+          } catch (_) { }
         })();
       }
 
@@ -1633,8 +1743,9 @@ export default function CoverageTypeDashboard({
       return res?.data;
     }
   }, [snapshotId, type, loadSystemSummary, refetchCoverage]);
-  const run = async () => {
-    if (!snapshotId || (running && activeJobIdRef.current)) return;
+  const run = async (options = {}) => {
+    if (!snapshotId) return;
+    activeJobIdRef.current = null;
     setRunning(true);
     setRunProgress(8);
     const initialStep = type === "system"
@@ -1779,15 +1890,7 @@ export default function CoverageTypeDashboard({
   const selectedFiles = useMemo(() => {
     let nonTestFiles = files.filter((f) => !isTestFile(f.filePath));
     if (type === "unit") {
-      nonTestFiles = nonTestFiles.filter((f) => {
-        if (isFrontendFile(f.filePath)) return false;
-        const norm = (f.filePath || "").replace(/\\/g, "/").toLowerCase();
-        const isRouteOrEntry = /(^|\/)(routes?|endpoints?)(\/|\.|$)/i.test(norm) ||
-          /\.(route|routes)\.[cm]?[jt]sx?$/i.test(norm) ||
-          /(^|\/)(app|server)\.[cm]?[jt]sx?$/i.test(norm) ||
-          /^(src\/)?(index|main)\.[cm]?[jt]sx?$/i.test(norm.replace(/^\.?\//, ""));
-        return !isRouteOrEntry;
-      });
+      nonTestFiles = nonTestFiles.filter((f) => isBusinessLogicClientFile(f.filePath));
     }
     return type === "integration" ? nonTestFiles.filter(apiFile) : nonTestFiles;
   }, [files, type]);
@@ -1949,22 +2052,6 @@ export default function CoverageTypeDashboard({
         initialMessage: startMsg,
       });
 
-      // Also notify external suggest handler if available (e.g. AIPanel in Layout)
-      if (onSuggestTestcase) {
-        try {
-          onSuggestTestcase(null, {
-            isBulk: true,
-            snapshotId,
-            projectId,
-            uncoveredFiles: needImprovementFiles.map((f) => f.filePath),
-            allSuitesSummary: {
-              total: files.length,
-              passed100Files: files.filter((f) => (f.linesPct >= 100 || f.linesPct == null) && (f.branchesPct >= 100 || f.branchesPct == null)),
-              needImprovementFiles,
-            },
-          });
-        } catch (_) {}
-      }
 
       // Expand only the first file to give an immediate preview without lagging the DOM with 200 editors
       if (needImprovementFiles.length > 0) {
@@ -2042,7 +2129,7 @@ export default function CoverageTypeDashboard({
 
   const avg = selectedFiles.length
     ? selectedFiles.reduce((sum, file) => sum + (file.linesPct || 0), 0) /
-      selectedFiles.length
+    selectedFiles.length
     : 0;
 
   const hasSystemTests = useMemo(() => {
@@ -2101,7 +2188,7 @@ export default function CoverageTypeDashboard({
                 ? "N/A (Black-box E2E)"
                 : "N/A",
           ]
-        : [totals.total, totals.passed, totals.failed, pct(linePct || cov.lines)];
+          : [totals.total, totals.passed, totals.failed, pct(linePct || cov.lines)];
 
   return (
     <div
@@ -2184,8 +2271,8 @@ export default function CoverageTypeDashboard({
             </>
           )}
         </div>
-        <div style={{ display: "flex", gap: 9, alignItems: "center",flexWrap:'wrap',flex:'0 1 auto',minWidth:0,maxWidth:'100%' }}>
-          {type === "system" && <span style={{color:'#8b949e',fontSize:12,padding:'7px 10px',border:'1px solid #30363d',borderRadius:6}}>Full system · Real API & database</span>}
+        <div style={{ display: "flex", gap: 9, alignItems: "center", flexWrap: 'wrap', flex: '0 1 auto', minWidth: 0, maxWidth: '100%' }}>
+          {type === "system" && <span style={{ color: '#8b949e', fontSize: 12, padding: '7px 10px', border: '1px solid #30363d', borderRadius: 6 }}>Full system · Real API & database</span>}
           {projectId && type !== "unit" && (
             <button
               onClick={() => setShowJobQueueModal(true)}
@@ -2374,7 +2461,8 @@ export default function CoverageTypeDashboard({
       {/* ── Guided Sequential Workflow Stepper (Unit Test Mode) ── */}
       {type === "unit" && (
         <UnitTestGuidedWorkflow
-          running={running && Boolean(activeJobIdRef.current)}
+          snapshotId={snapshotId}
+          running={running}
           runProgress={runProgress}
           runningStatus={runningStatus}
           runStep={runStep}
@@ -2389,12 +2477,16 @@ export default function CoverageTypeDashboard({
           bulkApplyStep={bulkApplyStep}
           summary={summary}
           rawTotals={rawTotals}
+          executions={executions}
+          testTotals={totals}
+          hasExecuted={relevantRuns.length > 0 || totals.total > 0}
           isLatestRunFailed={isLatestRunFailed}
           hasPartialFailures={hasPartialFailures}
           onRefresh={load}
           isRefreshing={isCoverageQueryFetching}
           onOpenJobQueue={() => setShowJobQueueModal(true)}
           onOpenReviewModal={() => openReviewForFile(null)}
+          hasReviewableDiffs={reviewFiles.length > 0}
           activeTab={activeMetricView}
           onChangeTab={(tabId) => setActiveMetricView(tabId)}
           isLight={isLight}
@@ -2915,65 +3007,65 @@ export default function CoverageTypeDashboard({
               {[
                 ...(type === "unit"
                   ? [
-                      {
-                        id: "traceability",
-                        label: "Logic & Test Traceability",
-                        count: `${functionsList.length} fns`,
-                        icon: Target,
-                        accent: isLight ? "#4f46e5" : "#a5b4fc",
-                      },
-                      {
-                        id: "testcases",
-                        label: "Test Suites & Specs",
-                        count: `${unitTestSuites.length} files`,
-                        icon: FileCheck,
-                        accent: isLight ? "#6d5dfb" : "#8b7cfd",
-                      },
-                      {
-                        id: "visualization",
-                        label: "Execution Terminal & Logs",
-                        count: "Logs & Pipeline",
-                        icon: Terminal,
-                        accent: isLight ? "#0f172a" : "#38bdf8",
-                      },
-                    ]
+                    {
+                      id: "traceability",
+                      label: "Logic & Test Traceability",
+                      count: `${functionsList.length} fns`,
+                      icon: Target,
+                      accent: isLight ? "#4f46e5" : "#a5b4fc",
+                    },
+                    {
+                      id: "testcases",
+                      label: "Test Suites & Specs",
+                      count: `${unitTestSuites.length} files`,
+                      icon: FileCheck,
+                      accent: isLight ? "#6d5dfb" : "#8b7cfd",
+                    },
+                    {
+                      id: "visualization",
+                      label: "Execution Terminal & Logs",
+                      count: "Logs & Pipeline",
+                      icon: Terminal,
+                      accent: isLight ? "#0f172a" : "#38bdf8",
+                    },
+                  ]
                   : [
-                      {
-                        id: "testcases",
-                        label: "Test Files",
-                        count: unitTestSuites.length,
-                        icon: null,
-                        accent: isLight ? "#6d5dfb" : "#8b7cfd",
-                      },
-                      {
-                        id: "all",
-                        label: "Source file coverage",
-                        count: selectedFiles.length,
-                        icon: ListChecks,
-                        accent: isLight ? "#2563eb" : "#60a5fa",
-                      },
-                      {
-                        id: "statements",
-                        label: "Statement coverage",
-                        count: pct(statPct),
-                        icon: FileCode,
-                        accent: isLight ? "#6366f1" : "#a78bfa",
-                      },
-                      {
-                        id: "branches",
-                        label: "Branch coverage",
-                        count: pct(branchPct),
-                        icon: GitBranch,
-                        accent: isLight ? "#d97706" : "#fbbf24",
-                      },
-                      {
-                        id: "functions",
-                        label: "Function coverage",
-                        count: pct(funcPct),
-                        icon: Cpu,
-                        accent: isLight ? "#0284c7" : "#38bdf8",
-                      },
-                    ]),
+                    {
+                      id: "testcases",
+                      label: "Test Files",
+                      count: unitTestSuites.length,
+                      icon: null,
+                      accent: isLight ? "#6d5dfb" : "#8b7cfd",
+                    },
+                    {
+                      id: "all",
+                      label: "Source file coverage",
+                      count: selectedFiles.length,
+                      icon: ListChecks,
+                      accent: isLight ? "#2563eb" : "#60a5fa",
+                    },
+                    {
+                      id: "statements",
+                      label: "Statement coverage",
+                      count: pct(statPct),
+                      icon: FileCode,
+                      accent: isLight ? "#6366f1" : "#a78bfa",
+                    },
+                    {
+                      id: "branches",
+                      label: "Branch coverage",
+                      count: pct(branchPct),
+                      icon: GitBranch,
+                      accent: isLight ? "#d97706" : "#fbbf24",
+                    },
+                    {
+                      id: "functions",
+                      label: "Function coverage",
+                      count: pct(funcPct),
+                      icon: Cpu,
+                      accent: isLight ? "#0284c7" : "#38bdf8",
+                    },
+                  ]),
               ].map((tab) => {
                 const isCurrent = activeMetricView === tab.id;
                 const TabIcon = tab.icon;
@@ -3272,12 +3364,22 @@ export default function CoverageTypeDashboard({
           {type === "unit" && activeMetricView === "traceability" ? (
             <div style={{ marginTop: 14 }}>
               <UnitTestTraceabilityMatrix
+                snapshotId={snapshotId}
+                projectId={projectId}
                 sourceFiles={selectedFiles}
                 testSuites={unitTestSuites}
                 functionsList={functionsList}
                 summary={summary}
                 rawTotals={rawTotals}
-                onOpenFile={onOpenFile}
+                onOpenFile={handleOpenFileInPlace}
+                onOpenCFG={(filePath, funcName, line) => {
+                  if (onOpenCFG) {
+                    onOpenCFG(filePath, funcName, line);
+                  } else {
+                    setCfgModalContext({ file: filePath, func: funcName, line });
+                    setShowCfgModal(true);
+                  }
+                }}
                 onSuggestTestcase={handleSuggestTestcaseInline}
                 inlineSuggestions={inlineSuggestions}
                 loadingSuggestions={loadingSuggestions}
@@ -3298,7 +3400,7 @@ export default function CoverageTypeDashboard({
                 snapshotId={snapshotId}
                 projectId={projectId}
                 isLight={isLight}
-                onOpenFile={onOpenFile}
+                onOpenFile={handleOpenFileInPlace}
                 onRunTests={run}
                 running={running}
                 runProgress={runProgress}
@@ -3414,470 +3516,476 @@ export default function CoverageTypeDashboard({
               ) : (
                 <div>
                   <div style={{ overflowX: "auto" }}>
-                  {/* Table Header */}
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns:
-                        "48px minmax(280px, 3.5fr) 100px 100px 85px 105px 105px",
-                      gap: 10,
-                      minWidth: 840,
-                      padding: "10px 18px",
-                      background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)",
-                      borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.05)",
-                      fontSize: 11,
-                      fontWeight: 650,
-                      color: isLight ? "#475569" : "#8b949e",
-                      textTransform: "uppercase",
-                      letterSpacing: "0.04em",
-                    }}
-                  >
-                    <span style={{ textAlign: "center" }}>#</span>
-                    <span>File Testcase</span>
-                    <span style={{ textAlign: "center" }}>Framework</span>
-                    <span style={{ textAlign: "right" }}>Test Cases</span>
-                    <span style={{ textAlign: "right" }}>Duration</span>
-                    <span style={{ textAlign: "center" }}>Status</span>
-                    <span style={{ textAlign: "center" }}>Actions</span>
-                  </div>
+                    {/* Table Header */}
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns:
+                          "48px minmax(280px, 3.5fr) 100px 100px 85px 105px 105px",
+                        gap: 10,
+                        minWidth: 840,
+                        padding: "10px 18px",
+                        background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)",
+                        borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.05)",
+                        fontSize: 11,
+                        fontWeight: 650,
+                        color: isLight ? "#475569" : "#8b949e",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.04em",
+                      }}
+                    >
+                      <span style={{ textAlign: "center" }}>#</span>
+                      <span>File Testcase</span>
+                      <span style={{ textAlign: "center" }}>Framework</span>
+                      <span style={{ textAlign: "right" }}>Test Cases</span>
+                      <span style={{ textAlign: "right" }}>Duration</span>
+                      <span style={{ textAlign: "center" }}>Status</span>
+                      <span style={{ textAlign: "center" }}>Actions</span>
+                    </div>
 
-                  {/* Rows */}
-                  {paginatedTestSuites.map((suite, idx) => {
-                    const isPassed =
-                      suite.status === "passed" && suite.failedTests === 0;
-                    const isExpanded = expandedSuite === suite.filePath;
+                    {/* Rows */}
+                    {paginatedTestSuites.map((suite, idx) => {
+                      const isPassed =
+                        suite.status === "passed" && suite.failedTests === 0;
+                      const isExpanded = expandedSuite === suite.filePath;
 
-                    return (
-                      <div key={suite.filePath}>
-                        <div
-                          style={{
-                            display: "grid",
-                            gridTemplateColumns:
-                              "48px minmax(280px, 3.5fr) 100px 100px 85px 105px 105px",
-                            gap: 10,
-                            minWidth: 840,
-                            padding: "12px 18px",
-                            alignItems: "center",
-                            borderBottom: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255,255,255,.04)",
-                            transition: "background 0.15s ease",
-                            background: isExpanded
-                              ? (isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.03)")
-                              : "transparent",
-                          }}
-                          className={isLight ? "hover:bg-slate-50/80" : "hover:bg-white/[0.02]"}
-                        >
-                          {/* File Index */}
-                          <div style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
-                            <span
-                              style={{
-                                fontSize: 11,
-                                fontWeight: 700,
-                                fontFamily: "var(--font-mono, monospace)",
-                                color: isLight ? "#64748b" : "#94a3b8",
-                                background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.05)",
-                                border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
-                                borderRadius: 6,
-                                padding: "2px 6px",
-                                minWidth: 26,
-                                textAlign: "center",
-                              }}
-                            >
-                              {(testSuitePage - 1) * TEST_SUITES_PER_PAGE + idx + 1}
-                            </span>
-                          </div>
-
-                          {/* File path */}
+                      return (
+                        <div key={suite.id || `${suite.filePath || 'suite'}-${idx}`}>
                           <div
-                            onClick={() => onOpenFile?.(suite.filePath)}
                             style={{
-                              cursor: "pointer",
-                              display: "flex",
+                              display: "grid",
+                              gridTemplateColumns:
+                                "48px minmax(280px, 3.5fr) 100px 100px 85px 105px 105px",
+                              gap: 10,
+                              minWidth: 840,
+                              padding: "12px 18px",
                               alignItems: "center",
-                              gap: 6,
-                              overflow: "hidden",
+                              borderBottom: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255,255,255,.04)",
+                              transition: "background 0.15s ease",
+                              background: isExpanded
+                                ? (isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.03)")
+                                : "transparent",
                             }}
-                            title={`Open test file ${suite.filePath}`}
+                            className={isLight ? "hover:bg-slate-50/80" : "hover:bg-white/[0.02]"}
                           >
-                            {(() => {
-                              const cleaned = cleanDisplayPath(suite.filePath);
-                              const parts = cleaned.split("/");
-                              if (parts.length <= 1) {
+                            {/* File Index */}
+                            <div style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
+                              <span
+                                style={{
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  fontFamily: "var(--font-mono, monospace)",
+                                  color: isLight ? "#64748b" : "#94a3b8",
+                                  background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.05)",
+                                  border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
+                                  borderRadius: 6,
+                                  padding: "2px 6px",
+                                  minWidth: 26,
+                                  textAlign: "center",
+                                }}
+                              >
+                                {(testSuitePage - 1) * TEST_SUITES_PER_PAGE + idx + 1}
+                              </span>
+                            </div>
+
+                            {/* File path */}
+                            <div
+                              onClick={() => handleOpenFileInPlace(suite.filePath)}
+                              style={{
+                                cursor: "pointer",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 6,
+                                overflow: "hidden",
+                              }}
+                              title={`Open test file ${suite.filePath}`}
+                            >
+                              {(() => {
+                                const cleaned = cleanDisplayPath(suite.filePath);
+                                const parts = cleaned.split("/");
+                                if (parts.length <= 1) {
+                                  return (
+                                    <span
+                                      style={{
+                                        overflow: "hidden",
+                                        textOverflow: "ellipsis",
+                                        whiteSpace: "nowrap",
+                                        color: isLight ? "#0f172a" : "#e6edf3",
+                                        fontSize: 13,
+                                        fontWeight: 600,
+                                        fontFamily: "var(--font-mono)",
+                                      }}
+                                    >
+                                      {cleaned}
+                                    </span>
+                                  );
+                                }
+                                const dir = parts.slice(0, -1).join(" / ");
+                                const file = parts[parts.length - 1];
                                 return (
                                   <span
                                     style={{
                                       overflow: "hidden",
                                       textOverflow: "ellipsis",
                                       whiteSpace: "nowrap",
-                                      color: isLight ? "#0f172a" : "#e6edf3",
                                       fontSize: 13,
-                                      fontWeight: 600,
                                       fontFamily: "var(--font-mono)",
                                     }}
+                                    title={cleaned}
                                   >
-                                    {cleaned}
+                                    <span style={{ color: isLight ? "#64748b" : "#8b949e", marginRight: 5 }}>{dir} /</span>
+                                    <span style={{ color: isLight ? "#0f172a" : "#e6edf3", fontWeight: 600 }}>{file}</span>
                                   </span>
                                 );
-                              }
-                              const dir = parts.slice(0, -1).join(" / ");
-                              const file = parts[parts.length - 1];
-                              return (
-                                <span
-                                  style={{
-                                    overflow: "hidden",
-                                    textOverflow: "ellipsis",
-                                    whiteSpace: "nowrap",
-                                    fontSize: 13,
-                                    fontFamily: "var(--font-mono)",
-                                  }}
-                                  title={cleaned}
-                                >
-                                  <span style={{ color: isLight ? "#64748b" : "#8b949e", marginRight: 5 }}>{dir} /</span>
-                                  <span style={{ color: isLight ? "#0f172a" : "#e6edf3", fontWeight: 600 }}>{file}</span>
-                                </span>
-                              );
-                            })()}
-                          </div>
+                              })()}
+                            </div>
 
-                          {/* Framework Badge */}
-                          <div
-                            style={{
-                              display: "flex",
-                              justifyContent: "center",
-                            }}
-                          >
-                            <span
+                            {/* Framework Badge */}
+                            <div
                               style={{
-                                fontSize: 11,
-                                fontWeight: 700,
-                                padding: "2px 8px",
-                                borderRadius: 4,
-                                background:
-                                  suite.framework === "vitest"
-                                    ? (isLight ? "#f0fdf4" : "rgba(56, 189, 248, 0.15)")
-                                    : (isLight ? "#fff1f2" : "rgba(192, 132, 252, 0.15)"),
-                                color:
-                                  suite.framework === "vitest"
-                                    ? (isLight ? "#15803d" : "#38bdf8")
-                                    : (isLight ? "#be123c" : "#c084fc"),
-                                border:
-                                  suite.framework === "vitest"
-                                    ? (isLight ? "1px solid #bbf7d0" : "1px solid rgba(56, 189, 248, 0.35)")
-                                    : (isLight ? "1px solid #fecdd3" : "1px solid rgba(192, 132, 252, 0.35)"),
-                                textTransform: "uppercase",
+                                display: "flex",
+                                justifyContent: "center",
                               }}
                             >
-                              {suite.framework}
-                            </span>
-                          </div>
-
-                          {/* Test Cases Count */}
-                          <div
-                            style={{
-                              textAlign: "right",
-                              fontSize: 12,
-                              fontFamily: "var(--font-mono)",
-                            }}
-                          >
-                            <span style={{ color: isLight ? "#16a34a" : "#4ade80", fontWeight: 600 }}>
-                              ✓ {suite.passedTests || 0}
-                            </span>
-                            {suite.failedTests > 0 && (
                               <span
                                 style={{
-                                  color: isLight ? "#dc2626" : "#f87171",
-                                  fontWeight: 600,
-                                  marginLeft: 6,
-                                }}
-                              >
-                                × {suite.failedTests}
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Duration */}
-                          <div
-                            style={{
-                              textAlign: "right",
-                              fontSize: 12,
-                              color: isLight ? "#64748b" : "#8b949e",
-                              fontFamily: "var(--font-mono)",
-                            }}
-                          >
-                            {suite.durationMs ? `${suite.durationMs}ms` : "—"}
-                          </div>
-
-                          {/* Status */}
-                          <div
-                            style={{
-                              display: "flex",
-                              justifyContent: "center",
-                            }}
-                          >
-                            <span
-                              style={{
-                                fontSize: 11,
-                                fontWeight: 700,
-                                padding: "2px 8px",
-                                borderRadius: 4,
-                                background: isPassed
-                                  ? (isLight ? "#f0fdf4" : "rgba(34, 197, 94, 0.15)")
-                                  : suite.status === "pending"
-                                    ? (isLight ? "#fefce8" : "rgba(234, 179, 8, 0.15)")
-                                    : (isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.15)"),
-                                color: isPassed
-                                  ? (isLight ? "#15803d" : "#4ade80")
-                                  : suite.status === "pending"
-                                    ? (isLight ? "#a16207" : "#fde047")
-                                    : (isLight ? "#b91c1c" : "#fca5a5"),
-                                border: isPassed
-                                  ? (isLight ? "1px solid #bbf7d0" : "1px solid rgba(34, 197, 94, 0.3)")
-                                  : suite.status === "pending"
-                                    ? (isLight ? "1px solid #fef08a" : "1px solid rgba(234, 179, 8, 0.3)")
-                                    : (isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.3)"),
-                              }}
-                              title={
-                                suite.status === "pending"
-                                  ? (suite.pendingReason || suite.message || "Pending: Test file not executed during test run")
-                                  : isPassed
-                                    ? "Test suite passed"
-                                    : (suite.message || "Test suite failed")
-                              }
-                            >
-                              {isPassed ? "✓ PASSED" : suite.status === "pending" ? "— PENDING" : "× FAILED"}
-                            </span>
-                          </div>
-
-                          {/* Actions */}
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              gap: 6,
-                            }}
-                          >
-                            <button
-                              onClick={() => onOpenFile?.(suite.filePath)}
-                              style={{
-                                padding: "4px 8px",
-                                borderRadius: 5,
-                                background: isLight ? "#ffffff" : "rgba(255,255,255,0.05)",
-                                border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.1)",
-                                color: isLight ? "#334155" : "#c9d1d9",
-                                fontSize: 11,
-                                fontWeight: isLight ? 600 : 400,
-                                cursor: "pointer",
-                              }}
-                              title="Open test file in editor"
-                            >
-                              Open test
-                            </button>
-
-                            {((suite.assertions && suite.assertions.length > 0) || suite.message || suite.pendingReason || suite.status === "pending") && (
-                              <button
-                                onClick={() =>
-                                  setExpandedSuite(
-                                    isExpanded ? null : suite.filePath,
-                                  )
-                                }
-                                style={{
-                                  padding: "4px 6px",
-                                  borderRadius: 5,
-                                  background: isLight ? "#ffffff" : "rgba(255,255,255,0.03)",
-                                  border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.08)",
-                                  color: isLight ? "#64748b" : "#8b949e",
                                   fontSize: 11,
-                                  cursor: "pointer",
-                                  display: "flex",
-                                  alignItems: "center",
+                                  fontWeight: 700,
+                                  padding: "2px 8px",
+                                  borderRadius: 4,
+                                  background:
+                                    suite.framework === "vitest"
+                                      ? (isLight ? "#f0fdf4" : "rgba(56, 189, 248, 0.15)")
+                                      : (isLight ? "#fff1f2" : "rgba(192, 132, 252, 0.15)"),
+                                  color:
+                                    suite.framework === "vitest"
+                                      ? (isLight ? "#15803d" : "#38bdf8")
+                                      : (isLight ? "#be123c" : "#c084fc"),
+                                  border:
+                                    suite.framework === "vitest"
+                                      ? (isLight ? "1px solid #bbf7d0" : "1px solid rgba(56, 189, 248, 0.35)")
+                                      : (isLight ? "1px solid #fecdd3" : "1px solid rgba(192, 132, 252, 0.35)"),
+                                  textTransform: "uppercase",
                                 }}
-                                title={suite.status === "pending" ? "View pending reason" : suite.message ? "View error details" : "View child test cases"}
                               >
-                                {isExpanded ? (
-                                  <ChevronDown size={13} />
-                                ) : (
-                                  <ChevronRight size={13} />
-                                )}
-                              </button>
-                            )}
-                          </div>
-                        </div>
+                                {suite.framework}
+                              </span>
+                            </div>
 
-                        {/* Expanded Test Cases Accordion */}
-                        {isExpanded && (suite.assertions?.length > 0 || suite.message || suite.pendingReason || suite.status === "pending") && (
-                          <div
-                            style={{
-                              background: isLight ? "#f8fafc" : "rgba(0,0,0,0.25)",
-                              padding: "12px 24px",
-                              borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,.05)",
-                            }}
-                          >
-                            {/* Pending reason banner */}
-                            {suite.status === "pending" && (
-                              <div style={{
-                                background: isLight ? "#fefce8" : "rgba(234,179,8,0.08)",
-                                border: isLight ? "1px solid #fef08a" : "1px solid rgba(234,179,8,0.25)",
-                                borderRadius: 6,
-                                padding: "8px 12px",
-                                marginBottom: suite.assertions?.length > 0 ? 10 : 0,
-                                fontSize: 11,
+                            {/* Test Cases Count */}
+                            <div
+                              style={{
+                                textAlign: "right",
+                                fontSize: 12,
                                 fontFamily: "var(--font-mono)",
-                                color: isLight ? "#854d0e" : "#fef08a",
-                                whiteSpace: "pre-wrap",
-                                wordBreak: "break-all",
-                              }}>
-                                <span style={{ fontWeight: 700, display: "block", marginBottom: 4, color: isLight ? "#a16207" : "#fde047" }}>
-                                  ⏳ Pending Reason:
-                                </span>
-                                {suite.pendingReason || suite.message || "File was discovered on disk but was not executed during the test run."}
-                              </div>
-                            )}
-
-                            {/* Error message banner */}
-                            {suite.status !== "pending" && suite.message && (
-                              <div style={{
-                                background: isLight ? "#fef2f2" : "rgba(239,68,68,0.08)",
-                                border: isLight ? "1px solid #fecaca" : "1px solid rgba(239,68,68,0.25)",
-                                borderRadius: 6,
-                                padding: "8px 12px",
-                                marginBottom: suite.assertions?.length > 0 ? 10 : 0,
-                                fontSize: 11,
-                                fontFamily: "var(--font-mono)",
-                                color: isLight ? "#991b1b" : "#fca5a5",
-                                whiteSpace: "pre-wrap",
-                                wordBreak: "break-all",
-                                maxHeight: 200,
-                                overflowY: "auto",
-                              }}>
-                                <span style={{ fontWeight: 700, display: "block", marginBottom: 4, color: isLight ? "#dc2626" : "#f87171" }}>
-                                  ⚠ Error Details:
-                                </span>
-                                {suite.message}
-                              </div>
-                            )}
-                            {suite.assertions && suite.assertions.length > 0 && (
-                              <>
-                                <div
+                              }}
+                            >
+                              <span style={{ color: isLight ? "#16a34a" : "#4ade80", fontWeight: 600 }}>
+                                ✓ {suite.passedTests || 0}
+                              </span>
+                              {suite.failedTests > 0 && (
+                                <span
                                   style={{
-                                    fontSize: 11,
-                                    fontWeight: 700,
-                                    color: isLight ? "#475569" : "#8b949e",
-                                    marginBottom: 6,
-                                    textTransform: "uppercase",
+                                    color: isLight ? "#dc2626" : "#f87171",
+                                    fontWeight: 600,
+                                    marginLeft: 6,
                                   }}
                                 >
-                                  Test cases in {suite.fileName}:
-                                </div>
-                                <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-                                  {suite.assertions.map((testCase, idx) => {
-                                    const targetFn = testCase.targetFunction ||
-                                      (Array.isArray(testCase.ancestorTitles) && testCase.ancestorTitles.length > 1
-                                        ? testCase.ancestorTitles[testCase.ancestorTitles.length - 1]
-                                        : null);
+                                  × {suite.failedTests}
+                                </span>
+                              )}
+                            </div>
 
-                                    return (
-                                      <div
-                                        key={idx}
-                                        style={{
-                                          display: "flex",
-                                          alignItems: "center",
-                                          gap: 9,
-                                          fontSize: 12,
-                                          fontFamily: "var(--font-mono)",
-                                          padding: "4px 0",
-                                          borderBottom: isLight ? "1px dashed #e2e8f0" : "1px dashed rgba(255,255,255,0.03)",
-                                        }}
-                                      >
-                                        <span
+                            {/* Duration */}
+                            <div
+                              style={{
+                                textAlign: "right",
+                                fontSize: 12,
+                                color: isLight ? "#64748b" : "#8b949e",
+                                fontFamily: "var(--font-mono)",
+                              }}
+                            >
+                              {suite.durationMs ? `${suite.durationMs}ms` : "—"}
+                            </div>
+
+                            {/* Status */}
+                            <div
+                              style={{
+                                display: "flex",
+                                justifyContent: "center",
+                              }}
+                            >
+                              <span
+                                style={{
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  padding: "2px 8px",
+                                  borderRadius: 4,
+                                  background: isPassed
+                                    ? (isLight ? "#f0fdf4" : "rgba(34, 197, 94, 0.15)")
+                                    : suite.status === "pending"
+                                      ? (isLight ? "#fefce8" : "rgba(234, 179, 8, 0.15)")
+                                      : (isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.15)"),
+                                  color: isPassed
+                                    ? (isLight ? "#15803d" : "#4ade80")
+                                    : suite.status === "pending"
+                                      ? (isLight ? "#a16207" : "#fde047")
+                                      : (isLight ? "#b91c1c" : "#fca5a5"),
+                                  border: isPassed
+                                    ? (isLight ? "1px solid #bbf7d0" : "1px solid rgba(34, 197, 94, 0.3)")
+                                    : suite.status === "pending"
+                                      ? (isLight ? "1px solid #fef08a" : "1px solid rgba(234, 179, 8, 0.3)")
+                                      : (isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.3)"),
+                                }}
+                                title={
+                                  suite.status === "pending"
+                                    ? (suite.pendingReason || suite.message || "Pending: Test file not executed during test run")
+                                    : isPassed
+                                      ? "Test suite passed"
+                                      : (suite.message || "Test suite failed")
+                                }
+                              >
+                                {isPassed ? "✓ PASSED" : suite.status === "pending" ? "— PENDING" : "× FAILED"}
+                              </span>
+                            </div>
+
+                            {/* Actions */}
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                gap: 6,
+                              }}
+                            >
+                              <button
+                                onClick={() => handleOpenFileInPlace(suite.filePath)}
+                                style={{
+                                  padding: "4px 8px",
+                                  borderRadius: 5,
+                                  background: isLight ? "#ffffff" : "rgba(255,255,255,0.05)",
+                                  border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.1)",
+                                  color: isLight ? "#334155" : "#c9d1d9",
+                                  fontSize: 11,
+                                  fontWeight: isLight ? 600 : 400,
+                                  cursor: "pointer",
+                                }}
+                                title="Open test file in editor"
+                              >
+                                Open test
+                              </button>
+
+                              {((suite.assertions && suite.assertions.length > 0) || suite.message || suite.pendingReason || suite.status === "pending") && (
+                                <button
+                                  onClick={() =>
+                                    setExpandedSuite(
+                                      isExpanded ? null : suite.filePath,
+                                    )
+                                  }
+                                  style={{
+                                    padding: "4px 6px",
+                                    borderRadius: 5,
+                                    background: isLight ? "#ffffff" : "rgba(255,255,255,0.03)",
+                                    border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.08)",
+                                    color: isLight ? "#64748b" : "#8b949e",
+                                    fontSize: 11,
+                                    cursor: "pointer",
+                                    display: "flex",
+                                    alignItems: "center",
+                                  }}
+                                  title={suite.status === "pending" ? "View pending reason" : suite.message ? "View error details" : "View child test cases"}
+                                >
+                                  {isExpanded ? (
+                                    <ChevronDown size={13} />
+                                  ) : (
+                                    <ChevronRight size={13} />
+                                  )}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Expanded Test Cases Accordion */}
+                          {isExpanded && (suite.assertions?.length > 0 || suite.message || suite.pendingReason || suite.status === "pending") && (
+                            <div
+                              style={{
+                                background: isLight ? "#f8fafc" : "rgba(0,0,0,0.25)",
+                                padding: "12px 24px",
+                                borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,.05)",
+                              }}
+                            >
+                              {/* Pending reason banner */}
+                              {suite.status === "pending" && (
+                                <div style={{
+                                  background: isLight ? "#fefce8" : "rgba(234,179,8,0.08)",
+                                  border: isLight ? "1px solid #fef08a" : "1px solid rgba(234,179,8,0.25)",
+                                  borderRadius: 6,
+                                  padding: "8px 12px",
+                                  marginBottom: suite.assertions?.length > 0 ? 10 : 0,
+                                  fontSize: 11,
+                                  fontFamily: "var(--font-mono)",
+                                  color: isLight ? "#854d0e" : "#fef08a",
+                                  whiteSpace: "pre-wrap",
+                                  wordBreak: "break-all",
+                                }}>
+                                  <span style={{ fontWeight: 700, display: "block", marginBottom: 4, color: isLight ? "#a16207" : "#fde047" }}>
+                                    ⏳ Pending Reason:
+                                  </span>
+                                  {suite.pendingReason || suite.message || "File was discovered on disk but was not executed during the test run."}
+                                </div>
+                              )}
+
+                              {/* Error message banner */}
+                              {suite.status !== "pending" && suite.message && (
+                                <div style={{
+                                  background: isLight ? "#fef2f2" : "rgba(239,68,68,0.08)",
+                                  border: isLight ? "1px solid #fecaca" : "1px solid rgba(239,68,68,0.25)",
+                                  borderRadius: 6,
+                                  padding: "8px 12px",
+                                  marginBottom: suite.assertions?.length > 0 ? 10 : 0,
+                                  fontSize: 11,
+                                  fontFamily: "var(--font-mono)",
+                                  color: isLight ? "#991b1b" : "#fca5a5",
+                                  whiteSpace: "pre-wrap",
+                                  wordBreak: "break-all",
+                                  maxHeight: 200,
+                                  overflowY: "auto",
+                                }}>
+                                  <span style={{ fontWeight: 700, display: "block", marginBottom: 4, color: isLight ? "#dc2626" : "#f87171" }}>
+                                    ⚠ Error Details:
+                                  </span>
+                                  {suite.message}
+                                </div>
+                              )}
+                              {suite.assertions && suite.assertions.length > 0 && (
+                                <>
+                                  <div
+                                    style={{
+                                      fontSize: 11,
+                                      fontWeight: 700,
+                                      color: isLight ? "#475569" : "#8b949e",
+                                      marginBottom: 6,
+                                      textTransform: "uppercase",
+                                    }}
+                                  >
+                                    Test cases in {suite.fileName}:
+                                  </div>
+                                  <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                                    {suite.assertions.map((testCase, idx) => {
+                                      const targetFn = testCase.targetFunction ||
+                                        (Array.isArray(testCase.ancestorTitles) && testCase.ancestorTitles.length > 1
+                                          ? testCase.ancestorTitles[testCase.ancestorTitles.length - 1]
+                                          : null);
+
+                                      return (
+                                        <div
+                                          key={idx}
+                                          onClick={() => handleOpenFileInPlace(suite.filePath, testCase.line || testCase.location?.line || null, testCase.title)}
                                           style={{
-                                            fontSize: 10.5,
-                                            fontWeight: 700,
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: 9,
+                                            fontSize: 12,
                                             fontFamily: "var(--font-mono)",
-                                            color: isLight ? "#94a3b8" : "#64748b",
-                                            minWidth: 22,
+                                            padding: "4px 6px",
+                                            borderRadius: 4,
+                                            cursor: "pointer",
+                                            borderBottom: isLight ? "1px dashed #e2e8f0" : "1px dashed rgba(255,255,255,0.03)",
+                                            transition: "all 0.12s ease",
                                           }}
+                                          className="hover:bg-indigo-500/10"
+                                          title={`Click to view test case source code: ${testCase.title}`}
                                         >
-                                          #{idx + 1}
-                                        </span>
-                                        {testCase.status === "passed" ? (
-                                          <Check size={13} style={{ color: isLight ? "#16a34a" : "#4ade80", flexShrink: 0 }} />
-                                        ) : (
-                                          <X size={13} style={{ color: isLight ? "#dc2626" : "#f87171", flexShrink: 0 }} />
-                                        )}
-                                        {targetFn && (
                                           <span
                                             style={{
-                                              display: "inline-flex",
-                                              alignItems: "center",
-                                              gap: 3,
                                               fontSize: 10.5,
                                               fontWeight: 700,
-                                              padding: "1px 7px",
-                                              borderRadius: 4,
-                                              background: isLight ? "#eff6ff" : "rgba(59, 130, 246, 0.16)",
-                                              color: isLight ? "#1d4ed8" : "#60a5fa",
-                                              border: isLight ? "1px solid #bfdbfe" : "1px solid rgba(59, 130, 246, 0.35)",
-                                              whiteSpace: "nowrap",
-                                              flexShrink: 0,
-                                              letterSpacing: "0.2px",
+                                              fontFamily: "var(--font-mono)",
+                                              color: isLight ? "#94a3b8" : "#64748b",
+                                              minWidth: 22,
                                             }}
-                                            title={`Target function: ${targetFn}`}
                                           >
-                                            <span style={{ color: isLight ? "#3b82f6" : "#93c5fd", opacity: 0.8 }}>ƒ</span>
-                                            {targetFn}
+                                            #{idx + 1}
                                           </span>
-                                        )}
-                                        <span
-                                          style={{
-                                            color:
-                                              testCase.status === "passed"
-                                                ? (isLight ? "#1e293b" : "#c9d1d9")
-                                                : (isLight ? "#991b1b" : "#fca5a5"),
-                                            flex: 1,
-                                            overflow: "hidden",
-                                            textOverflow: "ellipsis",
-                                            whiteSpace: "nowrap",
-                                          }}
-                                          title={testCase.title}
-                                        >
-                                          {testCase.title}
-                                        </span>
-                                        {testCase.duration ? (
+                                          {testCase.status === "passed" ? (
+                                            <Check size={13} style={{ color: isLight ? "#16a34a" : "#4ade80", flexShrink: 0 }} />
+                                          ) : (
+                                            <X size={13} style={{ color: isLight ? "#dc2626" : "#f87171", flexShrink: 0 }} />
+                                          )}
+                                          {targetFn && (
+                                            <span
+                                              style={{
+                                                display: "inline-flex",
+                                                alignItems: "center",
+                                                gap: 3,
+                                                fontSize: 10.5,
+                                                fontWeight: 700,
+                                                padding: "1px 7px",
+                                                borderRadius: 4,
+                                                background: isLight ? "#eff6ff" : "rgba(59, 130, 246, 0.16)",
+                                                color: isLight ? "#1d4ed8" : "#60a5fa",
+                                                border: isLight ? "1px solid #bfdbfe" : "1px solid rgba(59, 130, 246, 0.35)",
+                                                whiteSpace: "nowrap",
+                                                flexShrink: 0,
+                                                letterSpacing: "0.2px",
+                                              }}
+                                              title={`Target function: ${targetFn}`}
+                                            >
+                                              <span style={{ color: isLight ? "#3b82f6" : "#93c5fd", opacity: 0.8 }}>ƒ</span>
+                                              {targetFn}
+                                            </span>
+                                          )}
                                           <span
                                             style={{
-                                              color: isLight ? "#64748b" : "#6e7681",
-                                              fontSize: 11,
-                                              marginLeft: "auto",
-                                              flexShrink: 0,
-                                              paddingLeft: 10,
+                                              color:
+                                                testCase.status === "passed"
+                                                  ? (isLight ? "#1e293b" : "#c9d1d9")
+                                                  : (isLight ? "#991b1b" : "#fca5a5"),
+                                              flex: 1,
+                                              overflow: "hidden",
+                                              textOverflow: "ellipsis",
+                                              whiteSpace: "nowrap",
                                             }}
+                                            title={testCase.title}
                                           >
-                                            {testCase.duration}ms
+                                            {testCase.title}
                                           </span>
-                                        ) : null}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                                          {testCase.duration ? (
+                                            <span
+                                              style={{
+                                                color: isLight ? "#64748b" : "#6e7681",
+                                                fontSize: 11,
+                                                marginLeft: "auto",
+                                                flexShrink: 0,
+                                                paddingLeft: 10,
+                                              }}
+                                            >
+                                              {testCase.duration}ms
+                                            </span>
+                                          ) : null}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
 
-                <PaginationControl
-                  currentPage={testSuitePage}
-                  totalItems={filteredTestSuites.length}
-                  pageSize={TEST_SUITES_PER_PAGE}
-                  onPageChange={setTestSuitePage}
-                  isLight={isLight}
-                  itemLabel="test files"
-                />
-              </div>
-            )}
+                  <PaginationControl
+                    currentPage={testSuitePage}
+                    totalItems={filteredTestSuites.length}
+                    pageSize={TEST_SUITES_PER_PAGE}
+                    onPageChange={setTestSuitePage}
+                    isLight={isLight}
+                    itemLabel="test files"
+                  />
+                </div>
+              )}
             </div>
           ) : type === "unit" && activeMetricView === "functions" ? (
             functionViewMode === "map" ? (
@@ -3888,7 +3996,7 @@ export default function CoverageTypeDashboard({
                     realName: resolveFunctionName(fn, flowData?.functions),
                   }))}
                   loading={loadingFunctions}
-                  onOpenFile={onOpenFile}
+                  onOpenFile={handleOpenFileInPlace}
                   onSuggestTestcase={onSuggestTestcase}
                   onOpenCfg={(filePath, funcName, line) => {
                     if (onOpenCFG) {
@@ -4037,262 +4145,262 @@ export default function CoverageTypeDashboard({
                   <div>
                     <div style={{ overflowX: "auto" }}>
                       <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns:
-                          "40px minmax(180px, 1.2fr) minmax(200px, 1.4fr) 85px 100px 95px 140px",
-                        gap: 10,
-                        minWidth: 760,
-                        padding: "10px 18px",
-                        background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)",
-                        borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.05)",
-                        fontSize: 11,
-                        fontWeight: 650,
-                        color: isLight ? "#475569" : "#8b949e",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.04em",
-                      }}
-                    >
-                      <span style={{ textAlign: "center" }}>#</span>
-                      <span>Function Name</span>
-                      <span>Source File</span>
-                      <span>Location</span>
-                      <span style={{ textAlign: "right" }}>Call Count</span>
-                      <span style={{ textAlign: "center" }}>Status</span>
-                      <span style={{ textAlign: "center" }}>Actions</span>
-                    </div>
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns:
+                            "40px minmax(180px, 1.2fr) minmax(200px, 1.4fr) 85px 100px 95px 140px",
+                          gap: 10,
+                          minWidth: 760,
+                          padding: "10px 18px",
+                          background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)",
+                          borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.05)",
+                          fontSize: 11,
+                          fontWeight: 650,
+                          color: isLight ? "#475569" : "#8b949e",
+                          textTransform: "uppercase",
+                          letterSpacing: "0.04em",
+                        }}
+                      >
+                        <span style={{ textAlign: "center" }}>#</span>
+                        <span>Function Name</span>
+                        <span>Source File</span>
+                        <span>Location</span>
+                        <span style={{ textAlign: "right" }}>Call Count</span>
+                        <span style={{ textAlign: "center" }}>Status</span>
+                        <span style={{ textAlign: "center" }}>Actions</span>
+                      </div>
 
-                    {paginatedFunctions.map((fn, idx) => {
-                      const isCovered = fn.hit > 0;
-                      return (
-                        <div
-                          key={
-                            fn.id ||
-                            `${fn.filePath}:${fn.functionName}:${fn.startLine}`
-                          }
-                          style={{
-                            display: "grid",
-                            gridTemplateColumns:
-                              "40px minmax(180px, 1.2fr) minmax(200px, 1.4fr) 85px 100px 95px 140px",
-                            gap: 10,
-                            minWidth: 760,
-                            padding: "10px 18px",
-                            alignItems: "center",
-                            borderBottom: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255,255,255,.04)",
-                            transition: "background 0.15s ease",
-                          }}
-                          className={isLight ? "hover:bg-slate-50/80" : "hover:bg-white/[0.02]"}
-                        >
-                          {/* Function Index */}
-                          <div style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
-                            <span
-                              style={{
-                                fontSize: 11,
-                                fontWeight: 700,
-                                fontFamily: "var(--font-mono, monospace)",
-                                color: isLight ? "#64748b" : "#94a3b8",
-                                background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.05)",
-                                border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
-                                borderRadius: 6,
-                                padding: "2px 6px",
-                                minWidth: 26,
-                                textAlign: "center",
-                              }}
-                            >
-                              {(functionPage - 1) * FUNCTIONS_PER_PAGE + idx + 1}
-                            </span>
-                          </div>
-
+                      {paginatedFunctions.map((fn, idx) => {
+                        const isCovered = fn.hit > 0;
+                        return (
                           <div
-                            onClick={() => onOpenFile?.(fn.filePath)}
+                            key={
+                              fn.id ||
+                              `${fn.filePath}:${fn.functionName}:${fn.startLine}`
+                            }
                             style={{
-                              display: "flex",
+                              display: "grid",
+                              gridTemplateColumns:
+                                "40px minmax(180px, 1.2fr) minmax(200px, 1.4fr) 85px 100px 95px 140px",
+                              gap: 10,
+                              minWidth: 760,
+                              padding: "10px 18px",
                               alignItems: "center",
-                              gap: 7,
-                              overflow: "hidden",
-                              cursor: "pointer",
+                              borderBottom: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255,255,255,.04)",
+                              transition: "background 0.15s ease",
                             }}
-                            title={`Open file ${fn.filePath} at function ${fn.functionName}`}
+                            className={isLight ? "hover:bg-slate-50/80" : "hover:bg-white/[0.02]"}
                           >
-                            <Code2
-                              size={14}
+                            {/* Function Index */}
+                            <div style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
+                              <span
+                                style={{
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  fontFamily: "var(--font-mono, monospace)",
+                                  color: isLight ? "#64748b" : "#94a3b8",
+                                  background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.05)",
+                                  border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
+                                  borderRadius: 6,
+                                  padding: "2px 6px",
+                                  minWidth: 26,
+                                  textAlign: "center",
+                                }}
+                              >
+                                {(functionPage - 1) * FUNCTIONS_PER_PAGE + idx + 1}
+                              </span>
+                            </div>
+
+                            <div
+                              onClick={() => handleOpenFileInPlace(fn.filePath, fn.startLine || fn.line || 1, fn.functionName, fn.endLine)}
                               style={{
-                                color: isCovered
-                                  ? (isLight ? "#0284c7" : "#38bdf8")
-                                  : (isLight ? "#d97706" : "#fbbf24"),
-                                flexShrink: 0,
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 7,
+                                overflow: "hidden",
+                                cursor: "pointer",
                               }}
-                            />
-                            <span
+                              title={`Open file ${fn.filePath} at function ${fn.functionName}`}
+                            >
+                              <Code2
+                                size={14}
+                                style={{
+                                  color: isCovered
+                                    ? (isLight ? "#0284c7" : "#38bdf8")
+                                    : (isLight ? "#d97706" : "#fbbf24"),
+                                  flexShrink: 0,
+                                }}
+                              />
+                              <span
+                                style={{
+                                  fontFamily: "var(--font-mono)",
+                                  fontSize: 13,
+                                  color: isCovered
+                                    ? (isLight ? "#0f172a" : "#e6edf3")
+                                    : (isLight ? "#b45309" : "#fde68a"),
+                                  fontWeight: 600,
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {resolveFunctionName(fn, flowData?.functions)}()
+                              </span>
+                            </div>
+
+                            <div
+                              onClick={() => handleOpenFileInPlace(fn.filePath, fn.startLine || fn.line || 1, fn.functionName, fn.endLine)}
                               style={{
-                                fontFamily: "var(--font-mono)",
-                                fontSize: 13,
-                                color: isCovered
-                                  ? (isLight ? "#0f172a" : "#e6edf3")
-                                  : (isLight ? "#b45309" : "#fde68a"),
-                                fontWeight: 600,
                                 overflow: "hidden",
                                 textOverflow: "ellipsis",
                                 whiteSpace: "nowrap",
-                              }}
-                            >
-                              {resolveFunctionName(fn, flowData?.functions)}()
-                            </span>
-                          </div>
-
-                          <div
-                            onClick={() => onOpenFile?.(fn.filePath)}
-                            style={{
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                              color: isLight ? "#64748b" : "#8b949e",
-                              fontSize: 12,
-                              fontFamily: "var(--font-mono)",
-                              cursor: "pointer",
-                            }}
-                            title={fn.filePath}
-                          >
-                            {cleanDisplayPath(fn.filePath)}
-                          </div>
-
-                          <div
-                            style={{
-                              fontSize: 11,
-                              color: isLight ? "#64748b" : "#8b949e",
-                              fontFamily: "var(--font-mono)",
-                            }}
-                          >
-                            L{fn.startLine || 1}
-                            {fn.endLine ? ` - L${fn.endLine}` : ""}
-                          </div>
-
-                          <div
-                            style={{
-                              textAlign: "right",
-                              fontFamily: "var(--font-mono)",
-                              fontSize: 12,
-                              fontWeight: 600,
-                              color: isCovered
-                                ? (isLight ? "#16a34a" : "#22c55e")
-                                : (isLight ? "#d97706" : "#fbbf24"),
-                            }}
-                          >
-                            {isCovered ? `${fn.hit} hits` : "0 hits"}
-                          </div>
-
-                          <div
-                            style={{
-                              display: "flex",
-                              justifyContent: "center",
-                            }}
-                          >
-                            <span
-                              style={{
-                                fontSize: 10,
-                                fontWeight: 700,
-                                padding: "2px 7px",
-                                borderRadius: 10,
-                                background: isCovered
-                                  ? (isLight ? "#f0fdf4" : "rgba(34, 197, 94, 0.15)")
-                                  : (isLight ? "#fefce8" : "rgba(251, 191, 36, 0.15)"),
-                                color: isCovered
-                                  ? (isLight ? "#15803d" : "#4ade80")
-                                  : (isLight ? "#a16207" : "#fde047"),
-                                border: isCovered
-                                  ? (isLight ? "1px solid #bbf7d0" : "1px solid rgba(34, 197, 94, 0.3)")
-                                  : (isLight ? "1px solid #fef08a" : "1px solid rgba(251, 191, 36, 0.3)"),
-                              }}
-                            >
-                              {isCovered ? "✓ PASS" : "⚑ UNCALLED"}
-                            </span>
-                          </div>
-
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              gap: 6,
-                            }}
-                          >
-                            <button
-                              onClick={() =>
-                                onOpenFile?.(
-                                  fn.filePath,
-                                  fn.startLine || fn.line || 1,
-                                  fn.functionName,
-                                  fn.endLine
-                                )
-                              }
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 4,
-                                padding: "4px 8px",
-                                borderRadius: 5,
-                                background: isLight ? "#ffffff" : "rgba(255,255,255,0.05)",
-                                border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.1)",
-                                color: isLight ? "#334155" : "#c9d1d9",
-                                fontSize: 11,
-                                fontWeight: isLight ? 600 : 400,
+                                color: isLight ? "#64748b" : "#8b949e",
+                                fontSize: 12,
+                                fontFamily: "var(--font-mono)",
                                 cursor: "pointer",
                               }}
-                              title="View function source code"
+                              title={fn.filePath}
                             >
-                              <Code2 size={12} />
-                              <span>Open code</span>
-                            </button>
+                              {cleanDisplayPath(fn.filePath)}
+                            </div>
 
-                            <button
-                              onClick={() => {
-                                const targetLine = fn.startLine || fn.line || 1;
-                                const targetFunc = fn.displayName || fn.functionName;
-                                if (onOpenCFG) {
-                                  onOpenCFG(fn.filePath, targetFunc, targetLine);
-                                } else {
-                                  setCfgModalContext({
-                                    file: fn.filePath,
-                                    func: targetFunc,
-                                    line: targetLine,
-                                  });
-                                  setShowCfgModal(true);
-                                }
-                              }}
+                            <div
                               style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 4,
-                                padding: "4px 8px",
-                                borderRadius: 5,
-                                background: isLight ? "#e0f2fe" : "rgba(56, 189, 248, 0.12)",
-                                border: isLight ? "1px solid #7dd3fc" : "1px solid rgba(56, 189, 248, 0.3)",
-                                color: isLight ? "#0284c7" : "#38bdf8",
                                 fontSize: 11,
+                                color: isLight ? "#64748b" : "#8b949e",
+                                fontFamily: "var(--font-mono)",
+                              }}
+                            >
+                              L{fn.startLine || 1}
+                              {fn.endLine ? ` - L${fn.endLine}` : ""}
+                            </div>
+
+                            <div
+                              style={{
+                                textAlign: "right",
+                                fontFamily: "var(--font-mono)",
+                                fontSize: 12,
                                 fontWeight: 600,
-                                cursor: "pointer",
+                                color: isCovered
+                                  ? (isLight ? "#16a34a" : "#22c55e")
+                                  : (isLight ? "#d97706" : "#fbbf24"),
                               }}
-                              title="View Control Flow Graph (CFG) for this function"
                             >
-                              <Network size={12} />
-                              <span>View CFG</span>
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                              {isCovered ? `${fn.hit} hits` : "0 hits"}
+                            </div>
 
-                  <PaginationControl
-                    currentPage={functionPage}
-                    totalItems={filteredFunctions.length}
-                    pageSize={FUNCTIONS_PER_PAGE}
-                    onPageChange={setFunctionPage}
-                    isLight={isLight}
-                    itemLabel="functions"
-                  />
-                </div>
-              )}
+                            <div
+                              style={{
+                                display: "flex",
+                                justifyContent: "center",
+                              }}
+                            >
+                              <span
+                                style={{
+                                  fontSize: 10,
+                                  fontWeight: 700,
+                                  padding: "2px 7px",
+                                  borderRadius: 10,
+                                  background: isCovered
+                                    ? (isLight ? "#f0fdf4" : "rgba(34, 197, 94, 0.15)")
+                                    : (isLight ? "#fefce8" : "rgba(251, 191, 36, 0.15)"),
+                                  color: isCovered
+                                    ? (isLight ? "#15803d" : "#4ade80")
+                                    : (isLight ? "#a16207" : "#fde047"),
+                                  border: isCovered
+                                    ? (isLight ? "1px solid #bbf7d0" : "1px solid rgba(34, 197, 94, 0.3)")
+                                    : (isLight ? "1px solid #fef08a" : "1px solid rgba(251, 191, 36, 0.3)"),
+                                }}
+                              >
+                                {isCovered ? "✓ PASS" : "⚑ UNCALLED"}
+                              </span>
+                            </div>
+
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                gap: 6,
+                              }}
+                            >
+                              <button
+                                onClick={() =>
+                                  handleOpenFileInPlace(
+                                    fn.filePath,
+                                    fn.startLine || fn.line || 1,
+                                    fn.functionName,
+                                    fn.endLine
+                                  )
+                                }
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 4,
+                                  padding: "4px 8px",
+                                  borderRadius: 5,
+                                  background: isLight ? "#ffffff" : "rgba(255,255,255,0.05)",
+                                  border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.1)",
+                                  color: isLight ? "#334155" : "#c9d1d9",
+                                  fontSize: 11,
+                                  fontWeight: isLight ? 600 : 400,
+                                  cursor: "pointer",
+                                }}
+                                title="View function source code"
+                              >
+                                <Code2 size={12} />
+                                <span>Open code</span>
+                              </button>
+
+                              <button
+                                onClick={() => {
+                                  const targetLine = fn.startLine || fn.line || 1;
+                                  const targetFunc = fn.displayName || fn.functionName;
+                                  if (onOpenCFG) {
+                                    onOpenCFG(fn.filePath, targetFunc, targetLine);
+                                  } else {
+                                    setCfgModalContext({
+                                      file: fn.filePath,
+                                      func: targetFunc,
+                                      line: targetLine,
+                                    });
+                                    setShowCfgModal(true);
+                                  }
+                                }}
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 4,
+                                  padding: "4px 8px",
+                                  borderRadius: 5,
+                                  background: isLight ? "#e0f2fe" : "rgba(56, 189, 248, 0.12)",
+                                  border: isLight ? "1px solid #7dd3fc" : "1px solid rgba(56, 189, 248, 0.3)",
+                                  color: isLight ? "#0284c7" : "#38bdf8",
+                                  fontSize: 11,
+                                  fontWeight: 600,
+                                  cursor: "pointer",
+                                }}
+                                title="View Control Flow Graph (CFG) for this function"
+                              >
+                                <Network size={12} />
+                                <span>View CFG</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <PaginationControl
+                      currentPage={functionPage}
+                      totalItems={filteredFunctions.length}
+                      pageSize={FUNCTIONS_PER_PAGE}
+                      onPageChange={setFunctionPage}
+                      isLight={isLight}
+                      itemLabel="functions"
+                    />
+                  </div>
+                )}
               </div>
             )
           ) : (
@@ -4572,7 +4680,7 @@ export default function CoverageTypeDashboard({
                 </div>
               ) : type === "system" && systemSummary?.hasRun && !systemSummary?.coverageAvailable ? (
                 /* E2E Test Scenarios Table */
-                <div style={{overflowX:'auto'}}>
+                <div style={{ overflowX: 'auto' }}>
                   <div
                     style={{
                       display: "grid",
@@ -4638,10 +4746,10 @@ export default function CoverageTypeDashboard({
                                 </span>
                               )}
                             </div>
-                            <div style={{ fontSize: 11, color: "#8b949e", fontFamily: "var(--font-mono)",overflowWrap:'anywhere' }}>
+                            <div style={{ fontSize: 11, color: "#8b949e", fontFamily: "var(--font-mono)", overflowWrap: 'anywhere' }}>
                               {sc.file || "E2E Spec"}
                             </div>
-                            <div>{sc.hasEvidence ? <SystemTestEvidence snapshotId={snapshotId} scenarioId={sc.id} title={sc.title} /> : <span style={{color:'#6e7681',fontSize:12}}>Not captured</span>}</div>
+                            <div>{sc.hasEvidence ? <SystemTestEvidence snapshotId={snapshotId} scenarioId={sc.id} title={sc.title} /> : <span style={{ color: '#6e7681', fontSize: 12 }}>Not captured</span>}</div>
                             <div style={{ textAlign: "right", fontSize: 12, color: "#c9d1d9", fontFamily: "var(--font-mono)" }}>
                               {sc.durationMs ? `${Number(sc.durationMs).toFixed(0)}ms` : "—"}
                             </div>
@@ -4706,7 +4814,7 @@ export default function CoverageTypeDashboard({
                       <div style={{ fontSize: 12, color: "#8b949e", fontFamily: "var(--font-mono)" }}>
                         {systemSummary.latestRun?.type || "PLAYWRIGHT"}
                       </div>
-                      <div style={{color:'#6e7681'}}>Not captured</div>
+                      <div style={{ color: '#6e7681' }}>Not captured</div>
                       <div style={{ textAlign: "right", fontSize: 12, color: "#c9d1d9", fontFamily: "var(--font-mono)" }}>
                         {systemSummary.latestRun?.durationMs ? `${Number(systemSummary.latestRun.durationMs).toFixed(0)}ms` : "—"}
                       </div>
@@ -4746,448 +4854,448 @@ export default function CoverageTypeDashboard({
                 <div>
                   <div style={{ overflowX: "auto" }}>
                     {/* Table Header */}
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns:
-                        "40px minmax(220px, 1fr) repeat(4, 75px) 115px",
-                      gap: 10,
-                      minWidth: 700,
-                      padding: "10px 18px",
-                      background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)",
-                      borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.05)",
-                      fontSize: 11,
-                      fontWeight: 650,
-                      color: isLight ? "#475569" : "#8b949e",
-                      textTransform: "uppercase",
-                      letterSpacing: "0.04em",
-                    }}
-                  >
-                    <span style={{ textAlign: "center" }}>#</span>
-                    <span>Source File</span>
-                    <span style={{ textAlign: "right" }}>Lines</span>
-                    <span
+                    <div
                       style={{
-                        textAlign: "right",
-                        color:
-                          activeMetricView === "branches"
-                            ? (isLight ? "#d97706" : "#fbbf24")
-                            : undefined,
+                        display: "grid",
+                        gridTemplateColumns:
+                          "40px minmax(220px, 1fr) repeat(4, 75px) 115px",
+                        gap: 10,
+                        minWidth: 700,
+                        padding: "10px 18px",
+                        background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)",
+                        borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.05)",
+                        fontSize: 11,
+                        fontWeight: 650,
+                        color: isLight ? "#475569" : "#8b949e",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.04em",
                       }}
                     >
-                      Branches
-                    </span>
-                    <span style={{ textAlign: "right" }}>Funcs</span>
-                    <span
-                      style={{
-                        textAlign: "right",
-                        color:
-                          activeMetricView === "statements"
-                            ? (isLight ? "#6366f1" : "#a78bfa")
-                            : undefined,
-                      }}
-                    >
-                      Stmts
-                    </span>
-                    <span style={{ textAlign: "center" }}>Actions</span>
-                  </div>
+                      <span style={{ textAlign: "center" }}>#</span>
+                      <span>Source File</span>
+                      <span style={{ textAlign: "right" }}>Lines</span>
+                      <span
+                        style={{
+                          textAlign: "right",
+                          color:
+                            activeMetricView === "branches"
+                              ? (isLight ? "#d97706" : "#fbbf24")
+                              : undefined,
+                        }}
+                      >
+                        Branches
+                      </span>
+                      <span style={{ textAlign: "right" }}>Funcs</span>
+                      <span
+                        style={{
+                          textAlign: "right",
+                          color:
+                            activeMetricView === "statements"
+                              ? (isLight ? "#6366f1" : "#a78bfa")
+                              : undefined,
+                        }}
+                      >
+                        Stmts
+                      </span>
+                      <span style={{ textAlign: "center" }}>Actions</span>
+                    </div>
 
-                  {/* Table Rows */}
-                  {paginatedSourceFiles.map((file, idx) => {
-                    const isFull = (file.linesPct || 0) >= 100;
-                    const isExpanded = expandedFiles.has(file.filePath);
-                    const cacheEntry = fileCoverageCache[file.filePath];
-                    const isLoadingDetails = cacheEntry?.loading;
-                    const fileDetails = cacheEntry?.data;
-                    const fileSuggestions = inlineSuggestions[file.filePath] || [];
-                    const isSuggesting = loadingSuggestions[file.filePath] || false;
-                    const lastApply = applyResultsByFile[file.filePath] || null;
-                    const progressStep = applyProgressSteps[file.filePath] || "";
+                    {/* Table Rows */}
+                    {paginatedSourceFiles.map((file, idx) => {
+                      const isFull = (file.linesPct || 0) >= 100;
+                      const isExpanded = expandedFiles.has(file.filePath);
+                      const cacheEntry = fileCoverageCache[file.filePath];
+                      const isLoadingDetails = cacheEntry?.loading;
+                      const fileDetails = cacheEntry?.data;
+                      const fileSuggestions = inlineSuggestions[file.filePath] || [];
+                      const isSuggesting = loadingSuggestions[file.filePath] || false;
+                      const lastApply = applyResultsByFile[file.filePath] || null;
+                      const progressStep = applyProgressSteps[file.filePath] || "";
 
-                    return (
-                      <div key={file.filePath}>
-                        <div
-                          style={{
-                            display: "grid",
-                            gridTemplateColumns:
-                              "40px minmax(220px, 1fr) repeat(4, 75px) 115px",
-                            gap: 10,
-                            minWidth: 700,
-                            padding: "10px 18px",
-                            alignItems: "center",
-                            borderBottom: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255,255,255,.04)",
-                            transition: "background 0.15s ease",
-                            background: isExpanded
-                              ? (isLight ? "#f8fafc" : "rgba(255,255,255,0.03)")
-                              : "transparent",
-                          }}
-                          className={isLight ? "hover:bg-slate-50/80" : "hover:bg-white/[0.02]"}
-                        >
-                          {/* File Index */}
-                          <div style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
-                            <span
-                              style={{
-                                fontSize: 11,
-                                fontWeight: 700,
-                                fontFamily: "var(--font-mono, monospace)",
-                                color: isLight ? "#64748b" : "#94a3b8",
-                                background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.05)",
-                                border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
-                                borderRadius: 6,
-                                padding: "2px 6px",
-                                minWidth: 26,
-                                textAlign: "center",
-                              }}
-                            >
-                              {(sourceFilePage - 1) * SOURCE_FILES_PER_PAGE + idx + 1}
-                            </span>
-                          </div>
-
-                          {/* File path + status icon */}
+                      return (
+                        <div key={file.filePath}>
                           <div
                             style={{
-                              display: "flex",
+                              display: "grid",
+                              gridTemplateColumns:
+                                "40px minmax(220px, 1fr) repeat(4, 75px) 115px",
+                              gap: 10,
+                              minWidth: 700,
+                              padding: "10px 18px",
                               alignItems: "center",
-                              gap: 8,
-                              overflow: "hidden",
+                              borderBottom: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255,255,255,.04)",
+                              transition: "background 0.15s ease",
+                              background: isExpanded
+                                ? (isLight ? "#f8fafc" : "rgba(255,255,255,0.03)")
+                                : "transparent",
                             }}
+                            className={isLight ? "hover:bg-slate-50/80" : "hover:bg-white/[0.02]"}
                           >
-                            <span
-                              onClick={() => toggleExpandFile(file.filePath)}
-                              style={{
-                                cursor: "pointer",
-                                fontSize: 12,
-                                fontWeight: 700,
-                                color: isFull ? (isLight ? "#16a34a" : "#22c55e") : (isLight ? "#d97706" : "#eab308"),
-                                flexShrink: 0,
-                              }}
-                            >
-                              {isFull ? "✓" : "⚑"}
-                            </span>
-
-                            <span
-                              onClick={() => toggleExpandFile(file.filePath)}
-                              style={{
-                                cursor: "pointer",
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                                color: isExpanded
-                                  ? (isLight ? "#0f172a" : "#ffffff")
-                                  : (isLight ? "#1e293b" : "#c9d1d9"),
-                                fontSize: 13,
-                                fontWeight: isExpanded ? 700 : 500,
-                                fontFamily: "var(--font-mono)",
-                              }}
-                              title="Click to view execution flow analysis"
-                            >
-                              {cleanDisplayPath(file.filePath)}
-                            </span>
-                          </div>
-
-                          {/* Coverage percentages */}
-                          {[
-                            { val: file.linesPct, col: "lines" },
-                            { val: file.branchesPct, col: "branches" },
-                            { val: file.funcsPct, col: "funcs" },
-                            { val: file.stmtsPct, col: "stmts" },
-                          ].map(({ val, col }, i) => {
-                            const isHighlightedCol =
-                              (col === "stmts" &&
-                                activeMetricView === "statements") ||
-                              (col === "branches" &&
-                                activeMetricView === "branches") ||
-                              (col === "funcs" &&
-                                activeMetricView === "functions");
-
-                            return (
+                            {/* File Index */}
+                            <div style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
                               <span
-                                key={i}
                                 style={{
-                                  color: getCoverageColor(val, isLight),
-                                  textAlign: "right",
-                                  fontSize: 12,
-                                  fontFamily: "var(--font-mono)",
-                                  fontWeight: isHighlightedCol ? 750 : 600,
-                                  background: isHighlightedCol
-                                    ? isLight
-                                      ? col === "stmts"
-                                        ? "#ede9fe"
-                                        : col === "branches"
-                                          ? "#fef3c7"
-                                          : "#e0f2fe"
-                                      : col === "stmts"
-                                        ? "rgba(167, 139, 250, 0.1)"
-                                        : col === "branches"
-                                          ? "rgba(251, 191, 36, 0.1)"
-                                          : "rgba(56, 189, 248, 0.1)"
-                                    : "transparent",
-                                  padding: isHighlightedCol ? "2px 4px" : "0",
-                                  borderRadius: isHighlightedCol ? 4 : 0,
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  fontFamily: "var(--font-mono, monospace)",
+                                  color: isLight ? "#64748b" : "#94a3b8",
+                                  background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.05)",
+                                  border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
+                                  borderRadius: 6,
+                                  padding: "2px 6px",
+                                  minWidth: 26,
+                                  textAlign: "center",
                                 }}
                               >
-                                {pct(val)}
+                                {(sourceFilePage - 1) * SOURCE_FILES_PER_PAGE + idx + 1}
                               </span>
-                            );
-                          })}
+                            </div>
 
-                          {/* Action: Open Code & Expand Toggle */}
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              gap: 6,
-                            }}
-                          >
-                            {fileSuggestions.length > 0 && !isExpanded && (
+                            {/* File path + status icon */}
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                                overflow: "hidden",
+                              }}
+                            >
+                              <span
+                                onClick={() => toggleExpandFile(file.filePath)}
+                                style={{
+                                  cursor: "pointer",
+                                  fontSize: 12,
+                                  fontWeight: 700,
+                                  color: isFull ? (isLight ? "#16a34a" : "#22c55e") : (isLight ? "#d97706" : "#eab308"),
+                                  flexShrink: 0,
+                                }}
+                              >
+                                {isFull ? "✓" : "⚑"}
+                              </span>
+
+                              <span
+                                onClick={() => toggleExpandFile(file.filePath)}
+                                style={{
+                                  cursor: "pointer",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                  color: isExpanded
+                                    ? (isLight ? "#0f172a" : "#ffffff")
+                                    : (isLight ? "#1e293b" : "#c9d1d9"),
+                                  fontSize: 13,
+                                  fontWeight: isExpanded ? 700 : 500,
+                                  fontFamily: "var(--font-mono)",
+                                }}
+                                title="Click to view execution flow analysis"
+                              >
+                                {cleanDisplayPath(file.filePath)}
+                              </span>
+                            </div>
+
+                            {/* Coverage percentages */}
+                            {[
+                              { val: file.linesPct, col: "lines" },
+                              { val: file.branchesPct, col: "branches" },
+                              { val: file.funcsPct, col: "funcs" },
+                              { val: file.stmtsPct, col: "stmts" },
+                            ].map(({ val, col }, i) => {
+                              const isHighlightedCol =
+                                (col === "stmts" &&
+                                  activeMetricView === "statements") ||
+                                (col === "branches" &&
+                                  activeMetricView === "branches") ||
+                                (col === "funcs" &&
+                                  activeMetricView === "functions");
+
+                              return (
+                                <span
+                                  key={i}
+                                  style={{
+                                    color: getCoverageColor(val, isLight),
+                                    textAlign: "right",
+                                    fontSize: 12,
+                                    fontFamily: "var(--font-mono)",
+                                    fontWeight: isHighlightedCol ? 750 : 600,
+                                    background: isHighlightedCol
+                                      ? isLight
+                                        ? col === "stmts"
+                                          ? "#ede9fe"
+                                          : col === "branches"
+                                            ? "#fef3c7"
+                                            : "#e0f2fe"
+                                        : col === "stmts"
+                                          ? "rgba(167, 139, 250, 0.1)"
+                                          : col === "branches"
+                                            ? "rgba(251, 191, 36, 0.1)"
+                                            : "rgba(56, 189, 248, 0.1)"
+                                      : "transparent",
+                                    padding: isHighlightedCol ? "2px 4px" : "0",
+                                    borderRadius: isHighlightedCol ? 4 : 0,
+                                  }}
+                                >
+                                  {pct(val)}
+                                </span>
+                              );
+                            })}
+
+                            {/* Action: Open Code & Expand Toggle */}
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                gap: 6,
+                              }}
+                            >
+                              {fileSuggestions.length > 0 && !isExpanded && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleExpandFile(file.filePath);
+                                  }}
+                                  style={{
+                                    padding: "3px 6px",
+                                    borderRadius: 5,
+                                    background: isLight ? "#f5f3ff" : "rgba(168, 85, 247, 0.18)",
+                                    border: isLight ? "1px solid #ddd6fe" : "1px solid rgba(168, 85, 247, 0.35)",
+                                    color: isLight ? "#6d28d9" : "#d8b4fe",
+                                    fontSize: 10,
+                                    fontWeight: 700,
+                                    cursor: "pointer",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 3,
+                                  }}
+                                  title="Click to view generated test suggestions"
+                                >
+                                  <Sparkles size={10} />
+                                  <span>{fileSuggestions.length}</span>
+                                </button>
+                              )}
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   toggleExpandFile(file.filePath);
                                 }}
                                 style={{
-                                  padding: "3px 6px",
+                                  padding: "4px 8px",
                                   borderRadius: 5,
-                                  background: isLight ? "#f5f3ff" : "rgba(168, 85, 247, 0.18)",
-                                  border: isLight ? "1px solid #ddd6fe" : "1px solid rgba(168, 85, 247, 0.35)",
-                                  color: isLight ? "#6d28d9" : "#d8b4fe",
-                                  fontSize: 10,
-                                  fontWeight: 700,
+                                  background: isExpanded
+                                    ? (isLight ? "#eff6ff" : "rgba(56, 189, 248, 0.18)")
+                                    : (isLight ? "#ffffff" : "rgba(255, 255, 255, 0.05)"),
+                                  border: isExpanded
+                                    ? (isLight ? "1px solid #93c5fd" : "1px solid rgba(56, 189, 248, 0.4)")
+                                    : (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)"),
+                                  color: isExpanded
+                                    ? (isLight ? "#1d4ed8" : "#38bdf8")
+                                    : (isLight ? "#334155" : "#c9d1d9"),
+                                  fontSize: 11,
+                                  fontWeight: isLight ? 600 : 400,
+                                  cursor: "pointer",
+                                  transition: "all 0.15s ease",
+                                }}
+                                className={isLight ? "hover:bg-slate-100" : "hover:bg-white/10 hover:text-white"}
+                                title={isExpanded ? "Close view & edit" : "View coverage & edit code directly"}
+                              >
+                                {isExpanded ? "Close" : "View & Edit"}
+                              </button>
+
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleExpandFile(file.filePath);
+                                }}
+                                style={{
+                                  padding: "4px 6px",
+                                  borderRadius: 4,
+                                  background: isExpanded
+                                    ? (isLight ? "#f1f5f9" : "rgba(255,255,255,0.14)")
+                                    : (isLight ? "#ffffff" : "rgba(255,255,255,0.04)"),
+                                  border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.1)",
+                                  color: isExpanded
+                                    ? (isLight ? "#0f172a" : "#ffffff")
+                                    : (isLight ? "#64748b" : "#8b949e"),
                                   cursor: "pointer",
                                   display: "flex",
                                   alignItems: "center",
-                                  gap: 3,
-                                }}
-                                title="Click to view generated test suggestions"
-                              >
-                                <Sparkles size={10} />
-                                <span>{fileSuggestions.length}</span>
-                              </button>
-                            )}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleExpandFile(file.filePath);
-                              }}
-                              style={{
-                                padding: "4px 8px",
-                                borderRadius: 5,
-                                background: isExpanded
-                                  ? (isLight ? "#eff6ff" : "rgba(56, 189, 248, 0.18)")
-                                  : (isLight ? "#ffffff" : "rgba(255, 255, 255, 0.05)"),
-                                border: isExpanded
-                                  ? (isLight ? "1px solid #93c5fd" : "1px solid rgba(56, 189, 248, 0.4)")
-                                  : (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)"),
-                                color: isExpanded
-                                  ? (isLight ? "#1d4ed8" : "#38bdf8")
-                                  : (isLight ? "#334155" : "#c9d1d9"),
-                                fontSize: 11,
-                                fontWeight: isLight ? 600 : 400,
-                                cursor: "pointer",
-                                transition: "all 0.15s ease",
-                              }}
-                              className={isLight ? "hover:bg-slate-100" : "hover:bg-white/10 hover:text-white"}
-                              title={isExpanded ? "Close view & edit" : "View coverage & edit code directly"}
-                            >
-                              {isExpanded ? "Close" : "View & Edit"}
-                            </button>
-
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleExpandFile(file.filePath);
-                              }}
-                              style={{
-                                padding: "4px 6px",
-                                borderRadius: 4,
-                                background: isExpanded
-                                  ? (isLight ? "#f1f5f9" : "rgba(255,255,255,0.14)")
-                                  : (isLight ? "#ffffff" : "rgba(255,255,255,0.04)"),
-                                border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.1)",
-                                color: isExpanded
-                                  ? (isLight ? "#0f172a" : "#ffffff")
-                                  : (isLight ? "#64748b" : "#8b949e"),
-                                cursor: "pointer",
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                transition: "all 0.15s ease",
-                                flexShrink: 0,
-                              }}
-                              className={isLight ? "hover:bg-slate-100" : "hover:bg-white/10 hover:text-white"}
-                              title={
-                                isExpanded
-                                  ? "Collapse flow analysis"
-                                  : "View execution flow analysis & suggestions"
-                              }
-                            >
-                              {isExpanded ? (
-                                <ChevronDown size={13} />
-                              ) : (
-                                <ChevronRight size={13} />
-                              )}
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Expanded Dropdown Accordion Panel */}
-                        {isExpanded && (
-                          <div
-                            style={{
-                              padding: "14px 18px",
-                              background: isLight ? "#f8fafc" : "rgba(0, 0, 0, 0.4)",
-                              borderBottom: isLight
-                                ? "1px solid #e2e8f0"
-                                : "1px solid rgba(255, 255, 255, 0.08)",
-                              display: "flex",
-                              flexDirection: "column",
-                              gap: 16,
-                            }}
-                          >
-                            {/* Inline Suggestions Section (only for unit test, when not in FileCodeExecutionView) */}
-                            {type === "unit" && (fileSuggestions.length > 0 || isSuggesting) && activeMetricView !== "statements" && (
-                              <InlineTestSuggestions
-                                filePath={file.filePath}
-                                suggestions={fileSuggestions}
-                                isLoading={isSuggesting}
-                                onApply={(sug) => handleApplySuggestionInline(file.filePath, sug)}
-                                onApplyAll={(sugs) => handleApplyAllInline(file.filePath, sugs)}
-                                onReject={(sugId) => handleRejectInline(file.filePath, sugId)}
-                                onDismiss={(fPath) => handleDismissFileSuggestions(fPath)}
-                                onUpdateSuggestionCode={(sugId, newCode) =>
-                                  handleUpdateSuggestionCode(file.filePath, sugId, newCode)
-                                }
-                                applyingIds={applyingSuggestionIds}
-                                lastApplyResult={lastApply}
-                                progressStep={progressStep}
-                              />
-                            )}
-
-                            {isLoadingDetails || (!fileDetails && !cacheEntry?.error) ? (
-                              <div
-                                style={{
-                                  padding: "24px",
-                                  textAlign: "center",
-                                  color: isLight ? "#64748b" : "#8b949e",
-                                  fontSize: 12,
-                                  display: "flex",
-                                  alignItems: "center",
                                   justifyContent: "center",
-                                  gap: 8,
+                                  transition: "all 0.15s ease",
+                                  flexShrink: 0,
                                 }}
+                                className={isLight ? "hover:bg-slate-100" : "hover:bg-white/10 hover:text-white"}
+                                title={
+                                  isExpanded
+                                    ? "Collapse flow analysis"
+                                    : "View execution flow analysis & suggestions"
+                                }
                               >
-                                <Loader2 size={16} className={`animate-spin ${isLight ? "text-indigo-600" : "text-purple-400"}`} />
-                                <span>Analyzing execution flow for {cleanDisplayPath(file.filePath)}...</span>
-                              </div>
-                            ) : fileDetails ? (
-                              activeMetricView === "branches" ? (
-                                <FileBranchCFGView
+                                {isExpanded ? (
+                                  <ChevronDown size={13} />
+                                ) : (
+                                  <ChevronRight size={13} />
+                                )}
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Expanded Dropdown Accordion Panel */}
+                          {isExpanded && (
+                            <div
+                              style={{
+                                padding: "14px 18px",
+                                background: isLight ? "#f8fafc" : "rgba(0, 0, 0, 0.4)",
+                                borderBottom: isLight
+                                  ? "1px solid #e2e8f0"
+                                  : "1px solid rgba(255, 255, 255, 0.08)",
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 16,
+                              }}
+                            >
+                              {/* Inline Suggestions Section (only for unit test, when not in FileCodeExecutionView) */}
+                              {type === "unit" && (fileSuggestions.length > 0 || isSuggesting) && activeMetricView !== "statements" && (
+                                <InlineTestSuggestions
                                   filePath={file.filePath}
-                                  fileCoverage={fileDetails}
-                                  onOpenFile={onOpenFile}
-                                  onSuggestTestcase={(target) => {
-                                    if (type === "unit") {
-                                      handleSuggestTestcaseInline(target || file.filePath);
-                                    } else {
-                                      onSuggestTestcase?.(target || file.filePath);
-                                    }
-                                  }}
-                                />
-                              ) : activeMetricView === "functions" ? (
-                                <FileFunctionCallGraphView
-                                  filePath={file.filePath}
-                                  fileCoverage={fileDetails}
-                                  testSuites={testSuites}
-                                  onOpenFile={onOpenFile}
-                                  onSuggestTestcase={(target) => {
-                                    if (type === "unit") {
-                                      handleSuggestTestcaseInline(target || file.filePath);
-                                    } else {
-                                      onSuggestTestcase?.(target || file.filePath);
-                                    }
-                                  }}
-                                />
-                              ) : (
-                                <FileCodeExecutionView
-                                  filePath={file.filePath}
-                                  fileCoverage={fileDetails}
-                                  projectId={projectId}
-                                  snapshotId={snapshotId}
-                                  onOpenFile={onOpenFile}
-                                  onFileSaved={async (savedPath) => {
-                                    await ensureFileCoverage(savedPath, true);
-                                    invalidateCoverageQueries(snapshotId);
-                                    await refetchCoverage();
-                                  }}
-                                  onSuggestTestcase={(target) => {
-                                    if (type === "unit") {
-                                      handleSuggestTestcaseInline(target || file.filePath);
-                                    } else {
-                                      onSuggestTestcase?.(target || file.filePath);
-                                    }
-                                  }}
-                                  suggestions={type === "unit" ? fileSuggestions : []}
-                                  isLoadingSuggestions={type === "unit" ? isSuggesting : false}
-                                  applyingSuggestionIds={type === "unit" ? applyingSuggestionIds : new Set()}
-                                  onApplySuggestion={type === "unit" ? (sug) => handleApplySuggestionInline(file.filePath, sug) : undefined}
-                                  onApplyAllSuggestions={type === "unit" ? (sugs) => handleApplyAllInline(file.filePath, sugs) : undefined}
-                                  onRejectSuggestion={type === "unit" ? (sugId) => handleRejectInline(file.filePath, sugId) : undefined}
+                                  suggestions={fileSuggestions}
+                                  isLoading={isSuggesting}
+                                  onApply={(sug) => handleApplySuggestionInline(file.filePath, sug)}
+                                  onApplyAll={(sugs) => handleApplyAllInline(file.filePath, sugs)}
+                                  onReject={(sugId) => handleRejectInline(file.filePath, sugId)}
+                                  onDismiss={(fPath) => handleDismissFileSuggestions(fPath)}
                                   onUpdateSuggestionCode={(sugId, newCode) =>
                                     handleUpdateSuggestionCode(file.filePath, sugId, newCode)
                                   }
+                                  applyingIds={applyingSuggestionIds}
                                   lastApplyResult={lastApply}
                                   progressStep={progressStep}
-                                  isLight={isLight}
                                 />
-                              )
-                            ) : (
-                              <div
-                                style={{
-                                  padding: "20px",
-                                  textAlign: "center",
-                                  color: isLight ? "#dc2626" : "#f87171",
-                                  fontSize: 12,
-                                  display: "flex",
-                                  flexDirection: "column",
-                                  alignItems: "center",
-                                  gap: 8,
-                                }}
-                              >
-                                <span>{cacheEntry?.error ? `Error: ${cacheEntry.error}` : "Failed to load flow analysis data for this file."}</span>
-                                <button
-                                  onClick={() => ensureFileCoverage(file.filePath, true)}
+                              )}
+
+                              {isLoadingDetails || (!fileDetails && !cacheEntry?.error) ? (
+                                <div
                                   style={{
-                                    padding: "4px 10px",
-                                    background: isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.15)",
-                                    border: isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.3)",
-                                    borderRadius: 4,
-                                    color: isLight ? "#b91c1c" : "#f87171",
-                                    fontSize: 11,
-                                    cursor: "pointer",
+                                    padding: "24px",
+                                    textAlign: "center",
+                                    color: isLight ? "#64748b" : "#8b949e",
+                                    fontSize: 12,
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    gap: 8,
                                   }}
                                 >
-                                  Retry
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                                  <Loader2 size={16} className={`animate-spin ${isLight ? "text-indigo-600" : "text-purple-400"}`} />
+                                  <span>Analyzing execution flow for {cleanDisplayPath(file.filePath)}...</span>
+                                </div>
+                              ) : fileDetails ? (
+                                activeMetricView === "branches" ? (
+                                  <FileBranchCFGView
+                                    filePath={file.filePath}
+                                    fileCoverage={fileDetails}
+                                    onOpenFile={handleOpenFileInPlace}
+                                    onSuggestTestcase={(target) => {
+                                      if (type === "unit") {
+                                        handleSuggestTestcaseInline(target || file.filePath);
+                                      } else {
+                                        onSuggestTestcase?.(target || file.filePath);
+                                      }
+                                    }}
+                                  />
+                                ) : activeMetricView === "functions" ? (
+                                  <FileFunctionCallGraphView
+                                    filePath={file.filePath}
+                                    fileCoverage={fileDetails}
+                                    testSuites={testSuites}
+                                    onOpenFile={handleOpenFileInPlace}
+                                    onSuggestTestcase={(target) => {
+                                      if (type === "unit") {
+                                        handleSuggestTestcaseInline(target || file.filePath);
+                                      } else {
+                                        onSuggestTestcase?.(target || file.filePath);
+                                      }
+                                    }}
+                                  />
+                                ) : (
+                                  <FileCodeExecutionView
+                                    filePath={file.filePath}
+                                    fileCoverage={fileDetails}
+                                    projectId={projectId}
+                                    snapshotId={snapshotId}
+                                    onOpenFile={handleOpenFileInPlace}
+                                    onFileSaved={async (savedPath) => {
+                                      await ensureFileCoverage(savedPath, true);
+                                      invalidateCoverageQueries(snapshotId);
+                                      await refetchCoverage();
+                                    }}
+                                    onSuggestTestcase={(target) => {
+                                      if (type === "unit") {
+                                        handleSuggestTestcaseInline(target || file.filePath);
+                                      } else {
+                                        onSuggestTestcase?.(target || file.filePath);
+                                      }
+                                    }}
+                                    suggestions={type === "unit" ? fileSuggestions : []}
+                                    isLoadingSuggestions={type === "unit" ? isSuggesting : false}
+                                    applyingSuggestionIds={type === "unit" ? applyingSuggestionIds : new Set()}
+                                    onApplySuggestion={type === "unit" ? (sug) => handleApplySuggestionInline(file.filePath, sug) : undefined}
+                                    onApplyAllSuggestions={type === "unit" ? (sugs) => handleApplyAllInline(file.filePath, sugs) : undefined}
+                                    onRejectSuggestion={type === "unit" ? (sugId) => handleRejectInline(file.filePath, sugId) : undefined}
+                                    onUpdateSuggestionCode={(sugId, newCode) =>
+                                      handleUpdateSuggestionCode(file.filePath, sugId, newCode)
+                                    }
+                                    lastApplyResult={lastApply}
+                                    progressStep={progressStep}
+                                    isLight={isLight}
+                                  />
+                                )
+                              ) : (
+                                <div
+                                  style={{
+                                    padding: "20px",
+                                    textAlign: "center",
+                                    color: isLight ? "#dc2626" : "#f87171",
+                                    fontSize: 12,
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    alignItems: "center",
+                                    gap: 8,
+                                  }}
+                                >
+                                  <span>{cacheEntry?.error ? `Error: ${cacheEntry.error}` : "Failed to load flow analysis data for this file."}</span>
+                                  <button
+                                    onClick={() => ensureFileCoverage(file.filePath, true)}
+                                    style={{
+                                      padding: "4px 10px",
+                                      background: isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.15)",
+                                      border: isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.3)",
+                                      borderRadius: 4,
+                                      color: isLight ? "#b91c1c" : "#f87171",
+                                      fontSize: 11,
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    Retry
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
 
-                <PaginationControl
-                  currentPage={sourceFilePage}
-                  totalItems={filteredSourceFiles.length}
-                  pageSize={SOURCE_FILES_PER_PAGE}
-                  onPageChange={setSourceFilePage}
-                  isLight={isLight}
-                  itemLabel="source files"
-                />
-              </div>
-            )}
+                  <PaginationControl
+                    currentPage={sourceFilePage}
+                    totalItems={filteredSourceFiles.length}
+                    pageSize={SOURCE_FILES_PER_PAGE}
+                    onPageChange={setSourceFilePage}
+                    isLight={isLight}
+                    itemLabel="source files"
+                  />
+                </div>
+              )}
             </div>
           )}
         </>
@@ -5202,7 +5310,7 @@ export default function CoverageTypeDashboard({
           initialFile={cfgModalContext?.file}
           initialFunc={cfgModalContext?.func}
           initialLine={cfgModalContext?.line}
-          onOpenFile={onOpenFile}
+          onOpenFile={handleOpenFileInPlace}
         />
       )}
       {showJobQueueModal && projectId && (
@@ -5293,7 +5401,11 @@ export default function CoverageTypeDashboard({
           files={reviewFiles}
           initialFileIndex={reviewInitialFileIndex}
           onApplyFile={async (file) => {
-            const fileSugs = allPendingSuggestions.filter((s) => (s.sourceFile || s.filePath) === file.filePath);
+            const cleanTarget = cleanDisplayPath(file.filePath);
+            const fileSugs = allPendingSuggestions.filter((s) => {
+              const sPath = s.sourceFile || s.filePath;
+              return sPath === file.filePath || cleanDisplayPath(sPath) === cleanTarget;
+            });
             if (fileSugs.length > 0) {
               await handleApplyAllInline(file.filePath, fileSugs);
             }
@@ -5301,6 +5413,27 @@ export default function CoverageTypeDashboard({
           onApplyAll={handleApplyAllGlobal}
           onRunAnalysis={run}
           isApplying={isBulkApplying}
+        />
+      )}
+
+      {/* In-Place File & Code Viewer Modal (keeps user in Unit Test without redirect) */}
+      {inPlaceOpenFileTarget && (
+        <InPlaceCoverageFileModal
+          isOpen={Boolean(inPlaceOpenFileTarget)}
+          onClose={() => setInPlaceOpenFileTarget(null)}
+          filePath={inPlaceOpenFileTarget.filePath}
+          targetLine={inPlaceOpenFileTarget.targetLine}
+          functionName={inPlaceOpenFileTarget.functionName}
+          endLine={inPlaceOpenFileTarget.endLine}
+          testInfo={inPlaceOpenFileTarget.testInfo}
+          projectId={projectId}
+          snapshotId={snapshotId}
+          onOpenInExternalEditor={(fPath, line) => {
+            setInPlaceOpenFileTarget(null);
+            onOpenFile?.(fPath, line);
+          }}
+          isLight={isLight}
+          testSuites={unitTestSuites}
         />
       )}
     </div>

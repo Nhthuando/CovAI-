@@ -51,6 +51,9 @@ export const buildStandardUnitTestPrompt = ({
     const mockInstructionsStr = unitTestContext?.mockContracts?.mockInstructions || "";
     const decisionTableMarkdown = unitTestContext?.decisionTable?.decisionTableMarkdown || "";
     const decisionGuidanceStr = unitTestContext?.coverageGaps?.guidanceSummary || "No complex branching detected";
+    const cyclomaticComplexity = unitTestContext?.decisionTable?.summary?.cyclomaticComplexity ||
+        unitTestContext?.astMetadata?.cyclomaticComplexity ||
+        (1 + (unitTestContext?.astMetadata?.decisionPoints || []).length);
 
     const uncoveredLinesStr = formatLineRanges(coverageDetails?.uncoveredLines || []);
     const failedLinesStr = (coverageDetails?.failedLines || []).map(l => `Line ${l}: ${coverageDetails?.lines?.[l]?.error || "failed assertion"}`).join("\n") || "None";
@@ -87,6 +90,7 @@ ${unexportedWarning}
 
 ### 3. CURRENT COVERAGE DIAGNOSTICS & GAPS
 - Current Coverage: Lines ${coverageDetails?.summary?.linesPct ?? 0}%, Branches ${coverageDetails?.summary?.branchesPct ?? 0}%, Functions ${coverageDetails?.summary?.funcsPct ?? 0}%, Statements ${coverageDetails?.summary?.stmtsPct ?? 0}%
+- Control Flow Graph Complexity: Cyclomatic Complexity (CC) = ${cyclomaticComplexity} (Basis Paths = ${cyclomaticComplexity})
 - Uncovered Lines in Source: ${uncoveredLinesStr}
 - Uncovered Functions (0 invocations):
 ${functionDetailsStr}
@@ -118,10 +122,11 @@ ${unexportedWarning}
 3. REUSE EXISTING TEST MOCKS AND CONVENTIONS:
    - Carefully inspect the EXISTING TEST CODE in ${testFileInfo.relativePath}.
    - Re-use the exact same mocks, fixtures, and beforeEach configurations already established.
-4. MANDATORY TEST MATRIX (DECISION TABLE) TO HIT >= 90% TO 100% COVERAGE:
-   Follow this structured 4-category Decision Table created from AST analysis and coverage gaps:
+4. MANDATORY TEST MATRIX (DECISION TABLE) & CFG BASIS PATHS (CC = ${cyclomaticComplexity}, TARGET MINIMUM ${cyclomaticComplexity} BASIS PATHS):
+   - To satisfy McCabe's Basis Path Testing invariant, generate at least ${cyclomaticComplexity} independent test scenarios covering all execution paths in the Control Flow Graph.
+   - Follow this structured 4-category Decision Table created from AST analysis and coverage gaps:
 ${decisionTableMarkdown}
-   You MUST include test cases addressing all 4 essential business logic testing categories:
+   - You MUST include test cases addressing all 4 essential business logic testing categories:
    - Category A (Happy Path): Standard valid invocations verifying expected business output.
    - Category B (Boundary Values): Edge inputs such as 0, negative numbers, empty arrays [], empty strings "", empty objects {}, and max limits.
    - Category C (Branch Toggling): For EVERY conditional statement (if/else, ternary ? :, switch/case, ||, &&, ??, ?.), write test cases testing BOTH the True branch AND the False branch! Specifically pass null and undefined to exercise ??, ||, and ?. fallbacks.
@@ -159,6 +164,7 @@ ${unexportedWarning}
 
 ### 3. CURRENT COVERAGE DIAGNOSTICS & GAPS
 - Current Coverage: Lines ${coverageDetails?.summary?.linesPct ?? 0}%, Branches ${coverageDetails?.summary?.branchesPct ?? 0}%, Functions ${coverageDetails?.summary?.funcsPct ?? 0}%, Statements ${coverageDetails?.summary?.stmtsPct ?? 0}%
+- Control Flow Graph Complexity: Cyclomatic Complexity (CC) = ${cyclomaticComplexity} (Basis Paths = ${cyclomaticComplexity})
 - Uncovered Lines in Source: ${uncoveredLinesStr}
 - Uncovered Functions (0 invocations):
 ${functionDetailsStr}
@@ -182,10 +188,11 @@ ${sourceCode.slice(0, 25000)}
 ${unexportedWarning}
 3. REUSE EXISTING TEST MOCKS AND CONVENTIONS:
    - If test code exists, re-use existing mock patterns and assertions.
-4. MANDATORY TEST MATRIX (DECISION TABLE) TO HIT >= 90% TO 100% COVERAGE:
-   Follow this structured 4-category Decision Table created from AST analysis and coverage gaps:
+4. MANDATORY TEST MATRIX (DECISION TABLE) & CFG BASIS PATHS (CC = ${cyclomaticComplexity}, MINIMUM ${cyclomaticComplexity} BASIS PATHS):
+   - To satisfy McCabe's Basis Path Testing invariant, generate at least ${cyclomaticComplexity} independent test scenarios covering all execution paths in the Control Flow Graph.
+   - Follow this structured 4-category Decision Table created from AST analysis and coverage gaps:
 ${decisionTableMarkdown}
-   You MUST include test cases addressing all 4 essential business logic testing categories:
+   - You MUST include test cases addressing all 4 essential business logic testing categories:
    - Category A (Happy Path): Standard valid invocations verifying expected business output.
    - Category B (Boundary Values): Edge inputs such as 0, negative numbers, empty arrays [], empty strings "", empty objects {}, and max limits.
    - Category C (Branch Toggling): For EVERY conditional statement (if/else, switch, ternary, ||, &&, ??, ?.), craft test inputs executing BOTH the True branch AND the False branch! Specifically pass null and undefined to exercise ??, ||, and ?. fallbacks.
@@ -488,14 +495,14 @@ export const generateAiUnitTestSuite = async ({
         unitTestContext
     });
 
-    // 3. Invoke LLM with 45s Timeout
+    // 3. Invoke LLM with 90s Timeout
     let aiParsedResult = null;
     let aiGenerationError = null;
 
     try {
         const responseText = await Promise.race([
             generateText(prompt),
-            new Promise((_, reject) => setTimeout(() => reject(new Error("AI generation timed out (45s limit reached)")), 45000))
+            new Promise((_, reject) => setTimeout(() => reject(new Error("AI generation timed out (90s limit reached)")), 90000))
         ]);
 
         // 4. Parse & Sanitize Response (Section 3.2)

@@ -1,14 +1,40 @@
 import { parseJavaScriptCode } from './babelParser.service.js';
 import _traverse from '@babel/traverse';
+import * as fsPromises from 'fs/promises';
+import path from 'path';
+
 const traverse = _traverse.default || _traverse;
 
 /**
- * API Endpoint Parser Service
- * Extracts mount paths and router methods from Express.js source code
- * to build an inventory of valid endpoints with deep metadata.
+ * Recursively scans directory and loads source files using fsPromises.
  */
+async function loadSourceFilesFromDir(dirPath) {
+    const files = [];
+    try {
+        const entries = await fsPromises.readdir(dirPath);
+        for (const entry of entries) {
+            if (entry === 'node_modules' || entry === '.git' || entry === 'dist' || entry === 'build') {
+                continue;
+            }
+            if (entry.includes('.test.') || entry.includes('.spec.') || entry.includes('__tests__')) {
+                continue;
+            }
+            const fullPath = path.join(dirPath, entry);
+            const stat = await fsPromises.stat(fullPath);
+            if (stat.isDirectory() && !/\.(js|ts|mjs|cjs)$/i.test(entry)) {
+                const sub = await loadSourceFilesFromDir(fullPath);
+                files.push(...sub);
+            } else if (/\.(js|ts)$/.test(entry)) {
+                const content = await fsPromises.readFile(fullPath, 'utf8');
+                files.push({ path: fullPath, content });
+            }
+        }
+    } catch (_) {}
+    return files;
+}
 
 export const extractMountPaths = (sourceCode) => {
+    if (!Array.isArray(sourceCode)) return [];
     const mounts = [];
     const appFiles = sourceCode.filter(
         (f) => f.path.includes("app.js") || f.path.includes("index.js") || f.path.includes("server.js")
@@ -24,13 +50,25 @@ export const extractMountPaths = (sourceCode) => {
     return mounts;
 };
 
-export const extractValidEndpoints = (sourceCode) => {
-    if (!sourceCode || sourceCode.length === 0) return [];
+export const extractValidEndpoints = (sourceCodeOrRootDir, scanDir = null) => {
+    if (typeof sourceCodeOrRootDir === 'string') {
+        const targetDir = scanDir || sourceCodeOrRootDir;
+        return (async () => {
+            const sourceFiles = await loadSourceFilesFromDir(targetDir);
+            return parseEndpointsFromFiles(sourceFiles);
+        })();
+    }
+    const sourceFiles = Array.isArray(sourceCodeOrRootDir) ? sourceCodeOrRootDir : [];
+    return parseEndpointsFromFiles(sourceFiles);
+};
 
-    const mounts = extractMountPaths(sourceCode);
+export const parseEndpointsFromFiles = (sourceFiles = []) => {
+    if (!sourceFiles || sourceFiles.length === 0) return [];
+
+    const mounts = extractMountPaths(sourceFiles);
     const endpoints = [];
 
-    const routeFiles = sourceCode.filter((f) => {
+    const routeFiles = sourceFiles.filter((f) => {
         const lower = f.path.toLowerCase();
         // Skip obvious test files or mocks
         if (lower.includes(".test.") || lower.includes(".spec.") || lower.includes("__tests__") || lower.includes("mock")) {
@@ -53,17 +91,17 @@ export const extractValidEndpoints = (sourceCode) => {
         const parseResult = parseJavaScriptCode(routeFile.content);
         if (parseResult.success) {
             traverse(parseResult.ast, {
-                CallExpression(path) {
+                CallExpression(astPath) {
                     if (
-                        path.node.callee.type === "MemberExpression" &&
-                        ["get", "post", "put", "delete", "patch"].includes(path.node.callee.property.name)
+                        astPath.node.callee.type === "MemberExpression" &&
+                        ["get", "post", "put", "delete", "patch"].includes(astPath.node.callee.property.name)
                     ) {
-                        const objName = path.node.callee.object.name || "";
+                        const objName = astPath.node.callee.object.name || "";
                         // Exclude obvious HTTP clients
                         if (["axios", "http", "https", "request", "fetch", "supertest"].includes(objName.toLowerCase())) return;
 
-                        const method = path.node.callee.property.name.toUpperCase();
-                        const args = path.node.arguments;
+                        const method = astPath.node.callee.property.name.toUpperCase();
+                        const args = astPath.node.arguments;
                         if (args.length < 2) return;
 
                         const routePathNode = args[0];
@@ -106,11 +144,10 @@ export const extractValidEndpoints = (sourceCode) => {
                         let databaseModels = [];
 
                         if (controllerName) {
-                            const controllerFiles = sourceCode.filter(f => f.path.includes('controller'));
+                            const controllerFiles = sourceFiles.filter(f => f.path.includes('controller'));
                             for (const cFile of controllerFiles) {
                                 const methodName = handlerNode.property?.name || controllerMethod;
                                 if (methodName && cFile.content.includes(methodName)) {
-                                    // Heuristic for req.body.xxx
                                     const bodyRegex = /req\.body\.([a-zA-Z0-9_]+)/g;
                                     let bMatch;
                                     const bodyParams = [];
@@ -119,7 +156,6 @@ export const extractValidEndpoints = (sourceCode) => {
                                     }
                                     if (bodyParams.length > 0) requestBodySchema = [...new Set(bodyParams)];
 
-                                    // Heuristic for const { x, y } = req.body;
                                     const destructureRegex = /(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*req\.body/g;
                                     let dMatch;
                                     while ((dMatch = destructureRegex.exec(cFile.content)) !== null) {
@@ -127,7 +163,6 @@ export const extractValidEndpoints = (sourceCode) => {
                                         requestBodySchema = requestBodySchema ? [...new Set([...requestBodySchema, ...fields])] : fields;
                                     }
 
-                                    // Heuristic for Prisma ORM (prisma.model.method)
                                     const prismaRegex = /prisma\.([a-zA-Z0-9_]+)\./g;
                                     let pMatch;
                                     while ((pMatch = prismaRegex.exec(cFile.content)) !== null) {
@@ -139,6 +174,7 @@ export const extractValidEndpoints = (sourceCode) => {
 
                         endpoints.push({
                             method,
+                            path: fullPath || "/",
                             fullPath: fullPath || "/",
                             sourceFile: routeFile.path,
                             controllerMethod,
@@ -147,10 +183,10 @@ export const extractValidEndpoints = (sourceCode) => {
                             requestBodySchema,
                             databaseModels: databaseModels.length > 0 ? [...new Set(databaseModels)] : undefined,
                             provenance: {
-                                detectionType: "AST",
+                                detectionType: "AST_FALLBACK",
                                 sourceFile: routeFile.path,
-                                sourceLine: path.node.loc?.start?.line || null,
-                                resolutionStatus: "FULLY_RESOLVED"
+                                sourceLine: astPath.node.loc?.start?.line || null,
+                                resolutionStatus: "PARTIALLY_RESOLVED"
                             }
                         });
                     }
@@ -159,8 +195,8 @@ export const extractValidEndpoints = (sourceCode) => {
         }
     }
 
-    // Direct app.get/post endpoints
-    const appFiles = sourceCode.filter(
+    // Direct app.get/post endpoints via regex fallback
+    const appFiles = sourceFiles.filter(
         (f) => f.path.includes("app.js") || f.path.includes("index.js") || f.path.includes("server.js")
     );
     for (const file of appFiles) {
@@ -173,10 +209,11 @@ export const extractValidEndpoints = (sourceCode) => {
             
             endpoints.push({
                 method: match[1].toUpperCase(),
+                path: match[2],
                 fullPath: match[2],
                 sourceFile: file.path,
                 provenance: {
-                    detectionType: "REGEX_FALLBACK",
+                    detectionType: "AST_FALLBACK",
                     sourceFile: file.path,
                     sourceLine: sourceLine,
                     resolutionStatus: "PARTIALLY_RESOLVED"
@@ -184,12 +221,12 @@ export const extractValidEndpoints = (sourceCode) => {
             });
         }
     }
+
     // Deduplicate based on method + fullPath
     const uniqueEndpointsMap = new Map();
     for (const ep of endpoints) {
-        const key = `${ep.method}:${ep.fullPath}`;
-        // Prefer AST over REGEX_FALLBACK
-        if (!uniqueEndpointsMap.has(key) || ep.provenance?.detectionType === "AST") {
+        const key = `${ep.method}:${ep.path || ep.fullPath}`;
+        if (!uniqueEndpointsMap.has(key)) {
             uniqueEndpointsMap.set(key, ep);
         }
     }

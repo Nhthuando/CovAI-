@@ -111,10 +111,14 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
     jestCmd += ` --runTestsByPath ${testArgs}`;
 
     if (jestConfigPath) {
-        const resolvedConfig = path.resolve(jestConfigPath);
-        const relativeConfig = path.relative(resolvedRoot, resolvedConfig).replace(/\\/g, "/");
-        if (relativeConfig && !relativeConfig.startsWith("../") && !path.isAbsolute(relativeConfig)) {
-            jestCmd += ` --config=${quoteForShell(relativeConfig)}`;
+        const resolvedConfig = path.isAbsolute(jestConfigPath)
+            ? jestConfigPath
+            : path.resolve(resolvedRoot, jestConfigPath);
+        if (fs.existsSync(resolvedConfig)) {
+            const relativeConfig = path.relative(resolvedRoot, resolvedConfig).replace(/\\/g, "/");
+            if (relativeConfig && !relativeConfig.startsWith("../") && !path.isAbsolute(relativeConfig)) {
+                jestCmd += ` --config=${quoteForShell(relativeConfig)}`;
+            }
         }
     }
 

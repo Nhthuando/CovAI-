@@ -9,6 +9,8 @@ export const normalizeRelativePath = (p = "") => {
     return p.replace(/\\/g, "/").replace(/^\.?\//, "").trim();
 };
 
+import { isBusinessLogicSourceFile } from "../utils/businessLogicFileDetector.js";
+
 /**
  * 1.1 PHÂN LOẠI VÀ NHẬN DIỆN FILE NGHIỆP VỤ MỤC TIÊU
  *
@@ -18,81 +20,21 @@ export const normalizeRelativePath = (p = "") => {
  * - Controllers: src/controllers/**
  * - Utils & Helpers: src/utils/**, src/helpers/**, src/lib/**
  * - Models & Middlewares: src/models/**, src/middlewares/**
+ * - Core logic & Preset Services: src/core/**, src/presets/index.ts (modules with business functions)
  *
  * Strictly excludes:
  * - Test files (*.test.*, *.spec.*, *.testcase.*, *.steps.*, tests/**, __tests__/**)
  * - Mocks & fixtures (__mocks__/**, mocks/**, fixtures/**, stubs/**)
- * - Configs (jest.config.*, vite.config.*, tsconfig*.json, package.json)
+ * - Examples & Demos (examples/**, demo/**, samples/**)
+ * - Configs (jest.config.*, vite.config.*, tsup.config.*, tsconfig*.json, package.json)
+ * - TypeScript type definitions (*.d.ts, types.ts, *.types.ts, types/**)
+ * - Static preset data catalogs & dictionaries (presets/tier*.ts, presets/data/**)
  * - Dependencies & builds (node_modules/**, coverage/**, dist/**, build/**, .git/**)
- * - Frontend UI (client/**, frontend/**, components/**, *.jsx, *.tsx, *.vue, *.svelte)
+ * - Frontend UI & hooks & i18n (client/**, frontend/**, components/**, hooks/**, i18n/**, *.jsx, *.tsx)
  * - Routes and server entry points (routes/**, endpoints/**, app.js, server.js, index.js, main.js)
  */
-export const isBusinessLogicFile = (filePath = "") => {
-    if (!filePath || typeof filePath !== "string") return false;
-    const norm = normalizeRelativePath(filePath).toLowerCase();
-
-    // 1. Must be JavaScript or TypeScript
-    if (!/\.[cm]?[jt]s$/i.test(norm)) return false;
-
-    // 2. Reject TypeScript declaration files
-    if (/\.d\.ts$/i.test(norm)) return false;
-
-    // 3. Reject tests
-    if (
-        /\.(test|spec|testcase|steps)\.[cm]?[jt]s$/i.test(norm) ||
-        /(^|\/)(tests?|__tests__|specs?|unit|step_definitions)\//i.test(norm)
-    ) {
-        return false;
-    }
-
-    // 4. Reject mocks and fixtures
-    if (
-        /(^|\/)(mocks?|__mocks__|fixtures?|stubs?)\//i.test(norm) ||
-        /\.(mock|fixture|stub)\.[cm]?[jt]s$/i.test(norm)
-    ) {
-        return false;
-    }
-
-    // 5. Reject setup / teardown / helper files for test runners
-    const baseName = path.basename(norm);
-    if (/^(setup|global-?setup|setup-?tests|teardown|fixtures?)\.[a-z0-9]+$/i.test(baseName)) {
-        return false;
-    }
-
-    // 6. Reject configs
-    if (/^(jest|vitest|babel|webpack|vite|rollup|eslint|prettier|tailwind|postcss)\.config\.[a-z0-9]+$/i.test(baseName)) {
-        return false;
-    }
-
-    // 7. Reject dependencies and build outputs
-    if (/(^|\/)(node_modules|coverage|dist|build|\.git|\.next|\.turbo|out)\//i.test(norm)) {
-        return false;
-    }
-
-    // 8. Reject frontend UI code
-    if (/(^|\/)(client|frontend|components|views|pages)\//i.test(norm)) {
-        return false;
-    }
-
-    // 9. Reject route and server entry files (reserved for integration/system testing)
-    const isTopLevelEntry = /^(src\/|app\/|server\/|backend\/)?(index|main)\.[cm]?[jt]sx?$/i.test(norm.replace(/^\.?\//, ""));
-    const isRouteOrEntry = /(^|\/)(routes?|endpoints?)(\/|\.|$)/i.test(norm) ||
-        /\.(route|routes)\.[cm]?[jt]sx?$/i.test(norm) ||
-        /(^|\/)(app|server)\.[cm]?[jt]sx?$/i.test(norm) ||
-        isTopLevelEntry;
-    if (isRouteOrEntry) {
-        return false;
-    }
-
-    // 10. Check if it matches genuine business logic patterns
-    const isBusinessLayer =
-        /(^|\/)(services?|handlers?|controllers?|utils?|helpers?|models?|middlewares?|lib|domain|core|use-?cases?)(\/|\.|$)/i.test(norm) ||
-        /\.(service|handler|controller|util|helper|model|middleware)\.[cm]?[jt]s$/i.test(norm);
-
-    // If within src/, app/, or backend/, treat non-route JS/TS files as logic
-    const isInSrcOrApp = /^(src|app|backend|server)\//i.test(norm);
-
-    return isBusinessLayer || isInSrcOrApp;
+export const isBusinessLogicFile = (filePath = "", configExclusions = []) => {
+    return isBusinessLogicSourceFile(filePath, configExclusions);
 };
 
 /**
@@ -129,7 +71,7 @@ export const classifyBusinessLogicFiles = (rootDir) => {
             const lowerRel = relPath.toLowerCase();
 
             if (entry.isDirectory()) {
-                if (!/^(node_modules|coverage|dist|build|\.git|client|frontend)$/i.test(entry.name)) {
+                if (!/^(node_modules|coverage|dist|build|\.git|client|frontend|tests?|__tests__|specs?|e2e|cypress|playwright|fixtures|mocks|test[-_]data|test[-_]utils)$/i.test(entry.name)) {
                     walk(fullPath);
                 }
             } else if (entry.isFile()) {
@@ -170,7 +112,20 @@ export const analyzeSourceAst = (sourceCode = "") => {
     const mongooseModels = [];
 
     if (!sourceCode || typeof sourceCode !== "string") {
-        return { exportedSymbols, internalFunctions, decisionPoints, exceptionPoints };
+        return {
+            exportedSymbols,
+            internalFunctions,
+            decisionPoints,
+            exceptionPoints,
+            cyclomaticComplexity: 1,
+            basisPathsCount: 1,
+            classes: [],
+            classMethods: [],
+            declaredObjects: [],
+            mongooseModels: [],
+            unexportedFunctions: [],
+            exportedSymbolNames: []
+        };
     }
 
     const lines = sourceCode.split(/\r?\n/);
@@ -719,6 +674,8 @@ export const analyzeSourceAst = (sourceCode = "") => {
         internalFunctions,
         decisionPoints,
         exceptionPoints,
+        cyclomaticComplexity: 1 + (decisionPoints || []).length,
+        basisPathsCount: 1 + (decisionPoints || []).length,
         classes: Array.from(declaredClasses.values()),
         classMethods,
         declaredObjects: Array.from(declaredObjects.values()),

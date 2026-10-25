@@ -1,4 +1,13 @@
-import { cleanAndDeduplicateTestContent, healImportPathsInTestCode, healMultilineStrings, healMismatchedQuotes } from "../services/testSanitizer.service.js";
+import {
+    cleanAndDeduplicateTestContent,
+    healImportPathsInTestCode,
+    healMultilineStrings,
+    healMismatchedQuotes,
+    findTestBlockIntervalByTitle,
+    updateTestBlockByTitle,
+    ensureJestMockVirtualOption,
+    balanceTestFileBraces
+} from "../services/testSanitizer.service.js";
 import { relaxToHaveBeenCalled } from "../services/applyTestSuggestion.service.js";
 import { findAssociatedTestFile } from "../services/fileCoverage.service.js";
 import { parseJavaScriptCode } from "../services/babelParser.service.js";
@@ -326,6 +335,16 @@ describe('monorepo path', () => {
             const sanitized = cleanAndDeduplicateTestContent(code);
             expect(sanitized).not.toContain("const customVar = customVar;");
         });
+
+        test("heals illegal assignments to reserved keyword default like const fnRef = default or let target = default", () => {
+            const code = `import defaultExport from './index';\ndescribe('index', () => {\n  test('default category A', () => {\n    const fnRef: any = default;\n    let target = default;\n    if (typeof default === 'function') { target = new default(); }\n    expect(default).toBeDefined();\n  });\n});`;
+            const sanitized = cleanAndDeduplicateTestContent(code, "", "tests/index.test.ts");
+            expect(sanitized).not.toContain("const fnRef: any = default;");
+            expect(sanitized).not.toContain("let target = default;");
+            expect(sanitized).not.toMatch(/\btypeof\s+default\b(?!\w)/);
+            expect(sanitized).not.toContain("new default()");
+            expect(sanitized).toContain("typeof defaultExport");
+        });
     });
 
     describe("healMultilineStrings", () => {
@@ -473,13 +492,95 @@ describe('controller tests', () => {
             expect(relaxed).toContain("expect(streamUpload).toBeDefined();");
             expect(relaxed).toContain("expect(res.status).toBeDefined();");
         });
+
+        test("heals misplaced catch inside nested toSatisfy or callbacks caused by premature regex cuts", () => {
+            const brokenInput = `
+  test('TC-ERR-10/11: should catch errors, wrap them with cause, and throw after max retries', async () => {
+    try {
+  const originalError = new Error('network timeout');
+    const operation = jest.fn().mockRejectedValue(originalError);
+
+    const promise = retryAsync(operation, { retries: 2, delayMs: 200, label: 'database query' })
+    promise.catch(() => {});
+    promise.catch(() => {});
+    const assertionPromise = expect(promise).rejects.toSatisfy((err) => {
+      expect(err.message).toBe('Failed to complete database query after 2 attempts');
+      expect(err.cause).toBe(originalError);
+      return true;
+    } catch (err) {
+      expect(err).toBeDefined();
+    }
+    });
+
+    await jest.runAllTimersAsync();
+    await assertionPromise;
+    expect(operation).toHaveBeenCalledTimes(2);
+  });
+`;
+            const cleaned = cleanAndDeduplicateTestContent(brokenInput);
+            expect(cleaned).not.toContain("} catch (err) {\n      expect(err).toBeDefined();\n    }\n    });");
+            expect(cleaned).toContain("expect(err.cause).toBe(originalError);");
+            expect(cleaned).toContain("toSatisfy(received, predicate)");
+            const ast = parseJavaScriptCode(cleaned);
+            expect(ast.success).toBe(true);
+        });
+
+        test("injects toSatisfy polyfill when toSatisfy is used without expect.extend", () => {
+            const input = `
+test('uses toSatisfy matcher', async () => {
+    await expect(p).rejects.toSatisfy(err => err.message === 'fail');
+});
+`;
+            const cleaned = cleanAndDeduplicateTestContent(input);
+            expect(cleaned).toContain("expect.extend");
+            expect(cleaned).toContain("toSatisfy(received, predicate)");
+        });
+
+        test("findTestBlockIntervalByTitle accurately finds full test block spanning nested callbacks", () => {
+            const code = `
+describe('suite', () => {
+  test('complex nested test', async () => {
+    const a = 1;
+    await expect(p).rejects.toSatisfy((err) => {
+      expect(err.code).toBe(500);
+      return true;
+    });
+    expect(a).toBe(1);
+  });
+});
+`;
+            const interval = findTestBlockIntervalByTitle(code, "complex nested test");
+            expect(interval).not.toBeNull();
+            expect(interval.testHeader).toContain("test('complex nested test'");
+            expect(interval.testBody).toContain("toSatisfy");
+            expect(interval.testBody).toContain("expect(a).toBe(1);");
+            expect(interval.testTail.trim()).toBe("});");
+        });
+
+        test("updateTestBlockByTitle safely wraps test body without truncating at nested callbacks", () => {
+            const code = `
+  test('nested test', async () => {
+    await expect(p).rejects.toSatisfy((err) => {
+      return true;
+    });
+    expect(1).toBe(1);
+  });
+`;
+            const updated = updateTestBlockByTitle(code, "nested test", (h, b, t) => {
+                return `${h}\n    try {\n  ${b.trim()}\n    } catch (err) {\n      expect(err).toBeDefined();\n    }\n  });`;
+            });
+            expect(updated).toContain("try {");
+            expect(updated).toContain("expect(1).toBe(1);");
+            expect(updated).toContain("} catch (err) {");
+            const ast = parseJavaScriptCode(updated);
+            expect(ast.success).toBe(true);
+        });
     });
 
     describe("findAssociatedTestFile", () => {
         test("does not match unrelated test file simply because of same package prefix", () => {
             const rootDir = process.cwd();
             const result = findAssociatedTestFile(rootDir, "src/models/document.model.js");
-            // If document.model.test.js doesn't exist, it should return found: false and suggest a clean path
             if (!result.found) {
                 expect(result.suggestedFilePath).toContain("document.model.test");
             } else {
@@ -487,4 +588,339 @@ describe('controller tests', () => {
             }
         });
     });
+
+    describe("Prisma Mock Hoist & Out-of-Scope Variable Invariants", () => {
+        test("injects Prisma mock with mockSharedPrisma and mockCreatePrismaInstance complying with Jest hoist rules", () => {
+            const code = `
+const { prisma } = require('../lib/prisma');
+describe('user service', () => {
+    test('fetches user', async () => {
+        expect(true).toBe(true);
+    });
 });
+`;
+            const sanitized = cleanAndDeduplicateTestContent(code);
+            expect(sanitized).toContain("mockSharedPrisma");
+            expect(sanitized).toContain("mockCreatePrismaInstance");
+            expect(sanitized).not.toContain("__sharedMockPrisma");
+            expect(sanitized).not.toContain("_createPrismaMockInstance");
+
+            // Verify AST parsing
+            const ast = parseJavaScriptCode(sanitized);
+            expect(ast.success).toBe(true);
+        });
+
+        test("does NOT inject duplicate universal mock when @prisma/client is already mocked with double quotes", () => {
+            const code = `
+jest.mock("@prisma/client", () => {
+  const mPrisma = {
+    food: { findUnique: jest.fn() }
+  };
+  return { PrismaClient: jest.fn(() => mPrisma) };
+});
+const prisma = new PrismaClient();
+describe('cart controller', () => {
+    test('works', () => { expect(prisma).toBeDefined(); });
+});
+`;
+            const sanitized = cleanAndDeduplicateTestContent(code);
+            expect(sanitized).not.toContain("Universal Prisma Mock");
+            expect(sanitized).not.toContain("mockSharedPrisma");
+            expect(sanitized).toContain('jest.mock("@prisma/client"');
+
+            const ast = parseJavaScriptCode(sanitized);
+            expect(ast.success).toBe(true);
+        });
+
+        test("heals legacy __sharedMockPrisma to mockSharedPrisma in existing test content", () => {
+            const legacyCode = `
+const _createPrismaMockInstance = () => ({});
+const __sharedMockPrisma = _createPrismaMockInstance();
+jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => __sharedMockPrisma) }));
+describe('legacy suite', () => {
+    test('ok', () => { expect(__sharedMockPrisma).toBeDefined(); });
+});
+`;
+            const sanitized = cleanAndDeduplicateTestContent(legacyCode);
+            expect(sanitized).toContain("mockSharedPrisma");
+            expect(sanitized).toContain("mockCreatePrismaInstance");
+            expect(sanitized).not.toContain("__sharedMockPrisma");
+            expect(sanitized).not.toContain("_createPrismaMockInstance");
+
+            const ast = parseJavaScriptCode(sanitized);
+            expect(ast.success).toBe(true);
+        });
+    });
+
+    describe("Bull Queue Mock & Virtual Mock Invariants", () => {
+        test("purges false-positive Bull mocks and wire logic when test file does not import Bull", () => {
+            const code = `
+var mockImplementation = (typeof jest !== 'undefined' ? jest.fn() : {});
+jest.mock('bull', () => {
+  const MockBull = jest.fn().mockImplementation(() => ({
+    process: (typeof mockProcess !== 'undefined' ? mockProcess : jest.fn()),
+    on: (typeof mockOn !== 'undefined' ? mockOn : jest.fn()),
+    add: (typeof mockAdd !== 'undefined' ? mockAdd : jest.fn(() => Promise.resolve({ id: '1' }))),
+    getWaitingCount: (typeof mockGetWaitingCount !== 'undefined' ? mockGetWaitingCount : jest.fn(() => Promise.resolve(0))),
+    getActiveCount: (typeof mockGetActiveCount !== 'undefined' ? mockGetActiveCount : jest.fn(() => Promise.resolve(0))),
+    getCompletedCount: (typeof mockGetCompletedCount !== 'undefined' ? mockGetCompletedCount : jest.fn(() => Promise.resolve(0))),
+    getFailedCount: (typeof mockGetFailedCount !== 'undefined' ? mockGetFailedCount : jest.fn(() => Promise.resolve(0))),
+    getDelayedCount: (typeof mockGetDelayedCount !== 'undefined' ? mockGetDelayedCount : jest.fn(() => Promise.resolve(0))),
+    close: (typeof mockClose !== 'undefined' ? mockClose : jest.fn(() => Promise.resolve())),
+  }));
+  MockBull.prototype.process = (typeof mockProcess !== 'undefined' ? mockProcess : jest.fn());
+  MockBull.default = MockBull;
+  return MockBull;
+});
+var mockProcess = typeof jest !== 'undefined' ? jest.fn() : (() => {});
+var mockOn = typeof jest !== 'undefined' ? jest.fn() : (() => {});
+
+describe("Cart Controller Unit Tests", () => {
+  let req, res;
+  beforeEach(() => {
+    req = { body: {} };
+    res = { json: jest.fn().mockReturnThis() };
+    jest.clearAllMocks();
+    if (typeof Bull !== 'undefined' && Bull) {
+      if (!Bull.default) Bull.default = Bull;
+      if (typeof mockProcess !== 'undefined') Bull.prototype.process = mockProcess;
+    }
+    if (typeof analysisQueue !== 'undefined' && analysisQueue) {
+      if (typeof mockProcess !== 'undefined') analysisQueue.process = mockProcess;
+    }
+  });
+
+  it("should validate cart items", () => {
+    expect(res.json).toBeDefined();
+  });
+});
+`;
+            const sanitized = cleanAndDeduplicateTestContent(code, "", "cartController.test.js");
+            expect(sanitized).not.toContain("jest.mock('bull'");
+            expect(sanitized).not.toContain("var mockImplementation");
+            expect(sanitized).not.toContain("var mockProcess");
+            expect(sanitized).not.toContain("analysisQueue.process = mockProcess");
+            expect(sanitized).toContain("Cart Controller Unit Tests");
+            expect(sanitized).toContain("jest.clearAllMocks();");
+
+            const ast = parseJavaScriptCode(sanitized);
+            expect(ast.success).toBe(true);
+        });
+
+        test("does NOT hoist Jest mock methods like .mockImplementation as variable declarations", () => {
+            const code = `
+jest.mock('./paymentService', () => ({
+  charge: jest.fn().mockImplementation(() => ({ success: true })),
+  refund: jest.fn().mockReturnValue(true)
+}));
+describe("payment tests", () => {
+  it("charges successfully", () => { expect(true).toBe(true); });
+});
+`;
+            const sanitized = cleanAndDeduplicateTestContent(code, "", "payment.test.js");
+            expect(sanitized).not.toContain("var mockImplementation =");
+            expect(sanitized).not.toContain("var mockReturnValue =");
+
+            const ast = parseJavaScriptCode(sanitized);
+            expect(ast.success).toBe(true);
+        });
+
+        test("ensures Bull mock has { virtual: true } when file legitimately imports Bull", () => {
+            const code = `
+const Bull = require('bull');
+describe("analysis worker job tests", () => {
+  it("initializes worker queue", () => {
+    const q = new Bull('analysisQueue');
+    expect(q).toBeDefined();
+  });
+});
+`;
+            const sanitized = cleanAndDeduplicateTestContent(code, "", "analysis.job.test.js");
+            expect(sanitized).toContain("jest.mock('bull'");
+            expect(sanitized).toContain("{ virtual: true }");
+
+            const ast = parseJavaScriptCode(sanitized);
+            expect(ast.success).toBe(true);
+        });
+
+        test("heals corrupted jest.mock('bull', (, { virtual: true }); => { syntax error", () => {
+            const corrupted = `
+const Bull = require('bull');
+jest.mock('bull', (, { virtual: true }); => {
+  const MockBull = jest.fn().mockImplementation(() => ({
+    process: jest.fn(),
+    close: jest.fn(() => Promise.resolve()),
+  }));
+  return MockBull;
+}, { virtual: true });
+describe("worker tests", () => {
+  it("processes queue", () => {
+    expect(true).toBe(true);
+  });
+});
+`;
+            const sanitized = cleanAndDeduplicateTestContent(corrupted, "", "tests/worker.test.js");
+            expect(sanitized).not.toContain("(, { virtual: true }); =>");
+            expect(sanitized).toContain("jest.mock('bull', () => {");
+            const ast = parseJavaScriptCode(sanitized);
+            expect(ast.success).toBe(true);
+        });
+
+        test("ensureJestMockVirtualOption safely adds virtual option without truncating at nested callbacks", () => {
+            const input = `
+jest.mock('bull', () => ({
+  process: jest.fn((cb) => { return cb({ id: '1' }); }),
+  close: jest.fn(() => Promise.resolve())
+}));
+`;
+            const result = ensureJestMockVirtualOption(input, "bull");
+            expect(result).toContain("jest.mock('bull', () => ({");
+            expect(result).toContain("{ virtual: true }");
+            const ast = parseJavaScriptCode(result);
+            expect(ast.success).toBe(true);
+        });
+
+        test("collapses deeply nested analysisQueue assertions and remains idempotent across multiple runs", () => {
+            let nested = `
+describe("worker shutdown", () => {
+  it("closes queue", () => {
+    if (typeof analysisQueue !== 'undefined' && analysisQueue.close && analysisQueue.close.mock && analysisQueue.close.mock.calls.length > 0) { if (typeof analysisQueue !== 'undefined' && analysisQueue.close && analysisQueue.close.mock && analysisQueue.close.mock.calls.length > 0) { if (typeof analysisQueue !== 'undefined' && analysisQueue.close && analysisQueue.close.mock && analysisQueue.close.mock.calls.length > 0) { expect(analysisQueue.close).toHaveBeenCalled(); } else { expect(exitSpy).toHaveBeenCalledWith(0); } } else { expect(exitSpy).toHaveBeenCalledWith(0); } } else { expect(exitSpy).toHaveBeenCalledWith(0); }
+  });
+});
+`;
+            const pass1 = cleanAndDeduplicateTestContent(nested, "", "tests/worker.test.js");
+            // Should collapse to single if
+            const occurrences1 = (pass1.match(/if \(typeof analysisQueue !== 'undefined'/g) || []).length;
+            expect(occurrences1).toBe(1);
+
+            // Run pass 2 on pass 1 output - must remain idempotent and not re-nest
+            const pass2 = cleanAndDeduplicateTestContent(pass1, "", "tests/worker.test.js");
+            const occurrences2 = (pass2.match(/if \(typeof analysisQueue !== 'undefined'/g) || []).length;
+            expect(occurrences2).toBe(1);
+
+            const ast = parseJavaScriptCode(pass2);
+            expect(ast.success).toBe(true);
+        });
+
+        test("collapses repeated message objects in ai.service tests and preserves idempotency", () => {
+            const repeated = `
+const { chatWithAI } = require('../../src/services/ai.service');
+describe("ai chat", () => {
+  it("chats", async () => {
+    axios.create().post.mockResolvedValueOnce({
+      data: {
+        message: { content: 'Rewrite' }, message: { content: 'Rewrite' }, message: { content: 'Rewrite' }, choices: [{ message: { content: 'Rewrite' } }]
+      }
+    });
+  });
+});
+`;
+            const pass1 = cleanAndDeduplicateTestContent(repeated, "", "tests/services/ai.service.test.js");
+            expect(pass1).not.toContain("message: { content: 'Rewrite' }, message: { content: 'Rewrite' }");
+            const pass2 = cleanAndDeduplicateTestContent(pass1, "", "tests/services/ai.service.test.js");
+            expect(pass2).toEqual(pass1);
+            const ast = parseJavaScriptCode(pass2);
+            expect(ast.success).toBe(true);
+        });
+
+        test("compresses excessive consecutive blank lines down to at most two", () => {
+            const codeWithBlankLines = `
+const a = 1;
+
+
+
+
+const b = 2;
+`;
+            const cleaned = cleanAndDeduplicateTestContent(codeWithBlankLines, "", "test.js");
+            expect(cleaned).not.toContain("\n\n\n");
+            expect(cleaned).toContain("\n\nconst b = 2;");
+        });
+    });
+
+    describe("healImportPathsInTestCode with jest.doMock", () => {
+        test("heals storage paths inside jest.doMock and jest.dontMock", () => {
+            const input = `
+jest.doMock('../storage/projects/p1/github/123/repo/src/config', () => ({}));
+jest.dontMock('../storage/projects/p1/github/123/repo/src/utils/logger');
+jest.unmock('../storage/projects/p1/github/123/repo/src/models');
+`;
+            const result = healImportPathsInTestCode(input, "tests/worker.test.js");
+            expect(result).toContain("jest.doMock('../src/config'");
+            expect(result).toContain("jest.dontMock('../src/utils/logger'");
+            expect(result).toContain("jest.unmock('../src/models'");
+        });
+
+        test("ensureJestMockVirtualOption works on jest.doMock calls", () => {
+            const input = `
+jest.doMock('bull', () => ({
+  process: jest.fn(),
+  close: jest.fn()
+}));
+`;
+            const result = ensureJestMockVirtualOption(input, "bull");
+            expect(result).toContain("jest.doMock('bull', () => ({");
+            expect(result).toContain("{ virtual: true }");
+        });
+    });
+
+    describe("models mock healing and balanceTestFileBraces safety", () => {
+        test("heals malformed jest.mock('../../src/models') with premature closing brace", () => {
+            const brokenMock = `
+jest.mock('../../src/models', () => ({
+  models: { Requirement: { update: jest.fn() } }
+},
+    Version: {
+      create: jest.fn(() => Promise.resolve({ id: 1 })),
+      findByPk: jest.fn(),
+      findAll: jest.fn()
+    },
+    Document: {
+      create: jest.fn(() => Promise.resolve({ id: 1 })),
+      findByPk: jest.fn(),
+      findAll: jest.fn()
+    }));
+describe('test suite', () => {
+  it('works', () => { expect(true).toBe(true); });
+});
+`;
+            const cleaned = cleanAndDeduplicateTestContent(brokenMock, "SyntaxError: Unexpected token, expected \",\" (44:11)", "tests/jobs/analysis.job.test.js");
+            expect(cleaned).not.toContain("}, \n    Version:");
+            expect(cleaned).toContain("models: {");
+            expect(cleaned).toContain("Requirement:");
+            expect(cleaned).toContain("Version:");
+            expect(cleaned).toContain("Document:");
+            const parsed = parseJavaScriptCode(cleaned);
+            expect(parsed.success).toBe(true);
+        });
+
+        test("heals truncated assertions at EOF", () => {
+            const truncatedCode = `
+describe('analysis queue', () => {
+  test('getQueueStats retrieves counts', async () => {
+    const stats = await getQueueStats();
+    expect(stats).toEqual({ waiting: 1, active: 2, completed: 3, failed: 4, delayed: 5
+`;
+            const cleaned = cleanAndDeduplicateTestContent(truncatedCode, "", "tests/jobs/analysis.job.test.js");
+            expect(cleaned).toContain("expect(stats).toEqual({ waiting: 1, active: 2, completed: 3, failed: 4, delayed: 5 });");
+            const parsed = parseJavaScriptCode(cleaned);
+            expect(parsed.success).toBe(true);
+        });
+
+        test("balanceTestFileBraces does not strip valid closing brackets on files with parse errors", () => {
+            const codeWithSyntaxError = `
+describe('suite', () => {
+  test('test', () => {
+    const x = @syntax_error@;
+    expect(1).toBe(1);
+  });
+});
+`;
+            const result = balanceTestFileBraces(codeWithSyntaxError);
+            expect(result.trim()).toContain("});");
+            expect(result).toContain("describe('suite', () => {");
+        });
+    });
+});
+
+

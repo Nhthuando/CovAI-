@@ -21,7 +21,7 @@ const FRAMEWORKS = [
 
 const DEPENDENCY_SECTIONS = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"];
 const IGNORED_DIRECTORIES = new Set(["node_modules", ".git", "coverage", "dist", "build", ".next", ".vite", ".vitest"]);
-const TEST_FILE_PATTERN = /(?:^|\.)(?:test|spec)\.[cm]?[jt]sx?$/i;
+const TEST_FILE_PATTERN = /(?:^|\.)(?:test|spec)\.[cm]?[jt]sx?$|^(?:tests?|specs?)[-_.]|[-_.](?:tests?|specs?)\.[cm]?[jt]sx?$|^tests?[A-Z]|[a-z0-9](?:Tests?|Specs?)\.[cm]?[jt]sx?$/i;
 
 const readPackageJson = (packagePath, errors) => {
     if (!fs.existsSync(packagePath)) return null;

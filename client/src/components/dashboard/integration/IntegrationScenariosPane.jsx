@@ -571,9 +571,9 @@ export default function IntegrationScenariosPane({
                               {!isSelected && scenario.enabled && (
                                 <span
                                   className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--color-warning)]/10 text-[var(--color-warning)] border border-[var(--color-warning)]/20"
-                                  title="Kịch bản này chưa được chọn và sẽ bị bỏ qua khi chạy test (it.skip)"
+                                  title="This scenario is unselected and will be skipped during test execution (it.skip)"
                                 >
-                                  ○ BỎ QUA (Chưa chọn)
+                                  ○ SKIPPED (Unselected)
                                 </span>
                               )}
                             </div>

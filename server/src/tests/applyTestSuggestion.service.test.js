@@ -9,8 +9,13 @@ import {
     sanitizeAllProjectTestFiles,
     generateDeltaTestCode,
     autoHealTestFailures,
-    autoRefineCoverageGaps
+    autoRefineCoverageGaps,
+    computeSourceFilesHash,
+    verifySourceFilesUnchanged,
+    cleanTestRunnerError
 } from "../services/applyTestSuggestion.service.js";
+import { runJestCoverage } from "../services/runTestsJob.service.js";
+import { dockerRunner } from "../services/dockerRunner.service.js";
 
 describe("applyTestSuggestion.service", () => {
     let tempDir;
@@ -431,6 +436,157 @@ describe('user tests', () => {
 
             expect(result.currentSum).toEqual(fakeSum);
         });
+    });
+
+    describe("P0 Safety & Immutability Invariants", () => {
+        test("source file hashes remain 100% unchanged before and after applying test suggestions", () => {
+            const srcDir = path.join(tempDir, "src", "services");
+            fs.mkdirSync(srcDir, { recursive: true });
+            const sourceFile = path.join(srcDir, "billing.service.js");
+            const sourceCode = "export function calculateTotal(qty, price) { return qty * price; }";
+            fs.writeFileSync(sourceFile, sourceCode, "utf8");
+
+            const hashesBefore = computeSourceFilesHash(tempDir);
+            expect(Object.keys(hashesBefore).length).toBeGreaterThan(0);
+
+            const suggestion = {
+                sourceFile: "src/services/billing.service.js",
+                testFile: "tests/billing.test.js",
+                framework: "jest",
+                generatedCode: "describe('billing', () => { test('calc', () => { expect(calculateTotal(2, 5)).toBe(10); }); });"
+            };
+
+            const result = applyCodeToTestFile(tempDir, suggestion);
+            expect(result.changed).toBe(true);
+
+            const immutabilityCheck = verifySourceFilesUnchanged(tempDir, hashesBefore);
+            expect(immutabilityCheck.intact).toBe(true);
+            expect(immutabilityCheck.changedFiles).toHaveLength(0);
+
+            // Double-check source content
+            const contentAfter = fs.readFileSync(sourceFile, "utf8");
+            expect(contentAfter).toBe(sourceCode);
+        });
+
+        test("path traversal attempts with '..' segments are strictly rejected", () => {
+            const suggestion = {
+                sourceFile: "src/calc.js",
+                testFile: "../outside.test.js",
+                generatedCode: "describe('outside', () => { test('fail', () => {}); });"
+            };
+
+            expect(() => {
+                applyCodeToTestFile(tempDir, suggestion);
+            }).toThrow(/Path traversal forbidden/);
+        });
+
+        test("writing directly into source files (src/) is strictly rejected with 403", () => {
+            const suggestion = {
+                sourceFile: "src/calc.js",
+                testFile: "src/calc.js",
+                generatedCode: "describe('calc', () => { test('fail', () => {}); });"
+            };
+
+            expect(() => {
+                applyCodeToTestFile(tempDir, suggestion);
+            }).toThrow(/Strict Storage Guard/);
+        });
+
+        test("writing into configuration or environment files is strictly rejected", () => {
+            for (const badFile of ["package.json", ".env", ".env.local", "tsconfig.json"]) {
+                expect(() => {
+                    applyCodeToTestFile(tempDir, {
+                        testFile: badFile,
+                        generatedCode: "describe('bad', () => {});"
+                    });
+                }).toThrow(/Strict Storage Guard/);
+            }
+        });
+
+        test("stale diff detection throws 409 Conflict when baseContent mismatches on-disk content", () => {
+            const testDir = path.join(tempDir, "tests");
+            fs.mkdirSync(testDir, { recursive: true });
+            const testFile = path.join(testDir, "auth.test.js");
+            fs.writeFileSync(testFile, "// Original version 1 on disk", "utf8");
+
+            const suggestion = {
+                testFile: "tests/auth.test.js",
+                baseContent: "// Outdated version 0 in memory",
+                generatedCode: "describe('auth', () => { test('ok', () => {}); });"
+            };
+
+            expect(() => {
+                applyCodeToTestFile(tempDir, suggestion);
+            }).toThrow(/Stale diff detected/);
+        });
+
+        test("preserves existing skipped tests (.skip / xit) without unskipping them", () => {
+            const testDir = path.join(tempDir, "tests");
+            fs.mkdirSync(testDir, { recursive: true });
+            const testFile = path.join(testDir, "legacy.test.js");
+            const legacyContent = `describe('legacy suite', () => {
+  test.skip('skipped legacy test 1', () => { expect(1).toBe(1); });
+  xit('skipped legacy test 2', () => { expect(2).toBe(2); });
+});\n`;
+            fs.writeFileSync(testFile, legacyContent, "utf8");
+
+            const suggestion = {
+                testFile: "tests/legacy.test.js",
+                generatedCode: "describe('new coverage', () => { test('active test', () => { expect(3).toBe(3); }); });"
+            };
+
+            const result = applyCodeToTestFile(tempDir, suggestion);
+            expect(result.changed).toBe(true);
+
+            const contentAfter = fs.readFileSync(testFile, "utf8");
+            expect(contentAfter).toContain("test.skip('skipped legacy test 1'");
+            expect(contentAfter).toContain("xit('skipped legacy test 2'");
+            expect(contentAfter).toContain("test('active test'");
+        });
+    });
+
+    describe("cleanTestRunnerError", () => {
+        test("strips ANSI color escapes and Vite CJS deprecation warning to uncover real transform error", () => {
+            const raw = `\u001b[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.\u001b[39m\nJSON report written to /app/storage/projects/xyz/coverage/vitest-results.json\nTransform failed with 1 error:\n/app/storage/projects/xyz/tests/presets/index.vitest.test.ts:5296:31: ERROR: Unexpected "default"`;
+            const cleaned = cleanTestRunnerError(raw);
+            expect(cleaned).not.toContain("The CJS build of Vite");
+            expect(cleaned).not.toContain("\u001b[33m");
+            expect(cleaned).not.toContain("JSON report written to");
+            expect(cleaned).toContain("Transform failed with 1 error:");
+            expect(cleaned).toContain('ERROR: Unexpected "default"');
+        });
+
+        test("handles empty or non-string inputs safely", () => {
+            expect(cleanTestRunnerError(null)).toBe("");
+            expect(cleanTestRunnerError("")).toBe("");
+        });
+    });
+
+    describe("runJestCoverage covDir resolution", () => {
+        test("resolves covDir without ReferenceError and returns coverageDir", async () => {
+            const testDir = path.join(tempDir, "tests");
+            fs.mkdirSync(testDir, { recursive: true });
+            fs.writeFileSync(path.join(tempDir, "package.json"), JSON.stringify({ name: "dummy-pkg" }), "utf8");
+            
+            const spy = jest.spyOn(dockerRunner, "run").mockImplementation(async () => {
+                const cov = path.join(tempDir, "coverage");
+                fs.mkdirSync(cov, { recursive: true });
+                fs.writeFileSync(path.join(cov, "coverage-summary.json"), JSON.stringify({ total: {} }));
+                fs.writeFileSync(path.join(cov, "coverage-final.json"), JSON.stringify({}));
+                fs.writeFileSync(path.join(cov, "jest-results.json"), JSON.stringify({ success: true, numTotalTests: 1, numPassedTests: 1 }));
+                return { success: true, exitCode: 0, stdout: "", stderr: "" };
+            });
+
+            try {
+                const res = await runJestCoverage("job-covdir-test", tempDir, null, ["tests/a.test.js"], null);
+                expect(res).toBeDefined();
+                expect(res.exitCode).toBe(0);
+                expect(res.coverageDir).toBeDefined();
+                expect(res.coverageDir).toContain("coverage");
+            } finally {
+                spy.mockRestore();
+            }
+        }, 15000);
     });
 });
 

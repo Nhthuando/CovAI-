@@ -136,10 +136,12 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
         try {
             if (cacheFile && fs.existsSync(cacheFile)) {
                 const fileData = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
-                discoveredEndpoints = fileData.discoveredEndpoints;
-                sourceFilesCount = fileData.sourceFilesCount;
-                endpointCache.set(snapshotId, { discoveredEndpoints, sourceFilesCount });
-                discoveredEndpointsCache = endpointCache.get(snapshotId);
+                discoveredEndpoints = Array.isArray(fileData?.discoveredEndpoints) ? fileData.discoveredEndpoints : [];
+                sourceFilesCount = fileData?.sourceFilesCount || 0;
+                if (discoveredEndpoints.length > 0) {
+                    endpointCache.set(snapshotId, { discoveredEndpoints, sourceFilesCount });
+                    discoveredEndpointsCache = endpointCache.get(snapshotId);
+                }
             }
         } catch (e) {
             console.error("Failed to read endpoint cache file", e);
@@ -151,7 +153,8 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             const sourceCode = await loadSourceCode(snapshotId).catch(() => []);
             sourceTime = Date.now() - startSource;
             sourceFilesCount = sourceCode.length;
-            discoveredEndpoints = extractValidEndpoints(sourceCode);
+            const parsed = await extractValidEndpoints(sourceCode);
+            discoveredEndpoints = Array.isArray(parsed) ? parsed : [];
             endpointCache.set(snapshotId, { discoveredEndpoints, sourceFilesCount });
             
             if (cacheFile) {
@@ -166,8 +169,8 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             }
         }
     } else {
-        sourceFilesCount = discoveredEndpointsCache.sourceFilesCount;
-        discoveredEndpoints = discoveredEndpointsCache.discoveredEndpoints;
+        sourceFilesCount = discoveredEndpointsCache?.sourceFilesCount || 0;
+        discoveredEndpoints = Array.isArray(discoveredEndpointsCache?.discoveredEndpoints) ? discoveredEndpointsCache.discoveredEndpoints : [];
     }
     const astTime = Date.now() - startAst;
 
@@ -294,7 +297,8 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
     let uncoveredApis = 0;
     let notExecutedApis = 0;
 
-    const endpoints = discoveredEndpoints.map(ep => {
+    const safeDiscoveredEndpoints = Array.isArray(discoveredEndpoints) ? discoveredEndpoints : [];
+    const endpoints = safeDiscoveredEndpoints.map(ep => {
         const controllerCoverage = coverageFiles.find(cf => cf.filePath === ep.sourceFile || cf.filePath?.endsWith(ep.sourceFile));
         
         // Multi-level mapping:
@@ -512,7 +516,7 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             execute: executeJob ? { id: executeJob.id, status: executeJob.status, errorMessage: executeJob.errorMessage, createdAt: executeJob.createdAt } : null,
         },
         summary: {
-            discoveredApis: discoveredEndpoints.length,
+            discoveredApis: safeDiscoveredEndpoints.length,
             testedApis,
             uncoveredApis,
             notExecutedApis,

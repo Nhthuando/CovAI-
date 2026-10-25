@@ -206,7 +206,7 @@ export default function IntegrationEndpointDetail({
                        <Clock size={15} className="text-[#38bdf8]" />
                        <span>{endpoint.avgDurationMs || 0}ms</span>
                        {endpoint.latencyStatus === "SLOW" && (
-                         <span className="text-[10px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded font-bold">Chậm</span>
+                         <span className="text-[10px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded font-bold">Slow</span>
                        )}
                      </div>
                    </div>
@@ -244,9 +244,9 @@ export default function IntegrationEndpointDetail({
                </div>
              ) : (
                <div className="p-4 mb-6 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg text-sm text-[var(--color-text-secondary)]">
-                 <div style={{ color: "#e6edf3", fontWeight: 600, marginBottom: 4 }}>Endpoint Chưa Được Test Đợt Này</div>
+                 <div style={{ color: "#e6edf3", fontWeight: 600, marginBottom: 4 }}>Endpoint Not Tested in This Session</div>
                  <p className="mb-4">
-                   Endpoint này chưa có kịch bản nào được thực thi trong đợt chạy gần nhất. Hãy chạy lại kiểm thử để cập nhật số liệu.
+                   This endpoint has no executed scenarios in the latest test run. Re-run tests to collect metrics.
                  </p>
                  <button 
                    onClick={() => {

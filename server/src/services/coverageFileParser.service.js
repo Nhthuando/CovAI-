@@ -1,5 +1,7 @@
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
+import { canonicalizeFilePath } from "../utils/pathSanitizer.js";
+import { isBusinessLogicSourceFile } from "../utils/businessLogicFileDetector.js";
 
 const assertStringField = (value, fieldName) => {
   if (!value || typeof value !== "string" || value.trim().length === 0) {
@@ -20,7 +22,7 @@ const normalizeCoverageValue = (value) => {
   return null;
 };
 
-const calculatePct = (section) => {
+const calculatePct = (section, isFileCovered = false) => {
   if (!section || typeof section !== "object") {
     return null;
   }
@@ -33,7 +35,10 @@ const calculatePct = (section) => {
   const covered = normalizeCoverageValue(section.covered);
   const total = normalizeCoverageValue(section.total);
   if (total !== null && total >= 0 && covered !== null) {
-    return total === 0 ? 100 : (covered / total) * 100;
+    if (total === 0) {
+      return isFileCovered ? 100 : 0;
+    }
+    return (covered / total) * 100;
   }
 
   const hits = normalizeCoverageValue(section.hits);
@@ -44,7 +49,7 @@ const calculatePct = (section) => {
   return null;
 };
 
-const extractFilePath = (entry, key) => {
+const extractFilePath = (entry, key, rootDir = "") => {
   let raw = null;
   if (entry.path && typeof entry.path === "string") {
     raw = entry.path;
@@ -57,20 +62,17 @@ const extractFilePath = (entry, key) => {
   }
   if (!raw || typeof raw !== "string") return null;
 
-  let norm = raw.replace(/\\/g, "/").replace(/^[a-zA-Z]:[\\/]/, "");
-  norm = norm.replace(/^(?:.*?\/)?storage\/projects\/[^/]+\/[^/]+\/[^/]+\/repo\//i, "");
-  norm = norm.replace(/^(?:.*?\/)?repo\//i, "");
-  return norm.replace(/^\/+/, "");
+  return canonicalizeFilePath(raw, rootDir);
 };
 
-const calculateIstanbulPct = (map) => {
+const calculateIstanbulPct = (map, isFileCovered = false) => {
   if (!map || typeof map !== "object") {
     return null;
   }
 
   const values = Object.values(map);
   if (values.length === 0) {
-    return 100;
+    return isFileCovered ? 100 : 0;
   }
 
   const coveredCount = values.filter((v) => {
@@ -83,7 +85,7 @@ const calculateIstanbulPct = (map) => {
   return (coveredCount / values.length) * 100;
 };
 
-const getCoverageRecords = (coverageReport) => {
+const getCoverageRecords = (coverageReport, rootDir = "") => {
   if (!coverageReport || typeof coverageReport !== "object") {
     return [];
   }
@@ -109,6 +111,7 @@ const getCoverageRecords = (coverageReport) => {
       const filePath = extractFilePath(
         entry,
         entry.filePath || entry.path || index,
+        rootDir
       );
       if (!filePath || typeof filePath !== "string") {
         return null;
@@ -120,20 +123,22 @@ const getCoverageRecords = (coverageReport) => {
         calculatePct(entry.linesCoverage) ??
         calculateIstanbulPct(entry.s) ??
         0;
+      const isFileCovered = linesPct > 0;
+
       const funcsPct =
-        calculatePct(entry.functions) ??
-        calculatePct(entry.function) ??
-        calculatePct(entry.funcs) ??
-        calculateIstanbulPct(entry.f);
+        calculatePct(entry.functions, isFileCovered) ??
+        calculatePct(entry.function, isFileCovered) ??
+        calculatePct(entry.funcs, isFileCovered) ??
+        calculateIstanbulPct(entry.f, isFileCovered);
       const branchesPct =
-        calculatePct(entry.branches) ??
-        calculatePct(entry.branch) ??
-        calculateIstanbulPct(entry.b);
+        calculatePct(entry.branches, isFileCovered) ??
+        calculatePct(entry.branch, isFileCovered) ??
+        calculateIstanbulPct(entry.b, isFileCovered);
       const stmtsPct =
-        calculatePct(entry.statements) ??
-        calculatePct(entry.statement) ??
-        calculatePct(entry.stmts) ??
-        calculateIstanbulPct(entry.s);
+        calculatePct(entry.statements, isFileCovered) ??
+        calculatePct(entry.statement, isFileCovered) ??
+        calculatePct(entry.stmts, isFileCovered) ??
+        calculateIstanbulPct(entry.s, isFileCovered);
 
       return {
         filePath,
@@ -217,18 +222,32 @@ export const parseCoverageFilesForSnapshot = async ({
     );
   }
 
-  const coverageRows = getCoverageRecords(coverageReport);
+  const coverageRows = getCoverageRecords(coverageReport, snapshot.rootDir);
 
   const testType = coverageReport.testType || "UNIT"; // 'UNIT' or 'INTEGRATION'
 
-  const formattedRows = coverageRows.map((row) => ({
-    snapshotId,
-    filePath: row.filePath,
-    linesPct: row.linesPct,
-    branchesPct: row.branchesPct,
-    funcsPct: row.funcsPct,
-    stmtsPct: row.stmtsPct,
-  }));
+  const dedupedMap = new Map();
+  for (const row of coverageRows) {
+    if (!row.filePath) continue;
+    if (testType === "UNIT" && !isBusinessLogicSourceFile(row.filePath)) continue;
+    if (!dedupedMap.has(row.filePath)) {
+      dedupedMap.set(row.filePath, {
+        snapshotId,
+        filePath: row.filePath,
+        linesPct: row.linesPct,
+        branchesPct: row.branchesPct,
+        funcsPct: row.funcsPct,
+        stmtsPct: row.stmtsPct,
+      });
+    } else {
+      const existing = dedupedMap.get(row.filePath);
+      existing.linesPct = Math.max(existing.linesPct || 0, row.linesPct || 0);
+      existing.branchesPct = Math.max(existing.branchesPct || 0, row.branchesPct || 0);
+      existing.funcsPct = Math.max(existing.funcsPct || 0, row.funcsPct || 0);
+      existing.stmtsPct = Math.max(existing.stmtsPct || 0, row.stmtsPct || 0);
+    }
+  }
+  const formattedRows = Array.from(dedupedMap.values());
 
   const rawSummary = getTotalCoverageSummary(coverageReport);
   const summaryRow = rawSummary || {

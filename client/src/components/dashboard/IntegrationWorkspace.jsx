@@ -491,7 +491,7 @@ export default function IntegrationWorkspace({
     try {
       const remainingList = specificEndpoints || (workspace?.endpoints || []).filter((ep) => ep.executedCount === 0);
       if (remainingList.length === 0) {
-        throw new Error("Không có endpoint nào còn lại để chạy.");
+        throw new Error("No remaining endpoints to run.");
       }
 
       // Check if any of these remaining endpoints do not have AI tests generated
@@ -539,7 +539,7 @@ export default function IntegrationWorkspace({
       });
 
       if (remainingScenarioIds.length === 0) {
-        throw new Error("Chưa tìm thấy kịch bản kiểm thử nào cho endpoint này. Hãy tạo kịch bản ở bước Generate & Review.");
+        throw new Error("No test scenarios found for this endpoint. Please generate scenarios in the Generate & Review step.");
       }
 
       // 2. Combine with previously approved scenarios to preserve cumulative test results
@@ -574,11 +574,11 @@ export default function IntegrationWorkspace({
         setActiveJobStatus("RUNNING");
         setActiveStage("RUN");
       } else {
-        throw new Error("Backend không trả về Job ID khi khởi động chạy kiểm thử.");
+        throw new Error("Backend did not return a Job ID when launching test execution.");
       }
     } catch (err) {
       console.error("[handleRunRemainingEndpoints] Error:", err);
-      setError(err.message || "Không thể chạy các endpoint còn lại.");
+      setError(err.message || "Failed to execute remaining endpoints.");
     } finally {
       setPendingAction(null);
     }
@@ -869,7 +869,7 @@ export default function IntegrationWorkspace({
                           border: "none",
                         }
                   }
-                  title="Chạy nốt các endpoint chưa được kiểm thử trong đợt này mà không cần quay lại cấu hình"
+                  title="Run remaining unexecuted endpoints in this session without re-configuring"
                 >
                   <Play size={13} style={{ display: "inline", verticalAlign: "middle", marginRight: 6 }} fill="#ffffff" />
                   {pendingAction === "RUN_REMAINING" ? "Starting Remaining..." : `Run Remaining Endpoints (${remainingEndpoints.length})`}
@@ -1182,11 +1182,11 @@ export default function IntegrationWorkspace({
                                       <div style={{ fontSize: 18, fontWeight: 700, color: failed > 0 ? "var(--color-danger)" : "#e6edf3", marginTop: 2 }}>{failed}</div>
                                     </div>
                                     <div style={{ background: "rgba(245,158,11,0.06)", padding: "10px 12px", borderRadius: 6, border: "1px solid rgba(245,158,11,0.18)" }}>
-                                      <div style={{ fontSize: 11, color: "var(--color-warning)", fontWeight: 600 }}>SKIPPED (Bỏ qua)</div>
+                                      <div style={{ fontSize: 11, color: "var(--color-warning)", fontWeight: 600 }}>SKIPPED</div>
                                       <div style={{ fontSize: 18, fontWeight: 700, color: "#e6edf3", marginTop: 2 }}>{skipped}</div>
                                     </div>
                                     <div style={{ background: "rgba(255,255,255,0.02)", padding: "10px 12px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.05)" }}>
-                                      <div style={{ fontSize: 11, color: "var(--color-text-secondary)", fontWeight: 600 }}>PASS RATE (Đã chạy)</div>
+                                      <div style={{ fontSize: 11, color: "var(--color-text-secondary)", fontWeight: 600 }}>PASS RATE (Executed)</div>
                                       <div style={{ fontSize: 18, fontWeight: 700, color: passRate >= 80 ? "var(--color-success)" : passRate > 0 ? "var(--color-warning)" : "#8b949e", marginTop: 2 }}>
                                         {passRate}%
                                       </div>
@@ -1200,9 +1200,9 @@ export default function IntegrationWorkspace({
                                   </div>
 
                                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#8b949e", padding: "0 2px" }}>
-                                    <span>Tổng kịch bản: <strong style={{ color: "#e6edf3" }}>{total}</strong></span>
-                                    <span>Đã chạy: <strong style={{ color: "#e6edf3" }}>{executed}</strong> (Pass: {passed} | Fail: {failed})</span>
-                                    <span>Bỏ qua: <strong style={{ color: "var(--color-warning)" }}>{skipped}</strong></span>
+                                    <span>Total Scenarios: <strong style={{ color: "#e6edf3" }}>{total}</strong></span>
+                                    <span>Executed: <strong style={{ color: "#e6edf3" }}>{executed}</strong> (Pass: {passed} | Fail: {failed})</span>
+                                    <span>Skipped: <strong style={{ color: "var(--color-warning)" }}>{skipped}</strong></span>
                                   </div>
 
                                   {generation?.generatedScenarios && generation.generatedScenarios !== total && (
@@ -1219,7 +1219,7 @@ export default function IntegrationWorkspace({
                                       gap: 6
                                     }}>
                                       <span>ℹ️</span>
-                                      <span>Lần chạy gần nhất ghi nhận <strong>{total}</strong> kịch bản. Mã nguồn hiện có <strong>{generation.generatedScenarios}</strong> kịch bản (chạy lại test để cập nhật toàn bộ).</span>
+                                      <span>Latest test run recorded <strong>{total}</strong> scenarios. Source code currently contains <strong>{generation.generatedScenarios}</strong> scenarios (re-run tests to sync all).</span>
                                     </div>
                                   )}
                                 </div>
@@ -1251,18 +1251,18 @@ export default function IntegrationWorkspace({
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
                           <div>
                             <h4 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "#e6edf3" }}>
-                              Chi tiết kiểm thử từng API Endpoint
+                              API Endpoint Verification Details
                             </h4>
                             <div style={{ fontSize: 11, color: "#8b949e", marginTop: 2 }}>
-                              Chỉ rõ endpoint nào đã được test, endpoint nào chưa chạy trong đợt này
+                              Shows which endpoints were executed and which were not run in this session
                             </div>
                           </div>
                           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                             <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(34,197,94,0.12)", color: "#22c55e", fontWeight: 600 }}>
-                              {summary?.testedApis || 0} Đã test
+                              {summary?.testedApis || 0} Tested
                             </span>
                             <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(139,148,158,0.12)", color: "#8b949e", fontWeight: 600 }}>
-                              {(summary?.discoveredApis || 0) - (summary?.testedApis || 0)} Chưa chạy
+                              {(summary?.discoveredApis || 0) - (summary?.testedApis || 0)} Not Executed
                             </span>
                             {remainingEndpoints.length > 0 && (
                               <button
@@ -1284,10 +1284,10 @@ export default function IntegrationWorkspace({
                                   opacity: isJobActive || pendingAction === "RUN_REMAINING" ? 0.6 : 1,
                                   boxShadow: "0 2px 6px rgba(16, 185, 129, 0.25)",
                                 }}
-                                title="Tự động phê duyệt và chạy nốt các endpoint còn lại mà không cần quay lại cấu hình"
+                                title="Automatically approve and run remaining endpoints without re-configuring"
                               >
                                 <Play size={11} fill="#ffffff" />
-                                <span>{pendingAction === "RUN_REMAINING" ? "Đang chuẩn bị..." : `Run Remaining Endpoints (${remainingEndpoints.length})`}</span>
+                                <span>{pendingAction === "RUN_REMAINING" ? "Preparing..." : `Run Remaining Endpoints (${remainingEndpoints.length})`}</span>
                               </button>
                             )}
                           </div>
@@ -1311,8 +1311,8 @@ export default function IntegrationWorkspace({
                             <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#93c5fd" }}>
                               <Zap size={16} style={{ color: "#60a5fa", flexShrink: 0 }} />
                               <span>
-                                Phát hiện <strong>{remainingEndpoints.length}</strong> API endpoint chưa được kiểm thử trong đợt này.
-                                Bấm 1 click để chạy nốt các endpoint còn lại mà không cần quay lại cấu hình.
+                                Detected <strong>{remainingEndpoints.length}</strong> API endpoints not yet executed in this session.
+                                Click to run remaining endpoints directly without re-configuring.
                               </span>
                             </div>
                             <button
@@ -1337,7 +1337,7 @@ export default function IntegrationWorkspace({
                               }}
                             >
                               <Play size={12} fill="#ffffff" />
-                              <span>Chạy nốt {remainingEndpoints.length} endpoint</span>
+                              <span>Run Remaining {remainingEndpoints.length} Endpoints</span>
                             </button>
                           </div>
                         )}
@@ -1352,23 +1352,23 @@ export default function IntegrationWorkspace({
                             let badgeBg = "rgba(139,148,158,0.12)";
                             let badgeBorder = "rgba(139,148,158,0.25)";
                             let badgeColor = "#8b949e";
-                            let badgeText = "Chưa test trong đợt này";
+                            let badgeText = "Not executed in this session";
 
                             if (isCovered) {
                               badgeBg = "rgba(34,197,94,0.12)";
                               badgeBorder = "rgba(34,197,94,0.3)";
                               badgeColor = "#22c55e";
-                              badgeText = `Đã test (Pass ${ep.passedCount}/${ep.executedCount})`;
+                              badgeText = `Tested (Pass ${ep.passedCount}/${ep.executedCount})`;
                             } else if (isPartial) {
                               badgeBg = "rgba(245,158,11,0.12)";
                               badgeBorder = "rgba(245,158,11,0.3)";
                               badgeColor = "#fbbf24";
-                              badgeText = `Một phần (Pass ${ep.passedCount}/${ep.executedCount})`;
+                              badgeText = `Partial (Pass ${ep.passedCount}/${ep.executedCount})`;
                             } else if (ep.failedCount > 0) {
                               badgeBg = "rgba(239,68,68,0.12)";
                               badgeBorder = "rgba(239,68,68,0.3)";
                               badgeColor = "#f87171";
-                              badgeText = `Thất bại (${ep.failedCount} lỗi)`;
+                              badgeText = `Failed (${ep.failedCount} errors)`;
                             }
 
                             const methodColor = ep.method === "GET" ? "#38bdf8" : ep.method === "POST" ? "#4ade80" : ep.method === "DELETE" ? "#f87171" : "#fbbf24";
@@ -1423,11 +1423,11 @@ export default function IntegrationWorkspace({
                                           alignItems: "center",
                                           gap: 4,
                                         }}
-                                        title={`Thời gian phản hồi trung bình: ${ep.avgDurationMs}ms (Min: ${ep.minDurationMs}ms | Max: ${ep.maxDurationMs}ms)`}
+                                        title={`Average response time: ${ep.avgDurationMs}ms (Min: ${ep.minDurationMs}ms | Max: ${ep.maxDurationMs}ms)`}
                                       >
                                         <Clock size={11} />
                                         <span>{ep.avgDurationMs}ms</span>
-                                        {ep.latencyStatus === "SLOW" && <span style={{ fontSize: 10, fontWeight: 700 }}>(Chậm)</span>}
+                                        {ep.latencyStatus === "SLOW" && <span style={{ fontSize: 10, fontWeight: 700 }}>(Slow)</span>}
                                       </span>
                                     )}
                                   </div>
@@ -1465,10 +1465,10 @@ export default function IntegrationWorkspace({
                                           opacity: isJobActive || pendingAction === "RUN_REMAINING" ? 0.6 : 1,
                                           transition: "all 0.15s ease",
                                         }}
-                                        title="Chạy kiểm thử riêng endpoint này"
+                                        title="Execute tests for this endpoint only"
                                       >
                                         <Play size={10} fill="#38bdf8" />
-                                        <span>Chạy endpoint này</span>
+                                        <span>Run this endpoint</span>
                                       </button>
                                     )}
                                   </div>
@@ -1539,7 +1539,7 @@ export default function IntegrationWorkspace({
 
                                               <span style={{ fontSize: 10, color: isFailed ? "#f87171" : "#58a6ff", display: "inline-flex", alignItems: "center", gap: 3, fontWeight: 500 }}>
                                                 {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                                                <span>{isFailed ? "Chi tiết lỗi & Diff" : "Payload"}</span>
+                                                <span>{isFailed ? "Failure Details & Diff" : "Payload"}</span>
                                               </span>
                                             </div>
                                           </div>
@@ -1563,7 +1563,7 @@ export default function IntegrationWorkspace({
                                                 <div>
                                                   <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, fontSize: 11, fontWeight: 700, color: "#f87171" }}>
                                                     <AlertTriangle size={14} />
-                                                    <span>Dòng code bị gãy:</span>
+                                                    <span>Failing code line:</span>
                                                     {sc.failureDetails.brokenLineText && (
                                                       <code style={{ background: "rgba(239,68,68,0.15)", padding: "2px 6px", borderRadius: 4, color: "#fca5a5" }}>
                                                         {sc.failureDetails.brokenLineText}
@@ -1600,10 +1600,10 @@ export default function IntegrationWorkspace({
 
                                               {/* 2. GRID: PAYLOAD SENT vs RESPONSE RECEIVED / DIFF */}
                                               <div style={{ display: "grid", gridTemplateColumns: isFailed ? "1fr 1fr" : "1fr", gap: 10 }}>
-                                                {/* Payload đã gửi */}
+                                                {/* Sent Payload */}
                                                 <div style={{ background: "rgba(0,0,0,0.25)", padding: "8px 10px", borderRadius: 5, border: "1px solid rgba(255,255,255,0.04)" }}>
                                                   <div style={{ fontSize: 11, fontWeight: 600, color: "#38bdf8", marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
-                                                    <span>📤 Payload đã gửi ({ep.method}):</span>
+                                                    <span>📤 Sent Payload ({ep.method}):</span>
                                                     {sc.queryParams && <span style={{ fontSize: 10, color: "#8b949e" }}>Query: {JSON.stringify(sc.queryParams)}</span>}
                                                   </div>
                                                   {sc.requestPayload && Object.keys(sc.requestPayload).length > 0 ? (
@@ -1623,22 +1623,22 @@ export default function IntegrationWorkspace({
                                                     </pre>
                                                   ) : (
                                                     <div style={{ fontSize: 11, color: "#8b949e", fontStyle: "italic", padding: "4px 0" }}>
-                                                      {ep.method === "GET" ? "GET request không có body (No payload body)." : "Empty body payload: {}"}
+                                                      {ep.method === "GET" ? "GET request has no body (No payload body)." : "Empty body payload: {}"}
                                                     </div>
                                                   )}
                                                 </div>
 
-                                                {/* Response nhận được & Diff (if failed) */}
+                                                {/* Received Response & Diff (if failed) */}
                                                 {isFailed && sc.failureDetails && (
                                                   <div style={{ background: "rgba(0,0,0,0.25)", padding: "8px 10px", borderRadius: 5, border: "1px solid rgba(255,255,255,0.04)" }}>
                                                     <div style={{ fontSize: 11, fontWeight: 600, color: "#fbbf24", marginBottom: 4 }}>
-                                                      📥 Response nhận được & Sai lệch (Diff):
+                                                      📥 Received Response & Diff:
                                                     </div>
                                                     <div style={{ fontSize: 11, marginBottom: 4 }}>
-                                                      <span style={{ color: "#8b949e" }}>Kỳ vọng (Expected): </span>
+                                                      <span style={{ color: "#8b949e" }}>Expected: </span>
                                                       <strong style={{ color: "#22c55e" }}>{sc.failureDetails.expected || sc.expectedStatus || "200 OK"}</strong>
                                                       {"  |  "}
-                                                      <span style={{ color: "#8b949e" }}>Thực tế (Received): </span>
+                                                      <span style={{ color: "#8b949e" }}>Received: </span>
                                                       <strong style={{ color: "#f87171" }}>{sc.failureDetails.received || "Error"}</strong>
                                                     </div>
                                                     {sc.failureDetails.diff && (
@@ -1664,7 +1664,7 @@ export default function IntegrationWorkspace({
                                               {/* Raw failure message fallback if no structured snippet */}
                                               {isFailed && sc.failureMessages && sc.failureMessages.length > 0 && !sc.failureDetails?.codeSnippet && (
                                                 <div style={{ marginTop: 2 }}>
-                                                  <div style={{ fontSize: 10, color: "#8b949e", marginBottom: 2 }}>Thông báo lỗi từ Jest:</div>
+                                                  <div style={{ fontSize: 10, color: "#8b949e", marginBottom: 2 }}>Error output from Jest:</div>
                                                   <pre
                                                     style={{
                                                       margin: 0,
@@ -1689,7 +1689,7 @@ export default function IntegrationWorkspace({
                                   </div>
                                 ) : (
                                   <div style={{ fontSize: 11, color: "#8b949e", fontStyle: "italic", paddingTop: 2 }}>
-                                    Endpoint này không được chọn trong đợt chạy test vừa rồi (0 kịch bản thực thi).
+                                    This endpoint was not selected in the latest test run (0 executed scenarios).
                                   </div>
                                 )}
                               </div>
@@ -1742,7 +1742,7 @@ export default function IntegrationWorkspace({
                             </div>
                             {summary?.testedApis < summary?.discoveredApis && (
                               <div style={{ marginTop: 8, fontSize: 11, color: "#8b949e" }}>
-                                ℹ️ Trong đợt này đã kiểm thử thành công <strong>{summary?.testedApis || 0}</strong> endpoints. Còn <strong>{(summary?.discoveredApis || 0) - (summary?.testedApis || 0)}</strong> endpoint chưa đưa vào lượt chạy này.
+                                ℹ️ Successfully verified <strong>{summary?.testedApis || 0}</strong> endpoints. <strong>{(summary?.discoveredApis || 0) - (summary?.testedApis || 0)}</strong> endpoints have not been executed in this session.
                               </div>
                             )}
                           </div>

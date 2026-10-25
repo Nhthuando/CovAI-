@@ -26,7 +26,11 @@ async function handleResponse(res) {
             window.location.href = "/login";
         }
 
-        throw new Error(data.message || "Failed API call");
+        const msg = data.message || `API error (${res.status})`;
+        const error = new Error(msg);
+        error.status = res.status;
+        error.data = data;
+        throw error;
     }
 
     return data;

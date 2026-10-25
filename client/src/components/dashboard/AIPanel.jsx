@@ -57,6 +57,7 @@ import DiffReviewModal from "./DiffReviewModal";
 import AIContextDialog from "./AIContextDialog";
 import { getAiContext } from "../../services/aiContext.service";
 import { invalidateCoverageQueries } from "../../hooks/useCoverageQuery";
+import { isTestFile } from "./CoverageTypeDashboard";
 
 /* ── Clean and Normalize Path Utilities ─────────────────── */
 export function cleanFilePath(pathStr = "") {
@@ -2170,14 +2171,6 @@ function ChatInput({
   );
 }
 
-const isTestFile = (filePath) => {
-  if (!filePath) return false;
-  const normalized = filePath.replace(/\\/g, "/").toLowerCase();
-  return (
-    /(^|\/)(tests?|__tests__|spec|cypress|e2e)\//i.test(normalized) ||
-    /\.(test|spec)\.[a-z0-9]+$/i.test(normalized)
-  );
-};
 
 /* ── AI Agent Panel — Main Export ────────────────────────── */
 export default function AIPanel({
@@ -2234,11 +2227,14 @@ export default function AIPanel({
     if (!snapshotId) return;
     getIntegrationWorkspace(snapshotId)
       .then((res) => {
-        setHasAnalysis(!!res?.data?.generation?.hasAnalysis);
+        setHasAnalysis(Boolean(res?.data?.generation?.hasAnalysis));
       })
-      .catch((err) =>
-        console.error("Failed to check hasAnalysis for AIPanel:", err),
-      );
+      .catch((err) => {
+        setHasAnalysis(false);
+        if (err?.status !== 404) {
+          console.warn("[AIPanel] Integration workspace unavailable:", err.message);
+        }
+      });
   }, [snapshotId]);
 
   const [sessions, setSessions] = useState([]);
@@ -3013,7 +3009,8 @@ export default function AIPanel({
     const { filePath, isBulk } = pendingAiSuggestion;
     onClearPendingSuggestion?.();
     if (isBulk) {
-      handleSuggestBulk(pendingAiSuggestion);
+      // Bulk test generation is handled exclusively by UnitTestGuidedWorkflow and UnitTestTraceabilityMatrix
+      return;
     } else if (filePath) {
       handleSuggestForFile(filePath);
     }

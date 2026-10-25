@@ -198,6 +198,10 @@ function LayoutInner() {
   const [pendingAiSuggestion, setPendingAiSuggestion] = useState(null);
 
   const handleSuggestTestcase = (filePath, options = {}) => {
+    // Never open AIPanel for bulk test suggestions; they belong to the guided dashboard workflow
+    if (options?.isBulk || (typeof filePath === "object" && filePath?.isBulk) || options?.skipAiPanel) {
+      return;
+    }
     setAiPanelOpen(true);
     if (typeof filePath === "object" && filePath !== null) {
       setPendingAiSuggestion({ ...filePath, timestamp: Date.now() });

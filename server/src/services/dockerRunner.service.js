@@ -5,6 +5,7 @@ import treeKill from "tree-kill";
 import { ServiceError } from "../utils/serviceError.js";
 import { addJobLog } from "./job.service.js";
 import { appendJobOutput } from "./jobOutput.service.js";
+import { resolveSnapshotRootDir } from "../utils/projectRootResolver.js";
 
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes default
 
@@ -88,24 +89,27 @@ export const dockerRunner = {
       let child;
       let timer;
 
-      const nodeModulesBin = path.join(snapshotPath, "node_modules", ".bin");
+      const effectiveSnapshotPath = resolveSnapshotRootDir(snapshotPath) || snapshotPath;
+      const nodeModulesBin = path.join(effectiveSnapshotPath, "node_modules", ".bin");
       const appModulesBin = "/app/node_modules/.bin";
       const currentPath = process.env.PATH || "";
-      const customPath = `${nodeModulesBin}:${appModulesBin}:${currentPath}`;
+      const delimiter = path.delimiter;
+      const customPath = [nodeModulesBin, appModulesBin, currentPath].filter(Boolean).join(delimiter);
 
       const mergedEnv = {
         ...process.env,
         CI: "true",
+        VITE_CJS_IGNORE_WARNING: "true",
         PATH: customPath,
         NODE_OPTIONS: "--experimental-vm-modules",
-        NODE_PATH: `/app/node_modules:${path.join(snapshotPath, "node_modules")}:${process.env.NODE_PATH || ""}`,
+        NODE_PATH: ["/app/node_modules", path.join(effectiveSnapshotPath, "node_modules"), process.env.NODE_PATH || ""].filter(Boolean).join(delimiter),
         ...env,
       };
 
       // Auto-load repo-level environment variables (.env.test, .env.example, .env) into mergedEnv
       const repoEnvFiles = [".env.test", ".env.example", ".env"];
       for (const envFile of repoEnvFiles) {
-        const envFilePath = path.join(snapshotPath, envFile);
+        const envFilePath = path.join(effectiveSnapshotPath, envFile);
         if (fs.existsSync(envFilePath)) {
           try {
             const content = fs.readFileSync(envFilePath, "utf8");
@@ -134,7 +138,7 @@ export const dockerRunner = {
         envArgs.push("-e", `PLAYWRIGHT_BASE_URL=${baseUrl}`);
 
         for (const [k, v] of Object.entries(mergedEnv)) {
-          if (["NODE_OPTIONS", "CI", "NODE_ENV"].includes(k) || k in env) {
+          if (["NODE_OPTIONS", "CI", "NODE_ENV", "VITE_CJS_IGNORE_WARNING"].includes(k) || k in env) {
             envArgs.push("-e", `${k}=${v}`);
           }
         }
@@ -147,7 +151,7 @@ export const dockerRunner = {
           "--pids-limit=100",
           ...envArgs,
           "-v",
-          `${snapshotPath}:/workspace`,
+          `${effectiveSnapshotPath}:/workspace`,
           "-w",
           "/workspace",
           image,
@@ -157,7 +161,7 @@ export const dockerRunner = {
         ];
         child = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
       } else {
-        child = spawn(command, { shell: true, cwd: snapshotPath, env: mergedEnv, stdio: ["pipe", "pipe", "pipe"] });
+        child = spawn(command, { shell: true, cwd: effectiveSnapshotPath, env: mergedEnv, stdio: ["pipe", "pipe", "pipe"] });
       }
       try { child.stdin?.end(); } catch { }
 

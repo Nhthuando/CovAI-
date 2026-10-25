@@ -23,6 +23,7 @@ import {
 import MonacoEditor from "@monaco-editor/react";
 import { updateFileContentApi, createProjectFileApi } from "../../services/project.service.js";
 import { cleanDisplayPath } from "./CoverageTypeDashboard.jsx";
+import { resolveTestOrFunctionLine, resolveTestBlockRange } from "../../services/navigation.service.js";
 
 /* ── Extension to Language Mapping ───────────────────────── */
 const EXT_LANG_MAP = {
@@ -122,6 +123,9 @@ export default function TestFileViewerPanel({
   onRegisterTestSaver,
   onTestDirtyChange,
   onSaveBoth,
+  targetTestTitle = null,
+  targetTestLine = null,
+  targetFunction = null,
 }) {
   const isFound = Boolean(testFile?.found);
   const testFilePath = testFile?.filePath || testFile?.suggestedFilePath || "";
@@ -137,6 +141,36 @@ export default function TestFileViewerPanel({
   const [saveError, setSaveError] = useState("");
   const [copied, setCopied] = useState(false);
   const [editedCodes, setEditedCodes] = useState({});
+
+  // Auto-resolve exact block range of target test scenario or function in test file
+  const testBlockRange = useMemo(() => {
+    const code = rawTestCode || editorContent || "";
+    if (!code) return null;
+    return resolveTestBlockRange(code, {
+      targetFunction,
+      targetTestTitle,
+      targetTestLine,
+    });
+  }, [rawTestCode, editorContent, targetFunction, targetTestTitle, targetTestLine]);
+
+  const testStartLine = testBlockRange?.startLine || (targetTestLine ? Number(targetTestLine) : null);
+  const testEndLine = testBlockRange?.endLine || testStartLine;
+  const testCallLine = testBlockRange?.callLine || null;
+  const resolvedTestLine = testStartLine || null;
+
+  // Scroll to testStartLine or testCallLine when in code view
+  useEffect(() => {
+    const scrollTarget = testStartLine || testCallLine;
+    if (scrollTarget && scrollTarget > 0 && viewMode === "code") {
+      const timer = setTimeout(() => {
+        const el = document.getElementById(`test-line-${scrollTarget}`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }, 220);
+      return () => clearTimeout(timer);
+    }
+  }, [testStartLine, testCallLine, viewMode]);
 
   // Sync editor content whenever raw test code changes from disk
   useEffect(() => {
@@ -166,11 +200,67 @@ export default function TestFileViewerPanel({
   const onSaveBothRef = useRef(onSaveBoth || handleSaveTestFile);
   onSaveBothRef.current = onSaveBoth || handleSaveTestFile;
 
+  const monacoEditorRef = useRef(null);
+  const monacoInstanceRef = useRef(null);
+  const monacoDecorationsRef = useRef([]);
+
   const handleEditorDidMount = (editor, monaco) => {
+    monacoEditorRef.current = editor;
+    monacoInstanceRef.current = monaco;
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       onSaveBothRef.current?.();
     });
+    if (testStartLine && testStartLine > 0) {
+      setTimeout(() => {
+        try {
+          const safeEnd = testEndLine && testEndLine >= testStartLine ? testEndLine : testStartLine;
+          editor.revealLineInCenter(testStartLine);
+          editor.setPosition({ lineNumber: testStartLine, column: 1 });
+          monacoDecorationsRef.current = editor.deltaDecorations([], [
+            {
+              range: new monaco.Range(testStartLine, 1, safeEnd, 1),
+              options: {
+                isWholeLine: true,
+                className: "monaco-test-highlight-line",
+                linesDecorationsClassName: "monaco-test-glyph-marker",
+                overviewRuler: {
+                  color: "#a855f7",
+                  position: monaco.editor.OverviewRulerLane.Full,
+                },
+              },
+            },
+          ]);
+        } catch (_) {}
+      }, 150);
+    }
   };
+
+  // Sync Monaco editor highlight when test block changes while in editor view
+  useEffect(() => {
+    if (viewMode === "editor" && monacoEditorRef.current && monacoInstanceRef.current && testStartLine && testStartLine > 0) {
+      try {
+        const editor = monacoEditorRef.current;
+        const monaco = monacoInstanceRef.current;
+        const safeEnd = testEndLine && testEndLine >= testStartLine ? testEndLine : testStartLine;
+        editor.revealLineInCenter(testStartLine);
+        editor.setPosition({ lineNumber: testStartLine, column: 1 });
+        monacoDecorationsRef.current = editor.deltaDecorations(monacoDecorationsRef.current, [
+          {
+            range: new monaco.Range(testStartLine, 1, safeEnd, 1),
+            options: {
+              isWholeLine: true,
+              className: "monaco-test-highlight-line",
+              linesDecorationsClassName: "monaco-test-glyph-marker",
+              overviewRuler: {
+                color: "#a855f7",
+                position: monaco.editor.OverviewRulerLane.Full,
+              },
+            },
+          },
+        ]);
+      } catch (_) {}
+    }
+  }, [testStartLine, testEndLine, viewMode]);
 
   // If new suggestions arrive or finished loading, switch to suggestions tab automatically
   const prevLoadingRef = useRef(isLoadingSuggestions);
@@ -1266,44 +1356,106 @@ export default function TestFileViewerPanel({
               color: isLight ? "#0f172a" : "#e2e8f0",
             }}
           >
-            {testLines.map((line, idx) => (
-              <div
-                key={idx}
-                style={{
-                  display: "flex",
-                  alignItems: "flex-start",
-                  padding: "1px 12px",
-                  transition: "background 0.1s ease",
-                }}
-                className={isLight ? "hover:bg-slate-100" : "hover:bg-white/[0.03]"}
-              >
-                {/* Line number */}
-                <span
+            {testLines.map((line, idx) => {
+              const lineNum = idx + 1;
+              const isTestBlockLine = testStartLine && testEndLine && lineNum >= testStartLine && lineNum <= testEndLine;
+              const isTestStartLine = testStartLine && lineNum === testStartLine;
+              const isCallLine = testCallLine && lineNum === testCallLine && testCallLine !== testStartLine;
+              return (
+                <div
+                  key={idx}
+                  id={`test-line-${lineNum}`}
                   style={{
-                    width: 38,
-                    flexShrink: 0,
-                    textAlign: "right",
-                    marginRight: 16,
-                    color: isLight ? "#94a3b8" : "#475569",
-                    userSelect: "none",
-                    fontSize: 11,
+                    display: "flex",
+                    alignItems: "flex-start",
+                    padding: isTestBlockLine ? "2px 12px" : "1px 12px",
+                    background: isTestBlockLine
+                      ? (isLight ? "rgba(147, 51, 234, 0.05)" : "rgba(168, 85, 247, 0.07)")
+                      : "transparent",
+                    borderLeft: isTestBlockLine
+                      ? (isLight ? "3px solid #c084fc" : "3px solid #a855f7")
+                      : "3px solid transparent",
+                    transition: "background 0.1s ease",
                   }}
+                  className={isLight ? "hover:bg-slate-100" : "hover:bg-white/[0.03]"}
                 >
-                  {idx + 1}
-                </span>
+                  {/* Line number */}
+                  <span
+                    style={{
+                      width: 38,
+                      flexShrink: 0,
+                      textAlign: "right",
+                      marginRight: 16,
+                      color: isTestBlockLine ? (isLight ? "#7e22ce" : "#d8b4fe") : (isLight ? "#94a3b8" : "#475569"),
+                      fontWeight: isTestBlockLine ? 650 : 400,
+                      userSelect: "none",
+                      fontSize: 11,
+                    }}
+                  >
+                    {lineNum}
+                  </span>
 
-                {/* Line code */}
-                <span
-                  style={{
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-all",
-                    flex: 1,
-                  }}
-                >
-                  {line || " "}
-                </span>
-              </div>
-            ))}
+                  {/* Target test badge on start line of the test case */}
+                  {isTestStartLine && (
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        fontSize: 10,
+                        fontFamily: "var(--font-mono)",
+                        fontWeight: 600,
+                        padding: "1px 6px",
+                        borderRadius: 3,
+                        background: isLight ? "rgba(147, 51, 234, 0.08)" : "rgba(168, 85, 247, 0.12)",
+                        color: isLight ? "#7e22ce" : "#d8b4fe",
+                        border: isLight ? "1px solid rgba(147, 51, 234, 0.22)" : "1px solid rgba(168, 85, 247, 0.28)",
+                        marginRight: 8,
+                        flexShrink: 0,
+                      }}
+                      title={`Test scenario for: ${targetFunction || targetTestTitle || ""}`}
+                    >
+                      Test {targetFunction ? `for ${targetFunction}()` : ""}
+                    </span>
+                  )}
+
+                  {/* Direct invocation marker */}
+                  {isCallLine && (
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        fontSize: 9.5,
+                        fontFamily: "var(--font-mono)",
+                        fontWeight: 600,
+                        padding: "0.5px 5px",
+                        borderRadius: 3,
+                        background: isLight ? "rgba(99, 102, 241, 0.12)" : "rgba(99, 102, 241, 0.18)",
+                        color: isLight ? "#4338ca" : "#c7d2fe",
+                        border: isLight ? "1px solid rgba(99, 102, 241, 0.25)" : "1px solid rgba(99, 102, 241, 0.3)",
+                        marginRight: 6,
+                        flexShrink: 0,
+                      }}
+                      title={`Direct invocation of ${targetFunction}()`}
+                    >
+                      call
+                    </span>
+                  )}
+
+                  {/* Line code */}
+                  <span
+                    style={{
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-all",
+                      flex: 1,
+                      fontWeight: isTestBlockLine ? 500 : 400,
+                      color: isLight ? "#0f172a" : "#e2e8f0",
+                    }}
+                  >
+                    {line || " "}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         )}
 

@@ -36,6 +36,7 @@ import {
   updateFileContentApi,
 } from "../../services/project.service";
 import { getFileCoverage } from "../../services/coverage.service";
+import { resolveTestOrFunctionLine } from "../../services/navigation.service";
 import { EditorCodeSkeleton } from "../common/Skeleton";
 
 /* ── Smart File Icon Resolver ────────────────────────────── */
@@ -147,14 +148,8 @@ const EXT_LANG_MAP = {
   ".txt": "text",
 };
 
-export const isTestFile = (filePath) => {
-  if (!filePath) return false;
-  const normalized = filePath.replace(/\\/g, "/").toLowerCase();
-  return (
-    /(^|\/)(tests?|__tests__|spec|cypress|e2e)\//i.test(normalized) ||
-    /\.(test|spec)\.[a-z0-9]+$/i.test(normalized)
-  );
-};
+import { isTestFile } from "./CoverageTypeDashboard.jsx";
+export { isTestFile };
 
 /* ── Tab Component (Reorderable with Drag & Drop) ────────── */
 function ReorderableTab({ tab, isActive, onSelect, onClose }) {
@@ -521,8 +516,8 @@ export default function Editor({
 
     const editor = editorRef.current;
     const monaco = monacoRef.current;
-    const line = Math.max(1, Number(jumpTarget.line) || 1);
-    const endLine = Math.max(line, Number(jumpTarget.endLine) || line);
+    let line = Math.max(1, Number(jumpTarget.line) || 1);
+    let endLine = Math.max(line, Number(jumpTarget.endLine) || line);
 
     // Wait until model is available with loaded lines
     const model = editor.getModel();
@@ -531,6 +526,17 @@ export default function Editor({
     const fileText = currentFile.draft ?? currentFile.content;
     if (typeof fileText === "string" && fileText.length > 0 && model.getValueLength() === 0) {
       model.setValue(fileText);
+    }
+
+    // Auto-resolve exact line if target line is <= 1 and functionName or test title is provided
+    if ((!jumpTarget.line || Number(jumpTarget.line) <= 1) && jumpTarget.functionName) {
+      const content = model.getValue() || fileText || "";
+      const isCurrentTest = isTestFile(activeTabId);
+      const resolved = resolveTestOrFunctionLine(content, jumpTarget.functionName, isCurrentTest);
+      if (resolved && resolved > 0) {
+        line = resolved;
+        endLine = Math.max(line, Number(jumpTarget.endLine) || line);
+      }
     }
 
     const lineCount = model.getLineCount();

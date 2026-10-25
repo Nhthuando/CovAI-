@@ -22,6 +22,24 @@ export const cleanRelativePath = (rootDir, targetPath) => {
     if (rootDir) {
         const normRoot = normalizePath(rootDir);
         if (norm.startsWith(normRoot)) return norm.slice(normRoot.length).replace(/^\/+/, "");
+        if (norm.toLowerCase().startsWith(normRoot.toLowerCase())) return norm.slice(normRoot.length).replace(/^\/+/, "");
+
+        try {
+            if (fs.existsSync(path.join(rootDir, norm))) {
+                return norm.replace(/^\/+/, "");
+            }
+        } catch (_) {}
+
+        const rootUploadIdx = normRoot.indexOf("uploads/snapshots/");
+        const targetUploadIdx = norm.indexOf("uploads/snapshots/");
+        if (rootUploadIdx !== -1 && targetUploadIdx !== -1) {
+            const rootSub = normRoot.slice(rootUploadIdx);
+            const targetSub = norm.slice(targetUploadIdx);
+            if (targetSub.startsWith(rootSub)) {
+                return targetSub.slice(rootSub.length).replace(/^\/+/, "");
+            }
+        }
+
         const rootStorageIdx = normRoot.indexOf("storage/projects/");
         const targetStorageIdx = norm.indexOf("storage/projects/");
         if (rootStorageIdx !== -1 && targetStorageIdx !== -1) {
@@ -31,13 +49,29 @@ export const cleanRelativePath = (rootDir, targetPath) => {
                 return targetSub.slice(rootSub.length).replace(/^\/+/, "");
             }
         }
-        const testMatch = norm.match(/(?:tests?|__tests__|src)\/[^:\s\r\n]+\.(?:test|spec)\.[cm]?[jt]sx?/);
-        if (testMatch) {
-            return testMatch[0];
+
+        const rootBase = path.basename(normRoot);
+        if (rootBase && (norm.startsWith(rootBase + "/") || norm.toLowerCase().startsWith(rootBase.toLowerCase() + "/"))) {
+            const candidateStripped = norm.slice(rootBase.length).replace(/^\/+/, "");
+            try {
+                if (fs.existsSync(path.join(rootDir, candidateStripped))) {
+                    return candidateStripped;
+                }
+            } catch (_) {}
+            norm = candidateStripped;
+        }
+
+        const hasSubpackagePrefix = /^(?:server|client|backend|frontend|packages\/[^/]+|apps\/[^/]+)\//i.test(norm);
+        if (!hasSubpackagePrefix) {
+            const testMatch = norm.match(/(?:tests?|__tests__|src)\/[^:\s\r\n]+\.(?:test|spec)\.[cm]?[jt]sx?/);
+            if (testMatch) {
+                return testMatch[0];
+            }
         }
     }
     norm = norm.replace(/^[a-zA-Z]:[\\/]/, "");
     norm = norm.replace(/^.*?\/storage\/projects\/[^/]+\/[^/]+\/[^/]+\/repo\//i, "");
+    norm = norm.replace(/^.*?\/uploads\/snapshots\/[^/]+\/[^/]+\//i, "");
     norm = norm.replace(/^.*?\/repo\//i, "");
     return norm.replace(/^\/+/, "");
 };
@@ -500,6 +534,7 @@ export const extractBranchFlow = (fileCoverageData, sourceCode = "") => {
             fullConditionText: rawLine.slice(0, 160),
             totalHits,
             status,
+            counts: Array.isArray(counts) ? counts : [],
             missedTrue,
             missedFalse,
             uncoveredPathsCount,
@@ -991,15 +1026,29 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
     const linkedTestFiles = associatedInfo.linkedTestFiles;
 
     const getDiskSourceCode = () => {
+        const base = path.basename(rootDir);
         const candidatePaths = [
             path.join(rootDir, cleanPath),
             path.join(rootDir, targetFilePath),
+            path.join(path.dirname(rootDir), targetFilePath),
+            path.join(path.dirname(rootDir), cleanPath),
             targetFilePath,
+            cleanPath,
             path.join(rootDir, "src", path.basename(cleanPath))
         ];
+        if (targetFilePath.startsWith(base + "/") || targetFilePath.startsWith(base + "\\")) {
+            candidatePaths.push(path.join(rootDir, targetFilePath.slice(base.length + 1)));
+        }
+        if (cleanPath.startsWith(base + "/") || cleanPath.startsWith(base + "\\")) {
+            candidatePaths.push(path.join(rootDir, cleanPath.slice(base.length + 1)));
+        }
         for (const cp of candidatePaths) {
             if (cp && fs.existsSync(cp)) {
-                try { return fs.readFileSync(cp, "utf8"); } catch {}
+                try {
+                    if (!fs.statSync(cp).isDirectory()) {
+                        return fs.readFileSync(cp, "utf8");
+                    }
+                } catch {}
             }
         }
         return "";

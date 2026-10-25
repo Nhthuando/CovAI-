@@ -62,16 +62,19 @@ const resolveVitestBin = (dir) => {
 const SHARED_ENV = {
     NODE_OPTIONS: "--experimental-vm-modules",
     NODE_PATH: "/app/node_modules:/usr/local/lib/node_modules:./node_modules:../node_modules",
+    VITE_CJS_IGNORE_WARNING: "true",
 };
 
 /**
  * Run Vitest with Coverage
  */
-export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificFiles = []) => {
-    const rootCoverageDir = path.join(rootDir, "coverage");
-    if (!fs.existsSync(rootCoverageDir)) {
-        try { fs.mkdirSync(rootCoverageDir, { recursive: true }); } catch { }
+export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificFiles = [], options = {}) => {
+    const targetCovDir = options?.coverageDir ? path.resolve(rootDir, options.coverageDir) : path.join(rootDir, "coverage");
+    if (!fs.existsSync(targetCovDir)) {
+        try { fs.mkdirSync(targetCovDir, { recursive: true }); } catch { }
     }
+    const rootCoverageDir = targetCovDir;
+    const relCovDir = path.relative(rootDir, targetCovDir).replace(/\\/g, "/") || "coverage";
 
     // 1. Dependency check: check both root, backend node_modules, and /app/node_modules
     const rootHasVitest = fs.existsSync(path.join(rootDir, "node_modules", "vitest")) &&
@@ -113,7 +116,7 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
         }
 
         const backendBin = resolveVitestBin(backendDir);
-        const vitestCmd = `cd backend && ${backendBin} run ${targetArg} --coverage --coverage.reporter=json-summary --coverage.reporter=json --coverage.reporter=lcov --reporter=json --outputFile=../coverage/vitest-results.json --passWithNoTests`;
+        const vitestCmd = `cd backend && ${backendBin} run ${targetArg} --coverage --coverage.all=true --coverage.reportsDirectory=../${relCovDir} --coverage.reporter=json-summary --coverage.reporter=json --coverage.reporter=lcov --reporter=json --outputFile=../${relCovDir}/vitest-results.json --passWithNoTests`;
 
         await addJobLog(jobId, "INFO", `[VITEST] Running Vitest in backend/ with command: ${vitestCmd} (timeout: ${Math.round(effectiveTimeout / 60000)}m)`).catch(() => { });
 
@@ -200,7 +203,7 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
 
         const baseCmd = vitestCommand ? vitestCommand : `${resolveVitestBin(rootDir)} run`;
 
-        const coverageCmd = `${baseCmd} ${configArg} ${targetArg} --passWithNoTests --globals --coverage.enabled=true --coverage.provider=v8 --coverage.reporter=json-summary --coverage.reporter=json --coverage.reporter=lcov --reporter=json --outputFile=coverage/vitest-results.json`.replace(/\s+/g, " ").trim();
+        const coverageCmd = `${baseCmd} ${configArg} ${targetArg} --passWithNoTests --globals --coverage.enabled=true --coverage.provider=v8 --coverage.all=true --coverage.reportsDirectory=${relCovDir} --coverage.reporter=json-summary --coverage.reporter=json --coverage.reporter=lcov --reporter=json --outputFile=${relCovDir}/vitest-results.json`.replace(/\s+/g, " ").trim();
 
         await addJobLog(jobId, "INFO", `[VITEST] Running Vitest at rootDir: ${coverageCmd} (timeout: ${Math.round(effectiveTimeout / 60000)}m)`).catch(() => { });
 
@@ -216,7 +219,7 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
         // If coverage failed (e.g. coverage provider mismatch), retry running vitest without coverage so test case results are still captured
         if ((!result.success || !fs.existsSync(vitestResultsPathCheck)) && result.exitCode !== null) {
             await addJobLog(jobId, "WARN", `[VITEST] Vitest coverage failed (exit ${result.exitCode}), retrying basic test mode to collect test results...`).catch(() => { });
-            const fallbackCmd = `${baseCmd} ${configArg} ${targetArg} --passWithNoTests --reporter=json --outputFile=coverage/vitest-results.json`.replace(/\s+/g, " ").trim();
+            const fallbackCmd = `${baseCmd} ${configArg} ${targetArg} --passWithNoTests --reporter=json --outputFile=${relCovDir}/vitest-results.json`.replace(/\s+/g, " ").trim();
             const fallbackResult = await dockerRunner.run({
                 snapshotPath: rootDir,
                 command: fallbackCmd,

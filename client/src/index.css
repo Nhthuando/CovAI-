@@ -372,3 +372,17 @@ select:-webkit-autofill:focus {
     border-left-color: transparent;
   }
 }
+
+/* ── Monaco Editor Test Scenario Active Line Decoration ── */
+.monaco-test-highlight-line {
+  background: rgba(99, 102, 241, 0.08) !important;
+  border-left: 3px solid #818cf8 !important;
+}
+
+.monaco-test-glyph-marker {
+  background: #818cf8 !important;
+  width: 3px !important;
+  border-radius: 1px;
+  margin-left: 3px;
+}
+
