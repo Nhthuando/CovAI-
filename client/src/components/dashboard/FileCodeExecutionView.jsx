@@ -13,7 +13,7 @@ import {
   Loader2,
   Code2,
   AlertTriangle,
-  FlaskConical,
+  FileCheck,
   Columns,
   Maximize2,
   ExternalLink,
@@ -661,7 +661,7 @@ export default function FileCodeExecutionView({
                   background: saveStatus === "success"
                     ? (isLight ? "#16a34a" : "rgba(34, 197, 94, 0.2)")
                     : (isDirty || isTestDirty)
-                      ? (isLight ? "#2563eb" : "linear-gradient(135deg, #0284c7 0%, #0369a1 100%)")
+                      ? (isLight ? "#2563eb" : "var(--color-primary, #6d5dfb)")
                       : (isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.05)"),
                   border: (isDirty || isTestDirty) ? "none" : (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)"),
                   color: (isDirty || isTestDirty) || saveStatus === "success" ? "#ffffff" : (isLight ? "#94a3b8" : "#64748b"),
@@ -1048,7 +1048,7 @@ export default function FileCodeExecutionView({
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               {linkedTestFiles.length > 1 ? (
                 <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <FlaskConical size={12} color={isLight ? "#15803d" : "#4ade80"} />
+                  <FileCode size={12} color={isLight ? "#15803d" : "#4ade80"} />
                   <select
                     value={activeTestFile?.filePath || ""}
                     onChange={(e) => setSelectedTestFilePath(e.target.value)}
@@ -1088,7 +1088,7 @@ export default function FileCodeExecutionView({
                   }}
                   title={`Associated Test File: ${activeTestFile?.filePath} (${activeTestFile?.relationType || "Direct"})`}
                 >
-                  <FlaskConical size={12} />
+                  <FileCheck size={12} />
                   <span>Test: {testFileName}</span>
                 </div>
               )}
@@ -1138,14 +1138,14 @@ export default function FileCodeExecutionView({
               fontWeight: layoutMode === "split" ? 700 : 500,
               border: "none",
               background: layoutMode === "split"
-                ? (isLight ? "#ffffff" : "linear-gradient(135deg, #7c3aed 0%, #6366f1 100%)")
+                ? (isLight ? "#ffffff" : "var(--color-primary, #6d5dfb)")
                 : "transparent",
               color: layoutMode === "split"
                 ? (isLight ? "#4338ca" : "#ffffff")
                 : (isLight ? "#64748b" : "#8b949e"),
               cursor: "pointer",
               boxShadow: layoutMode === "split"
-                ? (isLight ? "0 2px 4px rgba(0,0,0,0.08)" : "0 2px 6px rgba(124, 58, 237, 0.35)")
+                ? (isLight ? "0 1px 2px rgba(0,0,0,0.06)" : "none")
                 : "none",
               transition: "all 0.15s ease",
             }}
@@ -1205,7 +1205,7 @@ export default function FileCodeExecutionView({
             }}
             title="Show test file only"
           >
-            <FlaskConical size={12} />
+            <FileCheck size={12} />
             <span>Test File</span>
           </button>
         </div>
@@ -1228,11 +1228,10 @@ export default function FileCodeExecutionView({
               borderRadius: 6,
               fontSize: 11,
               fontWeight: 700,
-              background: "linear-gradient(135deg, #7c3aed 0%, #6366f1 100%)",
+              background: "var(--color-primary, #6d5dfb)",
               color: "#ffffff",
               border: "none",
               cursor: isLoadingSuggestions ? "wait" : "pointer",
-              boxShadow: "0 2px 8px rgba(124, 58, 237, 0.35)",
               transition: "all 0.15s ease",
             }}
             className="hover:opacity-95"

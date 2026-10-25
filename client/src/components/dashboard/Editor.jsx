@@ -1155,39 +1155,45 @@ export default function Editor({
               className="flex items-center gap-2 text-xs"
               style={{ fontFamily: "var(--font-mono)" }}
             >
-              <span
-                className="px-2 py-0.5 rounded"
+              <button
+                type="button"
+                onClick={() => onRunAnalysis?.()}
+                className="px-2 py-0.5 rounded cursor-pointer transition-opacity hover:opacity-80"
                 style={{
                   background: "var(--color-bg)",
                   color: covPctColor(fileCoverage.summary.linesPct),
                   border: "1px solid var(--color-border)",
                 }}
-                title="Line Coverage"
+                title="Line Coverage - Click to switch to Coverage Dashboard"
               >
                 Lines: {fileCoverage.summary.linesPct}%
-              </span>
-              <span
-                className="px-2 py-0.5 rounded"
+              </button>
+              <button
+                type="button"
+                onClick={() => onRunAnalysis?.()}
+                className="px-2 py-0.5 rounded cursor-pointer transition-opacity hover:opacity-80"
                 style={{
                   background: "var(--color-bg)",
                   color: covPctColor(fileCoverage.summary.branchesPct),
                   border: "1px solid var(--color-border)",
                 }}
-                title="Branch Coverage"
+                title="Branch Coverage - Click to switch to Coverage Dashboard"
               >
                 Branches: {fileCoverage.summary.branchesPct}%
-              </span>
-              <span
-                className="px-2 py-0.5 rounded"
+              </button>
+              <button
+                type="button"
+                onClick={() => onRunAnalysis?.()}
+                className="px-2 py-0.5 rounded cursor-pointer transition-opacity hover:opacity-80"
                 style={{
                   background: "var(--color-bg)",
                   color: covPctColor(fileCoverage.summary.stmtsPct),
                   border: "1px solid var(--color-border)",
                 }}
-                title="Statement Coverage"
+                title="Statement Coverage - Click to switch to Coverage Dashboard"
               >
                 Stmts: {fileCoverage.summary.stmtsPct}%
-              </span>
+              </button>
             </div>
           )}
 

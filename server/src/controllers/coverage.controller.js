@@ -1158,6 +1158,68 @@ export const extractTargetFunction = (a, fileName, knownFunctions = []) => {
 };
 
 /**
+ * Classifies an assertion into one of the 4 test categories:
+ * - Category A: HAPPY_PATH (Happy Path / Standard flow)
+ * - Category B: BOUNDARY_VALUES (Boundary values: 0, -1, empty, max limits)
+ * - Category C: BRANCH_TOGGLING (Condition branches, fallback, falsy/truthy)
+ * - Category D: ERROR_HANDLING (Exceptions, throw, reject, error handling)
+ */
+export const classifyTestCategory = (a, title = "", ancestorTitles = []) => {
+    const fullText = [
+        title || a?.title || a?.fullName || "",
+        ...(Array.isArray(ancestorTitles) ? ancestorTitles : (a?.ancestorTitles || []))
+    ].join(" ").toLowerCase();
+
+    // 1. Category D: Error & Exception Handling
+    if (
+        /\b(error|throw|throws|exception|reject|rejects|catch|fail|failed|failure|invalid|malformed|unauthorized|forbidden|not\s*found|crash|abort)\b/i.test(fullText) ||
+        /\b(500|400|401|403|404|422)\b/.test(fullText)
+    ) {
+        return {
+            category: "ERROR_HANDLING",
+            categoryName: "D. Error & Exception Handling",
+            categoryBadge: "Error Handling",
+            categoryColor: "#ef4444"
+        };
+    }
+
+    // 2. Category B: Boundary Value Analysis
+    if (
+        /\b(bound|boundary|extreme|limits?|edge\s*cases?|empty|zero|\b0\b|-1|negative|null|undefined|nan|max|min|overflow|underflow|whitespace|blank)\b/i.test(fullText) ||
+        /\[\s*\]|\{\s*\}|""|''/.test(fullText)
+    ) {
+        return {
+            category: "BOUNDARY_VALUES",
+            categoryName: "B. Boundary Values",
+            categoryBadge: "Boundary Value",
+            categoryColor: "#f59e0b"
+        };
+    }
+
+    // 3. Category C: Branch Toggling
+    if (
+        /\b(branch|branches|toggle|condition|conditional|if|else|switch|case|when|fallback|default|optional|ternary|without|falsy|truthy|neither|either|boolean|flag)\b/i.test(fullText) ||
+        /\b(or|and|\?\?|\|\||\?\.)\b/.test(fullText)
+    ) {
+        return {
+            category: "BRANCH_TOGGLING",
+            categoryName: "C. Branch Toggling",
+            categoryBadge: "Branch Toggling",
+            categoryColor: "#0284c7"
+        };
+    }
+
+    // 4. Category A: Happy Path (Default standard successful flow)
+    return {
+        category: "HAPPY_PATH",
+        categoryName: "A. Happy Path",
+        categoryBadge: "Happy Path",
+        categoryColor: "#10b981"
+    };
+};
+
+
+/**
  * Extract a repo-relative path from a test suite name.
  * Handles both Docker paths (/app/storage/.../repo/foo.test.js)
  * and Windows paths (D:\...\storage\...\repo\foo.test.js).
@@ -1413,12 +1475,17 @@ export const getCoverageTestSuites = async (req, res) => {
                         try {
                             targetFunction = extractTargetFunction(a, baseName, fileKnownFunctions);
                         } catch (_) { }
+                        const catInfo = classifyTestCategory(a, a?.title || a?.fullName, a?.ancestorTitles);
                         return {
                             title: a?.title || a?.fullName || "Test case",
                             status: a?.status || "passed",
                             duration: typeof a?.duration === "number" ? a.duration : 0,
                             targetFunction: targetFunction || null,
-                            ancestorTitles: Array.isArray(a?.ancestorTitles) ? a.ancestorTitles : []
+                            ancestorTitles: Array.isArray(a?.ancestorTitles) ? a.ancestorTitles : [],
+                            category: catInfo.category,
+                            categoryName: catInfo.categoryName,
+                            categoryBadge: catInfo.categoryBadge,
+                            categoryColor: catInfo.categoryColor
                         };
                     })
                 : [];
@@ -1439,7 +1506,7 @@ export const getCoverageTestSuites = async (req, res) => {
                 : (passedTests + failedTests || (suiteResult ? 1 : 0));
 
             // pending = file found but no test run result yet; failed/passed = from results
-            let status = suiteResult ? (suiteResult.status === "failed" || failedTests > 0 ? "failed" : "passed") : "pending";
+            let status = suiteResult ? (suiteResult.status === "failed" || failedTests > 0 ? "failed" : (suiteResult.status === "pending" || suiteResult.status === "skipped" ? "pending" : "passed")) : "pending";
 
             const rawDuration = suiteResult?.endTime && suiteResult?.startTime
                 ? (suiteResult.endTime - suiteResult.startTime)
@@ -1463,6 +1530,23 @@ export const getCoverageTestSuites = async (req, res) => {
                 }
             }
 
+            // Determine explicit diagnostic reason if suite is pending/skipped
+            let pendingReason = null;
+            if (status === "pending") {
+                const hasAnyTest = /\b(test|it|describe|scenario|suite|autoBindSteps|defineFeature|defineStep|loadFeature|loadFeatures|given|when|then|Given|When|Then|StepDefinitions|beforeEach|afterEach)\b/i.test(content);
+                if (!hasAnyTest) {
+                    pendingReason = "File contains no executable test or step-definition blocks (empty stub file).";
+                } else if (suiteResult) {
+                    if (suiteResult.numPendingTests > 0 && (suiteResult.numPassingTests || 0) + (suiteResult.numFailingTests || 0) === 0) {
+                        pendingReason = "All test cases in this suite were skipped (e.g. test.skip, describe.skip, or xit).";
+                    } else if (suiteResult.status === "pending" || suiteResult.status === "skipped") {
+                        pendingReason = "Test suite was explicitly skipped or bypassed during execution.";
+                    }
+                } else {
+                    pendingReason = "Test suite was not executed by the test runner (not targeted by testMatch or excluded in configuration).";
+                }
+            }
+
             suites.push({
                 filePath: cleanStoragePath(relPath) || relPath,
                 fileName: baseName,
@@ -1474,7 +1558,8 @@ export const getCoverageTestSuites = async (req, res) => {
                 failedTests,
                 durationMs,
                 assertions,
-                message: cleanStorageText(message),
+                pendingReason,
+                message: cleanStorageText(message || pendingReason),
             });
         }
 
@@ -2769,7 +2854,37 @@ export const applySuggestion = async (req, res) => {
             suggestions
         });
 
-        return res.status(200).json({ success: true, data: result });
+        // Auto-trigger full project unit test analysis in the background
+        let backgroundJob = null;
+        if (result && result.success && snapshotId && projectId) {
+            try {
+                const activeUnitJob = await prisma.job.findFirst({
+                    where: {
+                        projectId,
+                        snapshotId,
+                        type: "RUN_TESTS",
+                        status: { in: ["QUEUED", "RUNNING"] }
+                    }
+                });
+                if (!activeUnitJob) {
+                    const runJob = await createRunTestsJob({
+                        projectId,
+                        snapshotId,
+                        userId,
+                        mode: "FULL"
+                    });
+                    await addJobToQueue("RUN_TESTS", runJob.id);
+                    backgroundJob = { id: runJob.id, type: "RUN_TESTS", status: "QUEUED" };
+                    console.log(`[applySuggestion] Auto-triggered background unit test analysis job ${runJob.id} for snapshot ${snapshotId}`);
+                } else {
+                    backgroundJob = { id: activeUnitJob.id, type: "RUN_TESTS", status: activeUnitJob.status };
+                }
+            } catch (jobErr) {
+                console.warn("[applySuggestion] Warning auto-triggering background RUN_TESTS job:", jobErr.message);
+            }
+        }
+
+        return res.status(200).json({ success: true, data: { ...result, backgroundJob } });
     } catch (error) {
         console.error("[applySuggestion] Error:", error);
         return res.status(error.statusCode || 500).json({

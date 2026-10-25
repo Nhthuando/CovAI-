@@ -198,8 +198,7 @@ export default function DiffReviewModal({
                   onClick={() => onApplyFile?.(activeFile, currentSuggestion)}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-all cursor-pointer"
                   style={{
-                    background: "linear-gradient(135deg, #7c3aed, #9333ea)",
-                    boxShadow: "0 0 14px rgba(124, 58, 237, 0.4)",
+                    background: "var(--color-primary, #6d5dfb)",
                   }}
                 >
                   {isApplying ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}

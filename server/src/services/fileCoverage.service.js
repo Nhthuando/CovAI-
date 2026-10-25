@@ -660,15 +660,16 @@ export const findAllAssociatedTestFiles = (rootDir, rawSourceFilePath, framework
     const subprojectPrefix = isMultiPackage && parts.length > 2 ? parts.slice(0, 2).join("/") : "";
 
     // Calculate default new test path
-    let defaultNewTestPath = normalizePath(path.join("tests", `${baseName}.test${ext}`));
+    const defaultTestFileName = framework === "vitest" ? `${baseName}.vitest.test${ext}` : `${baseName}.test${ext}`;
+    let defaultNewTestPath = normalizePath(path.join("tests", defaultTestFileName));
     const hasTestsUnit = fs.existsSync(path.join(rootDir, "tests", "unit"));
     if (dirName.includes("src")) {
         const subRel = dirName.replace(/^src\/?/, "");
         defaultNewTestPath = hasTestsUnit
-            ? normalizePath(`tests/unit/${subRel}/${baseName}.test${ext}`.replace(/\/+/g, "/"))
-            : normalizePath(dirName.replace("src", "tests") + `/${baseName}.test${ext}`);
+            ? normalizePath(`tests/unit/${subRel}/${defaultTestFileName}`.replace(/\/+/g, "/"))
+            : normalizePath(dirName.replace("src", "tests") + `/${defaultTestFileName}`);
     } else if (hasTestsUnit) {
-        defaultNewTestPath = normalizePath(`tests/unit/${baseName}.test${ext}`);
+        defaultNewTestPath = normalizePath(`tests/unit/${defaultTestFileName}`);
     }
 
     const linkedMap = new Map();
@@ -816,6 +817,10 @@ export const findAllAssociatedTestFiles = (rootDir, rawSourceFilePath, framework
                 const fullP = path.join(rootDir, cand);
                 if (fs.existsSync(fullP)) {
                     const content = fs.readFileSync(fullP, "utf8");
+                    const hasVitestInName = cand.includes(".vitest.") || cand.includes("vitest.test") || cand.includes("vitest.spec");
+                    if (!hasVitestInName && !content.includes("vitest")) {
+                        continue;
+                    }
                     const rel = normalizePath(cand);
                     linkedMap.set(rel, {
                         found: true,

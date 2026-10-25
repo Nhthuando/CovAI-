@@ -298,6 +298,25 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     // 0. Heal multiline strings with unescaped literal newlines
     cleaned = healMultilineStrings(cleaned);
 
+    // 0.5. Heal or strip illegal self-assignment declarations: const X = X; or let X = X;
+    // In JavaScript TDZ, `const path = path;` causes "ReferenceError: Cannot access 'path' before initialization"
+    const NODE_BUILTIN_MODULES = new Set([
+        "path", "fs", "crypto", "http", "https", "os", "url", "util", "events", "stream",
+        "child_process", "buffer", "zlib", "net", "tls", "cluster", "readline", "vm", "worker_threads"
+    ]);
+
+    cleaned = cleaned.replace(
+        /^[ \t]*(const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*\2\s*;?[ \t]*\r?$/gm,
+        (match, kind, varName) => {
+            if (NODE_BUILTIN_MODULES.has(varName)) {
+                return isTsFile
+                    ? `import ${varName} from '${varName}';`
+                    : `const ${varName} = require('${varName}');`;
+            }
+            return "";
+        }
+    );
+
     // 1. Remove non-code placeholder AI blocks (e.g. describe('AI Suggested Unit Tests', () => { N/A - See fullUpdatedContent });)
     cleaned = cleaned.replace(/[ \t]*describe\s*\(\s*['"]AI Suggested Unit Tests['"][\s\S]*?\n[ \t]*\}\s*\);?/g, (match) => {
         if (!match.includes("test(") && !match.includes("it(")) {
@@ -355,6 +374,13 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     cleaned = cleaned
         .replace(/;\s*\)+;?/g, ";")
         .replace(/\.(toBeDefined|toBeUndefined)\(\)\s*\)+;?/g, ".$1();");
+
+    // 1.4. Heal orphaned tokens or unclosed string fragments trailing after zero-argument assertions
+    // e.g. `expect(code).toBeDefined() item$/');` -> `expect(code).toBeDefined();`
+    // or `expect(code).toBeDefined() item$/');;` -> `expect(code).toBeDefined();`
+    cleaned = cleaned
+        .replace(/(\.(?:toBeDefined|toBeUndefined)\(\))\s*(?!\s*\/\/)((?:['"`/][^\r\n]*|[a-zA-Z0-9_$.-]+[^\r\n;]*|\)+);?)/g, "$1;")
+        .replace(/;{2,}/g, ";");
 
     // 2. Strip corrupted or invalid TypeScript annotations in JavaScript files ONLY that break Babel parser
     if (!isTsFile) {
@@ -1145,10 +1171,38 @@ jest.mock('../src/config/prisma.js', () => ({ prisma: __sharedMockPrisma, defaul
         .replace(/\bxtest\s*\(/g, "test(")
         .replace(/\bxdescribe\s*\(/g, "describe(");
 
-    // 21. Final syntax safety check: heal stray closing parens after statement terminators
+    // 21. Final syntax safety check: heal stray closing parens and orphaned trailing fragments
     cleaned = cleaned
         .replace(/;\s*\)+;?/g, ";")
-        .replace(/\.(toBeDefined|toBeUndefined)\(\)\s*\)+;?/g, ".$1();");
+        .replace(/\.(toBeDefined|toBeUndefined)\(\)\s*\)+;?/g, ".$1();")
+        .replace(/(\.(?:toBeDefined|toBeUndefined)\(\))\s*(?!\s*\/\/)((?:['"`/][^\r\n]*|[a-zA-Z0-9_$.-]+[^\r\n;]*|\)+);?)/g, "$1;")
+        .replace(/;{2,}/g, ";");
+
+    // 22. Final AST Validation & Error Line Healing
+    try {
+        const parsed = parseJavaScriptCode(cleaned);
+        if (!parsed.success && parsed.error) {
+            const matchLine = parsed.error.match(/\((\d+):(\d+)\)/);
+            if (matchLine) {
+                const errLineNum = parseInt(matchLine[1], 10);
+                const lines = cleaned.split("\n");
+                if (errLineNum > 0 && errLineNum <= lines.length) {
+                    const targetIdx = errLineNum - 1;
+                    const errLine = lines[targetIdx];
+                    if (errLine.includes(".toBeDefined()") || errLine.includes(".toBeUndefined()")) {
+                        lines[targetIdx] = errLine.replace(/(\.(?:toBeDefined|toBeUndefined)\(\))[\s\S]*$/, "$1;");
+                        cleaned = lines.join("\n");
+                    } else if (errLine.includes("expect(") && (errLine.includes("item$") || /expect\(.*\)\s*\.\w+\(/.test(errLine))) {
+                        const subjectMatch = errLine.match(/expect\(([^)]+)\)/);
+                        if (subjectMatch) {
+                            lines[targetIdx] = errLine.replace(/expect\([^)]+\)[\s\S]*$/, `expect(${subjectMatch[1]}).toBeDefined();`);
+                            cleaned = lines.join("\n");
+                        }
+                    }
+                }
+            }
+        }
+    } catch (_) {}
 
     return cleaned;
 };

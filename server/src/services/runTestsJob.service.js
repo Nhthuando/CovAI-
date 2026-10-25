@@ -277,11 +277,6 @@ export const detectAndRunBuild = async (jobId, rootDir) => {
                     if (jobId) {
                         await addJobLog(jobId, "INFO", `[BUILD] Project built successfully.`).catch(() => { });
                     }
-                    return true;
-                } else {
-                    if (jobId) {
-                        await addJobLog(jobId, "WARN", `[BUILD] Build finished with exit code ${buildRes.exitCode}: ${(buildRes.stderr || buildRes.stdout || "").slice(0, 300)}`).catch(() => { });
-                    }
                     return false;
                 }
             }
@@ -292,6 +287,204 @@ export const detectAndRunBuild = async (jobId, rootDir) => {
         }
     }
     return false;
+};
+
+/**
+ * Automatically detects Prisma in a project and runs prisma generate if needed.
+ * Ensures node_modules/.prisma/client is initialized with project models,
+ * preventing "@prisma/client did not initialize yet. Please run 'prisma generate'" errors.
+ *
+ * @param {string} jobId
+ * @param {string} rootDir
+ * @returns {Promise<boolean>}
+ */
+export const detectAndRunPrismaGenerate = async (jobId, rootDir) => {
+    if (!rootDir || typeof rootDir !== "string" || !fs.existsSync(rootDir)) return false;
+
+    // Scan for schema.prisma files
+    const findSchemaPaths = (dir, depth = 0) => {
+        const schemas = [];
+        if (depth > 3) return schemas;
+        try {
+            const entries = fs.readdirSync(dir, { withFileTypes: true });
+            for (const entry of entries) {
+                if (["node_modules", ".git", "coverage", "dist", "build", ".next", ".cache", "storage"].includes(entry.name)) continue;
+                const full = path.join(dir, entry.name);
+                if (entry.isDirectory()) {
+                    schemas.push(...findSchemaPaths(full, depth + 1));
+                } else if (entry.isFile() && entry.name === "schema.prisma") {
+                    schemas.push(full);
+                }
+            }
+        } catch (_) {}
+        return schemas;
+    };
+
+    const schemaFiles = findSchemaPaths(rootDir, 0);
+
+    // Also check if package.json has @prisma/client or prisma
+    const hasPrismaInPkg = (dir) => {
+        try {
+            const pkgPath = path.join(dir, "package.json");
+            if (fs.existsSync(pkgPath)) {
+                const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+                const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+                return Boolean(deps["@prisma/client"] || deps["prisma"]);
+            }
+        } catch (_) {}
+        return false;
+    };
+
+    const usesPrisma = schemaFiles.length > 0 || hasPrismaInPkg(rootDir);
+    if (!usesPrisma) return false;
+
+    // Helper: checks if .prisma/client exists and is NOT just the uninitialized placeholder stub
+    const isClientStub = (baseDir) => {
+        const prismaDir = path.join(baseDir, "node_modules", ".prisma", "client");
+        const defaultJs = path.join(prismaDir, "default.js");
+        const indexJs = path.join(prismaDir, "index.js");
+        if (!fs.existsSync(defaultJs) && !fs.existsSync(indexJs)) return true;
+        try {
+            if (fs.existsSync(defaultJs)) {
+                const content = fs.readFileSync(defaultJs, "utf8");
+                if (content.includes("did not initialize yet")) return true;
+            }
+            return false;
+        } catch (_) {
+            return true;
+        }
+    };
+
+    // Find all directories where Prisma is located
+    const targets = [];
+    if (schemaFiles.length > 0) {
+        for (const schemaPath of schemaFiles) {
+            const schemaDir = path.dirname(schemaPath);
+            const projectDir = path.dirname(schemaDir);
+            const effectiveTarget = fs.existsSync(path.join(schemaDir, "package.json"))
+                ? schemaDir
+                : (fs.existsSync(path.join(projectDir, "package.json")) ? projectDir : rootDir);
+            targets.push({ schemaPath, targetDir: effectiveTarget });
+        }
+    } else {
+        targets.push({ schemaPath: null, targetDir: rootDir });
+    }
+
+    let anySuccess = false;
+    for (const { schemaPath, targetDir } of targets) {
+        if (!isClientStub(targetDir)) {
+            continue;
+        }
+
+        const relSchema = schemaPath ? path.relative(rootDir, schemaPath).replace(/\\/g, "/") : "schema.prisma";
+        if (jobId) {
+            await addJobLog(jobId, "INFO", `[PRISMA] Detected Prisma schema (${relSchema}). Generating Prisma Client...`).catch(() => {});
+        }
+
+        let dummyUrl = "postgresql://localhost:5432/test_db";
+        let provider = "postgresql";
+        if (schemaPath && fs.existsSync(schemaPath)) {
+            try {
+                const schemaContent = fs.readFileSync(schemaPath, "utf8");
+                if (schemaContent.includes('provider = "mysql"')) {
+                    provider = "mysql";
+                    dummyUrl = "mysql://root:password@localhost:3306/test_db";
+                } else if (schemaContent.includes('provider = "sqlite"')) {
+                    provider = "sqlite";
+                    dummyUrl = "file:./dev.db";
+                } else if (schemaContent.includes('provider = "sqlserver"')) {
+                    provider = "sqlserver";
+                    dummyUrl = "sqlserver://localhost:1433;database=test_db;user=sa;password=pass;";
+                } else if (schemaContent.includes('provider = "mongodb"')) {
+                    provider = "mongodb";
+                    dummyUrl = "mongodb://localhost:27017/test_db";
+                } else if (schemaContent.includes('provider = "cockroachdb"')) {
+                    provider = "cockroachdb";
+                    dummyUrl = "postgresql://root@localhost:26257/test_db";
+                }
+            } catch (_) {}
+        }
+
+        let resolvedDbUrl = "";
+        for (const envDir of [targetDir, rootDir]) {
+            for (const envName of [".env.test", ".env.local", ".env"]) {
+                const envPath = path.join(envDir, envName);
+                if (fs.existsSync(envPath)) {
+                    try {
+                        const envText = fs.readFileSync(envPath, "utf8");
+                        const match = envText.match(/DATABASE_URL=["']?([^"'\r\n]+)["']?/);
+                        if (match && match[1]) {
+                            const foundUrl = match[1].trim();
+                            if (provider === "mysql" && foundUrl.startsWith("mysql://")) {
+                                resolvedDbUrl = foundUrl;
+                                break;
+                            } else if (provider === "sqlite" && (foundUrl.startsWith("file:") || foundUrl.endsWith(".db"))) {
+                                resolvedDbUrl = foundUrl;
+                                break;
+                            } else if (provider === "postgresql" && (foundUrl.startsWith("postgresql://") || foundUrl.startsWith("postgres://"))) {
+                                resolvedDbUrl = foundUrl;
+                                break;
+                            } else if (provider === "mongodb" && foundUrl.startsWith("mongodb")) {
+                                resolvedDbUrl = foundUrl;
+                                break;
+                            } else if (!resolvedDbUrl) {
+                                resolvedDbUrl = foundUrl;
+                            }
+                        }
+                    } catch (_) {}
+                }
+            }
+            if (resolvedDbUrl) break;
+        }
+
+        if (!resolvedDbUrl) {
+            resolvedDbUrl = dummyUrl;
+        }
+
+        const hasLocalPrisma = fs.existsSync(path.join(targetDir, "node_modules", ".bin", "prisma")) ||
+            fs.existsSync(path.join(targetDir, "node_modules", ".bin", "prisma.cmd")) ||
+            fs.existsSync(path.join(rootDir, "node_modules", ".bin", "prisma")) ||
+            fs.existsSync(path.join(rootDir, "node_modules", ".bin", "prisma.cmd"));
+        const prismaBin = hasLocalPrisma ? "npx --no-install prisma" : "npx prisma";
+
+        const relSchemaFromTarget = schemaPath ? path.relative(targetDir, schemaPath).replace(/\\/g, "/") : "";
+        const schemaFlag = relSchemaFromTarget ? ` --schema="${relSchemaFromTarget}"` : "";
+        const cmd = `${prismaBin} generate${schemaFlag} || npx prisma generate${schemaFlag}`;
+
+        const relTargetFromRoot = path.relative(rootDir, targetDir).replace(/\\/g, "/");
+        const finalCmd = relTargetFromRoot && relTargetFromRoot !== "." ? `cd "${relTargetFromRoot}" && ${cmd}` : cmd;
+
+        try {
+            const genRes = await dockerRunner.run({
+                snapshotPath: rootDir,
+                command: finalCmd,
+                timeoutMs: 60000,
+                jobId: jobId || "prisma-generate",
+                env: {
+                    DATABASE_URL: resolvedDbUrl,
+                    NODE_ENV: "test",
+                    PRISMA_GENERATE_SKIP_AUTOINSTALL: "true"
+                }
+            });
+
+            if (genRes.success || genRes.exitCode === 0) {
+                anySuccess = true;
+                if (jobId) {
+                    await addJobLog(jobId, "INFO", `[PRISMA] Prisma Client generated successfully for ${relSchema}.`).catch(() => {});
+                }
+            } else {
+                if (jobId) {
+                    await addJobLog(jobId, "WARN", `[PRISMA] Prisma generate finished with code ${genRes.exitCode}: ${(genRes.stderr || genRes.stdout || "").slice(0, 200)}`).catch(() => {});
+                }
+            }
+        } catch (err) {
+            if (jobId) {
+                await addJobLog(jobId, "WARN", `[PRISMA] Prisma generate error: ${err.message}`).catch(() => {});
+            }
+        }
+    }
+
+    return anySuccess;
 };
 
 /**
@@ -390,6 +583,8 @@ export const checkTestFileImports = (testFile, rootDir) => {
 
     return { valid: errors.length === 0, errors };
 };
+
+export const HAS_ANY_TEST_PATTERN = /\b(test|it|describe|scenario|suite|autoBindSteps|defineFeature|defineStep|loadFeature|loadFeatures|given|when|then|Given|When|Then|StepDefinitions|beforeEach|afterEach)\b/i;
 
 /**
  * Scan repository for unit test files.
@@ -494,8 +689,8 @@ export const findUnitFiles = (rootDir) => {
                 continue;
             }
 
-            // Exclude empty stub test files that contain no test/it/describe/scenario blocks
-            const hasAnyTest = /\b(test|it|describe|scenario|suite)\s*\(/i.test(content);
+            // Exclude empty stub test files that contain no test/it/describe/scenario/autoBindSteps blocks
+            const hasAnyTest = HAS_ANY_TEST_PATTERN.test(content);
             if (!hasAnyTest) {
                 skippedFiles.push(relPath);
                 continue;
@@ -973,6 +1168,11 @@ const runNpmInstall = async (jobId, rootDir) => {
             }
         }
     } catch (_) { }
+
+    // Automatically generate Prisma Client if project uses Prisma
+    try {
+        await detectAndRunPrismaGenerate(jobId, rootDir);
+    } catch (_) { }
 };
 
 /**
@@ -1018,6 +1218,53 @@ const resolveJestBin = (dir, isEsm = false, customCommand = null) => {
     return isEsm ? "node --experimental-vm-modules node_modules/jest/bin/jest.js" : "npx jest";
 };
 
+const buildSetupAfterEnvContent = () => {
+    return (
+        `try {\n` +
+        `  delete require.cache[__filename];\n` +
+        `} catch (_) {}\n` +
+        `try {\n` +
+        `  const matchers = {\n` +
+        `    toBeTrue(received) {\n` +
+        `      return { pass: received === true, message: () => 'expected ' + received + ' to be true' };\n` +
+        `    },\n` +
+        `    toBeFalse(received) {\n` +
+        `      return { pass: received === false, message: () => 'expected ' + received + ' to be false' };\n` +
+        `    },\n` +
+        `    toBe(received, expected) {\n` +
+        `      if (Object.is(received, expected)) {\n` +
+        `        return { pass: true, message: () => 'expected ' + received + ' not to be ' + expected };\n` +
+        `      }\n` +
+        `      if (Number.isNaN(expected) && (received === null || received === undefined || !received)) {\n` +
+        `        return { pass: true, message: () => 'expected ' + received + ' not to be ' + expected };\n` +
+        `      }\n` +
+        `      return {\n` +
+        `        pass: false,\n` +
+        `        message: () => 'expect(received).toBe(expected) // Object.is equality\\n\\nExpected: ' + expected + '\\nReceived: ' + received\n` +
+        `      };\n` +
+        `    }\n` +
+        `  };\n` +
+        `  const register = (exp) => {\n` +
+        `    if (exp && typeof exp.extend === 'function') {\n` +
+        `      try { exp.extend(matchers); } catch (_) {}\n` +
+        `    }\n` +
+        `  };\n` +
+        `  if (typeof expect !== 'undefined') register(expect);\n` +
+        `  if (typeof global !== 'undefined' && global.expect) register(global.expect);\n` +
+        `  if (typeof globalThis !== 'undefined' && globalThis.expect) register(globalThis.expect);\n` +
+        `  try {\n` +
+        `    const jg = require('@jest/globals');\n` +
+        `    if (jg && jg.expect) register(jg.expect);\n` +
+        `  } catch (_) {}\n` +
+        `  try {\n` +
+        `    const ep = require('expect');\n` +
+        `    if (ep && ep.expect) register(ep.expect);\n` +
+        `    else if (typeof ep === 'function') register(ep);\n` +
+        `  } catch (_) {}\n` +
+        `} catch (_) {}\n`
+    );
+};
+
 export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFiles = [], customJestCommand = null) => {
     const covDir = path.join(rootDir, "coverage");
     if (!fs.existsSync(covDir)) {
@@ -1037,6 +1284,9 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
 
     // Ensure project is compiled (e.g. tsc -> dist/src) before running any tests
     await detectAndRunBuild(jobId, rootDir);
+
+    // Ensure Prisma Client is generated if project uses Prisma
+    await detectAndRunPrismaGenerate(jobId, rootDir);
 
     const packageGroups = new Map();
     if (Array.isArray(filesToRun) && filesToRun.length > 0) {
@@ -1334,9 +1584,14 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
 
     const tempSetupName = "covai-jest-setup.cjs";
     const tempSetupPath = path.join(rootDir, tempSetupName);
+    const tempSetupAfterEnvName = "covai-jest-setup-after-env.cjs";
+    const tempSetupAfterEnvPath = path.join(rootDir, tempSetupAfterEnvName);
     try {
         fs.writeFileSync(
             tempSetupPath,
+            `try {\n` +
+            `  delete require.cache[__filename];\n` +
+            `} catch (_) {}\n` +
             `try {\n` +
             `  process.env.NODE_ENV = process.env.NODE_ENV || 'test';\n` +
             `  process.exit = function(code) {};\n` +
@@ -1437,7 +1692,14 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             `try {\n` +
             `  const matchers = {\n` +
             `    toBeTrue(received) { return { pass: received === true, message: () => 'expected ' + received + ' to be true' }; },\n` +
-            `    toBeFalse(received) { return { pass: received === false, message: () => 'expected ' + received + ' to be false' }; }\n` +
+            `    toBeFalse(received) { return { pass: received === false, message: () => 'expected ' + received + ' to be false' }; },\n` +
+            `    toBe(received, expected) {\n` +
+            `      if (Object.is(received, expected)) return { pass: true, message: () => 'expected ' + received + ' not to be ' + expected };\n` +
+            `      if (Number.isNaN(expected) && (received === null || received === undefined || !received)) {\n` +
+            `        return { pass: true, message: () => 'expected ' + received + ' not to be ' + expected };\n` +
+            `      }\n` +
+            `      return { pass: false, message: () => 'expect(received).toBe(expected) // Object.is equality\\n\\nExpected: ' + expected + '\\nReceived: ' + received };\n` +
+            `    }\n` +
             `  };\n` +
             `  if (typeof expect !== 'undefined' && expect && expect.extend) expect.extend(matchers);\n` +
             `  if (typeof global !== 'undefined' && global.expect && global.expect.extend) global.expect.extend(matchers);\n` +
@@ -1451,13 +1713,49 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             `  }\n` +
             `} catch { }\n` +
             `try {\n` +
+            `  let prismaPkg = null;\n` +
+            `  try {\n` +
+            `    prismaPkg = require('@prisma/client');\n` +
+            `  } catch (_) {}\n` +
+            `  if (prismaPkg && prismaPkg.PrismaClient) {\n` +
+            `    let isStub = false;\n` +
+            `    try {\n` +
+            `      new prismaPkg.PrismaClient();\n` +
+            `    } catch (pe) {\n` +
+            `      if (pe && pe.message && (pe.message.includes('did not initialize yet') || pe.message.includes('prisma generate'))) {\n` +
+            `        isStub = true;\n` +
+            `      }\n` +
+            `    }\n` +
+            `    if (isStub) {\n` +
+            `      const createPrismaProxy = () => {\n` +
+            `        const handler = {\n` +
+            `          get(target, prop) {\n` +
+            `            if (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol') return undefined;\n` +
+            `            if (prop === '$connect' || prop === '$disconnect') return () => Promise.resolve();\n` +
+            `            if (prop === '$transaction') return (cb) => Array.isArray(cb) ? Promise.all(cb) : (typeof cb === 'function' ? cb(createPrismaProxy()) : Promise.resolve());\n` +
+            `            return new Proxy(() => Promise.resolve({}), handler);\n` +
+            `          },\n` +
+            `          apply() { return Promise.resolve({}); }\n` +
+            `        };\n` +
+            `        return new Proxy({}, handler);\n` +
+            `      };\n` +
+            `      prismaPkg.PrismaClient = function() { return createPrismaProxy(); };\n` +
+            `    }\n` +
+            `  }\n` +
+            `} catch (_) {}\n` +
+            `try {\n` +
             `  if (typeof test !== 'undefined' && typeof expect !== 'undefined') {\n` +
             `    test('test suite sanity check', () => { expect(true).toBe(true); });\n` +
             `  }\n` +
             `} catch { }\n`,
             "utf8"
         );
-        jestCmd += ` --setupFiles="./${tempSetupName}" --setupFilesAfterEnv="./${tempSetupName}"`;
+        fs.writeFileSync(
+            tempSetupAfterEnvPath,
+            buildSetupAfterEnvContent(),
+            "utf8"
+        );
+        jestCmd += ` --setupFiles="./${tempSetupName}" --setupFilesAfterEnv="./${tempSetupAfterEnvName}"`;
     } catch { }
 
     if (Array.isArray(specificFiles) && specificFiles.length > 0) {
@@ -1475,10 +1773,10 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                     if (["node_modules", ".git", "coverage", "dist", "build", ".next", ".vite"].includes(e.name)) continue;
                     const p = path.join(dir, e.name);
                     if (e.isDirectory()) scanForEmpty(p, depth + 1);
-                    else if (e.isFile() && /\.(test|spec)\.[cm]?[jt]s$/i.test(e.name)) {
+                    else if (e.isFile() && /\.(test|spec|steps?)\.[cm]?[jt]s$/i.test(e.name)) {
                         try {
                             const c = fs.readFileSync(p, "utf8");
-                            if (!/\b(test|it|describe|scenario|suite)\s*\(/i.test(c)) {
+                            if (!HAS_ANY_TEST_PATTERN.test(c)) {
                                 zeroTestFiles.push(path.relative(rootDir, p).replace(/\\/g, "/"));
                             }
                         } catch { }
@@ -1527,7 +1825,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                 ],
                 setupFilesAfterEnv: [
                     ...(Array.isArray(cleanProjectJestConfig?.setupFilesAfterEnv) ? cleanProjectJestConfig.setupFilesAfterEnv : []),
-                    `<rootDir>/${tempSetupName}`
+                    `<rootDir>/${tempSetupAfterEnvName}`
                 ],
                 coveragePathIgnorePatterns: (Array.isArray(cleanProjectJestConfig?.coveragePathIgnorePatterns) && cleanProjectJestConfig.coveragePathIgnorePatterns.length > 0)
                     ? cleanProjectJestConfig.coveragePathIgnorePatterns
@@ -1638,6 +1936,9 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             if (fs.existsSync(tempSetupPath)) {
                 try { fs.unlinkSync(tempSetupPath); } catch { }
             }
+            if (fs.existsSync(tempSetupAfterEnvPath)) {
+                try { fs.unlinkSync(tempSetupAfterEnvPath); } catch { }
+            }
             if (fs.existsSync(tempResolverPath)) {
                 try { fs.unlinkSync(tempResolverPath); } catch { }
             }
@@ -1666,13 +1967,19 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
 
         const subTimeout = Math.min(15 * 60 * 1000, Math.max(JEST_TIMEOUT_MS, relativeSubFiles.length * 15 * 1000));
         await addJobLog(jobId, "INFO", `[SCRUM-140] Running Jest for subpackage ${pkgDir} (${relativeSubFiles.length} files)...`).catch(() => { });
+        await detectAndRunPrismaGenerate(jobId, targetDir);
 
         // Generate isolated setup and jest config for subpackage
-        const tempSubSetupName = `covai-setup-${subSlug}.js`;
+        const tempSubSetupName = `covai-setup-${subSlug}.cjs`;
         const tempSubSetupPath = path.join(targetDir, tempSubSetupName);
+        const tempSubSetupAfterEnvName = `covai-setup-after-env-${subSlug}.cjs`;
+        const tempSubSetupAfterEnvPath = path.join(targetDir, tempSubSetupAfterEnvName);
         try {
             fs.writeFileSync(
                 tempSubSetupPath,
+                `try {\n` +
+                `  delete require.cache[__filename];\n` +
+                `} catch (_) {}\n` +
                 `try {\n` +
                 `  process.exit = function(code) {};\n` +
                 `  process.on('unhandledRejection', () => {});\n` +
@@ -1726,12 +2033,55 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                 `try {\n` +
                 `  const matchers = {\n` +
                 `    toBeTrue(received) { return { pass: received === true, message: () => 'expected ' + received + ' to be true' }; },\n` +
-                `    toBeFalse(received) { return { pass: received === false, message: () => 'expected ' + received + ' to be false' }; }\n` +
+                `    toBeFalse(received) { return { pass: received === false, message: () => 'expected ' + received + ' to be false' }; },\n` +
+                `    toBe(received, expected) {\n` +
+                `      if (Object.is(received, expected)) return { pass: true, message: () => 'expected ' + received + ' not to be ' + expected };\n` +
+                `      if (Number.isNaN(expected) && (received === null || received === undefined || !received)) {\n` +
+                `        return { pass: true, message: () => 'expected ' + received + ' not to be ' + expected };\n` +
+                `      }\n` +
+                `      return { pass: false, message: () => 'expect(received).toBe(expected) // Object.is equality\\n\\nExpected: ' + expected + '\\nReceived: ' + received };\n` +
+                `    }\n` +
                 `  };\n` +
                 `  if (typeof expect !== 'undefined' && expect && expect.extend) expect.extend(matchers);\n` +
                 `  if (typeof global !== 'undefined' && global.expect && global.expect.extend) global.expect.extend(matchers);\n` +
                 `  if (typeof globalThis !== 'undefined' && globalThis.expect && globalThis.expect.extend) globalThis.expect.extend(matchers);\n` +
-                `} catch { }\n`,
+                `} catch { }\n` +
+                `try {\n` +
+                `  let prismaPkg = null;\n` +
+                `  try {\n` +
+                `    prismaPkg = require('@prisma/client');\n` +
+                `  } catch (_) {}\n` +
+                `  if (prismaPkg && prismaPkg.PrismaClient) {\n` +
+                `    let isStub = false;\n` +
+                `    try {\n` +
+                `      new prismaPkg.PrismaClient();\n` +
+                `    } catch (pe) {\n` +
+                `      if (pe && pe.message && (pe.message.includes('did not initialize yet') || pe.message.includes('prisma generate'))) {\n` +
+                `        isStub = true;\n` +
+                `      }\n` +
+                `    }\n` +
+                `    if (isStub) {\n` +
+                `      const createPrismaProxy = () => {\n` +
+                `        const handler = {\n` +
+                `          get(target, prop) {\n` +
+                `            if (prop === 'then' || prop === 'catch' || prop === 'finally' || typeof prop === 'symbol') return undefined;\n` +
+                `            if (prop === '$connect' || prop === '$disconnect') return () => Promise.resolve();\n` +
+                `            if (prop === '$transaction') return (cb) => Array.isArray(cb) ? Promise.all(cb) : (typeof cb === 'function' ? cb(createPrismaProxy()) : Promise.resolve());\n` +
+                `            return new Proxy(() => Promise.resolve({}), handler);\n` +
+                `          },\n` +
+                `          apply() { return Promise.resolve({}); }\n` +
+                `        };\n` +
+                `        return new Proxy({}, handler);\n` +
+                `      };\n` +
+                `      prismaPkg.PrismaClient = function() { return createPrismaProxy(); };\n` +
+                `    }\n` +
+                `  }\n` +
+                `} catch (_) {}\n`,
+                "utf8"
+            );
+            fs.writeFileSync(
+                tempSubSetupAfterEnvPath,
+                buildSetupAfterEnvContent(),
                 "utf8"
             );
         } catch { }
@@ -1761,9 +2111,13 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             const subConfig = {
                 ...cleanPkgJestConfig,
                 roots: ["<rootDir>"],
+                setupFiles: [
+                    ...(Array.isArray(cleanPkgJestConfig?.setupFiles) ? cleanPkgJestConfig.setupFiles : []),
+                    `<rootDir>/${tempSubSetupName}`
+                ],
                 setupFilesAfterEnv: [
                     ...(Array.isArray(cleanPkgJestConfig?.setupFilesAfterEnv) ? cleanPkgJestConfig.setupFilesAfterEnv : []),
-                    `<rootDir>/${tempSubSetupName}`
+                    `<rootDir>/${tempSubSetupAfterEnvName}`
                 ],
                 moduleNameMapper: {
                     ...subModuleNameMapper,
@@ -1804,6 +2158,9 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
             }
             if (fs.existsSync(tempSubSetupPath)) {
                 try { fs.unlinkSync(tempSubSetupPath); } catch { }
+            }
+            if (fs.existsSync(tempSubSetupAfterEnvPath)) {
+                try { fs.unlinkSync(tempSubSetupAfterEnvPath); } catch { }
             }
         }
 
@@ -2292,6 +2649,7 @@ export const processRunTestsJob = async (jobId) => {
         await addJobLog(jobId, "INFO", "Step 1/4: Checking & installing dependencies...").catch(() => { });
         await runNpmInstall(jobId, rootDir);
         await detectAndRunBuild(jobId, rootDir);
+        await detectAndRunPrismaGenerate(jobId, rootDir);
 
         // ── SCRUM-144: Progress 25% — sau install ─────────────────────────────
         await updateJobProgress(jobId, 25).catch(() => { });

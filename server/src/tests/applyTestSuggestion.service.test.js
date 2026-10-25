@@ -391,6 +391,21 @@ describe('user tests', () => {
             expect(contentAfter).toContain("it('skipped test 2'");
             expect(contentAfter).toContain("expect(myMock).toBeDefined()");
         });
+
+        test("heals TDZ ReferenceError Cannot access path before initialization", () => {
+            const testDir = path.join(tempDir, "tests");
+            fs.mkdirSync(testDir, { recursive: true });
+            const testFile = path.join(testDir, "worker.test.js");
+            fs.writeFileSync(testFile, "const path = path;\ndescribe('worker', () => { test('ok', () => { expect(1).toBe(1); }); });");
+
+            const rawOutput = "ReferenceError: Cannot access 'path' before initialization\n    at Object.path (tests/worker.test.js:1:14)";
+            const healed = autoHealTestFailures(tempDir, ["tests/worker.test.js"], null, rawOutput);
+            expect(healed).toBe(true);
+
+            const contentAfter = fs.readFileSync(testFile, "utf8");
+            expect(contentAfter).not.toContain("const path = path;");
+            expect(contentAfter).toContain("const path = require('path');");
+        });
     });
 
     describe("autoRefineCoverageGaps", () => {

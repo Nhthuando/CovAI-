@@ -313,6 +313,19 @@ describe('monorepo path', () => {
             expect(sanitized).toContain("require('../../src/services/ai.service')");
             expect(sanitized).not.toContain("../../backend/src/");
         });
+
+        test("heals self-assignment of node builtin modules like const path = path to require('path')", () => {
+            const code = `const path = path;\ndescribe('worker', () => { test('ok', () => { expect(1).toBe(1); }); });`;
+            const sanitized = cleanAndDeduplicateTestContent(code);
+            expect(sanitized).not.toContain("const path = path;");
+            expect(sanitized).toContain("const path = require('path');");
+        });
+
+        test("removes self-assignment of arbitrary non-builtin variables to avoid TDZ ReferenceError", () => {
+            const code = `const customVar = customVar;\ndescribe('custom', () => { test('ok', () => { expect(1).toBe(1); }); });`;
+            const sanitized = cleanAndDeduplicateTestContent(code);
+            expect(sanitized).not.toContain("const customVar = customVar;");
+        });
     });
 
     describe("healMultilineStrings", () => {

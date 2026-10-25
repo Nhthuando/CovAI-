@@ -1,7 +1,6 @@
 import React from "react";
 import {
   Cpu,
-  FlaskConical,
   CheckCircle2,
   AlertCircle,
   ArrowDown,

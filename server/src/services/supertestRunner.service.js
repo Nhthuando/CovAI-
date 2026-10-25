@@ -119,6 +119,13 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
     }
 
     await addJobLog(jobId, "INFO", "[SUPERTEST] Starting isolated integration tests.").catch(() => { });
+
+    // Automatically generate Prisma Client if project uses Prisma
+    try {
+        const { detectAndRunPrismaGenerate } = await import("./runTestsJob.service.js");
+        await detectAndRunPrismaGenerate(jobId, resolvedRoot);
+    } catch (_) { }
+
     const startedAt = Date.now();
     let result;
     try {
@@ -148,3 +155,6 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
         coverageDir: path.join(resolvedRoot, "coverage"),
     };
 };
+
+export const runSupertestTests = runSupertest;
+

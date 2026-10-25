@@ -115,6 +115,7 @@ const {
     getCoverageTestSuites,
     getSystemTestSummary,
     runCoverageByType,
+    classifyTestCategory,
 } = await import('../controllers/coverage.controller.js');
 
 describe('coverage controller empty-state behavior', () => {
@@ -346,6 +347,37 @@ describe('coverage controller empty-state behavior', () => {
                 testSuites: expect.any(Array)
             })
         }));
+    });
+
+    test('classifyTestCategory correctly categorizes all 4 test categories (A, B, C, D)', () => {
+        // Category A: Happy Path
+        const happy = classifyTestCategory({ title: 'should calculate total price successfully for valid items' });
+        expect(happy.category).toBe('HAPPY_PATH');
+        expect(happy.categoryName).toBe('A. Happy Path');
+
+        // Category B: Boundary Values
+        const boundary1 = classifyTestCategory({ title: 'should handle empty array of items []' });
+        expect(boundary1.category).toBe('BOUNDARY_VALUES');
+        expect(boundary1.categoryName).toBe('B. Boundary Values');
+
+        const boundary2 = classifyTestCategory({ title: 'should return 0 when quantity is zero' });
+        expect(boundary2.category).toBe('BOUNDARY_VALUES');
+
+        // Category C: Branch Toggling
+        const branch1 = classifyTestCategory({ title: 'should toggle branch when discount is false' });
+        expect(branch1.category).toBe('BRANCH_TOGGLING');
+        expect(branch1.categoryName).toBe('C. Branch Toggling');
+
+        const branch2 = classifyTestCategory({ title: 'should use fallback when options are nullish ?? default' });
+        expect(branch2.category).toBe('BRANCH_TOGGLING');
+
+        // Category D: Error & Exception Handling
+        const err1 = classifyTestCategory({ title: 'should throw error when payload is invalid' });
+        expect(err1.category).toBe('ERROR_HANDLING');
+        expect(err1.categoryName).toBe('D. Error & Exception Handling');
+
+        const err2 = classifyTestCategory({ title: 'should reject promise on 500 server exception' });
+        expect(err2.category).toBe('ERROR_HANDLING');
     });
 
     describe('getSystemTestSummary', () => {

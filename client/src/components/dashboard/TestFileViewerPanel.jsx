@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
-  FlaskConical,
   FileCode,
   Edit3,
   Eye,
@@ -285,7 +284,7 @@ export default function TestFileViewerPanel({
               flexShrink: 0,
             }}
           >
-            <FlaskConical size={15} />
+            <FileCode size={15} />
           </div>
 
           <div style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
@@ -564,7 +563,7 @@ export default function TestFileViewerPanel({
                 }}
                 title={tf.filePath}
               >
-                <FlaskConical size={11} />
+                <FileCode size={11} />
                 <span>{tf.fileName}</span>
                 {tf.relationType === "DIRECT_IMPORT" && (
                   <span
@@ -682,7 +681,7 @@ export default function TestFileViewerPanel({
                 marginBottom: 16,
               }}
             >
-              <FlaskConical size={26} />
+              <FileQuestion size={26} />
             </div>
 
             <h4
@@ -740,11 +739,10 @@ export default function TestFileViewerPanel({
                 borderRadius: 7,
                 fontSize: 12,
                 fontWeight: 600,
-                background: "linear-gradient(135deg, #7c3aed 0%, #6366f1 100%)",
+                background: "var(--color-primary, #6d5dfb)",
                 color: "#ffffff",
                 border: "none",
                 cursor: isLoadingSuggestions ? "wait" : "pointer",
-                boxShadow: "0 4px 14px rgba(124, 58, 237, 0.35)",
                 transition: "all 0.15s ease",
               }}
               className="hover:opacity-95"
@@ -840,11 +838,10 @@ export default function TestFileViewerPanel({
                       borderRadius: 6,
                       fontSize: 11,
                       fontWeight: 700,
-                      background: "linear-gradient(135deg, #059669 0%, #047857 100%)",
+                      background: "var(--color-success, #16a34a)",
                       color: "#ffffff",
                       border: "none",
                       cursor: "pointer",
-                      boxShadow: "0 2px 8px rgba(5, 150, 105, 0.3)",
                     }}
                   >
                     <Layers size={13} />
@@ -885,6 +882,8 @@ export default function TestFileViewerPanel({
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "space-between",
+                  flexWrap: "wrap",
+                  gap: 8,
                   fontSize: 11,
                   color: isLight ? "#15803d" : "#4ade80",
                 }}
@@ -893,15 +892,96 @@ export default function TestFileViewerPanel({
                   <TrendingUp size={13} />
                   <span>Verified Coverage Increase:</span>
                 </div>
-                <div style={{ display: "flex", gap: 12, fontFamily: "var(--font-mono, monospace)" }}>
-                  <span>Lines: {lastApplyResult.oldCoverage?.lines ?? 0}% → {lastApplyResult.newCoverage?.lines ?? 0}%</span>
-                  <span>Branches: {lastApplyResult.oldCoverage?.branches ?? 0}% → {lastApplyResult.newCoverage?.branches ?? 0}%</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", gap: 12, fontFamily: "var(--font-mono, monospace)" }}>
+                    <span>Lines: {lastApplyResult.oldCoverage?.lines ?? 0}% → {lastApplyResult.newCoverage?.lines ?? 0}%</span>
+                    <span>Branches: {lastApplyResult.oldCoverage?.branches ?? 0}% → {lastApplyResult.newCoverage?.branches ?? 0}%</span>
+                  </div>
+                  {((lastApplyResult.newCoverage?.lines < 100) || (lastApplyResult.newCoverage?.branches < 100)) && (
+                    <button
+                      onClick={() => onSuggestMissingTest?.()}
+                      disabled={isLoadingSuggestions}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 4,
+                        padding: "3px 9px",
+                        borderRadius: 5,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        background: "var(--color-primary, #6d5dfb)",
+                        color: "#ffffff",
+                        border: "none",
+                        cursor: isLoadingSuggestions ? "wait" : "pointer",
+                        transition: "all 0.15s ease",
+                      }}
+                      title="Continue suggesting test cases for remaining uncovered branches until 100%"
+                    >
+                      {isLoadingSuggestions ? (
+                        <Loader2 size={11} className="animate-spin" />
+                      ) : (
+                        <Sparkles size={11} />
+                      )}
+                      <span>Suggest Next Missing Tests</span>
+                    </button>
+                  )}
                 </div>
               </div>
             )}
 
             {/* List of suggestion cards */}
             {suggestions.filter((s) => s.status !== "REJECTED").map((sug, idx) => {
+              if (sug.isFullyCovered) {
+                const summary = sug.summary || {};
+                return (
+                  <div
+                    key={sug.suggestionId || idx}
+                    style={{
+                      padding: "16px 18px",
+                      borderRadius: 8,
+                      background: isLight ? "#f0fdf4" : "rgba(34, 197, 94, 0.1)",
+                      border: isLight ? "1px solid #86efac" : "1px solid rgba(34, 197, 94, 0.3)",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 8,
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, color: isLight ? "#15803d" : "#4ade80", fontWeight: 700, fontSize: 13 }}>
+                      <CheckCircle2 size={17} />
+                      <span>{sug.explanation || `File \`${cleanDisplayPath(sourceFilePath)}\` has achieved 100% full coverage across all metrics!`}</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: isLight ? "#166534" : "#86efac", display: "flex", gap: 12, fontFamily: "var(--font-mono, monospace)" }}>
+                      <span>Statements: {summary.statementsPct ?? summary.stmtsPct ?? 100}%</span>
+                      <span>Branches: {summary.branchesPct ?? 100}%</span>
+                      <span>Functions: {summary.functionsPct ?? summary.funcsPct ?? 100}%</span>
+                      <span>Lines: {summary.linesPct ?? 100}%</span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+                      <button
+                        onClick={() => onSuggestMissingTest?.()}
+                        disabled={isLoadingSuggestions}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 5,
+                          padding: "5px 12px",
+                          borderRadius: 6,
+                          fontSize: 11,
+                          fontWeight: 600,
+                          background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.08)",
+                          border: isLight ? "1px solid #bbf7d0" : "1px solid rgba(34, 197, 94, 0.4)",
+                          color: isLight ? "#15803d" : "#4ade80",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <Sparkles size={11} />
+                        <span>Generate Additional Edge Cases / Boundary Tests</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+
               const sugId = sug.suggestionId || sug.id || idx;
               const isApplying = applyingSuggestionIds.has(sugId);
               const currentCode = editedCodes[sugId] !== undefined

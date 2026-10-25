@@ -864,10 +864,9 @@ export default function IntegrationWorkspace({
                       ? disabledButtonStyle
                       : {
                           ...buttonStyle("#22c55e", true),
-                          background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
+                          background: "var(--color-success, #16a34a)",
                           color: "#ffffff",
                           border: "none",
-                          boxShadow: "0 2px 8px rgba(16, 185, 129, 0.25)",
                         }
                   }
                   title="Chạy nốt các endpoint chưa được kiểm thử trong đợt này mà không cần quay lại cấu hình"
@@ -1274,7 +1273,7 @@ export default function IntegrationWorkspace({
                                   display: "inline-flex",
                                   alignItems: "center",
                                   gap: 6,
-                                  background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
+                                  background: "var(--color-success, #16a34a)",
                                   color: "#ffffff",
                                   border: "none",
                                   borderRadius: 5,

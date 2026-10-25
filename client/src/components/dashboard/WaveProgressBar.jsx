@@ -26,13 +26,12 @@ export default function WaveProgressBar({
       style={{
         background: isLight
           ? "#ffffff"
-          : "linear-gradient(135deg, rgba(15, 23, 42, 0.9) 0%, rgba(30, 27, 75, 0.8) 100%)",
-        border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(167, 139, 250, 0.25)",
+          : "var(--color-surface, #11161d)",
+        border: isLight ? "1px solid #e2e8f0" : "1px solid var(--color-border, #29313d)",
         boxShadow: isLight
-          ? "0 4px 16px -2px rgba(15, 23, 42, 0.05), 0 2px 6px -1px rgba(15, 23, 42, 0.03)"
-          : "0 8px 32px rgba(0, 0, 0, 0.35), 0 0 20px rgba(139, 92, 246, 0.15)",
-        backdropFilter: isLight ? "none" : "blur(12px)",
-        borderRadius: 12,
+          ? "0 1px 3px 0 rgba(15, 23, 42, 0.04)"
+          : "none",
+        borderRadius: 8,
         padding: "16px 20px",
         marginBottom: 20,
         position: "relative",
@@ -43,10 +42,6 @@ export default function WaveProgressBar({
         @keyframes runnerPulse {
           0%, 100% { opacity: 1; transform: scale(1); }
           50% { opacity: 0.6; transform: scale(0.97); }
-        }
-        @keyframes shimmerSweep {
-          0% { transform: translateX(-100%); }
-          100% { transform: translateX(200%); }
         }
       `}</style>
 
@@ -253,30 +248,13 @@ export default function WaveProgressBar({
             height: "100%",
             borderRadius: 6,
             background: isComplete
-              ? "linear-gradient(90deg, #10b981, #059669)"
-              : isLight
-                ? "linear-gradient(90deg, #4f46e5 0%, #06b6d4 100%)"
-                : "linear-gradient(90deg, #6366f1 0%, #38bdf8 50%, #06b6d4 100%)",
+              ? "var(--color-success, #16a34a)"
+              : "var(--color-primary, #6d5dfb)",
             transition: "width 0.4s ease",
             position: "relative",
             overflow: "hidden",
           }}
-        >
-          {/* Shimmer line */}
-          {!isComplete && (
-            <div
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent)",
-                animation: "shimmerSweep 2s infinite ease-in-out",
-              }}
-            />
-          )}
-        </div>
+        />
 
         {/* Milestone markers */}
         {[25, 50, 75].map((tick) => (

@@ -116,6 +116,8 @@ function LayoutInner() {
       setShowCFG(true);
       return;
     }
+    setShowCFG(false);
+    setActiveActivity(id);
     const params = new URLSearchParams(location.search);
     params.set("tab", id);
     navigate(`${location.pathname}?${params.toString()}`);
@@ -214,9 +216,15 @@ function LayoutInner() {
   const [coverageRunTrigger, setCoverageRunTrigger] = useState(0);
 
   const handleTriggerRunAnalysis = () => {
+    setShowCFG(false);
     setActiveActivity("coverage");
     setCoverageType("unit");
     setCoverageRunTrigger((prev) => prev + 1);
+    const params = new URLSearchParams(location.search);
+    if (params.get("tab") !== "coverage") {
+      params.set("tab", "coverage");
+      navigate(`${location.pathname}?${params.toString()}`);
+    }
   };
 
   const handleGitSync = async () => {
@@ -491,7 +499,13 @@ function LayoutInner() {
 
   const handleOpenFile = (node) => {
     if (node.type === "folder") return;
+    setShowCFG(false);
     setActiveActivity("explorer");
+    const params = new URLSearchParams(location.search);
+    if (params.get("tab") !== "explorer") {
+      params.set("tab", "explorer");
+      navigate(`${location.pathname}?${params.toString()}`, { replace: true });
+    }
     setActiveFileId(node.id);
     if (!tabs.find((t) => t.id === node.id)) {
       setTabs((prev) => [
@@ -503,7 +517,13 @@ function LayoutInner() {
   };
 
   const handleOpenFileByPath = (filePath, targetLine = null, functionName = null, endLine = null) => {
+    setShowCFG(false);
     setActiveActivity("explorer");
+    const params = new URLSearchParams(location.search);
+    if (params.get("tab") !== "explorer") {
+      params.set("tab", "explorer");
+      navigate(`${location.pathname}?${params.toString()}`, { replace: true });
+    }
     const normalizedPath = filePath.replace(/\\/g, "/").replace(/^\.\//, "");
     const findNode = (nodes, path) => {
       for (const node of nodes) {
@@ -1135,7 +1155,13 @@ function LayoutInner() {
             onClose={() => setShowImport(false)}
             onSuccess={() => {
               setShowImport(false);
+              setShowCFG(false);
               setActiveActivity("jobs");
+              const params = new URLSearchParams(location.search);
+              if (params.get("tab") !== "jobs") {
+                params.set("tab", "jobs");
+                navigate(`${location.pathname}?${params.toString()}`);
+              }
               setTimeout(() => loadData(null, 3, 2500), 1500);
             }}
           />

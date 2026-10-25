@@ -137,7 +137,7 @@ ${mockInstructionsStr}
    - ONLY call functions listed under EXPORTED PUBLIC SYMBOLS (${exportedSymbolsStr}).
 
 ### 6. OUTPUT FORMAT
-Format your output strictly in JSON:
+Format your output strictly in JSON (ensure valid JSON syntax: values MUST be strings enclosed in double quotes "...", never backtick characters):
 {
   "explanation": "Summary of the added test cases and which branches are covered",
   "suggestedTestCode": "// only executable test code blocks with real assertions",
@@ -250,23 +250,56 @@ export const parseAndSanitizeAiTestResponse = ({
 
     // 2. Extract JSON payload
     let parsedJson = null;
-    try {
-        const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-            parsedJson = JSON.parse(jsonMatch[0]);
-        } else {
-            parsedJson = JSON.parse(cleanText);
-        }
-    } catch (parseErr) {
-        // Attempt mild JSON repair (e.g. unescaped newlines or trailing comma)
+
+    // 2.1 Direct regex extraction for LLM outputs that wrap code in backticks (`...`) instead of JSON string quotes
+    const extractBacktickField = (fieldName, text) => {
+        const match = text.match(new RegExp(`["']${fieldName}["']\\s*:\\s*\`([\\s\\S]*?)\`\\s*(?:,|\\n|\\r|\\})`, "m"));
+        return match ? match[1] : null;
+    };
+
+    const btTestCode = extractBacktickField("suggestedTestCode", cleanText);
+    const btFullContent = extractBacktickField("fullUpdatedContent", cleanText);
+    const btExplanation = extractBacktickField("explanation", cleanText);
+
+    if (btTestCode || btFullContent) {
+        parsedJson = {
+            explanation: btExplanation || "Targeted unit test cases for uncovered branches",
+            suggestedTestCode: btTestCode || btFullContent || "",
+            fullUpdatedContent: btFullContent || btTestCode || ""
+        };
+    }
+
+    if (!parsedJson) {
         try {
-            const repaired = cleanText
-                .replace(/,\s*([}\]])/g, "$1") // trailing commas
-                .replace(/\r?\n/g, "\\n");
-            const match = repaired.match(/\{[\s\S]*\}/);
-            if (match) parsedJson = JSON.parse(match[0]);
-        } catch (_) {
-            errors.push(`JSON parsing error: ${parseErr.message}`);
+            const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                parsedJson = JSON.parse(jsonMatch[0]);
+            } else {
+                parsedJson = JSON.parse(cleanText);
+            }
+        } catch (parseErr) {
+            // Attempt mild JSON repair (e.g. unescaped newlines, backticks, or trailing commas)
+            try {
+                let repaired = cleanText
+                    .replace(/:\s*`([\s\S]*?)`\s*([,}])/g, (m, val, post) => `: ${JSON.stringify(val)}${post}`)
+                    .replace(/,\s*([}\]])/g, "$1") // trailing commas
+                    .replace(/\r?\n/g, "\\n");
+                const match = repaired.match(/\{[\s\S]*\}/);
+                if (match) parsedJson = JSON.parse(match[0]);
+            } catch (_) {
+                // 2.2 Direct code extraction fallback from markdown code blocks or cleanText
+                const codeBlockMatch = rawResponse.match(/```(?:javascript|js|typescript|ts)?\r?\n([\s\S]*?)```/);
+                const candidateCode = codeBlockMatch ? codeBlockMatch[1] : cleanText;
+                if (candidateCode && (candidateCode.includes("test(") || candidateCode.includes("it(") || candidateCode.includes("describe("))) {
+                    parsedJson = {
+                        explanation: "Extracted test suite from code block response",
+                        suggestedTestCode: candidateCode.trim(),
+                        fullUpdatedContent: candidateCode.trim()
+                    };
+                } else {
+                    errors.push(`JSON parsing error: ${parseErr.message}`);
+                }
+            }
         }
     }
 
@@ -290,6 +323,34 @@ export const parseAndSanitizeAiTestResponse = ({
     }
     if (parsedJson.fullUpdatedContent) {
         parsedJson.fullUpdatedContent = unskipCode(parsedJson.fullUpdatedContent);
+    }
+
+    // 3.5. Self-assignment sanitization (e.g. const path = path; -> const path = require('path'); or removal)
+    const sanitizeSelfAssignments = (code) => {
+        if (!code || typeof code !== "string") return code;
+        const NODE_BUILTIN_MODULES = new Set([
+            "path", "fs", "crypto", "http", "https", "os", "url", "util", "events", "stream",
+            "child_process", "buffer", "zlib", "net", "tls", "cluster", "readline", "vm", "worker_threads"
+        ]);
+        const isTs = framework === "vitest" || /\bimport\s+/.test(code);
+        return code.replace(
+            /^[ \t]*(const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*\2\s*;?[ \t]*\r?$/gm,
+            (match, kind, varName) => {
+                if (NODE_BUILTIN_MODULES.has(varName)) {
+                    return isTs
+                        ? `import ${varName} from '${varName}';`
+                        : `const ${varName} = require('${varName}');`;
+                }
+                return "";
+            }
+        );
+    };
+
+    if (parsedJson.suggestedTestCode) {
+        parsedJson.suggestedTestCode = sanitizeSelfAssignments(parsedJson.suggestedTestCode);
+    }
+    if (parsedJson.fullUpdatedContent) {
+        parsedJson.fullUpdatedContent = sanitizeSelfAssignments(parsedJson.fullUpdatedContent);
     }
 
     // 4. Placeholder detection & reconciliation

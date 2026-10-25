@@ -56,6 +56,7 @@ import { useToast } from "./ToastContext";
 import DiffReviewModal from "./DiffReviewModal";
 import AIContextDialog from "./AIContextDialog";
 import { getAiContext } from "../../services/aiContext.service";
+import { invalidateCoverageQueries } from "../../hooks/useCoverageQuery";
 
 /* ── Clean and Normalize Path Utilities ─────────────────── */
 export function cleanFilePath(pathStr = "") {
@@ -619,8 +620,7 @@ function IdeChangesWidget({
               onClick={onApplyAll}
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold text-white transition-all cursor-pointer"
               style={{
-                background: "linear-gradient(135deg, #7c3aed, #9333ea)",
-                boxShadow: "0 0 10px rgba(124, 58, 237, 0.35)",
+                background: "var(--color-primary, #6d5dfb)",
               }}
               title="Apply all suggested test files"
             >
@@ -791,8 +791,7 @@ function IdeChangesWidget({
             onClick={onRunAnalysis}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-all ml-auto cursor-pointer"
             style={{
-              background: "linear-gradient(135deg, #7c3aed, #a855f7)",
-              boxShadow: "0 0 12px rgba(124, 58, 237, 0.4)",
+              background: "var(--color-primary, #6d5dfb)",
             }}
             title="Re-run Analysis Unit"
           >
@@ -2312,7 +2311,11 @@ export default function AIPanel({
       if (cancelled) return;
       setIsRestoring(true); setMessages(INITIAL_MESSAGES); setActiveSessionId(null); setActiveSessionMeta(null); setContextInfo(null);
       fetchSessions();
-      getAiContext(projectId).then(config => { if (!cancelled) setMemoryAvailable(config.automaticMemory); }).catch(() => { if (!cancelled) setMemoryAvailable(false); });
+      if (projectId && projectId !== "undefined") {
+        getAiContext(projectId).then(config => { if (!cancelled) setMemoryAvailable(config?.automaticMemory ?? false); }).catch(() => { if (!cancelled) setMemoryAvailable(false); });
+      } else if (!cancelled) {
+        setMemoryAvailable(false);
+      }
       let stored = null;
       try { stored = storageKey ? JSON.parse(localStorage.getItem(storageKey)) : null; } catch { /* Invalid local pointer cannot grant access. */ }
       if (stored?.id) {
@@ -2617,6 +2620,10 @@ export default function AIPanel({
         )
       );
 
+      if (snapshotId) {
+        invalidateCoverageQueries(snapshotId);
+      }
+
       showToast({
         type: "success",
         title: "Test Applied",
@@ -2710,6 +2717,9 @@ export default function AIPanel({
         await handleApplyIdeFile(f);
       }
     }
+    if (snapshotId) {
+      invalidateCoverageQueries(snapshotId);
+    }
   };
 
   const handleSuggestBulk = async (arg1, arg2) => {
@@ -2760,7 +2770,7 @@ export default function AIPanel({
     const userMsg = {
       id: getNextId(),
       role: "user",
-      content: `✨ Analyze overall project coverage and suggest testcases (${totalCount} source files · ${testCountDisplay} test files)`,
+      content: "✨ Suggest unit test cases for uncovered logic and branches",
       timestamp: new Date().toLocaleTimeString("vi-VN", {
         hour: "2-digit",
         minute: "2-digit",
@@ -2773,7 +2783,7 @@ export default function AIPanel({
       id: loadingId,
       role: "assistant",
       isLoading: true,
-      content: `⚡ **Analyzing comprehensive coverage...**\n\nThe system is cross-referencing **Source File Coverage** against **${testCountDisplay} Jest & Vitest test files** to detect missing branches and generate testcase code...`,
+      content: `⚡ **Analyzing project coverage and generating test cases...**\n\nDetecting uncovered branches and synthesizing test cases...`,
       timestamp: new Date().toLocaleTimeString("vi-VN", {
         hour: "2-digit",
         minute: "2-digit",
@@ -2815,9 +2825,9 @@ export default function AIPanel({
             m.id === loadingId
               ? {
                 ...m,
-                content: `⚡ **Analyzing comprehensive coverage... (${completedCount}/${totalTargets} files completed)**\n\n` +
+                content: `⚡ **Generating test cases... (${completedCount}/${totalTargets} files completed)**\n\n` +
                   (recentFile ? `↳ Just processed: \`${cleanFilePath(recentFile)}\`\n` : "") +
-                  `The system is running concurrently to detect missing conditional branches and synthesize testcases...`,
+                  `Synthesizing test cases for uncovered branches...`,
                 ideChanges: fileChanges.length > 0 ? {
                   totalFiles: fileChanges.length,
                   totalAdded: fileChanges.reduce((sum, f) => sum + (f.linesAdded || 0), 0),
@@ -2939,37 +2949,16 @@ export default function AIPanel({
       const totalDeleted = 0;
 
       // 1. Overview Markdown content
-      let overviewContent = `### 📊 Coverage Analysis Report (${totalCount} source files · ${testCountDisplay} Jest & Vitest test files)\n\n`;
-
-      if (passed100.length > 0) {
-        overviewContent += `#### ✅ Source files reaching 100% comprehensive coverage (${passed100.length}/${totalCount} files) — No further suggestions needed:\n`;
-        overviewContent += passed100
-          .map((s, idx) => {
-            const testList = s.matchingTests?.length
-              ? s.matchingTests
-                .map(
-                  (t) =>
-                    `\`${cleanFilePath(t.filePath)}\` (${(t.framework || "test").toUpperCase()})`,
-                )
-                .join(", ")
-              : s.primaryTestFile
-                ? `\`${cleanFilePath(s.primaryTestFile)}\``
-                : "Test suite present";
-            return `${idx + 1}. \`${cleanFilePath(s.filePath)}\` (Lines: ${s.linesPct ?? 100}% · Branches: ${s.branchesPct ?? 100}% · Funcs: ${s.funcsPct ?? 100}% · Stmts: ${s.stmtsPct ?? 100}%)\n   ↳ Linked test file: ${testList} *(Reached 100% coverage - No suggestions needed)*`;
-          })
-          .join("\n");
-        overviewContent += "\n\n";
-      }
+      let overviewContent = "";
 
       if (fileChanges.length > 0) {
-        overviewContent += `#### ⚡ Proposed Test Code Updates (${fileChanges.length} test files):\n`;
-        overviewContent += `Complete testcases covering missing branches have been generated. You can click **Review** to inspect detailed code diffs before applying, or click **Apply all** to update all test files in the project.`;
+        overviewContent = `### ⚡ Suggested Test Cases (${fileChanges.length} test files)\n\n` +
+          `Generated complete testcases covering missing branches. Click **Review** to inspect detailed code diffs before applying, or click **Apply all** to update all test files in the project.`;
       } else {
-        overviewContent +=
-          `🎉 **Excellent! All ${totalCount} source files and ${testCountDisplay} Jest & Vitest test files have reached 100% coverage!**\n\n` +
-          `- All test cases executed successfully (0 assertion errors).\n` +
-          `- Source code has reached 100% coverage (Statements, Branches, Lines, Functions).\n\n` +
-          `💬 *Note: All files have reached 100% coverage so no further testcase suggestions are needed.*`;
+        overviewContent =
+          `🎉 **All source files have reached comprehensive coverage!**\n\n` +
+          `- All conditional branches and functions are covered.\n` +
+          `- No additional testcase suggestions are needed.`;
       }
 
       const finalAssistantMsg = {
@@ -3104,6 +3093,10 @@ export default function AIPanel({
           };
         }),
       );
+
+      if (snapshotId) {
+        invalidateCoverageQueries(snapshotId);
+      }
 
       showToast({
         type: "success",
@@ -4321,7 +4314,13 @@ export default function AIPanel({
         projectId={projectId} snapshotId={snapshotId} sessionId={activeSessionId} useMemory={useProjectMemory}
         screenContext={screenContext}
         initialTab={contextDialog} onNew={handleNewChat} onSelect={id => handleSelectSession(id, true)}
-        onClose={() => { setContextDialog(null); fetchSessions(); getAiContext(projectId).then(config => setMemoryAvailable(config.automaticMemory)).catch(() => {}); }}
+        onClose={() => {
+          setContextDialog(null);
+          fetchSessions();
+          if (projectId && projectId !== "undefined") {
+            getAiContext(projectId).then(config => setMemoryAvailable(config?.automaticMemory ?? false)).catch(() => {});
+          }
+        }}
       />}
       <DiffReviewModal
         isOpen={reviewModalOpen}

@@ -16,7 +16,13 @@ if (apiKey) {
   );
 }
 
-const VALID_MODELS = ["gemini-3.8-flash", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite"];
+const VALID_MODELS = [
+  "gemini-2.5-flash-lite",
+  "gemini-flash-lite-latest",
+  "gemini-3.8-flash",
+  "gemini-3.1-pro-preview",
+  "gemini-3.1-flash-lite"
+];
 const exhaustedModels = new Set();
 
 /**
@@ -31,7 +37,7 @@ export function markModelExhausted(modelName) {
  * with the currently active and verified models.
  */
 function resolveModelName(requestedModel) {
-  const preferred = (requestedModel && requestedModel.trim()) || process.env.GEMINI_MODEL || "gemini-3.8-flash";
+  const preferred = (requestedModel && requestedModel.trim()) || process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
   
   if (VALID_MODELS.includes(preferred) && !exhaustedModels.has(preferred)) {
     return preferred;

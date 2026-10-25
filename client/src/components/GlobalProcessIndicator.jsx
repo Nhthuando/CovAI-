@@ -300,7 +300,7 @@ export default function GlobalProcessIndicator() {
                 style={{
                   height: "100%",
                   width: `${content.progressPct}%`,
-                  background: `linear-gradient(90deg, ${content.badgeColor}, #c084fc)`,
+                  background: content.badgeColor,
                   borderRadius: 9999,
                   transition: "width 0.35s ease",
                 }}
@@ -314,7 +314,7 @@ export default function GlobalProcessIndicator() {
               onClick={content.onAction}
               style={{
                 padding: "5px 12px",
-                background: `linear-gradient(135deg, ${content.badgeColor}22, ${content.badgeColor}33)`,
+                background: `${content.badgeColor}22`,
                 border: `1px solid ${content.badgeColor}66`,
                 borderRadius: 6,
                 color: "#ffffff",
