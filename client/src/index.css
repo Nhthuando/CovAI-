@@ -27,6 +27,21 @@
   --color-danger: var(--color-danger);
   --color-info: var(--color-info);
   --color-focus-ring: var(--color-focus);
+
+  /* Unified Dashboard Semantic Tokens */
+  --color-ud-bg: var(--ud-bg);
+  --color-ud-surface: var(--ud-surface);
+  --color-ud-surface-2: var(--ud-surface-2);
+  --color-ud-border: var(--ud-border);
+  --color-ud-text: var(--ud-text);
+  --color-ud-muted: var(--ud-text-muted);
+  --color-ud-pass: var(--ud-pass);
+  --color-ud-fail: var(--ud-fail);
+  --color-ud-warn: var(--ud-warn);
+  --color-ud-unit: var(--ud-unit);
+  --color-ud-integration: var(--ud-integration);
+  --color-ud-system: var(--ud-system);
+  --color-ud-neutral: var(--ud-neutral);
 }
 
 /* ============================================================
@@ -426,4 +441,42 @@ select:-webkit-autofill:focus {
     background: transparent;
     border-left-color: transparent;
   }
+}
+
+/* ============================================================
+   UNIFIED QUALITY & TESTING DASHBOARD — SCOPED TOKENS
+   Strict GitHub Primer / Technical Engineering theme
+   Light Mode Default, Dark Mode via [data-theme="dark"] / .dark
+   ============================================================ */
+.unified-dashboard {
+  --ud-bg: #f6f8fa;
+  --ud-surface: #ffffff;
+  --ud-surface-2: #f3f4f6;
+  --ud-border: #d0d7de;
+  --ud-text: #1f2328;
+  --ud-text-muted: #656d76;
+  --ud-pass: #1a7f37;
+  --ud-fail: #cf222e;
+  --ud-warn: #9a6700;
+  --ud-unit: #0969da;
+  --ud-integration: #8250df;
+  --ud-system: #1b7c83;
+  --ud-neutral: #8c959f;
+}
+
+[data-theme="dark"] .unified-dashboard,
+.dark .unified-dashboard {
+  --ud-bg: #0d1117;
+  --ud-surface: #161b22;
+  --ud-surface-2: #1f242c;
+  --ud-border: #30363d;
+  --ud-text: #f0f6fc;
+  --ud-text-muted: #8b949e;
+  --ud-pass: #3fb950;
+  --ud-fail: #f85149;
+  --ud-warn: #d29922;
+  --ud-unit: #58a6ff;
+  --ud-integration: #a371f7;
+  --ud-system: #39c5cf;
+  --ud-neutral: #6e7681;
 }
