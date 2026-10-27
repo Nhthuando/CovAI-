@@ -325,43 +325,47 @@ export const balanceTestFileBraces = (code) => {
     let parsed = parseJavaScriptCode(code);
     if (parsed.success) return code;
 
+    // Prune excessive runaway trailing closing brackets (e.g. cascaded additions from previous runs)
+    let candidate = code.replace(/(\n[ \t]*\}\s*\);\s*){3,}$/g, "\n    });\n});\n");
+    parsed = parseJavaScriptCode(candidate);
+    if (parsed.success) return candidate;
+
     let b = 0, p = 0;
-    for (const c of code) {
+    for (const c of candidate) {
         if (c === '{') b++;
         else if (c === '}') b--;
         else if (c === '(') p++;
         else if (c === ')') p--;
     }
 
-    let candidate = code;
+    let balanced = candidate;
     while (b > 0 && p > 0) {
-        candidate = candidate.trimEnd() + '\n});\n';
+        balanced = balanced.trimEnd() + '\n});\n';
         b--;
         p--;
     }
     while (b > 0) {
-        candidate = candidate.trimEnd() + '\n}\n';
+        balanced = balanced.trimEnd() + '\n}\n';
         b--;
     }
     while (p > 0) {
-        candidate = candidate.trimEnd() + '\n);\n';
+        balanced = balanced.trimEnd() + '\n);\n';
         p--;
     }
 
-    parsed = parseJavaScriptCode(candidate);
-    if (parsed.success) return candidate;
+    parsed = parseJavaScriptCode(balanced);
+    if (parsed.success) return balanced;
 
-    // Prune stray trailing closing brackets ONLY if candidate has extra closing brackets
-    // Test pruning from the original code up to at most 4 times without cutting into legitimate code.
-    let pruneCandidate = code;
+    // Prune stray trailing closing brackets if candidate has extra closing brackets
+    let pruneCandidate = candidate;
     let pruneCount = 0;
-    while ((pruneCandidate.endsWith('});\n') || pruneCandidate.endsWith('});') || pruneCandidate.endsWith('}\n') || pruneCandidate.endsWith('}')) && pruneCount < 4) {
+    while ((pruneCandidate.endsWith('});\n') || pruneCandidate.endsWith('});') || pruneCandidate.endsWith('}\n') || pruneCandidate.endsWith('}')) && pruneCount < 25) {
         pruneCandidate = pruneCandidate.replace(/\s*(?:\}\s*\);?|\})\s*$/, '\n');
         pruneCount++;
         if (parseJavaScriptCode(pruneCandidate).success) return pruneCandidate;
     }
 
-    return candidate;
+    return balanced;
 };
 
 /**
@@ -514,6 +518,125 @@ export const updateTestBlockByTitle = (content, title, transformFn) => {
 
     return content.slice(0, startIdx) + replacement + content.slice(endIdx);
 };
+
+/**
+ * Automatically heals unclosed nested object properties in model test suites
+ * (e.g. sequelize.define / model schema assertions where `},` was stripped or omitted).
+ * Also heals new Proxy({ ... } { get: ... }) missing argument delimiters,
+ * and prunes cascading runaway trailing braces `} \n } \n }`.
+ *
+ * @param {string} code - Test file content
+ * @param {string} [filePath] - Optional file path to infer missing model imports
+ * @returns {string} Syntactically healed test code
+ */
+export const healUnclosedModelPropertyBraces = (code, filePath = "") => {
+    if (!code || typeof code !== "string") return code;
+    if (!code.includes("Model") && !code.includes("model") && !code.includes("Proxy") && !code.includes("define")) return code;
+    let result = code;
+
+    // Only apply model schema assertion property healing if testing a model definition (not inside a job/service jest.mock)
+    const isModelTest = /(?:\.|\/)models?(?:\.|\/)|define[A-Z].*Model/i.test(filePath) || /expect\([^)]*define\)\.toHaveBeenCalledWith/i.test(code);
+    if (isModelTest) {
+        // 1. Heal unclosed property object literals missing `},` before next sibling property `prop: {`
+        result = result.replace(/(\b[a-zA-Z0-9_$]+:\s*\{[^{}\r\n]*(?:\r?\n[ \t]*[a-zA-Z0-9_$]+:[^\r\n]*)*)(?=\r?\n\s*[a-zA-Z0-9_$]+:\s*\{)/g, "$1\n        },");
+
+        // 2. Heal terminal property before options object argument (e.g. `{ tableName: ... }`)
+        result = result.replace(/(\b[a-zA-Z0-9_$]+:\s*\{[^{}\r\n]*(?:\r?\n[ \t]*[a-zA-Z0-9_$]+:[^\r\n]*)*)(?=\r?\n\s*\{\s*(?:tableName|timestamps|paranoid|underscored|modelName|schema|indexes))/g, "$1\n        }\n      },");
+
+        // 3. Heal unclosed options object argument before `);`
+        result = result.replace(/(\r?\n[ \t]*\{\s*(?:tableName|timestamps|paranoid|underscored|modelName|schema|indexes)[^{}\r\n]*(?:\r?\n[ \t]*[a-zA-Z0-9_$]+:[^\r\n]*)*)(?=\r?\n\s*\);)/g, "$1\n      }");
+    }
+
+    // 4. Heal new Proxy({ ... } { get: ... }) missing closing `},` between target and handler
+    result = result.replace(/(const\s+mockAppConfig\s*=\s*new\s+Proxy\(\s*\{[^{}\r\n]*(?:\r?\n[ \t]*[a-zA-Z0-9_$]+:[^\r\n]*)*)(?=\r?\n\s*\{\s*get\s*:)/g, "$1\n}, {\n  get:");
+
+    // 5. Strip orphaned standalone `}` AFTER a `});` block closure before next describe()
+    result = result.replace(/(\n[ \t]*\}\s*\);\s*)(?:\r?\n[ \t]*\}(?:\s*;)?)+(?=\s*\r?\n[ \t]*describe\s*\()/g, '$1');
+
+    // 5.5. Strip orphaned corrupted duplicate catch clusters (`}); \n } catch (err) { expect(err).toBeDefined(); } ... \n });`)
+    const corruptCatchClusterRegex = /[ \t]*\}\s*\);\s*(?:\r?\n[ \t]*\}\s*catch\s*(?:\([^)]*\))?\s*\{[ \t]*\r?\n[ \t]*expect\(err\)\.toBeDefined\(\);?[ \t]*(?:\r?\n[ \t]*\})?)+[ \t]*\r?\n[ \t]*\}\s*\);/g;
+    result = result.replace(corruptCatchClusterRegex, "        }\n    });\n});");
+
+    // 5.6. Strip orphaned standalone catch blocks after `});`
+    result = result.replace(/(\n[ \t]*\}\s*\);\s*)(?:\r?\n[ \t]*\}\s*catch\s*(?:\([^)]*\))?\s*\{[^{}]*\}\s*)+(?=\r?\n[ \t]*(?:test|it|describe|\/\/|\/\*))/g, "$1");
+
+    // 6. Prune runaway trailing braces / closures at end of file (3 or more)
+    result = result.replace(/(\r?\n[ \t]*(?:\}\s*;?|\}\s*\)\s*;?)){3,}$/g, '\n  });\n});\n');
+
+    // 7. Ensure model function is imported if called but not declared
+    const defineFnMatches = [...result.matchAll(/\b(define([A-Z][a-zA-Z0-9_$]*)Model)\s*\(/g)];
+    for (const dfm of defineFnMatches) {
+        const fnName = dfm[1];
+        const entityName = dfm[2];
+        const hasDecl = new RegExp(`(?:const|let|var)\\s+(?:\\{[^}]*\\b${fnName}\\b|\\b${fnName}\\b\\s*=)|import\\s+[^;]*\\b${fnName}\\b|function\\s+${fnName}\\b`).test(result);
+        if (!hasDecl) {
+            const kebabSlug = entityName.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+            const importStmt = `const ${fnName} = require('../../src/models/${kebabSlug}.model');\n`;
+            if (!result.includes(importStmt.trim())) {
+                result = importStmt + result;
+            }
+        }
+    }
+
+    // 7b. Convert destructured model function requires to direct requires (since model files do `module.exports = defineXModel`)
+    result = result.replace(/const\s+\{\s*(define[A-Z][a-zA-Z0-9_$]*Model)\s*\}\s*=\s*require\((['"][^'"]*model['"])\);/g, 'const $1 = require($2);');
+
+    // 8. Bridge mockDataTypes object literals to real DataTypes from sequelize
+    if (result.includes("mockDataTypes")) {
+        if (result.includes("INTEGER:") || result.includes("DataTypes")) {
+            if (!result.includes("require('sequelize')") && !result.includes('require("sequelize")')) {
+                result = "const { DataTypes } = require('sequelize');\n" + result;
+            }
+            result = result.replace(/const\s+mockDataTypes\s*=\s*\{[\s\S]*?INTEGER:\s*['"]INTEGER['"][\s\S]*?\};/g, "const mockDataTypes = DataTypes;");
+        }
+    }
+
+    // 8b. Safely strip DataType mock method invocations like mockDataTypes.ENUM.mockClear() on real DataTypes
+    result = result.replace(/mockDataTypes\.[A-Za-z0-9_$]+\.mock(?:Clear|Reset)\(\);?/g, '');
+
+    // 9. Fix reference equality check on newly constructed DataTypes.TEXT instances
+    result = result.replace(/\btoBe\s*\(\s*(?:mockDataTypes|DataTypes)\.TEXT\s*\(/g, "toEqual(mockDataTypes.TEXT(");
+
+    return result;
+};
+
+/**
+ * Heals unclosed or runaway object braces in jest.mock and vi.mock factory closures.
+ * Ensures mock factories returning object literals like `jest.mock('...', () => ({ ... }))`
+ * have balanced `{` and `}` braces, pruning runaway trailing braces or adding missing ones.
+ *
+ * @param {string} code - Test file content
+ * @returns {string} Cleaned code with balanced mock braces
+ */
+export const healMockFactoryBraces = (code) => {
+    if (!code || (!code.includes("jest.mock") && !code.includes("vi.mock"))) return code;
+    return code.replace(/(?:jest|vi)\.(?:mock|unstable_mockModule)\s*\(\s*['"][^'"]+['"]\s*,\s*(?:\(\)\s*=>\s*)?\(\s*\{[\s\S]*?\)\s*\)\s*;/g, (mockBlock) => {
+        // Only process a single mock call (avoid spanning across multiple mocks)
+        if ((mockBlock.match(/(?:jest|vi)\.mock/g) || []).length > 1) {
+            return mockBlock;
+        }
+        const stripped = stripCodeCommentsAndStrings(mockBlock);
+        let openB = 0;
+        for (let c = 0; c < stripped.length; c++) {
+            if (stripped[c] === '{') openB++;
+            else if (stripped[c] === '}') openB--;
+        }
+        if (openB > 0) {
+            return mockBlock.replace(/\)\s*\)\s*;\s*$/, "}".repeat(openB) + "));");
+        }
+        if (openB < 0) {
+            let excess = -openB;
+            let fixed = mockBlock;
+            while (excess > 0 && /\}\s*(?:\r?\n[ \t]*\})+\s*\)\s*\)\s*;\s*$/.test(fixed)) {
+                fixed = fixed.replace(/\}\s*(?=\}\s*\)\s*\)\s*;\s*$)/, "");
+                excess--;
+            }
+            return fixed;
+        }
+        return mockBlock;
+    });
+};
+
 
 /**
  * Converts rogue ESM import statements into CommonJS require declarations in CJS test files.
@@ -696,6 +819,34 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
         );
     }
 
+    // 0.05b. Eliminate accidental consecutive commas in object destructuring, arrays, or imports (e.g. { a,, b } -> { a, b })
+    cleaned = cleaned.replace(/,\s*,+/g, ", ");
+
+    // 0.06. Decouple glued inline statements (e.g. );import ... -> );\nimport ...)
+    cleaned = cleaned.replace(/;[ \t]*(import\s+(?:[\w*\s{},]+from\s+)?['"][^'"]+['"];?)/g, ";\n$1");
+    cleaned = cleaned.replace(/;[ \t]*(const|let|var|describe|test|it)\s+/g, ";\n$1 ");
+
+    // 0.07. Strip `jest` identifier from `@jest/globals` import to prevent babel-plugin-jest-hoist invariant failure
+    // When jest.mock() is used with `import { jest } from '@jest/globals'`, Babel hoister injects:
+    // `function _getJestObj() { const { jest } = require("@jest/globals"); return jest; }`
+    // which in Jest Native ESM (--experimental-vm-modules) throws:
+    // `invariant(jest, 'There should always be a Jest object already')`
+    cleaned = cleaned.replace(
+        /import\s*\{([^}]+)\}\s*from\s*['"]@jest\/globals['"];?/g,
+        (match, importList) => {
+            const items = importList.split(",").map(s => s.trim()).filter(s => s && s !== "jest");
+            return items.length > 0 ? `import { ${items.join(", ")} } from '@jest/globals';` : "";
+        }
+    );
+
+    // 0.08. Strip unnecessary virtual mocks for type-only definition files
+    cleaned = cleaned.replace(/^[ \t]*(?:jest|vi)\.(?:mock|unstable_mockModule)\s*\(\s*['"][^'"]*(?:\/types\/|\.d\.ts|definition)[^'"]*['"][^\n\r]*;?[ \t]*\r?\n?/gm, "");
+
+    // 0.09. Auto-heal Jest Native ESM invariant if detected in rawOutput
+    if (rawOutput.includes("There should always be a Jest object already") || rawOutput.includes("_getJestObj")) {
+        cleaned = cleaned.replace(/\bjest\.mock\s*\(/g, "jest.unstable_mockModule(");
+    }
+
     // Detect if this file is TypeScript
     const isExplicitTsFile = Boolean(filePath && /\.[cm]?tsx?$/i.test(filePath));
     const isExplicitJsFile = Boolean(filePath && /\.[cm]?jsx?$/i.test(filePath));
@@ -703,6 +854,26 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
         /\b(?:interface\s+[A-Z]|type\s+[A-Z][a-zA-Z0-9_$]*\s*=|enum\s+[A-Z])\b/.test(content);
 
     const isTsFile = isExplicitTsFile || (!isExplicitJsFile && hasTsConstructs);
+
+    // 0.095. Ensure essential environment variables for QuickBooks if needed
+    if (rawOutput.includes("Client ID, Client Secret and Redirect URI must be set in environment variables") || (/quickbooks/i.test(cleaned) && !cleaned.includes("QUICKBOOKS_CLIENT_ID"))) {
+        const qbEnv = "// Essential QuickBooks test environment variables\n" +
+            "process.env.NODE_ENV = 'test';\n" +
+            "process.env.QUICKBOOKS_CLIENT_ID = process.env.QUICKBOOKS_CLIENT_ID || 'test-client-id';\n" +
+            "process.env.QUICKBOOKS_CLIENT_SECRET = process.env.QUICKBOOKS_CLIENT_SECRET || 'test-client-secret';\n" +
+            "process.env.QUICKBOOKS_REDIRECT_URI = process.env.QUICKBOOKS_REDIRECT_URI || 'http://localhost:8000/callback';\n" +
+            "process.env.QUICKBOOKS_ENVIRONMENT = process.env.QUICKBOOKS_ENVIRONMENT || 'sandbox';\n\n";
+        cleaned = qbEnv + cleaned;
+    }
+
+    // Ensure @ts-nocheck is at top of TypeScript test files to allow hermetic dynamic testing without strict compiler blocks
+    if (isTsFile) {
+        if (!cleaned.includes("@ts-nocheck")) {
+            cleaned = "// @ts-nocheck\n" + cleaned;
+        } else if (!cleaned.startsWith("// @ts-nocheck")) {
+            cleaned = "// @ts-nocheck\n" + cleaned.replace(/^[ \t]*\/\/\s*@ts-nocheck[^\n]*\r?\n?/gm, "");
+        }
+    }
 
     // 0.1 Normalize ESM imports to CommonJS if JavaScript file in CJS context or contains require
     if (!isTsFile && (cleaned.includes("require(") || !filePath || !filePath.endsWith(".mjs"))) {
@@ -726,9 +897,17 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
         for (const v of varRefs) {
             const isDeclared = new RegExp(`^[ \\t]*(?:const|let|var)\\s+${v}\\b|^[ \\t]*function\\s+${v}\\b`, "m").test(cleaned);
             if (!isDeclared) {
-                cleaned = `var ${v} = (typeof jest !== 'undefined' ? jest.fn() : {});\n` + cleaned;
+                if (v === 'mockSequelizeInstance' || v === 'mockSequelize') {
+                    cleaned = `var ${v} = (typeof jest !== 'undefined' ? Object.assign(jest.fn(), { define: jest.fn(() => ({ hasMany: jest.fn().mockReturnThis(), belongsTo: jest.fn().mockReturnThis(), belongsToMany: jest.fn().mockReturnThis(), hasOne: jest.fn().mockReturnThis() })), authenticate: jest.fn().mockResolvedValue(undefined), sync: jest.fn().mockResolvedValue(undefined), getQueryInterface: jest.fn().mockReturnValue({ describeTable: jest.fn().mockResolvedValue({}), addColumn: jest.fn().mockResolvedValue(undefined) }) }) : {});\n` + cleaned;
+                } else {
+                    cleaned = `var ${v} = (typeof jest !== 'undefined' ? jest.fn() : {});\n` + cleaned;
+                }
             }
         }
+    }
+
+    if (cleaned.includes("mockQueryInterface") && !/^[ \t]*(?:const|let|var)\s+mockQueryInterface\b/m.test(cleaned)) {
+        cleaned = `var mockQueryInterface = (typeof jest !== 'undefined' ? { describeTable: jest.fn().mockResolvedValue({}), addColumn: jest.fn().mockResolvedValue(undefined) } : {});\n` + cleaned;
     }
 
     // 0.25. Heal legacy __sharedMockPrisma to valid mockSharedPrisma to comply with babel-plugin-jest-hoist
@@ -764,6 +943,25 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
         cleaned = cleaned.replace(/^[ \t]*if\s*\(\s*typeof\s+analysisQueue\s*!==\s*['"]undefined['"]\s*&&\s*analysisQueue\s*\)\s*\{[\s\S]*?^[ \t]*\}\r?\n?/gm, "");
         // Heal unclosed beforeEach missing closing }); before describe
         cleaned = cleaned.replace(/(beforeEach\s*\([\s\S]*?jest\.clearAllMocks\(\);?)\s*(?=\r?\n[ \t]*describe)/g, "$1\n  });\n");
+    }
+
+    // 0.28. Heal un-prototyped AppError / custom Error mocks to inherit from native Error
+    // Plain functions `jest.fn(function(statusCode, message) { this.statusCode = ... })` do not inherit
+    // from Error.prototype, causing Jest's `expect().rejects.toThrow()` matcher to fail with
+    // "Received function did not throw" when instances are thrown.
+    cleaned = cleaned.replace(
+        /jest\.mock\(\s*(['"][^'"]*(?:error\.middleware|AppError)[^'"]*['"])\s*,\s*\(\)\s*=>\s*\(?\{[\s\S]*?AppError\s*:\s*(?:jest|vi)\.fn\s*\(\s*function\s*\([^)]*\)\s*\{[\s\S]*?\}\s*\)[\s\S]*?\}\)?\s*\);?/g,
+        (match, modSpec) => {
+            return `jest.mock(${modSpec}, () => {\n  class MockAppError extends Error {\n    constructor(statusCode, message, details = null) {\n      super(message);\n      this.name = 'AppError';\n      this.statusCode = statusCode;\n      this.details = details;\n    }\n  }\n  const mockFn = jest.fn(function(statusCode, message, details) {\n    const err = new MockAppError(statusCode, message, details);\n    Object.setPrototypeOf(err, mockFn.prototype);\n    return err;\n  });\n  mockFn.prototype = Object.create(MockAppError.prototype);\n  mockFn.prototype.constructor = mockFn;\n  return { AppError: mockFn };\n});`;
+        }
+    );
+
+    // 0.29. Strip inlined module.exports implementation duplicated inside test file
+    if (cleaned.includes("module.exports = {") && /describe\s*\(/.test(cleaned)) {
+        cleaned = cleaned.replace(
+            /(?:^|\n)\s*module\.exports\s*=\s*\{[\s\S]*?\}\s*;?\s*(?=\r?\n\s*(?:\/\/[^\n]*\r?\n\s*)*(?:jest\.mock|\bdescribe\b|\bconst\b|\bimport\b))/m,
+            ""
+        );
     }
 
     // 0. Heal multiline strings with unescaped literal newlines
@@ -829,6 +1027,17 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     // Heal unquoted test runner keyword comparisons (e.g. expect(...).toEqual(test) -> expect(...).toEqual("test"))
     cleaned = cleaned.replace(/\.(toEqual|toBe)\(\s*(test|it|describe)\s*\)/g, '.$1("$2")');
 
+    // Heal unclosed new Proxy in mockCreateUniversalStub
+    cleaned = cleaned.replace(/(return target\[prop\];[^\n]*\r?\n[ \t]*\})(?=[ \t]*\r?\n[ \t]*\};)/g, "$1\n  });");
+
+    // Heal unclosed test/it blocks ending with catch or expect(target) before next test or describe
+    cleaned = cleaned.replace(/(\}\s*catch[^{]*\{[\s\S]*?expect\([^)]+\)\.toBeDefined\(\);?[^\n]*\r?\n[ \t]*\})(?=\s*(?:\r?\n[ \t]*\/\/[^\n]*)*\r?\n[ \t]*(?:test|it)\s*\()/g, "$1\n    });");
+    cleaned = cleaned.replace(/(\n[ \t]*expect\(target\)\.toBeDefined\(\);\s*\n[ \t]*\}\s*catch[^{]*\{[\s\S]*?\n[ \t]*\})(?=\s*(?:\r?\n[ \t]*\/\/[^\n]*)*\r?\n[ \t]*(?:test|it)\s*\()/g, "$1\n    });");
+    cleaned = cleaned.replace(/(\}\s*catch[^{]*\{[\s\S]*?expect\([^)]+\)\.toBeDefined\(\);?[^\n]*\r?\n[ \t]*\})(?=\s*(?:\r?\n[ \t]*\/\/[^\n]*)*\r?\n[ \t]*describe\s*\()/g, "$1\n    });\n});");
+
+    // Collapse any runaway trailing `});` at EOF down to `\n    });\n});\n`
+    cleaned = cleaned.replace(/(\n[ \t]*\}\s*\);\s*){3,}$/g, "\n    });\n});\n");
+
     // 1.1. Heal misplaced try/catch blocks where non-greedy regex prematurely cut off at nested callbacks (specifically toSatisfy)
     cleaned = cleaned.replace(
         /(\.toSatisfy\s*\(\s*(?:\([^)]*\)|[a-zA-Z0-9_$]+)\s*=>\s*\{(?:(?!\b(?:test|it|describe)\b)[\s\S])*?)\r?\n[ \t]*\}\s*catch\s*\([a-zA-Z0-9_$]+\)\s*\{[\s\S]*?expect\([^)]+\)\.toBeDefined\(\);?[\s\S]*?\}(\s*\r?\n[ \t]*\}\s*\);)/g,
@@ -867,7 +1076,16 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     // Restore stripped catch block before expect(err).toBeDefined()
     cleaned = cleaned.replace(
         /(\n[ \t]*expect\([a-zA-Z0-9_$]+\)\.toBeDefined\(\);\s*\n[ \t]*\})\s*\r?\n[ \t]*expect\(err\)\.toBeDefined\(\);/g,
-        "$1\n        } catch (err) {\n            expect(err).toBeDefined();"
+        "$1\n        } catch (err) {\n            expect(err).toBeDefined();\n        }"
+    );
+
+    // Strip orphaned corrupted duplicate catch clusters (`}); \n } catch (err) { expect(err).toBeDefined(); } ... \n });`)
+    const corruptCatchClusterRegex = /[ \t]*\}\s*\);\s*(?:\r?\n[ \t]*\}\s*catch\s*(?:\([^)]*\))?\s*\{[ \t]*\r?\n[ \t]*expect\(err\)\.toBeDefined\(\);?[ \t]*(?:\r?\n[ \t]*\})?)+[ \t]*\r?\n[ \t]*\}\s*\);/g;
+    cleaned = cleaned.replace(corruptCatchClusterRegex, "        }\n    });\n});");
+    cleaned = cleaned.replace(/(\n[ \t]*\}\s*\);\s*)(?:\r?\n[ \t]*\}\s*catch\s*(?:\([^)]*\))?\s*\{[^{}]*\}\s*)+(?=\r?\n[ \t]*(?:test|it|describe|\/\/|\/\*))/g, "$1");
+    cleaned = cleaned.replace(
+        /(\n[ \t]*expect\(err\)\.toBeDefined\(\);?)\s*\r?\n[ \t]*\}\s*\);\s*\r?\n[ \t]*\}\s*\);\s*\r?\n[ \t]*\}\s*(?=\r?\n)/g,
+        "$1\n        }\n    });\n});"
     );
 
     // Ensure async calls in delta branch tests use Promise.race with 50ms timeout to prevent hanging on long-running retry/polling loops
@@ -889,16 +1107,63 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
         let openB = 0;
         let inStr = null;
         let esc = false;
+        let inLineComment = false;
+        let inBlockComment = false;
+        let templateBraceDepth = 0;
         let bEnd = -1;
 
         for (let idx = bStart; idx < cleaned.length; idx++) {
             const ch = cleaned[idx];
-            if (esc) { esc = false; continue; }
-            if (ch === '\\') { esc = true; continue; }
-            if (inStr) {
-                if (ch === inStr) inStr = null;
+            const nextCh = cleaned[idx + 1];
+
+            if (inLineComment) {
+                if (ch === '\n') inLineComment = false;
                 continue;
             }
+            if (inBlockComment) {
+                if (ch === '*' && nextCh === '/') {
+                    inBlockComment = false;
+                    idx++;
+                }
+                continue;
+            }
+
+            if (esc) { esc = false; continue; }
+            if (ch === '\\') { esc = true; continue; }
+
+            if (inStr) {
+                if (inStr === '`') {
+                    if (ch === '$' && nextCh === '{') {
+                        templateBraceDepth++;
+                        idx++;
+                        continue;
+                    }
+                    if (ch === '}' && templateBraceDepth > 0) {
+                        templateBraceDepth--;
+                        continue;
+                    }
+                    if (ch === '`' && templateBraceDepth === 0) {
+                        inStr = null;
+                        continue;
+                    }
+                } else if (ch === inStr) {
+                    inStr = null;
+                    continue;
+                }
+                continue;
+            }
+
+            if (ch === '/' && nextCh === '/') {
+                inLineComment = true;
+                idx++;
+                continue;
+            }
+            if (ch === '/' && nextCh === '*') {
+                inBlockComment = true;
+                idx++;
+                continue;
+            }
+
             if (ch === '"' || ch === "'" || ch === '`') {
                 inStr = ch;
                 continue;
@@ -939,12 +1204,20 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
             tBody = "\n        try {\n" + tBody;
             tBodyMod = true;
         } else if (hasLeadingTry && !hasTrailingCatch) {
-            if (trimmed.includes("expect(err).toBeDefined()") || trimmed.includes("target({") || trimmed.includes("retryAsync(null)")) {
-                tBody = tBody + "\n        } catch (err) {\n            expect(err).toBeDefined();\n        }\n    ";
-            } else {
-                tBody = tBody.replace(/^\s*try\s*\{\s*\r?\n/, "");
+            // Guard against duplicate catch insertion if tBody already contains catch
+            if (!tBody.includes("} catch") && !tBody.includes("}catch")) {
+                if (trimmed.includes("expect(err).toBeDefined()") || trimmed.includes("target({") || trimmed.includes("retryAsync(null)")) {
+                    const trimmedEndsWithBrace = trimmed.endsWith("}");
+                    if (trimmedEndsWithBrace) {
+                        tBody = tBody + "\n        catch (err) {\n            expect(err).toBeDefined();\n        }\n    ";
+                    } else {
+                        tBody = tBody + "\n        } catch (err) {\n            expect(err).toBeDefined();\n        }\n    ";
+                    }
+                } else {
+                    tBody = tBody.replace(/^\s*try\s*\{\s*\r?\n/, "");
+                }
+                tBodyMod = true;
             }
-            tBodyMod = true;
         }
 
         if (tBodyMod) {
@@ -1381,6 +1654,12 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     cleaned = cleaned.replace(/\/\/\s*\[deduped\]\s*(?:const|let|var)\s+[a-zA-Z0-9_$]+\s*=\s*\{[^}\n]*\r?\n[\s\S]*?\}\s*;?/g, "");
     cleaned = cleaned.replace(/\/\/\s*\[deduped\]\s*(?:const|let|var)\s+[a-zA-Z0-9_$]+\s*=\s*\([^\)\n]*\r?\n[\s\S]*?\)\s*;?/g, "");
 
+    // 10c. Heal malformed models mock with premature closing brace after models: { ... }
+    cleaned = cleaned.replace(/(\bmodels:\s*\{[\s\S]*?\}\s*\})\s*\},(?=\s*(?:Version|Requirement|Document|ChatMessage|AnalysisResult)\s*:)/g, "$1,");
+
+    // 10d. Heal unclosed or runaway object braces in jest.mock / vi.mock factory closures
+    cleaned = healMockFactoryBraces(cleaned);
+
     // 11. Normalize redundant monorepo prefixes (../../backend/src/... -> ../../src/...)
     cleaned = cleaned.replace(/require\(['"](?:\.\.\/)+(?:backend|frontend|server|client|api)\/src\/([^'"]+)['"]\)/g, "require('../../src/$1')");
 
@@ -1398,22 +1677,40 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
                 return match;
             }
             if (modName.includes("models")) {
-                return `jest.mock('../../src/models', () => ({
-  models: {
-    Requirement: {
-      findByPk: jest.fn(),
-      findAll: jest.fn(),
-      create: jest.fn(),
-      update: jest.fn(),
-      destroy: jest.fn()
-    },
-    Document: {
-      create: jest.fn(() => Promise.resolve({ id: 1 })),
-      findByPk: jest.fn(),
-      findAll: jest.fn()
+                const targetMod = modName.startsWith(".") ? modName : `../../src/${modName}`;
+                return `jest.mock('${targetMod}', () => {
+  const createModelMock = () => ({
+    create: jest.fn(() => Promise.resolve({ id: 1 })),
+    findByPk: jest.fn(),
+    findAll: jest.fn(() => Promise.resolve([])),
+    findOne: jest.fn(() => Promise.resolve(null)),
+    update: jest.fn(() => Promise.resolve([1])),
+    destroy: jest.fn(() => Promise.resolve(1)),
+    bulkCreate: jest.fn(() => Promise.resolve([])),
+    count: jest.fn(() => Promise.resolve(0)),
+  });
+  const mockModels = {
+    Requirement: createModelMock(),
+    Version: createModelMock(),
+    Document: createModelMock(),
+    ChatMessage: createModelMock(),
+    AnalysisResult: createModelMock(),
+  };
+  return {
+    models: mockModels,
+    ...mockModels,
+    initDatabase: jest.fn(() => Promise.resolve()),
+    sequelize: {
+      authenticate: jest.fn(() => Promise.resolve()),
+      sync: jest.fn(() => Promise.resolve()),
+      close: jest.fn(() => Promise.resolve()),
+      getQueryInterface: jest.fn(() => ({
+        describeTable: jest.fn().mockResolvedValue({}),
+        addColumn: jest.fn().mockResolvedValue(),
+      })),
     }
-  }
-}));\n\n`;
+  };
+});\n\n`;
             }
             if (modName === "axios") {
                 return `jest.mock('axios', () => {
@@ -1433,23 +1730,27 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
         }
     );
 
-    // 12a. Heal corrupted or malformed jest.mock('../../src/models', ...) where closing brace separated models from entities
-    cleaned = cleaned.replace(
-        /jest\.mock\(['"][^'"]*models['"][\s\S]*?\n[ \t]*\}\s*\)\s*\)\s*;?/g,
-        `jest.mock('../../src/models', () => ({\n  models: {\n    Requirement: { update: jest.fn(), findByPk: jest.fn(), findAll: jest.fn(), create: jest.fn() },\n    Version: {\n      create: jest.fn(() => Promise.resolve({ id: 1 })),\n      findByPk: jest.fn(),\n      findAll: jest.fn()\n    },\n    Document: {\n      create: jest.fn(() => Promise.resolve({ id: 1 })),\n      findByPk: jest.fn(),\n      findAll: jest.fn()\n    }\n  }\n}));`
-    );
+    // 12a. Purge orphaned repetitive models blocks outside of jest.mock
+    cleaned = cleaned.replace(/(?:\r?\n[ \t]*models:\s*\{\s*Requirement:\s*\{[^\n]*\}\s*,\s*Version:\s*\{[^\n]*\}\s*,\s*Document:\s*\{[^\n]*\}\s*\},?\s*(?:\}\s*\)\s*\)\s*,?)?)+/g, "\n");
 
-    // If models mock has Requirement but lacks Document or Version, inject inside models: { ... } safely
-    if (cleaned.includes("models") && cleaned.includes("Requirement") && (!cleaned.includes("Document:") || !cleaned.includes("Version:"))) {
+
+    // If models mock has Requirement but lacks Document, Version, ChatMessage or AnalysisResult, inject inside models: { ... } safely
+    if (cleaned.includes("models") && cleaned.includes("Requirement") && !cleaned.includes("createModelMock") && (!cleaned.includes("Document:") || !cleaned.includes("Version:") || !cleaned.includes("ChatMessage:") || !cleaned.includes("AnalysisResult:"))) {
         cleaned = cleaned.replace(
-            /(jest\.mock\(['"][^'"]*models['"]\s*,\s*(?:\(\)\s*=>\s*)?\(\s*\{[\s\S]*?models:\s*\{)([\s\S]*?)(\}\s*\}\s*\)\s*;?|\}\s*\)\s*;?)/g,
+            /(jest\.mock\(['"][^'"]*models['"]\s*,\s*\(\)\s*=>\s*\(\{\s*models:\s*\{)([\s\S]*?)(\}\s*\}\s*\)\s*;?)/g,
             (match, prefix, body, suffix) => {
                 let newBody = body;
                 if (!newBody.includes("Document:")) {
-                    newBody = newBody.trimEnd() + `,\n    Document: {\n      create: jest.fn(() => Promise.resolve({ id: 1 })),\n      findByPk: jest.fn(),\n      findAll: jest.fn()\n    }`;
+                    newBody = newBody.trimEnd() + `,\n    Document: {\n      create: jest.fn(() => Promise.resolve({ id: 1 })),\n      findByPk: jest.fn(),\n      findAll: jest.fn(),\n      destroy: jest.fn(() => Promise.resolve(1))\n    }`;
                 }
                 if (!newBody.includes("Version:")) {
-                    newBody = newBody.trimEnd() + `,\n    Version: {\n      create: jest.fn(() => Promise.resolve({ id: 1 })),\n      findByPk: jest.fn(),\n      findAll: jest.fn()\n    }`;
+                    newBody = newBody.trimEnd() + `,\n    Version: {\n      create: jest.fn(() => Promise.resolve({ id: 1 })),\n      findByPk: jest.fn(),\n      findAll: jest.fn(),\n      destroy: jest.fn(() => Promise.resolve(1))\n    }`;
+                }
+                if (!newBody.includes("ChatMessage:")) {
+                    newBody = newBody.trimEnd() + `,\n    ChatMessage: {\n      create: jest.fn(() => Promise.resolve({ id: 1 })),\n      findByPk: jest.fn(),\n      findAll: jest.fn(() => Promise.resolve([])),\n      findOne: jest.fn(() => Promise.resolve(null)),\n      destroy: jest.fn(() => Promise.resolve(1))\n    }`;
+                }
+                if (!newBody.includes("AnalysisResult:")) {
+                    newBody = newBody.trimEnd() + `,\n    AnalysisResult: {\n      create: jest.fn(() => Promise.resolve({ id: 1 })),\n      findByPk: jest.fn(),\n      findAll: jest.fn(() => Promise.resolve([])),\n      findOne: jest.fn(() => Promise.resolve(null)),\n      destroy: jest.fn(() => Promise.resolve(1))\n    }`;
                 }
                 return `${prefix}${newBody}\n  }\n}));`;
             }
@@ -1596,8 +1897,8 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
                 `$1\n  initDatabase: jest.fn(() => Promise.resolve()),\n  sequelize: { authenticate: jest.fn(() => Promise.resolve()) },`
             );
         }
-        if (!cleaned.includes("jest.mock('../src/models'") && !cleaned.includes('jest.mock("../src/models"')) {
-            const workerModelsMock = `jest.mock('../src/models', () => ({\n  initDatabase: jest.fn(() => Promise.resolve()),\n  sequelize: {\n    authenticate: jest.fn().mockResolvedValue(),\n    sync: jest.fn().mockResolvedValue(),\n    close: jest.fn().mockResolvedValue(),\n    getQueryInterface: jest.fn(() => ({\n      describeTable: jest.fn().mockResolvedValue({}),\n      addColumn: jest.fn().mockResolvedValue(),\n    })),\n  },\n  models: {\n    Requirement: { findByPk: jest.fn(), findAll: jest.fn(), create: jest.fn(), update: jest.fn(), destroy: jest.fn() },\n    Version: { findByPk: jest.fn(), findAll: jest.fn(), create: jest.fn(), update: jest.fn(), destroy: jest.fn() },\n    Document: { findByPk: jest.fn(), findAll: jest.fn(), create: jest.fn(), update: jest.fn(), destroy: jest.fn() },\n  },\n}));\n`;
+        if (!cleaned.includes("jest.mock('../src/models'") && !cleaned.includes('jest.mock("../src/models"') && !cleaned.includes("jest.mock('../../src/models'") && !cleaned.includes('jest.mock("../../src/models"')) {
+            const workerModelsMock = `jest.mock('../src/models', () => ({\n  initDatabase: jest.fn(() => Promise.resolve()),\n  sequelize: {\n    authenticate: jest.fn().mockResolvedValue(),\n    sync: jest.fn().mockResolvedValue(),\n    close: jest.fn().mockResolvedValue(),\n    getQueryInterface: jest.fn(() => ({\n      describeTable: jest.fn().mockResolvedValue({}),\n      addColumn: jest.fn().mockResolvedValue(),\n    })),\n  },\n  models: {\n    Requirement: { findByPk: jest.fn(), findAll: jest.fn(), create: jest.fn(), update: jest.fn(), destroy: jest.fn() },\n    Version: { findByPk: jest.fn(), findAll: jest.fn(), create: jest.fn(), update: jest.fn(), destroy: jest.fn() },\n    Document: { findByPk: jest.fn(), findAll: jest.fn(), create: jest.fn(), update: jest.fn(), destroy: jest.fn() },\n    ChatMessage: { findByPk: jest.fn(), findAll: jest.fn(), create: jest.fn(), update: jest.fn(), destroy: jest.fn() },\n    AnalysisResult: { findByPk: jest.fn(), findAll: jest.fn(), create: jest.fn(), update: jest.fn(), destroy: jest.fn() },\n  },\n}));\n`;
             cleaned = workerModelsMock + cleaned;
         }
 
@@ -1683,8 +1984,8 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     // Heal universal mocks for downstream local dependencies
     if (cleaned.includes("mockCreateUniversalStub")) {
         cleaned = cleaned.replace(
-            /const mockCreateUniversalStub = \(\) => \{[\s\S]*?return new Proxy\(\{\}, \{[\s\S]*?\}\);\s*\};/g,
-            `const mockCreateUniversalStub = () => {\n  const stubFn = () => jest.fn(() => Promise.resolve({ id: 1, name: 'Sample Item', title: 'Sample Title', status: 'ACTIVE', score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90, filename: 'sample.pdf', analysis: { score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }, toJSON() { return { id: 1, score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }; } }));\n  const baseTarget = {\n    models: mockCreateModelRegistry(),\n    AppError: class extends Error { constructor(sc, m, d) { super(m); this.statusCode = sc; this.details = d; } },\n    asyncHandler: (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next),\n    errorMiddleware: jest.fn((err, req, res, next) => res.status(err.statusCode || 500).json({ message: err.message }))\n  };\n  return new Proxy(baseTarget, {\n    get: (target, prop) => {\n      if (prop === 'then' || typeof prop === 'symbol') return undefined;\n      if (!(prop in target)) {\n        if (prop === 'default') {\n          target[prop] = target;\n        } else if (prop === 'findAndCountAll') {\n          target[prop] = jest.fn(() => Promise.resolve({ count: 1, rows: [{ id: 1, title: 'Sample', score: 50, ambiguity: 50, clarity: 50, completeness: 50, consistency: 50, toJSON() { return { id: 1, score: 50, ambiguity: 50, clarity: 50, completeness: 50, consistency: 50 }; } }] }));\n        } else {\n          target[prop] = stubFn();\n        }\n      }\n      return target[prop];\n    }\n  });\n};`
+            /const mockCreateUniversalStub = \(\) => \{[\s\S]*?return target\[prop\];[\s\S]*?\};\r?\n/g,
+            `const mockCreateUniversalStub = () => {\n  const fnMaker = typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({})));\n  const stubFn = () => fnMaker(() => Promise.resolve({ id: 1, name: 'Sample Item', title: 'Sample Title', status: 'ACTIVE', score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90, filename: 'sample.pdf', analysis: { score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }, toJSON() { return { id: 1, score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }; } }));\n  const baseTarget = {\n    models: mockCreateModelRegistry(),\n    AppError: class extends Error { statusCode; details; constructor(sc, m, d) { super(m); this.statusCode = sc; this.details = d; } },\n    asyncHandler: (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next),\n    errorMiddleware: fnMaker((err, req, res, next) => res.status(err.statusCode || 500).json({ message: err.message }))\n  };\n  return new Proxy(baseTarget, {\n    get: (target, prop) => {\n      if (prop === 'then' || typeof prop === 'symbol') return undefined;\n      if (!(prop in target)) {\n        if (prop === 'default') {\n          target[prop] = target;\n        } else if (prop === 'findAndCountAll') {\n          target[prop] = fnMaker(() => Promise.resolve({ count: 1, rows: [{ id: 1, title: 'Sample', score: 50, ambiguity: 50, clarity: 50, completeness: 50, consistency: 50, toJSON() { return { id: 1, score: 50, ambiguity: 50, clarity: 50, completeness: 50, consistency: 50 }; } }] }));\n        } else {\n          target[prop] = stubFn();\n        }\n      }\n      return target[prop];\n    }\n  });\n};\n`
         );
         cleaned = cleaned.replace(
             /jest\.mock\((['"][^'"]+['"]),\s*\(\)\s*=>\s*\(\{\s*models:\s*mockCreateModelRegistry\(\),\s*\.\.\.mockCreateUniversalStub\(\)\s*\}\),\s*\{\s*virtual:\s*true\s*\}\);/g,
@@ -1976,6 +2277,17 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
         );
     }
 
+    // 16b. If createMockReqResNext is called in tests but not defined, inject it before describe
+    if (cleaned.includes("createMockReqResNext") && !cleaned.includes("function createMockReqResNext") && !cleaned.includes("const createMockReqResNext") && !cleaned.includes("var createMockReqResNext")) {
+        const mockHelper = `const createMockReqResNext = (overrides = {}) => {\n  const innerReq = (overrides && overrides.req) || {};\n  const req = {\n    body: { ...innerReq.body, ...overrides.body },\n    query: { page: '1', limit: '10', ...innerReq.query, ...overrides.query },\n    params: { id: '1', ...innerReq.params, ...overrides.params },\n    headers: { authorization: 'Bearer test-token', ...innerReq.headers, ...overrides.headers },\n    user: { id: 1, role: 'admin', email: 'admin@example.com', ...innerReq.user, ...overrides.user },\n    file: innerReq.file || overrides.file || null,\n  };\n  const res = {\n    json: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),\n    status: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),\n    send: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),\n    setHeader: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),\n    write: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),\n    end: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),\n  };\n  const next = (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))();\n  return { req, res, next };\n};\n\n`;
+        const firstDescribe = cleaned.search(/\r?\n[ \t]*(?:describe|test|it)\s*\(/);
+        if (firstDescribe !== -1) {
+            cleaned = cleaned.slice(0, firstDescribe) + "\n" + mockHelper + cleaned.slice(firstDescribe);
+        } else {
+            cleaned = mockHelper + cleaned;
+        }
+    }
+
     // 17. In worker unit tests, spyOn process.exit so background worker bootstrap doesn't terminate Jest worker process
     if (cleaned.includes("src/worker") || cleaned.includes("worker.js")) {
         if (!cleaned.includes("jest.spyOn(process, 'exit')")) {
@@ -2109,6 +2421,9 @@ jest.mock('../src/config/prisma.js', () => ({
         .replace(/\.(toBeDefined|toBeUndefined)\(\)\s*\)+;?/g, ".$1();")
         .replace(/(\.(?:toBeDefined|toBeUndefined)\(\))\s*(?!\s*\/\/)((?:['"`/][^\r\n]*|[a-zA-Z0-9_$.-]+[^\r\n;]*|\)+);?)/g, "$1;")
         .replace(/;{2,}/g, ";");
+
+    // 21.5. Heal unclosed model property braces and Proxy arguments
+    cleaned = healUnclosedModelPropertyBraces(cleaned, filePath);
 
     // 22. Final AST Validation & Error Line Healing
     try {

@@ -92,7 +92,7 @@ export const cleanupStaleJobsForProject = async (projectId, client = prisma) => 
       projectId,
       status: { in: ["QUEUED", "RUNNING"] },
     },
-    select: { id: true, type: true, status: true, startedAt: true, createdAt: true },
+    select: { id: true, type: true, status: true, startedAt: true, createdAt: true, updatedAt: true },
   });
 
   const now = Date.now();
@@ -101,17 +101,31 @@ export const cleanupStaleJobsForProject = async (projectId, client = prisma) => 
     const elapsedMs = startTime ? now - new Date(startTime).getTime() : 0;
     const isLongRunning = LONG_RUNNING_JOB_TYPES.includes(job.type);
     const maxLimit = isLongRunning ? STALE_JOB_TIMEOUT_MS : 8 * 60 * 1000;
+    // Long-running jobs like RUN_TESTS have 10m runner timeouts, so allow at least 12 minutes of inactivity before cancelling
+    const inactiveLimit = isLongRunning ? 12 * 60 * 1000 : INACTIVE_HEARTBEAT_TIMEOUT_MS;
 
-    if (elapsedMs > INACTIVE_HEARTBEAT_TIMEOUT_MS) {
-      const latestLog = await client.jobLog.findFirst({
-        where: { jobId: job.id },
-        orderBy: { createdAt: "desc" },
-        select: { createdAt: true },
-      });
-      const lastActiveTime = latestLog?.createdAt || startTime;
-      const inactiveMs = now - new Date(lastActiveTime).getTime();
+    if (elapsedMs > inactiveLimit) {
+      const [latestLog, latestOutput] = await Promise.all([
+        client.jobLog.findFirst({
+          where: { jobId: job.id },
+          orderBy: { createdAt: "desc" },
+          select: { createdAt: true },
+        }),
+        client.jobOutput.findUnique({
+          where: { jobId: job.id },
+          select: { updatedAt: true },
+        }).catch(() => null),
+      ]);
 
-      const isDead = inactiveMs > INACTIVE_HEARTBEAT_TIMEOUT_MS;
+      const logTime = latestLog?.createdAt ? new Date(latestLog.createdAt).getTime() : 0;
+      const outputTime = latestOutput?.updatedAt ? new Date(latestOutput.updatedAt).getTime() : 0;
+      const updateTime = job.updatedAt ? new Date(job.updatedAt).getTime() : 0;
+      const startMs = startTime ? new Date(startTime).getTime() : 0;
+
+      const lastActiveMs = Math.max(logTime, outputTime, updateTime, startMs);
+      const inactiveMs = now - lastActiveMs;
+
+      const isDead = inactiveMs > inactiveLimit;
       const isHardTimeout = elapsedMs > maxLimit;
 
       if (isDead || isHardTimeout) {
@@ -145,7 +159,7 @@ export const cleanupAllStaleJobs = async (userId = null, client = prisma) => {
   };
   const activeJobs = await client.job.findMany({
     where,
-    select: { id: true, type: true, status: true, startedAt: true, createdAt: true },
+    select: { id: true, type: true, status: true, startedAt: true, createdAt: true, updatedAt: true },
   });
 
   const now = Date.now();
@@ -154,17 +168,31 @@ export const cleanupAllStaleJobs = async (userId = null, client = prisma) => {
     const elapsedMs = startTime ? now - new Date(startTime).getTime() : 0;
     const isLongRunning = LONG_RUNNING_JOB_TYPES.includes(job.type);
     const maxLimit = isLongRunning ? STALE_JOB_TIMEOUT_MS : 8 * 60 * 1000;
+    // Long-running jobs like RUN_TESTS have 10m runner timeouts, so allow at least 12 minutes of inactivity before cancelling
+    const inactiveLimit = isLongRunning ? 12 * 60 * 1000 : INACTIVE_HEARTBEAT_TIMEOUT_MS;
 
-    if (elapsedMs > INACTIVE_HEARTBEAT_TIMEOUT_MS) {
-      const latestLog = await client.jobLog.findFirst({
-        where: { jobId: job.id },
-        orderBy: { createdAt: "desc" },
-        select: { createdAt: true },
-      });
-      const lastActiveTime = latestLog?.createdAt || startTime;
-      const inactiveMs = now - new Date(lastActiveTime).getTime();
+    if (elapsedMs > inactiveLimit) {
+      const [latestLog, latestOutput] = await Promise.all([
+        client.jobLog.findFirst({
+          where: { jobId: job.id },
+          orderBy: { createdAt: "desc" },
+          select: { createdAt: true },
+        }),
+        client.jobOutput.findUnique({
+          where: { jobId: job.id },
+          select: { updatedAt: true },
+        }).catch(() => null),
+      ]);
 
-      const isDead = inactiveMs > INACTIVE_HEARTBEAT_TIMEOUT_MS;
+      const logTime = latestLog?.createdAt ? new Date(latestLog.createdAt).getTime() : 0;
+      const outputTime = latestOutput?.updatedAt ? new Date(latestOutput.updatedAt).getTime() : 0;
+      const updateTime = job.updatedAt ? new Date(job.updatedAt).getTime() : 0;
+      const startMs = startTime ? new Date(startTime).getTime() : 0;
+
+      const lastActiveMs = Math.max(logTime, outputTime, updateTime, startMs);
+      const inactiveMs = now - lastActiveMs;
+
+      const isDead = inactiveMs > inactiveLimit;
       const isHardTimeout = elapsedMs > maxLimit;
 
       if (isDead || isHardTimeout) {

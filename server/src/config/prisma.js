@@ -10,7 +10,9 @@ if (process.env.DATABASE_URL) {
         connectionString: process.env.DATABASE_URL,
         max: 25,
         idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 25000,
+        connectionTimeoutMillis: 45000,
+        keepAlive: true,
+        keepAliveInitialDelayMillis: 10000,
         allowExitOnIdle: true,
     });
     pool.on("error", (err) => {

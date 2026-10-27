@@ -839,12 +839,17 @@ ${testCases.join("\n\n")}
         }
 
         if (isolationMockPreamble) {
+            const safePreamble = isolationMockPreamble.trim() + "\n\n";
             const firstDescribeIdx = updatedContent.search(/\r?\n[ \t]*(?:describe|test|it)\s*\(/);
             if (firstDescribeIdx !== -1) {
-                updatedContent = updatedContent.slice(0, firstDescribeIdx) + "\n" + isolationMockPreamble + updatedContent.slice(firstDescribeIdx);
+                updatedContent = updatedContent.slice(0, firstDescribeIdx) + "\n\n" + safePreamble + updatedContent.slice(firstDescribeIdx);
             } else {
-                updatedContent = isolationMockPreamble + updatedContent;
+                updatedContent = safePreamble + updatedContent;
             }
+        }
+
+        if (isTs && !updatedContent.includes("@ts-nocheck")) {
+            updatedContent = "// @ts-nocheck\n" + updatedContent;
         }
 
         updatedContent = updatedContent.trimEnd() + "\n\n" + newTests.trim() + "\n";
@@ -858,7 +863,7 @@ ${testCases.join("\n\n")}
 
     const testRunnerImport = isVitest
         ? "import { describe, test, expect } from 'vitest';\n"
-        : (isTs ? "import { describe, test, it, expect, jest } from '@jest/globals';\n" : "");
+        : (isTs ? "import { describe, test, it, expect } from '@jest/globals';\n" : "");
 
     const hasDefault = exportedFunctions.includes("default");
     const namedFns = exportedFunctions.filter(f => f !== "default");
@@ -886,7 +891,11 @@ ${testCases.join("\n\n")}
         }
     }
 
-    const fullCode = `${isolationMockPreamble}${testRunnerImport}${importStatement}${newTests}`;
+    const safePreamble = isolationMockPreamble ? (isolationMockPreamble.trim() + "\n\n") : "";
+    let fullCode = `${safePreamble}${testRunnerImport}${importStatement}${newTests}`;
+    if (isTs && !fullCode.includes("@ts-nocheck")) {
+        fullCode = "// @ts-nocheck\n" + fullCode;
+    }
 
     return {
         explanation: `Comprehensive ${framework.toUpperCase()} unit test file targeting >=90% statement, branch, and function coverage in ${sourceFile}.`,

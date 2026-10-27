@@ -920,6 +920,115 @@ describe('suite', () => {
             expect(result.trim()).toContain("});");
             expect(result).toContain("describe('suite', () => {");
         });
+
+        test("decouples glued inline imports and removes jest from @jest/globals", () => {
+            const gluedCode = `jest.mock('../../../src/handlers/search.handler.ts', () => mockStub(), { virtual: true });import { describe, test, it, expect, jest } from '@jest/globals';
+import { SearchTool } from '../../../src/tools/search.tool';
+describe('search', () => {
+  it('works', () => { expect(true).toBe(true); });
+});`;
+            const cleaned = cleanAndDeduplicateTestContent(gluedCode, "", "tests/unit/tools/search.tool.test.ts");
+            expect(cleaned).toContain("jest.mock('../../../src/handlers/search.handler.ts', () => mockStub(), { virtual: true });\nimport { describe, test, it, expect } from '@jest/globals';");
+            expect(cleaned).not.toContain(", jest }");
+            expect(cleaned).not.toContain("{ describe, test, it, expect, jest }");
+            expect(cleaned).toContain("// @ts-nocheck");
+        });
+
+        test("removes type-only definition virtual mocks cleanly without leaving syntax errors", () => {
+            const codeWithTypeMock = `jest.mock('../../../src/handlers/search.handler.ts', () => mockStub(), { virtual: true });
+jest.mock('../../../src/types/tool-definition.ts', () => mockStub(), { virtual: true });
+import { describe, test, it, expect } from '@jest/globals';
+describe('search', () => {
+  it('works', () => { expect(true).toBe(true); });
+});`;
+            const cleaned = cleanAndDeduplicateTestContent(codeWithTypeMock, "", "tests/unit/tools/search.tool.test.ts");
+            expect(cleaned).not.toContain("tool-definition.ts");
+            expect(cleaned).toContain("search.handler.ts");
+        });
+
+        test("converts jest.mock to jest.unstable_mockModule when Jest Native ESM invariant fails", () => {
+            const esmCode = `jest.mock('../../../src/handlers/search.handler.ts', () => mockStub(), { virtual: true });
+import { describe, test, it, expect } from '@jest/globals';
+describe('search', () => {
+  it('works', () => { expect(true).toBe(true); });
+});`;
+            const rawOutput = "● Test suite failed to run\nThere should always be a Jest object already\nat invariant (node_modules/jest-util/build/index.js:774:11)\nat require (tests/unit/tools/search.tool.test.ts:28:104)";
+            const cleaned = cleanAndDeduplicateTestContent(esmCode, rawOutput, "tests/unit/tools/search.tool.test.ts");
+            expect(cleaned).toContain("jest.unstable_mockModule('../../../src/handlers/search.handler.ts'");
+            expect(cleaned).not.toContain("jest.mock(");
+        });
+
+        test("heals runaway nested object closing braces in jest.mock and vi.mock factory closures and remains 100% idempotent", () => {
+            const codeWithRunawayBraces = `jest.mock('../src/models', () => ({
+  initDatabase: jest.fn(() => Promise.resolve()),
+  sequelize: {
+    authenticate: jest.fn().mockResolvedValue(),
+  },
+  models: {
+    Requirement: { findByPk: jest.fn() },
+  },
+}
+}
+}
+}
+}
+}));
+vi.mock('../backend/src/config', () => ({
+  default: {
+    queue: { analysisQueueName: 'test-queue' },
+  }
+}
+}
+}
+}));
+const { describe, it, expect } = require('vitest');
+describe('test', () => {
+  it('passes', () => expect(true).toBe(true));
+});
+`;
+            let cleaned = codeWithRunawayBraces;
+            for (let i = 0; i < 5; i++) {
+                cleaned = cleanAndDeduplicateTestContent(cleaned, "", "tests/worker.test.js");
+            }
+            // Count closing braces inside models mock
+            const modelsSection = cleaned.slice(0, cleaned.indexOf("vi.mock"));
+            expect(modelsSection.match(/^\}\s*$/gm) || []).toEqual([]);
+            expect(cleaned).toContain("models: {\n    Requirement: { findByPk: jest.fn() },\n  },\n}));");
+            expect(cleaned).toContain("default: {\n    queue: { analysisQueueName: 'test-queue' },\n  }\n}));");
+
+            const ast = parseJavaScriptCode(cleaned);
+            expect(ast.success).toBe(true);
+        });
+
+        test("heals corrupt duplicate catch clusters and removes orphaned catch blocks outside test functions", () => {
+            const corruptedCode = `
+describe('evaluator unit tests', () => {
+    test('deep runner', async () => {
+        try {
+            expect(target).toBeDefined();
+        } catch (err) {
+            expect(err).toBeDefined();
+  });
+
+        } catch (err) {
+            expect(err).toBeDefined();
+        }
+    } catch (err) {
+            expect(err).toBeDefined();
+        }
+  });
+
+describe('delta tests', () => {
+    test('delta 1', async () => {
+        expect(1).toBe(1);
+    });
+});
+`;
+            const cleaned = cleanAndDeduplicateTestContent(corruptedCode, "", "tests/utils/evaluator.test.ts");
+            expect(cleaned).not.toContain("        } catch (err) {\n            expect(err).toBeDefined();\n        }\n    } catch");
+            const ast = parseJavaScriptCode(cleaned);
+            expect(ast.success).toBe(true);
+        });
     });
 });
 

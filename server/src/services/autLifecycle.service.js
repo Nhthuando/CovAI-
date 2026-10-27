@@ -4,6 +4,7 @@ import net from "net";
 import http from "http";
 import { spawn, spawnSync } from "child_process";
 import treeKill from "tree-kill";
+import { isPsAvailable } from "./dockerRunner.service.js";
 import { addJobLog } from "./job.service.js";
 
 const safeAddJobLog = async (jobId, level, message) => {
@@ -480,12 +481,26 @@ export const stopAutServer = async (pid, port = null, jobId = null) => {
   if (!pid) return;
 
   await new Promise((resolve) => {
-    treeKill(pid, "SIGKILL", (err) => {
-      if (err) {
-        console.warn(`[AUT Lifecycle] Process tree cleanup failed for PID ${pid}: ${err.message}`);
-      }
+    // On Linux/Unix, tree-kill uses 'ps'. If ps is missing (e.g. node:20-slim Docker container),
+    // tree-kill crashes with unhandled 'error' event on child process. Fallback to process.kill.
+    if (process.platform !== "win32" && !isPsAvailable()) {
+      try { process.kill(-pid, "SIGKILL"); } catch (_) { }
+      try { process.kill(pid, "SIGKILL"); } catch (_) { }
+      return resolve();
+    }
+
+    try {
+      treeKill(pid, "SIGKILL", (err) => {
+        if (err) {
+          try { process.kill(pid, "SIGKILL"); } catch (_) { }
+          console.warn(`[AUT Lifecycle] Process tree cleanup failed for PID ${pid}: ${err.message}`);
+        }
+        resolve();
+      });
+    } catch {
+      try { process.kill(pid, "SIGKILL"); } catch (_) { }
       resolve();
-    });
+    }
   });
 
   // Brief pause to allow OS socket cleanup

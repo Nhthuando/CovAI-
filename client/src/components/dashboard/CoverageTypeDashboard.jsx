@@ -71,6 +71,7 @@ import UnitTestGuidedWorkflow from "./UnitTestGuidedWorkflow.jsx";
 import UnitTestTraceabilityMatrix from "./UnitTestTraceabilityMatrix.jsx";
 import DiffReviewModal from "./DiffReviewModal.jsx";
 import InPlaceCoverageFileModal from "./InPlaceCoverageFileModal.jsx";
+import SuggestTestcaseModal from "./SuggestTestcaseModal.jsx";
 
 const CONFIG = {
   unit: {
@@ -613,6 +614,23 @@ export default function CoverageTypeDashboard({
   const isGenerating = generating || internalGenerating;
   const activeJobIdRef = useRef(null);
 
+  // Suggest TestCase Modal configuration
+  const [suggestModalConfig, setSuggestModalConfig] = useState({
+    isOpen: false,
+    filePath: null,
+    functionName: null,
+    isBulk: false,
+  });
+
+  const handleOpenSuggestModal = useCallback((filePath = null, functionName = null, isBulk = false) => {
+    setSuggestModalConfig({
+      isOpen: true,
+      filePath,
+      functionName,
+      isBulk: Boolean(isBulk),
+    });
+  }, []);
+
   // Socket.IO realtime progress listener
   useEffect(() => {
     let userId = null;
@@ -908,7 +926,7 @@ export default function CoverageTypeDashboard({
 
   // Trigger inline suggestion generation directly below the source file
   const handleSuggestTestcaseInline = useCallback(
-    async (filePath, autoExpand = true) => {
+    async (filePath, autoExpand = true, frameworkOverride = null) => {
       if (!snapshotId || !filePath) return;
       if (autoExpand) {
         // Auto-expand this file so the suggestion displays immediately inline
@@ -920,7 +938,7 @@ export default function CoverageTypeDashboard({
       setLoadingSuggestions((prev) => ({ ...prev, [filePath]: true }));
       setInlineSuggestions((prev) => ({ ...prev, [filePath]: [] }));
       try {
-        const res = await suggestUnitTestcase(snapshotId, filePath, projectId, activeFramework);
+        const res = await suggestUnitTestcase(snapshotId, filePath, projectId, frameworkOverride || activeFramework);
         const data = res?.data || res;
         const sugs = Array.isArray(data?.suggestions)
           ? data.suggestions
@@ -2010,7 +2028,7 @@ export default function CoverageTypeDashboard({
   const [isBulkSuggesting, setIsBulkSuggesting] = useState(false);
   const [bulkSuggestMessage, setBulkSuggestMessage] = useState("");
 
-  const handleBulkSuggestTest = async () => {
+  const handleBulkSuggestTest = async (frameworkOverride = null) => {
     let sourceFiles = selectedFiles;
     if ((!sourceFiles || sourceFiles.length === 0) && snapshotId) {
       try {
@@ -2067,7 +2085,7 @@ export default function CoverageTypeDashboard({
           await Promise.all(
             batch.map(async (fileObj) => {
               // Pass autoExpand = false during bulk run so DOM doesn't mount 200 code editors simultaneously
-              const resSugs = await handleSuggestTestcaseInline(fileObj.filePath, false);
+              const resSugs = await handleSuggestTestcaseInline(fileObj.filePath, false, frameworkOverride);
               completed += 1;
               const pctDone = Math.round((completed / needImprovementFiles.length) * 100);
               const msg = `Generating test suggestions: ${completed}/${needImprovementFiles.length} files (${pctDone}%)...`;
@@ -2106,6 +2124,60 @@ export default function CoverageTypeDashboard({
       projectId,
     });
   };
+
+  const handleConfirmAiSuggest = useCallback(
+    async ({ framework, filePath }) => {
+      if (framework) {
+        setActiveFramework(framework);
+      }
+      if (suggestModalConfig.isBulk || !filePath) {
+        await handleBulkSuggestTest(framework);
+      } else {
+        await handleSuggestTestcaseInline(filePath, true, framework);
+      }
+    },
+    [suggestModalConfig.isBulk, handleBulkSuggestTest, handleSuggestTestcaseInline],
+  );
+
+  const handleConfirmManualApply = useCallback(
+    async ({ framework, filePath, generatedCode }) => {
+      if (!snapshotId || !filePath || !generatedCode) return;
+      setIsBulkApplying(true);
+      setBulkApplyStep("Applying manual unit test case...");
+      try {
+        const cleanPath = cleanDisplayPath(filePath);
+        const targetTestFile = `tests/${cleanPath.replace(/^src\//, "").replace(/\.[^.]+$/, "")}.test.js`;
+        const res = await applyUnitTestSuggestion(snapshotId, {
+          projectId,
+          suggestion: {
+            sourceFile: filePath,
+            testFile: targetTestFile,
+            generatedCode,
+            framework: framework || activeFramework || "vitest",
+          },
+        });
+        if (res?.success) {
+          invalidateCoverageQueries(snapshotId);
+          await load();
+        }
+      } catch (err) {
+        console.error("Failed to apply manual unit test:", err);
+      } finally {
+        setIsBulkApplying(false);
+        setBulkApplyStep("");
+      }
+    },
+    [snapshotId, projectId, activeFramework, load],
+  );
+
+  const functionsForTargetFile = useMemo(() => {
+    if (!suggestModalConfig.filePath || !functionsList) return [];
+    const cleanTarget = cleanDisplayPath(suggestModalConfig.filePath);
+    return functionsList.filter((fn) => {
+      const fPath = fn.filePath || "";
+      return fPath === suggestModalConfig.filePath || cleanDisplayPath(fPath) === cleanTarget;
+    });
+  }, [suggestModalConfig.filePath, functionsList]);
 
   const relevantRuns = useMemo(
     () =>
@@ -2469,6 +2541,7 @@ export default function CoverageTypeDashboard({
           activeJobId={activeJobIdRef.current}
           onRun={run}
           onBulkSuggest={handleBulkSuggestTest}
+          onOpenSuggestModal={(opts) => handleOpenSuggestModal(opts?.filePath, opts?.functionName, opts?.isBulk ?? true)}
           isBulkSuggesting={isBulkSuggesting}
           pendingSuggestionsCount={allPendingSuggestions.length}
           pendingFilesCount={filesWithPendingSuggestions.length}
@@ -3130,7 +3203,7 @@ export default function CoverageTypeDashboard({
           )}
 
           {/* Active View Explanatory Banner */}
-          {type === "unit" && activeMetricView !== "testcases" && (
+          {activeMetricView !== "testcases" && activeMetricView !== "traceability" && (
             <div
               style={{
                 marginTop: 10,
@@ -3222,17 +3295,7 @@ export default function CoverageTypeDashboard({
                   minWidth: 260,
                 }}
               >
-                {activeMetricView === "traceability" ? (
-                  <>
-                    <Target
-                      size={15}
-                      style={{ flexShrink: 0, color: isLight ? "#4f46e5" : "#a5b4fc" }}
-                    />
-                    <span>
-                      <b>Logic & Test Traceability:</b> Bi-directional mapping between business logic functions and unit test suites across the 4-category matrix (Happy Path, Boundary Values, Branch Toggling, Error Handling).
-                    </span>
-                  </>
-                ) : activeMetricView === "visualization" ? (
+                {activeMetricView === "visualization" ? (
                   <>
                     <Terminal
                       size={15}
@@ -3380,7 +3443,7 @@ export default function CoverageTypeDashboard({
                     setShowCfgModal(true);
                   }
                 }}
-                onSuggestTestcase={handleSuggestTestcaseInline}
+                onSuggestTestcase={(filePath, fnName) => handleOpenSuggestModal(filePath, fnName, false)}
                 inlineSuggestions={inlineSuggestions}
                 loadingSuggestions={loadingSuggestions}
                 applyingSuggestionIds={applyingSuggestionIds}
@@ -5434,6 +5497,24 @@ export default function CoverageTypeDashboard({
           }}
           isLight={isLight}
           testSuites={unitTestSuites}
+        />
+      )}
+
+      {/* Suggest TestCase Modal (Mode selection: AI vs Manual + Vitest vs Jest) */}
+      {suggestModalConfig.isOpen && (
+        <SuggestTestcaseModal
+          isOpen={suggestModalConfig.isOpen}
+          onClose={() => setSuggestModalConfig((prev) => ({ ...prev, isOpen: false }))}
+          targetFilePath={suggestModalConfig.filePath}
+          targetFunction={suggestModalConfig.functionName}
+          targetFunctionsList={functionsForTargetFile}
+          allBusinessFiles={selectedFiles}
+          allFunctions={functionsList}
+          defaultFramework={activeFramework || "vitest"}
+          onConfirmAi={handleConfirmAiSuggest}
+          onApplyManualTest={handleConfirmManualApply}
+          isApplying={isBulkApplying}
+          isLight={isLight}
         />
       )}
     </div>

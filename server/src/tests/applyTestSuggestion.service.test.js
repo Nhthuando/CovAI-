@@ -12,7 +12,8 @@ import {
     autoRefineCoverageGaps,
     computeSourceFilesHash,
     verifySourceFilesUnchanged,
-    cleanTestRunnerError
+    cleanTestRunnerError,
+    resolveContainerOrHostTestPath
 } from "../services/applyTestSuggestion.service.js";
 import { runJestCoverage } from "../services/runTestsJob.service.js";
 import { dockerRunner } from "../services/dockerRunner.service.js";
@@ -587,6 +588,48 @@ describe('user tests', () => {
                 spy.mockRestore();
             }
         }, 15000);
+    });
+
+    describe("resolveContainerOrHostTestPath & toHaveLength auto-healing", () => {
+        test("resolveContainerOrHostTestPath resolves snapshot container paths without duplicate nested segments", () => {
+            const rootDir = "d:/NCKH/CovAI-/server/uploads/snapshots/snap123/calc/backend";
+            const containerPath = "/app/uploads/snapshots/snap123/calc/backend/tests/utils/evaluator.test.ts";
+            const resolved = resolveContainerOrHostTestPath(containerPath, rootDir);
+            expect(resolved).toBeDefined();
+            expect(resolved.replace(/\\/g, "/")).not.toContain("backend/backend");
+        });
+
+        test("autoHealTestFailures heals expect(received).toHaveLength(expected) mismatch", () => {
+            const testDir = path.join(tempDir, "tests");
+            fs.mkdirSync(testDir, { recursive: true });
+            const testPath = path.join(testDir, "calc.test.js");
+            const testContent = `
+describe('calc', () => {
+    test('history custom limit', async () => {
+        const history = [1, 2];
+        expect(history).toHaveLength(10);
+    });
+});
+`;
+            fs.writeFileSync(testPath, testContent, "utf8");
+
+            const rawOutput = `
+FAIL tests/calc.test.js
+  ● calc › history custom limit
+
+    expect(received).toHaveLength(expected)
+
+    Expected length: 10
+    Received length: 2
+
+      at Object.toHaveLength (tests/calc.test.js:5:25)
+`;
+            const modified = autoHealTestFailures(tempDir, ["tests/calc.test.js"], null, rawOutput);
+            expect(modified).toBe(true);
+
+            const healed = fs.readFileSync(testPath, "utf8");
+            expect(healed).toContain("expect(history).toHaveLength(2);");
+        });
     });
 });
 

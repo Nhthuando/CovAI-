@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import {
   FileCode,
+  FileCode2,
   GitBranch,
   Cpu,
   Layers,
@@ -14,7 +15,6 @@ import {
   ChevronDown,
   ChevronRight,
   Filter,
-  Sparkles,
   Check,
   X,
   ShieldCheck,
@@ -105,75 +105,7 @@ export const isAnonymousName = (name) => {
  *    along with exact mathematical calculation formulas and Istanbul execution counts.
  * 2. 4-Category Strategy Matrix: Breakdown across Happy Path, Boundary Values, Branch Toggling, Error Handling.
  * 3. Bi-directional Traceability: Maps Business Logic functions to specific test cases and testing techniques.
-/**
- * Interactive Resizer Divider between category cards
- */
-function MatrixColumnDivider({ index, isDragging, onMouseDown, onDoubleClick, isLight }) {
-  const [isHovered, setIsHovered] = useState(false);
-  const active = isDragging || isHovered;
 
-  return (
-    <div
-      onMouseDown={onMouseDown}
-      onDoubleClick={onDoubleClick}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      style={{
-        width: 14,
-        margin: "0 -7px",
-        cursor: "col-resize",
-        zIndex: 20,
-        position: "relative",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexShrink: 0,
-        touchAction: "none",
-        userSelect: "none",
-        minHeight: 180,
-      }}
-      title="Drag left/right to resize columns · Double-click to balance 25%"
-    >
-      {/* 1.5px Hairline Divider with Glow */}
-      <div
-        style={{
-          width: active ? 2 : 1,
-          height: "100%",
-          background: active
-            ? (isLight ? "#4f46e5" : "#818cf8")
-            : (isLight ? "rgba(203, 213, 225, 0.8)" : "rgba(255, 255, 255, 0.12)"),
-          boxShadow: active ? "0 0 8px rgba(99, 102, 241, 0.5)" : "none",
-          transition: "background 0.15s ease, width 0.15s ease",
-          borderRadius: 1,
-        }}
-      />
-      {/* Centered Tactile Grip Capsule */}
-      <div
-        style={{
-          position: "absolute",
-          width: active ? 16 : 14,
-          height: 28,
-          borderRadius: 7,
-          background: active
-            ? (isLight ? "#4f46e5" : "#6366f1")
-            : (isLight ? "#ffffff" : "#1e293b"),
-          border: active
-            ? "1px solid rgba(255, 255, 255, 0.4)"
-            : (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.15)"),
-          boxShadow: active ? "0 2px 8px rgba(99, 102, 241, 0.35)" : "0 1px 3px rgba(0, 0, 0, 0.15)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 2,
-          transition: "all 0.15s ease",
-        }}
-      >
-        <div style={{ width: 2, height: 10, borderRadius: 1, background: active ? "#ffffff" : (isLight ? "#94a3b8" : "#64748b") }} />
-        <div style={{ width: 2, height: 10, borderRadius: 1, background: active ? "#ffffff" : (isLight ? "#94a3b8" : "#64748b") }} />
-      </div>
-    </div>
-  );
-}
 
 /**
  * 4-Category Decision Table Matrix with Resizable & Draggable Columns
@@ -688,24 +620,10 @@ export default function UnitTestTraceabilityMatrix({
   const [expandedFiles, setExpandedFiles] = useState(new Set());
   const [expandedCallbacksByFile, setExpandedCallbacksByFile] = useState(new Set());
 
-  // Function tab views: { [fnId]: "proof" | "matrix" }
-  const [activeTabByFunc, setActiveTabByFunc] = useState({});
-  // 4-Category Matrix Resizable Column Widths [HappyPath, BoundaryValues, BranchToggling, ErrorHandling]
-  const [matrixColWidths, setMatrixColWidths] = useState(() => {
-    try {
-      const saved = localStorage.getItem("covai_matrix_4col_widths");
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length === 4) return parsed;
-      }
-    } catch (_) {}
-    return [25, 25, 25, 25];
-  });
-  const [matrixCollapsedCols, setMatrixCollapsedCols] = useState({});
+
   // File inspection modal: filePath of file being inspected for 4-metric calculation proof
   const [inspectingFileProof, setInspectingFileProof] = useState(null);
   const [fileModalTab, setFileModalTab] = useState("overview"); // "overview" | "statements" | "branches" | "functions" | "lines" | "tests"
-  const [showFormulaGuide, setShowFormulaGuide] = useState(false);
 
   // Cache for on-demand detailed file coverage (contains statementMap, branchMap, fnMap, lines, etc.)
   const [fileCoverageCache, setFileCoverageCache] = useState({});
@@ -757,25 +675,6 @@ export default function UnitTestTraceabilityMatrix({
     }
     return list;
   }, [testSuites]);
-
-  // Strategy Distribution counts
-  const categoryCounts = useMemo(() => {
-    const counts = {
-      HAPPY_PATH: 0,
-      BOUNDARY_VALUES: 0,
-      BRANCH_TOGGLING: 0,
-      ERROR_HANDLING: 0,
-      total: allAssertions.length,
-    };
-    for (const a of allAssertions) {
-      if (counts[a.category] !== undefined) {
-        counts[a.category]++;
-      } else {
-        counts.HAPPY_PATH++;
-      }
-    }
-    return counts;
-  }, [allAssertions]);
 
   // Helper to extract clean base name without extensions and prefixes
   const getFileBase = (filePath = "") => {
@@ -946,6 +845,30 @@ export default function UnitTestTraceabilityMatrix({
     });
   }, [functionsList, allAssertions, sourceFiles, testSuites]);
 
+  // 4-Category Strategy Distribution counts (Happy Path, Boundary Values, Branch Toggling, Error Handling)
+  const categoryCounts = useMemo(() => {
+    const counts = {
+      HAPPY_PATH: 0,
+      BOUNDARY_VALUES: 0,
+      BRANCH_TOGGLING: 0,
+      ERROR_HANDLING: 0,
+      total: 0,
+    };
+    const targetList = allAssertions.length > 0
+      ? allAssertions
+      : (functionTraceability || []).flatMap((fn) => fn.tests || []);
+
+    counts.total = targetList.length;
+    for (const a of targetList) {
+      if (counts[a.category] !== undefined) {
+        counts[a.category]++;
+      } else {
+        counts.HAPPY_PATH++;
+      }
+    }
+    return counts;
+  }, [allAssertions, functionTraceability]);
+
   // Aggregate Cyclomatic Complexity & Basis Path statistics
   const { avgComplexity, maxComplexity, highestComplexityFn, basisPathsMetCount, highComplexityCount } = useMemo(() => {
     if (!functionTraceability.length) {
@@ -1040,6 +963,8 @@ export default function UnitTestTraceabilityMatrix({
           if (selectedCategory !== "ALL") {
             if (selectedCategory === "HIGH_CC") {
               if ((fn.complexity || 1) <= 10) return false;
+            } else if (selectedCategory === "UNCOVERED") {
+              if (fn.isFullyCovered) return false;
             } else {
               const hasCat = fn.tests.some((t) => t.category === selectedCategory);
               if (!hasCat) return false;
@@ -1089,24 +1014,6 @@ export default function UnitTestTraceabilityMatrix({
     });
   };
 
-  const expandAll = () => {
-    const allFnIds = new Set();
-    const allFilePaths = new Set();
-    for (const group of groupedByFile) {
-      allFilePaths.add(group.filePath);
-      fetchFileCoverage(group.filePath);
-      for (const fn of group.functions) {
-        allFnIds.add(`${fn.filePath}:${fn.cleanName}`);
-      }
-    }
-    setExpandedFunctions(allFnIds);
-    setExpandedFiles(allFilePaths);
-  };
-
-  const collapseAll = () => {
-    setExpandedFunctions(new Set());
-    setExpandedFiles(new Set());
-  };
 
   // Helper to compute 4-metric execution proof for a function
   const computeFunctionProof = (fn, fileCov, meta) => {
@@ -1221,339 +1128,7 @@ export default function UnitTestTraceabilityMatrix({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* ── SECTION 1: Top Strategy Matrix & 4-Metric Guide Header ── */}
-      <div
-        style={{
-          background: isLight ? "#ffffff" : "var(--color-surface, #11161d)",
-          border: isLight ? "1px solid #e2e8f0" : "1px solid var(--color-border, #29313d)",
-          borderRadius: 10,
-          padding: "14px 18px",
-          boxShadow: isLight ? "0 1px 3px rgba(15, 23, 42, 0.05)" : "none",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          flexWrap: "wrap",
-          gap: 12,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <Sparkles size={16} style={{ color: "#8b5cf6" }} />
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 750, color: isLight ? "#0f172a" : "#f8fafc", display: "flex", alignItems: "center", gap: 8 }}>
-              <span>Test Case Strategy Matrix & 4-Metric Invariant Proof</span>
-              <button
-                onClick={() => setShowFormulaGuide(!showFormulaGuide)}
-                style={{
-                  background: isLight ? "#eff6ff" : "rgba(59, 130, 246, 0.15)",
-                  border: isLight ? "1px solid #bfdbfe" : "1px solid rgba(59, 130, 246, 0.35)",
-                  color: isLight ? "#2563eb" : "#60a5fa",
-                  borderRadius: 4,
-                  padding: "1px 7px",
-                  fontSize: 10.5,
-                  fontWeight: 650,
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 4,
-                }}
-                title="View how Istanbul calculates Statements, Branches, Functions, and Lines"
-              >
-                <Calculator size={10} />
-                <span>{showFormulaGuide ? "Hide Formula Anatomy" : "📘 4-Metric Formula Anatomy"}</span>
-              </button>
-            </div>
-            <div style={{ fontSize: 11, color: isLight ? "#64748b" : "#94a3b8" }}>
-              Filter business functions by testing category or inspect how 4 metrics are calculated
-            </div>
-          </div>
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          {/* Category A: Happy Path */}
-          <div
-            onClick={() => setSelectedCategory(selectedCategory === "HAPPY_PATH" ? "ALL" : "HAPPY_PATH")}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "4px 10px",
-              borderRadius: 6,
-              background: "rgba(16, 185, 129, 0.12)",
-              border: selectedCategory === "HAPPY_PATH" ? "1.5px solid #10b981" : "1px solid rgba(16, 185, 129, 0.3)",
-              color: isLight ? "#047857" : "#4ade80",
-              fontSize: 11.5,
-              fontWeight: 650,
-              cursor: "pointer",
-            }}
-            title="Category A: Standard valid inputs, normal flow, and expected state transitions"
-          >
-            <span>🟢 A. Happy Path:</span>
-            <span style={{ fontWeight: 800 }}>{categoryCounts.HAPPY_PATH}</span>
-          </div>
-
-          {/* Category B: Boundary Values */}
-          <div
-            onClick={() => setSelectedCategory(selectedCategory === "BOUNDARY_VALUES" ? "ALL" : "BOUNDARY_VALUES")}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "4px 10px",
-              borderRadius: 6,
-              background: "rgba(245, 158, 11, 0.12)",
-              border: selectedCategory === "BOUNDARY_VALUES" ? "1.5px solid #f59e0b" : "1px solid rgba(245, 158, 11, 0.3)",
-              color: isLight ? "#b45309" : "#fbbf24",
-              fontSize: 11.5,
-              fontWeight: 650,
-              cursor: "pointer",
-            }}
-            title="Category B: Boundary analysis (0, -1, MAX values, empty arrays [], empty strings, null/undefined)"
-          >
-            <span>🟡 B. Boundary Values:</span>
-            <span style={{ fontWeight: 800 }}>{categoryCounts.BOUNDARY_VALUES}</span>
-          </div>
-
-          {/* Category C: Branch Toggling */}
-          <div
-            onClick={() => setSelectedCategory(selectedCategory === "BRANCH_TOGGLING" ? "ALL" : "BRANCH_TOGGLING")}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "4px 10px",
-              borderRadius: 6,
-              background: "rgba(2, 132, 199, 0.12)",
-              border: selectedCategory === "BRANCH_TOGGLING" ? "1.5px solid #0284c7" : "1px solid rgba(2, 132, 199, 0.3)",
-              color: isLight ? "#0369a1" : "#38bdf8",
-              fontSize: 11.5,
-              fontWeight: 650,
-              cursor: "pointer",
-            }}
-            title="Category C: Branch toggling (True vs False paths, fallback ??, logical || operators)"
-          >
-            <span>🔵 C. Branch Toggling:</span>
-            <span style={{ fontWeight: 800 }}>{categoryCounts.BRANCH_TOGGLING}</span>
-          </div>
-
-          {/* Category D: Error & Exception Handling */}
-          <div
-            onClick={() => setSelectedCategory(selectedCategory === "ERROR_HANDLING" ? "ALL" : "ERROR_HANDLING")}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "4px 10px",
-              borderRadius: 6,
-              background: "rgba(239, 68, 68, 0.12)",
-              border: selectedCategory === "ERROR_HANDLING" ? "1.5px solid #ef4444" : "1px solid rgba(239, 68, 68, 0.3)",
-              color: isLight ? "#b91c1c" : "#f87171",
-              fontSize: 11.5,
-              fontWeight: 650,
-              cursor: "pointer",
-            }}
-            title="Category D: Error and exception handling (throw Error, catch blocks, rejected promises, mock dependency failures)"
-          >
-            <span>🔴 D. Error Handling:</span>
-            <span style={{ fontWeight: 800 }}>{categoryCounts.ERROR_HANDLING}</span>
-          </div>
-
-          {/* CFG & Cyclomatic Complexity summary badge */}
-          <div
-            onClick={() => {
-              if (highComplexityCount > 0) {
-                setSelectedCategory((prev) => (prev === "HIGH_CC" ? "ALL" : "HIGH_CC"));
-              } else {
-                onOpenCFG?.();
-              }
-            }}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "4px 10px",
-              borderRadius: 6,
-              background: selectedCategory === "HIGH_CC" ? "rgba(239, 68, 68, 0.15)" : "rgba(168, 85, 247, 0.12)",
-              border: selectedCategory === "HIGH_CC" ? "1.5px solid #ef4444" : "1px solid rgba(168, 85, 247, 0.3)",
-              color: selectedCategory === "HIGH_CC" ? "#ef4444" : (isLight ? "#7e22ce" : "#c084fc"),
-              fontSize: 11.5,
-              fontWeight: 650,
-              cursor: "pointer",
-            }}
-            title={`Cyclomatic Complexity (CC): Avg ${avgComplexity.toFixed(1)} | Max ${maxComplexity} (${highestComplexityFn?.cleanName || "peak function"}). Click to filter ${highComplexityCount} functions with CC > 10.`}
-          >
-            <GitBranch size={13} />
-            <span>CFG & CC:</span>
-            <span style={{ fontWeight: 700 }}>
-              Avg: <b>{avgComplexity.toFixed(1)}</b>
-            </span>
-            <span style={{ opacity: 0.4 }}>·</span>
-            <span
-              style={{ fontWeight: 700 }}
-              title={`Peak Complexity = ${maxComplexity} in function ${highestComplexityFn?.cleanName || ""}`}
-            >
-              Max: <b style={{ color: maxComplexity > 10 ? "#ef4444" : "inherit" }}>{maxComplexity}</b>
-            </span>
-            {highComplexityCount > 0 && (
-              <span
-                style={{
-                  fontSize: 10,
-                  background: selectedCategory === "HIGH_CC" ? "#ef4444" : "rgba(239, 68, 68, 0.2)",
-                  color: selectedCategory === "HIGH_CC" ? "#ffffff" : "#ef4444",
-                  padding: "1px 6px",
-                  borderRadius: 4,
-                  fontWeight: 700,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 3,
-                }}
-                title={`${highComplexityCount} functions have high complexity (CC > 10, defect risk). Click to filter.`}
-              >
-                <AlertTriangle size={10} />
-                {highComplexityCount} fns (CC &gt; 10)
-              </span>
-            )}
-          </div>
-
-          {selectedCategory !== "ALL" && (
-            <button
-              onClick={() => setSelectedCategory("ALL")}
-              style={{
-                background: "transparent",
-                border: "none",
-                color: isLight ? "#4f46e5" : "#a5b4fc",
-                fontSize: 11,
-                fontWeight: 600,
-                cursor: "pointer",
-                textDecoration: "underline",
-              }}
-            >
-              Clear Filter ({selectedCategory === "HIGH_CC" ? "CC > 10" : selectedCategory})
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* ── Collapsible 4-Metric Formula Anatomy & Calculation Guide ── */}
-      {showFormulaGuide && (
-        <div
-          style={{
-            background: isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.025)",
-            border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
-            borderRadius: 10,
-            padding: "16px 20px",
-            display: "flex",
-            flexDirection: "column",
-            gap: 12,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13, fontWeight: 750, color: isLight ? "#0f172a" : "#f8fafc" }}>
-              <Calculator size={15} style={{ color: "#6366f1" }} />
-              <span>How Istanbul & Jest Measure the 4 Code Coverage Dimensions</span>
-            </div>
-            <button
-              onClick={() => setShowFormulaGuide(false)}
-              style={{ background: "transparent", border: "none", color: isLight ? "#64748b" : "#94a3b8", cursor: "pointer" }}
-            >
-              <X size={14} />
-            </button>
-          </div>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-              gap: 12,
-            }}
-          >
-            {/* Statements */}
-            <div
-              style={{
-                background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.03)",
-                border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.06)",
-                borderRadius: 8,
-                padding: "12px 14px",
-                display: "flex",
-                flexDirection: "column",
-                gap: 6,
-              }}
-            >
-              <span style={{ fontSize: 12, fontWeight: 750, color: "#6366f1" }}>1. Statements Metric</span>
-              <code style={{ fontSize: 11, background: isLight ? "#f1f5f9" : "rgba(0,0,0,0.3)", padding: "3px 6px", borderRadius: 4, color: isLight ? "#334155" : "#e2e8f0" }}>
-                Statements % = (Covered / Total) × 100%
-              </code>
-              <p style={{ fontSize: 11, color: isLight ? "#64748b" : "#94a3b8", lineHeight: 1.4, margin: 0 }}>
-                Every discrete statement (assignments, declarations, calls, returns) is tracked by Istanbul index <code>s[id]</code>. 100% means each statement ran at least once.
-              </p>
-            </div>
-
-            {/* Branches */}
-            <div
-              style={{
-                background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.03)",
-                border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.06)",
-                borderRadius: 8,
-                padding: "12px 14px",
-                display: "flex",
-                flexDirection: "column",
-                gap: 6,
-              }}
-            >
-              <span style={{ fontSize: 12, fontWeight: 750, color: "#0284c7" }}>2. Branches Metric</span>
-              <code style={{ fontSize: 11, background: isLight ? "#f1f5f9" : "rgba(0,0,0,0.3)", padding: "3px 6px", borderRadius: 4, color: isLight ? "#334155" : "#e2e8f0" }}>
-                Branches % = (Taken Paths / Total Paths) × 100%
-              </code>
-              <p style={{ fontSize: 11, color: isLight ? "#64748b" : "#94a3b8", lineHeight: 1.4, margin: 0 }}>
-                Conditional logic (<code>if/else</code>, <code>? :</code>, <code>??</code>, <code>||</code>) creates 2 paths (True & False). 100% requires unit tests to trigger BOTH paths. Functions with 0 branches default to 100% (straight-line logic).
-              </p>
-            </div>
-
-            {/* Functions */}
-            <div
-              style={{
-                background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.03)",
-                border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.06)",
-                borderRadius: 8,
-                padding: "12px 14px",
-                display: "flex",
-                flexDirection: "column",
-                gap: 6,
-              }}
-            >
-              <span style={{ fontSize: 12, fontWeight: 750, color: "#10b981" }}>3. Functions Metric</span>
-              <code style={{ fontSize: 11, background: isLight ? "#f1f5f9" : "rgba(0,0,0,0.3)", padding: "3px 6px", borderRadius: 4, color: isLight ? "#334155" : "#e2e8f0" }}>
-                Functions % = (Called / Declared) × 100%
-              </code>
-              <p style={{ fontSize: 11, color: isLight ? "#64748b" : "#94a3b8", lineHeight: 1.4, margin: 0 }}>
-                Measures whether each function body is invoked at least once (<code>f[id] &gt; 0</code>). 100% means all exported and internal helper functions were entered during test suite execution.
-              </p>
-            </div>
-
-            {/* Lines */}
-            <div
-              style={{
-                background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.03)",
-                border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.06)",
-                borderRadius: 8,
-                padding: "12px 14px",
-                display: "flex",
-                flexDirection: "column",
-                gap: 6,
-              }}
-            >
-              <span style={{ fontSize: 12, fontWeight: 750, color: "#f59e0b" }}>4. Lines Metric</span>
-              <code style={{ fontSize: 11, background: isLight ? "#f1f5f9" : "rgba(0,0,0,0.3)", padding: "3px 6px", borderRadius: 4, color: isLight ? "#334155" : "#e2e8f0" }}>
-                Lines % = (Hit Lines / Executable Lines) × 100%
-              </code>
-              <p style={{ fontSize: 11, color: isLight ? "#64748b" : "#94a3b8", lineHeight: 1.4, margin: 0 }}>
-                Every executable source line (excluding comments, blank lines, type imports) must receive $\ge 1$ execution hit.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── SECTION 2: Bi-directional Traceability Matrix Explorer ── */}
+      {/* ── Bi-directional Traceability Matrix Explorer ── */}
       <div
         style={{
           background: isLight ? "#ffffff" : "var(--color-surface, #11161d)",
@@ -1584,7 +1159,196 @@ export default function UnitTestTraceabilityMatrix({
             </span>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            {/* CFG & Cyclomatic Complexity summary badge */}
+            <div
+              onClick={() => {
+                if (highComplexityCount > 0) {
+                  setSelectedCategory((prev) => (prev === "HIGH_CC" ? "ALL" : "HIGH_CC"));
+                } else {
+                  onOpenCFG?.();
+                }
+              }}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "4px 10px",
+                borderRadius: 6,
+                background: selectedCategory === "HIGH_CC" ? "rgba(239, 68, 68, 0.15)" : "rgba(168, 85, 247, 0.12)",
+                border: selectedCategory === "HIGH_CC" ? "1.5px solid #ef4444" : "1px solid rgba(168, 85, 247, 0.3)",
+                color: selectedCategory === "HIGH_CC" ? "#ef4444" : (isLight ? "#7e22ce" : "#c084fc"),
+                fontSize: 11.5,
+                fontWeight: 650,
+                cursor: "pointer",
+              }}
+              title={`Cyclomatic Complexity (CC): Avg ${avgComplexity.toFixed(1)} | Max ${maxComplexity} (${highestComplexityFn?.cleanName || "peak function"}). Click to filter ${highComplexityCount} functions with CC > 10.`}
+            >
+              <GitBranch size={13} />
+              <span>CFG & CC:</span>
+              <span style={{ fontWeight: 700 }}>
+                Avg: <b>{avgComplexity.toFixed(1)}</b>
+              </span>
+              <span style={{ opacity: 0.4 }}>·</span>
+              <span
+                style={{ fontWeight: 700 }}
+                title={`Peak Complexity = ${maxComplexity} in function ${highestComplexityFn?.cleanName || ""}`}
+              >
+                Max: <b style={{ color: maxComplexity > 10 ? "#ef4444" : "inherit" }}>{maxComplexity}</b>
+              </span>
+              {highComplexityCount > 0 && (
+                <span
+                  style={{
+                    fontSize: 10,
+                    background: selectedCategory === "HIGH_CC" ? "#ef4444" : "rgba(239, 68, 68, 0.2)",
+                    color: selectedCategory === "HIGH_CC" ? "#ffffff" : "#ef4444",
+                    padding: "1px 6px",
+                    borderRadius: 4,
+                    fontWeight: 700,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 3,
+                  }}
+                  title={`${highComplexityCount} functions have high complexity (CC > 10, defect risk). Click to filter.`}
+                >
+                  <AlertTriangle size={10} />
+                  {highComplexityCount} fns (CC &gt; 10)
+                </span>
+              )}
+            </div>
+
+            {/* 4 Decision Table Category Statistics Badges */}
+            <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+              {/* Happy Path */}
+              <div
+                onClick={() => setSelectedCategory(selectedCategory === "HAPPY_PATH" ? "ALL" : "HAPPY_PATH")}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  padding: "4px 8px",
+                  borderRadius: 6,
+                  background: selectedCategory === "HAPPY_PATH"
+                    ? "rgba(16, 185, 129, 0.22)"
+                    : (isLight ? "#ecfdf5" : "rgba(16, 185, 129, 0.08)"),
+                  border: selectedCategory === "HAPPY_PATH"
+                    ? "1.5px solid #10b981"
+                    : "1px solid rgba(16, 185, 129, 0.25)",
+                  color: isLight ? "#047857" : "#34d399",
+                  fontSize: 11,
+                  fontWeight: 650,
+                  cursor: "pointer",
+                  transition: "all 0.15s ease",
+                }}
+                title={`Happy Path: ${categoryCounts.HAPPY_PATH} assertions. Click to filter.`}
+              >
+                <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10b981", flexShrink: 0 }} />
+                <span>Happy Path:</span>
+                <span style={{ fontWeight: 800 }}>{categoryCounts.HAPPY_PATH}</span>
+              </div>
+
+              {/* Boundary Value */}
+              <div
+                onClick={() => setSelectedCategory(selectedCategory === "BOUNDARY_VALUES" ? "ALL" : "BOUNDARY_VALUES")}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  padding: "4px 8px",
+                  borderRadius: 6,
+                  background: selectedCategory === "BOUNDARY_VALUES"
+                    ? "rgba(245, 158, 11, 0.22)"
+                    : (isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.08)"),
+                  border: selectedCategory === "BOUNDARY_VALUES"
+                    ? "1.5px solid #f59e0b"
+                    : "1px solid rgba(245, 158, 11, 0.25)",
+                  color: isLight ? "#b45309" : "#fbbf24",
+                  fontSize: 11,
+                  fontWeight: 650,
+                  cursor: "pointer",
+                  transition: "all 0.15s ease",
+                }}
+                title={`Boundary Values: ${categoryCounts.BOUNDARY_VALUES} assertions. Click to filter.`}
+              >
+                <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#f59e0b", flexShrink: 0 }} />
+                <span>Boundary Value:</span>
+                <span style={{ fontWeight: 800 }}>{categoryCounts.BOUNDARY_VALUES}</span>
+              </div>
+
+              {/* Branch Toggling */}
+              <div
+                onClick={() => setSelectedCategory(selectedCategory === "BRANCH_TOGGLING" ? "ALL" : "BRANCH_TOGGLING")}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  padding: "4px 8px",
+                  borderRadius: 6,
+                  background: selectedCategory === "BRANCH_TOGGLING"
+                    ? "rgba(2, 132, 199, 0.22)"
+                    : (isLight ? "#f0f9ff" : "rgba(2, 132, 199, 0.08)"),
+                  border: selectedCategory === "BRANCH_TOGGLING"
+                    ? "1.5px solid #0284c7"
+                    : "1px solid rgba(2, 132, 199, 0.25)",
+                  color: isLight ? "#0369a1" : "#38bdf8",
+                  fontSize: 11,
+                  fontWeight: 650,
+                  cursor: "pointer",
+                  transition: "all 0.15s ease",
+                }}
+                title={`Branch Toggling: ${categoryCounts.BRANCH_TOGGLING} assertions. Click to filter.`}
+              >
+                <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#0284c7", flexShrink: 0 }} />
+                <span>Branch Toggling:</span>
+                <span style={{ fontWeight: 800 }}>{categoryCounts.BRANCH_TOGGLING}</span>
+              </div>
+
+              {/* Error */}
+              <div
+                onClick={() => setSelectedCategory(selectedCategory === "ERROR_HANDLING" ? "ALL" : "ERROR_HANDLING")}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  padding: "4px 8px",
+                  borderRadius: 6,
+                  background: selectedCategory === "ERROR_HANDLING"
+                    ? "rgba(239, 68, 68, 0.22)"
+                    : (isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.08)"),
+                  border: selectedCategory === "ERROR_HANDLING"
+                    ? "1.5px solid #ef4444"
+                    : "1px solid rgba(239, 68, 68, 0.25)",
+                  color: isLight ? "#b91c1c" : "#f87171",
+                  fontSize: 11,
+                  fontWeight: 650,
+                  cursor: "pointer",
+                  transition: "all 0.15s ease",
+                }}
+                title={`Error Handling: ${categoryCounts.ERROR_HANDLING} assertions. Click to filter.`}
+              >
+                <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#ef4444", flexShrink: 0 }} />
+                <span>Error:</span>
+                <span style={{ fontWeight: 800 }}>{categoryCounts.ERROR_HANDLING}</span>
+              </div>
+            </div>
+
+            {selectedCategory !== "ALL" && (
+              <button
+                onClick={() => setSelectedCategory("ALL")}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: isLight ? "#4f46e5" : "#a5b4fc",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  textDecoration: "underline",
+                }}
+              >
+                Clear Filter ({selectedCategory === "HIGH_CC" ? "CC > 10" : selectedCategory === "HAPPY_PATH" ? "Happy Path" : selectedCategory === "BOUNDARY_VALUES" ? "Boundary Value" : selectedCategory === "BRANCH_TOGGLING" ? "Branch Toggling" : selectedCategory === "ERROR_HANDLING" ? "Error" : selectedCategory})
+              </button>
+            )}
+
             {/* Search Input */}
             <div
               style={{
@@ -1617,38 +1381,6 @@ export default function UnitTestTraceabilityMatrix({
                 <X size={12} style={{ cursor: "pointer", color: "#8b949e" }} onClick={() => setSearchQuery("")} />
               )}
             </div>
-
-            {/* Expand / Collapse All */}
-            <button
-              onClick={expandAll}
-              style={{
-                background: isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.04)",
-                border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)",
-                borderRadius: 5,
-                padding: "4px 8px",
-                fontSize: 11,
-                fontWeight: 600,
-                color: isLight ? "#475569" : "#cbd5e1",
-                cursor: "pointer",
-              }}
-            >
-              Expand All
-            </button>
-            <button
-              onClick={collapseAll}
-              style={{
-                background: isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.04)",
-                border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)",
-                borderRadius: 5,
-                padding: "4px 8px",
-                fontSize: 11,
-                fontWeight: 600,
-                color: isLight ? "#475569" : "#cbd5e1",
-                cursor: "pointer",
-              }}
-            >
-              Collapse All
-            </button>
           </div>
         </div>
 
@@ -1909,7 +1641,7 @@ export default function UnitTestTraceabilityMatrix({
                                 gap: 3,
                               }}
                             >
-                              <Sparkles size={11} />
+                              <FileCode2 size={11} />
                               <span>Re-generate</span>
                             </button>
                           )}
@@ -1934,9 +1666,9 @@ export default function UnitTestTraceabilityMatrix({
                             gap: 4,
                             boxShadow: "0 1px 2px rgba(99, 102, 241, 0.1)",
                           }}
-                          title="Suggest AI unit tests for uncovered logic and branches in this file"
+                          title="Suggest unit tests for uncovered logic and branches in this file"
                         >
-                          <Sparkles size={11} />
+                          <FileCode2 size={11} />
                           <span>Suggest tests</span>
                         </button>
                       ) : null}
@@ -1964,7 +1696,7 @@ export default function UnitTestTraceabilityMatrix({
                         title="View mathematical 4-metric calculation and Istanbul execution proof for this file"
                       >
                         <Calculator size={11} />
-                        <span>📊 4-Metric Proof</span>
+                        <span>4-Metric Proof</span>
                       </button>
 
                       <button
@@ -2017,7 +1749,7 @@ export default function UnitTestTraceabilityMatrix({
                           const isFnExpanded = expandedFunctions.has(fnId);
                           const isCovered = (fn.hit || 0) > 0 || (Array.isArray(fn.tests) && fn.tests.length > 0);
 
-                        const activeTab = activeTabByFunc[fnId] || "proof"; // default to 4-metric execution proof
+                        const activeTab = "proof"; // always show 4-metric execution proof
                         const proofData = computeFunctionProof(fn, fileCov, meta);
                         const isAnon = isAnonymousName(fn.cleanName);
                         const displayFnName = isAnon ? (businessFunctions.length === 0 ? `${fileBaseName} [default]` : fn.cleanName) : fn.cleanName;
@@ -2125,7 +1857,7 @@ export default function UnitTestTraceabilityMatrix({
                               </div>
 
                               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                {/* Category Status Pill */}
+                                {/* Function Status Pill */}
                                 <span
                                   style={{
                                     fontSize: 11,
@@ -2134,26 +1866,40 @@ export default function UnitTestTraceabilityMatrix({
                                     borderRadius: 4,
                                     background: fn.tests.length === 0 && (fn.hit || 0) === 0
                                       ? (isLight ? "#fff1f2" : "rgba(239, 68, 68, 0.15)")
-                                      : fn.coveredCategoriesCount === 4
+                                      : fn.isFullyCovered
                                         ? (isLight ? "#ecfdf5" : "rgba(16, 185, 129, 0.15)")
                                         : (isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.15)"),
                                     color: fn.tests.length === 0 && (fn.hit || 0) === 0
                                       ? (isLight ? "#dc2626" : "#f87171")
-                                      : fn.coveredCategoriesCount === 4
+                                      : fn.isFullyCovered
                                         ? (isLight ? "#059669" : "#4ade80")
                                         : (isLight ? "#b45309" : "#fbbf24"),
                                     border: fn.tests.length === 0 && (fn.hit || 0) === 0
                                       ? (isLight ? "1px solid #fecdd3" : "1px solid rgba(239, 68, 68, 0.3)")
-                                      : fn.coveredCategoriesCount === 4
+                                      : fn.isFullyCovered
                                         ? (isLight ? "1px solid #a7f3d0" : "1px solid rgba(16, 185, 129, 0.3)")
                                         : (isLight ? "1px solid #fde68a" : "1px solid rgba(245, 158, 11, 0.3)"),
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 4,
                                   }}
                                 >
-                                  {fn.tests.length === 0 && (fn.hit || 0) === 0
-                                    ? "⚑ 0 tests (Uncovered)"
-                                    : fn.coveredCategoriesCount === 4
-                                      ? `✓ 4/4 Categories (${fn.tests.length} tests)`
-                                      : `⚠️ ${fn.coveredCategoriesCount}/4 Categories (${fn.tests.length} tests)`}
+                                  {fn.tests.length === 0 && (fn.hit || 0) === 0 ? (
+                                    <>
+                                      <AlertCircle size={11} />
+                                      <span>Uncovered (0 tests)</span>
+                                    </>
+                                  ) : fn.isFullyCovered ? (
+                                    <>
+                                      <CheckCircle2 size={11} />
+                                      <span>100% Covered ({fn.tests.length} tests)</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <AlertTriangle size={11} />
+                                      <span>Partial Coverage ({fn.tests.length} tests)</span>
+                                    </>
+                                  )}
                                 </span>
                                 </div>
                               </div>
@@ -2173,49 +1919,23 @@ export default function UnitTestTraceabilityMatrix({
                                 {/* Tab selector inside expanded function: 4-Metric Proof vs 4-Category Decision Table */}
                                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
                                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                    <button
-                                      onClick={() => setActiveTabByFunc((prev) => ({ ...prev, [fnId]: "proof" }))}
+                                    <div
                                       style={{
                                         padding: "4px 10px",
                                         borderRadius: 6,
                                         fontSize: 11.5,
                                         fontWeight: 700,
-                                        cursor: "pointer",
-                                        background: activeTab === "proof"
-                                          ? (isLight ? "#6366f1" : "#4f46e5")
-                                          : (isLight ? "#ffffff" : "rgba(255, 255, 255, 0.04)"),
-                                        color: activeTab === "proof" ? "#ffffff" : (isLight ? "#475569" : "#cbd5e1"),
-                                        border: activeTab === "proof" ? "1px solid #4f46e5" : (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)"),
+                                        background: isLight ? "#eff6ff" : "rgba(59, 130, 246, 0.15)",
+                                        color: isLight ? "#2563eb" : "#60a5fa",
+                                        border: isLight ? "1px solid #bfdbfe" : "1px solid rgba(59, 130, 246, 0.35)",
                                         display: "flex",
                                         alignItems: "center",
                                         gap: 5,
                                       }}
                                     >
                                       <Calculator size={12} />
-                                      <span>🔬 4-Metric Execution Proof (How this function passed)</span>
-                                    </button>
-
-                                    <button
-                                      onClick={() => setActiveTabByFunc((prev) => ({ ...prev, [fnId]: "matrix" }))}
-                                      style={{
-                                        padding: "4px 10px",
-                                        borderRadius: 6,
-                                        fontSize: 11.5,
-                                        fontWeight: 700,
-                                        cursor: "pointer",
-                                        background: activeTab === "matrix"
-                                          ? (isLight ? "#6366f1" : "#4f46e5")
-                                          : (isLight ? "#ffffff" : "rgba(255, 255, 255, 0.04)"),
-                                        color: activeTab === "matrix" ? "#ffffff" : (isLight ? "#475569" : "#cbd5e1"),
-                                        border: activeTab === "matrix" ? "1px solid #4f46e5" : (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)"),
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: 5,
-                                      }}
-                                    >
-                                      <ShieldCheck size={12} />
-                                      <span>🛡️ 4-Category Decision Table Matrix</span>
-                                    </button>
+                                      <span>4-Metric Execution Proof</span>
+                                    </div>
 
                                     <button
                                       onClick={() => onOpenCFG?.(fn.filePath, fn.cleanName, fn.startLine)}
@@ -2235,7 +1955,7 @@ export default function UnitTestTraceabilityMatrix({
                                       title="Open Control Flow Graph (CFG) and inspect Cyclomatic Complexity (CC)"
                                     >
                                       <GitBranch size={12} />
-                                      <span>📊 View CFG Flow Graph & CC Analysis</span>
+                                      <span>View CFG Flow Graph & CC Analysis</span>
                                     </button>
                                   </div>
 
@@ -2558,21 +2278,8 @@ export default function UnitTestTraceabilityMatrix({
                                   </div>
                                 )}
 
-                                {/* TAB 2: 4-CATEGORY DECISION TABLE MATRIX (Resizable & Draggable Columns) */}
-                                {activeTab === "matrix" && (
-                                  <CategoryMatrix4Cards
-                                    fn={fn}
-                                    isLight={isLight}
-                                    onOpenFile={onOpenFile}
-                                    colWidths={matrixColWidths}
-                                    setColWidths={setMatrixColWidths}
-                                    collapsedCols={matrixCollapsedCols}
-                                    setCollapsedCols={setMatrixCollapsedCols}
-                                  />
-                                )}
-
                                 {/* Guidance & Suggest Action Footer */}
-                                {fn.missingCategories.length > 0 ? (
+                                {!fn.isFullyCovered ? (
                                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                                     <div
                                       style={{
@@ -2590,15 +2297,23 @@ export default function UnitTestTraceabilityMatrix({
                                       }}
                                     >
                                       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                        <span style={{ fontWeight: 700 }}>💡 Missing Coverage Gaps:</span>
-                                        <span>Missing categories: {fn.missingCategories.join(", ")}</span>
+                                        <AlertCircle size={13} style={{ color: "#f59e0b", flexShrink: 0 }} />
+                                        <span style={{ fontWeight: 700 }}>Coverage Gap:</span>
+                                        <span>
+                                          {proofData.uncoveredLines?.length > 0 ? `${proofData.uncoveredLines.length} uncovered lines` : ""}
+                                          {proofData.uncoveredBranches?.length > 0 ? ` (${proofData.uncoveredBranches.length} uncovered branches)` : ""}
+                                          {!proofData.uncoveredLines?.length && !proofData.uncoveredBranches?.length && fn.tests.length === 0 ? "No unit tests exercising this function yet." : ""}
+                                        </span>
                                       </div>
 
                                       {hasPending ? (
                                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                          <span style={{ fontSize: 11.5, fontWeight: 700, color: isLight ? "#15803d" : "#4ade80" }}>
-                                            ✨ {fileSugs.length} test proposal ready
-                                          </span>
+                                          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                            <CheckCircle2 size={12} style={{ color: isLight ? "#15803d" : "#4ade80" }} />
+                                            <span style={{ fontSize: 11.5, fontWeight: 700, color: isLight ? "#15803d" : "#4ade80" }}>
+                                              {fileSugs.length} test suggestion{fileSugs.length > 1 ? "s" : ""} ready
+                                            </span>
+                                          </div>
                                           {onReviewDiff && (
                                             <button
                                               onClick={() => onReviewDiff(fn.filePath)}
@@ -2659,7 +2374,7 @@ export default function UnitTestTraceabilityMatrix({
                                       ) : (
                                         onSuggestTestcase && (
                                           <button
-                                            onClick={() => onSuggestTestcase(fn.filePath)}
+                                            onClick={() => onSuggestTestcase(fn.filePath, fn.functionName || fn.name)}
                                             disabled={isSuggesting}
                                             style={{
                                               padding: "4px 12px",
@@ -2676,7 +2391,7 @@ export default function UnitTestTraceabilityMatrix({
                                               alignItems: "center",
                                               gap: 5,
                                             }}
-                                            title={`Generate unit tests for ${cleanPath} covering missing scenarios (${fn.missingCategories.join(", ")})`}
+                                            title={`Generate unit tests for ${cleanPath} covering uncovered branches and logic`}
                                           >
                                             {isSuggesting ? (
                                               <>
@@ -2685,7 +2400,7 @@ export default function UnitTestTraceabilityMatrix({
                                               </>
                                             ) : (
                                               <>
-                                                <Sparkles size={11} />
+                                                <FileCode2 size={11} />
                                                 <span>Suggest Tests for File</span>
                                               </>
                                             )}
@@ -2752,7 +2467,7 @@ export default function UnitTestTraceabilityMatrix({
                                   >
                                     <CheckCircle2 size={14} style={{ color: "#10b981", flexShrink: 0 }} />
                                     <span>
-                                      <strong>100% Robust Coverage:</strong> This function is exercised across all 4 decision table categories (Happy Path, Boundary Values, Branch Toggling, Error Handling) with verified hermetic execution.
+                                      <strong>100% Covered:</strong> This function is fully exercised across statements, branches, and lines with verified execution.
                                     </span>
                                   </div>
                                 )}

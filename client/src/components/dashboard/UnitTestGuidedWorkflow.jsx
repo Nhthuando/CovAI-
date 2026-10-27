@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import {
   Play,
-  Sparkles,
+  FileCode2,
+  Code2,
   Zap,
   RotateCcw,
   CheckCircle2,
@@ -44,6 +45,7 @@ export default function UnitTestGuidedWorkflow({
   activeJobId = null,
   onRun,
   onBulkSuggest,
+  onOpenSuggestModal = null,
   isBulkSuggesting = false,
   pendingSuggestionsCount = 0,
   pendingFilesCount = 0,
@@ -103,10 +105,12 @@ export default function UnitTestGuidedWorkflow({
   // Determine initial workflow stage:
   // If already 100% verified -> Stage 4
   // If pending suggestions exist -> Stage 3
+  // If baseline has already run -> Stage 2 (Suggest Tests)
   // Otherwise -> Stage 1 (Baseline Measurement)
   const getInitialActiveStage = () => {
     if (is100Percent) return 4;
     if (pendingSuggestionsCount > 0) return 3;
+    if (hasBaselineRun) return 2;
     return 1;
   };
 
@@ -171,10 +175,10 @@ export default function UnitTestGuidedWorkflow({
     {
       num: 2,
       id: "suggest",
-      title: "2. AI Gap Suggestion",
-      shortTitle: "AI Suggestion",
-      desc: "Detect AST coverage gaps & generate 4-category test matrix",
-      icon: Sparkles,
+      title: "2. Suggest Unit Tests",
+      shortTitle: "Suggest Tests",
+      desc: "Analyze AST coverage gaps and generate targeted unit tests",
+      icon: FileCode2,
       isDone: pendingSuggestionsCount > 0 || is100Percent,
       isActive: currentStage === 2,
       isViewing: currentViewStep === 2,
@@ -202,7 +206,7 @@ export default function UnitTestGuidedWorkflow({
       isDone: is100Percent,
       isActive: currentStage === 4,
       isViewing: currentViewStep === 4,
-      badge: is100Percent ? "🏆 100% Verified" : "Continuous Loop"
+      badge: is100Percent ? "100% Verified" : "Continuous Loop"
     }
   ];
 
@@ -514,203 +518,6 @@ export default function UnitTestGuidedWorkflow({
         })}
       </div>
 
-      {/* ── Context Stage Inspector Details Card (Shows detailed info for currentViewStep) ── */}
-      <div
-        style={{
-          borderRadius: 8,
-          padding: "12px 16px",
-          marginBottom: 14,
-          background: isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.025)",
-          border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
-          display: "flex",
-          flexDirection: "column",
-          gap: 10,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-            <span style={{ fontSize: 13, fontWeight: 750, color: isLight ? "#0f172a" : "#f8fafc" }}>
-              {currentViewStep === 1 && "📊 Stage 1: Baseline Measurement & Execution Context"}
-              {currentViewStep === 2 && "✨ Stage 2: AI Gap Suggestion & 4-Category Decision Matrix"}
-              {currentViewStep === 3 && "⚡ Stage 3: Traceability, Safe Code Merge & AST Self-Healing"}
-              {currentViewStep === 4 && "🛡️ Stage 4: Continuous Multi-Metric 100% Verification Loop"}
-            </span>
-            <span
-              style={{
-                fontSize: 10.5,
-                fontWeight: 650,
-                padding: "1px 6px",
-                borderRadius: 4,
-                background: currentViewStep === currentStage
-                  ? (isLight ? "#ecfdf5" : "rgba(34, 197, 94, 0.15)")
-                  : (isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.06)"),
-                color: currentViewStep === currentStage
-                  ? (isLight ? "#059669" : "#4ade80")
-                  : (isLight ? "#64748b" : "#94a3b8"),
-              }}
-            >
-              {currentViewStep === currentStage ? "Currently Active in Pipeline" : "Historical Stage Review"}
-            </span>
-          </div>
-
-          {/* Quick tab switcher link to Traceability */}
-          {onChangeTab && activeTab !== "traceability" && (
-            <button
-              onClick={() => onChangeTab("traceability")}
-              style={{
-                background: "transparent",
-                border: "none",
-                color: isLight ? "#4f46e5" : "#a5b4fc",
-                fontSize: 11.5,
-                fontWeight: 600,
-                cursor: "pointer",
-                padding: "2px 6px",
-                display: "flex",
-                alignItems: "center",
-                gap: 4,
-                textDecoration: "underline",
-              }}
-              title="Open Business Logic Traceability & Decision Table Explorer"
-            >
-              <span>Explore Logic & Test Traceability</span>
-              <ArrowRight size={11} />
-            </button>
-          )}
-        </div>
-
-        {/* Dynamic content per viewed stage */}
-        {currentViewStep === 1 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 12, color: isLight ? "#334155" : "#cbd5e1" }}>
-            <div>
-              {hasBaselineRun ? (
-                <span>
-                  Initial baseline analysis executed via <strong>Jest & Vitest</strong> in hermetic RAM sandbox.
-                  Recorded: <b>Statements {statementsPct}%</b> ({rawTotals?.statements?.covered || 0}/{rawTotals?.statements?.total || 0}),{" "}
-                  <b>Branches {branchesPct}%</b> ({rawTotals?.branches?.covered || 0}/{rawTotals?.branches?.total || 0}),{" "}
-                  <b>Functions {functionsPct}%</b> ({rawTotals?.functions?.covered || 0}/{rawTotals?.functions?.total || 0}),{" "}
-                  <b>Lines {linesPct}%</b> ({rawTotals?.lines?.covered || 0}/{rawTotals?.lines?.total || 0}).
-                </span>
-              ) : (
-                <span>No initial baseline test execution recorded yet. Click Run Baseline Analysis to start measuring.</span>
-              )}
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 11.5 }}>
-              <span style={{ color: isLight ? "#64748b" : "#8b949e" }}>Engine: <strong>Jest / Vitest</strong></span>
-              <span style={{ color: isLight ? "#64748b" : "#8b949e" }}>Isolation: <strong>Universal Mock Proxy (Prisma, Axios, Redis)</strong></span>
-              {onChangeTab && (
-                <button
-                  onClick={() => onChangeTab("terminal")}
-                  style={{
-                    background: "transparent",
-                    border: "none",
-                    color: isLight ? "#0284c7" : "#38bdf8",
-                    cursor: "pointer",
-                    textDecoration: "underline",
-                    fontSize: 11,
-                    padding: 0,
-                  }}
-                >
-                  View Execution Logs
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
-        {currentViewStep === 2 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 12, color: isLight ? "#334155" : "#cbd5e1" }}>
-            <div>
-              {is100Percent ? (
-                <span style={{ color: isLight ? "#15803d" : "#4ade80" }}>
-                  ✓ <b>AST Fully Optimized:</b> 0 uncovered branches remaining across all source files. Code logic is exercised across all 4 decision categories.
-                </span>
-              ) : pendingSuggestionsCount > 0 ? (
-                <span>
-                  ✓ <b>{pendingSuggestionsCount} tests generated</b> across {pendingFilesCount} files ready to be reviewed and merged.
-                </span>
-              ) : (
-                <span>
-                  AI scans AST decision branches, Control Flow Graph (CFG), and Cyclomatic Complexity (CC) to generate complementary unit tests satisfying McCabe's Basis Path testing invariants.
-                </span>
-              )}
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 11 }}>
-              <span style={{ padding: "2px 7px", borderRadius: 4, background: "rgba(16, 185, 129, 0.12)", color: "#10b981", border: "1px solid rgba(16, 185, 129, 0.3)" }}>🟢 A. Happy Path</span>
-              <span style={{ padding: "2px 7px", borderRadius: 4, background: "rgba(245, 158, 11, 0.12)", color: "#f59e0b", border: "1px solid rgba(245, 158, 11, 0.3)" }}>🟡 B. Boundary Values</span>
-              <span style={{ padding: "2px 7px", borderRadius: 4, background: "rgba(2, 132, 199, 0.12)", color: "#0284c7", border: "1px solid rgba(2, 132, 199, 0.3)" }}>🔵 C. Branch Toggling</span>
-              <span style={{ padding: "2px 7px", borderRadius: 4, background: "rgba(239, 68, 68, 0.12)", color: "#ef4444", border: "1px solid rgba(239, 68, 68, 0.3)" }}>🔴 D. Error Handling</span>
-              <span style={{ padding: "2px 7px", borderRadius: 4, background: "rgba(168, 85, 247, 0.12)", color: "#c084fc", border: "1px solid rgba(168, 85, 247, 0.3)" }}>📊 CFG Basis Paths</span>
-            </div>
-          </div>
-        )}
-
-        {currentViewStep === 3 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 12, color: isLight ? "#334155" : "#cbd5e1" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-              <span>
-                {pendingSuggestionsCount > 0
-                  ? `⚡ ${pendingSuggestionsCount} unit test proposals ready across ${pendingFilesCount} files. Review side-by-side diffs or safely merge all.`
-                  : "✓ All generated unit tests have been safely merged into project test suites."}
-              </span>
-              {onOpenReviewModal && (
-                <button
-                  onClick={onOpenReviewModal}
-                  style={{
-                    background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.08)",
-                    border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.2)",
-                    color: isLight ? "#1e293b" : "#f1f5f9",
-                    borderRadius: 6,
-                    padding: "4px 10px",
-                    fontSize: 11.5,
-                    fontWeight: 650,
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 5,
-                  }}
-                  className="hover:opacity-90"
-                  title="Inspect side-by-side test file changes and assertions in Monaco Diff Editor"
-                >
-                  <FileDiff size={13} style={{ color: "#6366f1" }} />
-                  <span>
-                    {pendingSuggestionsCount > 0
-                      ? `🔍 Review Diffs & Assertions (${pendingSuggestionsCount})`
-                      : "🔍 Review Merged Diffs"}
-                  </span>
-                </button>
-              )}
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", fontSize: 11, color: isLight ? "#64748b" : "#8b949e" }}>
-              <span>🛡️ <b>Safe Hoisting:</b> Imports extracted & hoisted to top of file</span>
-              <span>🩹 <b>AST Syntax Healing:</b> Auto-heals quotes, trailing tokens, balanced parens</span>
-              <span>🚫 <b>Self-Assignment Ban:</b> <code>const X = X</code> sanitized to prevent TDZ</span>
-            </div>
-          </div>
-        )}
-
-        {currentViewStep === 4 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 12, color: isLight ? "#334155" : "#cbd5e1" }}>
-            <div>
-              {is100Percent ? (
-                <span style={{ color: isLight ? "#15803d" : "#4ade80", fontWeight: 650 }}>
-                  🏆 <b>100% Invariant Verified Across All 4 Dimensions:</b> Statements 100%, Branches 100%, Functions 100%, Lines 100%. Hermetic test suites execute cleanly in RAM without modifying source code.
-                </span>
-              ) : (
-                <span>
-                  Continuous verification runs Jest & Vitest to measure verified coverage gains after applying test suggestions until all 4 metrics reach 100%.
-                </span>
-              )}
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", fontSize: 11, fontFamily: "var(--font-mono)" }}>
-              <span style={{ color: statementsPct >= 100 ? "#10b981" : "#f59e0b" }}>Statements: {statementsPct}% {statementsPct >= 100 ? "✓" : "⚑"}</span>
-              <span style={{ color: branchesPct >= 100 ? "#10b981" : "#f59e0b" }}>Branches: {branchesPct}% {branchesPct >= 100 ? "✓" : "⚑"}</span>
-              <span style={{ color: functionsPct >= 100 ? "#10b981" : "#f59e0b" }}>Functions: {functionsPct}% {functionsPct >= 100 ? "✓" : "⚑"}</span>
-              <span style={{ color: linesPct >= 100 ? "#10b981" : "#f59e0b" }}>Lines: {linesPct}% {linesPct >= 100 ? "✓" : "⚑"}</span>
-            </div>
-          </div>
-        )}
-      </div>
-
       {/* ── Bottom Bar: Unified Smart Call-to-Action Bar ── */}
       <div
         style={{
@@ -747,14 +554,14 @@ export default function UnitTestGuidedWorkflow({
             </div>
           ) : isBulkSuggesting ? (
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <Sparkles size={16} className="animate-spin text-purple-400" />
-              <span style={{ fontSize: 12.5, fontWeight: 650, color: isLight ? "#6d28d9" : "#d8b4fe" }}>
-                AI is scanning AST branch gaps and generating hermetic test suites...
+              <Loader2 size={16} className="animate-spin text-indigo-500" />
+              <span style={{ fontSize: 12.5, fontWeight: 650, color: isLight ? "#4f46e5" : "#c7d2fe" }}>
+                Scanning AST branch gaps and generating hermetic test suites...
               </span>
             </div>
           ) : currentViewStep === 3 ? (
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <Sparkles size={16} style={{ color: "#16a34a" }} />
+              <CheckCircle2 size={16} style={{ color: "#16a34a" }} />
               <div>
                 <span style={{ fontSize: 13, fontWeight: 700, color: isLight ? "#15803d" : "#4ade80" }}>
                   {pendingSuggestionsCount > 0
@@ -884,9 +691,15 @@ export default function UnitTestGuidedWorkflow({
                 </button>
               )}
 
-              {pendingSuggestionsCount === 0 && !is100Percent && onBulkSuggest && (
+              {pendingSuggestionsCount === 0 && !is100Percent && (onOpenSuggestModal || onBulkSuggest) && (
                 <button
-                  onClick={onBulkSuggest}
+                  onClick={() => {
+                    if (onOpenSuggestModal) {
+                      onOpenSuggestModal({ isBulk: true });
+                    } else if (onBulkSuggest) {
+                      onBulkSuggest();
+                    }
+                  }}
                   disabled={isBulkSuggesting}
                   style={{
                     background: isLight ? "#4f46e5" : "#6d5dfb",
@@ -906,15 +719,15 @@ export default function UnitTestGuidedWorkflow({
                     transition: "all 0.15s ease",
                   }}
                   className="hover:opacity-90"
-                  title="Identify AST gaps and generate 4-category unit test matrix for remaining gaps"
+                  title="Identify uncovered code and generate unit tests for remaining gaps"
                 >
-                  <Sparkles size={14} className={isBulkSuggesting ? "animate-spin" : ""} />
+                  {isBulkSuggesting ? <Loader2 size={14} className="animate-spin" /> : <FileCode2 size={14} />}
                   <span>{isBulkSuggesting ? "Analyzing & suggesting..." : "Suggest Next Missing Tests"}</span>
                 </button>
               )}
             </div>
           ) : currentViewStep === 2 && onBulkSuggest ? (
-            /* Action Group for Stage 2: AI Suggest Missing Tests + Re-run */
+            /* Action Group for Stage 2: Suggest Missing Tests + Re-run */
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               {onRun && (
                 <button
@@ -941,7 +754,13 @@ export default function UnitTestGuidedWorkflow({
               )}
 
               <button
-                onClick={onBulkSuggest}
+                onClick={() => {
+                  if (onOpenSuggestModal) {
+                    onOpenSuggestModal({ isBulk: true });
+                  } else if (onBulkSuggest) {
+                    onBulkSuggest();
+                  }
+                }}
                 disabled={isBulkSuggesting}
                 style={{
                   background: isLight ? "#4f46e5" : "#6d5dfb",
@@ -962,9 +781,9 @@ export default function UnitTestGuidedWorkflow({
                   opacity: isBulkSuggesting ? 0.7 : 1,
                 }}
                 className="hover:opacity-90"
-                title="Identify AST gaps and generate 4-category unit test matrix"
+                title="Identify uncovered code and generate unit tests"
               >
-                <Sparkles size={14} className={isBulkSuggesting ? "animate-spin" : ""} />
+                {isBulkSuggesting ? <Loader2 size={14} className="animate-spin" /> : <FileCode2 size={14} />}
                 <span>{isBulkSuggesting ? "Analyzing & suggesting..." : "2. Suggest Missing Tests"}</span>
               </button>
             </div>
@@ -1015,7 +834,7 @@ export default function UnitTestGuidedWorkflow({
                   }}
                   title="Suggest more tests to cover remaining branch gaps"
                 >
-                  <Sparkles size={13} className={isBulkSuggesting ? "animate-spin" : ""} />
+                  {isBulkSuggesting ? <Loader2 size={13} className="animate-spin" /> : <FileCode2 size={13} />}
                   <span>Suggest Next Missing Tests</span>
                 </button>
               )}

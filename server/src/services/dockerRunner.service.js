@@ -9,6 +9,22 @@ import { resolveSnapshotRootDir } from "../utils/projectRootResolver.js";
 
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes default
 
+let hasPsBinary = null;
+export const isPsAvailable = () => {
+  if (process.platform === "win32") return false;
+  if (hasPsBinary !== null) return hasPsBinary;
+  try {
+    const res = spawnSync("ps", ["-o", "pid", "--no-headers", "-p", String(process.pid)], {
+      timeout: 1000,
+      stdio: "ignore",
+    });
+    hasPsBinary = Boolean(res && res.status === 0 && !res.error);
+  } catch {
+    hasPsBinary = false;
+  }
+  return hasPsBinary;
+};
+
 const killProcessTree = (proc) => {
   if (!proc || !proc.pid) return;
   if (process.platform === "win32") {
@@ -17,6 +33,20 @@ const killProcessTree = (proc) => {
       return;
     } catch (_) { }
   }
+
+  // If ps is not installed on Linux (e.g. node:20-slim Docker container),
+  // tree-kill spawns 'ps' without error listeners, causing unhandled 'error' event crash.
+  if (!isPsAvailable()) {
+    try {
+      process.kill(-proc.pid, "SIGKILL");
+      return;
+    } catch (_) { }
+    try {
+      proc.kill("SIGKILL");
+      return;
+    } catch (_) { }
+  }
+
   try {
     treeKill(proc.pid, "SIGKILL", (err) => {
       if (err) {
@@ -170,8 +200,21 @@ export const dockerRunner = {
         if (child.stdin) child.stdin.end();
       } catch (_) { }
 
+      let heartbeatTimer = null;
+      if (jobId) {
+        const execStartTime = Date.now();
+        heartbeatTimer = setInterval(async () => {
+          const elapsedSec = Math.round((Date.now() - execStartTime) / 1000);
+          await addJobLog(jobId, "INFO", `[DockerRunner] Execution in progress (elapsed ${elapsedSec}s)...`).catch(() => { });
+        }, 60000);
+      }
+
       timer = setTimeout(async () => {
         timedOut = true;
+        if (heartbeatTimer) {
+          clearInterval(heartbeatTimer);
+          heartbeatTimer = null;
+        }
         killProcessTree(child);
         if (jobId) {
           await addJobLog(jobId, "ERROR", `[DockerRunner] Execution timed out (${timeoutMs}ms)`).catch(() => { });
@@ -230,6 +273,10 @@ export const dockerRunner = {
 
       child.on("error", async (err) => {
         clearTimeout(timer);
+        if (heartbeatTimer) {
+          clearInterval(heartbeatTimer);
+          heartbeatTimer = null;
+        }
         if (flushTimer) {
           clearTimeout(flushTimer);
           flushTimer = null;
@@ -246,6 +293,10 @@ export const dockerRunner = {
 
       child.on("close", async (code) => {
         clearTimeout(timer);
+        if (heartbeatTimer) {
+          clearInterval(heartbeatTimer);
+          heartbeatTimer = null;
+        }
         if (flushTimer) {
           clearTimeout(flushTimer);
           flushTimer = null;

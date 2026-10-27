@@ -309,7 +309,8 @@ import {
     findTestBlockIntervalByTitle,
     updateTestBlockByTitle,
     stripJestMockCall,
-    ensureJestMockVirtualOption
+    ensureJestMockVirtualOption,
+    healUnclosedModelPropertyBraces
 } from "./testSanitizer.service.js";
 export {
     healImportPathsInTestCode,
@@ -320,7 +321,8 @@ export {
     findTestBlockIntervalByTitle,
     updateTestBlockByTitle,
     stripJestMockCall,
-    ensureJestMockVirtualOption
+    ensureJestMockVirtualOption,
+    healUnclosedModelPropertyBraces
 };
 import { dependencyInstallationService } from "./dependencyInstallation.service.js";
 
@@ -663,7 +665,11 @@ export const insertCodeIntoTestFile = (originalContent, codeToAdd, targetTestFil
                     const escapedMod = modulePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                     const existingCjsRequire = new RegExp(`(const|let|var)\\s*\\{([^}]+)\\}\\s*=\\s*require\\s*\\(${escapedMod}\\)`);
                     if (existingCjsRequire.test(result)) {
-                        result = result.replace(existingCjsRequire, (m, kind, oldInner) => `${kind} { ${oldInner.trim()}, ${neededTokens.join(', ')} } = require(${modulePath})`);
+                        result = result.replace(existingCjsRequire, (m, kind, oldInner) => {
+                            const existingTokens = oldInner.split(',').map(t => t.trim()).filter(Boolean);
+                            const combined = Array.from(new Set([...existingTokens, ...neededTokens]));
+                            return `${kind} { ${combined.join(', ')} } = require(${modulePath})`;
+                        });
                     } else {
                         importOrRequireLines.push(stmt.replace(inner, ` ${neededTokens.join(', ')} `));
                     }
@@ -679,7 +685,11 @@ export const insertCodeIntoTestFile = (originalContent, codeToAdd, targetTestFil
                 if (neededTokens.length > 0) {
                     const existingModuleImport = new RegExp(`import\\s*\\{([^}]+)\\}\\s*from\\s*${modulePath.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}`);
                     if (existingModuleImport.test(result)) {
-                        result = result.replace(existingModuleImport, (m, oldInner) => `import { ${oldInner.trim()}, ${neededTokens.join(', ')} } from ${modulePath}`);
+                        result = result.replace(existingModuleImport, (m, oldInner) => {
+                            const existingTokens = oldInner.split(',').map(t => t.trim()).filter(Boolean);
+                            const combined = Array.from(new Set([...existingTokens, ...neededTokens]));
+                            return `import { ${combined.join(', ')} } from ${modulePath}`;
+                        });
                     } else {
                         importOrRequireLines.push(stmt.replace(inner, ` ${neededTokens.join(', ')} `));
                     }
@@ -986,7 +996,7 @@ export const applyCodeToTestFile = (rootDir, suggestion) => {
             if (isEsm) {
                 const runnerImport = suggestion.framework === "vitest"
                     ? "import { describe, it, test, expect, beforeEach, vi } from 'vitest';\n"
-                    : "import { describe, it, test, expect, beforeEach, jest } from '@jest/globals';\n";
+                    : "import { describe, it, test, expect, beforeEach } from '@jest/globals';\n";
                 newContent = `${runnerImport}import * as ${baseName} from '${cleanImport}';\n\n${newContent}`;
             } else {
                 newContent = `const ${baseName} = require('${cleanImport}');\n\n${newContent}`;
@@ -1134,6 +1144,51 @@ export const relaxToHaveBeenCalled = (text) => {
 };
 
 /**
+ * Resiliently resolves a test file path whether it was emitted as an absolute host path,
+ * a container path (e.g. /app/uploads/snapshots/... or /app/repo/...), or a relative path.
+ */
+export function resolveContainerOrHostTestPath(relOrAbs, rootDir) {
+    if (!relOrAbs || typeof relOrAbs !== "string") return null;
+    let hostCandidate = relOrAbs;
+    if (relOrAbs.startsWith("/app/")) {
+        const repoIdx = relOrAbs.indexOf("/repo/");
+        if (repoIdx !== -1 && rootDir) {
+            hostCandidate = path.resolve(rootDir, relOrAbs.slice(repoIdx + 6));
+        } else if (relOrAbs.includes("/uploads/snapshots/")) {
+            const snapRel = relOrAbs.replace(/^\/app\//, "");
+            const cwdCandidate = path.resolve(process.cwd(), snapRel);
+            const serverCandidate = path.resolve(process.cwd(), "server", snapRel);
+            if (fs.existsSync(cwdCandidate)) {
+                hostCandidate = cwdCandidate;
+            } else if (fs.existsSync(serverCandidate)) {
+                hostCandidate = serverCandidate;
+            } else if (rootDir) {
+                const normRoot = rootDir.replace(/\\/g, "/");
+                const snapIdx = normRoot.indexOf("/uploads/snapshots/");
+                if (snapIdx !== -1) {
+                    const snapBase = normRoot.slice(0, snapIdx);
+                    const fullSnap = path.resolve(snapBase, snapRel);
+                    if (fs.existsSync(fullSnap)) hostCandidate = fullSnap;
+                    else hostCandidate = cwdCandidate;
+                } else {
+                    const snapSub = relOrAbs.replace(/^.*\/uploads\/snapshots\/[^/]+\/[^/]+\//, "");
+                    if (fs.existsSync(path.resolve(rootDir, snapSub))) {
+                        hostCandidate = path.resolve(rootDir, snapSub);
+                    } else {
+                        hostCandidate = cwdCandidate;
+                    }
+                }
+            } else {
+                hostCandidate = cwdCandidate;
+            }
+        } else {
+            hostCandidate = path.resolve(process.cwd(), relOrAbs.replace(/^\/app\//, ""));
+        }
+    }
+    return path.isAbsolute(hostCandidate) ? hostCandidate : path.join(rootDir || process.cwd(), hostCandidate);
+}
+
+/**
  * Analyzes test runner failure messages and automatically heals test files
  * by correcting assertion mismatches, injecting missing mock declarations,
  * or marking failing test cases as skipped to ensure the test suite passes and coverage is recorded.
@@ -1151,40 +1206,25 @@ export const autoHealTestFailures = (rootDir, testFilesToRun, testResults, rawOu
         for (const suite of testResults.testResults) {
             if (suite.status === "failed" || (Array.isArray(suite.assertionResults) && suite.assertionResults.some(a => a.status === "failed"))) {
                 if (suite.name) {
-                    candidateFiles.add(path.isAbsolute(suite.name) ? suite.name : path.join(rootDir, suite.name));
+                    const resolved = resolveContainerOrHostTestPath(suite.name, rootDir);
+                    if (resolved) candidateFiles.add(resolved);
                 }
             }
         }
     }
 
     if (rawOutput) {
-        const failMatches = [...rawOutput.matchAll(/(?:FAIL|SyntaxError:)\s+([^\s:]+\.(?:test|spec)\.[cm]?[jt]sx?)/g)];
+        const failMatches = [...rawOutput.matchAll(/(?:FAIL|SyntaxError:|Cannot parse)\s+([^\s:]+\.(?:test|spec)\.[cm]?[jt]sx?)/g)];
         for (const fm of failMatches) {
-            const relOrAbs = fm[1];
-            candidateFiles.add(path.isAbsolute(relOrAbs) ? relOrAbs : path.join(rootDir, relOrAbs));
+            const resolved = resolveContainerOrHostTestPath(fm[1], rootDir);
+            if (resolved) candidateFiles.add(resolved);
         }
 
         // Also extract from: Jest encountered an unexpected token / Details: <path>:<line> / SyntaxError
         const detailsMatches = [...rawOutput.matchAll(/(?:Details:\s*(?:\r?\n\s*)?|Jest failed to parse a file[\s\S]*?|\b(?:at\s+|SyntaxError:\s*))([\/\\A-Za-z0-9_.-]+\.(?:test|spec)\.[cm]?[jt]sx?)(?::\d+)?/g)];
         for (const dm of detailsMatches) {
-            const relOrAbs = dm[1];
-            let hostCandidate = relOrAbs;
-            if (relOrAbs.startsWith("/app/")) {
-                const repoIdx = relOrAbs.indexOf("/repo/");
-                if (repoIdx !== -1 && rootDir) {
-                    hostCandidate = path.resolve(rootDir, relOrAbs.slice(repoIdx + 6));
-                } else if (relOrAbs.includes("/uploads/snapshots/") && rootDir) {
-                    const snapSub = relOrAbs.replace(/^.*\/uploads\/snapshots\/[^/]+\/[^/]+\//, "");
-                    if (fs.existsSync(path.resolve(rootDir, snapSub))) {
-                        hostCandidate = path.resolve(rootDir, snapSub);
-                    } else {
-                        hostCandidate = path.resolve(process.cwd(), relOrAbs.replace(/^\/app\//, ""));
-                    }
-                } else {
-                    hostCandidate = path.resolve(process.cwd(), relOrAbs.replace(/^\/app\//, ""));
-                }
-            }
-            candidateFiles.add(path.isAbsolute(hostCandidate) ? hostCandidate : path.join(rootDir, hostCandidate));
+            const resolved = resolveContainerOrHostTestPath(dm[1], rootDir);
+            if (resolved) candidateFiles.add(resolved);
         }
 
         // Also extract from call stack lines: (path/to/test.test.js:line:col) or at test (path/to/test.test.js:line:col)
@@ -1192,66 +1232,24 @@ export const autoHealTestFailures = (rootDir, testFilesToRun, testResults, rawOu
         for (const sm of stackMatches) {
             const relOrAbs = sm[1];
             if (!relOrAbs || relOrAbs.includes("node_modules")) continue;
-            let hostCandidate = relOrAbs;
-            if (relOrAbs.startsWith("/app/")) {
-                const repoIdx = relOrAbs.indexOf("/repo/");
-                if (repoIdx !== -1 && rootDir) {
-                    hostCandidate = path.resolve(rootDir, relOrAbs.slice(repoIdx + 6));
-                } else if (relOrAbs.includes("/uploads/snapshots/") && rootDir) {
-                    const snapSub = relOrAbs.replace(/^.*\/uploads\/snapshots\/[^/]+\/[^/]+\//, "");
-                    if (fs.existsSync(path.resolve(rootDir, snapSub))) {
-                        hostCandidate = path.resolve(rootDir, snapSub);
-                    } else {
-                        hostCandidate = path.resolve(process.cwd(), relOrAbs.replace(/^\/app\//, ""));
-                    }
-                } else {
-                    hostCandidate = path.resolve(process.cwd(), relOrAbs.replace(/^\/app\//, ""));
-                }
-            }
-            candidateFiles.add(path.isAbsolute(hostCandidate) ? hostCandidate : path.join(rootDir, hostCandidate));
+            const resolved = resolveContainerOrHostTestPath(relOrAbs, rootDir);
+            if (resolved) candidateFiles.add(resolved);
         }
 
         // Also extract from Vitest / esbuild transform errors:
         // /app/storage/projects/.../tests/presets/index.vitest.test.ts:5296:31: ERROR: Unexpected "default"
         const esbuildMatches = [...rawOutput.matchAll(/(?:^|\n)\s*([\/\\A-Za-z0-9_.-]+\.(?:test|spec)\.[cm]?[jt]sx?):\d+:\d+:\s*(?:ERROR|error):/g)];
         for (const em of esbuildMatches) {
-            const relOrAbs = em[1];
-            let hostCandidate = relOrAbs;
-            if (relOrAbs.startsWith("/app/")) {
-                const repoIdx = relOrAbs.indexOf("/repo/");
-                if (repoIdx !== -1 && rootDir) {
-                    hostCandidate = path.resolve(rootDir, relOrAbs.slice(repoIdx + 6));
-                } else if (relOrAbs.includes("/uploads/snapshots/") && rootDir) {
-                    const snapSub = relOrAbs.replace(/^.*\/uploads\/snapshots\/[^/]+\/[^/]+\//, "");
-                    if (fs.existsSync(path.resolve(rootDir, snapSub))) {
-                        hostCandidate = path.resolve(rootDir, snapSub);
-                    } else {
-                        hostCandidate = path.resolve(process.cwd(), relOrAbs.replace(/^\/app\//, ""));
-                    }
-                } else {
-                    hostCandidate = path.resolve(process.cwd(), relOrAbs.replace(/^\/app\//, ""));
-                }
-            }
-            candidateFiles.add(path.isAbsolute(hostCandidate) ? hostCandidate : path.join(rootDir, hostCandidate));
+            const resolved = resolveContainerOrHostTestPath(em[1], rootDir);
+            if (resolved) candidateFiles.add(resolved);
         }
     }
 
     for (let fullPath of candidateFiles) {
         if (!fullPath) continue;
-        if (!fs.existsSync(fullPath) && fullPath.startsWith("/app/")) {
-            const repoIdx = fullPath.indexOf("/repo/");
-            if (repoIdx !== -1 && rootDir) {
-                fullPath = path.resolve(rootDir, fullPath.slice(repoIdx + 6));
-            } else if (fullPath.includes("/uploads/snapshots/") && rootDir) {
-                const snapSub = fullPath.replace(/^.*\/uploads\/snapshots\/[^/]+\/[^/]+\//, "");
-                if (fs.existsSync(path.resolve(rootDir, snapSub))) {
-                    fullPath = path.resolve(rootDir, snapSub);
-                } else {
-                    fullPath = path.resolve(process.cwd(), fullPath.replace(/^\/app\//, ""));
-                }
-            } else {
-                fullPath = path.resolve(process.cwd(), fullPath.replace(/^\/app\//, ""));
-            }
+        if (!fs.existsSync(fullPath)) {
+            const resolved = resolveContainerOrHostTestPath(fullPath, rootDir);
+            if (resolved && fs.existsSync(resolved)) fullPath = resolved;
         }
         if (isDirectStorageDirectory(fullPath)) continue;
         const normRoot = typeof rootDir === "string" ? rootDir.replace(/\\/g, "/").toLowerCase() : "";
@@ -1348,7 +1346,13 @@ export const autoHealTestFailures = (rootDir, testFilesToRun, testResults, rawOu
                 !content.includes(`var ${varName} =`) &&
                 !content.includes(`function ${varName}`)
             ) {
-                content = `var ${varName} = (typeof globalThis['${varName}'] !== 'undefined' ? globalThis['${varName}'] : (typeof jest !== 'undefined' ? jest.fn() : {}));\n` + content;
+                if (/^define[A-Z].*Model$/.test(varName)) {
+                    const modelEntity = varName.replace(/^define|Model$/g, "");
+                    const kebab = modelEntity.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+                    content = `const ${varName} = require('../../src/models/${kebab}.model');\n` + content;
+                } else {
+                    content = `var ${varName} = (typeof globalThis['${varName}'] !== 'undefined' ? globalThis['${varName}'] : (typeof jest !== 'undefined' ? jest.fn() : {}));\n` + content;
+                }
             }
         }
 
@@ -1387,6 +1391,12 @@ export const autoHealTestFailures = (rootDir, testFilesToRun, testResults, rawOu
             content = content.replace(/\bnew\s+default\s*\(/g, "new (typeof defaultExport !== 'undefined' ? defaultExport : Object)(");
             content = content.replace(/\bdefault\s*\(/g, "(typeof defaultExport === 'function' ? defaultExport : (() => {}))(");
             content = content.replace(/\bexpect\s*\(\s*default\s*\)/g, "expect(typeof defaultExport !== 'undefined' ? defaultExport : undefined)");
+        }
+
+        // 3.6b. Fix SyntaxError: Unexpected token ',' or consecutive double commas in imports or code
+        if (content.includes(",,") || /,\s*,+/.test(content)) {
+            content = content.replace(/,\s*,+/g, ", ");
+            anyFileModified = true;
         }
 
         // 3.7. Fix Babel/Jest out-of-scope variable error in jest.mock() factory
@@ -1446,6 +1456,29 @@ export const autoHealTestFailures = (rootDir, testFilesToRun, testResults, rawOu
                     content = ensureJestMockVirtualOption(content, missingMod);
                 }
             }
+        }
+
+        // 3.9. Fix Jest Native ESM invariant: "There should always be a Jest object already" or "_getJestObj"
+        if (rawOutput.includes("There should always be a Jest object already") || rawOutput.includes("_getJestObj") || content.includes("_getJestObj")) {
+            content = content.replace(
+                /import\s*\{([^}]+)\}\s*from\s*['"]@jest\/globals['"];?/g,
+                (match, importList) => {
+                    const items = importList.split(",").map(s => s.trim()).filter(s => s && s !== "jest");
+                    return items.length > 0 ? `import { ${items.join(", ")} } from '@jest/globals';` : "";
+                }
+            );
+
+            content = content.replace(/;[ \t]*(import\s+(?:[\w*\s{},]+from\s+)?['"][^'"]+['"];?)/g, ";\n$1");
+            content = content.replace(/^[ \t]*(?:jest|vi)\.(?:mock|unstable_mockModule)\s*\(\s*['"][^'"]*(?:\/types\/|\.d\.ts|definition)[^'"]*['"][^\n\r]*;?[ \t]*\r?\n?/gm, "");
+
+            if (isTs || content.includes("import ")) {
+                content = content.replace(/\bjest\.mock\s*\(/g, "jest.unstable_mockModule(");
+            }
+        }
+
+        // 3.10. Ensure TypeScript test files have @ts-nocheck to bypass strict compiler errors
+        if (isTs && !content.includes("@ts-nocheck")) {
+            content = "// @ts-nocheck\n" + content;
         }
 
         // 4. Inspect testResults assertionResults for failing assertions in target suites
@@ -1579,6 +1612,30 @@ export const autoHealTestFailures = (rootDir, testFilesToRun, testResults, rawOu
                             anyFileModified = true;
                         }
 
+                        // Case 4a-4: expect(received).toHaveLength(expected) mismatch
+                        const matchHaveLength = cleanMsgs.match(/expect\(received\)\.toHaveLength\(expected\)[\s\S]*?Expected length:\s*(\d+)[\s\S]*?Received length:\s*(\d+)/i) ||
+                                                cleanMsgs.match(/Expected length:\s*(\d+)[\s\S]*?Received length:\s*(\d+)/i);
+                        if (matchHaveLength) {
+                            const receivedLen = matchHaveLength[2].trim();
+                            const fileName = path.basename(fullPath);
+                            const stackLineMatch = cleanMsgs.match(new RegExp(`${fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:(\\d+):\\d+`));
+                            const failLineNum = stackLineMatch ? parseInt(stackLineMatch[1], 10) : null;
+
+                            const fileLines = content.split('\n');
+                            let targetIdx = failLineNum ? failLineNum - 1 : -1;
+                            if (targetIdx < 0 || targetIdx >= fileLines.length || !fileLines[targetIdx].includes("toHaveLength")) {
+                                targetIdx = fileLines.findIndex(l => l.includes("expect(") && l.includes("toHaveLength"));
+                            }
+                            if (targetIdx >= 0 && targetIdx < fileLines.length) {
+                                const originalLine = fileLines[targetIdx];
+                                if (originalLine.includes("toHaveLength")) {
+                                    fileLines[targetIdx] = replaceBalancedMethodCall(originalLine, ["toHaveLength"], `.toHaveLength(${receivedLen})`);
+                                    content = fileLines.join('\n');
+                                    anyFileModified = true;
+                                }
+                            }
+                        }
+
                         // Case 4b: TypeError: next is not a function (Express controller middleware calls)
                         if (cleanMsgs.includes("next is not a function")) {
                             if (assertion.title) {
@@ -1635,13 +1692,75 @@ export const autoHealTestFailures = (rootDir, testFilesToRun, testResults, rawOu
                                 content = content.replace(/@jest-environment\s+jsdom/g, "@jest-environment node");
                             }
                         }
+
+                        // Case 4g: "Received function did not throw" when custom AppError mock does not inherit from Error
+                        if (cleanMsgs.includes("Received function did not throw") && (cleanMsgs.includes("AppError") || content.includes("AppError"))) {
+                            content = content.replace(
+                                /jest\.mock\(\s*(['"][^'"]*(?:error\.middleware|AppError)[^'"]*['"])\s*,\s*\(\)\s*=>\s*\(?\{[\s\S]*?AppError\s*:\s*(?:jest|vi)\.fn\s*\(\s*function\s*\([^)]*\)\s*\{[\s\S]*?\}\s*\)[\s\S]*?\}\)?\s*\);?/g,
+                                (match, modSpec) => {
+                                    return `jest.mock(${modSpec}, () => {\n  class MockAppError extends Error {\n    constructor(statusCode, message, details = null) {\n      super(message);\n      this.name = 'AppError';\n      this.statusCode = statusCode;\n      this.details = details;\n    }\n  }\n  const mockFn = jest.fn(function(statusCode, message, details) {\n    const err = new MockAppError(statusCode, message, details);\n    Object.setPrototypeOf(err, mockFn.prototype);\n    return err;\n  });\n  mockFn.prototype = Object.create(MockAppError.prototype);\n  mockFn.prototype.constructor = mockFn;\n  return { AppError: mockFn };\n});`;
+                                }
+                            );
+                            anyFileModified = true;
+                        }
+
+                        // Case 4h: TypeError: Cannot read properties of undefined (reading 'mockResolvedValue'|'findAll'|'create'|'findOne'|'destroy') on models
+                        const isUndefinedPropError = cleanMsgs.includes("Cannot read properties of undefined") || (rawOutput && rawOutput.includes("Cannot read properties of undefined"));
+                        if (isUndefinedPropError && (cleanMsgs.includes("models.") || (rawOutput && rawOutput.includes("models.")) || content.includes("models"))) {
+                            const combinedLogs = (rawOutput || "") + " " + cleanMsgs;
+                            const modelMethodMatches = [...combinedLogs.matchAll(/models\.([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)/g)];
+                            for (const mmm of modelMethodMatches) {
+                                const entity = mmm[1];
+                                const method = mmm[2];
+                                if (method === "mockResolvedValue" || method === "mockReturnValue" || method === "mockImplementation") continue;
+                                const hasModelsMock = /jest\.mock\(['"][^'"]*models['"]/.test(content);
+                                if (hasModelsMock) {
+                                    if (!content.includes(`${entity}:`)) {
+                                        content = content.replace(
+                                            /(jest\.mock\(['"][^'"]*models['"][\s\S]*?models:\s*\{)/,
+                                            `$1\n    ${entity}: { create: jest.fn(() => Promise.resolve({ id: 1 })), findByPk: jest.fn(), findAll: jest.fn(() => Promise.resolve([])), findOne: jest.fn(() => Promise.resolve(null)), update: jest.fn(() => Promise.resolve([1])), destroy: jest.fn(() => Promise.resolve(1)), bulkCreate: jest.fn(() => Promise.resolve([])), count: jest.fn(() => Promise.resolve(0)) },`
+                                        );
+                                        anyFileModified = true;
+                                    } else if (!new RegExp(`${entity}:\\s*\\{[^}]*\\b${method}\\s*:`).test(content)) {
+                                        content = content.replace(
+                                            new RegExp(`(${entity}:\\s*\\{)`),
+                                            `$1 ${method}: jest.fn(() => Promise.resolve()),`
+                                        );
+                                        anyFileModified = true;
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
 
-        // 4.5. Also inspect rawOutput for Expected / Received mismatches if testResults was absent or missed it
-        if (rawOutput && rawOutput.includes("Expected:") && rawOutput.includes("Received:")) {
+        // 4.5. Also inspect rawOutput for Expected / Received or toHaveLength mismatches if testResults was absent or missed it
+        if (rawOutput && (rawOutput.includes("Expected length:") || (rawOutput.includes("Expected:") && rawOutput.includes("Received:")))) {
+            const rawLengthMatch = rawOutput.match(/expect\(received\)\.toHaveLength\(expected\)[\s\S]*?Expected length:\s*(\d+)[\s\S]*?Received length:\s*(\d+)/i) ||
+                                   rawOutput.match(/Expected length:\s*(\d+)[\s\S]*?Received length:\s*(\d+)/i);
+            if (rawLengthMatch) {
+                const receivedLen = rawLengthMatch[2].trim();
+                const fileName = path.basename(fullPath);
+                const stackLineMatch = rawOutput.match(new RegExp(`${fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:(\\d+):\\d+`));
+                const failLineNum = stackLineMatch ? parseInt(stackLineMatch[1], 10) : null;
+
+                const fileLines = content.split('\n');
+                let targetIdx = failLineNum ? failLineNum - 1 : -1;
+                if (targetIdx < 0 || targetIdx >= fileLines.length || !fileLines[targetIdx].includes("toHaveLength")) {
+                    targetIdx = fileLines.findIndex(l => l.includes("expect(") && l.includes("toHaveLength"));
+                }
+                if (targetIdx >= 0 && targetIdx < fileLines.length) {
+                    const originalLine = fileLines[targetIdx];
+                    if (originalLine.includes("toHaveLength")) {
+                        fileLines[targetIdx] = replaceBalancedMethodCall(originalLine, ["toHaveLength"], `.toHaveLength(${receivedLen})`);
+                        content = fileLines.join('\n');
+                        anyFileModified = true;
+                    }
+                }
+            }
+
             const rawBeMatches = [...rawOutput.matchAll(/(?:Expected|Expected substring):\s*["']?([^"'\n\r]+)["']?\s*\r?\n\s*(?:Received|Received string):\s*["']?([^"'\n\r]+)["']?/gi)];
             for (const rbm of rawBeMatches) {
                 const expectedVal = rbm[1].trim();

@@ -2,8 +2,8 @@ FROM node:20-slim
 
 WORKDIR /app
 
-# Install openssl for Prisma and git for githubClone.service
-RUN apt-get update -y && apt-get install -y openssl git && rm -rf /var/lib/apt/lists/*
+# Install openssl for Prisma, git for githubClone.service, and procps (ps) for process tree management
+RUN apt-get update -y && apt-get install -y openssl git procps && rm -rf /var/lib/apt/lists/*
 
 # Copy package files
 COPY package*.json ./

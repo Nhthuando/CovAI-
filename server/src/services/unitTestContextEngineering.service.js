@@ -430,11 +430,16 @@ export const buildIsolationMockContracts = ({
     // 1. Detect Environment Variables
     const envMatches = [...codeToInspect.matchAll(/process\.env\.([A-Z0-9_]+)/g)].map(m => m[1]);
     const uniqueEnvs = Array.from(new Set(envMatches)).filter(v => !["NODE_ENV", "PATH", "HOME", "USER"].includes(v));
+    if (/quickbooks/i.test(codeToInspect)) {
+        for (const qbKey of ["QUICKBOOKS_CLIENT_ID", "QUICKBOOKS_CLIENT_SECRET", "QUICKBOOKS_REDIRECT_URI", "QUICKBOOKS_ENVIRONMENT"]) {
+            if (!uniqueEnvs.includes(qbKey)) uniqueEnvs.push(qbKey);
+        }
+    }
     let envMockCode = "";
     if (uniqueEnvs.length > 0) {
         detectedDependencies.push("environment-variables");
         envMockCode = `// 1. Mock Environment Variables\nprocess.env.NODE_ENV = 'test';\n` +
-            uniqueEnvs.map(v => `process.env.${v} = process.env.${v} || 'test-${v.toLowerCase()}';`).join("\n") + "\n\n";
+            uniqueEnvs.map(v => (v.includes("URI") || v.includes("URL")) ? `process.env.${v} = process.env.${v} || 'http://localhost:8000/callback';` : `process.env.${v} = process.env.${v} || 'test-${v.toLowerCase()}';`).join("\n") + "\n\n";
     }
 
     // 2. Detect Prisma / Database
@@ -602,7 +607,8 @@ jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, de
     }
 
     // 8. Detect Downstream Local Services & Models (Pure RAM Isolation)
-    const localRequires = [...new Set([...sourceCode.matchAll(/(?:require\s*\(\s*['"](\.[^'"]+)['"]\s*\)|from\s+['"](\.[^'"]+)['"])/g)].map(m => m[1] || m[2]))];
+    const localRequires = [...new Set([...sourceCode.matchAll(/(?:require\s*\(\s*['"](\.[^'"]+)['"]\s*\)|from\s+['"](\.[^'"]+)['"])/g)].map(m => m[1] || m[2]))]
+        .filter(reqPath => !/(?:\/types\/|\.d\.ts$|definition)/i.test(reqPath));
     let localServicesMockCode = "";
     if (localRequires.length > 0) {
         detectedDependencies.push("downstream-local-services");
@@ -611,7 +617,7 @@ jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, de
             `  const stubFn = () => (${isVitest ? "vi.fn" : "jest.fn"}(() => Promise.resolve({ id: 1, name: 'Sample Item', title: 'Sample Title', status: 'ACTIVE', score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90, filename: 'sample.pdf', analysis: { score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }, toJSON() { return { id: 1, score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }; } })));\n` +
             `  const baseTarget = {\n` +
             `    models: mockCreateModelRegistry(),\n` +
-            `    AppError: class extends Error { constructor(sc, m, d) { super(m); this.statusCode = sc; this.details = d; } },\n` +
+            `    AppError: class extends Error { statusCode; details; constructor(sc, m, d) { super(m); this.statusCode = sc; this.details = d; } },\n` +
             `    asyncHandler: (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next),\n` +
             `    errorMiddleware: ${isVitest ? "vi.fn" : "jest.fn"}((err, req, res, next) => res.status(err.statusCode || 500).json({ message: err.message }))\n` +
             `  };\n` +
@@ -643,7 +649,8 @@ jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, de
         localServicesMockCode += "\n";
     }
 
-    const mockPreambleCode = `${envMockCode}${prismaMockCode}${axiosMockCode}${bullMockCode}${configMockCode}${thirdPartyMockCode}${localServicesMockCode}${controllerMockCode}${timersMockCode}`.trim();
+    const trimmedPreamble = `${envMockCode}${prismaMockCode}${axiosMockCode}${bullMockCode}${configMockCode}${thirdPartyMockCode}${localServicesMockCode}${controllerMockCode}${timersMockCode}`.trim();
+    const mockPreambleCode = trimmedPreamble ? trimmedPreamble + "\n\n" : "";
 
     const mockInstructions = [
         "MANDATORY ISOLATION MOCK CONTRACTS:",
