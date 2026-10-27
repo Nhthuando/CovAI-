@@ -18,6 +18,8 @@ import JobQueue from "./JobQueue";
 import ProjectArchitecturePanel from "./ProjectArchitecturePanel";
 import CFGCalculator from "./CFGCalculator";
 import QualityDashboard from "./QualityDashboard";
+import UnifiedDashboard from "./unified/UnifiedDashboard";
+import { buildWorkspaceUrl } from "../../services/unifiedDashboard/workspaceNavigation";
 import SettingsSidebar from "./settings/SettingsSidebar";
 import UserProfile from "./settings/UserProfile";
 import Appearance from "./settings/Appearance";
@@ -135,7 +137,30 @@ function LayoutInner() {
     if (cType) {
       setCoverageType(cType);
     }
-  }, [location.search]);
+
+    const focusFile = params.get("focusFile");
+    const focusEndpoint = params.get("focusEndpoint");
+    const focusScenario = params.get("focusScenario");
+    if (focusFile) {
+      showToast({
+        type: "info",
+        title: "Navigated to Unit Tests",
+        message: `Focus target: ${focusFile}`,
+      });
+    } else if (focusEndpoint) {
+      showToast({
+        type: "info",
+        title: "Navigated to Integration Tests",
+        message: `Focus target: ${focusEndpoint}`,
+      });
+    } else if (focusScenario) {
+      showToast({
+        type: "info",
+        title: "Navigated to System Tests",
+        message: `Focus target: ${focusScenario}`,
+      });
+    }
+  }, [location.search, showToast]);
 
   const [activeSetting, setActiveSetting] = useState("profile");
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -149,7 +174,7 @@ function LayoutInner() {
   const [activeFileId, setActiveFileId] = useState(null);
   const initialCoverageType = searchParams.get("coverageType") || "unit";
   const [coverageType, setCoverageType] = useState(initialCoverageType);
-  const screenContext = useMemo(() => ({ activity: activeActivity, testType: activeActivity === "coverage" ? coverageType : undefined, filePath: activeActivity === "explorer" ? activeTabId || undefined : undefined }), [activeActivity, coverageType, activeTabId]);
+  const screenContext = useMemo(() => ({ activity: activeActivity, testType: activeActivity === "coverage" ? coverageType : activeActivity === "overview" ? "overview" : undefined, filePath: activeActivity === "explorer" ? activeTabId || undefined : undefined }), [activeActivity, coverageType, activeTabId]);
   const [showImport, setShowImport] = useState(false);
   const [showQualityDashboard, setShowQualityDashboard] = useState(false);
   const [cfgInitialContext, setCfgInitialContext] = useState(null);
@@ -853,7 +878,7 @@ function LayoutInner() {
           </motion.div>
         )}
         <AnimatePresence initial={false}>
-          {sidebarOpen && activeActivity !== "architecture" && (
+          {sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && (
             <motion.div
               key="sidebar"
               initial={
@@ -930,7 +955,7 @@ function LayoutInner() {
             </motion.div>
           )}
         </AnimatePresence>
-        {!isMobile && sidebarOpen && activeActivity !== "architecture" && (
+        {!isMobile && sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && (
           <PanelResizer
             onMouseDown={handleSidebarResize}
             isDragging={isDraggingSidebar}
@@ -968,6 +993,26 @@ function LayoutInner() {
             <ProjectArchitecturePanel
               projectId={project?.id}
               initialFile={archInitialContext?.initialFile}
+            />
+          </div>
+
+          <div className={activeActivity === "overview" ? "w-full h-full overflow-y-auto" : "hidden"}>
+            <UnifiedDashboard
+              projectId={project?.id}
+              project={project}
+              snapshotId={
+                searchParams.get("snapshotId") ||
+                project?.latestSnapshotId ||
+                project?.snapshots?.[0]?.id ||
+                (project?.id
+                  ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                  : null) ||
+                testPromptSnapshotId
+              }
+              onNavigateWorkspace={(pillar, focus) => {
+                const targetUrl = buildWorkspaceUrl(location, pillar, focus);
+                navigate(targetUrl);
+              }}
             />
           </div>
 
@@ -1026,7 +1071,7 @@ function LayoutInner() {
             </div>
           </div>
 
-          <div className={activeActivity !== "settings" && activeActivity !== "jobs" && activeActivity !== "architecture" && activeActivity !== "coverage" ? "w-full h-full" : "hidden"}>
+          <div className={activeActivity !== "settings" && activeActivity !== "jobs" && activeActivity !== "architecture" && activeActivity !== "coverage" && activeActivity !== "overview" ? "w-full h-full" : "hidden"}>
                 <Editor
                   tabs={tabs}
                   activeTabId={activeTabId}

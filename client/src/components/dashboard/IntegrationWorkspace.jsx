@@ -951,13 +951,13 @@ export default function IntegrationWorkspace({
       totalApis > 0 ? Math.round((testedApis / totalApis) * 100) : 0;
 
     const dedupedScenarios = Array.from(uniqueScenariosMap.values());
-    const dedupPassed = dedupScenarios.filter(
+    const dedupPassed = dedupedScenarios.filter(
       (s) =>
         s.status === "passed" ||
         s.rawJestStatus === "passed" ||
         s.executionVerdict === "PASS",
     ).length;
-    const dedupFailed = dedupScenarios.filter(
+    const dedupFailed = dedupedScenarios.filter(
       (s) =>
         s.status === "failed" ||
         s.rawJestStatus === "failed" ||
