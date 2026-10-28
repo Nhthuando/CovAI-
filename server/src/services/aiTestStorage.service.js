@@ -15,6 +15,10 @@ export const resolveAndValidateAiTestPath = (rootDir, filePath) => {
     if (path.isAbsolute(filePath)) {
         throw new ServiceError(`Generated path must be relative: ${filePath}`, 400);
     }
+    if (filePath.replaceAll("\\", "/").split("/").some(part => /^(?:\.git|node_modules|\.covai-collaboration.*)$/i.test(part)
+        || /^\.env(?:\.|$)/i.test(part) || /[\0\r\n]/.test(part))) {
+        throw new ServiceError("Generated test path uses a reserved workspace location", 400);
+    }
 
     const resolvedPath = path.resolve(rootDir, filePath);
     

@@ -1,3 +1,4 @@
+import { useProjectAccess } from "../../hooks/useProjectAccess";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import SystemTestEvidence from './SystemTestEvidence.jsx';
 import { io } from "socket.io-client";
@@ -473,6 +474,10 @@ export default function CoverageTypeDashboard({
   onOpenCFG,
   runTrigger,
 }) {
+  const projectAccess = useProjectAccess(projectId);
+  const canRun = projectAccess.can("tests.run");
+  const canUseAi = projectAccess.can("ai.use");
+  const canWrite = projectAccess.can("files.write");
   const config = CONFIG[type];
   const { resolvedTheme } = useTheme();
   const isLight = resolvedTheme === "light";
@@ -645,6 +650,7 @@ export default function CoverageTypeDashboard({
   }, []);
 
   const handleGenerateAiSystemTest = async () => {
+    if (!projectAccess.can("ai.use")) return;
     if (onGenerate && !projectId) {
       return onGenerate("system");
     }
@@ -674,11 +680,12 @@ export default function CoverageTypeDashboard({
   const [isSavingAiTest, setIsSavingAiTest] = useState(false);
 
   const handleSaveAiSystemTest = async () => {
+    if (!projectAccess.can("files.write")) return;
     if (!snapshotId || isSavingAiTest) return;
     setIsSavingAiTest(true);
     setGenerateError("");
     try {
-      await saveAiSystemTest(snapshotId);
+      await saveAiSystemTest(snapshotId, { expectedVersion: systemSummary?.latestAiTest?.baseVersion, expectedWorkspaceRevision: systemSummary?.latestAiTest?.workspaceRevision, requestId: crypto.randomUUID() });
       const updatedSys = await load();
       if (updatedSys?.latestAiTest?.status === "VERIFIED") {
         await run();
@@ -878,6 +885,7 @@ export default function CoverageTypeDashboard({
   // Apply single suggestion inline, execute runner, update real coverage
   const handleApplySuggestionInline = useCallback(
     async (filePath, suggestion) => {
+      if (!canWrite) return;
       if (!snapshotId || !suggestion) return;
       const sugId = suggestion.suggestionId || suggestion.id;
       setApplyingSuggestionIds((prev) => new Set(prev).add(sugId));
@@ -1013,6 +1021,7 @@ export default function CoverageTypeDashboard({
   // Apply all suggestions inline safely without overwriting
   const handleApplyAllInline = useCallback(
     async (filePath, suggestions) => {
+      if (!canWrite) return;
       if (!snapshotId || !suggestions?.length) return;
       const sugIds = suggestions.map((s) => s.suggestionId || s.id);
       setApplyingSuggestionIds((prev) => {
@@ -1241,6 +1250,7 @@ export default function CoverageTypeDashboard({
 
   // Apply all suggestions across all files with real-time step progress (1/N, 2/N...)
   const handleApplyAllGlobal = useCallback(async () => {
+    if (!projectAccess.can("files.write")) return;
     if (!snapshotId || allPendingSuggestions.length === 0 || isBulkApplying) return;
 
     setIsBulkApplying(true);
@@ -1528,6 +1538,7 @@ export default function CoverageTypeDashboard({
     }
   }, [snapshotId, type, loadSystemSummary, refetchCoverage]);
   const run = async () => {
+    if (!projectAccess.can("tests.run")) return;
     if (!snapshotId || (running && activeJobIdRef.current)) return;
     setRunning(true);
     setRunProgress(8);
@@ -1802,6 +1813,7 @@ export default function CoverageTypeDashboard({
   const [bulkSuggestMessage, setBulkSuggestMessage] = useState("");
 
   const handleBulkSuggestTest = async () => {
+    if (!projectAccess.can("ai.use")) return;
     let sourceFiles = selectedFiles;
     if ((!sourceFiles || sourceFiles.length === 0) && snapshotId) {
       try {
@@ -2130,7 +2142,7 @@ export default function CoverageTypeDashboard({
             <>
               <button
                 onClick={handleGenerateAiSystemTest}
-                disabled={loading || running || isGenerating}
+                disabled={!canUseAi || loading || running || isGenerating}
                 style={{
                   ...buttonStyle("#67e8f9"),
                   background: isLight
@@ -2160,7 +2172,7 @@ export default function CoverageTypeDashboard({
               </button>
               <button
                 onClick={run}
-                disabled={!snapshotId || (running && Boolean(activeJobIdRef.current)) || isGenerating}
+                disabled={!canRun || !snapshotId || (running && Boolean(activeJobIdRef.current)) || isGenerating}
                 style={{
                   background: (running && Boolean(activeJobIdRef.current))
                     ? (isLight ? "#fce7f3" : "rgba(236, 72, 153, 0.2)")
@@ -2193,7 +2205,7 @@ export default function CoverageTypeDashboard({
             <>
               <button
                 onClick={handleBulkSuggestTest}
-                disabled={(running && Boolean(activeJobIdRef.current)) || isBulkSuggesting}
+                disabled={!canUseAi || (running && Boolean(activeJobIdRef.current)) || isBulkSuggesting}
                 style={{
                   background: isLight ? "#f5f3ff" : "rgba(168, 85, 247, 0.15)",
                   border: isLight ? "1px solid #ddd6fe" : "1px solid rgba(168, 85, 247, 0.4)",
@@ -2228,7 +2240,7 @@ export default function CoverageTypeDashboard({
               </button>
               <button
                 onClick={run}
-                disabled={!snapshotId || (running && Boolean(activeJobIdRef.current))}
+                disabled={!canRun || !snapshotId || (running && Boolean(activeJobIdRef.current))}
                 style={{
                   background: (running && Boolean(activeJobIdRef.current))
                     ? (isLight ? "#e0e7ff" : "rgba(99, 102, 241, 0.2)")
@@ -2285,7 +2297,7 @@ export default function CoverageTypeDashboard({
               </button>
               <button
                 onClick={run}
-                disabled={!snapshotId || (running && Boolean(activeJobIdRef.current))}
+                disabled={!canRun || !snapshotId || (running && Boolean(activeJobIdRef.current))}
                 style={{
                   background: (running && Boolean(activeJobIdRef.current))
                     ? (isLight ? "#e0f2fe" : "rgba(14, 165, 233, 0.2)")
@@ -2352,7 +2364,7 @@ export default function CoverageTypeDashboard({
           {allPendingSuggestions.length > 0 && (
             <button
               onClick={handleApplyAllGlobal}
-              disabled={isBulkApplying || running}
+              disabled={!canWrite || isBulkApplying || running}
               style={{
                 padding: "6px 14px",
                 background: "linear-gradient(135deg, #16a34a 0%, #15803d 100%)",
@@ -4581,7 +4593,7 @@ export default function CoverageTypeDashboard({
                   {type === "unit" && allPendingSuggestions.length > 0 && (
                     <button
                       onClick={handleApplyAllGlobal}
-                      disabled={isBulkApplying}
+                      disabled={!canWrite || isBulkApplying}
                       style={{
                         padding: "3px 10px",
                         background: isLight ? "#f0fdf4" : "rgba(34, 197, 94, 0.15)",
@@ -4758,7 +4770,7 @@ export default function CoverageTypeDashboard({
                   <div style={{ display: "flex", justifyContent: "center", gap: 12 }}>
                     <button
                       onClick={handleGenerateAiSystemTest}
-                      disabled={loading || running || isGenerating}
+                      disabled={!canUseAi || loading || running || isGenerating}
                       style={{
                         ...buttonStyle("#67e8f9"),
                         background: "linear-gradient(135deg, rgba(168,85,247,0.2) 0%, rgba(103,232,249,0.2) 100%)",
@@ -4779,7 +4791,7 @@ export default function CoverageTypeDashboard({
                     </button>
                     <button
                       onClick={run}
-                      disabled={!snapshotId || running || isGenerating}
+                      disabled={!canRun || !snapshotId || running || isGenerating}
                       style={{
                         ...buttonStyle(config.accent),
                         padding: "10px 18px",

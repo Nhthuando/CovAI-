@@ -1,7 +1,8 @@
 import prisma from '../config/prisma.js';
+import {currentProjectOperation,stagePreparedPublication} from './projectOperationWorkspace.service.js';
 
 export const saveCodeHygieneReport = async (snapshotId, issues, summary) => {
-    return await prisma.$transaction(async (tx) => {
+    const persist = async tx => {
         // Idempotent storage: delete existing
         await tx.codeHygieneIssue.deleteMany({ where: { snapshotId } });
         await tx.codeHygieneSummary.deleteMany({ where: { snapshotId } });
@@ -23,7 +24,9 @@ export const saveCodeHygieneReport = async (snapshotId, issues, summary) => {
                 snapshotId
             }
         });
-    });
+    };
+    if(currentProjectOperation()?.preparedPublications) return stagePreparedPublication(persist);
+    return prisma.$transaction(persist);
 };
 
 export const getCodeHygieneReport = async (snapshotId) => {

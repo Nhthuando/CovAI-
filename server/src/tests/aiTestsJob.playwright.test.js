@@ -1,4 +1,4 @@
-import { describe, expect, it, jest, beforeEach } from "@jest/globals";
+import { describe, expect, it, jest, beforeEach, afterEach } from "@jest/globals";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -29,13 +29,51 @@ const notificationMock = {
 };
 
 const prismaMock = {
-  project: { findUnique: jest.fn() },
+  project: { findUnique: jest.fn(), findFirst: jest.fn(async () => ({ id: "proj-1", ownerId: "owner", workspaceRevision: 0 })) },
+  projectOperation: { findUnique: jest.fn(async () => null) },
+  job: { updateMany: jest.fn(async () => ({ count: 1 })) },
   projectSnapshot: { findUnique: jest.fn() },
   aiTest: {
     deleteMany: jest.fn(),
     create: jest.fn(),
   },
 };
+let activeWorkspace = null;
+let rejectPublication = false;
+const preparedRoots = [];
+const assertActive = async () => {
+  if (activeWorkspace?.revoked) throw Object.assign(new Error("Access revoked"), { statusCode: 403 });
+};
+const stage = async action => {
+  if (activeWorkspace) { activeWorkspace.preparedPublications.push(action); return null; }
+  return action(prismaMock);
+};
+await jest.unstable_mockModule("../services/projectOperationWorkspace.service.js", () => ({
+  currentProjectOperation: () => activeWorkspace,
+  operationSnapshot: snapshot => activeWorkspace && snapshot?.id === activeWorkspace.snapshotId ? { ...snapshot, rootDir: activeWorkspace.rootDir } : snapshot,
+  stagePreparedPublication: stage, assertProjectOperationActive: assertActive,
+  withOperationPublishGuard: action => action(prismaMock),
+  beginPreparedPublications: () => {}, flushPreparedPublications: async () => {},
+  withOperationWorkspace: async (_id, action) => action(activeWorkspace), runJobInOperationWorkspace: async (_id, action) => action(),
+}));
+await jest.unstable_mockModule("../services/projectWorkspacePreparation.service.js", () => ({
+  withPreparedProjectWorkspace: async (options, action) => {
+    const storedJob = await lifecycle.getJobById(options.primaryJobId);
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "covai-ai-prepared-"));
+    preparedRoots.push(rootDir);
+    fs.cpSync(storedJob.snapshot.rootDir, rootDir, { recursive: true });
+    activeWorkspace = { rootDir, snapshotId: options.snapshotId, analysisRelative: "", workspaceRevision: 0, preparedPublications: [] };
+    try {
+      const result = await action(activeWorkspace);
+      await assertActive();
+      if (rejectPublication) throw Object.assign(new Error("Publication blocked"), { statusCode: 409 });
+      const publish = typeof options.publish === "function" ? options.publish(result) : options.publish !== false;
+      if (publish) fs.cpSync(rootDir, storedJob.snapshot.rootDir, { recursive: true });
+      for (const pending of activeWorkspace.preparedPublications) await pending(prismaMock);
+      return { ...result, workspaceRevision: publish ? 1 : 0 };
+    } finally { activeWorkspace = null; }
+  },
+}));
 
 await jest.unstable_mockModule("../config/prisma.js", () => ({ default: prismaMock }));
 await jest.unstable_mockModule("../services/job.service.js", () => lifecycle);
@@ -53,21 +91,27 @@ describe("processAiTestsJob - PLAYWRIGHT_E2E mode", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "covai-playwright-ai-"));
+    rejectPublication = false;
 
     prismaMock.project.findUnique.mockResolvedValue({ hasJest: false, hasVitest: false });
-    prismaMock.projectSnapshot.findUnique.mockResolvedValue({ rootDir: tempRoot });
+    prismaMock.projectSnapshot.findUnique.mockResolvedValue({ id: "snap-1", rootDir: tempRoot });
     aiContextBuilder.buildAiPayload.mockResolvedValue({
       payload: {
         sourceCode: [{ path: "src/App.jsx", content: "export default function App() {}" }],
       },
     });
   });
+  afterEach(() => {
+    for (const root of [tempRoot, ...preparedRoots.splice(0)]) {
+      if (root && path.dirname(root) === os.tmpdir()) fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   it("completes full flow on passing dry-run and stores VERIFIED AiTest", async () => {
     const job = {
       id: "job-p1",
       snapshotId: "snap-1",
-      projectId: "proj-1",
+      projectId: "proj-1", userId: "owner",
       payloadJson: JSON.stringify({ mode: "PLAYWRIGHT_E2E" }),
       snapshot: { rootDir: tempRoot },
     };
@@ -129,7 +173,7 @@ describe("processAiTestsJob - PLAYWRIGHT_E2E mode", () => {
     const job = {
       id: "job-p2",
       snapshotId: "snap-1",
-      projectId: "proj-1",
+      projectId: "proj-1", userId: "owner",
       payloadJson: JSON.stringify({ mode: "PLAYWRIGHT_E2E" }),
       snapshot: { rootDir: tempRoot },
     };
@@ -180,7 +224,7 @@ describe("processAiTestsJob - PLAYWRIGHT_E2E mode", () => {
     const job = {
       id: "job-p3",
       snapshotId: "snap-1",
-      projectId: "proj-1",
+      projectId: "proj-1", userId: "owner",
       payloadJson: JSON.stringify({ mode: "PLAYWRIGHT_E2E" }),
       snapshot: { rootDir: tempRoot },
     };
@@ -207,5 +251,25 @@ describe("processAiTestsJob - PLAYWRIGHT_E2E mode", () => {
         status: "FAILED",
       }),
     });
+  });
+  it.each(["publication conflict", "revoked during verification"])("does not publish files or AiTest metadata after %s", async failure => {
+    lifecycle.getJobById.mockResolvedValue({ id: "job-fenced", projectId: "proj-1", snapshotId: "snap-1", userId: "owner",
+      payloadJson: JSON.stringify({ mode: "PLAYWRIGHT_E2E" }), snapshot: { id: "snap-1", rootDir: tempRoot } });
+    geminiService.generateText.mockResolvedValue(`import { test, expect } from '@playwright/test';
+test('opens home', async ({ page }) => {
+ await test.step('Action: NAVIGATION - open home', async()=>{await page.goto('/');});
+ await test.step('Assert: heading visible', async()=>{await expect(page.getByRole('heading')).toBeVisible();});
+ await test.step('Evidence: outcome', async()=>{await test.info().attach('evidence',{body:await page.screenshot(),contentType:'image/png'});});
+});`);
+    rejectPublication = failure === "publication conflict";
+    dockerRunnerMock.run.mockImplementation(async () => {
+      if (failure === "revoked during verification") activeWorkspace.revoked = true;
+      return { success: true, exitCode: 0, stdout: "1 passed", stderr: "" };
+    });
+    await expect(processAiTestsJob("job-fenced")).rejects.toMatchObject({ statusCode: failure === "publication conflict" ? 409 : 403 });
+    expect(fs.existsSync(path.join(tempRoot, "tests/e2e/ai-generated.spec.js"))).toBe(false);
+    expect(prismaMock.aiTest.create).not.toHaveBeenCalled();
+    expect(jobUpdate.updateJobStatus.mock.calls.some(([input]) => input.status === "SUCCESS")).toBe(false);
+    expect(notificationMock.createJobFinishedNotification).not.toHaveBeenCalled();
   });
 });

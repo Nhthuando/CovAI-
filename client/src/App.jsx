@@ -15,6 +15,7 @@ import ProjectSelectionPage from "./pages/ProjectSelectionPage";
 import GithubCallbackPage from "./pages/GithubCallbackPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
 import IntegrationReportPage from "./pages/IntegrationReportPage";
+import InvitationPage from "./pages/InvitationPage";
 import { NotificationProvider } from "./contexts/NotificationContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { RunningProcessProvider } from "./contexts/RunningProcessContext";
@@ -71,6 +72,7 @@ function AppContent() {
   return (
     <>
       <Routes>
+        <Route path="/invitations/:token" element={<InvitationPage />} />
         <Route
           path="/"
           element={
@@ -135,10 +137,11 @@ function AppContent() {
 }
 
 function App() {
+  const { userId } = useAuth();
   return (
     <ThemeProvider>
       <NotificationProvider>
-        <RunningProcessProvider>
+        <RunningProcessProvider key={userId || "anonymous"} sessionUserId={userId}>
           <AppContent />
         </RunningProcessProvider>
       </NotificationProvider>

@@ -1,4 +1,5 @@
 import prisma from "../config/prisma.js";
+import {currentProjectOperation,stagePreparedPublication} from "./projectOperationWorkspace.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { addJobLog } from "./job.service.js";
 
@@ -27,17 +28,27 @@ const JOB_STATUSES = ["QUEUED", "RUNNING", "SUCCESS", "FAILED", "CANCELED"];
  * Update multiple job fields atomically with validations.
  * Accepts any of: status, progress, startedAt, finishedAt, errorMessage
  */
-export const updateJobStatus = async ({
+export const updateJobStatus = async (input, db = prisma) => {
+    const operation = currentProjectOperation();
+    if (db === prisma && input.status === 'SUCCESS' && operation?.preparedPublications && !operation.flushingPreparedPublications) {
+        const current = await db.job.findUnique({where:{id:input.jobId}});
+        await stagePreparedPublication(tx=>updateJobStatusNow(input,tx));
+        return {...current,status:'SUCCESS'};
+    }
+    return updateJobStatusNow(input,db);
+};
+
+const updateJobStatusNow = async ({
     jobId,
     status, // optional
     progress, // optional number 0-100
     startedAt, // optional Date|string
     finishedAt, // optional Date|string
     errorMessage, // optional string
-}) => {
+}, db = prisma) => {
     assertStringField(jobId, "jobId");
 
-    const currentJob = await prisma.job.findUnique({ where: { id: jobId } });
+    const currentJob = await db.job.findUnique({ where: { id: jobId } });
     if (!currentJob) {
         throw new ServiceError("Job not found", 404);
     }
@@ -135,14 +146,14 @@ export const updateJobStatus = async ({
         throw new ServiceError("No updates provided", 400);
     }
 
-    const updated = await prisma.job.update({
+    const updated = await db.job.update({
         where: { id: jobId },
         data: updates,
     });
 
     // write logs
     for (const l of logs) {
-        await addJobLog(jobId, "INFO", l).catch(() => { });
+        await addJobLog(jobId, "INFO", l, db).catch(() => { });
     }
 
     return updated;

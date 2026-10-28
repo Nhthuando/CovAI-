@@ -22,6 +22,8 @@ import {
 } from "lucide-react";
 import MonacoEditor from "@monaco-editor/react";
 import { updateFileContentApi } from "../../services/project.service.js";
+import { useVersionedProjectFile } from "../../hooks/useVersionedProjectFile";
+import { useProjectAccess } from "../../hooks/useProjectAccess";
 import { cleanDisplayPath } from "./CoverageTypeDashboard.jsx";
 import TestFileViewerPanel from "./TestFileViewerPanel.jsx";
 
@@ -74,7 +76,9 @@ export default function FileCodeExecutionView({
   progressStep,
   isLight = false,
 }) {
-  const initialSourceCode = fileCoverage?.sourceCode || "";
+  const versionedSource = useVersionedProjectFile(projectId, snapshotId, filePath);
+  const sourceAccess = useProjectAccess(projectId);
+  const initialSourceCode = versionedSource.data?.content ?? fileCoverage?.sourceCode ?? "";
   const linesMap = fileCoverage?.lines || {};
   const statements = fileCoverage?.statements || [];
   const summary = fileCoverage?.summary || {};
@@ -117,6 +121,7 @@ export default function FileCodeExecutionView({
   const [viewMode, setViewMode] = useState("coverage");
   const [editorContent, setEditorContent] = useState(initialSourceCode);
   const [isDirty, setIsDirty] = useState(false);
+  const [baseVersion, setBaseVersion] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState(null); // null | "success" | "error"
   const [errorMessage, setErrorMessage] = useState("");
@@ -129,8 +134,9 @@ export default function FileCodeExecutionView({
   useEffect(() => {
     if (!isDirty) {
       setEditorContent(initialSourceCode);
+      setBaseVersion(versionedSource.data?.version || null);
     }
-  }, [initialSourceCode, isDirty]);
+  }, [initialSourceCode, isDirty, versionedSource.data?.version]);
 
   const sourceCodeToRender = isDirty && viewMode === "coverage" ? editorContent : initialSourceCode;
 
@@ -261,6 +267,7 @@ export default function FileCodeExecutionView({
 
   // Synchronized save handler: saves BOTH source file and test file
   const handleSaveBoth = useCallback(async () => {
+    if (!sourceAccess.can("files.write")) return;
     if (!projectId) {
       setErrorMessage("Missing project ID to save.");
       setSaveStatus("error");
@@ -271,27 +278,23 @@ export default function FileCodeExecutionView({
     setSaveStatus(null);
     setErrorMessage("");
 
+    let sourceSaved = false;
     try {
-      const savePromises = [];
-
-      // 1. Save source file
-      if (filePath) {
-        savePromises.push(
-          updateFileContentApi(projectId, filePath, editorContent)
-            .then(() => ({ type: "source", path: filePath }))
-        );
+      let nextWorkspaceRevision;
+      // Save in order so a new test file can use this save's committed revision.
+      if (filePath && isDirty) {
+        const result = await updateFileContentApi(projectId, filePath, editorContent, { snapshotId, expectedVersion: baseVersion });
+        setBaseVersion(result.data?.version || null);
+        nextWorkspaceRevision = result.data?.workspaceRevision;
+        sourceSaved = true;
+        await versionedSource.refetch();
+        setIsDirty(false);
       }
 
-      // 2. Save test file if registered
       if (testSaverRef.current) {
-        savePromises.push(
-          testSaverRef.current()
-            .then((savedPath) => ({ type: "test", path: savedPath }))
-        );
+        await testSaverRef.current({ expectedWorkspaceRevision: nextWorkspaceRevision });
       }
 
-      await Promise.all(savePromises);
-      setIsDirty(false);
       setIsTestDirty(false);
       setSaveStatus("success");
       setTimeout(() => setSaveStatus(null), 3000);
@@ -303,11 +306,12 @@ export default function FileCodeExecutionView({
     } catch (err) {
       console.error("[FileCodeExecutionView] Failed to save code:", err);
       setSaveStatus("error");
-      setErrorMessage(err?.response?.data?.message || err?.message || "Failed to save files.");
+      const detail = err?.response?.data?.message || err?.message || "Failed to save files.";
+      setErrorMessage(sourceSaved ? `Source file saved. The test file was not saved; its draft is preserved. ${detail}` : detail);
     } finally {
       setIsSaving(false);
     }
-  }, [projectId, filePath, editorContent, onFileSaved]);
+  }, [projectId, snapshotId, filePath, editorContent, onFileSaved, isDirty, versionedSource, sourceAccess, baseVersion]);
 
   const handleSaveBothRef = useRef(handleSaveBoth);
   handleSaveBothRef.current = handleSaveBoth;
@@ -628,7 +632,7 @@ export default function FileCodeExecutionView({
               {isDirty && (
                 <button
                   onClick={handleDiscard}
-                  disabled={isSaving}
+                  disabled={isSaving || !sourceAccess.can("files.write")}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -651,7 +655,7 @@ export default function FileCodeExecutionView({
 
               <button
                 onClick={handleSaveBoth}
-                disabled={isSaving || !projectId}
+                disabled={isSaving || !projectId || !sourceAccess.can("files.write")}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -758,6 +762,7 @@ export default function FileCodeExecutionView({
               beforeMount={handleEditorWillMount}
               onMount={handleEditorDidMount}
               options={{
+                readOnly: isSaving || !sourceAccess.can("files.write"),
                 fontSize: 12,
                 fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace",
                 lineHeight: 22,
@@ -1219,7 +1224,7 @@ export default function FileCodeExecutionView({
               }
               onSuggestTestcase && onSuggestTestcase(filePath);
             }}
-            disabled={isLoadingSuggestions}
+            disabled={isLoadingSuggestions || !sourceAccess.can("ai.use")}
             style={{
               display: "flex",
               alignItems: "center",

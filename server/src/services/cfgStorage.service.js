@@ -18,7 +18,7 @@ export const storeCfg = async ({
   endLine,
   graphJson,
   skipSnapshotCheck = false,
-}) => {
+}, db = prisma) => {
   // 1. Validate required fields
   if (!snapshotId || !filePath || !functionName || !graphJson) {
     throw new ServiceError(
@@ -29,7 +29,7 @@ export const storeCfg = async ({
 
   // 2. Validate snapshot existence (if not explicitly skipped by batch caller)
   if (!skipSnapshotCheck) {
-    const snapshot = await prisma.projectSnapshot.findUnique({
+    const snapshot = await db.projectSnapshot.findUnique({
       where: { id: snapshotId },
     });
 
@@ -54,7 +54,7 @@ export const storeCfg = async ({
 
   // 4. Create CFG record
   try {
-    const cfg = await prisma.cfg.create({
+    const cfg = await db.cfg.create({
       data: {
         snapshotId,
         filePath,

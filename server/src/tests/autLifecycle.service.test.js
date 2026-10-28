@@ -74,9 +74,9 @@ describe("autLifecycle.service", () => {
       const result = await prepareAutEnvironment(rootDir, 4173, "job-1");
       expect(result.created).toBe(true);
       const content = fs.readFileSync(path.join(rootDir, ".env"), "utf8");
-      expect(content).toContain("PORT=4173");
-      expect(content).toContain("NODE_ENV=test");
-      expect(content).toContain("JWT_SECRET=covai_test_mock_jwt_secret");
+      expect(result.vars.PORT).toBe('4173');
+      expect(result.vars.NODE_ENV).toBe('development');
+      expect(result.vars.JWT_SECRET).toMatch(/^[a-f0-9]{64}$/);
       expect(addJobLog).toHaveBeenCalledWith("job-1", "INFO", expect.stringContaining("4173"));
     });
 
@@ -87,10 +87,8 @@ describe("autLifecycle.service", () => {
       const result = await prepareAutEnvironment(rootDir, 4173, "job-1");
       expect(result.created).toBe(true);
       const content = fs.readFileSync(path.join(rootDir, ".env"), "utf8");
-      expect(content).toContain("PORT=4173");
-      expect(content).toContain("DATABASE_URL=postgresql://postgres:postgres@localhost:5432/covai_mock_test");
-      expect(content).toContain("API_KEY=covai_mock_secret_key");
-      expect(content).toContain("BACKEND_URL=http://localhost:4173");
+      expect(result.vars.PORT).toBe('4173');
+      expect(content).not.toMatch(/DATABASE_URL|API_KEY|BACKEND_URL|mock_secret|mock_value/);
     });
   });
 
@@ -123,6 +121,18 @@ describe("autLifecycle.service", () => {
   });
 
   describe("runSeedDataIfPresent", () => {
+    it('does not automatically execute database seed scripts in frontend mode',async()=>{
+      const snapshotDir=fixture({'package.json':JSON.stringify({scripts:{seed:'node seed.js'}})});
+      expect(await runSeedDataIfPresent({snapshotDir})).toEqual({executed:false,reason:'ISOLATED_DATABASE_REQUIRED'});
+    });
+    it('uses the selected manager and isolated database and stops if seeding fails',async()=>{
+      const snapshotDir=fixture({'package.json':JSON.stringify({scripts:{seed:'node seed.js'}})});
+      const prepare=jest.fn().mockResolvedValue({command:'pnpm',env:{}}),run=jest.fn().mockResolvedValue({success:false,stderr:'seed invalid'});
+      await expect(runSeedDataIfPresent({snapshotDir,isolatedDatabase:true,env:{DATABASE_URL:'mysql://test:test@127.0.0.1:45000/covai_test'},dependencies:{prepare,run}})).rejects.toThrow('seed invalid');
+      expect(run.mock.calls[0][0]).toMatchObject({command:'pnpm run seed',env:{DATABASE_URL:'mysql://test:test@127.0.0.1:45000/covai_test',NODE_ENV:'test'}});
+      await expect(runSeedDataIfPresent({snapshotDir,isolatedDatabase:true,env:{DATABASE_URL:'mysql://live.example/production'},dependencies:{prepare,run}})).rejects.toThrow('isolated test database');
+      expect(run).toHaveBeenCalledTimes(1);
+    });
     it("returns executed false if package.json has no seed script", async () => {
       const rootDir = fixture({
         "package.json": JSON.stringify({ scripts: { start: "node index.js" } }),

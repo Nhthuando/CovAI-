@@ -3,9 +3,10 @@ import { jest } from '@jest/globals';
 // Mock dependencies
 const mockPrisma = {
     project: {
-        findUnique: jest.fn()
+        findUnique: jest.fn(), findFirst: jest.fn(async()=> await mockPrisma.project.findUnique())
     },
-    snapshot: {
+    projectMember:{findUnique:jest.fn(async()=>null)},
+    projectSnapshot: {
         findFirst: jest.fn()
     }
 };
@@ -19,6 +20,10 @@ jest.unstable_mockModule('../services/aiSuggestJob.service.js', () => ({
     processAiSuggestJob: mockProcessAiSuggestJob
 }));
 
+const createAiSuggestJob=jest.fn(async()=>({id:'queued-suggest'}));
+const enqueue=jest.fn(async()=>{});
+jest.unstable_mockModule('../services/job.service.js',()=>({createAiSuggestJob}));
+jest.unstable_mockModule('../services/queue.service.js',()=>({addJobToQueue:enqueue}));
 const { refreshAiSuggestions } = await import('../services/aiSuggestion.service.js');
 const prisma = mockPrisma;
 
@@ -32,7 +37,7 @@ describe('aiSuggestion.service - refreshAiSuggestions', () => {
 
     it('should throw 401 if userId is missing', async () => {
         await expect(refreshAiSuggestions({ projectId: mockProjectId, userId: null }))
-            .rejects.toThrow('Unauthorized');
+            .rejects.toMatchObject({statusCode:401});
     });
 
     it('should throw 404 if project not found', async () => {
@@ -44,21 +49,21 @@ describe('aiSuggestion.service - refreshAiSuggestions', () => {
     it('should throw 403 if user is not owner', async () => {
         mockPrisma.project.findUnique.mockResolvedValue({ id: mockProjectId, ownerId: 'otherUser' });
         await expect(refreshAiSuggestions({ projectId: mockProjectId, userId: mockUserId }))
-            .rejects.toThrow('Forbidden');
+            .rejects.toMatchObject({statusCode:404});
     });
 
     it('should throw 404 if no snapshots found', async () => {
         mockPrisma.project.findUnique.mockResolvedValue({ id: mockProjectId, ownerId: mockUserId });
-        mockPrisma.snapshot.findFirst.mockResolvedValue(null);
+        mockPrisma.projectSnapshot.findFirst.mockResolvedValue(null);
         await expect(refreshAiSuggestions({ projectId: mockProjectId, userId: mockUserId }))
             .rejects.toThrow('No snapshots found for this project');
     });
 
     it('should return success if suggestions are refreshed', async () => {
         mockPrisma.project.findUnique.mockResolvedValue({ id: mockProjectId, ownerId: mockUserId });
-        mockPrisma.snapshot.findFirst.mockResolvedValue({ id: 'snap123' });
+        mockPrisma.projectSnapshot.findFirst.mockResolvedValue({ id: 'snap123' });
         
         const result = await refreshAiSuggestions({ projectId: mockProjectId, userId: mockUserId });
-        expect(result).toEqual({ success: true, message: 'Suggestions refreshed successfully' });
+        expect(result).toEqual({ success: true, message: 'Suggestions refresh queued', jobId:'queued-suggest' });
     });
 });

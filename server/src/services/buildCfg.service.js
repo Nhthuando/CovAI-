@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import prisma from '../config/prisma.js';
+import {operationSnapshot,stagePreparedPublication} from './projectOperationWorkspace.service.js';
 import { extractFunctions } from './cyclomaticFunctionExtractor.service.js';
 import { calculateComplexityFromAst } from './cyclomaticCalculator.service.js';
 import { buildCFG } from './cfgBuilder.service.js';
@@ -14,7 +15,7 @@ export async function buildCfgForSnapshot(snapshotId) {
     });
     if (!snapshot) throw new Error('Snapshot not found');
 
-    let rootDir = snapshot.rootDir;
+    let rootDir = operationSnapshot({id:snapshotId,...snapshot}).rootDir;
     if (!rootDir || !fs.existsSync(rootDir)) {
         const fallbackPath = path.join(process.cwd(), 'uploads', 'snapshots', snapshotId);
         if (!fs.existsSync(fallbackPath)) throw new Error(`Snapshot root directory not found for ${snapshotId}.`);
@@ -23,8 +24,8 @@ export async function buildCfgForSnapshot(snapshotId) {
 
     const files = getAllFiles(rootDir);
     let functionCount = 0;
-    await prisma.cyclomatic.deleteMany({ where: { snapshotId } });
-    await prisma.cfg.deleteMany({ where: { snapshotId } });
+    await stagePreparedPublication(tx=>tx.cyclomatic.deleteMany({ where: { snapshotId } }));
+    await stagePreparedPublication(tx=>tx.cfg.deleteMany({ where: { snapshotId } }));
 
     for (const file of files) {
         if (!/\.(js|ts|jsx|tsx)$/.test(file)) continue;
@@ -49,6 +50,7 @@ export async function buildCfgForSnapshot(snapshotId) {
             }
             seenInFile.add(uniqueName);
 
+            await stagePreparedPublication(async tx=>{
             const cfg = await storeCfg({
                 snapshotId,
                 filePath: relativePath,
@@ -57,9 +59,9 @@ export async function buildCfgForSnapshot(snapshotId) {
                 endLine: func.endLine,
                 graphJson: JSON.stringify(graphJson),
                 skipSnapshotCheck: true
-            });
+            },tx);
 
-            await prisma.cyclomatic.upsert({
+            await tx.cyclomatic.upsert({
                 where: {
                     snapshotId_filePath_functionName: {
                         snapshotId,
@@ -79,6 +81,7 @@ export async function buildCfgForSnapshot(snapshotId) {
                     cfgId: cfg.id
                 }
             });
+            });
         }
     }
 
@@ -90,7 +93,7 @@ function getAllFiles(dirPath, files = []) {
     for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
         const filePath = path.join(dirPath, entry.name);
         if (entry.isDirectory()) {
-            if (!['node_modules', '.git', 'dist', 'build', 'coverage'].includes(entry.name)) getAllFiles(filePath, files);
+            if (!['node_modules', '.git', '.covai-collaboration', '.covai-temp', '.covai-system-test', 'dist', 'build', 'coverage'].includes(entry.name)) getAllFiles(filePath, files);
         } else {
             files.push(filePath);
         }

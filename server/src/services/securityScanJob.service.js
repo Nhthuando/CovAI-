@@ -5,6 +5,7 @@ import { updateJobStatus } from "./jobUpdate.service.js";
 import { scanLocalVulnerabilities, scanAiVulnerabilities } from "./securityScanner.service.js";
 import fs from "fs";
 import path from "path";
+import { operationSnapshot, stagePreparedPublication } from './projectOperationWorkspace.service.js';
 
 // Read source code from directory
 const loadSourceFiles = (rootDir) => {
@@ -37,7 +38,7 @@ export const processSecurityAnalysisJob = async (jobId) => {
         const job = await getJobById(jobId);
         
         await addJobLog(jobId, "INFO", "Loading source code from Snapshot...");
-        const snapshot = await prisma.projectSnapshot.findUnique({ where: { id: job.snapshotId } });
+        const snapshot = operationSnapshot(await prisma.projectSnapshot.findUnique({ where: { id: job.snapshotId } }));
         const sourceFiles = loadSourceFiles(snapshot?.rootDir);
         
         await updateJobStatus({ jobId, progress: 30 });
@@ -58,10 +59,9 @@ export const processSecurityAnalysisJob = async (jobId) => {
         const allFindings = [...localFindings, ...aiFindings];
         
         // Remove stale data if present
-        await prisma.vulnerability.deleteMany({ where: { snapshotId: job.snapshotId } });
-        
-        if (allFindings.length > 0) {
-            await prisma.vulnerability.createMany({
+        await stagePreparedPublication(async tx => {
+            await tx.vulnerability.deleteMany({ where: { snapshotId: job.snapshotId } });
+            if (allFindings.length > 0) await tx.vulnerability.createMany({
                 data: allFindings.map(f => ({
                     snapshotId: job.snapshotId,
                     type: f.type || "UNKNOWN",
@@ -71,6 +71,8 @@ export const processSecurityAnalysisJob = async (jobId) => {
                     description: f.description || ""
                 }))
             });
+        });
+        if (allFindings.length > 0) {
             await addJobLog(jobId, "INFO", `Saved ${allFindings.length} security findings.`);
         } else {
             await addJobLog(jobId, "INFO", "Congratulations! No security vulnerabilities detected.");

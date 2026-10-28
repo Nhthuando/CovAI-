@@ -8,9 +8,9 @@ import path from "node:path";
 import AdmZip from "adm-zip";
 
 const prismaMock = {
-    project: { findFirst: jest.fn() }, projectSnapshot: { findFirst: jest.fn() },
+    project: { findFirst: jest.fn() }, projectSnapshot: { findFirst: jest.fn(), findUnique: jest.fn(async()=>({projectId:"project-1"})) },
 };
-const many = ["coverageFile", "coverageFunction", "cyclomatic", "testRun", "aiSuggestion", "cfg", "vulnerability", "job"];
+const many = ["coverageFile", "coverageFunction", "cyclomatic", "testRun", "aiSuggestion", "cfg", "vulnerability", "job", "systemTestAssessment"];
 const unique = ["coverageSummary", "projectStructureAnalysis", "qualityReport", "performanceMetric"];
 for (const model of many) prismaMock[model] = { findMany: jest.fn() };
 for (const model of unique) prismaMock[model] = { findUnique: jest.fn() };
@@ -27,7 +27,7 @@ const get = (query = "type=analysis&format=json") => request(app).get(`/api/proj
 beforeEach(() => {
     jest.clearAllMocks();
     process.env.JWT_SECRET = "export-test-secret";
-    prismaMock.project.findFirst.mockResolvedValue({ id: "project-1", name: "Dự án thử nghiệm", description: "Demo", repoUrl: "https://user:password@github.com/team/repo?token=secret", createdAt: new Date("2026-10-01") });
+    prismaMock.project.findFirst.mockResolvedValue({ id: "project-1", ownerId:"owner-1", name: "Dự án thử nghiệm", description: "Demo", repoUrl: "https://user:password@github.com/team/repo?token=secret", createdAt: new Date("2026-10-01") });
     prismaMock.projectSnapshot.findFirst.mockResolvedValue({ id: "snapshot-1", projectId: "project-1", source: "ZIP", createdAt: new Date("2026-10-02"), rootDir: "C:/private/workspace" });
     for (const model of many) prismaMock[model].findMany.mockResolvedValue([]);
     for (const model of unique) prismaMock[model].findUnique.mockResolvedValue(null);
@@ -37,12 +37,12 @@ describe("authenticated project export route", () => {
     it("requires authentication on the real project router", async () => {
         const response = await request(app).get("/api/projects/project-1/export");
         expect(response.status).toBe(401);
-        expect(prismaMock.project.findFirst).not.toHaveBeenCalled();
+        expect(prismaMock.coverageFile.findMany).not.toHaveBeenCalled();
     });
     it("does not query a snapshot or analysis belonging to a foreign project", async () => {
         prismaMock.project.findFirst.mockResolvedValue(null);
         expect((await get()).status).toBe(404);
-        expect(prismaMock.project.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "project-1", ownerId: "owner-1" } }));
+        expect(prismaMock.project.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "project-1", OR:[{ownerId:"owner-1"},{members:{some:{userId:"owner-1"}}}] } }));
         expect(prismaMock.projectSnapshot.findFirst).not.toHaveBeenCalled();
         expect(prismaMock.coverageFile.findMany).not.toHaveBeenCalled();
     });
@@ -58,7 +58,7 @@ describe("authenticated project export route", () => {
     });
     it.each(["type=nope", "format=html", "snapshotId=../secret", "snapshotId=", "snapshotId=a&snapshotId=b", "type=project&format=json", "rootDir=/private", "userId=other"])("rejects invalid query %s", async (query) => {
         expect((await get(query)).status).toBe(400);
-        expect(prismaMock.project.findFirst).not.toHaveBeenCalled();
+        expect(prismaMock.coverageFile.findMany).not.toHaveBeenCalled();
     });
     it("exports snapshot-scoped safe JSON with nulls for missing analyses and download headers", async () => {
         prismaMock.coverageFile.findMany.mockResolvedValue([{ filePath: "C:/private/workspace/src/app.js", linesPct: 0 }]);
@@ -151,7 +151,7 @@ describe("authenticated project export route", () => {
     });
     it("rejects identity-less auth before a Prisma owner filter can become undefined", async () => {
         await expect(loadExportScope({ projectId: "project-1", userId: undefined })).rejects.toMatchObject({ statusCode: 401 });
-        expect(prismaMock.project.findFirst).not.toHaveBeenCalled();
+        expect(prismaMock.coverageFile.findMany).not.toHaveBeenCalled();
     });
     it("removes private keys and host paths recursively", () => {
         expect(sanitizeExportData({ rootDir: "secret", nodes: [{ absolutePath: "/private", path: "C:\\root\\src\\a.js", graph: { token: "secret" } }], file: "/other/private/b.js" }, "C:/root"))

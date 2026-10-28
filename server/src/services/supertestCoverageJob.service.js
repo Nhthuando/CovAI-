@@ -16,6 +16,9 @@ import { ServiceError } from "../utils/serviceError.js";
 import { detectSupertest } from "./supertestDetection.service.js";
 import { parseJestResults, formatScenariosForPrisma } from "./testResultParser.service.js";
 import prisma from "../config/prisma.js";
+import { currentProjectOperation, withOperationPublishGuard, stagePreparedPublication } from './projectOperationWorkspace.service.js';
+import { resolveContainedProjectPath } from './projectFileVersion.service.js';
+import { resolveProjectRoot, ensureMinimalPackageJson } from '../utils/projectRootResolver.js';
 
 /**
  * Pipeline cho Supertest Coverage:
@@ -30,10 +33,16 @@ export const processSupertestCoverageJob = async (jobId) => {
         if (!job?.snapshot?.rootDir) {
             throw new ServiceError("Snapshot is not ready to run Supertest.", 409);
         }
-        const { rootDir, jestConfigPath } = job.snapshot;
+        const { jestConfigPath } = job.snapshot;
+        const rootDir = resolveProjectRoot(job.snapshot.rootDir) || job.snapshot.rootDir;
         const snapshotId = job.snapshotId;
         const projectId = job.projectId;
         const userId = job.userId;
+        if (currentProjectOperation()) {
+            ensureMinimalPackageJson(rootDir);
+            const { runNpmInstall } = await import('./runTestsJob.service.js');
+            await runNpmInstall(jobId, rootDir);
+        }
 
         const supertestInfo = await detectSupertest(rootDir);
         
@@ -53,7 +62,7 @@ export const processSupertestCoverageJob = async (jobId) => {
             try { meta = typeof t.metaJson === 'string' ? JSON.parse(t.metaJson) : t.metaJson; } catch(e) { continue; }
             if (meta.framework !== "SUPERTEST" || meta.status !== "APPROVED") continue;
             
-            const filePath = path.join(rootDir, t.filePath);
+            const filePath = (await resolveContainedProjectPath(job.snapshot, t.filePath)).target;
             
             const testCode = t.content || (fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '');
             if (!testCode) continue;
@@ -126,7 +135,7 @@ export const processSupertestCoverageJob = async (jobId) => {
         if (!fs.existsSync(summaryPath) || !fs.existsSync(finalPath)) {
             throw new ServiceError("Supertest completed without producing the required coverage JSON files.", 422);
         }
-        const summaryResult = await parseCoverageSummary(coverageDir, snapshotId);
+        const summaryResult = await withOperationPublishGuard(() => parseCoverageSummary(coverageDir, snapshotId));
 
         // Parse test results
         const supertestResults = parseJestResults(coverageDir);
@@ -142,13 +151,13 @@ export const processSupertestCoverageJob = async (jobId) => {
                 skippedTests: supertestResults.skippedTests,
                 durationMs: supertestResults.durationMs,
                 status: supertestResults.status, // PASSED or FAILED
-                startedAt: new Date(), // TODO: Get actual start time
-                finishedAt: new Date() // TODO: Get actual finish time
+                startedAt: job.startedAt || new Date(),
+                finishedAt: new Date()
             };
             if (formattedScenarios) {
                 dataPayload.scenarios = formattedScenarios;
             }
-            await prisma.testRun.create({ data: dataPayload });
+            await stagePreparedPublication(tx => tx.testRun.create({ data: dataPayload }));
             await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'PARSE_COVERAGE', label: `[SCRUM-141] Saved TestRun (SUPERTEST): ${supertestResults.totalTests} tests.`, progress: 60 })).catch(() => { });
         }
 
@@ -158,8 +167,8 @@ export const processSupertestCoverageJob = async (jobId) => {
 
         await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'MAP_RESULTS', label: "Parsing coverage files and functions...", progress: 70 }));
         const coverageReport = JSON.parse(fs.readFileSync(finalPath, "utf8"));
-        await parseCoverageFilesForSnapshot({ projectId, snapshotId, coverageReport, userId });
-        await parseCoverageFunctionsForSnapshot({ projectId, snapshotId, coverageReport, userId });
+        await withOperationPublishGuard(() => parseCoverageFilesForSnapshot({ projectId, snapshotId, coverageReport, userId }));
+        await withOperationPublishGuard(() => parseCoverageFunctionsForSnapshot({ projectId, snapshotId, coverageReport, userId }));
 
         await updateJobProgress(jobId, 80);
 

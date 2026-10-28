@@ -34,7 +34,7 @@ describe('supertestRunner.service', () => {
         expect(result.exitCode).toBe(0);
         expect(dockerRunner.run).toHaveBeenCalledTimes(1);
         const command = dockerRunner.run.mock.calls[0][0].command;
-        expect(command).toContain('CI=true NODE_ENV=test');
+        expect(dockerRunner.run.mock.calls[0][0].env).toMatchObject({ CI: 'true', NODE_ENV: 'test' });
         expect(command).toContain('--runInBand');
         expect(command).toContain('--coverage');
         expect(command).toContain('--coverageReporters=json-summary');
@@ -49,7 +49,7 @@ describe('supertestRunner.service', () => {
         await runSupertest('job1', tempDir, null, [file]);
 
         const command = dockerRunner.run.mock.calls[0][0].command;
-        expect(command).toContain("NODE_OPTIONS='--experimental-vm-modules'");
+        expect(dockerRunner.run.mock.calls[0][0].env.NODE_OPTIONS).toBe('--experimental-vm-modules');
         expect(command).toContain('npx --no-install jest');
     });
 

@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import prisma from "../config/prisma.js";
+import { stagePreparedValue,stagePreparedPublication } from "./projectOperationWorkspace.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 
 /**
@@ -112,7 +113,7 @@ const upsertCoverageSummary = async (snapshotId, lines, branches, functions, sta
         s = 0;
     }
 
-    return prisma.coverageSummary.upsert({
+    return stagePreparedValue(tx=>tx.coverageSummary.upsert({
         where: { snapshotId },
         create: {
             snapshotId,
@@ -127,20 +128,20 @@ const upsertCoverageSummary = async (snapshotId, lines, branches, functions, sta
             funcsPct: f,
             stmtsPct: s,
         },
-    });
+    }),{snapshotId,linesPct:l,branchesPct:b,funcsPct:f,stmtsPct:s});
 };
 
 /**
  * Upsert CoverageFile records for each project file.
  */
-const upsertCoverageFiles = async (snapshotId, fileEntries) => {
+const upsertCoverageFiles = async (snapshotId, fileEntries) => stagePreparedPublication(async tx=>{
     for (const [filePath, data] of fileEntries) {
         const lines = parseLineCoverage(data);
         const branches = parseBranchCoverage(data);
         const functions = parseFunctionCoverage(data);
         const statements = parseStatementCoverage(data);
 
-        await prisma.coverageFile.upsert({
+        await tx.coverageFile.upsert({
             where: { snapshotId_filePath: { snapshotId, filePath } },
             create: {
                 snapshotId,
@@ -158,7 +159,7 @@ const upsertCoverageFiles = async (snapshotId, fileEntries) => {
             },
         });
     }
-};
+});
 
 /**
  * Main entry point of SCRUM-85.

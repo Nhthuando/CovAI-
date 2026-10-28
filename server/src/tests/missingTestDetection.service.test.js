@@ -4,7 +4,7 @@ import path from "path";
 import { afterEach, beforeEach, describe, expect, it, jest } from "@jest/globals";
 
 const roots = [];
-const prismaMock = { project: { findUnique: jest.fn() } };
+const prismaMock = { project: { findUnique: jest.fn(), findFirst: jest.fn(async()=>({id:"1",ownerId:"owner-1"})) } };
 
 jest.unstable_mockModule("../config/prisma.js", () => ({ default: prismaMock }));
 jest.unstable_mockModule("../services/aiSuggestion.service.js", () => ({
@@ -36,7 +36,7 @@ describe("missingTestDetection.service", () => {
     });
 
     it("returns all categories as missing when package metadata is absent", async () => {
-        const result = await detectMissingTests("1");
+        const result = await detectMissingTests("1", "owner-1");
         expect(result.data.missingCategories).toEqual(["UNIT", "INTEGRATION", "SYSTEM"]);
         expect(result.data.availableFrameworks).toEqual([]);
     });
@@ -46,7 +46,7 @@ describe("missingTestDetection.service", () => {
         fs.mkdirSync(path.join(rootDir, "src"));
         fs.writeFileSync(path.join(rootDir, "src", "auth.test.js"), "import { jest } from '@jest/globals'; test('x', () => {});");
 
-        const result = await detectMissingTests("1");
+        const result = await detectMissingTests("1", "owner-1");
         expect(result.data.availableCategories).toContain("UNIT");
         expect(result.data.tests.unit).toMatchObject({ detected: true, framework: "JEST" });
     });
@@ -56,7 +56,7 @@ describe("missingTestDetection.service", () => {
         fs.mkdirSync(path.join(rootDir, "src"));
         fs.writeFileSync(path.join(rootDir, "src", "api.integration.test.js"), "import request from 'supertest';");
 
-        const result = await detectMissingTests("1");
+        const result = await detectMissingTests("1", "owner-1");
         expect(result.data.availableCategories).toContain("INTEGRATION");
         expect(result.data.tests.integration).toMatchObject({ detected: true, framework: "SUPERTEST" });
     });

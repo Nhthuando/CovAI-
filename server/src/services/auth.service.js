@@ -21,7 +21,7 @@ export const register = async (name, email, password) => {
 
   const refreshToken = jwt.sign(
     { userId: user.id },
-    process.env.JWT_REFRESH_SECRET,
+    process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET,
     { expiresIn: "7d" },
   );
 
@@ -54,7 +54,7 @@ export const login = async (email, password) => {
 
   const refreshToken = jwt.sign(
     { userId: user.id },
-    process.env.JWT_REFRESH_SECRET,
+    process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET,
     { expiresIn: "7d" },
   );
 

@@ -49,6 +49,10 @@ specs/
 !/docs/superpowers/specs/
 /docs/superpowers/specs/*
 !/docs/superpowers/specs/2026-10-09-project-analysis-export-design.md
+!/docs/superpowers/specs/2026-10-28-project-collaboration-design.md
+
+# Disposable collaboration worker copies and generated test artifacts
+/server/.covai-temp/collaboration-operations/
 
 
 # Local system-assessment verification artifacts

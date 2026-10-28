@@ -102,8 +102,8 @@ export const notificationController = {
             }
 
             const created = await notificationService.createNotification({
-                userId: req.user.id,
                 ...req.body,
+                userId: req.user.id,
             });
 
             res.status(201).json({

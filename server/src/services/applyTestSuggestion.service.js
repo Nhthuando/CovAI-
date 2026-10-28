@@ -1,6 +1,9 @@
 import fs from "fs";
 import path from "path";
 import prisma from "../config/prisma.js";
+import { currentProjectOperation, operationSnapshot, stagePreparedPublication } from "./projectOperationWorkspace.service.js";
+import { withPreparedProjectWorkspace } from "./projectWorkspacePreparation.service.js";
+import { projectFileError } from "./projectFileVersion.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import {
     runJestCoverage,
@@ -1383,7 +1386,20 @@ export const autoRefineCoverageGaps = async ({
  * @param {Function} [params.runCoverageFn] - Optional custom coverage runner function
  * @returns {Promise<Object>}
  */
-export const applyUnitTestSuggestion = async ({ snapshotId, projectId, userId, suggestion, suggestions = [], runCoverageFn = null }) => {
+export const applyUnitTestSuggestion = async input => {
+    if (currentProjectOperation()) return applyPreparedUnitTestSuggestion(input);
+    const items = input.suggestions?.length ? input.suggestions : input.suggestion ? [input.suggestion] : [];
+    if (!items.length) throw projectFileError('INVALID_SUGGESTION','No suggestion provided to apply',400);
+    const revisions = new Set(items.map(item=>item.proposalBase?.workspaceRevision));
+    if (items.some(item=>item.proposalBase?.snapshotId !== input.snapshotId)) throw projectFileError('FILE_VERSION_REQUIRED','Regenerate suggestions for the currently selected snapshot',428);
+    const expectedWorkspaceRevision = revisions.size === 1 ? [...revisions][0] : undefined;
+    if (input.expectedWorkspaceRevision !== undefined && input.expectedWorkspaceRevision !== expectedWorkspaceRevision) throw projectFileError('SNAPSHOT_CHANGED','Proposal versions do not match');
+    const actualProjectId = input.projectId || (await prisma.projectSnapshot.findUnique({where:{id:input.snapshotId},select:{projectId:true}}))?.projectId;
+    return withPreparedProjectWorkspace({projectId:actualProjectId,snapshotId:input.snapshotId,userId:input.userId,
+        expectedWorkspaceRevision,type:'APPLY_UNIT_SUGGESTION'},()=>applyPreparedUnitTestSuggestion(input));
+};
+
+const applyPreparedUnitTestSuggestion = async ({ snapshotId, projectId, userId, suggestion, suggestions = [], runCoverageFn = null }) => {
     if (!snapshotId) {
         throw new ServiceError("snapshotId is required", 400);
     }
@@ -1409,7 +1425,7 @@ export const applyUnitTestSuggestion = async ({ snapshotId, projectId, userId, s
         throw new ServiceError("Project snapshot not found", 404);
     }
 
-    const rootDir = resolveSnapshotRootDir(snapshot.rootDir);
+    const rootDir = resolveSnapshotRootDir(operationSnapshot(snapshot).rootDir);
     if (!rootDir || !fs.existsSync(rootDir)) {
         throw new ServiceError("Project snapshot root directory not found on filesystem", 409);
     }
@@ -1908,7 +1924,7 @@ export const applyUnitTestSuggestion = async ({ snapshotId, projectId, userId, s
         };
 
         // Update CoverageSummary in DB with the REAL whole-project merged metrics
-        await prisma.coverageSummary.upsert({
+        await stagePreparedPublication(tx => tx.coverageSummary.upsert({
             where: { snapshotId },
             update: {
                 stmtsPct: newCoverage.statements,
@@ -1923,7 +1939,7 @@ export const applyUnitTestSuggestion = async ({ snapshotId, projectId, userId, s
                 funcsPct: newCoverage.functions,
                 linesPct: newCoverage.lines
             }
-        }).catch(() => { });
+        })).catch(() => { });
     }
 
     // Update CoverageFile records in DB for the inspected source files (safely and concurrently in chunks)
@@ -1934,7 +1950,7 @@ export const applyUnitTestSuggestion = async ({ snapshotId, projectId, userId, s
         await Promise.all(chunk.map(async ([sf, pResult]) => {
             const cleanSf = cleanRelativePath(rootDir, sf);
             try {
-                await prisma.coverageFile.upsert({
+                await stagePreparedPublication(tx => tx.coverageFile.upsert({
                     where: {
                         snapshotId_filePath: {
                             snapshotId,
@@ -1955,7 +1971,7 @@ export const applyUnitTestSuggestion = async ({ snapshotId, projectId, userId, s
                         funcsPct: pResult.newCoverage.functions,
                         linesPct: pResult.newCoverage.lines
                     }
-                });
+                }));
             } catch (_) {
                 try {
                     const existing = await prisma.coverageFile.findFirst({
@@ -1970,7 +1986,7 @@ export const applyUnitTestSuggestion = async ({ snapshotId, projectId, userId, s
                         }
                     });
                     if (existing) {
-                        await prisma.coverageFile.update({
+                        await stagePreparedPublication(tx => tx.coverageFile.update({
                             where: { id: existing.id },
                             data: {
                                 stmtsPct: pResult.newCoverage.statements,
@@ -1978,7 +1994,7 @@ export const applyUnitTestSuggestion = async ({ snapshotId, projectId, userId, s
                                 funcsPct: pResult.newCoverage.functions,
                                 linesPct: pResult.newCoverage.lines
                             }
-                        });
+                        }));
                     }
                 } catch (_) { }
             }

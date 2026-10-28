@@ -28,6 +28,12 @@ afterEach(() => {
 
 describe('Phase 2: Cold-Start AI System Test Generator', () => {
   describe('Task 2.1: harvestFrontendContext', () => {
+    it.each(['index.html','src/Welcome.vue','src/Welcome.svelte'])('discovers UI controls outside React page conventions: %s', filePath => {
+      const context=harvestFrontendContext([{path:filePath,content:'<a href="/help">Help</a><button>Save</button><input placeholder="Name">'}]);
+      expect(context.routes).toContain('/help');
+      expect(context.uiActions[0].buttons).toContain('Save');
+      expect(context.uiActions[0].inputs).toContain('Name');
+    });
     it('detects React Router routes, Next.js page/app routes, and navigation links', () => {
       const mockFiles = [
         {
@@ -87,6 +93,30 @@ describe('Phase 2: Cold-Start AI System Test Generator', () => {
       expect(cartAction.buttons).toContain('Apply Coupon');
       expect(cartAction.buttons).toContain('Checkout Now');
       expect(cartAction.inputs).toContain('Discount code');
+    });
+
+    it('ignores HTML <link> tags and static assets like /favicon.svg', () => {
+      const htmlFile = {
+        path: 'index.html',
+        content: `
+          <!doctype html>
+          <html>
+            <head>
+              <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+              <link rel="stylesheet" href="/assets/style.css" />
+            </head>
+            <body>
+              <a href="/logo.png">Download Logo</a>
+              <a href="/dashboard">Go to Dashboard</a>
+            </body>
+          </html>
+        `,
+      };
+      const result = harvestFrontendContext([htmlFile]);
+      expect(result.routes).toContain('/dashboard');
+      expect(result.routes).not.toContain('/favicon.svg');
+      expect(result.routes).not.toContain('/assets/style.css');
+      expect(result.routes).not.toContain('/logo.png');
     });
   });
 
@@ -231,7 +261,7 @@ describe('Phase 2: Cold-Start AI System Test Generator', () => {
       const savedCode = fs.readFileSync(path.join(dir, result.filePath), 'utf8');
       expect(savedCode.match(/test\.step\(/g)).toHaveLength(6);
       expect(savedCode).toBe(result.code);
-      expect(mockGenerate.mock.calls[0][0]).toContain('In EVERY Playwright scenario');
+      expect(mockGenerate.mock.calls[0][0]).toContain('Every test.step label MUST');
       expect(progressLogs.some((p) => p.pct === 100)).toBe(true);
     });
 
@@ -276,40 +306,43 @@ describe('Phase 2: Cold-Start AI System Test Generator', () => {
       expect(fs.existsSync(path.join(dir, 'cypress/e2e/covai-generated.cy.js'))).toBe(true);
     });
 
-    it('falls back to safe template if AI output has syntax errors or dangerous code', async () => {
+    it('rejects unsafe output after one correction without saving a fallback', async () => {
       const dir = createTempDir();
-      fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'malformed-ai-app' }));
-      fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
-      fs.writeFileSync(
-        path.join(dir, 'src/App.jsx'),
-        'export default function App() { return <div>Hello</div>; }',
-      );
+      const generate = jest.fn().mockResolvedValue(JSON.stringify({content: "import { exec } from 'child_process'; test('bad',()=>{exec('ls');});"}));
+      await expect(generateColdStartSystemTests({rootDir:dir,dependencies:{
+        collect:()=>({routes:['/'],sourceCode:[],uiActions:[]}),generate,
+      }})).rejects.toThrow();
+      expect(generate).toHaveBeenCalledTimes(2);
+      expect(fs.existsSync(path.join(dir,'tests/e2e/covai-generated.spec.js'))).toBe(false);
+    });
 
-      // AI outputs forbidden child_process or broken syntax
-      const mockGenerate = jest.fn().mockResolvedValue(
-        JSON.stringify({
-          content: `
-            import { exec } from 'child_process';
-            test('bad', () => { exec('ls'); });
-          `,
-        }),
-      );
+    it('corrects unlabeled steps and saves only the validated replacement', async () => {
+      const dir = createTempDir();
+      const valid = `import {test,expect} from '@playwright/test';
+      test('READ home heading',async({page})=>{
+        await test.step('Action: READ - open home',async()=>{await page.goto('/');});
+        await test.step('Assert: heading',async()=>{await expect(page.getByRole('heading',{name:'Welcome'})).toBeVisible();});
+        await test.step('Evidence: verified outcome',async()=>{await test.info().attach('evidence',{body:await page.screenshot(),contentType:'image/png'});});
+      });`;
+      const generate = jest.fn()
+        .mockResolvedValueOnce(JSON.stringify({content:valid.replace('Action: READ - open home','Open home')}))
+        .mockResolvedValueOnce(JSON.stringify({content:valid}));
+      const result = await generateColdStartSystemTests({rootDir:dir,dependencies:{
+        collect:()=>({routes:['/'],sourceCode:[{path:'index.html',content:'<h1>Welcome</h1>'}],uiActions:[]}),generate,
+      }});
+      expect(generate).toHaveBeenCalledTimes(2);
+      expect(generate.mock.calls[1][0]).toContain('every step must identify');
+      expect(generate.mock.calls[0][0]).toContain('<h1>Welcome</h1>');
+      expect(fs.readFileSync(path.join(dir,result.filePath),'utf8')).toBe(valid);
+      expect(result.fallbackUsed).toBe(false);
+    });
 
-      const result = await generateColdStartSystemTests({
-        rootDir: dir,
-        framework: 'playwright',
-        dependencies: { generate: mockGenerate },
-      });
-
-      // Should automatically fallback to safe template and still succeed!
-      expect(result.framework).toBe('PLAYWRIGHT');
-      expect(result.scenarioCount).toBeGreaterThan(0);
-      expect(fs.existsSync(path.join(dir, 'tests/e2e/covai-generated.spec.js'))).toBe(true);
-      const savedCode = fs.readFileSync(path.join(dir, 'tests/e2e/covai-generated.spec.js'), 'utf8');
-      expect(savedCode).not.toContain('child_process');
-      expect(savedCode).toContain('@playwright/test');
-      expect(savedCode).toContain('await test.step(');
+    it('propagates provider failure without writing test files', async () => {
+      const dir=createTempDir();
+      const generate=jest.fn().mockRejectedValue(new Error('AI unavailable'));
+      await expect(generateColdStartSystemTests({rootDir:dir,dependencies:{collect:()=>({routes:['/'],sourceCode:[]}),generate}})).rejects.toThrow('AI unavailable');
+      expect(generate).toHaveBeenCalledTimes(1);
+      expect(fs.existsSync(path.join(dir,'tests/e2e/covai-generated.spec.js'))).toBe(false);
     });
   });
 });
-

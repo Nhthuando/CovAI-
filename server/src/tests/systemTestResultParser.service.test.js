@@ -17,6 +17,32 @@ afterEach(() => paths.splice(0).forEach((dir) => fs.rmSync(dir, { recursive: tru
 describe("parseSystemTestResult", () => {
   const startedAt = new Date("2026-08-22T00:00:00Z");
   const finishedAt = new Date("2026-08-22T00:00:02Z");
+  it('retains bounded API method/path/status evidence without query or response secrets', () => {
+    const calls = [{ method: 'GET', path: '/api/orders', status: 200, durationMs: 42, requestId: 'req-1' }, { method: 'GET', path: '/api/orders?token=secret', status: 200 }];
+    const resultPath = report('api.json', { suites: [{ specs: [{ title: 'orders', tests: [{ results: [{ status: 'passed', attachments: [{ name: 'covai-api-evidence', contentType: 'application/json', body: Buffer.from(JSON.stringify(calls)).toString('base64') }] }] }] }] }] });
+    const parsed = parseSystemTestResult({ runner: 'playwright', resultPath, startedAt, finishedAt });
+    expect(parsed.scenarios[0].apiCalls).toEqual([{ method: 'GET', path: '/api/orders', status: 200, durationMs: 42, requestId: 'req-1' }]);
+  });
+  it('retains runtime icon controls from inline and file-backed failure attachments', () => {
+    const controls={controls:[{tag:'button',icons:['lucide lucide-pencil']}]};
+    const resultPath=report('controls.json',{});
+    const rootDir=path.dirname(resultPath);
+    const evidencePath=path.join(rootDir,'dom.json');
+    fs.writeFileSync(evidencePath,JSON.stringify(controls));
+    for(const attachment of [{body:Buffer.from(JSON.stringify(controls)).toString('base64')},{path:evidencePath}]) {
+      fs.writeFileSync(resultPath,JSON.stringify({suites:[{specs:[{title:'edit',tests:[{results:[{status:'failed',error:{message:'locator.click: timeout'},attachments:[{name:'covai-interaction-evidence',contentType:'application/json',...attachment}]}]}]}]}]}));
+      const parsed=parseSystemTestResult({runner:'playwright',resultPath,startedAt,finishedAt,rootDir});
+      expect(JSON.parse(parsed.scenarios[0].domSnapshot)).toEqual(controls);
+    }
+  });
+
+  it('ignores failure evidence outside the workspace and malformed inline evidence',()=>{
+    const resultPath=report('unsafe-controls.json',{}),rootDir=path.dirname(resultPath);
+    for(const attachment of [{path:path.join(rootDir,'..','private.json')},{body:'bm90LWpzb24='}]) {
+      fs.writeFileSync(resultPath,JSON.stringify({suites:[{specs:[{title:'edit',tests:[{results:[{status:'failed',attachments:[{name:'covai-interaction-evidence',contentType:'application/json',...attachment}]}]}]}]}]}));
+      expect(parseSystemTestResult({runner:'playwright',resultPath,startedAt,finishedAt,rootDir}).scenarios[0].domSnapshot).toBeNull();
+    }
+  });
   it('retains the complete source step plan when execution stops early', () => {
     const resultPath = report('steps.json', { suites: [{ specs: [{ file: 'checkout.spec.js', line: 1, title: 'checkout', tests: [{ results: [{ status: 'failed', steps: [
       { title: 'open', category: 'test.step', duration: 10 },

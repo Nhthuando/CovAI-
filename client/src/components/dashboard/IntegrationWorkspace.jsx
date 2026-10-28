@@ -1,3 +1,4 @@
+import { useProjectAccess } from "../../hooks/useProjectAccess";
 import React, { useCallback, useEffect, useState, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
@@ -158,6 +159,7 @@ export default function IntegrationWorkspace({
   initialContext,
   onContextChange
 }) {
+  const projectAccess = useProjectAccess(projectId);
   const navigate = useNavigate();
   const location = useLocation();
   const [workspace, setWorkspace] = useState(() => {
@@ -359,6 +361,7 @@ export default function IntegrationWorkspace({
   );
 
   const handleRunAnalysis = async () => {
+    if (!projectAccess.can("tests.run")) return;
     if (
       !projectId ||
       !snapshotId ||
@@ -387,6 +390,7 @@ export default function IntegrationWorkspace({
   };
 
   const handleGenerateClick = async (explicitTargets = null) => {
+    if (!projectAccess.can("ai.use")) return;
     if (
       !workspace?.generation?.hasAnalysis ||
       (activeJobId && activeJobStatus !== "FAILED")
@@ -416,6 +420,7 @@ export default function IntegrationWorkspace({
   };
 
   const handleApprove = async () => {
+    if (!projectAccess.can("evidence.approve")) return;
     if (
       !snapshotId ||
       (activeJobId && activeJobStatus !== "FAILED") ||
@@ -435,6 +440,7 @@ export default function IntegrationWorkspace({
   };
 
   const handleApproveAndRun = async () => {
+    if (!projectAccess.can("evidence.approve")) return;
     if (
       !snapshotId ||
       (activeJobId && activeJobStatus !== "FAILED") ||
@@ -464,6 +470,7 @@ export default function IntegrationWorkspace({
   };
 
   const handleRunApprovedTests = async () => {
+    if (!projectAccess.can("tests.run")) return;
     if (!snapshotId || (activeJobId && activeJobStatus !== "FAILED")) return;
     setError("");
     setActiveStage("RUN");
@@ -483,6 +490,7 @@ export default function IntegrationWorkspace({
   };
 
   const handleRunRemainingEndpoints = async (specificEndpoints = null) => {
+    if (!projectAccess.can("tests.run")) return;
     if (!snapshotId || (activeJobId && activeJobStatus !== "FAILED") || pendingAction) return;
 
     setError("");
@@ -805,7 +813,7 @@ export default function IntegrationWorkspace({
           {activeStage === "ANALYZE" && (
              <button
                onClick={handleRunAnalysis}
-               disabled={isJobActive || pendingAction === "ANALYZE"}
+               disabled={!projectAccess.can("tests.run") || isJobActive || pendingAction === "ANALYZE"}
                style={isJobActive || pendingAction === "ANALYZE" ? disabledButtonStyle : buttonStyle("var(--color-text-secondary)", true)}
              >
                {pendingAction === "ANALYZE" ? "Analyzing..." : (hasAnalysis ? "Re-analyze Project" : "Analyze Project")}
@@ -815,7 +823,7 @@ export default function IntegrationWorkspace({
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <button
                 onClick={() => handleGenerateClick()}
-                disabled={!hasAnalysis || isJobActive || pendingAction === "GENERATE"}
+                disabled={!projectAccess.can("ai.use") || !hasAnalysis || isJobActive || pendingAction === "GENERATE"}
                 style={!hasAnalysis || isJobActive || pendingAction === "GENERATE" ? disabledButtonStyle : buttonStyle("var(--color-primary)", false)}
               >
                 {pendingAction === "GENERATE"
@@ -837,7 +845,7 @@ export default function IntegrationWorkspace({
               {hasGeneratedTests && (
                 <button
                   onClick={handleApproveAndRun}
-                  disabled={isJobActive || selectedTestIds.length === 0 || pendingAction === "APPROVE_AND_RUN"}
+                  disabled={!projectAccess.can("evidence.approve") || isJobActive || selectedTestIds.length === 0 || pendingAction === "APPROVE_AND_RUN"}
                   style={
                     isJobActive || selectedTestIds.length === 0 || pendingAction === "APPROVE_AND_RUN"
                       ? disabledButtonStyle
@@ -858,7 +866,7 @@ export default function IntegrationWorkspace({
                 <button
                   type="button"
                   onClick={() => handleRunRemainingEndpoints()}
-                  disabled={isJobActive || pendingAction === "RUN_REMAINING"}
+                  disabled={!projectAccess.can("tests.run") || isJobActive || pendingAction === "RUN_REMAINING"}
                   style={
                     isJobActive || pendingAction === "RUN_REMAINING"
                       ? disabledButtonStyle
@@ -879,7 +887,7 @@ export default function IntegrationWorkspace({
               <button
                 type="button"
                 onClick={handleRunApprovedTests}
-                disabled={!isApproved || isJobActive || pendingAction === "RUN" || pendingAction === "RUN_REMAINING"}
+                disabled={!projectAccess.can("tests.run") || !isApproved || isJobActive || pendingAction === "RUN" || pendingAction === "RUN_REMAINING"}
                 style={!isApproved || isJobActive || pendingAction === "RUN" || pendingAction === "RUN_REMAINING" ? disabledButtonStyle : buttonStyle("var(--color-info, #3b82f6)", false)}
               >
                 {pendingAction === "RUN" ? "Starting..." : (execution ? "Run Tests Again" : "Run Tests")}
@@ -1269,7 +1277,7 @@ export default function IntegrationWorkspace({
                               <button
                                 type="button"
                                 onClick={() => handleRunRemainingEndpoints()}
-                                disabled={isJobActive || pendingAction === "RUN_REMAINING"}
+                                disabled={!projectAccess.can("tests.run") || isJobActive || pendingAction === "RUN_REMAINING"}
                                 style={{
                                   display: "inline-flex",
                                   alignItems: "center",
@@ -1319,7 +1327,7 @@ export default function IntegrationWorkspace({
                             <button
                               type="button"
                               onClick={() => handleRunRemainingEndpoints()}
-                              disabled={isJobActive || pendingAction === "RUN_REMAINING"}
+                              disabled={!projectAccess.can("tests.run") || isJobActive || pendingAction === "RUN_REMAINING"}
                               style={{
                                 whiteSpace: "nowrap",
                                 display: "inline-flex",
@@ -1450,7 +1458,7 @@ export default function IntegrationWorkspace({
                                       <button
                                         type="button"
                                         onClick={() => handleRunRemainingEndpoints([ep])}
-                                        disabled={isJobActive || pendingAction === "RUN_REMAINING"}
+                                        disabled={!projectAccess.can("tests.run") || isJobActive || pendingAction === "RUN_REMAINING"}
                                         style={{
                                           display: "inline-flex",
                                           alignItems: "center",

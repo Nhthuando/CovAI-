@@ -1,4 +1,5 @@
 import fs from 'fs';
+import {currentProjectOperation} from './projectOperationWorkspace.service.js';
 import path from 'path';
 import { parseJavaScriptCode } from './babelParser.service.js';
 import { CodeHygieneRuleRunner } from './codeHygieneRuleRunner.js';
@@ -6,7 +7,7 @@ import { saveCodeHygieneReport } from './codeHygiene.service.js';
 import { calculateSummary } from './codeHygieneSummary.service.js';
 
 const SOURCE_FILE_PATTERN = /\.(js|jsx|ts|tsx)$/i;
-const IGNORED_DIRECTORIES = new Set(['node_modules', 'build', 'dist', 'coverage', '.git']);
+const IGNORED_DIRECTORIES = new Set(['node_modules', 'build', 'dist', 'coverage', '.git', '.covai-collaboration', '.covai-temp', '.covai-system-test']);
 
 const isSourceFile = (entry) => entry.isFile() && SOURCE_FILE_PATTERN.test(entry.name);
 
@@ -36,6 +37,7 @@ export const analyzeCodeHygieneDirectory = (rootDir, { ruleRunner = new CodeHygi
 
 export const runCodeHygieneAnalysis = async (snapshotId, rootDir, dependencies = {}) => {
     const report = analyzeCodeHygieneDirectory(rootDir, dependencies);
-    await (dependencies.saveReport ?? saveCodeHygieneReport)(snapshotId, report.issues, report.summary);
+    const issues = currentProjectOperation() ? report.issues.map(issue=>({...issue,filePath:path.relative(rootDir,issue.filePath).replaceAll('\\','/')})) : report.issues;
+    await (dependencies.saveReport ?? saveCodeHygieneReport)(snapshotId, issues, report.summary);
     return report;
 };

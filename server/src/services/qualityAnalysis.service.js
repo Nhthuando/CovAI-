@@ -1,3 +1,4 @@
+import { membershipWhere, resolveProjectAccess } from './projectAccess.service.js';
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { resolveOwnedProjectSnapshot } from "./projectScope.service.js";
@@ -7,6 +8,7 @@ import { addJobLog } from "./job.service.js";
  * Starts a quality analysis job. Reuses an active job if one exists.
  */
 export const startQualityAnalysis = async ({ projectId, snapshotId, userId }) => {
+    await resolveProjectAccess({ projectId, userId, capability: "tests.run" });
     if (!projectId || typeof projectId !== "string") {
         throw new ServiceError("projectId is required", 400);
     }
@@ -87,7 +89,7 @@ export const getQualityReport = async ({ projectId, userId }) => {
 
     // Verify ownership
     const project = await prisma.project.findFirst({
-        where: { id: projectId, ownerId: userId },
+        where: { id: projectId, ...membershipWhere(userId) },
         select: { id: true },
     });
     if (!project) throw new ServiceError("Project not found", 404);

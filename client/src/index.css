@@ -1,6 +1,8 @@
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *, [data-theme="dark"], [data-theme="dark"] *));
+
 /* ============================================================
    COVAI DESIGN SYSTEM — DESIGN TOKENS
    Standard Design Tokens per COVAI_FRONTEND_AGENT_RULES.md
@@ -372,3 +374,6 @@ select:-webkit-autofill:focus {
     border-left-color: transparent;
   }
 }
+
+/* Dark primary buttons need dark foreground for readable system-test actions. */
+[data-theme="dark"] .system-test-primary-action { color: #0b0f14; }

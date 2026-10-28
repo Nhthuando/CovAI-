@@ -3,6 +3,54 @@ import _traverse from '@babel/traverse';
 import _generate from '@babel/generator';
 import prisma from '../config/prisma.js';
 import crypto from 'crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { resolveProjectAccess, withProjectGuard } from './projectAccess.service.js';
+import { publishProjectEvent, deliverProjectEvent } from './projectEvent.service.js';
+import { stagePreparedPublication, currentProjectOperation } from './projectOperationWorkspace.service.js';
+import { ServiceError } from '../utils/serviceError.js';
+const scenarioTransactions = new AsyncLocalStorage();
+const scenarioDb = () => scenarioTransactions.getStore() || prisma;
+export const scenarioArtifactVersion = row => crypto.createHash('sha256').update(JSON.stringify([row.content || '', row.metaJson || null])).digest('hex');
+export const assertScenarioVersion = (row, expectedVersion) => {
+    if (typeof expectedVersion !== 'string' || !/^[a-f0-9]{64}$/.test(expectedVersion)) throw new ServiceError('Reload the scenario to capture its version', 428, 'ARTIFACT_VERSION_REQUIRED');
+    if (scenarioArtifactVersion(row) !== expectedVersion) throw new ServiceError('This test changed. Reload and review your draft before saving again.', 409, 'ARTIFACT_VERSION_CONFLICT');
+};
+const loadScenarioArtifact = async (aiTestId, options, db = prisma, capability = 'project.read') => {
+    if (!options?.userId) throw new ServiceError('Authentication required',401,'AUTH_REQUIRED');
+    const row = await db.aiTest.findUnique({where:{id:aiTestId}});
+    if (!row || options.snapshotId && row.snapshotId !== options.snapshotId) throw new ServiceError('AiTest not found',404,'RESOURCE_NOT_FOUND');
+    await resolveProjectAccess({projectId:row.projectId,userId:options.userId,capability,db});
+    return row;
+};
+const mutateScenarioArtifact = async (aiTestId, options, run) => {
+    const initial = await loadScenarioArtifact(aiTestId,options,prisma,'files.write');
+    assertScenarioVersion(initial,options.expectedVersion);
+    const activeOperation = currentProjectOperation();
+    if (activeOperation && (activeOperation.projectId !== initial.projectId || activeOperation.snapshotId !== initial.snapshotId || activeOperation.userId !== options.userId)) {
+        throw new ServiceError('Scenario does not match this operation',409,'ARTIFACT_OPERATION_MISMATCH');
+    }
+    const apply = async tx => {
+        const current = await loadScenarioArtifact(aiTestId,options,tx,'files.write');
+        assertScenarioVersion(current,options.expectedVersion);
+        const updated = await scenarioTransactions.run(tx,run);
+        let event;
+        const operation = currentProjectOperation();
+        if (!operation || options.metadataOnly && !operation.publicationMetadata?.changedPaths?.length) {
+            const project = await tx.project.update({where:{id:current.projectId},data:{workspaceRevision:{increment:1}}});
+            event = await publishProjectEvent({tx,projectId:current.projectId,actorId:options.userId,type:'workspace.changed',resourceId:aiTestId,revision:project.workspaceRevision,payload:{kind:'SCENARIO_EDIT'}});
+        }
+        return {...updated,version:scenarioArtifactVersion(updated),_event:event};
+    };
+    if (currentProjectOperation()) {
+        const proposal = await scenarioTransactions.run({aiTest:{findUnique:async()=>initial,update:async({data})=>({...initial,...data})}},run);
+        await stagePreparedPublication(apply);
+        return {...proposal,deferred:true};
+    }
+    const result = await withProjectGuard({projectId:initial.projectId,userId:options.userId,capability:'files.write'},apply);
+    if(result._event) await deliverProjectEvent(result._event).catch(()=>{});
+    delete result._event;
+    return result;
+};
 const traverse = _traverse.default || _traverse;
 const generate = _generate.default || _generate;
 
@@ -93,8 +141,8 @@ export function getScenarioIdentity(aiTest, scenarioId) {
     }
 }
 
-export const getScenarioService = async (aiTestId, scenarioId) => {
-    const aiTest = await prisma.aiTest.findUnique({ where: { id: aiTestId } });
+export const getScenarioService = async (aiTestId, scenarioId, options) => {
+    const aiTest = await loadScenarioArtifact(aiTestId,options);
     if (!aiTest) throw new Error("AiTest not found");
     
     const { testName, nameIndex } = getScenarioIdentity(aiTest, scenarioId);
@@ -104,11 +152,11 @@ export const getScenarioService = async (aiTestId, scenarioId) => {
     if (!path) throw new Error(`Scenario '${testName}' (index ${nameIndex}) not found in AST`);
     
     const { code } = generate(path.node);
-    return { code, aiTest };
+    return { code, version:scenarioArtifactVersion(aiTest), aiTest:{...aiTest,version:scenarioArtifactVersion(aiTest)} };
 };
 
-export const updateScenarioService = async (aiTestId, scenarioId, updatedCode) => {
-    const aiTest = await prisma.aiTest.findUnique({ where: { id: aiTestId } });
+const updateScenarioServiceUnsafe = async (aiTestId, scenarioId, updatedCode) => {
+    const aiTest = await scenarioDb().aiTest.findUnique({ where: { id: aiTestId } });
     if (!aiTest) throw new Error("AiTest not found");
 
     const { testName, nameIndex } = getScenarioIdentity(aiTest, scenarioId);
@@ -156,7 +204,7 @@ export const updateScenarioService = async (aiTestId, scenarioId, updatedCode) =
     }
     meta.requests = updatedRequests;
 
-    const updatedTest = await prisma.aiTest.update({
+    const updatedTest = await scenarioDb().aiTest.update({
         where: { id: aiTestId },
         data: { 
             content: finalCode,
@@ -167,8 +215,8 @@ export const updateScenarioService = async (aiTestId, scenarioId, updatedCode) =
     return updatedTest;
 };
 
-export const deleteScenarioService = async (aiTestId, scenarioId) => {
-    const aiTest = await prisma.aiTest.findUnique({ where: { id: aiTestId } });
+const deleteScenarioServiceUnsafe = async (aiTestId, scenarioId) => {
+    const aiTest = await scenarioDb().aiTest.findUnique({ where: { id: aiTestId } });
     if (!aiTest) throw new Error("AiTest not found");
 
     const { testName, nameIndex } = getScenarioIdentity(aiTest, scenarioId);
@@ -188,7 +236,7 @@ export const deleteScenarioService = async (aiTestId, scenarioId) => {
     const requests = Array.isArray(meta.requests) ? meta.requests : [];
     meta.requests = requests.filter(r => r.scenarioId !== scenarioId && !(r.testName === testName && nameIndex === 0 && !r.scenarioId));
 
-    const updatedTest = await prisma.aiTest.update({
+    const updatedTest = await scenarioDb().aiTest.update({
         where: { id: aiTestId },
         data: { 
             content: finalCode,
@@ -239,8 +287,8 @@ export const stripAiScenariosService = (aiTest) => {
     };
 };
 
-export const toggleScenarioService = async (aiTestId, scenarioId, enable) => {
-    const aiTest = await prisma.aiTest.findUnique({ where: { id: aiTestId } });
+const toggleScenarioServiceUnsafe = async (aiTestId, scenarioId, enable) => {
+    const aiTest = await scenarioDb().aiTest.findUnique({ where: { id: aiTestId } });
     if (!aiTest) throw new Error("AiTest not found");
 
     const { testName, nameIndex } = getScenarioIdentity(aiTest, scenarioId);
@@ -282,7 +330,7 @@ export const toggleScenarioService = async (aiTestId, scenarioId, enable) => {
         return r;
     });
 
-    const updatedTest = await prisma.aiTest.update({
+    const updatedTest = await scenarioDb().aiTest.update({
         where: { id: aiTestId },
         data: { 
             content: finalCode,
@@ -293,8 +341,8 @@ export const toggleScenarioService = async (aiTestId, scenarioId, enable) => {
     return updatedTest;
 };
 
-export const addScenarioService = async (aiTestId, newScenarioCode, endpoint) => {
-    const aiTest = await prisma.aiTest.findUnique({ where: { id: aiTestId } });
+const addScenarioServiceUnsafe = async (aiTestId, newScenarioCode, endpoint) => {
+    const aiTest = await scenarioDb().aiTest.findUnique({ where: { id: aiTestId } });
     if (!aiTest) throw new Error("AiTest not found");
 
     const newAst = parseCode(newScenarioCode);
@@ -347,7 +395,7 @@ export const addScenarioService = async (aiTestId, newScenarioCode, endpoint) =>
     });
     meta.requests = requests;
 
-    const updatedTest = await prisma.aiTest.update({
+    const updatedTest = await scenarioDb().aiTest.update({
         where: { id: aiTestId },
         data: { 
             content: finalCode,
@@ -360,8 +408,9 @@ export const addScenarioService = async (aiTestId, newScenarioCode, endpoint) =>
 
 import { generateText } from "./gemini.service.js";
 
-export const regenerateScenarioService = async (aiTestId, scenarioId, payload = {}) => {
-    const aiTest = await prisma.aiTest.findUnique({ where: { id: aiTestId } });
+export const regenerateScenarioService = async (aiTestId, scenarioId, payload = {}, options) => {
+    const aiTest = await loadScenarioArtifact(aiTestId,options,prisma,'ai.use');
+    assertScenarioVersion(aiTest,options.expectedVersion);
     if (!aiTest) throw new Error("AiTest not found");
 
     const { testName, nameIndex } = getScenarioIdentity(aiTest, scenarioId);
@@ -388,10 +437,18 @@ ${originalCode}
 Please improve it, fix potential issues, or make it more robust based on the API context if relevant. Do NOT output a full file, ONLY the test block (e.g. it(...) {...}).
 `;
 
-    const generatedText = await generateText(prompt, "gemini-3.8-flash");
+    const generatedText = await generateText(prompt, payload.model || "gemini-3.8-flash");
     if (!generatedText) throw new Error("Failed to generate test from AI");
 
     const cleanText = generatedText.replace(/```(javascript|js|typescript|ts)?/g, '').replace(/```/g, '').trim();
     
-    return await updateScenarioService(aiTestId, scenarioId, cleanText);
+    return await updateScenarioService(aiTestId, scenarioId, cleanText, options);
 };
+
+export const updateScenarioService = (id,scenarioId,code,options) => mutateScenarioArtifact(id,options,()=>updateScenarioServiceUnsafe(id,scenarioId,code));
+export const deleteScenarioService = (id,scenarioId,options) => mutateScenarioArtifact(id,options,()=>deleteScenarioServiceUnsafe(id,scenarioId));
+export const toggleScenarioService = (id,scenarioId,enabled,options) => {
+    if (typeof enabled !== 'boolean') throw new ServiceError('enable must be a boolean',400);
+    return mutateScenarioArtifact(id,options,()=>toggleScenarioServiceUnsafe(id,scenarioId,enabled));
+};
+export const addScenarioService = (id,code,endpoint,options) => mutateScenarioArtifact(id,options,()=>addScenarioServiceUnsafe(id,code,endpoint));

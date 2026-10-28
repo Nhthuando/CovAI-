@@ -1,6 +1,13 @@
 import request from "supertest";
 import express from "express";
 import { describe, expect, it, jest } from "@jest/globals";
+await jest.unstable_mockModule('../config/prisma.js', () => ({ default: {
+  project: { findFirst: jest.fn(async () => ({ id: 'project-1', ownerId: 'owner-1', workspaceRevision: 0 })) },
+  projectSnapshot: {
+    findUnique: jest.fn(async () => ({ id: 'snapshot-1', projectId: 'project-1' })),
+    findFirst: jest.fn(async () => ({ id: 'snapshot-1', projectId: 'project-1' })),
+  },
+} }));
 
 const controller = {
   getChatSessions: (_req, res) => res.status(200).json({ success: true }),

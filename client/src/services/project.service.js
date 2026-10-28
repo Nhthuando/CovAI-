@@ -1,9 +1,11 @@
+import { getAIModelHeaders } from './aiModel.service.js';
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 function getAuthHeaders() {
   const token = localStorage.getItem("token");
   return {
     "Content-Type": "application/json",
+    ...getAIModelHeaders(),
     ...(token && { Authorization: `Bearer ${token}` }),
   };
 }
@@ -21,6 +23,10 @@ async function handleResponse(res) {
     const err = new Error(data.message || "Failed API call");
     err.status = res.status;
     err.code = data.code;
+    err.resetAt = data.resetAt;
+    err.retryAt = data.retryAt;
+    err.model = data.model;
+    err.details = data.details;
     throw err;
   }
   return data;
@@ -133,58 +139,60 @@ export async function getGithubRepositoriesApi() {
   }
 }
 
-export async function getFileContentApi(projectId, filePath) {
+export async function getFileContentApi(projectId, filePath, { snapshotId, signal } = {}) {
   const res = await fetch(
-    `${BASE_URL}/projects/${projectId}/file-content?path=${encodeURIComponent(filePath)}`,
+    `${BASE_URL}/projects/${projectId}/file-content?path=${encodeURIComponent(filePath)}${snapshotId ? `&snapshotId=${encodeURIComponent(snapshotId)}` : ""}`,
     {
       headers: getAuthHeaders(),
+      signal,
     },
   );
   return handleResponse(res);
 }
 
-export async function updateFileContentApi(projectId, filePath, content) {
+export async function updateFileContentApi(projectId, filePath, content, { snapshotId, expectedVersion, expectedWorkspaceRevision, requestId = crypto.randomUUID() } = {}) {
   const res = await fetch(`${BASE_URL}/projects/${projectId}/file-content`, {
     method: "PUT",
     headers: getAuthHeaders(),
-    body: JSON.stringify({ path: filePath, content }),
+    body: JSON.stringify({ path: filePath, content, snapshotId, expectedVersion, expectedWorkspaceRevision, requestId }),
   });
   return handleResponse(res);
 }
 
-export async function createProjectFileApi(projectId, filePath, content = "") {
+export async function createProjectFileApi(projectId, filePath, content = "", options = {}) {
   const res = await fetch(`${BASE_URL}/projects/${projectId}/files`, {
     method: "POST",
     headers: getAuthHeaders(),
-    body: JSON.stringify({ path: filePath, content }),
+    body: JSON.stringify({ path: filePath, content, ...options, requestId: options.requestId || crypto.randomUUID() }),
   });
   return handleResponse(res);
 }
 
-export async function createProjectFolderApi(projectId, folderPath) {
+export async function createProjectFolderApi(projectId, folderPath, options = {}) {
   const res = await fetch(`${BASE_URL}/projects/${projectId}/folders`, {
     method: "POST",
     headers: getAuthHeaders(),
-    body: JSON.stringify({ path: folderPath }),
+    body: JSON.stringify({ path: folderPath, ...options, requestId: options.requestId || crypto.randomUUID() }),
   });
   return handleResponse(res);
 }
 
-export async function renameProjectEntryApi(projectId, filePath, newPath) {
+export async function renameProjectEntryApi(projectId, filePath, newPath, options = {}) {
   const res = await fetch(`${BASE_URL}/projects/${projectId}/entries`, {
     method: "PATCH",
     headers: getAuthHeaders(),
-    body: JSON.stringify({ path: filePath, newPath }),
+    body: JSON.stringify({ path: filePath, newPath, ...options, requestId: options.requestId || crypto.randomUUID() }),
   });
   return handleResponse(res);
 }
 
-export async function deleteProjectEntryApi(projectId, filePath) {
+export async function deleteProjectEntryApi(projectId, filePath, options = {}) {
   const res = await fetch(
     `${BASE_URL}/projects/${projectId}/entries?path=${encodeURIComponent(filePath)}`,
     {
       method: "DELETE",
       headers: getAuthHeaders(),
+      body: JSON.stringify({ ...options, requestId: options.requestId || crypto.randomUUID() }),
     },
   );
   return handleResponse(res);

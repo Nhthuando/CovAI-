@@ -1,4 +1,4 @@
-import { useQuery, keepPreviousData } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
   getCoverageFiles,
   getCoverageFrameworks,
@@ -11,6 +11,7 @@ import {
 } from "../services/coverage.service.js";
 import { getProjectCfgApi, getProjectsApi, getProjectTreeApi } from "../services/project.service.js";
 import { queryClient } from "../lib/queryClient.js";
+import { useAuth } from "./useAuth";
 
 /**
  * Fetch all coverage data for a given snapshot and coverage type in parallel.
@@ -85,11 +86,12 @@ export async function fetchCoverageDashboardData({ snapshotId, type, projectId }
  * and maintains previous data during background refreshes.
  */
 export function useCoverageDashboard(snapshotId, type, projectId) {
+  const { userId } = useAuth();
   return useQuery({
-    queryKey: ["coverageDashboard", snapshotId, type, projectId || null],
+    queryKey: ["coverageDashboard", snapshotId, type, projectId || null, userId],
     queryFn: () => fetchCoverageDashboardData({ snapshotId, type, projectId }),
     enabled: Boolean(snapshotId),
-    placeholderData: keepPreviousData,
+    placeholderData: (previous, query) => query?.queryKey[1] === snapshotId && query?.queryKey.at(-1) === userId ? previous : undefined,
     staleTime: 10 * 60 * 1000, // 10 minutes cache freshness
     gcTime: 60 * 60 * 1000,    // 1 hour in memory
   });
@@ -99,8 +101,9 @@ export function useCoverageDashboard(snapshotId, type, projectId) {
  * React Query hook for single file coverage & AST details.
  */
 export function useFileCoverage(snapshotId, filePath) {
+  const { userId } = useAuth();
   return useQuery({
-    queryKey: ["fileCoverage", snapshotId, filePath],
+    queryKey: ["fileCoverage", snapshotId, filePath, userId],
     queryFn: async () => {
       const res = await getFileCoverage(snapshotId, filePath);
       return res?.data || null;
@@ -115,14 +118,15 @@ export function useFileCoverage(snapshotId, filePath) {
  * React Query hook for Integration Workspace.
  */
 export function useIntegrationWorkspace(snapshotId) {
+  const { userId } = useAuth();
   return useQuery({
-    queryKey: ["integrationWorkspace", snapshotId],
+    queryKey: ["integrationWorkspace", snapshotId, userId],
     queryFn: async () => {
       const res = await getIntegrationWorkspace(snapshotId);
       return res?.data || null;
     },
     enabled: Boolean(snapshotId),
-    placeholderData: keepPreviousData,
+    placeholderData: (previous, query) => query?.queryKey[1] === snapshotId && query?.queryKey.at(-1) === userId ? previous : undefined,
     staleTime: 10 * 60 * 1000,
     gcTime: 60 * 60 * 1000,
   });
@@ -206,8 +210,9 @@ export function updateCoverageFilesData(snapshotId, type, projectId, perFileResu
  * React Query hook for Project list.
  */
 export function useProjectsQuery() {
+  const { userId } = useAuth();
   return useQuery({
-    queryKey: ["projects"],
+    queryKey: ["projects", userId],
     queryFn: async () => {
       const res = await getProjectsApi();
       return res?.projects || [];
@@ -221,13 +226,15 @@ export function useProjectsQuery() {
  * React Query hook for Project file tree.
  */
 export function useProjectTreeQuery(projectId) {
+  const { userId } = useAuth();
   return useQuery({
-    queryKey: ["projectTree", projectId],
+    queryKey: ["projectTree", userId, projectId],
     queryFn: async () => {
       const res = await getProjectTreeApi(projectId);
-      return res?.data || [];
+      return { tree: res?.data || [], snapshotId: res.snapshotId, workspaceRevision: res.workspaceRevision };
     },
-    enabled: Boolean(projectId),
+    select: result => Array.isArray(result) ? result : result.tree,
+    enabled: Boolean(projectId && userId),
     staleTime: 5 * 60 * 1000,
     gcTime: 60 * 60 * 1000,
   });

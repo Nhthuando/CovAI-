@@ -3,7 +3,6 @@ import path from "path";
 import { addJobLog } from "./job.service.js";
 import { dockerRunner } from "./dockerRunner.service.js";
 import { classifyTestFile } from "../utils/testingFrameworkDetector.js";
-
 const INSTALL_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes for npm install
 const VITEST_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes for testing
 

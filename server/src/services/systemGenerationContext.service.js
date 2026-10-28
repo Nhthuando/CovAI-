@@ -4,8 +4,11 @@ import {startFullSystem} from './fullSystemLifecycle.service.js';
 import {containedPath, readFullSystemConfig, resolveSystemRepositoryRoot} from './fullSystemConfig.service.js';
 import {extractValidEndpoints} from './apiEndpointParser.service.js';
 import {ServiceError} from '../utils/serviceError.js';
+import {runtimeIgnoredDirectories} from './projectRuntimePlan.service.js';
+import {fileURLToPath} from 'node:url';
 
 const ignored = new Set([
+  ...runtimeIgnoredDirectories,
   'node_modules',
   '.git',
   'dist',
@@ -37,8 +40,29 @@ const sourceExtensions = new Set([
  * @param {Array<{ path: string, content: string }>} sourceCode
  * @returns {{ routes: string[], clientApiCalls: string[], uiActions: Array<Object> }}
  */
+const isStaticAsset = (pathStr) =>
+  /\.(?:svg|png|jpe?g|gif|ico|webp|avif|css|js|mjs|cjs|map|json|woff2?|ttf|eot|otf|pdf|zip|gz|xml|txt)$/i.test(pathStr);
+
 export const harvestFrontendContext = (sourceCode = []) => {
   const routes = new Set(['/']);
+
+  const addRoute = (candidate) => {
+    if (!candidate || typeof candidate !== 'string') return;
+    const pathOnly = candidate.split('?')[0].split('#')[0].trim();
+    if (
+      !pathOnly ||
+      pathOnly.startsWith('http') ||
+      pathOnly.startsWith('//') ||
+      pathOnly.startsWith('/api') ||
+      pathOnly.startsWith('api/') ||
+      pathOnly.includes('*') ||
+      pathOnly.startsWith(':') ||
+      isStaticAsset(pathOnly)
+    ) {
+      return;
+    }
+    routes.add(pathOnly.startsWith('/') ? pathOnly : `/${pathOnly}`);
+  };
   const clientApiCalls = new Set();
   const uiActions = [];
 
@@ -59,7 +83,7 @@ export const harvestFrontendContext = (sourceCode = []) => {
         !route.includes('*') &&
         !route.startsWith(':')
       ) {
-        routes.add(route.startsWith('/') ? route : `/${route}`);
+        addRoute(route);
       }
     }
 
@@ -76,30 +100,28 @@ export const harvestFrontendContext = (sourceCode = []) => {
           pageMatch[1] === 'index'
             ? '/'
             : `/${pageMatch[1].replace(/\/index$/, '')}`;
-        routes.add(routePath);
+        addRoute(routePath);
       }
     }
     if (/(?:^|\/)app\/(.+)\/page\.(?:jsx|tsx|js|ts)$/i.test(filePath)) {
       const appMatch = filePath.match(/(?:^|\/)app\/(.+)\/page\.(?:jsx|tsx|js|ts)$/i);
       if (appMatch && appMatch[1]) {
-        routes.add(`/${appMatch[1]}`);
+        addRoute(`/${appMatch[1]}`);
       }
     }
 
-    // Link / anchor navigation: <Link to="/...">, <router-link to="/...">, <a href="/...">
-    const linkRegex =
-      /<(?:router-link|NuxtLink|Link|a)\s+[^>]*(?:to|href)=["']([^"']+)["']/gi;
-    while ((match = linkRegex.exec(content)) !== null) {
-      const route = match[1];
-      if (
-        route &&
-        route.startsWith('/') &&
-        !route.startsWith('//') &&
-        !route.startsWith('/api') &&
-        !route.includes('#')
-      ) {
-        routes.add(route.split('?')[0]);
-      }
+    // Component Link navigation: <Link to="/...">, <router-link to="/...">, <NuxtLink to="/...">
+    // (Notice: case-sensitive tag name so it won't match HTML <link rel="icon" href="...">)
+    const componentLinkRegex =
+      /<(?:router-link|NuxtLink|Link)\s+[^>]*to=["']([^"']+)["']/g;
+    while ((match = componentLinkRegex.exec(content)) !== null) {
+      addRoute(match[1]);
+    }
+
+    // HTML anchor navigation: <a href="/...">
+    const anchorRegex = /<a\s+[^>]*href=["']([^"']+)["']/gi;
+    while ((match = anchorRegex.exec(content)) !== null) {
+      addRoute(match[1]);
     }
 
     // 2. Detect Client API calls:
@@ -119,8 +141,7 @@ export const harvestFrontendContext = (sourceCode = []) => {
 
     // 3. Detect UI Actions (buttons, inputs, forms)
     if (
-      /(?:components?|pages?|views?|screens?)\//i.test(filePath) ||
-      /(?:App|main)\.[jt]sx?$/i.test(filePath)
+      /\.(?:jsx?|tsx?|vue|svelte|html)$/i.test(filePath)
     ) {
       const buttons = [];
       const inputs = [];
@@ -215,6 +236,7 @@ export const collectSystemGenerationContext = (
         continue;
       }
       const relative = path.relative(rootDir, file).replace(/\\/g, '/');
+      if (['package-lock.json','yarn.lock','pnpm-lock.yaml','bun.lock','bun.lockb'].includes(entry.name)) continue;
       if (/^(?:playwright|cypress)\.config\./.test(entry.name)) continue;
       if (/\.(test|spec|cy)\./.test(entry.name) || !entry.isFile()) continue;
       if (
@@ -288,12 +310,16 @@ export const collectSystemGenerationContext = (
   };
 };
 
-export const observeSystemApplication = async ({ rootDir, jobId }) => {
-  const stack = await startFullSystem({ rootDir, jobId });
+export const observeSystemApplication = async ({ rootDir, jobId, environmentRoot, signal }) => {
+  const stack = await startFullSystem({ rootDir, jobId, environmentRoot, signal });
   let browser;
   try {
+    const {preparePlaywrightBrowsers}=await import('./systemTestRunner.service.js');
+    const browserEnv=await preparePlaywrightBrowsers(fileURLToPath(new URL('../../',import.meta.url)),jobId);
     const { chromium } = await import('@playwright/test');
-    browser = await chromium.launch({ headless: true });
+    const executable=chromium.executablePath().split(path.sep),revision=executable.findIndex(part=>/^chromium-\d+$/.test(part));
+    const executablePath=revision<0?chromium.executablePath():path.join(browserEnv.PLAYWRIGHT_BROWSERS_PATH,...executable.slice(revision));
+    browser = await chromium.launch({ headless: true,executablePath });
     const context = await browser.newContext();
     await context.route('**/api/**', (route) => {
       const url = new URL(route.request().url());

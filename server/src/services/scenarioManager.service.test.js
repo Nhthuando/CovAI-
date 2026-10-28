@@ -20,6 +20,17 @@ jest.unstable_mockModule('./gemini.service.js', () => ({
 }));
 
 const prisma = (await import('../config/prisma.js')).default;
+prisma.$transaction = jest.fn(async run => run(prisma));
+prisma.$executeRaw = jest.fn(async () => 1);
+prisma.project = {
+    findFirst: jest.fn(async () => ({id:'p1',ownerId:'owner',workspaceRevision:0})),
+    update: jest.fn(async () => ({workspaceRevision:1,eventSequence:1})),
+};
+prisma.projectMember = {findUnique:jest.fn(async ({where}) => {
+    const id=where.projectId_userId.userId;
+    return id === 'editor' ? {role:'EDITOR'} : id === 'viewer' ? {role:'VIEWER'} : null;
+})};
+prisma.projectEvent = {create:jest.fn(async ({data}) => ({id:'event',...data}))};
 const { generateText } = await import('./gemini.service.js');
 const { 
     getScenarioService, 
@@ -27,7 +38,7 @@ const {
     addScenarioService, 
     deleteScenarioService, 
     toggleScenarioService,
-    regenerateScenarioService 
+    regenerateScenarioService, scenarioArtifactVersion 
 } = await import('./scenarioManager.service.js');
 const { processSingleSupertestTest } = await import('./supertestPostProcessor.service.js');
 const { buildIntegrationWorkspace } = await import('./integrationWorkspace.service.js');
@@ -38,7 +49,7 @@ describe('scenarioManager.service', () => {
     });
 
     const mockAiTest = {
-        id: '123',
+        id: '123', projectId:'p1',snapshotId:'s1',
         content: `
 import supertest from "supertest";
 import app from "../app.js";
@@ -62,10 +73,12 @@ describe("GET /api/test", () => {
         })
     };
 
+    const options = row => ({userId:'editor',snapshotId:'s1',expectedVersion:scenarioArtifactVersion(row)});
+
     describe('getScenarioService', () => {
         it('should get scenario code', async () => {
             prisma.aiTest.findUnique.mockResolvedValue(mockAiTest);
-            const { code } = await getScenarioService('123', 'scenario1');
+            const { code } = await getScenarioService('123', 'scenario1', options(mockAiTest));
             expect(code).toContain('should work');
         });
     });
@@ -80,7 +93,7 @@ it("should work renamed", async () => {
     expect(false).toBe(false);
 });`;
             
-            await updateScenarioService('123', 'scenario1', updatedCode);
+            await updateScenarioService('123', 'scenario1', updatedCode, options(mockAiTest));
             
             expect(prisma.aiTest.update).toHaveBeenCalled();
             const updateCall = prisma.aiTest.update.mock.calls[0][0];
@@ -98,7 +111,7 @@ it("should work renamed", async () => {
             
             const invalidCode = `it("should fail", async () => { expect(false).toBe(false);`; // missing closing
             
-            await expect(updateScenarioService('123', 'scenario1', invalidCode)).rejects.toThrow();
+            await expect(updateScenarioService('123', 'scenario1', invalidCode, options(mockAiTest))).rejects.toThrow();
             expect(prisma.aiTest.update).not.toHaveBeenCalled(); // Atomicity
         });
     });
@@ -108,7 +121,7 @@ it("should work renamed", async () => {
             prisma.aiTest.findUnique.mockResolvedValue(mockAiTest);
             prisma.aiTest.update.mockResolvedValue({ id: '123' });
 
-            await deleteScenarioService('123', 'scenario1');
+            await deleteScenarioService('123', 'scenario1', options(mockAiTest));
             
             expect(prisma.aiTest.update).toHaveBeenCalled();
             const updateCall = prisma.aiTest.update.mock.calls[0][0];
@@ -124,7 +137,7 @@ it("should work renamed", async () => {
             prisma.aiTest.findUnique.mockResolvedValue(mockAiTest);
             prisma.aiTest.update.mockResolvedValue({ id: '123' });
 
-            await toggleScenarioService('123', 'scenario1', false);
+            await toggleScenarioService('123', 'scenario1', false, options(mockAiTest));
             
             expect(prisma.aiTest.update).toHaveBeenCalled();
             const updateCall = prisma.aiTest.update.mock.calls[0][0];
@@ -141,7 +154,7 @@ it("should work renamed", async () => {
             prisma.aiTest.update.mockResolvedValue({ id: '123' });
             generateText.mockResolvedValue('it("regenerated", () => {});');
 
-            await regenerateScenarioService('123', 'scenario1', { apiDefinitions: [] });
+            await regenerateScenarioService('123', 'scenario1', { apiDefinitions: [] }, options(mockAiTest));
             
             expect(generateText).toHaveBeenCalled();
             expect(prisma.aiTest.update).toHaveBeenCalled();
@@ -153,9 +166,18 @@ it("should work renamed", async () => {
             prisma.aiTest.findUnique.mockResolvedValue(mockAiTest);
             generateText.mockRejectedValue(new Error('AI failed'));
 
-            await expect(regenerateScenarioService('123', 'scenario1', {})).rejects.toThrow('AI failed');
+            await expect(regenerateScenarioService('123', 'scenario1', {}, options(mockAiTest))).rejects.toThrow('AI failed');
             expect(prisma.aiTest.update).not.toHaveBeenCalled(); // Original unchanged
         });
+    });
+
+    it('rejects missing actors, Viewer writes, missing versions and stale versions before updating',async()=>{
+        prisma.aiTest.findUnique.mockResolvedValue(mockAiTest);
+        await expect(updateScenarioService('123','scenario1','it("x",()=>{});')).rejects.toMatchObject({statusCode:401});
+        await expect(updateScenarioService('123','scenario1','it("x",()=>{});',{...options(mockAiTest),userId:'viewer'})).rejects.toMatchObject({statusCode:403});
+        await expect(updateScenarioService('123','scenario1','it("x",()=>{});',{userId:'editor',snapshotId:'s1'})).rejects.toMatchObject({statusCode:428});
+        await expect(updateScenarioService('123','scenario1','it("x",()=>{});',{...options(mockAiTest),expectedVersion:'0'.repeat(64)})).rejects.toMatchObject({statusCode:409});
+        expect(prisma.aiTest.update).not.toHaveBeenCalled();
     });
 
     describe('Phase 3 Root Cause Tests', () => {
@@ -182,7 +204,7 @@ describe("API", () => {
             expect(meta.requests[0].scenarioId.length).toBeGreaterThan(10); // UUID
             
             generatedAiTest = {
-                id: 'new123',
+                id: 'new123', projectId:'p1',snapshotId:'s1',
                 content: processed.content,
                 filePath: processed.filePath,
                 metaJson: processed.metaJson
@@ -210,7 +232,7 @@ describe("API", () => {
             prisma.aiTest.update.mockResolvedValue({ id: 'new123' });
 
             const newCode = `it("should generate renamed", async () => { await request(app).get('/test'); expect(1).toBe(1); });`;
-            await updateScenarioService('new123', originalScenarioId, newCode);
+            await updateScenarioService('new123', originalScenarioId, newCode, options(generatedAiTest));
             
             const updateCall = prisma.aiTest.update.mock.calls[0][0];
             const meta = JSON.parse(updateCall.data.metaJson);
@@ -239,7 +261,7 @@ describe("API", () => {
             prisma.aiTest.update.mockClear();
             
             const newerCode = `it("should edit again", async () => { await request(app).get('/test'); });`;
-            await updateScenarioService('new123', originalScenarioId, newerCode);
+            await updateScenarioService('new123', originalScenarioId, newerCode, options(generatedAiTest));
             
             const updateCall = prisma.aiTest.update.mock.calls[0][0];
             expect(updateCall.data.content).toContain('should edit again');
@@ -255,7 +277,7 @@ describe("API", () => {
             prisma.aiTest.findUnique.mockResolvedValue(generatedAiTest);
             prisma.aiTest.update.mockClear();
 
-            await toggleScenarioService('new123', originalScenarioId, false);
+            await toggleScenarioService('new123', originalScenarioId, false, options(generatedAiTest));
             
             const updateCall = prisma.aiTest.update.mock.calls[0][0];
             expect(updateCall.data.content).toContain('it.skip("should edit again"');
@@ -269,7 +291,7 @@ describe("API", () => {
             prisma.aiTest.update.mockClear();
             generateText.mockResolvedValue('it("regenerated after rename", async () => { await request(app).get("/test"); });');
 
-            await regenerateScenarioService('new123', originalScenarioId, { apiDefinitions: [] });
+            await regenerateScenarioService('new123', originalScenarioId, { apiDefinitions: [] }, options(generatedAiTest));
             
             const updateCall = prisma.aiTest.update.mock.calls[0][0];
             expect(updateCall.data.content).toContain('regenerated after rename');
@@ -285,7 +307,7 @@ describe("API", () => {
             prisma.aiTest.findUnique.mockResolvedValue(generatedAiTest);
             prisma.aiTest.update.mockClear();
 
-            await addScenarioService('new123', 'it("new test added", async () => { await request(app).get("/test"); });', { method: 'GET', path: '/test' });
+            await addScenarioService('new123', 'it("new test added", async () => { await request(app).get("/test"); });', { method: 'GET', path: '/test' }, options(generatedAiTest));
             
             const updateCall = prisma.aiTest.update.mock.calls[0][0];
             expect(updateCall.data.content).toContain('new test added');
@@ -300,7 +322,7 @@ describe("API", () => {
             prisma.aiTest.findUnique.mockResolvedValue(generatedAiTest);
             prisma.aiTest.update.mockClear();
 
-            await deleteScenarioService('new123', originalScenarioId);
+            await deleteScenarioService('new123', originalScenarioId, options(generatedAiTest));
             
             const updateCall = prisma.aiTest.update.mock.calls[0][0];
             expect(updateCall.data.content).not.toContain('regenerated after rename');
@@ -311,7 +333,7 @@ describe("API", () => {
 
         it('Test 10: Legacy AiTest without scenarioId -> verify backward-compatible normalization', async () => {
             const legacyAiTest = {
-                id: 'legacy_workspace',
+                id: 'legacy_workspace', projectId:'p1',snapshotId:'s1',
                 filePath: '/legacy.js',
                 content: `
 const request = require('supertest');
@@ -333,7 +355,7 @@ describe("API", () => {
             prisma.aiTest.findUnique.mockResolvedValue(legacyAiTest);
             prisma.aiTest.update.mockClear();
 
-            await updateScenarioService('legacy_workspace', uiScenario.scenarioId, `it("renamed legacy", async () => { await request(app).get('/test'); });`);
+            await updateScenarioService('legacy_workspace', uiScenario.scenarioId, `it("renamed legacy", async () => { await request(app).get('/test'); });`, options(legacyAiTest));
             
             const updateCall = prisma.aiTest.update.mock.calls[0][0];
             const meta = JSON.parse(updateCall.data.metaJson);

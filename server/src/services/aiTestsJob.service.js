@@ -25,6 +25,10 @@ import { validateFullSystemTest } from "./systemTestEvidence.service.js";
 import { generateVerifiedSystemTests } from './verifiedSystemGeneration.service.js';
 import { ensurePlaywrightExecutionSteps } from './playwrightExecutionSteps.service.js';
 import { validateSystemTestQuality } from './systemTestQuality.service.js';
+import { withPreparedProjectWorkspace } from './projectWorkspacePreparation.service.js';
+import { currentProjectOperation, operationSnapshot, stagePreparedPublication, assertProjectOperationActive } from './projectOperationWorkspace.service.js';
+import { resolveProjectAccess } from './projectAccess.service.js';
+import { resolveContainedProjectPath } from './projectFileVersion.service.js';
 import {
     resolveAvailableAutPort,
     prepareAutEnvironment,
@@ -33,6 +37,8 @@ import {
 } from "./autLifecycle.service.js";
 
 const broadcastAiJobProgress = (jobId, { progress, stage, message, status = "RUNNING", userId = null }) => {
+    // A terminal success must not reach sockets before files and metadata commit.
+    if (currentProjectOperation()?.preparedPublications && status === "SUCCESS") return;
     try {
         if (global.io) {
             const payload = {
@@ -52,14 +58,24 @@ const broadcastAiJobProgress = (jobId, { progress, stage, message, status = "RUN
     }
 };
 
+const updateGenerationJobStatus = async input => {
+    const operation = currentProjectOperation();
+    if (operation?.preparedPublications && ["SUCCESS", "FAILED"].includes(input.status)) {
+        return stagePreparedPublication(tx => updateJobStatus(input, tx));
+    }
+    if (operation) await assertProjectOperationActive(operation);
+    return updateJobStatus(input);
+};
+
 /**
  * Orchestrates the full Skeleton Test Generation Pipeline
  */
-export const processAiTestsJob = async (jobId) => {
+const processAiTestsJobInWorkspace = async (jobId) => {
     try {
-        const job = await getJobById(jobId);
+        const storedJob = await getJobById(jobId);
+        const job = storedJob && { ...storedJob, snapshot: operationSnapshot(storedJob.snapshot && { ...storedJob.snapshot, id: storedJob.snapshot.id || storedJob.snapshotId }) };
 
-        await updateJobStatus({
+        await updateGenerationJobStatus({
             jobId,
             status: "RUNNING",
             progress: 5,
@@ -75,13 +91,15 @@ export const processAiTestsJob = async (jobId) => {
         const hasVitest = project ? project.hasVitest : false;
 
         const payloadJsonObj = JSON.parse(job.payloadJson || "{}");
+        const selectedAiModel=payloadJsonObj.model || process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+        await addJobLog(jobId,'INFO',`Using Gemini model: ${selectedAiModel}`);
         const mode = payloadJsonObj.mode || "SKELETON";
         const executionMode = payloadJsonObj.executionMode || "frontend";
 
         if ((mode === 'PLAYWRIGHT_E2E' || mode === 'PLAYWRIGHT') && payloadJsonObj.executionMode === 'full') {
-            const rootDir=job.snapshot?.rootDir || (await prisma.projectSnapshot.findUnique({where:{id:snapshotId},select:{rootDir:true}}))?.rootDir;
-            const result=await generateVerifiedSystemTests({rootDir,jobId,onProgress:async(progress,message)=>{
-                await updateJobStatus({jobId,progress});
+            const rootDir=job.snapshot?.rootDir || operationSnapshot(await prisma.projectSnapshot.findUnique({where:{id:snapshotId},select:{id:true,rootDir:true}}))?.rootDir;
+            const result=await generateVerifiedSystemTests({rootDir,jobId,model:selectedAiModel,onProgress:async(progress,message)=>{
+                await updateGenerationJobStatus({jobId,progress});
                 await addJobLog(jobId,'INFO',message);
                 broadcastAiJobProgress(jobId,{progress,stage:message,message,userId:job.userId});
             }});
@@ -92,12 +110,12 @@ export const processAiTestsJob = async (jobId) => {
                 fs.writeFileSync(target,result.code,'utf8');
             }
             // Keep previous verified generations; a failed candidate must not erase them.
-            await prisma.aiTest.create({data:{
+            await stagePreparedPublication(tx => tx.aiTest.create({data:{
                 projectId,snapshotId,mode:'PLAYWRIGHT_E2E',status:result.failed?'FAILED':'VERIFIED',filePath,content:result.code,
                 metaJson:JSON.stringify({framework:'PLAYWRIGHT',executionMode:'full',dryRun:result.failed?'FAILED':'PASSED',attempts:result.attempts,verificationRuns:result.verificationRuns,contextHash:result.contextHash,quality:result.quality,scenarioCount:result.scenarioCount,contextComplete:result.contextComplete,omittedFiles:result.omittedFiles,error:result.error,verifiedAt:result.failed?undefined:new Date().toISOString()}),
-            }});
-            await updateJobStatus({jobId,status:result.failed?'FAILED':'SUCCESS',progress:100,...(result.failed?{errorMessage:result.error}:{})});
-            await notificationService.createJobFinishedNotification(jobId);
+            }}));
+            await updateGenerationJobStatus({jobId,status:result.failed?'FAILED':'SUCCESS',progress:100,...(result.failed?{errorMessage:result.error}:{})});
+            // Completion notification is sent only after the prepared workspace commits.
             return {success:!result.failed,dryRunPassed:!result.failed,filePath,error:result.error};
         }
 
@@ -106,7 +124,7 @@ export const processAiTestsJob = async (jobId) => {
         const aiPayloadResult = await buildAiPayload(snapshotId);
         const payload = aiPayloadResult.payload;
 
-        await updateJobStatus({ jobId, progress: 30 });
+        await updateGenerationJobStatus({ jobId, progress: 30 });
 
         await addJobLog(jobId, "INFO", `Constructing final prompt for ${mode} mode...`);
 
@@ -114,7 +132,7 @@ export const processAiTestsJob = async (jobId) => {
         if (mode === "PLAYWRIGHT_E2E" || mode === "PLAYWRIGHT") {
             const playwrightPrompt = buildPlaywrightPrompt(payload, {executionMode});
 
-            await updateJobStatus({ jobId, progress: 40 });
+            await updateGenerationJobStatus({ jobId, progress: 40 });
             await addJobLog(jobId, "INFO", "Calling Gemini AI model to generate Playwright E2E tests...");
             broadcastAiJobProgress(jobId, {
                 progress: 40,
@@ -123,12 +141,12 @@ export const processAiTestsJob = async (jobId) => {
                 userId: job.userId,
             });
 
-            const aiResponseText = await generateText(playwrightPrompt);
+            const aiResponseText = await generateText(playwrightPrompt, selectedAiModel);
             if (!aiResponseText || !aiResponseText.trim()) {
                 throw new ServiceError("Gemini returned an empty response for Playwright test generation.", 500);
             }
 
-            await updateJobStatus({ jobId, progress: 65 });
+            await updateGenerationJobStatus({ jobId, progress: 65 });
             await addJobLog(jobId, "INFO", "Validating generated Playwright test syntax and safety via Babel AST...");
             broadcastAiJobProgress(jobId, {
                 progress: 65,
@@ -172,10 +190,7 @@ export const processAiTestsJob = async (jobId) => {
             } catch (astError) {
                 await addJobLog(jobId, "WARN", `AST Validation failed: ${astError.message}`);
 
-                await prisma.aiTest.deleteMany({
-                    where: { snapshotId, mode: "PLAYWRIGHT_E2E" }
-                });
-                await prisma.aiTest.create({
+                await stagePreparedPublication(tx => tx.aiTest.create({
                     data: {
                         projectId,
                         snapshotId,
@@ -190,9 +205,9 @@ export const processAiTestsJob = async (jobId) => {
                             error: `Syntax/Security check failed: ${astError.message}`,
                         }),
                     },
-                });
+                }));
 
-                await updateJobStatus({
+                await updateGenerationJobStatus({
                     jobId,
                     status: "FAILED",
                     errorMessage: `AST Validation failed: ${astError.message}`,
@@ -201,7 +216,7 @@ export const processAiTestsJob = async (jobId) => {
             }
 
             // 2. Isolated Dry-Run Gate
-            await updateJobStatus({ jobId, progress: 75 });
+            await updateGenerationJobStatus({ jobId, progress: 75 });
             await addJobLog(jobId, "INFO", "Starting isolated Dry-Run gate to verify test executability...");
             broadcastAiJobProgress(jobId, {
                 progress: 75,
@@ -210,10 +225,10 @@ export const processAiTestsJob = async (jobId) => {
                 userId: job.userId,
             });
 
-            const snapshotRecord = await prisma.projectSnapshot.findUnique({
+            const snapshotRecord = operationSnapshot(await prisma.projectSnapshot.findUnique({
                 where: { id: snapshotId },
-                select: { rootDir: true }
-            });
+                select: { id: true, rootDir: true }
+            }));
             const rootDir = snapshotRecord?.rootDir || job.snapshot?.rootDir;
 
             if (!rootDir || !fs.existsSync(rootDir)) {
@@ -288,7 +303,7 @@ export const processAiTestsJob = async (jobId) => {
                 } catch (_) {}
             }
 
-            await updateJobStatus({ jobId, progress: 90 });
+            await updateGenerationJobStatus({ jobId, progress: 90 });
             broadcastAiJobProgress(jobId, {
                 progress: 90,
                 stage: "Persisting verified tests...",
@@ -297,17 +312,16 @@ export const processAiTestsJob = async (jobId) => {
             });
 
             // 3. Persist based on Dry-Run Result
-            await prisma.aiTest.deleteMany({
-                where: { snapshotId, mode: "PLAYWRIGHT_E2E" }
-            });
-
             if (dryRunSuccess) {
+                await stagePreparedPublication(tx => tx.aiTest.deleteMany({
+                    where: { snapshotId, mode: "PLAYWRIGHT_E2E" }
+                }));
                 // Dry-Run PASS: Save officially into tests/e2e/ai-generated.spec.js
                 const fullTargetPath = path.join(rootDir, targetFilePath);
                 fs.mkdirSync(path.dirname(fullTargetPath), { recursive: true });
                 fs.writeFileSync(fullTargetPath, generatedCode, "utf8");
 
-                await prisma.aiTest.create({
+                await stagePreparedPublication(tx => tx.aiTest.create({
                     data: {
                         projectId,
                         snapshotId,
@@ -323,10 +337,10 @@ export const processAiTestsJob = async (jobId) => {
                             verifiedAt: new Date().toISOString(),
                         }),
                     },
-                });
+                }));
 
                 await addJobLog(jobId, "INFO", `Dry-run passed! Saved verified test to ${targetFilePath}.`);
-                await updateJobStatus({ jobId, status: "SUCCESS", progress: 100 });
+                await updateGenerationJobStatus({ jobId, status: "SUCCESS", progress: 100 });
                 broadcastAiJobProgress(jobId, {
                     progress: 100,
                     stage: "Completed",
@@ -334,11 +348,11 @@ export const processAiTestsJob = async (jobId) => {
                     status: "SUCCESS",
                     userId: job.userId,
                 });
-                await notificationService.createJobFinishedNotification(jobId);
+                // Completion notification is sent only after the prepared workspace commits.
                 return { success: true, dryRunPassed: true, filePath: targetFilePath };
             } else {
                 // Dry-Run FAIL: Do NOT save to main test suite. Save AiTest as FAILED for UI feedback.
-                await prisma.aiTest.create({
+                await stagePreparedPublication(tx => tx.aiTest.create({
                     data: {
                         projectId,
                         snapshotId,
@@ -354,14 +368,14 @@ export const processAiTestsJob = async (jobId) => {
                             failedAt: new Date().toISOString(),
                         }),
                     },
-                });
+                }));
 
                 await addJobLog(
                     jobId,
                     "WARN",
                     `Dry-run failed: ${dryRunError.slice(0, 300)}. Test was not saved to project test suite.`,
                 );
-                await updateJobStatus({
+                await updateGenerationJobStatus({
                     jobId,
                     status: "FAILED",
                     progress: 100,
@@ -374,7 +388,7 @@ export const processAiTestsJob = async (jobId) => {
                     status: "FAILED",
                     userId: job.userId,
                 });
-                await notificationService.createJobFinishedNotification(jobId);
+                // Completion notification is sent only after the prepared workspace commits.
                 return { success: false, dryRunPassed: false, error: dryRunError };
             }
         }
@@ -383,13 +397,20 @@ export const processAiTestsJob = async (jobId) => {
         if (mode === "SUPERTEST_REGENERATE") {
             const { aiTestId, scenarioId } = payloadJsonObj;
             
-            await updateJobStatus({ jobId, progress: 40 });
+            await updateGenerationJobStatus({ jobId, progress: 40 });
             await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'GENERATE_AI_TESTS', label: "Regenerating scenario using AI...", progress: 40 }));
             
             const { regenerateScenarioService } = await import("./scenarioManager.service.js");
-            await regenerateScenarioService(aiTestId, scenarioId, payload);
+            const artifact = await prisma.aiTest.findUnique({where:{id:aiTestId}});
+            if (!artifact || artifact.projectId !== job.projectId || artifact.snapshotId !== job.snapshotId) throw new ServiceError('AiTest does not belong to this job snapshot',404);
+            const options = {userId:job.userId,snapshotId:job.snapshotId,expectedVersion:payloadJsonObj.expectedVersion};
+            const candidate = await regenerateScenarioService(aiTestId, scenarioId, {...payload,model:payloadJsonObj.model}, options);
+            const resolved = await resolveContainedProjectPath(job.snapshot,artifact.filePath);
+            options.metadataOnly = fs.existsSync(resolved.target) && fs.readFileSync(resolved.target,'utf8') === candidate.content;
+            fs.mkdirSync(path.dirname(resolved.target),{recursive:true});
+            fs.writeFileSync(resolved.target,candidate.content,'utf8');
             
-            await updateJobStatus({ jobId, progress: 100, status: "SUCCESS" });
+            await updateGenerationJobStatus({ jobId, progress: 100, status: "SUCCESS" });
             return;
         }
 
@@ -432,7 +453,7 @@ export const processAiTestsJob = async (jobId) => {
 
             if (targetEndpoints.length === 0) {
                 await addJobLog(jobId, "WARN", "No matching API endpoints detected for generation. Aborting.");
-                await updateJobStatus({ jobId, status: "SUCCESS", progress: 100 });
+                await updateGenerationJobStatus({ jobId, status: "SUCCESS", progress: 100 });
                 return { success: true, count: 0, summary: summaryCombined };
             }
 
@@ -450,7 +471,7 @@ export const processAiTestsJob = async (jobId) => {
                     const chunkEndpoints = chunkKeys.map(k => endpointTracker.get(k).endpoint);
                     
                     const chunkProgress = Math.min(80, Math.floor(40 + ((i / currentQueue.length) * 40 / generationCycles)));
-                    await updateJobStatus({ jobId, progress: chunkProgress });
+                    await updateGenerationJobStatus({ jobId, progress: chunkProgress });
                     
                     const batchId = `cycle-${generationCycles}-batch-${Math.floor(i / CHUNK_SIZE) + 1}`;
                     await addJobLog(jobId, "INFO", JSON.stringify({ 
@@ -476,7 +497,7 @@ export const processAiTestsJob = async (jobId) => {
                     
                     try {
                         // The model name is hardcoded here but gemini.service resolves fallbacks internally
-                        const supertestResponseText = await generateText(supertestPrompt, "gemini-3.8-flash");
+                        const supertestResponseText = await generateText(supertestPrompt, selectedAiModel);
                         
                         if (supertestResponseText) {
                             try {
@@ -608,7 +629,7 @@ export const processAiTestsJob = async (jobId) => {
             await addJobLog(jobId, "INFO", `Coverage Results: ${completelyCovered} Complete, ${partialCovered} Partial, ${completelyMissed} Missed.`);
 
             await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'GENERATE_AI_TESTS', label: "Consolidating test scenarios...", progress: 85 }));
-            await updateJobStatus({ jobId, progress: 85 });
+            await updateGenerationJobStatus({ jobId, progress: 85 });
 
             await addJobLog(jobId, "INFO", "Replacing old Supertest tests atomically...");
             const existingTests = await prisma.aiTest.findMany({
@@ -682,7 +703,7 @@ export const processAiTestsJob = async (jobId) => {
             }
 
             // Step 2: Atomic DB Transaction
-            await prisma.$transaction(async (tx) => {
+            await stagePreparedPublication(async (tx) => {
                 if (supertestIds.length > 0) {
                     await tx.aiTest.deleteMany({
                         where: { id: { in: supertestIds } }
@@ -730,8 +751,8 @@ export const processAiTestsJob = async (jobId) => {
                 await addJobLog(jobId, "INFO", "No Supertest integration test files were generated.");
             }
 
-            await updateJobStatus({ jobId, status: finalJobStatus === "PARTIAL" ? "SUCCESS" : finalJobStatus, progress: 100 });
-            await notificationService.createJobFinishedNotification(jobId);
+            await updateGenerationJobStatus({ jobId, status: finalJobStatus === "PARTIAL" ? "SUCCESS" : finalJobStatus, progress: 100 });
+            // Completion notification is sent only after the prepared workspace commits.
             return { 
                 success: finalJobStatus !== "FAILED", 
                 count: allTestsCombined.length, 
@@ -747,16 +768,16 @@ export const processAiTestsJob = async (jobId) => {
         if (mode === "CYPRESS") {
             const cypressPrompt = buildCypressPrompt(payload);
 
-            await updateJobStatus({ jobId, progress: 40 });
+            await updateGenerationJobStatus({ jobId, progress: 40 });
 
             await addJobLog(jobId, "INFO", "Calling Gemini AI model for Cypress test generation...");
-            const cypressResponseText = await generateText(cypressPrompt, "gemini-3.8-flash");
+            const cypressResponseText = await generateText(cypressPrompt, selectedAiModel);
 
             if (!cypressResponseText) {
                 throw new Error("Gemini returned an empty response for Cypress generation.");
             }
 
-            await updateJobStatus({ jobId, progress: 80 });
+            await updateGenerationJobStatus({ jobId, progress: 80 });
 
             await addJobLog(jobId, "INFO", "Parsing and classifying Cypress test scenarios...");
             const { allTests, summary } = processCypressTests(cypressResponseText, {
@@ -765,37 +786,37 @@ export const processAiTestsJob = async (jobId) => {
             });
 
             await addJobLog(jobId, "INFO", "Cleaning up old Cypress tests for this snapshot...");
-            await prisma.aiTest.deleteMany({
+            await stagePreparedPublication(tx => tx.aiTest.deleteMany({
                 where: { snapshotId, mode: "CYPRESS" },
-            });
+            }));
 
             if (allTests.length > 0) {
-                await prisma.aiTest.createMany({ data: allTests });
+                await stagePreparedPublication(tx => tx.aiTest.createMany({ data: allTests }));
                 await addJobLog(jobId, "INFO", summary.message);
             } else {
                 await addJobLog(jobId, "INFO", "No Cypress test files were generated.");
             }
 
-            await updateJobStatus({ jobId, status: "SUCCESS", progress: 100 });
-            await notificationService.createJobFinishedNotification(jobId);
+            await updateGenerationJobStatus({ jobId, status: "SUCCESS", progress: 100 });
+            // Completion notification is sent only after the prepared workspace commits.
             return { success: true, count: allTests.length, summary };
         }
 
         // ── Jest / Vitest Generation Branch (existing) ─────────────────────
         const finalPrompt = buildFinalPrompt(payload, { mode, hasJest, hasVitest });
 
-        await updateJobStatus({ jobId, progress: 40 });
+        await updateGenerationJobStatus({ jobId, progress: 40 });
 
         // SCRUM-394: Call Gemini API
         await addJobLog(jobId, "INFO", "Calling Gemini AI model...");
-        const responseText = await generateText(finalPrompt, "gemini-3.8-flash");
+        const responseText = await generateText(finalPrompt, selectedAiModel);
 
         // SCRUM-396: Validate AI response
         if (!responseText) {
             throw new Error("Gemini returned an empty response.");
         }
 
-        await updateJobStatus({ jobId, progress: 80 });
+        await updateGenerationJobStatus({ jobId, progress: 80 });
 
         await addJobLog(jobId, "INFO", "Parsing AI response...");
         const { suggestions, tests } = processAiSuggestions(responseText, projectId, snapshotId);
@@ -803,18 +824,18 @@ export const processAiTestsJob = async (jobId) => {
         await addJobLog(jobId, "INFO", "Saving skeleton tests to database...");
 
         // Clean up old ones for this snapshot
-        await prisma.aiTest.deleteMany({
+        await stagePreparedPublication(tx => tx.aiTest.deleteMany({
             where: { snapshotId }
-        });
-        await prisma.aiSuggestion.deleteMany({
+        }));
+        await stagePreparedPublication(tx => tx.aiSuggestion.deleteMany({
             where: { snapshotId }
-        });
+        }));
 
         // SCRUM-397: Generate mock suggestions
         if (suggestions.length > 0) {
-            await prisma.aiSuggestion.createMany({
+            await stagePreparedPublication(tx => tx.aiSuggestion.createMany({
                 data: suggestions
-            });
+            }));
             await addJobLog(jobId, "INFO", `Saved ${suggestions.length} mock suggestions.`);
         } else {
             await addJobLog(jobId, "INFO", "No mock suggestions were generated.");
@@ -834,22 +855,22 @@ export const processAiTestsJob = async (jobId) => {
                 summary = result.summary;
             }
 
-            await prisma.aiTest.createMany({
+            await stagePreparedPublication(tx => tx.aiTest.createMany({
                 data: processedTests
-            });
+            }));
             await addJobLog(jobId, "INFO", summary.message);
         } else {
             await addJobLog(jobId, "INFO", `No ${mode.toLowerCase()} test files were generated.`);
         }
 
-        await updateJobStatus({
+        await updateGenerationJobStatus({
             jobId,
             status: "SUCCESS",
             progress: 100,
         });
 
         // Notify user
-        await notificationService.createJobFinishedNotification(jobId);
+        // Completion notification is sent only after the prepared workspace commits.
 
         return { success: true, count: tests.length };
     } catch (error) {
@@ -861,7 +882,7 @@ export const processAiTestsJob = async (jobId) => {
         } catch (_) {}
 
         try {
-            await updateJobStatus({
+            await updateGenerationJobStatus({
                 jobId,
                 status: "FAILED",
                 progress: 100,
@@ -869,6 +890,27 @@ export const processAiTestsJob = async (jobId) => {
             });
         } catch (_) {}
 
+        throw error;
+    }
+};
+
+export const processAiTestsJob = async jobId => {
+    const job = await getJobById(jobId);
+    if (!job) throw new ServiceError("Job not found", 404);
+    try {
+        const { project } = await resolveProjectAccess({ projectId: job.projectId, userId: job.userId, capability: "ai.use" });
+        const admitted = await prisma.projectOperation.findUnique({ where: { primaryJobId: jobId } });
+        const result = await withPreparedProjectWorkspace({
+            projectId: job.projectId, snapshotId: job.snapshotId, userId: job.userId, primaryJobId: jobId,
+            capability: "ai.use", expectedWorkspaceRevision: admitted?.capturedWorkspaceRevision ?? project.workspaceRevision,
+            type: "AI_TESTS", input: JSON.parse(job.payloadJson || "{}"),
+            publish: result => result?.success !== false,
+        }, () => processAiTestsJobInWorkspace(jobId));
+        if (!result?.skipped) await notificationService.createJobFinishedNotification(jobId);
+        return result;
+    } catch (error) {
+        await prisma.job.updateMany({ where: { id: jobId, status: { in: ["QUEUED", "RUNNING"] } },
+            data: { status: "FAILED", progress: 100, finishedAt: new Date(), errorMessage: error.message } }).catch(() => {});
         throw error;
     }
 };

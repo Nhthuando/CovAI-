@@ -1,3 +1,5 @@
+import { getSelectedAIModel, setSelectedAIModel } from '../../services/aiModel.service.js';
+import { AI_MODELS } from '../../../../shared/aiModels.js';
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -56,6 +58,9 @@ import { useToast } from "./ToastContext";
 import DiffReviewModal from "./DiffReviewModal";
 import AIContextDialog from "./AIContextDialog";
 import { getAiContext } from "../../services/aiContext.service";
+import { useProjectAccess } from "../../hooks/useProjectAccess";
+import { useAuth } from "../../hooks/useAuth";
+import { collaborationRequest, projectPath } from "../../services/collaborationHttp";
 
 /* ── Clean and Normalize Path Utilities ─────────────────── */
 export function cleanFilePath(pathStr = "") {
@@ -1063,7 +1068,7 @@ function ChatMessage({
             fontSize: 12,
           }}
         >
-          {isUser ? "You" : "COV"}
+          {isUser ? (msg.senderName || (msg.isOwn !== false ? "You" : "Project member")) : "COV"}
         </span>
 
         {!isUser && (
@@ -1403,40 +1408,7 @@ function TypingIndicator() {
 }
 
 /* ── AI Model Options ────────────────────────────────────── */
-const AI_MODELS = [
-  {
-    id: "gemini-1.5-pro",
-    name: "Gemini 1.5 Pro",
-    provider: "Google",
-    badge: "Default",
-    badgeColor: "#a78bfa",
-    desc: "Complex logic & test generation",
-  },
-  {
-    id: "gemini-1.5-flash",
-    name: "Gemini 1.5 Flash",
-    provider: "Google",
-    badge: "Fast",
-    badgeColor: "#38bdf8",
-    desc: "Ultra-low latency reasoning",
-  },
-  {
-    id: "claude-3-5-sonnet",
-    name: "Claude 3.5 Sonnet",
-    provider: "Anthropic",
-    badge: "Pro",
-    badgeColor: "#f472b6",
-    desc: "Advanced refactoring & test design",
-  },
-  {
-    id: "gpt-4o",
-    name: "GPT-4o",
-    provider: "OpenAI",
-    badge: "Smart",
-    badgeColor: "#4ade80",
-    desc: "High precision code synthesis",
-  },
-];
+
 
 /* ── Modern Prompt Input (Compact & Dynamic Auto-Resize) ─── */
 function ChatInput({
@@ -1446,6 +1418,8 @@ function ChatInput({
   setSelectedModel,
   fileTree = [],
   projectId,
+  readOnly = false,
+  snapshotId,
 }) {
   const [input, setInput] = useState("");
   const [focused, setFocused] = useState(false);
@@ -1666,7 +1640,7 @@ function ChatInput({
       setAttachments((prev) => [...prev, newAtt]);
 
       if (projectId) {
-        getFileContentApi(projectId, file.path)
+        getFileContentApi(projectId, file.path, { snapshotId })
           .then((res) => {
             if (res?.content !== undefined) {
               setAttachments((prev) =>
@@ -1720,18 +1694,21 @@ function ChatInput({
     }
   };
 
-  const handleSend = () => {
-    if ((!input.trim() && attachments.length === 0) || isTyping) return;
-    onSend(input.trim(), attachments);
-    setInput("");
-    setAttachments([]);
+  const handleSend = async () => {
+    if ((!input.trim() && attachments.length === 0) || isTyping || readOnly) return;
+    const sentInput = input;
+    const sentAttachments = attachments;
+    const succeeded = await onSend(input.trim(), attachments);
+    if (!succeeded) return;
+    setInput(current => current === sentInput ? "" : current);
+    setAttachments(current => current === sentAttachments ? [] : current);
     setAtMentionOpen(false);
     if (textareaRef.current) {
       textareaRef.current.style.height = "24px";
     }
   };
 
-  const canSend = (input.trim() || attachments.length > 0) && !isTyping;
+  const canSend = (input.trim() || attachments.length > 0) && !isTyping && !readOnly;
 
   return (
     <div
@@ -1896,7 +1873,7 @@ function ChatInput({
                   fontFamily: "var(--font-mono)",
                 }}
               >
-                COV Multi-LLM
+                Gemini Models
               </span>
             </div>
 
@@ -1908,6 +1885,7 @@ function ChatInput({
                     key={model.id}
                     onClick={() => {
                       setSelectedModel(model);
+                      setSelectedAIModel(model.id);
                       setModelMenuOpen(false);
                     }}
                     className="flex items-start gap-2.5 p-2 rounded-lg text-left transition-colors cursor-pointer"
@@ -2048,6 +2026,8 @@ function ChatInput({
         )}
 
         <textarea
+          aria-label="Ask COV"
+          disabled={readOnly}
           ref={textareaRef}
           value={input}
           onChange={handleInputChange}
@@ -2129,7 +2109,7 @@ function ChatInput({
                 style={{ fontWeight: 500 }}
                 className="truncate max-w-[120px]"
               >
-                {selectedModel?.name || "Gemini 1.5 Pro"}
+                {selectedModel?.name || "Gemini 3.5 Flash Lite"}
               </span>
               <ChevronDown
                 size={12}
@@ -2191,6 +2171,9 @@ export default function AIPanel({
   onOpenFile,
   onRunAnalysis,
 }) {
+  const projectAccess = useProjectAccess(projectId);
+  const { userId: currentUserId } = useAuth();
+  const chatRequestRef = useRef(null);
   const [internalTree, setInternalTree] = useState(fileTree || []);
 
   useEffect(() => {
@@ -2214,7 +2197,7 @@ export default function AIPanel({
 
   const [messages, setMessages] = useState(INITIAL_MESSAGES);
   const [isTyping, setIsTyping] = useState(false);
-  const [selectedModel, setSelectedModel] = useState(AI_MODELS[0]);
+  const [selectedModel, setSelectedModel] = useState(() => AI_MODELS.find(model => model.id === getSelectedAIModel()) || AI_MODELS[0]);
   const [generateExpanded, setGenerateExpanded] = useState(false);
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
   const [reviewFiles, setReviewFiles] = useState([]);
@@ -2291,6 +2274,7 @@ export default function AIPanel({
       const session = res.data.session;
       const formatted = (res.data.messages || []).map(m => ({
         id: m.id, role: m.role, content: m.content, model: m.model,
+        senderUserId: m.senderUserId, senderName: m.senderUser?.name || m.sender?.name || m.senderUser?.email, isOwn: m.senderUserId === currentUserId,
         attachments: (m.attachments || []).map((att, index) => ({ ...att, id: att.id || `${m.id}_${index}`, previewUrl: att.type === "image" ? att.data : undefined })),
         timestamp: new Date(m.createdAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
       }));
@@ -2303,7 +2287,43 @@ export default function AIPanel({
       if (request === contextRequestRef.current) showToast({ type: "error", title: "Load failed", message: err.message });
       if (throwOnError) throw err;
     } finally { if (request === contextRequestRef.current) setIsLoadingSession(false); }
-  }, [projectId, storageKey, showToast]);
+  }, [projectId, storageKey, showToast, currentUserId]);
+
+  useEffect(() => {
+    if (!projectId || !projectAccess.role) return;
+    let alive = true;
+    let refreshing = false;
+    const refreshShared = async event => {
+      if (event?.detail && event.detail.projectId !== projectId) return;
+      if (event?.detail && !/chat|memory/i.test(event.detail.type || "")) return;
+      if (refreshing || sendRef.current || isRestoring || isLoadingSession) return;
+      refreshing = true;
+      try {
+        const response = await getChatSessionsApi(projectId);
+        if (!alive) return;
+        if (Array.isArray(response.data)) setSessions(response.data);
+        const eventSession = event?.detail?.payload?.sessionId || (event?.detail?.type === "chat.message" ? event.detail.resourceId : null);
+        const sessionId = activeSessionId || eventSession || response.data?.find(row => row._count?.messages > 0)?.id;
+        if (sessionId) {
+          const history = await getChatSessionMessagesApi(projectId, sessionId);
+          if (!alive || sendRef.current) return;
+          const formatted = (history.data?.messages || []).map(message => ({
+            ...message, senderName: message.senderUser?.name || message.senderUser?.email,
+            isOwn: message.senderUserId === currentUserId,
+            timestamp: new Date(message.createdAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
+          }));
+          if (formatted.length) {
+            setMessages(previous => previous.at(-1)?.id === formatted.at(-1)?.id ? previous : formatted);
+            if (!activeSessionId) { setActiveSessionId(sessionId); setActiveSessionMeta(history.data.session); }
+          }
+        }
+      } catch { /* Expiry/revocation is handled by the access boundary. */ }
+      finally { refreshing = false; }
+    };
+    const interval = setInterval(refreshShared, 5000);
+    window.addEventListener("covai:project-event", refreshShared);
+    return () => { alive = false; clearInterval(interval); window.removeEventListener("covai:project-event", refreshShared); };
+  }, [projectId, projectAccess.role, activeSessionId, currentUserId, isRestoring, isLoadingSession]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2326,6 +2346,7 @@ export default function AIPanel({
   }, [projectId, storageKey, fetchSessions, handleSelectSession]);
 
   const handleNewChat = (memory = useProjectMemory) => {
+    if (!projectAccess.can("chat.write")) return;
     if (isTyping || isRestoring || isLoadingSession) return;
     contextRequestRef.current++;
     setUseProjectMemory(typeof memory === "boolean" ? memory : useProjectMemory);
@@ -2343,11 +2364,13 @@ export default function AIPanel({
 
   const handleStartRenameSession = (session, e) => {
     e.stopPropagation();
+    if (!projectAccess.can("chat.write")) return;
     setEditingSessionId(session.id);
     setEditingTitle(session.title || "");
   };
 
   const handleSaveRenameSession = async (sessionId) => {
+    if (!projectAccess.can("chat.write")) return;
     const trimmed = editingTitle.trim();
     if (!trimmed) {
       setEditingSessionId(null);
@@ -2379,6 +2402,7 @@ export default function AIPanel({
 
   const handleDeleteSession = async (sessionId, e) => {
     e.stopPropagation();
+    if (!projectAccess.can("chat.delete")) return;
     try {
       const res = await deleteChatSessionApi(projectId, sessionId);
       if (res?.success) {
@@ -2430,6 +2454,7 @@ export default function AIPanel({
   }, [messages, isTyping]);
 
   const handleSuggestForFile = async (filePath) => {
+    if (!projectAccess.can("ai.use")) return;
     if (!projectId) {
       showToast({
         type: "warning",
@@ -2495,6 +2520,7 @@ export default function AIPanel({
             }))
           : [
               {
+                ...data,
                 sourceFile: data.sourceFile,
                 targetTestFile: data.targetTestFile,
                 isExisting: data.isExisting,
@@ -2574,7 +2600,7 @@ export default function AIPanel({
   };
 
   const handleApplyIdeFile = async (file, specificSuggestion = null) => {
-    if (!projectId || !file) return;
+    if (!projectAccess.can("files.write") || !projectId || !file) return;
     const target = specificSuggestion || file;
     const targetPath = target.targetTestFile || file.targetTestFile;
 
@@ -2593,18 +2619,18 @@ export default function AIPanel({
       const contentToWrite =
         target.fullUpdatedContent || target.suggestedTestCode;
 
-      if (file.isExisting) {
-        await updateFileContentApi(projectId, targetPath, contentToWrite);
-      } else {
-        await createProjectFileApi(projectId, targetPath, contentToWrite);
-      }
+      const options = { snapshotId: target.snapshotId || file.snapshotId, expectedVersion: target.baseVersion || file.baseVersion, expectedWorkspaceRevision: target.workspaceRevision ?? file.workspaceRevision };
+      const mutation = file.isExisting
+        ? await updateFileContentApi(projectId, targetPath, contentToWrite, options)
+        : await createProjectFileApi(projectId, targetPath, contentToWrite, options);
+      const appliedVersion = mutation.data?.version;
 
       setMessages((prev) =>
         prev.map((m) => {
           if (!m.ideChanges) return m;
           const updated = m.ideChanges.files.map((f) =>
             f.targetTestFile === file.targetTestFile
-              ? { ...f, applied: true, isApplying: false }
+              ? { ...f, applied: true, appliedVersion, isApplying: false }
               : f
           );
           return { ...m, ideChanges: { ...m.ideChanges, files: updated } };
@@ -2614,7 +2640,7 @@ export default function AIPanel({
       // Update modal state if open
       setReviewFiles((prev) =>
         prev.map((f) =>
-          f.targetTestFile === file.targetTestFile ? { ...f, applied: true } : f
+          f.targetTestFile === file.targetTestFile ? { ...f, applied: true, appliedVersion } : f
         )
       );
 
@@ -2644,7 +2670,7 @@ export default function AIPanel({
   };
 
   const handleUndoIdeFile = async (file) => {
-    if (!projectId || !file) return;
+    if (!projectAccess.can("files.write") || !projectId || !file) return;
     const targetPath = file.targetTestFile;
     const orig = file.originalContent ?? "";
 
@@ -2659,14 +2685,15 @@ export default function AIPanel({
     );
 
     try {
-      await updateFileContentApi(projectId, targetPath, orig);
+      const mutation = await updateFileContentApi(projectId, targetPath, orig, { snapshotId: file.snapshotId, expectedVersion: file.appliedVersion });
+      const baseVersion = mutation.data?.version;
 
       setMessages((prev) =>
         prev.map((m) => {
           if (!m.ideChanges) return m;
           const updated = m.ideChanges.files.map((f) =>
             f.targetTestFile === targetPath
-              ? { ...f, applied: false, isUndoing: false }
+              ? { ...f, applied: false, baseVersion, isUndoing: false }
               : f
           );
           return { ...m, ideChanges: { ...m.ideChanges, files: updated } };
@@ -2675,7 +2702,7 @@ export default function AIPanel({
 
       setReviewFiles((prev) =>
         prev.map((f) =>
-          f.targetTestFile === targetPath ? { ...f, applied: false } : f
+          f.targetTestFile === targetPath ? { ...f, applied: false, baseVersion } : f
         )
       );
 
@@ -2714,6 +2741,7 @@ export default function AIPanel({
   };
 
   const handleSuggestBulk = async (arg1, arg2) => {
+    if (!projectAccess.can("ai.use")) return;
     if (!projectId) {
       showToast({
         type: "warning",
@@ -2880,6 +2908,7 @@ export default function AIPanel({
                 (primary.suggestedTestCode || "").split("\n").length;
 
               fileChanges.push({
+                snapshotId: primary.snapshotId, baseVersion: primary.baseVersion, workspaceRevision: primary.workspaceRevision,
                 id: `fc-${item.filePath || item.sourceFile}`,
                 sourceFile: cleanSource,
                 targetTestFile: cleanTargetTest,
@@ -3032,7 +3061,7 @@ export default function AIPanel({
   }, [pendingAiSuggestion]);
 
   const handleApplySuggestion = async (msgId, suggestion) => {
-    if (!projectId || !suggestion) return;
+    if (!projectAccess.can("files.write") || !projectId || !suggestion) return;
 
     setMessages((prev) =>
       prev.map((m) => {
@@ -3052,42 +3081,36 @@ export default function AIPanel({
     );
 
     try {
-      let previousContent = "";
-      if (suggestion.isExisting) {
-        try {
-          const prevRes = await getFileContentApi(
-            projectId,
-            suggestion.targetTestFile,
-          );
-          previousContent = prevRes?.data?.content || "";
-        } catch {
-          previousContent = "";
-        }
-      }
+      const previousContent = suggestion.existingContent ?? suggestion.originalContent ?? "";
 
       const contentToWrite =
         suggestion.fullUpdatedContent || suggestion.suggestedTestCode;
 
+      let mutation;
+      const options = { snapshotId: suggestion.snapshotId, expectedVersion: suggestion.baseVersion, expectedWorkspaceRevision: suggestion.workspaceRevision };
       if (suggestion.isExisting) {
-        await updateFileContentApi(
+        mutation = await updateFileContentApi(
           projectId,
           suggestion.targetTestFile,
           contentToWrite,
+          options,
         );
       } else {
-        await createProjectFileApi(
+        mutation = await createProjectFileApi(
           projectId,
           suggestion.targetTestFile,
           contentToWrite,
+          options,
         );
       }
 
+      const appliedVersion = mutation.data?.version;
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id !== msgId) return m;
           const updatedList = (m.testSuggestions || []).map((s) =>
             s.framework === suggestion.framework
-              ? { ...s, applied: true, previousContent, isApplying: false }
+              ? { ...s, applied: true, appliedVersion, previousContent, isApplying: false }
               : s,
           );
           return {
@@ -3099,6 +3122,7 @@ export default function AIPanel({
                     ...m.testSuggestion,
                     applied: true,
                     previousContent,
+                    appliedVersion,
                     isApplying: false,
                   }
                 : m.testSuggestion,
@@ -3149,7 +3173,7 @@ export default function AIPanel({
   };
 
   const handleUndoSuggestion = async (msgId, suggestion) => {
-    if (!projectId || !suggestion) return;
+    if (!projectAccess.can("files.write") || !projectId || !suggestion) return;
 
     setMessages((prev) =>
       prev.map((m) => {
@@ -3170,18 +3194,20 @@ export default function AIPanel({
 
     try {
       const prevContent = suggestion.previousContent ?? "";
-      await updateFileContentApi(
+      const mutation = await updateFileContentApi(
         projectId,
         suggestion.targetTestFile,
         prevContent,
+        { snapshotId: suggestion.snapshotId, expectedVersion: suggestion.appliedVersion },
       );
+      const baseVersion = mutation.data?.version;
 
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id !== msgId) return m;
           const updatedList = (m.testSuggestions || []).map((s) =>
             s.framework === suggestion.framework
-              ? { ...s, applied: false, isUndoing: false }
+              ? { ...s, applied: false, baseVersion, isUndoing: false }
               : s,
           );
           return {
@@ -3189,7 +3215,7 @@ export default function AIPanel({
             testSuggestions: updatedList,
             testSuggestion:
               m.testSuggestion?.framework === suggestion.framework
-                ? { ...m.testSuggestion, applied: false, isUndoing: false }
+                ? { ...m.testSuggestion, applied: false, baseVersion, isUndoing: false }
                 : m.testSuggestion,
           };
         }),
@@ -3229,14 +3255,14 @@ export default function AIPanel({
   };
 
   const handleSend = async (text, attachments = []) => {
-    if (sendRef.current || isRestoring || isLoadingSession || isTyping) return;
+    if (!projectAccess.can("chat.write") || sendRef.current || isRestoring || isLoadingSession || isTyping) return false;
     if (!projectId) {
       showToast({
         type: "warning",
         title: "No Project",
         message: "Please select or create a project before using AI.",
       });
-      return;
+      return false;
     }
 
     const userMsg = {
@@ -3251,6 +3277,9 @@ export default function AIPanel({
     };
 
     const currentHistory = []; // The server reconstructs authoritative history from the session.
+    const identity = JSON.stringify({ projectId, sessionId: activeSessionId, text, attachments, model: selectedModel.id });
+    if (chatRequestRef.current?.identity !== identity) chatRequestRef.current = { identity, id: crypto.randomUUID() };
+    const clientRequestId = chatRequestRef.current.id;
     sendRef.current = true;
     const requestScope = contextRequestRef.current;
     setMessages((m) => [...m, userMsg]);
@@ -3264,9 +3293,15 @@ export default function AIPanel({
         selectedModel.id,
         attachments || [],
         activeSessionId,
-        { snapshotId, useMemory: useProjectMemory, screenContext },
+        { snapshotId, useMemory: useProjectMemory, screenContext, clientRequestId },
       );
       if (requestScope !== contextRequestRef.current) return;
+
+      if (res?.data?.processing) {
+        if (res.data.sessionId) setActiveSessionId(res.data.sessionId);
+        showToast({ type: "info", title: "AI is still processing", message: "Your request is already running. The shared conversation will refresh when it completes." });
+        return false;
+      }
 
       if (res?.data?.sessionId) {
         setActiveSessionId(res.data.sessionId);
@@ -3287,11 +3322,19 @@ export default function AIPanel({
           content: res.data.reply,
         },
       ]);
+      chatRequestRef.current = null;
+      return true;
     } catch (err) {
       if (requestScope !== contextRequestRef.current) return;
-      console.error(err);
+      if (!err.status && activeSessionId) {
+        try {
+          const status = await collaborationRequest(`${projectPath(projectId)}/chat/requests/${clientRequestId}`);
+          if (status.status === "SUCCEEDED") { await handleSelectSession(status.sessionId || activeSessionId); chatRequestRef.current = null; return true; }
+        } catch { /* The original request ID is retained for an explicit retry. */ }
+      }
+      setMessages(current => current.filter(message => message.id !== userMsg.id));
       const isQuotaError =
-        err.message && err.message.includes("QUOTA_EXCEEDED");
+        err.code?.includes("QUOTA_EXCEEDED") || (err.message && err.message.includes("QUOTA_EXCEEDED"));
 
       if (isQuotaError) {
         setMessages((m) => [
@@ -3303,8 +3346,7 @@ export default function AIPanel({
               hour: "2-digit",
               minute: "2-digit",
             }),
-            content:
-              "🛑 **Daily Limit Reached**\n\nYou have used all free chat requests for today. Please check back tomorrow or upgrade your plan in **Settings > Billing**.",
+            content: err.message,
           },
         ]);
       } else {
@@ -3327,6 +3369,7 @@ export default function AIPanel({
           },
         ]);
       }
+      return false;
     } finally {
       sendRef.current = false;
       setIsTyping(false);
@@ -4309,12 +4352,14 @@ export default function AIPanel({
 
       {/* ── Modern Prompt Input ──────────────────────────── */}
       <ChatInput
+        readOnly={!projectAccess.can("chat.write")}
         onSend={handleSend}
         isTyping={isTyping || isRestoring || isLoadingSession}
         selectedModel={selectedModel}
         setSelectedModel={setSelectedModel}
         fileTree={internalTree}
         projectId={projectId}
+        snapshotId={snapshotId}
       />
 
       {/* ── Monaco Code Review Diff Modal ────────────────── */}

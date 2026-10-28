@@ -19,6 +19,9 @@ import ProjectArchitecturePanel from "./ProjectArchitecturePanel";
 import CFGCalculator from "./CFGCalculator";
 import QualityDashboard from "./QualityDashboard";
 import SettingsSidebar from "./settings/SettingsSidebar";
+import ProjectMembersSettings from "./settings/ProjectMembersSettings";
+import { useProjectAccess } from "../../hooks/useProjectAccess";
+import { useProjectEvents } from "../../hooks/useProjectEvents";
 import UserProfile from "./settings/UserProfile";
 import Appearance from "./settings/Appearance";
 import Security from "./settings/Security";
@@ -130,10 +133,32 @@ function LayoutInner() {
     if (tab === "logic-analysis") {
       setShowCFG(true);
     }
-    setActiveActivity(tab);
+    if (tab === "system") {
+      setActiveActivity("coverage");
+      setCoverageType("system");
+    } else {
+      setActiveActivity(tab);
+      const type = params.get("coverageType") || params.get("type");
+      if (type) setCoverageType(type);
+    }
   }, [location.search]);
 
-  const [activeSetting, setActiveSetting] = useState("profile");
+  const allowedSettings = ["profile", "appearance", "security", "notifications", "billing", "members"];
+  const selectedSetting = searchParams.get("setting");
+  const activeSetting = allowedSettings.includes(selectedSetting) ? selectedSetting : "profile";
+  const membersTab = searchParams.get("membersTab") === "pending" ? "pending" : "members";
+  const setActiveSetting = setting => {
+    const params = new URLSearchParams(location.search);
+    params.set("tab", "settings");
+    params.set("setting", allowedSettings.includes(setting) ? setting : "profile");
+    navigate(`${location.pathname}?${params}`);
+  };
+  const setMembersTabInUrl = tab => {
+    const params = new URLSearchParams(location.search);
+    params.set("tab", "settings"); params.set("setting", "members");
+    params.set("membersTab", tab === "pending" ? "pending" : "members");
+    navigate(`${location.pathname}?${params}`);
+  };
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [isDraggingSidebar, setIsDraggingSidebar] = useState(false);
@@ -143,7 +168,8 @@ function LayoutInner() {
   const [tabs, setTabs] = useState(INITIAL_TABS);
   const [activeTabId, setActiveTabId] = useState(null);
   const [activeFileId, setActiveFileId] = useState(null);
-  const [coverageType, setCoverageType] = useState("unit");
+  const initialCoverageType = searchParams.get("coverageType") || searchParams.get("type") || (searchParams.get("tab") === "system" ? "system" : "unit");
+  const [coverageType, setCoverageType] = useState(initialCoverageType);
   const screenContext = useMemo(() => ({ activity: activeActivity, testType: activeActivity === "coverage" ? coverageType : undefined, filePath: activeActivity === "explorer" ? activeTabId || undefined : undefined }), [activeActivity, coverageType, activeTabId]);
   const [showImport, setShowImport] = useState(false);
   const [showQualityDashboard, setShowQualityDashboard] = useState(false);
@@ -206,12 +232,27 @@ function LayoutInner() {
 
   const [projects, setProjects] = useState([]);
   const [project, setProject] = useState(null);
+  const projectAccess = useProjectAccess(project?.id);
   const [fileTree, setFileTree] = useState([]);
+  const [treeVersion, setTreeVersion] = useState(null);
   const [isLoadingTree, setIsLoadingTree] = useState(true);
   const [latestRunJob, setLatestRunJob] = useState(null);
   const [isSubmittingAnalysis, setIsSubmittingAnalysis] = useState(false);
   const [editorRefreshTrigger, setEditorRefreshTrigger] = useState(0);
   const [coverageRunTrigger, setCoverageRunTrigger] = useState(0);
+  useEffect(() => {
+    if (![403, 404].includes(projectAccess.error?.status)) return;
+    queryClient.cancelQueries({ predicate: query => query.queryKey.includes(project?.id) });
+    queryClient.removeQueries({ predicate: query => query.queryKey.includes(project?.id) });
+    setFileTree([]);
+    setProject(null);
+    navigate("/projects", { replace: true, state: { projectAccessLost: true } });
+  }, [projectAccess.error, project?.id, navigate]);
+
+  useProjectEvents(project?.id, user?.id, event => {
+    if (event.revoked) { setFileTree([]); setProject(null); navigate("/projects", { replace: true, state: { projectAccessLost: true } }); return; }
+    if (/file|workspace|snapshot/i.test(event.type || "")) setEditorRefreshTrigger(value => value + 1);
+  });
 
   const handleTriggerRunAnalysis = () => {
     setActiveActivity("coverage");
@@ -298,7 +339,7 @@ function LayoutInner() {
         const { getProjectsApi, getProjectTreeApi } =
           await import("../../services/project.service");
         const loadedProjects = await queryClient.fetchQuery({
-          queryKey: ["projects"],
+          queryKey: ["projects", user?.id],
           queryFn: async () => {
             const res = await getProjectsApi();
             return res?.projects || [];
@@ -321,15 +362,17 @@ function LayoutInner() {
           for (let attempt = 1; attempt <= retries; attempt++) {
             try {
               const tree = await queryClient.fetchQuery({
-                queryKey: ["projectTree", targetProj.id],
+                queryKey: ["projectTree", user?.id, targetProj.id],
                 queryFn: async () => {
                   const res = await getProjectTreeApi(targetProj.id);
-                  return res?.data || [];
+                  return { tree: res?.data || [], snapshotId: res.snapshotId, workspaceRevision: res.workspaceRevision };
                 },
                 staleTime: 5 * 60 * 1000,
               });
-              setFileTree(tree || []);
-              if (tree && tree.length > 0) {
+              const sourceTree = Array.isArray(tree) ? tree : tree.tree;
+              setTreeVersion(Array.isArray(tree) ? null : { snapshotId: tree.snapshotId, expectedWorkspaceRevision: tree.workspaceRevision });
+              setFileTree(sourceTree || []);
+              if (sourceTree && sourceTree.length > 0) {
                 const fileExistsInTree = (nodes, path) => {
                   for (const node of nodes) {
                     if (node.id === path) return true;
@@ -340,7 +383,7 @@ function LayoutInner() {
                 };
                 setTabs((prev) => {
                   const remaining = prev.filter((t) =>
-                    fileExistsInTree(tree, t.id),
+                    fileExistsInTree(sourceTree, t.id),
                   );
                   if (remaining.length !== prev.length) {
                     setActiveTabId((currActive) => {
@@ -386,7 +429,7 @@ function LayoutInner() {
         setIsLoadingTree(false);
       }
     },
-    [showToast],
+    [showToast, user?.id],
   );
 
   const handleSidebarResize = useCallback(
@@ -453,6 +496,26 @@ function LayoutInner() {
     loadData(initialProjectId);
   }, [loadData, initialProjectId]);
 
+  useEffect(() => {
+    if (!project?.id) return;
+    let alive = true;
+    let request = 0;
+    const refreshTree = async event => {
+      if (event.detail?.projectId !== project.id || !/workspace|file|snapshot/i.test(event.detail?.type || "")) return;
+      const currentRequest = ++request;
+      try {
+        const response = await getProjectTreeApi(project.id);
+        if (!alive || currentRequest !== request) return;
+        const next = { tree: response.data || [], snapshotId: response.snapshotId, workspaceRevision: response.workspaceRevision };
+        queryClient.setQueryData(["projectTree", user?.id, project.id], next);
+        setFileTree(next.tree);
+        setTreeVersion({ snapshotId: next.snapshotId, expectedWorkspaceRevision: next.workspaceRevision });
+      } catch { /* A revoked project is handled by the access boundary. */ }
+    };
+    window.addEventListener("covai:project-event", refreshTree);
+    return () => { alive = false; window.removeEventListener("covai:project-event", refreshTree); };
+  }, [project?.id, user?.id]);
+
   const handleChangeProject = (projectId) => {
     if (project?.id === projectId) return;
     setFileTree([]);
@@ -466,6 +529,7 @@ function LayoutInner() {
   };
 
   const handleDeleteProject = async (projectId) => {
+    if (project?.id === projectId && !projectAccess.can("project.delete")) return;
     try {
       const { deleteProjectApi } =
         await import("../../services/project.service");
@@ -559,13 +623,15 @@ function LayoutInner() {
   };
 
   const refreshProjectFiles = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["projectTree"] });
+    await projectAccess.refetch();
     await loadData(project?.id, 1, 0);
   };
 
   const handleCreateFile = async (filePath) => {
-    if (!project) return;
+    if (!project || !projectAccess.can("files.write")) return;
     try {
-      await createProjectFileApi(project.id, filePath);
+      await createProjectFileApi(project.id, filePath, "", treeVersion || {});
       await refreshProjectFiles();
       handleOpenFile({
         id: filePath.replace(/\\/g, "/"),
@@ -578,9 +644,9 @@ function LayoutInner() {
   };
 
   const handleCreateFolder = async (folderPath) => {
-    if (!project) return;
+    if (!project || !projectAccess.can("files.write")) return;
     try {
-      await createProjectFolderApi(project.id, folderPath);
+      await createProjectFolderApi(project.id, folderPath, treeVersion || {});
       await refreshProjectFiles();
     } catch (err) {
       showToast({ type: "error", title: "Could not create folder" });
@@ -588,9 +654,9 @@ function LayoutInner() {
   };
 
   const handleRenameEntry = async (filePath, newPath) => {
-    if (!project) return;
+    if (!project || !projectAccess.can("files.write")) return;
     try {
-      await renameProjectEntryApi(project.id, filePath, newPath);
+      await renameProjectEntryApi(project.id, filePath, newPath, treeVersion || {});
       setTabs((prev) =>
         prev.map((tab) =>
           tab.id === filePath
@@ -607,9 +673,9 @@ function LayoutInner() {
   };
 
   const handleDeleteEntry = async (node) => {
-    if (!project) return;
+    if (!project || !projectAccess.can("files.write")) return;
     try {
-      await deleteProjectEntryApi(project.id, node.id);
+      await deleteProjectEntryApi(project.id, node.id, treeVersion || {});
       setTabs((prev) =>
         prev.filter(
           (tab) => tab.id !== node.id && !tab.id.startsWith(`${node.id}/`),
@@ -873,6 +939,7 @@ function LayoutInner() {
             >
               {activeActivity === "settings" ? (
                 <SettingsSidebar
+                  project={project}
                   activeSetting={activeSetting}
                   onSelectSetting={(s) => {
                     setActiveSetting(s);
@@ -930,6 +997,7 @@ function LayoutInner() {
           <div className={activeActivity === "settings" ? "w-full h-full overflow-y-auto" : "hidden"}>
             {isMobile && (
               <SettingsSidebar
+                project={project}
                 activeSetting={activeSetting}
                 onSelectSetting={setActiveSetting}
                 variant="tabs"
@@ -940,6 +1008,7 @@ function LayoutInner() {
             {activeSetting === "security" && <Security />}
             {activeSetting === "notifications" && <NotificationsSettings />}
             {activeSetting === "billing" && <Billing />}
+            {activeSetting === "members" && project?.id && <ProjectMembersSettings key={project.id} projectId={project.id} projectName={project.name} access={projectAccess.access} loading={projectAccess.isPending} error={projectAccess.error} onRetry={projectAccess.refetch} tab={membersTab} onTabChange={setMembersTabInUrl} />}
           </div>
 
           <div className={activeActivity === "jobs" ? "w-full h-full overflow-y-auto" : "hidden"}>
@@ -1008,6 +1077,7 @@ function LayoutInner() {
 
           <div className={activeActivity !== "settings" && activeActivity !== "jobs" && activeActivity !== "architecture" && activeActivity !== "coverage" ? "w-full h-full" : "hidden"}>
                 <Editor
+                  key={`${user?.id}:${project?.id}:${project?.snapshots?.[0]?.id || project?.latestSnapshotId || ""}`}
                   tabs={tabs}
                   activeTabId={activeTabId}
                   onSelectTab={(tabId) => {
@@ -1081,6 +1151,7 @@ function LayoutInner() {
                 }
               >
                 <AIPanel
+                  key={`${user?.id}:${project?.id}`}
                   screenContext={screenContext}
                   projectId={project?.id}
                   snapshotId={

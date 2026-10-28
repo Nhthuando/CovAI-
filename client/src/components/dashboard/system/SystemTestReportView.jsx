@@ -10,6 +10,8 @@ import {
 } from "lucide-react";
 import Button from "../../common/Button.jsx";
 
+import { downloadSystemAssessmentPdf } from "../../../services/systemTest.service.js";
+
 function formatMs(ms) {
   if (!ms || ms <= 0) return "0ms";
   if (ms < 1000) return `${Math.round(ms)}ms`;
@@ -21,6 +23,7 @@ export default function SystemTestReportView({
   testFiles = [],
   projectName = "CovAI Project",
   snapshotId,
+  assessmentId,
   onBack,
 }) {
   const [exporting, setExporting] = useState(false);
@@ -34,6 +37,23 @@ export default function SystemTestReportView({
   // Print Report Handler
   const handlePrint = () => {
     window.print();
+  };
+
+  // Download Official PDF from Backend
+  const handleDownloadPdf = async () => {
+    if (!snapshotId || !assessmentId) {
+      window.print();
+      return;
+    }
+    setExporting(true);
+    try {
+      await downloadSystemAssessmentPdf(snapshotId, assessmentId);
+    } catch (err) {
+      console.warn("Server PDF export failed, falling back to print dialog:", err);
+      window.print();
+    } finally {
+      setExporting(false);
+    }
   };
 
   // Export JSON Report Handler
@@ -123,12 +143,21 @@ export default function SystemTestReportView({
             Export JSON
           </Button>
           <Button
-            variant="primary"
+            variant="secondary"
             size="sm"
             icon={Printer}
             onClick={handlePrint}
           >
-            Print / Save as PDF
+            Print
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            icon={Download}
+            onClick={handleDownloadPdf}
+            loading={exporting}
+          >
+            Export PDF Report
           </Button>
         </div>
       </div>

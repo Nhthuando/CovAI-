@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { queryClient } from "../lib/queryClient";
 import {
   FolderGit2,
@@ -48,7 +48,9 @@ export default function ProjectSelectionPage() {
   });
 
   const { user, logout } = useAuth();
+  const userId = user?.id;
   const navigate = useNavigate();
+  const location = useLocation();
 
   const handleLogout = () => {
     setShowLogoutConfirm(false);
@@ -60,7 +62,7 @@ export default function ProjectSelectionPage() {
     try {
       setLoading(true);
       const data = await queryClient.fetchQuery({
-        queryKey: ["projects"],
+        queryKey: ["projects", userId],
         queryFn: async () => {
           const res = await getProjectsApi();
           return res?.projects || [];
@@ -73,7 +75,7 @@ export default function ProjectSelectionPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
     let ignore = false;
@@ -205,6 +207,7 @@ export default function ProjectSelectionPage() {
 
       {/* ── Main Content Area ──────────────────────────────── */}
       <main className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 flex flex-col gap-6">
+        {location.state?.projectAccessLost && <div role="alert" className="rounded-lg border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/10 p-4 text-sm text-[var(--color-text)]">Your access to this project has been removed. Your unsaved editor drafts are kept in this browser.</div>}
         {/* Page Header: Title & Action */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>

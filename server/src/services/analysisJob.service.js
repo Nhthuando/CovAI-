@@ -1,4 +1,6 @@
 import prisma from "../config/prisma.js";
+import { currentProjectOperation,stagePreparedValue } from "./projectOperationWorkspace.service.js";
+import {randomUUID} from "node:crypto";
 import { ServiceError } from "../utils/serviceError.js";
 import { analyzeProjectStructure } from "./projectStructureAnalyzer.service.js";
 import {
@@ -53,9 +55,11 @@ export const processAnalysisJob = async (jobId) => {
         await updateJobProgress(jobId, 75);
 
         await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'MAP_DEPENDENCIES', label: "Saving analysis results to database...", progress: 85 }));
-        const analysis = await prisma.projectStructureAnalysis.upsert({
+        const plannedId = currentProjectOperation()?.preparedPublications ? (await prisma.projectStructureAnalysis.findUnique({where:{snapshotId:job.snapshotId},select:{id:true}}))?.id || randomUUID() : undefined;
+        const analysis = await stagePreparedValue(tx => tx.projectStructureAnalysis.upsert({
             where: { snapshotId: job.snapshotId },
             create: {
+                ...(plannedId ? {id:plannedId} : {}),
                 snapshotId: job.snapshotId,
                 schemaVersion: result.schemaVersion,
                 resultJson: JSON.stringify(result),
@@ -64,7 +68,7 @@ export const processAnalysisJob = async (jobId) => {
                 schemaVersion: result.schemaVersion,
                 resultJson: JSON.stringify(result),
             },
-        });
+        }),{id:plannedId});
         await updateJobProgress(jobId, 95);
         await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'COMPLETE', label: "Analysis completed successfully.", progress: 100 }));
         await markJobSuccess(jobId, {

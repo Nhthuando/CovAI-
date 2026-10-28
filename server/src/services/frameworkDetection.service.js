@@ -1,6 +1,7 @@
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { detectTestingFrameworks } from "../utils/testingFrameworkDetector.js";
+import { membershipWhere } from "./projectAccess.service.js";
 
 /**
  * Priority order for recommending a single framework when multiple are detected.
@@ -36,7 +37,7 @@ async function resolveOwnedProjectRoot(projectId, userId) {
     }
 
     const project = await prisma.project.findFirst({
-        where: { id: projectId, ownerId: userId },
+        where: { id: projectId, ...membershipWhere(userId) },
         select: { id: true },
     });
 

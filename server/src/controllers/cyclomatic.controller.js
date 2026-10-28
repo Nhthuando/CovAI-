@@ -1,4 +1,5 @@
 import prisma from '../config/prisma.js';
+import { resolveProjectAccess } from '../services/projectAccess.service.js';
 import { runCyclomaticAnalysis } from '../services/cyclomaticAnalysis.service.js';
 
 export const calculateComplexity = async (req, res) => {
@@ -15,9 +16,7 @@ export const calculateComplexity = async (req, res) => {
             return res.status(404).json({ error: 'Snapshot not found' });
         }
 
-        if (snapshot.project.ownerId !== userId) {
-            return res.status(403).json({ error: 'Unauthorized' });
-        }
+        await resolveProjectAccess({ projectId: snapshot.projectId, userId, capability: 'tests.run' });
 
         const results = await runCyclomaticAnalysis(snapshotId);
         res.json(results);
@@ -51,10 +50,7 @@ export const getComplexity = async (req, res) => {
             return res.status(404).json({ error: 'Snapshot not found' });
         }
 
-        if (snapshot.project.ownerId !== userId) {
-            console.log(`Auth failed: snapshot.project.ownerId (${snapshot.project.ownerId}) !== userId (${userId})`);
-            return res.status(403).json({ error: 'Unauthorized' });
-        }
+        await resolveProjectAccess({ projectId: snapshot.projectId, userId, capability: 'project.read' });
 
         const results = await prisma.cyclomatic.findMany({
             where,

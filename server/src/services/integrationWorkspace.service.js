@@ -1,3 +1,4 @@
+import { scenarioArtifactVersion } from './scenarioManager.service.js';
 import prisma from "../config/prisma.js";
 import { loadSourceCode } from "./aiContextBuilder.service.js";
 import { extractValidEndpoints } from "./apiEndpointParser.service.js";
@@ -115,7 +116,7 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
         prisma.coverageFile.findMany({ where: { snapshotId } }),
         prisma.aiTest.findMany({ where: { snapshotId } }),
         prisma.projectSnapshot.findUnique({ where: { id: snapshotId }, select: { storagePath: true, rootDir: true } }),
-        prisma.job.findMany({ where: { snapshotId }, orderBy: { createdAt: "desc" }, select: { id: true, type: true, status: true, createdAt: true, startedAt: true, finishedAt: true, errorMessage: true } })
+        prisma.job.findMany({ where: { snapshotId }, orderBy: { createdAt: "desc" }, select: { id: true, type: true, status: true, createdAt: true, startedAt: true, finishedAt: true, errorMessage: true, resultJson: true } })
     ]);
     const dbTime = Date.now() - startDb;
     const latestRun = (testRuns && testRuns[0]) || null;
@@ -174,12 +175,17 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
     // 3. Gather Scenarios (Cached by snapshotId + latestRun)
     const startFb = Date.now();
     let testScenarios = [];
-    const firebaseCacheKey = `${snapshotId}_${latestRun?.id || 'none'}`;
+    const outputJob = jobs.find(job => job.type === 'SUPERTEST_COVERAGE' && job.status === 'SUCCESS' && job.resultJson);
+    let artifactPrefix;
+    try { artifactPrefix = outputJob ? JSON.parse(outputJob.resultJson).storageBasePath : undefined; } catch { /* Legacy unreadable result: use persisted scenario rows. */ }
+    if (!artifactPrefix && typeof snapshot?.storagePath === 'string' && snapshot.storagePath.startsWith('projects/') && snapshot.storagePath.endsWith('/coverage')) artifactPrefix = snapshot.storagePath;
+    if (artifactPrefix && (typeof artifactPrefix !== 'string' || !artifactPrefix.startsWith('projects/') || artifactPrefix.split('/').includes('..'))) artifactPrefix = undefined;
+    const firebaseCacheKey = `${snapshotId}_${latestRun?.id || 'none'}_${outputJob?.id || 'legacy'}`;
     if (firebaseCache.has(firebaseCacheKey)) {
         testScenarios = firebaseCache.get(firebaseCacheKey);
-    } else if (snapshot?.storagePath) {
+    } else if (artifactPrefix) {
         try {
-            const file = getBucket().file(`${snapshot.storagePath}/integration-scenarios.json`);
+            const file = getBucket().file(`${artifactPrefix}/integration-scenarios.json`);
             const [exists] = await file.exists();
             if (exists) {
                 const [content] = await file.download();
@@ -603,6 +609,7 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             const cachedRequests = cacheEntry ? cacheEntry.requests : extractTestRequests(t.content, t.filePath);
             return {
                 id: t.id,
+                version: scenarioArtifactVersion(t),
                 filePath: t.filePath,
                 status: meta.status || "DRAFT",
                 isValid: meta.isValid !== false,

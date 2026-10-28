@@ -1,10 +1,19 @@
 import fs from "fs";
+import crypto from "node:crypto";
+import {parse as parseEnvironment} from "dotenv";
+import {containedPath} from './fullSystemConfig.service.js';
+import {resolveProjectPrismaCli} from '../utils/projectPrismaCli.js';
 import path from "path";
 import net from "net";
 import http from "http";
-import { spawn, spawnSync } from "child_process";
+import { spawn } from "child_process";
 import treeKill from "tree-kill";
 import { addJobLog } from "./job.service.js";
+import { selectFrontendPackage } from './projectRuntimePlan.service.js';
+import { prepareProjectDependencies, redactRuntimeOutput } from './projectDependencies.service.js';
+import { dockerRunner } from './dockerRunner.service.js';
+import { ServiceError } from '../utils/serviceError.js';
+import { autStartupCommand } from "../utils/autStartupCommand.js";
 
 const safeAddJobLog = async (jobId, level, message) => {
   if (!jobId) return;
@@ -111,7 +120,7 @@ export const verifyHttpHealth = (port, pathName = "/", host = "127.0.0.1", timeo
 /** Wait for HTTP readiness after the port opens (dev servers may still be compiling). */
 export const waitForHttpHealthy = async ({
   port, healthPath = "/", timeoutMs = 45000, intervalMs = 500,
-  probeTimeoutMs = 5000, isExited = () => false, onRetry = async () => {},
+  probeTimeoutMs = 5000, isExited = () => false, onRetry = async () => {}, allowHttpNotFound = false,
 }) => {
   const deadline = Date.now() + timeoutMs;
   let result = { healthy: false, status: 0, error: "HTTP readiness timeout" };
@@ -120,7 +129,7 @@ export const waitForHttpHealthy = async ({
     if (isExited()) throw new Error(`AUT process exited before HTTP readiness at http://127.0.0.1:${port}${healthPath}`);
     result = await verifyHttpHealth(port, healthPath, "127.0.0.1", Math.max(1, Math.min(probeTimeoutMs, deadline - Date.now())));
     if (isExited()) throw new Error(`AUT process exited before HTTP readiness at http://127.0.0.1:${port}${healthPath}`);
-    if (result.healthy && result.status < 400) return result;
+    if (result.healthy && (result.status < 400 || allowHttpNotFound && result.status===404)) return result;
     if (result.status >= 400 && result.status < 500 && ![408, 429].includes(result.status)) break;
     if (attempts++ === 0) await onRetry(result);
     const remaining = deadline - Date.now();
@@ -203,7 +212,7 @@ export const resolveAvailableAutPort = async (snapshotDir, defaultPort = 4173) =
 };
 
 /**
- * Prepares a minimal mock .env file if none exists in snapshotDir.
+ * Prepares local development defaults without fabricating external credentials.
  */
 export const prepareAutEnvironment = async (snapshotDir, port = 4173, jobId = null) => {
   const envPath = path.join(snapshotDir, ".env");
@@ -211,62 +220,26 @@ export const prepareAutEnvironment = async (snapshotDir, port = 4173, jobId = nu
     return { created: false, path: envPath };
   }
 
-  const defaultVars = {
-    PORT: String(port),
-    NODE_ENV: "test",
-    JWT_SECRET: "covai_test_mock_jwt_secret",
-  };
-
-  const candidateTemplates = [".env.example", ".env.test", ".env.sample"];
-  const foundTemplate = candidateTemplates.find((name) =>
-    fs.existsSync(path.join(snapshotDir, name))
-  );
-
-  const finalVars = { ...defaultVars };
-
-  if (foundTemplate) {
-    try {
-      const content = fs.readFileSync(path.join(snapshotDir, foundTemplate), "utf8");
-      for (const line of content.split("\n")) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith("#")) continue;
-        const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-        if (match) {
-          const key = match[1];
-          const val = match[2].trim();
-          if (!(key in finalVars)) {
-            if (val && !val.includes("your-") && !val.includes("changeme") && !val.includes("xxx")) {
-              finalVars[key] = val;
-            } else if (key.includes("DB") || key.includes("DATABASE")) {
-              finalVars[key] = "postgresql://postgres:postgres@localhost:5432/covai_mock_test";
-            } else if (key.includes("URL")) {
-              finalVars[key] = `http://localhost:${port}`;
-            } else if (key.includes("PORT")) {
-            } else if (key.includes("SECRET") || key.includes("KEY") || key.includes("TOKEN")) {
-              finalVars[key] = "covai_mock_secret_key";
-            } else {
-              finalVars[key] = "mock_value";
-            }
-          }
-        }
-      }
-    } catch (err) {
-      console.warn(`[AUT Environment] Failed to read template ${foundTemplate}:`, err.message);
+  const finalVars={PORT:String(port),NODE_ENV:'development',JWT_SECRET:crypto.randomBytes(32).toString('hex')};
+  const testFile=path.join(snapshotDir,'.env.test');
+  if(fs.existsSync(testFile))Object.assign(finalVars,parseEnvironment(fs.readFileSync(testFile,'utf8')),{PORT:String(port)});
+  else {
+    const template=['.env.example','.env.sample'].map(name=>path.join(snapshotDir,name)).find(file=>fs.existsSync(file));
+    if(template)for(const [key,value] of Object.entries(parseEnvironment(fs.readFileSync(template,'utf8')))) {
+      if(!value || /PASSWORD|SECRET|TOKEN|KEY|DATABASE|(?:^|_)DB(?:_|$)/i.test(key) || /your[-_]|changeme|xxx|example\.com/i.test(value))continue;
+      if(/URL|URI|HOST/i.test(key) && !/^(?:https?:\/\/)?(?:localhost|127\.0\.0\.1)(?::|\/|$)/.test(value))continue;
+      if(!(key in finalVars))finalVars[key]=value;
     }
   }
-
-  const fileLines = Object.entries(finalVars).map(([k, v]) => `${k}=${v}`);
-  fs.writeFileSync(envPath, fileLines.join("\n") + "\n", "utf8");
-
-  await safeAddJobLog(jobId, "INFO", `[AUT Environment] Generated minimal mock .env for AUT on port ${port}`);
-
-  return { created: true, path: envPath, vars: finalVars };
+  fs.writeFileSync(envPath,Object.entries(finalVars).map(([key,value])=>`${key}=${JSON.stringify(value)}`).join('\n')+'\n','utf8');
+  await safeAddJobLog(jobId,'INFO',`[AUT Environment] Prepared local test configuration on port ${port}; external credentials and database connections are never fabricated.`);
+  return {created:true,path:envPath,vars:finalVars};
 };
 
 /**
  * Runs seed data script if defined in package.json (seed or db:seed).
  */
-export const runSeedDataIfPresent = async ({ snapshotDir, jobId = null }) => {
+export const runSeedDataIfPresent = async ({ snapshotDir, repositoryRoot=snapshotDir, jobId = null, isolatedDatabase=false, env={}, signal, dependencies={} }) => {
   const candidateDirs = ["", "server", "backend", "api", "client", "frontend"];
   let chosenDir = null;
   let seedScript = null;
@@ -279,7 +252,7 @@ export const runSeedDataIfPresent = async ({ snapshotDir, jobId = null }) => {
     try {
       const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
       const scripts = pkg.scripts || {};
-      const script = typeof scripts.seed === "string" ? "seed" : typeof scripts["db:seed"] === "string" ? "db:seed" : null;
+      const script = typeof scripts.seed === "string" ? "seed" : typeof scripts["db:seed"] === "string" ? "db:seed" : typeof pkg.prisma?.seed==='string'?'prisma db seed':null;
       if (script) {
         chosenDir = targetDir;
         seedScript = script;
@@ -292,35 +265,35 @@ export const runSeedDataIfPresent = async ({ snapshotDir, jobId = null }) => {
 
   if (!seedScript || !chosenDir) return { executed: false };
 
-  await safeAddJobLog(jobId, "INFO", `[AUT Seed] Found seed script '${seedScript}'. Executing seed data...`);
-
-  try {
-    const result = spawnSync(`npm run ${seedScript}`, {
-      shell: true,
-      cwd: chosenDir,
-      timeout: 30000,
-      env: { ...process.env, NODE_ENV: "test" },
-    });
-
-    if (result.status === 0) {
-      await safeAddJobLog(jobId, "INFO", `[AUT Seed] Seed data completed successfully.`);
-      return { executed: true, success: true, script: seedScript };
-    } else {
-      await safeAddJobLog(jobId, "WARN", `[AUT Seed] Seed script exited with code ${result.status}, continuing test run.`);
-      return { executed: true, success: false, script: seedScript };
-    }
-  } catch (error) {
-    await safeAddJobLog(jobId, "WARN", `[AUT Seed] Seed execution error: ${error.message}, continuing test run.`);
-    return { executed: true, success: false, error: error.message };
+  if (!isolatedDatabase) {
+    await safeAddJobLog(jobId,'INFO','[AUT Seed] Database seed is reserved for the isolated Full Stack database; frontend execution does not run it.');
+    return {executed:false,reason:'ISOLATED_DATABASE_REQUIRED'};
   }
+  let database;
+  try{database=new URL(env.DATABASE_URL);}catch{throw new ServiceError('Seed requires the isolated test database URL',422);}
+  const sqlite=database.protocol==='file:' && env.SQLITE_DB_PATH && env.DATABASE_URL==='file:'+env.SQLITE_DB_PATH.replaceAll('\\','/') && path.basename(env.SQLITE_DB_PATH)==='covai_test.db';
+  if(sqlite)containedPath(repositoryRoot,path.relative(repositoryRoot,env.SQLITE_DB_PATH));
+  else if(!['mysql:','postgres:','postgresql:','mongodb:'].includes(database.protocol)||!['127.0.0.1','localhost','[::1]'].includes(database.hostname)||database.pathname!=='/covai_test')throw new ServiceError('Seed requires the isolated test database',422);
+  const runtime=await (dependencies.prepare || prepareProjectDependencies)({directory:chosenDir,repositoryRoot,jobId,signal,env});
+  let command=`${runtime.command} run ${seedScript}`;
+  if(seedScript==='prisma db seed') {
+    const cli=resolveProjectPrismaCli(chosenDir,repositoryRoot);
+    command=`"${process.execPath}" "${cli}" db seed`;
+  }
+  await safeAddJobLog(jobId,'INFO',`[AUT Seed] Running ${seedScript} against the isolated test database...`);
+  const result=await (dependencies.run || dockerRunner.run)({snapshotPath:chosenDir,command,forceHost:true,timeoutMs:60000,jobId,signal,env:{...runtime.env,...env,NODE_ENV:'test'}});
+  if(!result.success)throw new ServiceError(`Application seed failed. ${redactRuntimeOutput(result.stderr || result.stdout,env)}`,422);
+  return {executed:true,success:true,script:seedScript};
 };
 
 /**
  * Starts the application under test (AUT) web server and performs 2-tier healthcheck.
  */
-export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, healthTimeoutMs = 45000, env = {}, healthPath = "/", requireHealthy = false, preferStart = false, signal }) => {
+export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, healthTimeoutMs = 45000, env = {}, healthPath = "/", requireHealthy = false, preferStart = false, signal, repositoryRoot = snapshotDir, dependencies = {}, allowHttpNotFound = false }) => {
   if (signal?.aborted) throw new ServiceError('AUT startup canceled',409);
-  const candidateDirs = ["", "client", "frontend", "web", "ui", "app"];
+  const selected = !preferStart ? selectFrontendPackage({rootDir:snapshotDir}) : null;
+  const candidateDirs = selected ? [path.relative(snapshotDir,selected)] : ["", "client", "frontend", "web", "ui", "app"];
+  let chosenScript, chosenMetadata;
   let chosenDir = null;
   let command = null;
 
@@ -337,49 +310,27 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
     }
 
     const scripts = pkg.scripts || {};
-    let cmd = null;
-    if (preferStart && typeof scripts.start === "string") cmd = "npm run start";
-    else if (typeof scripts.dev === "string") cmd = "npm run dev";
-    else if (typeof scripts.preview === "string") cmd = "npm run preview";
-    else if (typeof scripts.start === "string") cmd = "npm run start";
-
-    if (cmd) {
-      chosenDir = targetDir;
-      command = cmd;
-      break;
-    }
+    const names=preferStart ? ['start','dev','serve','preview'] : ['dev','serve','start','preview'];
+    const name=names.find(value=>typeof scripts[value]==='string');
+    if (name) {chosenDir=targetDir;chosenScript=name;chosenMetadata=pkg;break;}
   }
 
-  if (!command || !chosenDir) {
-    await safeAddJobLog(jobId, "INFO", "[AUT Lifecycle] No web server script found in package.json (static/mock mode).");
+  if (!chosenDir) {
+    await safeAddJobLog(jobId, "INFO", "[AUT Lifecycle] No web server script found in package.json.");
     return { started: false, port };
   }
-
-  // If running Vite, pass --port explicitly so Vite never defaults to 5173 when a custom port is given
-  const isVite = ["vite.config.js", "vite.config.ts", "vite.config.mjs", "vite.config.cjs"].some((vc) =>
-    fs.existsSync(path.join(chosenDir, vc))
-  );
-  if (isVite && !command.includes("--port")) {
-    command = `${command} -- --port ${port} --strictPort --host 127.0.0.1`;
-  }
-
   const dirLabel = chosenDir === snapshotDir ? "root" : path.relative(snapshotDir, chosenDir).replace(/\\/g, "/");
-
-  // Ensure node_modules exists in chosenDir before executing server scripts (e.g. vite, express)
-  const nodeModulesPath = path.join(chosenDir, "node_modules");
-  if (!fs.existsSync(nodeModulesPath)) {
-    await safeAddJobLog(jobId, "INFO", `[AUT Lifecycle] Installing dependencies in ${dirLabel} before starting AUT...`);
-    try {
-      spawnSync("npm install --prefer-offline --no-audit --no-fund", {
-        shell: true,
-        cwd: chosenDir,
-        timeout: 90000,
-        env: { ...process.env, NODE_ENV: "development" },
-      });
-    } catch (installErr) {
-      await safeAddJobLog(jobId, "WARN", `[AUT Lifecycle] Failed to install dependencies in ${dirLabel}: ${installErr.message}`);
-    }
+  const runtime=await (dependencies.prepare || prepareProjectDependencies)({directory:chosenDir,repositoryRoot,jobId,signal,env});
+  command=autStartupCommand(chosenScript,chosenMetadata.scripts[chosenScript],port,runtime);
+  const startupEnv={...runtime.env,...env};
+  const needsBuild=chosenScript==='preview' || /\bnext\s+start\b|\bnode\s+["']?(?:\.\/)?(?:dist|build)[/\\]/.test(chosenMetadata.scripts[chosenScript]);
+  if(needsBuild) {
+    if(typeof chosenMetadata.scripts.build!=='string')throw new ServiceError('The application starts from build output but has no build script. Include a build script or a development server script.',422);
+    await safeAddJobLog(jobId,'INFO','[AUT Lifecycle] Building application before preview/production startup...');
+    const built=await (dependencies.run || dockerRunner.run)({snapshotPath:chosenDir,command:`${runtime.command} run build`,jobId,forceHost:true,timeoutMs:600000,signal,env:{...startupEnv,NODE_ENV:'development'}});
+    if(!built.success)throw new ServiceError(`Application build failed. ${redactRuntimeOutput(built.stderr || built.stdout,startupEnv)}`,422);
   }
+  if(signal?.aborted)throw new ServiceError('AUT startup canceled',409);
 
   await safeAddJobLog(jobId, "INFO", `[AUT Lifecycle] Starting AUT server (Command: "${command}" in ${dirLabel}) on port ${port}...`);
 
@@ -390,8 +341,9 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
     env: {
       ...process.env,
       PORT: String(port),
-      NODE_ENV: "test",
-      ...env,
+      NODE_ENV: "development",
+      BROWSER: "none",
+      ...startupEnv,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -439,7 +391,7 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
   try {
     httpResult = requireHealthy
       ? await waitForHttpHealthy({
-          port, healthPath, timeoutMs: Math.max(1, readinessDeadline - Date.now()),
+          port, healthPath, timeoutMs: Math.max(1, readinessDeadline - Date.now()), allowHttpNotFound,
           isExited: () => serverExited,
           onRetry: result => safeAddJobLog(jobId, "INFO", `[AUT Healthcheck] Port ${port} is open; waiting for HTTP readiness (${result.error || `HTTP ${result.status}`})...`),
         })
