@@ -58,3 +58,6 @@ specs/
 /client/.evidence-review/
 /client/evidence-preview.html
 /server/src/tests/fixtures/system-assessment/.covai-system-test/
+
+docker-compose.prod.yml
+deploy.sh
