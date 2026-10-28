@@ -1438,6 +1438,7 @@ function ChatInput({
   setSelectedModel,
   fileTree = [],
   projectId,
+  prefillPrompt = null,
 }) {
   const [input, setInput] = useState("");
   const [focused, setFocused] = useState(false);
@@ -1454,6 +1455,36 @@ function ChatInput({
   const atMenuRef = useRef(null);
   const fileInputRef = useRef(null);
   const selectedMentionItemRef = useRef(null);
+
+  useEffect(() => {
+    if (prefillPrompt?.text) {
+      setInput(prefillPrompt.text);
+      setTimeout(() => {
+        if (textareaRef.current) {
+          textareaRef.current.focus();
+          const len = prefillPrompt.text.length;
+          textareaRef.current.setSelectionRange(len, len);
+        }
+      }, 60);
+    }
+  }, [prefillPrompt]);
+
+  useEffect(() => {
+    const handleCustomPrefill = (e) => {
+      const text = e.detail?.promptText;
+      if (text) {
+        setInput(text);
+        setTimeout(() => {
+          if (textareaRef.current) {
+            textareaRef.current.focus();
+            textareaRef.current.setSelectionRange(text.length, text.length);
+          }
+        }, 60);
+      }
+    };
+    window.addEventListener("covai:prefill-prompt", handleCustomPrefill);
+    return () => window.removeEventListener("covai:prefill-prompt", handleCustomPrefill);
+  }, []);
 
   const allProjectFiles = useMemo(() => {
     return flattenFiles(fileTree);
@@ -2212,6 +2243,7 @@ export default function AIPanel({
   const [reviewFiles, setReviewFiles] = useState([]);
   const [reviewIndex, setReviewIndex] = useState(0);
   const [hasAnalysis, setHasAnalysis] = useState(false);
+  const [prefillPrompt, setPrefillPrompt] = useState(null);
   const bottomRef = useRef(null);
   const messageIdRef = useRef(10);
   const getNextId = () => ++messageIdRef.current;
@@ -3012,12 +3044,14 @@ export default function AIPanel({
     }
   };
 
-  // Watch for external suggest trigger (e.g. from Coverage table or Editor)
+  // Watch for external suggest trigger (e.g. from Coverage table, Unified Overview, or Editor)
   useEffect(() => {
     if (!pendingAiSuggestion) return;
-    const { filePath, isBulk } = pendingAiSuggestion;
+    const { filePath, isBulk, promptText } = pendingAiSuggestion;
     onClearPendingSuggestion?.();
-    if (isBulk) {
+    if (promptText) {
+      setPrefillPrompt({ text: promptText, timestamp: Date.now() });
+    } else if (isBulk) {
       handleSuggestBulk(pendingAiSuggestion);
     } else if (filePath) {
       handleSuggestForFile(filePath);
@@ -3473,7 +3507,7 @@ export default function AIPanel({
       {/* ── Chat History Drawer (ChatGPT style) ──────────── */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 border-b border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)]">
         <span>{isRestoring ? "Restoring conversation..." : activeSessionMeta?.sourceSessionId ? "Branched conversation" : activeSessionId ? "Saved conversation" : "New conversation"}</span>
-        <span>Current screen: {screenContext?.testType ? `${({ unit: 'Unit', integration: 'Integration', system: 'System' })[screenContext.testType]} Test` : ({ explorer: 'Code', jobs: 'Run history', architecture: 'Architecture', settings: 'Settings' })[screenContext?.activity] || 'Project'}</span>
+        <span>Current screen: {screenContext?.activity === "overview" || screenContext?.testType === "overview" ? "Unified Quality Overview" : ({ unit: "Unit Test", integration: "Integration Test", system: "System Test" })[screenContext?.testType] || ({ overview: "Unified Quality Overview", explorer: "Code", jobs: "Run history", architecture: "Architecture", settings: "Settings" })[screenContext?.activity] || "Project"}</span>
         <label className="flex items-center gap-1" title={memoryAvailable ? 'Use saved preferences in this chat' : 'Optional: enable memory in What AI knows. AI follows your screen even when memory is off.'}><input type="checkbox" aria-label="Use memory in this chat" checked={memoryAvailable && useProjectMemory} disabled={!memoryAvailable || isTyping || isRestoring || isLoadingSession} onChange={event => { setUseProjectMemory(event.target.checked); if (storageKey) localStorage.setItem(storageKey, JSON.stringify({ id: activeSessionId, useMemory: event.target.checked })); }} />Use memory</label>
         <button type="button" className="underline cursor-pointer" disabled={isTyping || isRestoring} onClick={() => setContextDialog("context")}>View context</button>
         {contextInfo?.warnings?.map(warning => <span key={warning} className="w-full">{warning}</span>)}
@@ -4308,6 +4342,7 @@ export default function AIPanel({
         setSelectedModel={setSelectedModel}
         fileTree={internalTree}
         projectId={projectId}
+        prefillPrompt={prefillPrompt}
       />
 
       {/* ── Monaco Code Review Diff Modal ────────────────── */}

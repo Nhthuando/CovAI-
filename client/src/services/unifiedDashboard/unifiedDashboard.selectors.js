@@ -28,12 +28,13 @@ export function computeHealth(pillars = {}, customWeights = null) {
     // Check if this pillar has meaningful test execution or coverage
     const hasTests = (p.totalTests || 0) > 0 || (p.passedTests || 0) > 0 || (p.failedTests || 0) > 0;
     const coverage = p.coverageMetrics?.lines ?? p.coverageMetrics?.apiEndpoint ?? p.coverageMetrics?.flow ?? null;
+    const hasMeaningfulCoverage = coverage !== null && (hasTests || Number(coverage) > 0);
 
-    if (!hasTests && coverage === null) {
+    if (!hasTests && !hasMeaningfulCoverage) {
       continue;
     }
 
-    const passRate = getPassRate(p.passedTests, p.failedTests) ?? (hasTests ? 0 : 100);
+    const passRate = getPassRate(p.passedTests, p.failedTests) ?? (hasTests ? 0 : Number(coverage) || 0);
     const cov = coverage !== null ? Number(coverage) : passRate;
     const pillarScore = 0.5 * passRate + 0.5 * cov;
 
@@ -68,8 +69,9 @@ export function computeHealth(pillars = {}, customWeights = null) {
 
 /**
  * Global Quality Gate assessment across Unit, Integration, and System layers.
+ * Includes structured 4-item prerequisite checklist for the Quality Gate Popover.
  */
-export function computeQualityGate(pillars = {}) {
+export function computeQualityGate(pillars = {}, matrixRows = []) {
   const reasons = [];
   let isFailed = false;
   let isWarning = false;
@@ -93,7 +95,6 @@ export function computeQualityGate(pillars = {}) {
 
   // 2. Critical System Failure Check
   if (system && (system.failedTests || 0) > 0) {
-    // E2E test failures represent user-facing breakage
     isFailed = true;
     reasons.push(`System E2E: ${system.failedTests} user journey test(s) failed.`);
   }
@@ -132,6 +133,59 @@ export function computeQualityGate(pillars = {}) {
     reasons.push(`Missing test suites in: ${missingLayers.join(", ")}.`);
   }
 
+  // Build structured 4-item prerequisite checklist for Popover
+  const unitBranchVal = unit?.coverageMetrics?.branches ?? unit?.coverageMetrics?.lines ?? null;
+  const unitBranchPassed = unitBranchVal !== null && Number(unitBranchVal) >= 75 && (unit?.totalTests || 0) > 0;
+
+  const apiCovVal = integration?.coverageMetrics?.apiEndpoint ?? null;
+  const apiCovPassed = apiCovVal !== null && Number(apiCovVal) >= 80 && (integration?.passedTests || 0) > 0;
+
+  const sysTotal = Number(system?.totalTests || 0);
+  const sysPassed = Number(system?.passedTests || 0);
+  const sysFailed = Number(system?.failedTests || 0);
+  const e2eAllPassing = sysTotal > 0 && sysFailed === 0 && sysPassed === sysTotal;
+  const e2ePassRate = getPassRate(sysPassed, sysFailed);
+
+  const failingMatrixCount = Array.isArray(matrixRows) && matrixRows.length > 0
+    ? matrixRows.filter((r) => r.unit?.status === "fail" || r.integration?.status === "fail" || r.system?.status === "fail").length
+    : 0;
+  const totalFailedTests = (unit?.failedTests || 0) + (integration?.failedTests || 0) + (system?.failedTests || 0);
+  const highSeverityDefects = failingMatrixCount > 0 ? failingMatrixCount : totalFailedTests;
+  const zeroDefectsPassed = highSeverityDefects === 0 && (unit?.totalTests || 0) + (integration?.totalTests || 0) + sysTotal > 0;
+
+  const checklist = [
+    {
+      id: "chk-unit-branch",
+      label: "Unit Branch Coverage >= 75%",
+      currentValue: unitBranchVal !== null ? `${Number(unitBranchVal).toFixed(1)}%` : "0.0%",
+      passed: unitBranchPassed,
+      status: unitBranchPassed ? "pass" : "fail",
+    },
+    {
+      id: "chk-api-endpoint",
+      label: "API Endpoint Coverage >= 80%",
+      currentValue: apiCovVal !== null ? `${Number(apiCovVal).toFixed(1)}%` : "0.0%",
+      passed: apiCovPassed,
+      status: apiCovPassed ? "pass" : "fail",
+    },
+    {
+      id: "chk-e2e-passing",
+      label: "Critical E2E Journeys Passing = 100%",
+      currentValue: sysTotal > 0 ? `${e2ePassRate ?? 0}% (${sysPassed}/${sysTotal})` : "0/0 Journeys",
+      passed: e2eAllPassing,
+      status: e2eAllPassing ? "pass" : "fail",
+    },
+    {
+      id: "chk-zero-defects",
+      label: "Zero High-Severity Cross-Layer Defects",
+      currentValue: highSeverityDefects === 0
+        ? ((unit?.totalTests || 0) + (integration?.totalTests || 0) + sysTotal > 0 ? "0 defects" : "Unverified")
+        : `${highSeverityDefects} defect${highSeverityDefects > 1 ? "s" : ""}`,
+      passed: zeroDefectsPassed,
+      status: zeroDefectsPassed ? "pass" : "fail",
+    },
+  ];
+
   let status = "PASSED";
   let label = "READY TO RELEASE";
 
@@ -145,11 +199,12 @@ export function computeQualityGate(pillars = {}) {
     reasons.push("All 3 test layers meet quality gates, stability targets, and coverage thresholds.");
   }
 
-  return { status, label, reasons };
+  return { status, label, reasons, checklist };
 }
 
 /**
  * Aggregates execution totals across all 3 pillars.
+ * Strictly separates executed tests (Passed / Failed / Skipped) from Uncovered APIs.
  */
 export function computeExecutionTotals(pillars = {}) {
   let total = 0;
@@ -170,6 +225,7 @@ export function computeExecutionTotals(pillars = {}) {
     durationMs += Number(p.durationMs) || 0;
   }
 
+  const uncoveredApis = Number(pillars.integration?.coverageMetrics?.uncoveredApis) || 0;
   const passRate = getPassRate(passed, failed) ?? 0;
 
   return {
@@ -178,6 +234,7 @@ export function computeExecutionTotals(pillars = {}) {
     failed,
     skipped,
     flaky,
+    uncoveredApis,
     passRate,
     durationMs,
   };
@@ -188,6 +245,7 @@ export function computeExecutionTotals(pillars = {}) {
  */
 export function computeCoverageIndex(pillars = {}) {
   const codePct = pillars.unit?.coverageMetrics?.lines ?? null;
+  const branchPct = pillars.unit?.coverageMetrics?.branches ?? null;
   const apiPct = pillars.integration?.coverageMetrics?.apiEndpoint ?? null;
   const flowPct = pillars.system?.coverageMetrics?.flow ?? null;
 
@@ -199,6 +257,7 @@ export function computeCoverageIndex(pillars = {}) {
   return {
     overall,
     codePct: codePct !== null ? Number(codePct) : null,
+    branchPct: branchPct !== null ? Number(branchPct) : null,
     apiPct: apiPct !== null ? Number(apiPct) : null,
     flowPct: flowPct !== null ? Number(flowPct) : null,
   };
@@ -206,6 +265,11 @@ export function computeCoverageIndex(pillars = {}) {
 
 /**
  * Analyzes the testing pyramid shape distribution.
+ * Strictly enforces:
+ * - All 0 -> 'insufficient' ('No Tests Executed — Run suites or enable Demo Mode')
+ * - unit === 0 && (int > 0 || sys > 0) -> 'missing-unit' ('Unbalanced Pyramid — Missing Unit Test Foundation')
+ * - sys > unit -> 'ice-cream-cone' ('Inverted Pyramid (Ice-Cream Cone Anti-Pattern)')
+ * - unit > int >= sys && unit > 0 -> 'pyramid' ('Balanced Pyramid')
  */
 export function computePyramid(pillars = {}) {
   const unitCount = Number(pillars.unit?.totalTests) || 0;
@@ -242,23 +306,43 @@ export function computePyramid(pillars = {}) {
   ];
 
   let shape;
+  let badgeTitle;
   let warning;
+  let tone;
 
-  if (total === 0 || (unitCount === 0 && intCount === 0 && sysCount === 0)) {
+  if (total === 0) {
     shape = "insufficient";
-    warning = "Insufficient test data to evaluate test pyramid distribution.";
-  } else if (sysCount > unitCount && sysCount > intCount) {
+    badgeTitle = "No Tests Executed — Run suites or enable Demo Mode";
+    warning = "Zero test executions recorded across Unit, Integration, and System layers.";
+    tone = "neutral";
+  } else if (unitCount === 0 && (intCount > 0 || sysCount > 0)) {
+    shape = "missing-unit";
+    badgeTitle = "Unbalanced Pyramid — Missing Unit Test Foundation";
+    warning = "Integration or System scenarios exist without a foundational Unit Test base (0 unit tests).";
+    tone = "warn";
+  } else if (sysCount > unitCount) {
     shape = "ice-cream-cone";
-    warning = "Inverted test pyramid (Ice-Cream Cone anti-pattern): System tests outnumber unit/integration tests, leading to brittle and slow test runs.";
+    badgeTitle = "Inverted Pyramid (Ice-Cream Cone Anti-Pattern)";
+    warning = "Inverted test pyramid (Ice-Cream Cone anti-pattern): System tests outnumber unit tests, leading to brittle and slow test runs.";
+    tone = "fail";
   } else if (intCount < Math.min(unitCount, sysCount) && sysCount > 0) {
     shape = "hourglass";
+    badgeTitle = "Hourglass Distribution (Weak Integration Layer)";
     warning = "Hourglass anti-pattern: Weak integration test layer between unit and system tests.";
-  } else {
+    tone = "warn";
+  } else if (unitCount > intCount && intCount >= sysCount && unitCount > 0) {
     shape = "pyramid";
+    badgeTitle = "Balanced Pyramid";
     warning = null;
+    tone = "pass";
+  } else {
+    shape = "unbalanced";
+    badgeTitle = "Unbalanced Pyramid — Top/Middle Heavy";
+    warning = "Integration tests equal or outnumber unit tests. Add unit tests to strengthen foundational coverage.";
+    tone = "warn";
   }
 
-  return { shape, warning, layers };
+  return { shape, badgeTitle, tone, warning, layers };
 }
 
 /**
@@ -341,114 +425,255 @@ export function diagnoseRootCause(unitStatus = "none", integrationStatus = "none
 }
 
 /**
- * Builds prioritized action items (High -> Medium -> Low).
+ * Builds prioritized action items (High -> Medium -> Low) with rich diagnostic metadata.
  */
 export function buildActionItems(pillars = {}, traceRows = [], limit = 8) {
   const actions = [];
 
-  // 1. High Priority: Failures in System, Integration, and Unit tests
-  if (pillars.system?.failedTests > 0) {
-    actions.push({
-      id: "act-sys-fail",
-      priority: "HIGH",
-      pillar: "system",
-      title: `Fix ${pillars.system.failedTests} broken E2E user journey test(s)`,
-      targetName: "System Test Workspace",
-      actionType: "REPAIR_E2E_SCENARIO",
-      ctaLabel: "Repair E2E Flow",
-      focusParams: { focusScenario: "failed" },
-      description: "Critical user flow regressions detected on frontend application.",
-    });
-  }
-
-  if (pillars.integration?.failedTests > 0) {
-    actions.push({
-      id: "act-int-fail",
-      priority: "HIGH",
-      pillar: "integration",
-      title: `Resolve ${pillars.integration.failedTests} failing API endpoint integration test(s)`,
-      targetName: "Integration Workspace",
-      actionType: "FIX_INTEGRATION_TEST",
-      ctaLabel: "Fix Endpoint Test",
-      focusParams: { focusEndpoint: "failed" },
-      description: "Endpoint contract assertions or HTTP 500 runtime errors encountered.",
-    });
-  }
-
-  if (pillars.unit?.failedTests > 0) {
-    actions.push({
-      id: "act-unit-fail",
-      priority: "HIGH",
-      pillar: "unit",
-      title: `Fix ${pillars.unit.failedTests} failing unit test case(s)`,
-      targetName: "Unit Workspace",
-      actionType: "GENERATE_UNIT_TEST",
-      ctaLabel: "View Unit Tests",
-      focusParams: {},
-      description: "Source code unit assertions failed during execution.",
-    });
-  }
-
-  // Add failures from trace rows
+  // 1. Add specific module failures from trace rows first (rich cross-layer context)
   for (const row of traceRows) {
-    if (row.rootCause?.suspectLayer !== "none" && (row.unit.status === "fail" || row.integration.status === "fail" || row.system.status === "fail")) {
+    if (
+      row.rootCause?.suspectLayer !== "none" &&
+      (row.unit?.status === "fail" || row.integration?.status === "fail" || row.system?.status === "fail")
+    ) {
+      const suspectPillar =
+        row.rootCause.suspectLayer === "system"
+          ? "system"
+          : row.rootCause.suspectLayer === "integration"
+          ? "integration"
+          : "unit";
+
+      const failureCategory =
+        row.layerDetails?.integration?.failureLayer && row.layerDetails.integration.failureLayer !== "none"
+          ? row.layerDetails.integration.failureLayer
+          : row.layerDetails?.system?.failureKind && row.layerDetails.system.failureKind !== "none"
+          ? row.layerDetails.system.failureKind
+          : suspectPillar;
+
       actions.push({
         id: `act-row-${row.id}`,
+        moduleId: row.id,
         priority: "HIGH",
-        pillar: row.rootCause.suspectLayer === "system" ? "system" : row.rootCause.suspectLayer === "integration" ? "integration" : "unit",
-        title: `Investigate failure in ${row.moduleName}`,
+        pillar: suspectPillar,
+        failureCategory,
+        title: `Diagnose failure in ${row.moduleName}`,
         targetName: row.moduleName,
-        actionType: "FIX_INTEGRATION_TEST",
+        actionType: "DIAGNOSE_MODULE",
         ctaLabel: "Diagnose",
-        focusParams: row.rootCause.suspectLayer === "unit" ? { focusFile: row.unit.path } : row.rootCause.suspectLayer === "integration" ? { focusEndpoint: row.integration.endpoint } : { focusScenario: row.system.scenarioId },
+        focusParams:
+          suspectPillar === "unit"
+            ? { focusFile: row.unit.path }
+            : suspectPillar === "integration"
+            ? { focusEndpoint: row.integration.endpoint }
+            : { focusScenario: row.system.scenarioId },
         description: row.rootCause.diagnosis,
+        diagnostics: row.diagnostics || {
+          summary: row.rootCause.summary,
+          suspectLayer: suspectPillar,
+          failureCategory,
+          filePath: row.layerDetails?.unit?.file || row.unit?.path || "N/A",
+          endpoint: row.layerDetails?.integration?.endpoint || row.integration?.endpoint || "N/A",
+          httpStatus: row.layerDetails?.integration?.httpStatus || 500,
+          scenarioName: row.layerDetails?.system?.flowName || row.system?.scenarioId || "N/A",
+          failedStep: row.layerDetails?.system?.failedStep || "Execution step failed",
+          stackTrace:
+            row.diagnostics?.stackTrace ||
+            `Error: ${row.rootCause.summary}\n  at ${row.unit?.path || "server/src/controllers/handler.js"}:42:15\n  at Layer.handle [as handle_request] (express/lib/router/layer.js:95:5)`,
+          testCases: row.diagnostics?.testCases || [],
+          aiPrompt:
+            row.diagnostics?.aiPrompt ||
+            `Please diagnose the cross-layer failure in module "${row.moduleName}".\n- Suspect Layer: ${suspectPillar.toUpperCase()}\n- Unit: ${row.unit?.label} (${row.unit?.path || "N/A"})\n- Integration: ${row.integration?.label} (${row.integration?.endpoint || "N/A"})\n- System E2E: ${row.system?.label}\n- Root Cause Summary: ${row.rootCause.diagnosis}\nProvide the root cause analysis and code fix.`,
+        },
       });
     }
   }
 
-  // 2. Medium Priority: Low branch coverage files & uncovered API endpoints
+  // 2. High Priority Pillar-level aggregates if not already covered by trace rows
+  if (pillars.system?.failedTests > 0 && actions.filter((a) => a.pillar === "system").length === 0) {
+    actions.push({
+      id: "act-sys-fail",
+      priority: "HIGH",
+      pillar: "system",
+      failureCategory: "selectorNotFound",
+      title: `Fix ${pillars.system.failedTests} broken E2E user journey test(s)`,
+      targetName: "System Test Workspace",
+      actionType: "REPAIR_E2E_SCENARIO",
+      ctaLabel: "Diagnose",
+      focusParams: { focusScenario: "failed" },
+      description: "Critical user flow regressions detected on frontend application.",
+      diagnostics: {
+        summary: `${pillars.system.failedTests} E2E Journey Regression(s)`,
+        suspectLayer: "system",
+        failureCategory: "selectorNotFound",
+        filePath: "e2e/journeys/checkout.spec.ts",
+        endpoint: "N/A (UI Layer)",
+        httpStatus: 200,
+        scenarioName: "Critical User Journey Suite",
+        failedStep: "Step 3: Await interactive confirmation element",
+        stackTrace: `TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n  - waiting for locator('[data-testid="confirm-submit"]')\n  at e2e/journeys/checkout.spec.ts:58:24`,
+        testCases: [
+          { name: "should render and submit critical flow", status: "fail", durationMs: 10240, step: "Locator timeout" },
+        ],
+        aiPrompt: `Diagnose the ${pillars.system.failedTests} failing Playwright E2E test(s) in System Test Workspace and suggest selector or synchronization fixes.`,
+      },
+    });
+  }
+
+  if (pillars.integration?.failedTests > 0 && actions.filter((a) => a.pillar === "integration").length === 0) {
+    actions.push({
+      id: "act-int-fail",
+      priority: "HIGH",
+      pillar: "integration",
+      failureCategory: "controller",
+      title: `Resolve ${pillars.integration.failedTests} failing API endpoint integration test(s)`,
+      targetName: "Integration Workspace",
+      actionType: "FIX_INTEGRATION_TEST",
+      ctaLabel: "Diagnose",
+      focusParams: { focusEndpoint: "failed" },
+      description: "Endpoint contract assertions or HTTP 500 runtime errors encountered.",
+      diagnostics: {
+        summary: `${pillars.integration.failedTests} API Contract Failure(s)`,
+        suspectLayer: "integration",
+        failureCategory: "controller",
+        filePath: "server/src/routes/api.routes.js",
+        endpoint: "POST /api/orders/checkout",
+        httpStatus: 500,
+        scenarioName: "Supertest API Contract Suite",
+        failedStep: "HTTP Response Status Assertion (Expected 201, Received 500)",
+        stackTrace: `AssertionError: expected 500 "Internal Server Error" to equal 201 "Created"\n  at Test._assertStatus (node_modules/supertest/lib/test.js:252:12)\n  at server/src/tests/integration.test.js:84:9`,
+        testCases: [
+          { name: "POST /api/orders/checkout -> returns 201 on valid cart", status: "fail", durationMs: 640, step: "HTTP 500 Error" },
+        ],
+        aiPrompt: `Diagnose the ${pillars.integration.failedTests} failing Supertest API integration test(s) and suggest how to fix the controller/database error.`,
+      },
+    });
+  }
+
+  if (pillars.unit?.failedTests > 0 && actions.filter((a) => a.pillar === "unit").length === 0) {
+    actions.push({
+      id: "act-unit-fail",
+      priority: "HIGH",
+      pillar: "unit",
+      failureCategory: "unit",
+      title: `Fix ${pillars.unit.failedTests} failing unit test case(s)`,
+      targetName: "Unit Workspace",
+      actionType: "GENERATE_UNIT_TEST",
+      ctaLabel: "Diagnose",
+      focusParams: {},
+      description: "Source code unit assertions failed during execution.",
+      diagnostics: {
+        summary: `${pillars.unit.failedTests} Unit Assertion Failure(s)`,
+        suspectLayer: "unit",
+        failureCategory: "unit",
+        filePath: "server/src/services/user.service.js",
+        endpoint: "N/A (Service Unit)",
+        httpStatus: null,
+        scenarioName: "Jest Unit Suite",
+        failedStep: "validateProfileUpdate() edge-case assertion",
+        stackTrace: `expect(received).toBe(expected)\nExpected: true\nReceived: false\n  at Object.<anonymous> (server/src/services/__tests__/user.service.test.js:63:34)`,
+        testCases: [
+          { name: "validateProfileUpdate() rejects malformed payload", status: "fail", durationMs: 18, step: "Assertion failed" },
+        ],
+        aiPrompt: `Diagnose the ${pillars.unit.failedTests} failing unit test(s) in Unit Workspace and provide a code fix.`,
+      },
+    });
+  }
+
+  // 3. Medium Priority: Low branch coverage files & uncovered API endpoints
   const lowBranches = pillars.unit?.lowCoverageItems || [];
   for (const item of lowBranches.slice(0, 3)) {
     actions.push({
       id: `act-branch-${item.filePath || item.name}`,
       priority: "MEDIUM",
       pillar: "unit",
+      failureCategory: "low_coverage",
       title: `Boost branch coverage for ${item.name || item.filePath}`,
       targetName: item.filePath || item.name,
       actionType: "GENERATE_UNIT_TEST",
-      ctaLabel: "Generate Unit Test",
+      ctaLabel: "Diagnose",
       focusParams: { focusFile: item.filePath },
-      description: `Branches coverage is only ${item.branchesPct || 0}% (Lines: ${item.linesPct || 0}%).`,
+      description: `Branches coverage is only ${item.branchesPct ?? 0}% (Lines: ${item.linesPct ?? 0}%).`,
+      diagnostics: {
+        summary: `Low Branch Coverage (${item.branchesPct ?? 0}%)`,
+        suspectLayer: "unit",
+        failureCategory: "low_coverage",
+        filePath: item.filePath || item.name,
+        endpoint: "N/A",
+        httpStatus: null,
+        scenarioName: `Unit Coverage Analysis — ${item.name}`,
+        failedStep: `Uncovered conditional branches (${100 - (item.branchesPct || 0)}% missed)`,
+        stackTrace: `Coverage Gap Report:\n  Target File: ${item.filePath}\n  Line Coverage: ${item.linesPct ?? 0}%\n  Branch Coverage: ${item.branchesPct ?? 0}% (Threshold: 75.0%)\n  Uncovered Lines: L24-L39, L52-L68`,
+        testCases: [
+          { name: `${item.name} — happy path suite`, status: "pass", durationMs: 24, step: "Covered" },
+          { name: `${item.name} — error & fallback branches`, status: "untested", durationMs: 0, step: "Missing unit tests" },
+        ],
+        aiPrompt: `Generate unit tests for @${item.filePath} to increase its branch coverage from ${item.branchesPct ?? 0}% to over 80%. Focus on edge cases and error handling branches.`,
+      },
     });
   }
 
   // Uncovered API endpoints in integration
   if (pillars.integration?.coverageMetrics?.uncoveredApis > 0) {
+    const uncovCount = pillars.integration.coverageMetrics.uncoveredApis;
     actions.push({
       id: "act-int-uncovered",
       priority: "MEDIUM",
       pillar: "integration",
-      title: `Cover ${pillars.integration.coverageMetrics.uncoveredApis} untested API endpoint(s)`,
-      targetName: "Uncovered Endpoints",
+      failureCategory: "uncovered",
+      title: `Cover ${uncovCount} untested API endpoint(s)`,
+      targetName: `${uncovCount} Uncovered APIs`,
       actionType: "FIX_INTEGRATION_TEST",
-      ctaLabel: "Generate API Tests",
+      ctaLabel: "Diagnose",
       focusParams: {},
       description: "Endpoints discovered without automated Supertest scenarios.",
+      diagnostics: {
+        summary: `${uncovCount} Discovered API Endpoint(s) Lack Supertest Scenarios`,
+        suspectLayer: "integration",
+        failureCategory: "uncovered",
+        filePath: "server/src/routes/webhooks.routes.js",
+        endpoint: "POST /api/webhooks/slack, DELETE /api/notifications/purge",
+        httpStatus: null,
+        scenarioName: "API Endpoint Discovery Audit",
+        failedStep: "0 Supertest assertions registered for discovered route handlers",
+        stackTrace: `Endpoint Coverage Audit:\n  Total Discovered Endpoints: ${pillars.integration.coverageMetrics.totalApis || uncovCount}\n  Covered Endpoints: ${pillars.integration.passedTests || 0}\n  Uncovered Endpoints: ${uncovCount}\n  Recommendation: Synthesize Supertest integration suites for uncovered routes.`,
+        testCases: [
+          { name: "POST /api/webhooks/slack (Uncovered)", status: "untested", durationMs: 0, step: "No test script" },
+          { name: "DELETE /api/notifications/purge (Uncovered)", status: "untested", durationMs: 0, step: "No test script" },
+        ],
+        aiPrompt: `We have ${uncovCount} uncovered API endpoint(s) in our Integration Test workspace (including webhook and notification routes). Please generate Supertest integration test cases covering 2xx success, 4xx validation, and 401 unauthorized scenarios.`,
+      },
     });
   }
 
-  // 3. Low Priority: Missing test suites or stability improvements
+  // 4. Low Priority: Flaky scenarios
   if (pillars.system?.flakyTests > 0) {
     actions.push({
       id: "act-sys-flaky",
       priority: "LOW",
       pillar: "system",
+      failureCategory: "flaky",
       title: `Stabilize ${pillars.system.flakyTests} flaky E2E scenario(s)`,
       targetName: "Flaky Scenarios",
       actionType: "REPAIR_E2E_SCENARIO",
-      ctaLabel: "Inspect Flaky Tests",
+      ctaLabel: "Diagnose",
       focusParams: {},
       description: "Intermittent timing or selector race conditions detected.",
+      diagnostics: {
+        summary: `${pillars.system.flakyTests} Flaky E2E Scenario Detected`,
+        suspectLayer: "system",
+        failureCategory: "flaky",
+        filePath: "e2e/catalog-search.spec.ts",
+        endpoint: "GET /api/products/search",
+        httpStatus: 200,
+        scenarioName: "Catalog Search & Filter Journey",
+        failedStep: "Step 2: Debounced search results list assertion (passed on retry #2)",
+        stackTrace: `Warning [Flaky Test]: "Catalog Search & Filter Journey"\n  Attempt #1: FAILED (Timed out 3000ms waiting for .product-card-grid)\n  Attempt #2: PASSED (1420ms)\n  Suspect Cause: Unawaited network response before asserting DOM count.`,
+        testCases: [
+          { name: "Filter products by keyword debounce (Attempt 1)", status: "fail", durationMs: 3010, step: "Race condition" },
+          { name: "Filter products by keyword debounce (Retry 2)", status: "pass", durationMs: 1420, step: "Passed on retry" },
+        ],
+        aiPrompt: `Analyze the flaky E2E test in "Catalog Search & Filter Journey" (e2e/catalog-search.spec.ts) where debounced search results intermittently time out on attempt #1. Suggest how to replace fixed waits with deterministic Playwright network/locator assertions.`,
+      },
     });
   }
 

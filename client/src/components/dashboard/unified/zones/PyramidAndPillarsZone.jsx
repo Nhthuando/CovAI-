@@ -4,7 +4,13 @@ import { UnitPillarCard } from "../pillars/UnitPillarCard.jsx";
 import { IntegrationPillarCard } from "../pillars/IntegrationPillarCard.jsx";
 import { SystemPillarCard } from "../pillars/SystemPillarCard.jsx";
 
-export function PyramidAndPillarsZone({ vm, onNavigateWorkspace, className = "" }) {
+export function PyramidAndPillarsZone({
+  vm,
+  onNavigateWorkspace,
+  activeCrossFilter = null,
+  onSelectCrossFilter = null,
+  className = "",
+}) {
   const pyramid = vm?.pyramid || {};
   const pillars = vm?.pillars || {};
 
@@ -16,10 +22,15 @@ export function PyramidAndPillarsZone({ vm, onNavigateWorkspace, className = "" 
           id="ud-zone-pyramid"
           title="Testing Pyramid"
           description="Architecture & distribution balance"
+          source={vm?.dataMode === "demo" ? "demo" : "live"}
           contentClassName="p-4"
           className="h-full"
         >
-          <TestPyramidVisualizer pyramid={pyramid} />
+          <TestPyramidVisualizer
+            pyramid={pyramid}
+            activeCrossFilter={activeCrossFilter}
+            onSelectCrossFilter={onSelectCrossFilter}
+          />
         </ZonePanel>
       </div>
 
@@ -29,14 +40,20 @@ export function PyramidAndPillarsZone({ vm, onNavigateWorkspace, className = "" 
           <UnitPillarCard
             pillarData={pillars.unit}
             onNavigateWorkspace={onNavigateWorkspace}
+            activeCrossFilter={activeCrossFilter}
+            onSelectCrossFilter={onSelectCrossFilter}
           />
           <IntegrationPillarCard
             pillarData={pillars.integration}
             onNavigateWorkspace={onNavigateWorkspace}
+            activeCrossFilter={activeCrossFilter}
+            onSelectCrossFilter={onSelectCrossFilter}
           />
           <SystemPillarCard
             pillarData={pillars.system}
             onNavigateWorkspace={onNavigateWorkspace}
+            activeCrossFilter={activeCrossFilter}
+            onSelectCrossFilter={onSelectCrossFilter}
           />
         </div>
       </div>

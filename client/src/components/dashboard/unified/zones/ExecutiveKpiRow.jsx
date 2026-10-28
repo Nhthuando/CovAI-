@@ -20,11 +20,18 @@ export function ExecutiveKpiRow({ vm, loading = false, className = "" }) {
     }
   };
 
+  const uncoveredApis = Number(execution.uncoveredApis ?? 0);
+
   const execSegments = [
     { key: "Passed", value: execution.passed || 0, tone: "pass", label: "Passed" },
     { key: "Failed", value: execution.failed || 0, tone: "fail", label: "Failed" },
     { key: "Skipped", value: (execution.skipped || 0) + (execution.flaky || 0), tone: "neutral", label: "Skip/Flaky" },
+    ...(uncoveredApis > 0
+      ? [{ key: "Uncovered", value: uncoveredApis, tone: "warn", label: "Uncovered APIs" }]
+      : []),
   ];
+
+  const barTotal = (execution.total || 0) + uncoveredApis;
 
   return (
     <div className={`grid grid-cols-12 gap-4 ${className}`}>
@@ -33,7 +40,7 @@ export function ExecutiveKpiRow({ vm, loading = false, className = "" }) {
         id="ud-kpi-health"
         className="col-span-12 sm:col-span-6 xl:col-span-3"
         label="Quality Health Score"
-        value={health.score !== null ? health.score : "—"}
+        value={health.score !== null && health.score !== undefined ? health.score : "—"}
         unit="/100"
         grade={health.grade}
         icon={Activity}
@@ -44,24 +51,35 @@ export function ExecutiveKpiRow({ vm, loading = false, className = "" }) {
           <>
             <span>Health Standard</span>
             <span className="font-mono text-xs font-semibold text-[var(--ud-text)]">
-              {health.score >= 80 ? "Healthy" : health.score >= 60 ? "Warning" : "Needs Review"}
+              {health.score === null || health.score === undefined
+                ? "No Runs Yet"
+                : health.score >= 80
+                ? "Healthy"
+                : health.score >= 60
+                ? "Warning"
+                : "Needs Review"}
             </span>
           </>
         }
       />
 
-      {/* 2. Total Test Execution */}
+      {/* 2. Total Test Execution (Strictly separates Executed Failed vs. Uncovered APIs) */}
       <KpiCard
         id="ud-kpi-execution"
         className="col-span-12 sm:col-span-6 xl:col-span-3"
         label="Total Test Execution"
-        value={fmtCount(execution.total)}
-        unit={`(${execution.passRate}% pass)`}
+        value={fmtCount(execution.total || 0)}
+        unit={`(${execution.passRate ?? 0}% pass)`}
         icon={CheckCircle2}
         loading={loading}
         supporting={
           <div className="mt-2 space-y-1.5">
-            <StackedBar segments={execSegments} total={execution.total} height={6} showLegend={true} />
+            <StackedBar
+              segments={execSegments}
+              total={barTotal}
+              height={6}
+              showLegend={true}
+            />
           </div>
         }
         footer={
@@ -133,7 +151,7 @@ export function ExecutiveKpiRow({ vm, loading = false, className = "" }) {
         id="ud-kpi-ai"
         className="col-span-12 sm:col-span-6 xl:col-span-3"
         label="AI Tests & Coverage Gaps"
-        badge={<DemoDataBadge />}
+        badge={ai.source === "demo" ? <DemoDataBadge /> : null}
         value={fmtCount(ai.aiGenerated || 0)}
         unit="generated"
         icon={Sparkles}

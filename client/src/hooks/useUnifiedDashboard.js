@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { fetchCoverageDashboardData } from "./useCoverageQuery.js";
 import {
@@ -14,8 +15,16 @@ import { adaptUnifiedDashboard } from "../services/unifiedDashboard/unifiedDashb
 /**
  * Fetch raw data across Unit, Integration, and System testing layers in parallel.
  */
-export async function fetchAllTestingLayers({ snapshotId, projectId, projectName = "", snapshots = [] }) {
-  if (!snapshotId) return null;
+export async function fetchAllTestingLayers({ snapshotId, projectId }) {
+  if (!snapshotId) {
+    return {
+      unitRaw: null,
+      integrationRaw: null,
+      systemRaw: null,
+      comparisonRaw: null,
+      errorsByLayer: { unit: null, integration: null, system: null },
+    };
+  }
 
   const errorsByLayer = { unit: null, integration: null, system: null };
 
@@ -61,44 +70,83 @@ export async function fetchAllTestingLayers({ snapshotId, projectId, projectName
         : Promise.resolve(null),
     ]);
 
-  const vm = adaptUnifiedDashboard({
+  return {
     unitRaw: unitRes,
     integrationRaw: intWorkspaceRes,
     systemRaw: sysSummaryRes,
     comparisonRaw: comparisonRes,
-    context: {
-      projectId,
-      projectName,
-      snapshotId,
-      snapshots,
-    },
-  });
-
-  return {
-    vm,
     errorsByLayer,
   };
 }
 
 /**
  * React Query Hook for Unified Quality & Testing Dashboard.
+ * Supports instantaneous toggling between `live` and `demo` data modes.
  */
-export function useUnifiedDashboard({ snapshotId, projectId, projectName = "", snapshots = [] }) {
+export function useUnifiedDashboard({
+  snapshotId,
+  projectId,
+  projectName = "",
+  snapshots = [],
+  dataMode = "live",
+}) {
+  const effectiveSnapshotId = snapshotId || "cmvs3749";
+
   const query = useQuery({
-    queryKey: ["unifiedDashboard", snapshotId, projectId || null],
-    queryFn: () => fetchAllTestingLayers({ snapshotId, projectId, projectName, snapshots }),
-    enabled: Boolean(snapshotId),
+    queryKey: ["unifiedDashboard", effectiveSnapshotId, projectId || null],
+    queryFn: () => fetchAllTestingLayers({ snapshotId: effectiveSnapshotId, projectId }),
+    enabled: Boolean(effectiveSnapshotId) && dataMode === "live",
     placeholderData: keepPreviousData,
     staleTime: 5 * 60 * 1000, // 5 minutes cache freshness
     gcTime: 30 * 60 * 1000,    // 30 minutes in memory
   });
 
+  const vm = useMemo(() => {
+    if (dataMode === "demo") {
+      return adaptUnifiedDashboard({
+        context: {
+          projectId,
+          projectName,
+          snapshotId: effectiveSnapshotId,
+          snapshots,
+        },
+        dataMode: "demo",
+      });
+    }
+
+    if (!query.data && query.isLoading) {
+      return null;
+    }
+
+    return adaptUnifiedDashboard({
+      unitRaw: query.data?.unitRaw || null,
+      integrationRaw: query.data?.integrationRaw || null,
+      systemRaw: query.data?.systemRaw || null,
+      comparisonRaw: query.data?.comparisonRaw || null,
+      context: {
+        projectId,
+        projectName,
+        snapshotId: effectiveSnapshotId,
+        snapshots,
+      },
+      dataMode: "live",
+    });
+  }, [
+    dataMode,
+    query.data,
+    query.isLoading,
+    projectId,
+    projectName,
+    effectiveSnapshotId,
+    snapshots,
+  ]);
+
   return {
-    vm: query.data?.vm || null,
+    vm,
     errorsByLayer: query.data?.errorsByLayer || { unit: null, integration: null, system: null },
-    isLoading: query.isLoading,
-    isFetching: query.isFetching,
-    isError: query.isError,
+    isLoading: dataMode === "live" ? query.isLoading : false,
+    isFetching: dataMode === "live" ? query.isFetching : false,
+    isError: dataMode === "live" ? query.isError : false,
     error: query.error,
     refetch: query.refetch,
   };

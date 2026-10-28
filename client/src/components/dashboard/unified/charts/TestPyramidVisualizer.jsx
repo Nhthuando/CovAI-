@@ -1,60 +1,152 @@
 import { useState } from "react";
-import { AlertTriangle, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Info } from "lucide-react";
 import { SegmentedFilter } from "../primitives/SegmentedFilter.jsx";
 import { fmtDuration, fmtCount } from "../../../../services/unifiedDashboard/format.js";
 
-export function TestPyramidVisualizer({ pyramid, className = "" }) {
+export function TestPyramidVisualizer({
+  pyramid,
+  activeCrossFilter = null,
+  onSelectCrossFilter = null,
+  className = "",
+}) {
   const [metricMode, setMetricMode] = useState("count"); // 'count' | 'duration'
 
-  const { shape = "pyramid", warning = null, layers = [] } = pyramid || {};
+  const {
+    shape = "insufficient",
+    badgeTitle = null,
+    tone = "neutral",
+    warning = null,
+    layers = [],
+  } = pyramid || {};
 
   // Find layer by pillar
-  const systemLayer = layers.find((l) => l.pillar === "system") || { count: 0, pctOfTotal: 0, durationMs: 0 };
-  const intLayer = layers.find((l) => l.pillar === "integration") || { count: 0, pctOfTotal: 0, durationMs: 0 };
-  const unitLayer = layers.find((l) => l.pillar === "unit") || { count: 0, pctOfTotal: 0, durationMs: 0 };
-
-  const totalCount = (unitLayer.count || 0) + (intLayer.count || 0) + (systemLayer.count || 0);
-  const totalDuration = (unitLayer.durationMs || 0) + (intLayer.durationMs || 0) + (systemLayer.durationMs || 0);
-
-  // Calculate relative SVG polygon widths based on chosen mode
-  const getWeight = (l) => {
-    if (metricMode === "duration") {
-      return totalDuration > 0 ? (l.durationMs || 0) / totalDuration : 0.33;
-    }
-    return totalCount > 0 ? (l.count || 0) / totalCount : 0.33;
+  const systemLayer = layers.find((l) => l.pillar === "system") || {
+    pillar: "system",
+    label: "System (E2E)",
+    count: 0,
+    pctOfTotal: 0,
+    durationMs: 0,
+  };
+  const intLayer = layers.find((l) => l.pillar === "integration") || {
+    pillar: "integration",
+    label: "Integration",
+    count: 0,
+    pctOfTotal: 0,
+    durationMs: 0,
+  };
+  const unitLayer = layers.find((l) => l.pillar === "unit") || {
+    pillar: "unit",
+    label: "Unit Tests",
+    count: 0,
+    pctOfTotal: 0,
+    durationMs: 0,
   };
 
-  const sysWeight = Math.max(0.18, Math.min(0.9, getWeight(systemLayer)));
-  const intWeight = Math.max(0.3, Math.min(0.95, getWeight(intLayer)));
-  const unitWeight = Math.max(0.4, Math.min(1.0, getWeight(unitLayer)));
+  const totalCount =
+    (unitLayer.count || 0) + (intLayer.count || 0) + (systemLayer.count || 0);
+  const totalDuration =
+    (unitLayer.durationMs || 0) +
+    (intLayer.durationMs || 0) +
+    (systemLayer.durationMs || 0);
+
+  const getLayerValue = (l) =>
+    metricMode === "duration" ? Number(l.durationMs || 0) : Number(l.count || 0);
+
+  const maxVal = Math.max(
+    1,
+    getLayerValue(systemLayer),
+    getLayerValue(intLayer),
+    getLayerValue(unitLayer)
+  );
+
+  // Compute true visual widths for each tier so 0-test tiers look empty/collapsed
+  const computeTierWidths = (layer, idealTop, idealBot) => {
+    const val = getLayerValue(layer);
+    const hasTests = Number(layer.count || 0) > 0;
+    if (!hasTests || val <= 0) {
+      return {
+        topW: 108,
+        botW: 120,
+        isEmpty: true,
+      };
+    }
+
+    if (shape === "pyramid" && metricMode === "count") {
+      return {
+        topW: idealTop,
+        botW: idealBot,
+        isEmpty: false,
+      };
+    }
+
+    // Proportional width based on actual share relative to max layer
+    const ratio = Math.max(0.28, Math.min(1.0, val / maxVal));
+    const baseW = Math.round(96 + ratio * 184);
+    return {
+      topW: Math.max(88, baseW - 16),
+      botW: baseW,
+      isEmpty: false,
+    };
+  };
+
+  const sysDim = computeTierWidths(systemLayer, 68, 124);
+  const intDim = computeTierWidths(intLayer, 132, 200);
+  const unitDim = computeTierWidths(unitLayer, 208, 284);
 
   const svgWidth = 320;
   const svgHeight = 160;
   const cx = svgWidth / 2;
 
-  // Trapezoid dimensions
-  // Top tier (System)
-  const topTopW = Math.round(sysWeight * 70);
-  const topBotW = Math.round(sysWeight * 130);
-  const topY1 = 12;
-  const topY2 = 54;
+  const topY1 = 12,
+    topY2 = 54;
+  const midY1 = 58,
+    midY2 = 104;
+  const botY1 = 108,
+    botY2 = 152;
 
-  // Mid tier (Integration)
-  const midTopW = Math.max(topBotW + 4, Math.round(intWeight * 140));
-  const midBotW = Math.round(intWeight * 210);
-  const midY1 = 58;
-  const midY2 = 104;
+  const handleTierClick = (pillar, label) => {
+    onSelectCrossFilter?.({
+      pillar,
+      category: null,
+      label: `${label} Pillar`,
+    });
+  };
 
-  // Base tier (Unit)
-  const botTopW = Math.max(midBotW + 4, Math.round(unitWeight * 220));
-  const botBotW = Math.max(botTopW + 10, Math.round(unitWeight * 290));
-  const botY1 = 108;
-  const botY2 = 152;
+  const resolvedTitle =
+    badgeTitle ||
+    (shape === "pyramid"
+      ? "Balanced Pyramid"
+      : shape === "missing-unit"
+      ? "Unbalanced Pyramid — Missing Unit Test Foundation"
+      : shape === "ice-cream-cone"
+      ? "Inverted Pyramid (Ice-Cream Cone Anti-Pattern)"
+      : shape === "hourglass"
+      ? "Hourglass Distribution"
+      : shape === "insufficient"
+      ? "No Tests Executed — Run suites or enable Demo Mode"
+      : "Unbalanced Pyramid");
+
+  const resolvedTone =
+    tone ||
+    (shape === "pyramid"
+      ? "pass"
+      : shape === "insufficient"
+      ? "neutral"
+      : shape === "ice-cream-cone"
+      ? "fail"
+      : "warn");
+
+  const bannerStyles = {
+    pass: "border-[var(--ud-pass)]/30 bg-[var(--ud-pass)]/10 text-[var(--ud-pass)]",
+    warn: "border-[var(--ud-warn)]/40 bg-[var(--ud-warn)]/10 text-[var(--ud-warn)]",
+    fail: "border-[var(--ud-fail)]/40 bg-[var(--ud-fail)]/10 text-[var(--ud-fail)]",
+    neutral: "border-[var(--ud-border)] bg-[var(--ud-surface-2)] text-[var(--ud-text-muted)]",
+  };
 
   return (
     <div className={`flex flex-col justify-between h-full space-y-4 ${className}`}>
       {/* Visualizer Header & Mode Switch */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <span className="text-xs font-semibold text-[var(--ud-text)] tracking-tight">
           Test Pyramid Architecture
         </span>
@@ -70,7 +162,7 @@ export function TestPyramidVisualizer({ pyramid, className = "" }) {
         />
       </div>
 
-      {/* SVG Pyramid Visualization */}
+      {/* SVG Pyramid Visualization (Interactive Tiers for Cross-Filtering) */}
       <div className="relative flex items-center justify-center my-1 select-none">
         <svg
           viewBox={`0 0 ${svgWidth} ${svgHeight}`}
@@ -79,128 +171,177 @@ export function TestPyramidVisualizer({ pyramid, className = "" }) {
           aria-label={`Test Pyramid representing ${unitLayer.count} unit tests, ${intLayer.count} integration tests, and ${systemLayer.count} system tests`}
         >
           {/* Top Tier: System (Teal) */}
-          <polygon
-            points={`${cx - topTopW / 2},${topY1} ${cx + topTopW / 2},${topY1} ${cx + topBotW / 2},${topY2} ${cx - topBotW / 2},${topY2}`}
-            fill="var(--ud-system)"
-            fillOpacity="0.16"
-            stroke="var(--ud-system)"
-            strokeWidth="1.5"
-            strokeLinejoin="round"
-          />
-          <text
-            x={cx}
-            y={(topY1 + topY2) / 2 + 4}
-            textAnchor="middle"
-            fill="var(--ud-system)"
-            fontSize="11"
-            fontFamily="var(--font-mono)"
-            fontWeight="bold"
+          <g
+            onClick={() => handleTierClick("system", "System (E2E)")}
+            className="cursor-pointer group"
           >
-            E2E ({metricMode === "duration" ? fmtDuration(systemLayer.durationMs) : systemLayer.count})
-          </text>
+            <polygon
+              points={`${cx - sysDim.topW / 2},${topY1} ${cx + sysDim.topW / 2},${topY1} ${cx + sysDim.botW / 2},${topY2} ${cx - sysDim.botW / 2},${topY2}`}
+              fill="var(--ud-system)"
+              fillOpacity={
+                activeCrossFilter?.pillar === "system"
+                  ? "0.34"
+                  : sysDim.isEmpty
+                  ? "0.04"
+                  : "0.20"
+              }
+              stroke="var(--ud-system)"
+              strokeOpacity={sysDim.isEmpty ? "0.4" : "1"}
+              strokeDasharray={sysDim.isEmpty ? "4 3" : undefined}
+              strokeWidth={activeCrossFilter?.pillar === "system" ? "2.2" : "1.5"}
+              strokeLinejoin="round"
+            />
+            <text
+              x={cx}
+              y={(topY1 + topY2) / 2 + 4}
+              textAnchor="middle"
+              fill={sysDim.isEmpty ? "var(--ud-text-muted)" : "var(--ud-system)"}
+              fontSize="11"
+              fontFamily="var(--font-mono)"
+              fontWeight="bold"
+            >
+              E2E ({metricMode === "duration" ? fmtDuration(systemLayer.durationMs) : systemLayer.count})
+            </text>
+          </g>
 
           {/* Middle Tier: Integration (Purple) */}
-          <polygon
-            points={`${cx - midTopW / 2},${midY1} ${cx + midTopW / 2},${midY1} ${cx + midBotW / 2},${midY2} ${cx - midBotW / 2},${midY2}`}
-            fill="var(--ud-integration)"
-            fillOpacity="0.16"
-            stroke="var(--ud-integration)"
-            strokeWidth="1.5"
-            strokeLinejoin="round"
-          />
-          <text
-            x={cx}
-            y={(midY1 + midY2) / 2 + 4}
-            textAnchor="middle"
-            fill="var(--ud-integration)"
-            fontSize="11"
-            fontFamily="var(--font-mono)"
-            fontWeight="bold"
+          <g
+            onClick={() => handleTierClick("integration", "Integration")}
+            className="cursor-pointer group"
           >
-            Integration ({metricMode === "duration" ? fmtDuration(intLayer.durationMs) : intLayer.count})
-          </text>
+            <polygon
+              points={`${cx - intDim.topW / 2},${midY1} ${cx + intDim.topW / 2},${midY1} ${cx + intDim.botW / 2},${midY2} ${cx - intDim.botW / 2},${midY2}`}
+              fill="var(--ud-integration)"
+              fillOpacity={
+                activeCrossFilter?.pillar === "integration"
+                  ? "0.34"
+                  : intDim.isEmpty
+                  ? "0.04"
+                  : "0.22"
+              }
+              stroke="var(--ud-integration)"
+              strokeOpacity={intDim.isEmpty ? "0.4" : "1"}
+              strokeDasharray={intDim.isEmpty ? "4 3" : undefined}
+              strokeWidth={activeCrossFilter?.pillar === "integration" ? "2.2" : "1.5"}
+              strokeLinejoin="round"
+            />
+            <text
+              x={cx}
+              y={(midY1 + midY2) / 2 + 4}
+              textAnchor="middle"
+              fill={intDim.isEmpty ? "var(--ud-text-muted)" : "var(--ud-integration)"}
+              fontSize="11"
+              fontFamily="var(--font-mono)"
+              fontWeight="bold"
+            >
+              Integration ({metricMode === "duration" ? fmtDuration(intLayer.durationMs) : intLayer.count})
+            </text>
+          </g>
 
           {/* Base Tier: Unit Tests (Blue) */}
-          <polygon
-            points={`${cx - botTopW / 2},${botY1} ${cx + botTopW / 2},${botY1} ${cx + botBotW / 2},${botY2} ${cx - botBotW / 2},${botY2}`}
-            fill="var(--ud-unit)"
-            fillOpacity="0.16"
-            stroke="var(--ud-unit)"
-            strokeWidth="1.5"
-            strokeLinejoin="round"
-          />
-          <text
-            x={cx}
-            y={(botY1 + botY2) / 2 + 4}
-            textAnchor="middle"
-            fill="var(--ud-unit)"
-            fontSize="11"
-            fontFamily="var(--font-mono)"
-            fontWeight="bold"
+          <g
+            onClick={() => handleTierClick("unit", "Unit Tests")}
+            className="cursor-pointer group"
           >
-            Unit Tests ({metricMode === "duration" ? fmtDuration(unitLayer.durationMs) : unitLayer.count})
-          </text>
+            <polygon
+              points={`${cx - unitDim.topW / 2},${botY1} ${cx + unitDim.topW / 2},${botY1} ${cx + unitDim.botW / 2},${botY2} ${cx - unitDim.botW / 2},${botY2}`}
+              fill="var(--ud-unit)"
+              fillOpacity={
+                activeCrossFilter?.pillar === "unit"
+                  ? "0.34"
+                  : unitDim.isEmpty
+                  ? "0.04"
+                  : "0.22"
+              }
+              stroke="var(--ud-unit)"
+              strokeOpacity={unitDim.isEmpty ? "0.4" : "1"}
+              strokeDasharray={unitDim.isEmpty ? "4 3" : undefined}
+              strokeWidth={activeCrossFilter?.pillar === "unit" ? "2.2" : "1.5"}
+              strokeLinejoin="round"
+            />
+            <text
+              x={cx}
+              y={(botY1 + botY2) / 2 + 4}
+              textAnchor="middle"
+              fill={unitDim.isEmpty ? "var(--ud-text-muted)" : "var(--ud-unit)"}
+              fontSize="11"
+              fontFamily="var(--font-mono)"
+              fontWeight="bold"
+            >
+              Unit Tests ({metricMode === "duration" ? fmtDuration(unitLayer.durationMs) : unitLayer.count})
+            </text>
+          </g>
         </svg>
       </div>
 
-      {/* Layer Metrics Summary List */}
-      <div className="space-y-1.5 text-xs font-mono pt-2 border-t border-[var(--ud-border)]">
-        <div className="flex items-center justify-between text-[var(--ud-text-muted)]">
-          <span className="flex items-center gap-1.5 font-sans">
-            <span className="w-2 h-2 rounded-full bg-[var(--ud-system)] shrink-0" />
-            <span>Top: System (E2E)</span>
-          </span>
-          <span className="tabular-nums font-semibold text-[var(--ud-text)]">
-            {fmtCount(systemLayer.count)} tests • {fmtDuration(systemLayer.durationMs)}
-          </span>
-        </div>
-        <div className="flex items-center justify-between text-[var(--ud-text-muted)]">
-          <span className="flex items-center gap-1.5 font-sans">
-            <span className="w-2 h-2 rounded-full bg-[var(--ud-integration)] shrink-0" />
-            <span>Middle: Integration</span>
-          </span>
-          <span className="tabular-nums font-semibold text-[var(--ud-text)]">
-            {fmtCount(intLayer.count)} tests • {fmtDuration(intLayer.durationMs)}
-          </span>
-        </div>
-        <div className="flex items-center justify-between text-[var(--ud-text-muted)]">
-          <span className="flex items-center gap-1.5 font-sans">
-            <span className="w-2 h-2 rounded-full bg-[var(--ud-unit)] shrink-0" />
-            <span>Base: Unit Tests</span>
-          </span>
-          <span className="tabular-nums font-semibold text-[var(--ud-text)]">
-            {fmtCount(unitLayer.count)} tests • {fmtDuration(unitLayer.durationMs)}
-          </span>
-        </div>
+      {/* Layer Metrics Summary List (Clickable for Cross-Filtering) */}
+      <div className="space-y-1 text-xs font-mono pt-2 border-t border-[var(--ud-border)]">
+        {[
+          {
+            pillar: "system",
+            title: "Top: System (E2E)",
+            color: "bg-[var(--ud-system)]",
+            layer: systemLayer,
+          },
+          {
+            pillar: "integration",
+            title: "Middle: Integration",
+            color: "bg-[var(--ud-integration)]",
+            layer: intLayer,
+          },
+          {
+            pillar: "unit",
+            title: "Base: Unit Tests",
+            color: "bg-[var(--ud-unit)]",
+            layer: unitLayer,
+          },
+        ].map((row) => {
+          const isSelected =
+            activeCrossFilter?.pillar === row.pillar && !activeCrossFilter?.category;
+          return (
+            <button
+              key={row.pillar}
+              type="button"
+              onClick={() => handleTierClick(row.pillar, row.layer.label)}
+              className={`w-full flex items-center justify-between px-2 py-1 rounded-[var(--radius-sm)] transition-colors cursor-pointer text-left ${
+                isSelected
+                  ? "bg-[var(--ud-surface-2)] text-[var(--ud-text)] ring-1 ring-[var(--ud-border)]"
+                  : "text-[var(--ud-text-muted)] hover:bg-[var(--ud-surface-2)]/60"
+              }`}
+              title={`Click to filter Zone 4 by ${row.layer.label}`}
+            >
+              <span className="flex items-center gap-1.5 font-sans">
+                <span className={`w-2 h-2 rounded-full ${row.color} shrink-0`} />
+                <span>{row.title}</span>
+              </span>
+              <span className="tabular-nums font-semibold text-[var(--ud-text)]">
+                {fmtCount(row.layer.count)} tests • {fmtDuration(row.layer.durationMs)}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       {/* Shape Assessment & Warning Banner */}
       <div
-        className={`rounded-[var(--radius-sm)] border p-2 text-xs flex items-start gap-2 ${
-          shape === "pyramid"
-            ? "border-[var(--ud-pass)]/30 bg-[var(--ud-pass)]/10 text-[var(--ud-pass)]"
-            : shape === "insufficient"
-            ? "border-[var(--ud-border)] bg-[var(--ud-surface-2)] text-[var(--ud-text-muted)]"
-            : "border-[var(--ud-warn)]/30 bg-[var(--ud-warn)]/10 text-[var(--ud-warn)]"
+        className={`rounded-[var(--radius-sm)] border p-2.5 text-xs flex items-start gap-2 ${
+          bannerStyles[resolvedTone] || bannerStyles.neutral
         }`}
       >
-        {shape === "pyramid" ? (
+        {resolvedTone === "pass" ? (
           <CheckCircle2 size={14} className="shrink-0 mt-0.5 text-[var(--ud-pass)]" />
+        ) : resolvedTone === "neutral" ? (
+          <Info size={14} className="shrink-0 mt-0.5 text-[var(--ud-text-muted)]" />
         ) : (
           <AlertTriangle size={14} className="shrink-0 mt-0.5" />
         )}
         <div className="space-y-0.5 font-sans leading-relaxed">
-          <span className="font-semibold capitalize">
-            {shape === "pyramid"
-              ? "Balanced Pyramid"
-              : shape === "ice-cream-cone"
-              ? "Ice-Cream Cone Warning"
-              : shape === "hourglass"
-              ? "Hourglass Distribution"
-              : "Insufficient Data"}
-          </span>
+          <span className="font-semibold block">{resolvedTitle}</span>
           <p className="text-[11px] opacity-90">
-            {warning || "Fast unit foundation with targeted integration and reliable system tests."}
+            {warning ||
+              (totalCount > 0 || totalDuration > 0
+                ? "Fast unit foundation with targeted integration and reliable system tests."
+                : "Execute test suites or switch to Demo Showcase to inspect multi-tier balance.")}
           </p>
         </div>
       </div>

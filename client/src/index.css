@@ -480,3 +480,33 @@ select:-webkit-autofill:focus {
   --ud-system: #39c5cf;
   --ud-neutral: #6e7681;
 }
+
+/* ============================================================
+   PRINT STYLES FOR UNIFIED QUALITY & TESTING DASHBOARD REPORT
+   ============================================================ */
+@media print {
+  .ide-root {
+    height: auto !important;
+    width: 100% !important;
+    overflow: visible !important;
+  }
+
+  .ud-no-print,
+  header.h-11,
+  aside {
+    display: none !important;
+  }
+
+  .unified-dashboard {
+    --ud-bg: #ffffff !important;
+    --ud-surface: #ffffff !important;
+    --ud-surface-2: #f6f8fa !important;
+    --ud-border: #d0d7de !important;
+    --ud-text: #1f2328 !important;
+    --ud-text-muted: #57606a !important;
+    background: #ffffff !important;
+    color: #1f2328 !important;
+    padding: 0 !important;
+  }
+}
+
