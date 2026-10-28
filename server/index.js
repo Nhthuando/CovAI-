@@ -1,16 +1,172 @@
-import express from "express";
 import dotenv from "dotenv";
-
 dotenv.config();
+
+import { exec } from "child_process";
+try {
+  exec('git config --global --add safe.directory "*"', () => {});
+} catch (_) {}
+
+import express from "express";
+import cors from "cors";
+import { createServer } from "http";
+import { Server } from "socket.io";
+import { subscribeToUserRoom } from "./src/utils/socketSubscription.js";
+import authRoute from "./src/routes/auth.route.js";
+import refreshRoute from "./src/routes/refresh.route.js";
+import userRoute from "./src/routes/user.route.js";
+import cookieParser from "cookie-parser";
+import projectRoutes from "./src/routes/project.route.js";
+import projectMemberRoutes from './src/routes/projectMember.route.js';
+import projectInvitationRoutes from './src/routes/projectInvitation.route.js';
+import { startInvitationDeliveryWorker } from './src/services/invitationDelivery.service.js';
+import projectEventRoutes from './src/routes/projectEvent.route.js';
+import { attachProjectSubscriptions } from './src/services/projectSubscription.service.js';
+import { isCollaborationLocalTest } from './src/config/collaborationLocal.js';
+import { recoverQueuedProjectOperations } from './src/services/projectOperationRecovery.service.js';
+import pipelineRoutes from "./src/routes/pipeline.route.js";
+import prisma from "./src/config/prisma.js";
+import uploadRoute from "./src/routes/upload.route.js";
+import jobRoute from "./src/routes/job.route.js";
+import systemAssessmentRoute from "./src/routes/systemAssessment.route.js";
+import coverageRoute from "./src/routes/coverage.route.js";
+import githubRoute from "./src/routes/github.route.js";
+import cyclomaticRoute from "./src/routes/cyclomatic.route.js";
+import aiSuggestionRoute from "./src/routes/aiSuggestion.route.js";
+import aiTestRoute from "./src/routes/aiTest.route.js";
+import fileRoutes from "./src/routes/file.routes.js";
+import notificationRoute from "./src/routes/notification.route.js";
+import {
+  eventDispatcher,
+  NOTIFICATION_EVENT,
+} from "./src/utils/eventDispatcher.js";
+import analyticsRoute from "./src/routes/analytics.route.js";
+import codeHygieneRoute from "./src/routes/codeHygiene.route.js";
+import fileManagerRoute from "./src/routes/fileManager.route.js";
+import webhookRoute from "./src/routes/webhook.route.js";
+import reportRoute from "./src/routes/report.route.js";
+import gitRoute from "./src/routes/git.route.js";
+import { globalLimiter } from "./src/middlewares/rateLimit.middleware.js";
+import path from "path";
+import { fileURLToPath } from "url";
+import "./src/services/queue.service.js";
+import "./src/services/codeHygieneJob.service.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: [
+      process.env.CLIENT_URL || "http://localhost:5173",
+      "http://localhost:5174",
+      "http://[::1]:5173",
+      "http://127.0.0.1:5173",
+    ],
+    credentials: true,
+  },
+});
 
-app.use(express.json());
+// CORS — allow Vite dev server and production domain
+
+app.use(
+  cors({
+    origin: [
+      process.env.CLIENT_URL || "http://localhost:5173",
+      "http://localhost:5174",
+      "http://[::1]:5173",
+      "http://127.0.0.1:5173",
+    ],
+    credentials: true,
+    exposedHeaders: ["Content-Disposition"],
+  }),
+);
+
+app.use(cookieParser());
+
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
+app.use('/invitations', (_req, res, next) => { res.setHeader('Referrer-Policy', 'no-referrer'); next(); });
+
+// Global rate limiter
+app.use(globalLimiter);
+
+app.use("/api/auth", authRoute);
+app.use("/api/refresh", refreshRoute);
+app.use("/api/users", userRoute);
+app.use('/api/projects', projectMemberRoutes);
+app.use('/api/projects', projectEventRoutes);
+app.use('/api/invitations', projectInvitationRoutes);
+app.get('/api/health', async (_req, res) => {
+  try { await prisma.$queryRaw`SELECT 1`; res.json({ success: true }); }
+  catch { res.status(503).json({ success: false }); }
+});
+app.use("/api/projects", projectRoutes);
+app.use("/api/pipeline", pipelineRoutes);
+app.use("/api/upload", uploadRoute);
+app.use("/api/job", jobRoute);
+app.use("/api/coverage", systemAssessmentRoute);
+app.use("/api/coverage", coverageRoute);
+app.use("/api/github", githubRoute);
+app.use("/api/cyclomatic", cyclomaticRoute);
+app.use("/api/ai-suggestions", aiSuggestionRoute);
+app.use("/api/ai-tests", aiTestRoute);
+app.use("/api/files", fileRoutes);
+app.use("/api/notifications", notificationRoute);
+app.use("/api/analytics", analyticsRoute);
+app.use("/api/code-hygiene", codeHygieneRoute);
+app.use("/api/file-manager", fileManagerRoute);
+app.use("/api/git", gitRoute);
+app.use("/api/reports", reportRoute);
+app.use("/webhook", webhookRoute);
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+app.use(express.static(path.join(__dirname, "../client/dist")));
+
+app.get(/.*/, (req, res) => {
+  res.sendFile(path.join(__dirname, "../client/dist/index.html"));
+});
+
+// Socket.IO connection handling
+io.on("connection", (socket) => {
+  console.log(`[Socket.IO] User connected: ${socket.id}`);
+
+  socket.on("subscribe_notifications", (userId) => {
+    subscribeToUserRoom(socket, userId);
+  });
+
+  socket.on("disconnect", () => {
+    console.log(`[Socket.IO] User disconnected: ${socket.id}`);
+  });
+});
+
+// Make io available globally for services
+global.io = io;
+attachProjectSubscriptions(io);
+
+async function startServer() {
+  try {
+    if (process.env.COLLABORATION_E2E_ENABLED === 'true' && !isCollaborationLocalTest()) throw new Error('Collaboration E2E profile requires isolated localhost database and non-production mode');
+    await prisma.$connect();
+    startInvitationDeliveryWorker();
+    const recover = () => recoverQueuedProjectOperations().catch(() => console.error('[operations] Queue recovery unavailable; retrying'));
+    const recoveryTimer = setInterval(recover, 10000);
+    recoveryTimer.unref();
+    void recover();
+    console.log("Database connected successfully.");
+
+    httpServer.listen(PORT, isCollaborationLocalTest() ? '127.0.0.1' : undefined, () => {
+      console.log("-----------------------------------------------");
+      console.log("CovAI server is running on port: " + PORT);
+      console.log("-----------------------------------------------");
+    });
+  } catch (error) {
+    console.error("Failed to connect to the database:", error);
+    process.exit(1);
+  }
+}
+
+startServer();
 
 
-app.listen(PORT,  () => {
-    console.log("-----------------------------------------------");
-    console.log("CovAI server đang được chạy dưới port: " + PORT);
-    console.log("-----------------------------------------------");
-})

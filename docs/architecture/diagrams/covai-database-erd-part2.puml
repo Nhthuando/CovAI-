@@ -1,0 +1,155 @@
+@startuml CovAI_Database_ERD_Part2
+title <b>CovAI Database ERD (Part 2): Extended Quality, LLM/RAG & AI Test Schema</b>\n<size:12>PostgreSQL Relational Schema - Quality Reports, RAG Triad Evaluations & Load Testing</size>
+
+skinparam dpi 200
+skinparam linetype ortho
+skinparam roundCorner 4
+skinparam defaultFontName "Segoe UI", Arial, sans-serif
+skinparam defaultFontSize 14
+skinparam shadowing false
+skinparam nodesep 55
+skinparam ranksep 65
+
+skinparam entity {
+  BackgroundColor #FFFFFF
+  BorderColor #2C3E50
+  BorderThickness 1.3
+  FontColor #1C2833
+}
+
+entity "Project" as Project {
+  * id : String <<PK>>
+  --
+  * ownerId : String <<FK>>
+  * name : String
+  repoUrl : String
+  createdAt : DateTime
+}
+
+entity "ProjectSnapshot" as Snapshot {
+  * id : String <<PK>>
+  --
+  * projectId : String <<FK>>
+  storagePath : String
+  source : SnapshotSource
+  createdAt : DateTime
+}
+
+entity "QualityReport" as Quality {
+  * id : String <<PK>>
+  --
+  * snapshotId : String <<FK>>
+  * projectId : String <<FK>>
+  overallScore : Float
+  performanceScore : Float
+  securityScore : Float
+  coverageScore : Float
+  maintainabilityScore : Float
+  recommendations : String
+  createdAt : DateTime
+}
+
+entity "Vulnerability" as Vuln {
+  * id : String <<PK>>
+  --
+  * snapshotId : String <<FK>>
+  type : String
+  severity : String
+  file : String
+  line : Int
+  description : String
+}
+
+entity "AiTest" as AiTest {
+  * id : String <<PK>>
+  --
+  * projectId : String <<FK>>
+  * snapshotId : String <<FK>>
+  mode : AiTestMode
+  filePath : String
+  content : String
+  createdAt : DateTime
+}
+
+entity "AiTestResult" as AiResult {
+  * id : String <<PK>>
+  --
+  * aiTestId : String <<FK>>
+  status : String
+  output : String
+  duration : Int
+}
+
+entity "RagDataset" as RagDataset #EBF5FB {
+  * id : String <<PK>>
+  --
+  * projectId : String <<FK>>
+  name : String
+  datasetType : String
+  itemCount : Int
+  createdAt : DateTime
+}
+
+entity "RagEvaluation" as RagEval #EBF5FB {
+  * id : String <<PK>>
+  --
+  * snapshotId : String <<FK>>
+  * projectId : String <<FK>>
+  datasetId : String <<FK>>
+  name : String
+  status : String
+  faithfulnessScore : Float
+  answerRelevanceScore : Float
+  contextPrecisionScore : Float
+  hallucinationRate : Float
+  promptInjectionResilience : Float
+  toxicityScore : Float
+  avgLatencyMs : Float
+  totalTokensUsed : Int
+  estimatedCostUsd : Float
+  createdAt : DateTime
+}
+
+entity "RagTestCase" as RagItem #EBF5FB {
+  * id : String <<PK>>
+  --
+  * evaluationId : String <<FK>>
+  query : String
+  retrievedContext : String
+  actualAnswer : String
+  groundTruth : String
+  faithfulness : Float
+  relevance : Float
+  passed : Boolean
+  latencyMs : Int
+}
+
+entity "LoadTestRun" as LoadTest #F4ECF7 {
+  * id : String <<PK>>
+  --
+  * snapshotId : String <<FK>>
+  targetEndpoint : String
+  virtualUsers : Int
+  durationSeconds : Int
+  requestsPerSec : Float
+  p95LatencyMs : Float
+  errorRate : Float
+  createdAt : DateTime
+}
+
+Project ||--o{ Snapshot : "has snapshots"
+Project ||--o{ Quality : "has reports"
+Project ||--o{ RagDataset : "manages datasets"
+Project ||--o{ RagEval : "runs evaluations"
+
+Snapshot ||--|| Quality : "evaluates"
+Snapshot ||--o{ Vuln : "detects"
+Snapshot ||--o{ AiTest : "generates tests"
+Snapshot ||--o{ RagEval : "benchmarks RAG"
+Snapshot ||--o{ LoadTest : "profiles performance"
+
+AiTest ||--o| AiResult : "produces"
+RagDataset ||--o{ RagEval : "benchmarked against"
+RagEval ||--o{ RagItem : "contains test cases"
+
+@enduml

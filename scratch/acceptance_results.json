@@ -1,0 +1,109 @@
+{
+  "timestamp": "2026-10-15T01:33:34.282Z",
+  "gateB_cancellation": {
+    "runTests": {
+      "jobId": "cmv8v7xbr0002hg7dc6cb82ng",
+      "dbStatus": "CANCELED",
+      "passed": true
+    },
+    "idempotency": {
+      "status": 200,
+      "passed": true
+    },
+    "unauthorizedRejection": {
+      "status": 401,
+      "passed": true
+    }
+  },
+  "gateC_comparison": {
+    "badges": {
+      "srcChangedVisible": true,
+      "runtimeRegressionVisible": true,
+      "coverageUnchangedVisible": true
+    },
+    "sourceDiff": {
+      "hasNewFile": true,
+      "hasModFile": true,
+      "hasDelFile": true
+    },
+    "runtimeTransitions": {
+      "alphaVisible": true,
+      "betaVisible": true,
+      "gammaVisible": true
+    },
+    "identicalSnapshot": {
+      "noChangesVisible": true
+    },
+    "navigationPersistence": {
+      "reloadPreserved": true
+    }
+  },
+  "gateD_endpointExplorer": {
+    "endpointClicked": true,
+    "routeEvidenceVisible": true,
+    "controllerEvidenceVisible": true,
+    "contractIndependent": true
+  },
+  "screenshots": [
+    {
+      "name": "01_login_success",
+      "filePath": "D:\\NCKH\\CovAI-\\scratch\\evidence_screenshots\\01_login_success.png"
+    },
+    {
+      "name": "02_gateB_run_tests_running",
+      "filePath": "D:\\NCKH\\CovAI-\\scratch\\evidence_screenshots\\02_gateB_run_tests_running.png"
+    },
+    {
+      "name": "03_gateB_run_tests_cancelling",
+      "filePath": "D:\\NCKH\\CovAI-\\scratch\\evidence_screenshots\\03_gateB_run_tests_cancelling.png"
+    },
+    {
+      "name": "04_gateB_run_tests_canceled",
+      "filePath": "D:\\NCKH\\CovAI-\\scratch\\evidence_screenshots\\04_gateB_run_tests_canceled.png"
+    },
+    {
+      "name": "05_gateB_run_tests_reloaded",
+      "filePath": "D:\\NCKH\\CovAI-\\scratch\\evidence_screenshots\\05_gateB_run_tests_reloaded.png"
+    },
+    {
+      "name": "10_gateC_comparison_overview",
+      "filePath": "D:\\NCKH\\CovAI-\\scratch\\evidence_screenshots\\10_gateC_comparison_overview.png"
+    },
+    {
+      "name": "11_gateC_source_diff_expanded",
+      "filePath": "D:\\NCKH\\CovAI-\\scratch\\evidence_screenshots\\11_gateC_source_diff_expanded.png"
+    },
+    {
+      "name": "12_gateC_test_diff",
+      "filePath": "D:\\NCKH\\CovAI-\\scratch\\evidence_screenshots\\12_gateC_test_diff.png"
+    },
+    {
+      "name": "13_gateC_runtime_transitions",
+      "filePath": "D:\\NCKH\\CovAI-\\scratch\\evidence_screenshots\\13_gateC_runtime_transitions.png"
+    },
+    {
+      "name": "14_gateC_coverage_gaps",
+      "filePath": "D:\\NCKH\\CovAI-\\scratch\\evidence_screenshots\\14_gateC_coverage_gaps.png"
+    },
+    {
+      "name": "15_gateC_identical_snapshots",
+      "filePath": "D:\\NCKH\\CovAI-\\scratch\\evidence_screenshots\\15_gateC_identical_snapshots.png"
+    },
+    {
+      "name": "16_gateC_history_navigation",
+      "filePath": "D:\\NCKH\\CovAI-\\scratch\\evidence_screenshots\\16_gateC_history_navigation.png"
+    },
+    {
+      "name": "17_gateD_endpoint_explorer",
+      "filePath": "D:\\NCKH\\CovAI-\\scratch\\evidence_screenshots\\17_gateD_endpoint_explorer.png"
+    },
+    {
+      "name": "18_gateD_endpoint_switching_clean",
+      "filePath": "D:\\NCKH\\CovAI-\\scratch\\evidence_screenshots\\18_gateD_endpoint_switching_clean.png"
+    }
+  ],
+  "networkSummary": {
+    "totalRequests": 240,
+    "errors": []
+  }
+}

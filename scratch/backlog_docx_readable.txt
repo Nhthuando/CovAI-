@@ -1,0 +1,257 @@
+FILE: D:\HuuThuan - Project\NCKH\CovAI\temp\C1SE.30_ProductBacklog_CovAI_ver1.1.docx
+sha256: 815fcff8cf6ac7b6b190ce028b324f1430844b3f63251ab6fcd5e7c4e7239609
+paragraphs: 125; tables: 12; sections: 6
+
+BODY PARAGRAPHS
+P001 [Body Text Indent] International School
+P002 [Normal] Capstone Project 1
+P003 [Normal] CMU-SE 450 – C1SE.30
+P005 [Normal] 2. Product Backlog
+P006 [Normal] Version 1.1
+P007 [Normal] Date: September 10th, 2026
+P009 [Normal] TEST COVERAGE ANALYSIS AND AI-DRIVEN TEST GENERATION SYSTEM
+P011 [Normal] Submitted by
+P012 [Normal] Dinh, Huynh Tan
+P013 [Normal] Phuc, Tran Huu
+P014 [Normal] Quy, Nguyen Duy
+P015 [Normal] Thuan, Ngo Huu
+P016 [Normal] Approved by 
+P017 [Normal] Man, Nguyen Duc, Ph.D.
+P019 [Normal] Proposal Review Panel Representative:	
+P022 [Normal] Name			Signature		Date
+P025 [Normal] Capstone Project 1- Mentor:	
+P028 [Normal] Name			Signature		Date
+P030 [Normal] PROJECT INFORMATION
+P032 [Normal] Table 1 - Project Information
+P034 [Normal] DOCUMENT APPROVALS
+P035 [Normal] The following signatures are required for approval of this document.
+P037 [Normal] Table 2 - Document Approvals
+P040 [Normal] DOCUMENT NAME
+P042 [Normal] Table 3 - Document Details
+P044 [Normal] REVISION HISTORY
+P046 [Normal] Table 4 - Revision History
+P049 [Normal] TABLE OF CONTENTS
+P051 [Normal] 1.3.	System Overview	5
+P052 [Normal] 2.1.	Priority and Estimates	6
+P053 [Normal] 2.3.	Product Backlog Specification (User)	9
+P054 [Normal] 5.	References	15
+P055 [Normal] LIST OF TABLES	
+P056 [Normal] Table 1 - Project Information	1
+P057 [Normal] Table 2 - Document Approvals	2
+P058 [Normal] Table 3 - Document Details	2
+P059 [Normal] Table 4 - Revision History	2
+P060 [Normal] Table 5 - Priority Definition	6
+P061 [Normal] Table 6 - Development Effort and Sprint Allocation	6
+P062 [Normal] Table 7 - Sprint 1 Work Breakdown (Week 1 & Week 2)	7
+P063 [Normal] Table 8 - Product Backlog Specification (Admin)	8
+P064 [Normal] Table 9 - Product Backlog Specification (User)	9
+P065 [Normal] Table 10 - Constraints	13
+P066 [Normal] Table 11 - Stakeholders and User Descriptions Summary	14
+P067 [Normal] Table 12 - References	15
+P070 [Normal] 1. Introduction
+P071 [Normal]      The agile product backlog in Scrum is a prioritized features list, containing short descriptions of all functionality desired in the product. When applying Scrum, it’s not necessary to start a project with a lengthy, upfront effort to document all requirements. Typically, a Scrum team and its product owner begin by writing down everything they can think of for agile backlog prioritization. This agile product backlog is almost always more than enough for a first sprint. The Scrum product backlog is then allowed to grow and change as more is learned about the product and its clients.
+P073 [Normal] 1.1 Purpose
+P074 [Normal] Provide a prioritized features list, containing short descriptions of all functionality desired in the CovAI product.
+P075 [Normal] Lists everything that the product owner and Scrum team feel should be included in the software they are developing for automated test coverage analysis, AI-driven test generation, and AI chatbot trustworthiness evaluation.
+P077 [Normal] 1.2 Scope
+P078 [Normal] Lists the user roles into two core operational modules: Administrator (Admin) and General User (User - covering developers, QA engineers, testers, and academic researchers testing their projects).
+P079 [Normal] Specifies all functional requirements (FR-01 to FR-16) and non-functional quality attributes (NFR-01 to NFR-08) across the CovAI platform.
+P080 [Normal] Lists key capabilities across two core pillars: (1) Software Testing & Coverage Intelligence: ZIP/GitHub ingestion, isolated Docker sandbox execution, Statement/Branch/Function/Line coverage, AST & interactive CFG visualization, Cyclomatic Complexity analysis, Google Gemini AI test skeleton and full test generation, multi-framework support (Jest, Vitest, Supertest, Cypress, Playwright), GitHub webhooks, and real-time WebSocket notifications; (2) AI Chatbot Trustworthiness Evaluation: Knowledge document ingestion, evaluation profile builder, scenario generation, multi-task evaluation runner (Knowledge Q&A, Usage Guidance, Action/Tool execution), tool/action safety verification, 3-layer trustworthiness scoring (Core Criteria, Task Module, Project Rules), diagnosis, and multi-version benchmark comparison.
+P081 [Normal] Provides concise descriptions of desired functionality and user value for each backlog item.
+P082 [Normal] Assigns three standard priority levels (High, Medium, Low) and development effort (hours) aligned with the 7 Sprints of the project schedule.
+P084 [Normal] 1.3 System Overview
+P085 [Normal] CovAI is designed with a decoupled architecture comprising React 19 + Vite frontend, Express.js 5 REST API, PostgreSQL + Prisma ORM database, BullMQ + Redis job queues, Docker sandbox test execution, and Google Gemini API integration.
+P089 [Normal] 2. Product Backlog
+P090 [Normal] 2.1 Priority and Estimates
+P093 [Normal] In accordance with Agile/Scrum empirical process control and CMU-SE 450 capstone guidelines, the Product Backlog features are evaluated and prioritized into three standard categories: High, Medium, and Low. Every feature is sized in committed man-hours and assigned to specific iterations across the 7 Sprints of the CovAI development lifecycle.
+P094 [Normal] Table 5 - Priority Definition
+P095 [Normal] The CovAI engineering effort encompasses 7 Agile/Scrum Sprints comprising 1,920 development man-hours, which form the core of the total 2,568 committed project man-hours (107 project days x 6 hours/day x 4 members). Table 6 details the schedule and effort allocation across all Sprints.
+P096 [Normal] Table 6 - Development Effort and Sprint Allocation
+P097 [Normal] Sprint 1 is structured into two 1-week cycles totaling 336 man-hours (24 man-hours/day across 4 team members). Week 1 (14/09/2026 - 20/09/2026) delivers 168 man-hours focused on UI prototyping, database schema engineering, front-end views, and foundational back-end controllers. Week 2 (21/09/2026 - 27/09/2026) delivers 168 man-hours completing back-end API services, authentication middleware, Docker host setup, and comprehensive unit test suites. Table 7 outlines the complete task breakdown matching the verified Project Plan.
+P098 [Normal] Table 7 - Sprint 1 Work Breakdown (Week 1 & Week 2)
+P099 [Normal] 2.2 Product Backlog Specification (Admin)
+P100 [Normal] Table 8 - Product Backlog Specification (Admin)
+P104 [Normal] 2.3 Product Backlog Specification (User)
+P105 [Normal] Table 9 - Product Backlog Specification (User)
+P111 [Normal] 3. Constraints
+P112 [Normal] Table 10 - Constraints
+P118 [Normal] 4. Stakeholders and User Descriptions Summary
+P121 [Normal] Table 11 - Stakeholders and User Descriptions Summary
+P123 [Normal] 5. References
+P124 [Normal] Table 12 - References
+
+TABLES
+TABLE 1: 13x4
+R01: Project acronym || COVAI || COVAI || COVAI
+R02: Project Title || Test Coverage Analysis and AI-Driven Test Generation System || Test Coverage Analysis and AI-Driven Test Generation System || Test Coverage Analysis and AI-Driven Test Generation System
+R03: Start Date || 10 Aug 2026 || End Date || 26 Dec 2026
+R04: Lead Institution || International School, Duy Tan University || International School, Duy Tan University || International School, Duy Tan University
+R05: Project Mentor || Man, Nguyen Duc, Ph.D. || Man, Nguyen Duc, Ph.D. || Man, Nguyen Duc, Ph.D.
+R06: Scrum master / Project Leader & contact details || Dinh, Huynh Tan / Email: huynhtandinh.dev@gmail.com / Tel: 0365 472 162 / ID: 29219052500 || Dinh, Huynh Tan / Email: huynhtandinh.dev@gmail.com / Tel: 0365 472 162 / ID: 29219052500 || Dinh, Huynh Tan / Email: huynhtandinh.dev@gmail.com / Tel: 0365 472 162 / ID: 29219052500
+R07: Partner Organization || Duy Tan University || Duy Tan University || Duy Tan University
+R08: Project Web URL ||  ||  || 
+R09: Team members || Name || Email || Tel
+R10: Team members || Dinh, Huynh Tan || huynhtandinh.dev@gmail.com || 0365472162
+R11: Team members || Phuc, Tran Huu || phuc12435az@gmail.com || 0842644169
+R12: Team members || Quy, Nguyen Duy || quylavip333@gmail.com || 0835940026
+R13: Team members || Thuan, Ngo Huu || huuthuan280804@gmail.com || 0981944510
+TABLE 2: 4x3
+R01: Dinh, Huynh Tan Student ID: 29219052500 Scrum Master || Signature || Date
+R02: Phuc, Tran Huu Student ID: 29211458179 Team Member || Signature || Date
+R03: Quy, Nguyen Duy Student ID: 29211158823 Team Member || Signature || Date
+R04: Thuan, Ngo Huu Student ID: 29219065178 Team Member || Signature || Date
+TABLE 3: 4x4
+R01: Document Title || Product Backlog Document || Product Backlog Document || Product Backlog Document
+R02: Author(s) || temp/C1SE.30_ProductBacklog_CovAI_ver1.1.docx || temp/C1SE.30_ProductBacklog_CovAI_ver1.1.docx || temp/C1SE.30_ProductBacklog_CovAI_ver1.1.docx
+R03: Role || Dinh Huynh Tan, Ngo Huu Thuan || Dinh Huynh Tan, Ngo Huu Thuan || Dinh Huynh Tan, Ngo Huu Thuan
+R04: Date || August 26th, 2026 || File name: || 26 Dec 2026
+TABLE 4: 3x4
+R01: Version || Person(s) || Date || Description
+R02: 1.0 || Thuan, Ngo Huu || 22-Aug-2026 || Create initial Product Backlog document based on Proposal
+R03: 1.1 || C1SE.30 || 10-Sep-2026 || Update Product Backlog aligned with Proposal v1.2 & Project Plan v1.1: 2 core modules (Admin, User), High/Medium/Low priority scale, Sprint 1 task-based hours (Week 1 = 168h, Week 2 = 168h), and AI Chatbot Trustworthiness Evaluation.
+TABLE 5: 4x4
+R01: Priority Level || Definition || Scope & Criteria || Target Sprints
+R02: High || Critical core functionality indispensable for minimum viable product (MVP) operation. || Core authentication, project repository ingestion, Docker sandbox isolation, automated test execution, code coverage calculation, AI test generation, and AI chatbot trustworthiness evaluation. || Sprint 1, 2, 3, 5
+R03: Medium || Significant analytical and automation capabilities that streamline developer workflows. || AST parsing & Control Flow Graph (CFG) visualization, Cyclomatic Complexity gap prioritization, multi-framework adapters (Jest, Vitest, Playwright, Cypress), GitHub webhooks, ground truth rule confirmation, and benchmark comparison. || Sprint 3, 4, 5, 7
+R04: Low || Supplementary operational enhancements and non-blocking optimizations. || Real-time WebSocket push notifications, structured PDF/JSON report exports, UI theme personalization, and minor non-blocking helpers. || Sprint 4, 6
+TABLE 6: 10x5
+R01: Sprint || Major Focus & Key Deliverables || Duration || Schedule Dates || Committed Hours
+R02: Sprint 1 || Environment Setup, Authentication & Project Management || 14 days || Sep 14, 2026 - Sep 27, 2026 || 336 hours
+R03: Sprint 2 || Source Ingestion, Test Execution & Coverage Analysis || 14 days || Sep 28, 2026 - Oct 11, 2026 || 336 hours
+R04: Sprint 3 || Code Analysis, Multi-Test Framework Support & AI Test Generation || 14 days || Oct 12, 2026 - Oct 25, 2026 || 336 hours
+R05: Sprint 4 || GitHub Automation, Monitoring & System Integration || 6 days || Oct 26, 2026 - Oct 31, 2026 || 144 hours
+R06: Sprint 5 || AI Chatbot Trustworthiness Evaluation Module || 14 days || Nov 08, 2026 - Nov 21, 2026 || 336 hours
+R07: Sprint 6 || End-to-End System Testing & Quality Assurance || 7 days || Nov 22, 2026 - Nov 28, 2026 || 168 hours
+R08: Sprint 7 || System Deployment, Final Fixes & Project Delivery || 11 days || Nov 29, 2026 - Dec 09, 2026 || 264 hours
+R09: Total Development || Total Development Effort across 7 Sprints (4 members @ 6h/day) || 80 days || Sep 14, 2026 - Dec 09, 2026 || 1,920 hours
+R10: Total Project || Total Committed Academic Man-Hours (including Initial Phase & Defense) || 107 days || Aug 10, 2026 - Dec 26, 2026 || 2,568 hours
+TABLE 7: 40x6
+R01: Week || Component || No || Task Name || Responsible Member || Estimate
+R02: Week 1 || Design UI || 1 || UI Home Page || Thuan, Ngo Huu || 8 hours
+R03: Week 1 || Design UI || 2 || UI Registration || Phuc, Tran Huu || 8 hours
+R04: Week 1 || Design UI || 3 || UI Login || Dinh, Huynh Tan || 8 hours
+R05: Week 1 || Design UI || 4 || UI Landscape || Dinh, Huynh Tan || 8 hours
+R06: Week 1 || Design UI || 5 || UI Forgot Password || Quy, Nguyen Duy || 8 hours
+R07: Week 1 || Design UI || 6 || UI Profile User || Phuc, Tran Huu || 8 hours
+R08: Week 1 || Design UI || 7 || UI GitHub Repository || Thuan, Ngo Huu || 8 hours
+R09: Week 1 || Design UI || 8 || UI Project Management || Thuan, Ngo Huu || 8 hours
+R10: Week 1 || Design UI || 9 || UI Snapshot Management || Phuc, Tran Huu || 8 hours
+R11: Week 1 || Database || 10 || Design database (PostgreSQL & Prisma ORM) || Quy, Nguyen Duy / Thuan, Ngo Huu || 24 hours
+R12: Week 1 || Front end || 11 || (Front-end) Homepage || Quy, Nguyen Duy || 8 hours
+R13: Week 1 || Front end || 12 || (Front-end) Landscape || Quy, Nguyen Duy || 8 hours
+R14: Week 1 || Front end || 13 || (Front-end) Registration || Thuan, Ngo Huu || 8 hours
+R15: Week 1 || Front end || 14 || (Front-end) Login || Phuc, Tran Huu || 8 hours
+R16: Week 1 || Front end || 15 || (Front-end) Forgot Password || Dinh, Huynh Tan || 8 hours
+R17: Week 1 || Front end || 16 || (Front-end) GitHub Repository || Phuc, Tran Huu || 8 hours
+R18: Week 1 || Front end || 17 || (Front-end) Project Management || Quy, Nguyen Duy || 8 hours
+R19: Week 1 || Back end || 18 || (Back-end) Forgot Password || Dinh, Huynh Tan || 16 hours
+R20: Week 1 Subtotal || Week 1 Total Effort (14/09/2026 - 20/09/2026: 7 days @ 24h/day) || - || - || All 4 Members || 168 hours
+R21: Week 2 || Back end || 19 || (Back-end) Reset Password || Dinh, Huynh Tan || 16 hours
+R22: Week 2 || Back end || 20 || (Back-end) Registration || Phuc, Tran Huu || 16 hours
+R23: Week 2 || Back end || 21 || (Back-end) Login & Session || Thuan, Ngo Huu || 16 hours
+R24: Week 2 || Back end || 22 || (Back-end) User Profile & PAT || Quy, Nguyen Duy || 16 hours
+R25: Week 2 || Back end || 23 || (Back-end) GitHub Repository || Dinh, Huynh Tan || 16 hours
+R26: Week 2 || Back end || 24 || (Back-end) Environment Setup & Docker Host || Phuc, Tran Huu || 16 hours
+R27: Week 2 || Back end || 25 || (Back-end) Authentication Middleware || Thuan, Ngo Huu || 16 hours
+R28: Week 2 || Back end || 26 || (Back-end) Snapshot Management || Quy, Nguyen Duy || 16 hours
+R29: Week 2 || Testing || 27 || Design Test Case for Registration || Dinh, Huynh Tan || 4 hours
+R30: Week 2 || Testing || 28 || Design Test Case for Login || Phuc, Tran Huu || 4 hours
+R31: Week 2 || Testing || 29 || Design Test Case for Forgot Password || Thuan, Ngo Huu || 4 hours
+R32: Week 2 || Testing || 30 || Design Test Case for Reset Password || Phuc, Tran Huu || 4 hours
+R33: Week 2 || Testing || 31 || Design Test Case for Profile || Dinh, Huynh Tan || 4 hours
+R34: Week 2 || Testing || 32 || Design Test Case for Homepage || Thuan, Ngo Huu || 4 hours
+R35: Week 2 || Testing || 33 || Design Test Case for Landscape || Quy, Nguyen Duy || 4 hours
+R36: Week 2 || Testing || 34 || Design Test Case for GitHub Repository || Dinh, Huynh Tan || 4 hours
+R37: Week 2 || Testing || 35 || Design Test Case for Project Management || Quy, Nguyen Duy || 4 hours
+R38: Week 2 || Testing || 36 || Design Test Case for Snapshot Management || Phuc, Tran Huu || 4 hours
+R39: Week 2 Subtotal || Week 2 Total Effort (21/09/2026 - 27/09/2026: 7 days @ 24h/day) || - || - || All 4 Members || 168 hours
+R40: Sprint 1 Total || Complete Sprint 1 Committed Work (36 tasks across 14 calendar days) || - || - || All 4 Members || 336 hours
+TABLE 8: 8x6
+R01: ID || Theme || As a/an || I want to || So that || Priority
+R02: PB01 || User Management & System RBAC [Sprint 1 | 36h] || Admin || Manage user accounts, access permissions, and account status || I can control platform access, monitor user activity, and maintain system security || High
+R03: PB02 || Security & Access Auditing [Sprint 4 | 32h] || Admin || Review security audit logs, authentication attempts, and encrypted PAT usages || I can detect unauthorized access attempts and maintain compliance with data security standards || High
+R04: PB03 || Resource Quotas & API Monitoring [Sprint 4 | 40h] || Admin || Configure system resource quotas, rate limits, and Gemini API usage thresholds || I can prevent runaway cloud costs and protect infrastructure from abuse or exhaustion || Medium
+R05: PB04 || AI Evaluation Rule Management [Sprint 5 | 56h] || Admin || Manage default AI benchmark rules, trustworthiness criteria weights, and scoring rubrics || The platform maintains standardized, objective evaluation metrics across all evaluation runs || High
+R06: PB05 || Benchmark Scenario Auditing [Sprint 5 | 48h] || Admin || Review, approve, and curate system-wide benchmark scenario datasets || I can ensure that benchmark test sets represent robust, high-quality assessment standards || Medium
+R07: PB06 || Docker Sandbox Host Administration [Sprint 2 | 64h] || Admin || Configure isolated container pools, execution timeouts, memory limits, and network isolation || The platform executes untrusted user test suites safely without risking host server integrity || High
+R08: PB07 || Platform Health & Log Diagnostics [Sprint 7 | 48h] || Admin || Inspect worker queue health (BullMQ), Redis cache status, and detailed server diagnostic logs || I can quickly diagnose background job failures and ensure optimal platform availability || Medium
+TABLE 9: 30x6
+R01: ID || Theme || As a/an || I want to || So that || Priority
+R02: PB01 || User Registration & Account Management [Sprint 1 | 36h] || User || Register an account with valid email and password, and verify credentials || I can create an authenticated profile to securely access the CovAI workspace || High
+R03: PB02 || User Login & JWT Session Management [Sprint 1 | 52h] || User || Log in with credentials, receive a signed JWT token, and authenticate requests || I can securely access protected endpoints and maintain an active session || High
+R04: PB03 || Password Recovery & Secure Reset Workflow [Sprint 1 | 56h] || User || Request password reset email and reset password using a secure one-time token || I can regain access to my account if I forget my credentials || High
+R05: PB04 || User Profile & Encrypted GitHub Token [Sprint 1 | 28h] || User || View/update profile and configure GitHub Personal Access Token (PAT) || CovAI can authenticate against GitHub APIs to clone private repositories securely || High
+R06: PB05 || Platform Navigation & Project Workspace [Sprint 1 | 60h] || User || Create, view, update, and delete software projects in dedicated workspace || I can organize multiple repositories, view status overviews, and maintain settings || High
+R07: PB06 || GitHub Repository Ingestion Setup [Sprint 1 | 36h] || User || Link GitHub repositories to projects by specifying repository URL and branch || The system can pull remote source code for automated testing and coverage analysis || High
+R08: PB07 || Snapshot Management & Core Database [Sprint 1 | 68h] || User || Create immutable snapshots for source versions and query version histories || I can track code quality over time, compare test runs, and ensure reproducibility || High
+R09: PB08 || Local ZIP Archive Project Ingestion [Sprint 2 | 64h] || User || Upload project source code as a ZIP archive with sanitization and safety checks || I can analyze local codebases while protecting the server against malicious archives || High
+R10: PB09 || GitHub Repository Shallow Clone [Sprint 2 | 64h] || User || Import remote repositories directly from GitHub via automated shallow cloning || I can analyze hosted repositories without manual packaging or file transfers || High
+R11: PB10 || Automated Testing Framework Detection [Sprint 2 | 64h] || User || Have system automatically detect configured testing frameworks from project config || I can run tests without manual configuration of test runners and commands || High
+R12: PB11 || Isolated Docker Sandbox Test Execution [Sprint 2 | 80h] || User || Execute automated test suites inside an isolated Docker container || Tests execute securely without risking host compromise, pollution, or resource exhaustion || High
+R13: PB12 || Multi-Level Code Coverage Analysis [Sprint 2 | 64h] || User || View multi-level test coverage reports (Statement, Branch, Function, Line) || I can precisely identify which source files and logic paths are tested versus uncovered || High
+R14: PB13 || AST Parsing & Interactive Control Flow Graph [Sprint 3 | 64h] || User || Parse ASTs and view interactive Control Flow Graphs for functions || I can visually trace execution flows and distinguish covered from uncovered paths || Medium
+R15: PB14 || Cyclomatic Complexity & Gap Prioritization [Sprint 3 | 56h] || User || Calculate Cyclomatic Complexity and get a prioritized list of testing gaps || I can focus testing effort on high-risk, defect-prone functions with high complexity || Medium
+R16: PB15 || Multi-Framework Test Runner Adapters [Sprint 3 | 48h] || User || Execute tests across Jest, Vitest, Supertest, Playwright, and Cypress || I can evaluate test coverage and execution health across all testing pyramid layers || Medium
+R17: PB16 || AI Test Skeleton Generation via Gemini [Sprint 3 | 56h] || User || Request AI-generated test skeletons for uncovered code via Google Gemini API || I can quickly get scaffolded test structures, describe blocks, and mock setups || High
+R18: PB17 || AI Full Runnable Test Case Generation [Sprint 3 | 64h] || User || Generate complete, runnable unit test implementations targeting uncovered branches || I can directly run generated tests to close coverage gaps without manual boilerplate || High
+R19: PB18 || Generated Test Validation & Code Export [Sprint 3 | 48h] || User || Review, edit, validate in sandbox, and export AI-generated test files || I can verify test correctness and safely integrate new test suites into my codebase || Medium
+R20: PB19 || GitHub Webhook Automation & Continuous Analysis [Sprint 4 | 40h] || User || Configure GitHub repository webhooks to automatically trigger test runs on push/PR || My project coverage and quality scores are continuously analyzed without manual actions || Medium
+R21: PB20 || Real-Time WebSocket Push Notifications [Sprint 4 | 32h] || User || Receive real-time push notifications when analysis or AI generation completes || I don't have to repeatedly refresh the browser or wait idle on the screen || Low
+R22: PB21 || Software Quality Overview Dashboard & Radar Metrics [Sprint 4 | 40h] || User || View centralized Quality Dashboard with composite scores and radar charts || I can holistically evaluate software release readiness across coverage, complexity, security || High
+R23: PB22 || AI Evaluation Knowledge Ingestion [Sprint 5 | 48h] || User || Upload project business documents, API specifications, and operational rule sets || CovAI can establish project ground truth required for evaluating chatbot trustworthiness || Medium
+R24: PB23 || Evaluation Profile Builder & Benchmark Scenarios [Sprint 5 | 56h] || User || Configure chatbot endpoints and generate benchmark test scenarios (Q&A, Guidance, Action) || I have a comprehensive benchmark dataset tailored to the target application || High
+R25: PB24 || Domain Expert Rule & Ground Truth Confirmation [Sprint 5 | 40h] || User || Review, edit, and confirm ground truth facts, expected UI steps, and forbidden actions || The evaluation benchmark accurately reflects verified business logic || Medium
+R26: PB25 || Multi-Task Chatbot Evaluation Runner [Sprint 5 | 56h] || User || Execute automated benchmark evaluation runs against target chatbot interface || The system systematically tests all approved scenarios and captures raw responses & latency || High
+R27: PB26 || Chatbot Tool & Action Execution Safety Verification [Sprint 5 | 48h] || User || Verify tool selection accuracy, parameter schemas, safety confirmations, and forbidden actions || I can prevent risky external mutations and ensure chatbot adheres to permissions || High
+R28: PB27 || 3-Layer Trustworthiness Multi-Dimensional Scoring [Sprint 5 | 48h] || User || Evaluate chatbot outputs across Core Criteria, Task Module, and Project Rules || I receive objective multi-dimensional scores on Correctness, Faithfulness, Safety, Latency || High
+R29: PB28 || Chatbot Diagnosis, Benchmark Comparison & Report Export [Sprint 5 | 40h] || User || Inspect failure diagnosis, compare multiple chatbot versions, and export reports || I can identify root causes of chatbot errors, track model improvements, and present evidence || Medium
+R30: PB29 || End-to-End System Integration & Regression Testing [Sprint 6 | 96h] || User || Perform automated end-to-end integration and regression test runs across platform || I can ensure all interconnected modules work seamlessly from ingestion to evaluation || High
+TABLE 10: 8x2
+R01: Constraint || Condition
+R02: Time || Project development duration is 18 weeks (from August 10, 2026 to December 26, 2026), structured into 7 Agile/Scrum Sprints: Sprint 1 (Environment Setup, Authentication & Project Management), Sprint 2 (Source Ingestion, Test Execution & Coverage Analysis), Sprint 3 (Code Analysis, Multi-Test Framework Support & AI Test Generation), Sprint 4 (GitHub Automation, Monitoring & System Integration), Sprint 5 (AI Chatbot Trustworthiness Evaluation Module), Sprint 6 (End-to-End System Testing & Quality Assurance), and Sprint 7 (System Deployment, Final Fixes & Project Delivery), followed by final document submission and Capstone defense.
+R03: People constraint || The project is designed, engineered, and maintained by a dedicated team of 4 software engineering students from Duy Tan University (Dinh, Huynh Tan; Thuan, Ngo Huu; Phuc, Tran Huu; Quy, Nguyen Duy) under the academic supervision of Ph.D. Nguyen Duc Man. Total committed development effort is 2,568 man-hours (642 hours per member, based on 6 working hours/day).
+R04: Hardware & OS || Development is conducted on personal student workstations running Windows 11/10 and Linux environments. Server runtime requires Docker Engine 24+ and Node.js 20 LTS. Test sandboxes execute within memory-constrained containers (<= 1 GB RAM, <= 1 vCPU, 30s timeout).
+R05: Software & Runtime || Client built with React 19 and Vite; API built with Express.js 5 and Node.js 20 LTS; Database is PostgreSQL managed via Prisma ORM; Job queues are powered by BullMQ and Redis; AI capabilities integrate Google Gemini API (gemini-1.5-flash / gemini-1.5-pro).
+R06: Economic & AI Budget || Total project labor is 2,568 academic man-hours (non-billable student effort) and $400 estimated cloud/infrastructure budget (PostgreSQL Neon, domain, and Google Gemini API limits). Content hashing (SHA-256) and snapshot caching are employed to cache AST/CFG and coverage analyses, preventing redundant computations and controlling token expenses.
+R07: Standards & Quality || Development strictly adheres to Product Owner requirements, Agile/Scrum empirical process control, ISO/IEC/IEEE 29119 Software Testing standards, ISO/IEC 25010 Software Quality models, and IEEE 830/29148 requirements specifications.
+R08: Safety & Real-World Protection || Evaluation of action-oriented chatbots and dynamic test execution strictly avoids unintended real-world side effects through simulated tool environments, mandatory human confirmation rules for destructive actions, and strict rate limiting.
+TABLE 11: 10x3
+R01: Name || Description || Role
+R02: Product Owner || Provides product vision, defines acceptance criteria, reviews Sprint deliverables, and accepts system increments. || Duy Tan University / Man, Nguyen Duc, Ph.D.
+R03: Scrum Master / Project Leader || Leads agile processes, facilitates Daily Scrums and Sprint Planning, removes technical impediments, and ensures timely milestone delivery. || Dinh, Huynh Tan
+R04: Frontend Lead / Full-Stack Developer || Architects React 19 SPA, designs responsive UI/UX, interactive CFG graphs, real-time coverage dashboards, and notification components. || Thuan, Ngo Huu
+R05: Backend & Integration Developer || Builds RESTful APIs, database schema, BullMQ worker queues, Docker Sandbox isolation environments, and end-to-end integration. || Phuc, Tran Huu
+R06: Data & Full-Stack Developer || Develops data analysis pipelines, Babel AST parser, CFG generator, database query optimization, and UI modules. || Quy, Nguyen Duy
+R07: AI Evaluator / Domain Expert || Defines chatbot evaluation profiles, validates ground truth rules and expected actions, audits benchmark scenarios, and analyzes trustworthiness scores. || AI Evaluation Specialist / Domain Expert
+R08: System Administrator || Manages cloud infrastructure, Docker host environments, BullMQ queues, database backups, security audits, and Gemini API quotas. || C1SE.30 Team
+R09: Software Developer (End-User) || Primary user who imports projects, executes automated test suites, inspects coverage/CFG graphs, and generates test cases via AI. || Software Developers & Students
+R10: QA Engineer / Tester (End-User) || Evaluates test coverage metrics, traces requirements to tests, prioritizes coverage gaps, audits AI-generated tests, and exports quality reports. || QA Engineers & Testers
+TABLE 12: 8x3
+R01: No || Reference || Note
+R02: 1 || https://www.scrum.org/resources/scrum-guide || Scrum Guide & Agile Backlog Standards
+R03: 2 || http://www.mountaingoatsoftware.com/agile/scrum/product-backlog/example/ || Scrum Product Backlog Example & Estimation
+R04: 3 || C1SE.30_Proposal_ver1.2.pdf || CovAI Project Proposal Document (ver 1.2)
+R05: 4 || C1SE.30_ProjectPlan_ver_1.1.pdf || CovAI Project Plan & Sprint Schedule Document (ver 1.1)
+R06: 5 || https://ai.google.dev/gemini-api/docs || Google Gemini API Documentation
+R07: 6 || https://www.iso.org/standard/81291.html || ISO/IEC/IEEE 29119 Software Testing Standards
+R08: 7 || https://www.iso.org/standard/35733.html || ISO/IEC 25010 Systems and Software Quality Requirements and Evaluation
+
+SECTIONS / HEADERS / FOOTERS
+SECTION 1: page 8.277777777777779x11.708333333333334 in; margins T0.7875 B0.7875 L1.18125 R0.7875; header 0.5; footer 0.5
+HEADER [Normal] PRODUCT BACKLOG	   	 International School Capstone 1 – 2026
+FOOTER [Footer] C1SE.30		Page 1 of 16
+SECTION 2: page 8.277777777777779x11.708333333333334 in; margins T0.7875 B0.7875 L1.18125 R0.7875; header 0.5; footer 0.5
+HEADER [Normal] PRODUCT BACKLOG	   	 International School Capstone 1 – 2026
+FOOTER [Footer] C1SE.30		Page 1 of 16
+SECTION 3: page 8.277777777777779x11.708333333333334 in; margins T0.7875 B0.7875 L1.18125 R0.7875; header 0.5; footer 0.5
+HEADER [Normal] PRODUCT BACKLOG	   	 International School Capstone 1 – 2026
+FOOTER [Footer] C1SE.30		Page 1 of 16
+SECTION 4: page 8.277777777777779x11.708333333333334 in; margins T0.7875 B0.7875 L1.18125 R0.7875; header 0.5; footer 0.5
+HEADER [Normal] PRODUCT BACKLOG	   	 International School Capstone 1 – 2026
+FOOTER [Footer] C1SE.30		Page 1 of 16
+SECTION 5: page 8.277777777777779x11.708333333333334 in; margins T0.7875 B0.7875 L1.18125 R0.7875; header 0.5; footer 0.5
+HEADER [Normal] PRODUCT BACKLOG	   	 International School Capstone 1 – 2026
+FOOTER [Footer] C1SE.30		Page 1 of 16
+SECTION 6: page 8.277777777777779x11.708333333333334 in; margins T0.7875 B0.7875 L1.18125 R0.7875; header 0.5; footer 0.5
+HEADER [Normal] PRODUCT BACKLOG	   	 International School Capstone 1 – 2026
+FOOTER [Footer] C1SE.30		Page 1 of 16

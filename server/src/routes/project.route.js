@@ -1,0 +1,170 @@
+import { enforceProjectEndpointPolicy } from '../middlewares/projectEndpointPolicy.js';
+import express from "express";
+import { aiContextController } from "../controllers/aiContext.controller.js";
+import projectController from "./../controllers/project.controller.js";
+import { authMiddleware } from "../middlewares/auth.middleware.js";
+import { downloadProjectExport } from "../controllers/projectExport.controller.js";
+import { uploadSingleArchive } from "../middlewares/upload.middleware.js";
+import {
+  runQualityAnalysis,
+  fetchQualityReport,
+} from "../controllers/quality.controller.js";
+
+const router = express.Router();
+router.use(authMiddleware, enforceProjectEndpointPolicy('projects'));
+
+router.use(authMiddleware);
+
+router.post("/", projectController.createProject);
+router.get("/", projectController.listProjects);
+router.post(
+  "/validate-archive",
+  uploadSingleArchive,
+  projectController.validateArchive,
+);
+router.get("/:id", projectController.getProjectById);
+router.get("/:id/export", downloadProjectExport);
+router.get("/:id/snapshots", projectController.listSnapshots);
+router.post("/:id/snapshots", projectController.createSnapshot);
+router.post(
+  "/:id/snapshots/:snapshotId/restore",
+  projectController.restoreSnapshot,
+);
+router.get("/:id/structure-analysis", projectController.getStructureAnalysis);
+router.get("/:id/tree", projectController.getProjectTree);
+router.get("/:id/file-content", projectController.getFileContent);
+router.put("/:id/file-content", projectController.updateFileContent);
+router.post("/:id/files", projectController.createFile);
+router.post("/:id/folders", projectController.createFolder);
+router.patch("/:id/entries", projectController.renameEntry);
+router.delete("/:id/entries", projectController.deleteEntry);
+router.post(
+  "/:id/upload-zip",
+  uploadSingleArchive,
+  projectController.uploadZip,
+);
+router.post("/:id/run-analysis", projectController.runCoverageAnalysis);
+router.post("/:id/structure-analysis", projectController.runStructureAnalysis);
+router.post(
+  "/:id/architecture/ai-summary",
+  projectController.getArchitectureAiSummary,
+);
+router.post("/:id/quality-analysis", runQualityAnalysis);
+router.get("/:id/quality-report", fetchQualityReport);
+router.post("/:id/cfg/build", projectController.buildCfg);
+router.post("/:id/coverage/parse", projectController.parseCoverageFiles);
+router.post(
+  "/:id/coverage/functions/parse",
+  projectController.parseCoverageFunctions,
+);
+router.delete("/:id", projectController.deleteProject);
+router.post("/:id/detect-jest", projectController.detectJestConfig);
+router.post("/:id/detect-playwright", projectController.detectPlaywrightConfig);
+router.post("/:id/detect-vitest", projectController.detectVitestConfig);
+router.post("/:id/detect-cypress", projectController.detectCypressConfig);
+router.get("/:id/detect-frameworks", projectController.detectFrameworks);
+router.get(
+  "/:id/test-framework-recommendation",
+  projectController.getFrameworkRecommendation.bind(projectController),
+);
+router.put(
+  "/:id/test-framework-selection",
+  projectController.selectTestingFramework.bind(projectController),
+);
+router.get(
+  "/:id/missing-test-framework",
+  projectController.detectMissingTestFramework,
+);
+router.post("/:id/run-playwright", projectController.runPlaywrightTests);
+router.post(
+  "/:id/run-cypress",
+  projectController.runCypressTests.bind(projectController),
+);
+router.post(
+  "/:id/system-test-analysis",
+  projectController.runSystemTestAnalysis.bind(projectController),
+);
+router.post(
+  "/:id/run-integration-tests",
+  projectController.runIntegrationTests,
+);
+router.post("/:id/import-github", projectController.importGitHub);
+router.post("/:id/ai-suggest", projectController.runAiSuggest);
+router.post("/:id/ai-tests", projectController.runAiTests);
+router.get("/:id/ai-context", aiContextController.settings);
+router.put("/:id/ai-context", aiContextController.saveSettings);
+router.post("/:id/ai-context/preview", aiContextController.preview);
+router.get("/:id/ai-context/memories", aiContextController.memories);
+router.post("/:id/ai-context/memories", aiContextController.addMemory);
+router.patch("/:id/ai-context/memories/:memoryId", aiContextController.editMemory);
+router.delete("/:id/ai-context/memories/:memoryId", aiContextController.forgetMemory);
+router.delete("/:id/ai-context/memories", aiContextController.clearMemories);
+router.post("/:id/chat/sessions/:sessionId/branch", aiContextController.branch);
+router.get("/:id/chat/sessions", aiContextController.sessions);
+router.post("/:id/chat/sessions", aiContextController.createSession);
+router.get(
+  "/:id/chat/sessions/:sessionId",
+  aiContextController.session,
+);
+router.patch(
+  "/:id/chat/sessions/:sessionId",
+  aiContextController.renameSession,
+);
+router.delete(
+  "/:id/chat/sessions/:sessionId",
+  aiContextController.deleteSession,
+);
+router.post("/:id/chat", aiContextController.chat);
+router.get("/:id/chat/requests/:requestId", aiContextController.chatRequest);
+router.get("/:id/cfg", projectController.getCfg);
+router.get("/:id/cc", projectController.getCc);
+router.get("/:id/ai/tests", projectController.getAiTests);
+router.get("/:id/ai/tests/:testId", projectController.getAiTest);
+router.post(
+  "/:id/ai/generate-integration-test",
+  authMiddleware,
+  projectController.generateIntegrationTest,
+);
+router.post(
+  "/:id/run-vitest",
+  authMiddleware,
+  projectController.runVitestTests.bind(projectController),
+);
+router.post(
+  "/:id/vitest-coverage",
+  authMiddleware,
+  projectController.runVitestCoverage.bind(projectController),
+);
+router.post(
+  "/:id/playwright-detection",
+  authMiddleware,
+  projectController.detectPlaywrightFramework.bind(projectController),
+);
+router.get(
+  "/:id/system-test/frameworks",
+  authMiddleware,
+  projectController.detectSystemTestFrameworks.bind(projectController),
+);
+
+router.get(
+  "/:id/integration/detection",
+  authMiddleware,
+  projectController.detectIntegrationFrameworks.bind(projectController),
+);
+router.get(
+  "/:id/integration/frameworks",
+  authMiddleware,
+  projectController.detectIntegrationFrameworks.bind(projectController),
+);
+router.post(
+  "/:id/integration/generate-tests",
+  authMiddleware,
+  projectController.generateIntegrationTest.bind(projectController),
+);
+router.post(
+  "/:id/integration/install-dependencies",
+  authMiddleware,
+  projectController.installIntegrationDependencies.bind(projectController),
+);
+
+export default router;

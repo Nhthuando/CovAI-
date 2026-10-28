@@ -1,0 +1,64 @@
+.understand-anything/
+/.agents/
+/.specify/
+/specs/
+/AGENTS.md
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+.env
+.env.*
+
+AGENTS.md
+
+.agents
+.specify
+specs/
+
+# Local export verification artifacts and dependency cache
+/.npm-cache/
+/temp/npm-cache/
+.covai-temp/
+/.covai-temp/
+/server/.covai-temp/
+/tmp/
+/output/
+
+# Keep the approved export design alongside its delivery plan
+!/docs/superpowers/specs/
+/docs/superpowers/specs/*
+!/docs/superpowers/specs/2026-10-09-project-analysis-export-design.md
+!/docs/superpowers/specs/2026-10-28-project-collaboration-design.md
+
+# Disposable collaboration worker copies and generated test artifacts
+/server/.covai-temp/collaboration-operations/
+
+
+# Local system-assessment verification artifacts
+/temp/system-assessment-*
+/client/.evidence-review/
+/client/evidence-preview.html
+/server/src/tests/fixtures/system-assessment/.covai-system-test/

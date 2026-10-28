@@ -1,0 +1,172 @@
+FILE: D:\HuuThuan - Project\NCKH\CovAI\temp\C1SE.20_ProductBacklog-UserStory_Storelens_v1.1.xlsx
+sha256: 53dba7bb33abf93c2680f2ad3e5c7d58653ffb64a46d18d6625ae4d072579f0d
+sheets: 1
+
+SHEET Product Backlog: max 990x22; merged=['J4:J6', 'M3:M6']; freeze=D8; gridlines=False; print_area=None
+tables={}
+R001:                        ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  || 
+R005:  || Product Backlog ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  ||  || 
+R007:  || Id || Heading || As a.. || I want to .. || so that .. || Acceptance Criteria || Remarks || Priority || Status || Type || Project Id || Sprint No || Estimate
+(Hours) || Status ||  ||  ||  ||  ||  ||  || 
+R008:  || PB-01 || User Registration & Account Management || User || Register an account with email, name, and strong password, and verify credentials || I can create an authenticated user profile to securely access the CovAI platform || 1. User submits name, valid email, and password (>= 8 chars, hashed with bcrypt).
+2. System rejects duplicate email with clear error.
+3. Creates user record in PostgreSQL database.
+4. Redirects newly registered user to Login screen. || Sprint 1 tasks: UI Registration (8h) + FE Registration (8h) + BE Registration (16h) + Test Registration (4h). || High || Done || Functional || COVAI || Sprint 1 || 36 || Done ||  ||  ||  ||  ||  ||  || 
+R009:  || PB-02 || User Login & JWT Session Management || User || Log in with email and password, receive a signed JWT token, and authenticate API requests || I can securely access protected endpoints and maintain an active session || 1. User submits valid credentials and receives JWT signed token (HS256).
+2. Invalid credentials show error without exposing account existence.
+3. Client AuthContext manages token in local storage.
+4. AuthMiddleware protects private routes and rejects invalid tokens (HTTP 401).
+5. User can log out to destroy session. || Sprint 1 tasks: UI Login (8h) + FE Login (8h) + BE Login (16h) + Auth Middleware (16h) + Test Login (4h). || High || Done || Functional || COVAI || Sprint 1 || 52 || Done ||  ||  ||  ||  ||  ||  || 
+R010:  || PB-03 || Password Recovery & Secure Reset Workflow || User || Request a password reset link via email and reset password using a secure one-time token || I can regain access to my account if I forget my credentials || 1. User enters registered email to request password reset.
+2. System generates time-bounded reset token and sends email link.
+3. User submits new password on reset page.
+4. Password is encrypted and updated; reset token is invalidated.
+5. User can log in with new password. || Sprint 1 tasks: UI Forgot (8h) + FE Forgot (8h) + BE Forgot (16h) + BE Reset (16h) + Test Forgot (4h) + Test Reset (4h). || High || Done || Functional || COVAI || Sprint 1 || 56 || Done ||  ||  ||  ||  ||  ||  || 
+R011:  || PB-04 || User Profile & Encrypted GitHub Token Configuration || User || View/update my profile details and configure my GitHub Personal Access Token (PAT) || CovAI can authenticate against GitHub APIs to clone private repositories securely || 1. User can view and update display name and avatar.
+2. User inputs GitHub PAT; system validates token via GitHub API.
+3. PAT is encrypted using AES-256-GCM before database storage.
+4. Plain token is never returned in client API responses. || Sprint 1 tasks: UI Profile (8h) + BE Profile (16h) + Test Profile (4h). AES-256-GCM crypto utility. || High || Done || Functional || COVAI || Sprint 1 || 28 || Done ||  ||  ||  ||  ||  ||  || 
+R012:  || PB-05 || Platform Navigation & Project Management Workspace || User || Navigate Homepage and Landscape overview, and manage projects (create, view, edit, delete) || I can organize repositories, view status overviews, and maintain project configurations || 1. Responsive Homepage and Landscape system overview display platform capabilities.
+2. User can create projects with title, description, and source type.
+3. Workspace lists all owned projects with status indicators and snapshot count.
+4. User can edit metadata or delete a project with cascade cleanup.
+5. Authorization isolates projects strictly by user ID. || Sprint 1 tasks: UI Home (8h) + FE Home (8h) + Test Home (4h) + UI Landscape (8h) + FE Landscape (8h) + Test Landscape (4h) + UI Project (8h) + FE Project (8h) + Test Project (4h). || High || Done || Functional || COVAI || Sprint 1 || 60 || Done ||  ||  ||  ||  ||  ||  || 
+R013:  || PB-06 || GitHub Repository Ingestion Setup || User || Link GitHub repositories to projects by specifying repository URL and branch || The system can pull remote source code for automated testing and coverage analysis || 1. User enters GitHub repository URL and branch name.
+2. System verifies repository access using user encrypted PAT.
+3. Validates repository structure and permissions.
+4. Saves repository configuration linked to project record. || Sprint 1 tasks: UI GitHub (8h) + FE GitHub (8h) + BE GitHub (16h) + Test GitHub (4h). || High || Done || Functional || COVAI || Sprint 1 || 36 || Done ||  ||  ||  ||  ||  ||  || 
+R014:  || PB-07 || Snapshot Management & Core Database Infrastructure || User || Create immutable snapshots for source versions and query version histories || I can track code quality over time, compare test runs, and ensure reproducibility || 1. Database schema (PostgreSQL + Prisma) models users, projects, snapshots, and reports.
+2. Each ingestion records an immutable snapshot with unique SHA-256 hash and timestamp.
+3. Snapshot stores source tree structure, file count, and version metadata.
+4. User can browse snapshot history and switch between versions in UI. || Sprint 1 tasks: Design database (24h) + Environment Setup (16h) + UI Snapshot (8h) + BE Snapshot (16h) + Test Snapshot (4h). || High || Done || Functional || COVAI || Sprint 1 || 68 || Done ||  ||  ||  ||  ||  ||  || 
+R015:  || PB-08 || Local ZIP Archive Project Ingestion || User || Upload project source code as a ZIP archive with automated sanitization and safety checks || I can analyze local codebases while protecting the server against malicious archives || 1. Accepts ZIP archives up to 200MB compressed / 1GB uncompressed.
+2. Rejects zip bombs, recursive directory traversal (../), and corrupt files.
+3. Sanitizes sensitive files (.env, *.pem, *.key, id_rsa, node_modules).
+4. Extracts valid files to sandbox directory and stores archive in Firebase Storage. || Multer upload middleware, Adm-Zip / Archiver with safety guards, Firebase Storage. || High || Planned || Functional || COVAI || Sprint 2 || 64 || Planned ||  ||  ||  ||  ||  ||  || 
+R016:  || PB-09 || GitHub Repository Shallow Clone Ingestion || User || Import remote repositories directly from GitHub via automated shallow cloning || I can analyze hosted repositories without manual packaging or file transfers || 1. Clones repository using simple-git with depth=1 to optimize speed and bandwidth.
+2. Strips sensitive configuration files (.env, .git/hooks) before snapshot creation.
+3. Records commit hash, commit message, author, and branch name in snapshot.
+4. Emits real-time progress events during cloning and extraction. || simple-git client, GitHub REST API, shallow clone sandbox worker. || High || Planned || Functional || COVAI || Sprint 2 || 64 || Planned ||  ||  ||  ||  ||  ||  || 
+R017:  || PB-10 || Automated Testing Framework Detection || User || Have the system automatically inspect project structure and detect configured testing frameworks || I don't have to manually configure test runners, config paths, and coverage reporters || 1. Parses package.json dependencies for Jest, Vitest, Supertest, Mocha, Playwright, Cypress.
+2. Detects configuration files: jest.config.*, vitest.config.*, playwright.config.*.
+3. Identifies test directories (__tests__, *.test.js, *.spec.js, *.test.ts).
+4. Auto-selects appropriate test execution command with coverage flags. || FrameworkDetector service, AST-based config inspector, JSON schema validation. || High || Planned || Functional || COVAI || Sprint 2 || 64 || Planned ||  ||  ||  ||  ||  ||  || 
+R018:  || PB-11 || Isolated Docker Sandbox Test Execution || User || Execute automated test suites inside an isolated, resource-constrained Docker container || Tests execute securely without risking host compromise, dependency pollution, or resource exhaustion || 1. Spawns ephemeral Docker container using hardened Node.js image.
+2. Enforces resource caps: max 2 CPU cores, max 2GB RAM, 180-second timeout.
+3. Runs under non-root unprivileged container user with disabled external networking.
+4. Captures stdout, stderr, exit code, and duration into persistent job logs.
+5. Container is automatically terminated and pruned upon completion or timeout. || Docker Engine API / Dockerode, Docker Compose sandbox image, cgroups controls. || High || Planned || Functional || COVAI || Sprint 2 || 80 || Planned ||  ||  ||  ||  ||  ||  || 
+R019:  || PB-12 || Multi-Level Code Coverage Analysis || User || View comprehensive test coverage metrics across Statement, Branch, Function, and Line dimensions || I can precisely identify which source files and logic paths are tested versus uncovered || 1. Parses Istanbul/c8 JSON coverage reports (coverage-final.json).
+2. Computes and displays Statement %, Branch %, Function %, and Line %.
+3. Shows color-coded badges (Green >= 80%, Yellow >= 60%, Red < 60%).
+4. Provides file-level coverage table with line-by-line hit count highlighting.
+5. Flags uncovered lines, untested branches, and zero-call functions. || Istanbul/c8 report parser, CoverageService, Prisma CoverageReport models. || High || Planned || Functional || COVAI || Sprint 2 || 64 || Planned ||  ||  ||  ||  ||  ||  || 
+R020:  || PB-13 || AST Parsing & Interactive Control Flow Graph (CFG) || User || Parse JavaScript/TypeScript ASTs and inspect interactive Control Flow Graphs for functions || I can visually trace execution branching and distinguish covered from uncovered execution paths || 1. Parses source files using Babel (@babel/parser, @babel/traverse) into AST.
+2. Constructs CFG mapping basic blocks, branching decisions (if/while/for/try), and exit nodes.
+3. Correlates graph edges with test coverage data (green = covered, red = uncovered).
+4. Renders interactive graph with Dagre / React Flow.
+5. Clicking a graph node highlights the corresponding code line in editor. || Babel parser, CFG generator service, Dagre layout engine, React Flow visualizer. || Medium || Planned || Functional || COVAI || Sprint 3 || 64 || Planned ||  ||  ||  ||  ||  ||  || 
+R021:  || PB-14 || Cyclomatic Complexity & Testing Gap Prioritization || User || Calculate Cyclomatic Complexity for every function and get a prioritized list of testing gaps || I can focus testing effort on high-risk, defect-prone functions with low coverage and high complexity || 1. Computes McCabe Cyclomatic Complexity (CC = E - N + 2P) per function.
+2. Computes Risk Score combining High CC (> 10) and Low Branch Coverage (< 60%).
+3. Displays ranked Testing Gaps table (Critical, High, Medium, Low).
+4. Explains gap causes and highlights uncovered branch decision points.
+5. Stores complexity metrics and gap rankings with the snapshot. || Static analysis service, McCabe formula implementation, Risk ranking algorithm. || Medium || Planned || Functional || COVAI || Sprint 3 || 56 || Planned ||  ||  ||  ||  ||  ||  || 
+R022:  || PB-15 || Multi-Framework Test Runner Adapters || User || Execute tests across Unit, Integration, and E2E frameworks (Jest, Vitest, Supertest, Playwright, Cypress) || I can evaluate test coverage and execution health across all layers of the testing pyramid || 1. Execution adapters for Jest, Vitest, Supertest, Playwright, and Cypress.
+2. Executes headless unit/integration test suites and captures standard test summaries.
+3. Normalizes test counts (passed, failed, skipped), duration, and coverage output.
+4. Displays consolidated test result breakdown by test suite in the dashboard.
+5. Gracefully handles framework-specific error outputs and missing configs. || Multi-framework runner adapters, Docker headless browsers for Playwright/Cypress. || Medium || Planned || Functional || COVAI || Sprint 3 || 48 || Planned ||  ||  ||  ||  ||  ||  || 
+R023:  || PB-16 || AI-Assisted Test Skeleton Generation via Gemini API || User || Request AI-generated test skeletons for uncovered functions using Google Gemini API || I can quickly get scaffolded test structures, describe blocks, and mock setups for untested code || 1. Selects uncovered function from Testing Gaps list.
+2. System extracts bounded context: signature, docstrings, imports, and uncovered branches.
+3. Sends prompt to Google Gemini API enforcing clean test formatting.
+4. Generates test skeletons with describe, it/test blocks, mock stubs, and scenario names.
+5. Rule-based fallback template is provided if Gemini API is unreachable or quota exceeded. || Google Gemini API client, Prompt engineering templates, Token limiter & quota tracker. || High || Planned || Functional || COVAI || Sprint 3 || 56 || Planned ||  ||  ||  ||  ||  ||  || 
+R024:  || PB-17 || AI-Assisted Full Runnable Test Case Generation || User || Generate complete, runnable unit test implementations targeting specific uncovered branches || I can directly run generated tests to close coverage gaps without writing boilerplate setup manually || 1. Requests full test generation for target function with specified branch focus.
+2. Provides Gemini with source code, mock patterns, and branch condition details.
+3. Generated code includes: imports, input fixtures, mocked dependencies, assertions, edge cases.
+4. Validates syntax using Babel parse check before presenting to user.
+5. Stores generation history, token count, model version, and generation metadata. || Gemini API integration, AST syntax validator, Test generator service. || High || Planned || Functional || COVAI || Sprint 3 || 64 || Planned ||  ||  ||  ||  ||  ||  || 
+R025:  || PB-18 || Generated Test Case Validation & Code Export || User || Review, edit, validate in sandbox, and export AI-generated test files into my project || I can verify test correctness and safely integrate new test suites into my codebase || 1. Split-screen UI displays original source alongside AI-generated test with syntax highlighting.
+2. User can edit generated test code directly in the web editor.
+3. 'Run in Sandbox' executes the new test in isolated Docker container against source.
+4. Reports test execution status (Passed/Failed) and new coverage delta achieved.
+5. User can download test file (*.test.js) or copy code to clipboard. || Monaco Editor / PrismJS integration, Sandbox test validator, Coverage diff calculator. || Medium || Planned || Functional || COVAI || Sprint 3 || 48 || Planned ||  ||  ||  ||  ||  ||  || 
+R026:  || PB-19 || GitHub Webhook Automation & Continuous Analysis || User || Configure GitHub repository webhooks to automatically trigger test runs upon new commits or PRs || My project coverage and quality scores are continuously analyzed without manual trigger actions || 1. Generates unique webhook endpoint URL and HMAC-SHA256 secret per GitHub project.
+2. Listens for push and pull_request events and verifies X-Hub-Signature-256.
+3. Automatically creates new snapshot with commit metadata and queues analysis in BullMQ.
+4. Posts commit status check back to GitHub API (Pending, Success, Failure) with report link.
+5. User can enable, disable, or regenerate secret in Project Settings. || Express webhook handler, crypto HMAC verification, GitHub Status API. || Medium || Planned || Functional || COVAI || Sprint 4 || 40 || Planned ||  ||  ||  ||  ||  ||  || 
+R027:  || PB-20 || Asynchronous BullMQ Queue & Worker Monitoring || Admin || Manage and monitor BullMQ background job queues and worker execution states in real-time || I can ensure smooth asynchronous analysis, detect queue bottlenecks, and retry failed tasks || 1. Background tasks (ZIP extraction, Docker test runs, AST parsing, AI generation) are queued in BullMQ.
+2. Workers process jobs with configured concurrency, timeouts, and exponential backoff retries.
+3. Admin can view queue metrics: Active, Waiting, Completed, Failed, and Delayed jobs.
+4. Admin can inspect error stack traces, view execution logs, and trigger manual retries.
+5. Handles Redis disconnections gracefully and logs worker health metrics. || BullMQ, Redis client (ioredis), custom admin queue inspector. || Medium || Planned || Functional || COVAI || Sprint 4 || 40 || Planned ||  ||  ||  ||  ||  ||  || 
+R028:  || PB-21 || Real-Time WebSocket Push Notifications || User || Receive real-time WebSocket push notifications when long-running analysis or AI generation completes || I don't have to repeatedly refresh the browser or wait idle on the screen during background processing || 1. Authenticated Socket.IO connection established on login.
+2. Server emits real-time events on job progress: job:progress, job:completed, job:failed.
+3. UI displays toast notifications when coverage analysis, AST/CFG, or AI generation finishes.
+4. Notifications dropdown stores recent notification history with direct links to reports.
+5. Automatically re-syncs state if socket reconnects after network drop. || Socket.IO server & client, Redis pub/sub adapter, React notification toast component. || Low || Planned || Functional || COVAI || Sprint 4 || 32 || Planned ||  ||  ||  ||  ||  ||  || 
+R029:  || PB-22 || Software Quality Overview Dashboard & Radar Metrics || User || View a centralized Quality Dashboard with composite quality scores and multi-dimensional radar charts || I can holistically evaluate software release readiness across coverage, complexity, and maintainability || 1. Computes Composite Quality Score (0-100) combining Coverage (40%), Complexity (20%), Security (20%), Maintainability (20%).
+2. Renders interactive Radar Chart visual comparing project quality against target benchmarks.
+3. Displays summary metric cards: Total Tests, Pass Rate %, Overall Coverage %, Total Functions, Critical Gaps.
+4. Quick action links drill down into file details, test reports, and AI generation tools.
+5. Supports exporting summary overview as PNG or formatted PDF. || Recharts / Chart.js radar charts, QualityScoringService, React Dashboard UI. || High || Planned || Functional || COVAI || Sprint 4 || 32 || Planned ||  ||  ||  ||  ||  ||  || 
+R030:  || PB-23 || AI Evaluation Knowledge Ingestion & Document Parsing || User || Upload project business documents, API specifications, FAQ files, and operational rule sets || CovAI can establish the project ground truth required for evaluating internal chatbot trustworthiness || 1. Accepts PDF, Markdown, text, and OpenAPI/Swagger JSON/YAML knowledge documents.
+2. Extracts text, section hierarchies, API endpoints, parameters, and business constraints.
+3. Sanitizes uploaded files and enforces file size limits (max 50MB per package).
+4. Stores ingested documents in structured knowledge base linked to project snapshot.
+5. Displays document preview, parsed token counts, and indexing status in UI. || Document parser (pdf-parse, markdown-it, swagger-parser), Prisma KnowledgeDoc model. || Medium || Planned || Functional || COVAI || Sprint 5 || 48 || Planned ||  ||  ||  ||  ||  ||  || 
+R031:  || PB-24 || Evaluation Profile Builder & Benchmark Scenario Generation || User || Configure target chatbot endpoints and automatically generate candidate evaluation scenarios || I can create a structured benchmark dataset covering Knowledge Q&A, Usage Guidance, and Action/Tool execution || 1. Configures chatbot adapter: HTTP endpoint, auth headers, request/response schema mapping.
+2. Analyzes ingested documents and proposes candidate test scenarios categorized by task type:
+   - Knowledge Q&A scenarios (factual retrieval, policy clarification, out-of-scope refusal).
+   - Usage Guidance scenarios (step-by-step UI navigation, button clicks, workflows).
+   - Action/Tool scenarios (API calls, data mutations, query execution).
+3. Generates candidate prompts, expected answers, expected tool calls, and ground truth citations.
+4. Persists evaluation profile with versioning and configuration parameters. || EvaluationProfileBuilder service, Gemini scenario generator, JSON schema validator. || High || Planned || Functional || COVAI || Sprint 5 || 56 || Planned ||  ||  ||  ||  ||  ||  || 
+R032:  || PB-25 || Domain Expert Rule & Ground Truth Confirmation || User || Review, edit, approve, or add ground truth facts, expected UI sequences, and forbidden actions || The evaluation benchmark precisely reflects validated business logic and prevents false positive penalties || 1. Interactive scenario management table displaying prompt, expected behavior, ground truth facts, and rules.
+2. User can edit prompt text, adjust expected answer keywords, and configure required citations.
+3. For Action/Tool tasks: user can specify mandatory confirmation prompts, allowed tools, and forbidden actions.
+4. Marks scenarios as 'Approved for Benchmark' or 'Excluded'.
+5. Tracks author, edit history, and approval timestamp for complete auditability. || Ground truth verification UI, Role-based editing permissions, Prisma EvaluationScenario model. || Medium || Planned || Functional || COVAI || Sprint 5 || 40 || Planned ||  ||  ||  ||  ||  ||  || 
+R033:  || PB-26 || Multi-Task Chatbot Evaluation Runner || User || Execute automated benchmark evaluation runs against the target chatbot interface || The system systematically tests all approved scenarios and captures raw responses, latency, and metadata || 1. Iterates through all approved scenarios in active evaluation profile.
+2. Dispatches prompts to target chatbot endpoint with session context, timeout limits, and throttling.
+3. Collects raw text response, citations, generated tool calls, HTTP status, and response latency (ms).
+4. Executes multi-turn conversations for context-retention and clarification scenarios.
+5. Records complete execution trace and persists evaluation run metadata. || EvaluationRunner service, Axios HTTP client with retry & timeout, BullMQ background job. || High || Planned || Functional || COVAI || Sprint 5 || 56 || Planned ||  ||  ||  ||  ||  ||  || 
+R034:  || PB-27 || Chatbot Tool & Action Execution Safety Verification || User || Verify tool selection accuracy, parameter schemas, safety confirmations, and forbidden actions || I can prevent risky external mutations and ensure the chatbot safely adheres to API authorization rules || 1. Verifies that chatbot selected exact expected tool/API endpoint for action-oriented prompts.
+2. Validates extracted parameters against expected schema types, boundary values, and mandatory fields.
+3. Verifies that high-risk actions (delete, transfer, checkout) require explicit user confirmation.
+4. Immediately flags safety violations if chatbot attempts forbidden or unauthorized actions.
+5. Checks for duplicate tool executions or unhandled error loops. || ActionVerifier engine, JSON schema validation, Tool trace audit inspector. || High || Planned || Functional || COVAI || Sprint 5 || 48 || Planned ||  ||  ||  ||  ||  ||  || 
+R035:  || PB-28 || 3-Layer Trustworthiness Multi-Dimensional Scoring Engine || User || Evaluate chatbot outputs across the 3-Layer framework (Core Criteria, Task Module, Project Rules) || I receive objective, multi-dimensional scores on Correctness, Faithfulness, Hallucination, Safety, and Latency || 1. Evaluates Layer 1 Core Criteria: Correctness %, Faithfulness %, Relevance %, Hallucination %, Refusal %, Safety %, Latency.
+2. Evaluates Layer 2 Task Module Criteria:
+   - Q&A: Source accuracy, citation presence.
+   - Guidance: UI step correctness, navigation completeness.
+   - Action: Tool selection accuracy %, parameter precision %, confirmation compliance %.
+3. Evaluates Layer 3 Project Rules: Compliance with verified ground-truth constraints.
+4. Computes Overall Trustworthiness Index (0-100) using weighted aggregation.
+5. Stores granular sub-scores and violation tags for every scenario. || 3-Layer Scoring Engine, LLM-as-a-judge prompts with deterministic heuristics. || High || Planned || Functional || COVAI || Sprint 5 || 48 || Planned ||  ||  ||  ||  ||  ||  || 
+R036:  || PB-29 || Chatbot Diagnosis, Benchmark Comparison & Report Export || User || Inspect detailed failure diagnosis, compare multiple chatbot versions/models, and export benchmark reports || I can identify root causes of chatbot errors, track model improvements, and present compliance evidence || 1. Diagnostic report lists failed scenarios, hallucination snippets, parameter mismatches, and risk levels.
+2. Generates automated AI improvement suggestions for prompts, retrieval contexts, and guardrails.
+3. Side-by-side benchmark comparison between multiple chatbot versions or configurations under same profile.
+4. Visualizes comparison charts: Trustworthiness score delta, latency trends, and error categories.
+5. Exports evaluation reports in structured PDF and JSON formats. || ComparisonEngine, Diagnostic reporter, PDF/JSON report exporter. || Medium || Planned || Functional || COVAI || Sprint 5 || 40 || Planned ||  ||  ||  ||  ||  ||  || 
+R037:  || PB-30 || End-to-End System Integration & Regression Testing || User || Perform automated end-to-end integration and regression test runs across the complete platform pipeline || I can ensure all interconnected modules (Ingestion -> Sandbox -> Coverage -> CFG -> AI -> Evaluation) work seamlessly || 1. Executes integration test suite covering end-to-end workflow: login, project import, test execution, coverage report generation, AST/CFG display, AI test generation, and chatbot evaluation.
+2. Verifies data integrity across PostgreSQL, Redis queues, and Firebase storage.
+3. Validates error recovery when Docker daemon fails, sandbox times out, or target chatbot API returns HTTP 500.
+4. Generates automated test execution logs and defect reports for discovered regressions. || Supertest API testing suite, Jest integration tests, Mock Docker/Gemini testing fixtures. || High || Planned || Functional || COVAI || Sprint 6 || 96 || Planned ||  ||  ||  ||  ||  ||  || 
+R038:  || PB-31 || Security Hardening, Quotas & Container Sandboxing Verification || Admin || Conduct security penetration checks, rate-limit verifications, and Docker sandbox escape audits || The platform is robustly defended against malicious code execution, token depletion, and unauthorized data access || 1. Validates that API endpoints enforce rate limiting (express-rate-limit) and reject brute force attacks.
+2. Verifies that encrypted GitHub PATs and user credentials cannot be decrypted without server secret key.
+3. Audits Docker sandbox isolation: tests container escape attempts, fork bomb resistance, and memory exhaustion limits.
+4. Verifies that Gemini AI API token usage caps prevent unexpected billing or quota exhaustion.
+5. Produces security compliance audit log ready for Capstone 1 presentation. || Security audit suite, OWASP Top 10 verification, Docker security profiling. || Medium || Planned || Non-Functional || COVAI || Sprint 6 || 72 || Planned ||  ||  ||  ||  ||  ||  || 
+R039:  || PB-32 || Production Deployment & Docker Compose Multi-Container Orchestration || Admin || Deploy the complete CovAI platform using Docker Compose multi-container orchestration || The client, server, Redis, and PostgreSQL services run reliably in production for defense demo and user trials || 1. Docker Compose orchestrates client (Vite/Nginx), server (Express API), database (PostgreSQL), and Redis.
+2. Environment variables are securely injected from .env with validation on startup.
+3. Database migrations run automatically via prisma migrate deploy upon server startup.
+4. Nginx reverse proxy routes client traffic, API endpoints (/api), and WebSocket connections (/socket.io).
+5. System starts cleanly with docker compose up --build with healthcheck passing on all services. || Docker Compose, Nginx reverse proxy, multi-stage Dockerfiles, Prisma migration pipeline. || High || Planned || Non-Functional || COVAI || Sprint 7 || 144 || Planned ||  ||  ||  ||  ||  ||  || 
+R040:  || PB-33 || Admin Platform Oversight, Audit Logs & API Quota Management || Admin || Monitor system-wide platform health, view audit logs, and configure global Gemini AI token limits || I can ensure operational stability, track user usage patterns, and prevent unexpected infrastructure expenses || 1. Admin dashboard displays active users, total projects analyzed, Docker container runtime stats, and error rates.
+2. Real-time tracking of Google Gemini API token usage per project and aggregate monthly consumption.
+3. Configurable rate limits and daily token quotas per user tier to prevent abuse.
+4. Audit log records all critical events: user logins, project deletions, webhook triggers, and permission changes.
+5. Admin can export platform usage metrics and audit logs for academic review and grading. || Admin dashboard, AuditLog service, Gemini token counter & quota enforcement middleware. || Medium || Planned || Functional || COVAI || Sprint 7 || 120 || Planned ||  ||  ||  ||  ||  ||  || 

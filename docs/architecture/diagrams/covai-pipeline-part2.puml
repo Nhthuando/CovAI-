@@ -1,0 +1,89 @@
+@startuml CovAI_Pipeline_Part2
+title <b>CovAI Pipeline (Part 2): Extended Quality, LLM/RAG Evaluation & AI Test Generation</b>\n<size:12>IEEE / ACM Standard - Non-functional Testing, RAG Triad Benchmarks, and Automated Test Synthesis</size>
+
+skinparam monochrome false
+skinparam shadowing false
+skinparam roundCorner 8
+skinparam defaultFontName "Segoe UI", Arial, sans-serif
+skinparam defaultFontSize 12
+skinparam defaultTextAlignment center
+
+skinparam nodesep 45
+skinparam ranksep 55
+skinparam padding 12
+
+skinparam ArrowColor #1B4F72
+skinparam ArrowThickness 1.5
+skinparam ArrowFontSize 11
+skinparam ArrowFontColor #2C3E50
+
+skinparam package {
+  BackgroundColor #F8F9FA
+  BorderColor #7F8C8D
+  FontColor #154360
+  FontStyle bold
+  BorderThickness 1.3
+}
+
+skinparam rectangle {
+  BackgroundColor #FFFFFF
+  BorderColor #34495E
+  BorderThickness 1.3
+  FontColor #1C2833
+}
+
+' INPUT FROM PART 1
+package "INPUT ARTIFACTS (RECEIVED FROM PART 1)" as InPart2 {
+  rectangle "<b>Static & Dynamic Analysis Data</b>\n---\n• AST Tree, CFG Graph & CC Complexity\n• Coverage Metrics & Uncovered Gap Map\n• Integration (Supertest) & E2E Test Logs" as In_Data #EAEDED
+  rectangle "<b>Test Resources & Configurations</b>\n---\n• Isolated Docker Sandbox Environment\n• RAG Golden Dataset & LLM API Endpoints\n• Application Source Code Under Test" as In_Env #EAEDED
+}
+
+' 5. EXTENDED QUALITY & LLM/RAG EVALUATION
+package "5. EXTENDED QUALITY & LLM/RAG EVALUATION PIPELINES" as L5 {
+  rectangle "<b>Performance Testing Engine</b>\n---\n• Function execution time profiling\n• Latency risk scoring (High CC + Slow runtime)\n• API load & stress testing via k6 / Artillery" as Perf #F4ECF7
+  
+  rectangle "<b>Security Testing (SAST & AI)</b>\n---\n• Static pattern rules: Hardcoded secrets, eval, exec\n• Dependency vulnerability audit: npm audit / CVE\n• Gemini AI Security Scan: SQLi, XSS, Insecure Crypto" as Sec #F4ECF7
+
+  rectangle "<b>LLM / RAG Evaluation Engine (LLM-as-a-Judge)</b>\n---\n• <b>RAG Triad:</b> Faithfulness, Relevance, Precision\n• <b>LLM Safety:</b> Prompt Injection, Toxicity, JSON Schema\n• <b>Operational:</b> TTFT Latency & Token Cost Estimation\n• Automated evaluation via Gemini Evaluator" as RAG #F5EEF8
+}
+
+' 6. AI TEST GENERATION & REPAIR
+package "6. AI TEST GENERATION & REPAIR ENGINE" as L6 {
+  rectangle "<b>AI Context & Prompt Builder</b>\n---\n• Synthesizes: Source + AST + CFG + CC\n• Injects Uncovered Gaps & Missing Branches\n• Constructs structured, framework-tailored prompts" as Ctx #EBF5FB
+  
+  rectangle "<b>Google Gemini Generative AI Model</b>\n---\n• Generates Test Skeletons (describe/it structure)\n• Synthesizes Full Runnable Test Suites\n• Proposes automated refactoring suggestions" as AI #EBF5FB
+  
+  rectangle "<b>Syntax Validator & Fallback Engine</b>\n---\n• Validates AST syntax of generated test code\n• Fallback mechanism: Wraps failing tests into test.todo()\n• Re-executes in Docker to confirm new coverage\n• Guarantees 100% runnable test suite delivery" as Rep #EBF5FB
+}
+
+' 7. OUTPUT ARTIFACTS & VISUALIZATION
+package "7. OUTPUT ARTIFACTS & DASHBOARD VISUALIZATION" as L7 {
+  rectangle "<b>Interactive Code & CFG Viewer</b>\n---\n• React Flow interactive graph canvas\n• Heatmap highlighting CC complexity hotspots" as OutCFG #E8F8F5
+  
+  rectangle "<b>Coverage Dashboard</b>\n---\n• 4-Dimension coverage gauge (Stmt/Branch/Func/Line)\n• Source code viewer with highlighted uncovered lines" as OutCov #E8F8F5
+  
+  rectangle "<b>Unified Quality Scorecard & RAG Radar</b>\n---\n• Overall codebase health score (0 - 100)\n• RAG Triad performance radar chart\n• Prioritized security & performance findings" as OutSc #E8F8F5
+  
+  rectangle "<b>Deployable Test Artifacts</b>\n---\n• Fully runnable *.test.js test suite files\n• Comprehensive audit report (JSON / PDF)\n• Direct integration into CI/CD pipelines" as OutTest #E8F8F5
+}
+
+' Data flows
+In_Data --> Ctx : Source code & Uncovered Gaps
+In_Data --> Perf : Function metrics & CC scores
+In_Env --> Perf : Triggers k6 inside Docker
+In_Env --> Sec : Scans source & dependencies
+In_Env --> RAG : Golden Dataset & LLM API
+
+Ctx --> AI : Structured Prompt
+AI --> Rep : Generated test suite
+Rep --> OutTest : Exports runnable *.test.js
+Rep --> OutCov : Updates post-generation coverage
+
+In_Data --> OutCFG : Renders CFG & CC
+In_Data --> OutCov : Baseline 4-Dim Coverage
+
+Perf --> OutSc : Performance scores & bottlenecks
+Sec --> OutSc : Security vulnerability list
+RAG --> OutSc : RAG Triad scores & Radar Chart
+
+@enduml

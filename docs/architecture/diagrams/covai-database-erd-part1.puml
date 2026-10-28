@@ -1,0 +1,127 @@
+@startuml CovAI_Database_ERD_Part1
+title <b>CovAI Database ERD (Part 1): Core Project & Multi-Level Testing Schema</b>\n<size:12>PostgreSQL Relational Schema - Project Management, Source Snapshots & 4-Dim Coverage Metrics</size>
+
+skinparam dpi 200
+skinparam linetype ortho
+skinparam roundCorner 4
+skinparam defaultFontName "Segoe UI", Arial, sans-serif
+skinparam defaultFontSize 14
+skinparam shadowing false
+skinparam nodesep 55
+skinparam ranksep 65
+
+skinparam entity {
+  BackgroundColor #FFFFFF
+  BorderColor #2C3E50
+  BorderThickness 1.3
+  FontColor #1C2833
+}
+
+entity "User" as User {
+  * id : String <<PK>>
+  --
+  * email : String
+  name : String
+  passwordHash : String
+  githubUserId : String
+  aiUsageCount : Int
+  aiTokenUsage : Int
+  createdAt : DateTime
+}
+
+entity "Project" as Project {
+  * id : String <<PK>>
+  --
+  * ownerId : String <<FK>>
+  * name : String
+  repoUrl : String
+  defaultBranch : String
+  hasJest : Boolean
+  hasVitest : Boolean
+  createdAt : DateTime
+}
+
+entity "ProjectSnapshot" as Snapshot {
+  * id : String <<PK>>
+  --
+  * projectId : String <<FK>>
+  * storagePath : String
+  source : SnapshotSource
+  checksum : String
+  commitSha : String
+  selectedTestingFramework : String
+  createdAt : DateTime
+}
+
+entity "CoverageSummary" as CovSummary {
+  * id : String <<PK>>
+  --
+  * snapshotId : String <<FK>>
+  linesPct : Float
+  branchesPct : Float
+  funcsPct : Float
+  stmtsPct : Float
+}
+
+entity "CoverageFile" as CovFile {
+  * id : String <<PK>>
+  --
+  * snapshotId : String <<FK>>
+  filePath : String
+  linesPct : Float
+  branchesPct : Float
+}
+
+entity "CoverageFunction" as CovFunc {
+  * id : String <<PK>>
+  --
+  * snapshotId : String <<FK>>
+  filePath : String
+  functionName : String
+  hit : Int
+}
+
+entity "Cfg" as Cfg {
+  * id : String <<PK>>
+  --
+  * snapshotId : String <<FK>>
+  filePath : String
+  functionName : String
+  graphJson : String
+}
+
+entity "Cyclomatic" as CC {
+  * id : String <<PK>>
+  --
+  * snapshotId : String <<FK>>
+  cfgId : String <<FK>>
+  filePath : String
+  functionName : String
+  value : Int
+}
+
+entity "TestRun" as TestRun {
+  * id : String <<PK>>
+  --
+  * snapshotId : String <<FK>>
+  type : TestType
+  totalTests : Int
+  passedTests : Int
+  failedTests : Int
+  durationMs : Float
+  status : String
+}
+
+User ||--o{ Project : "owns"
+Project ||--o{ Snapshot : "has snapshots"
+
+Snapshot ||--o{ CovFile : "analyzes"
+Snapshot ||--o{ CovFunc : "analyzes"
+Snapshot ||--|| CovSummary : "summarizes"
+Snapshot ||--o{ Cfg : "builds CFG"
+Snapshot ||--o{ CC : "calculates CC"
+Snapshot ||--o{ TestRun : "executes"
+
+Cfg ||--o| CC : "links to"
+
+@enduml

@@ -1,0 +1,205 @@
+P0: 
+P1: International School
+P2: Capstone Project 1
+P3: CMU-SE 450 – C1SE.30
+P4: 
+P5: Product Backlog
+P6: Version 1.1
+P7: Date: September 10th, 2026
+P8: 
+P9: TEST COVERAGE ANALYSIS AND AI-DRIVEN TEST GENERATION SYSTEM
+P10: 
+P11: Submitted by
+P12: Dinh, Huynh Tan
+P13: Hien, Nguyen Thanh Long
+P14: Phuc, Tran Huu
+P15: Quy, Nguyen Duy
+P16: Thuan, Ngo Huu
+P17: Approved by 
+P18: Man, Nguyen Duc, Ph.D.
+P19: 
+P20: Proposal Review Panel Representative:	
+P21: 
+P22:       							  	        
+P23: Name			Signature		Date
+P24: 		
+P25: 
+P26: Capstone Project 1- Mentor:	
+P27: 		
+P28: 								
+P29: Name			Signature		Date
+P30: 
+P31: PROJECT INFORMATION
+P32: 
+P33: 
+P34: DOCUMENT APPROVALS
+P35: The following signatures are required for approval of this document.
+P36: 
+P37: 
+P38: 
+P39: DOCUMENT NAME
+P40: 
+P41: 
+P42: REVISION HISTORY
+P43: 
+P44: 
+P45: 
+P46: TABLE OF CONTENTS
+P47: 
+P48: 1.	Introduction	5
+P49: 1.1.	Purpose	5
+P50: 1.2.	Scope	5
+P51: 1.3.	References	5
+P52: 2.	Product Backlog	6
+P53: 2.1.	Product Backlog Specification	6
+P54: 3.	Constraint	9
+P55: 4.	Stakeholders and User Descriptions Summary	9
+P56: 
+P57: 
+P58: Introduction
+P59:      The agile product backlog in Scrum is a prioritized features list, containing short descriptions of all functionality desired in the product. When applying Scrum, it’s not necessary to start a project with a lengthy, upfront effort to document all requirements. Typically, a Scrum team and its product owner begin by writing down everything they can think of for agile backlog prioritization. This agile product backlog is almost always more than enough for a first sprint. The Scrum product backlog is then allowed to grow and change as more is learned about the product and its clients.
+P60: 
+P61: Purpose
+P62: Provide a prioritized features list, containing short descriptions of all functionality desired in the CovAI product.
+P63: Lists everything that the product owner and Scrum team feel should be included in the software they are developing for automated test coverage analysis and AI-driven test generation.
+P64: 
+P65: Scope
+P66: Lists the user roles (Administrator, Developer, QA Engineer / Tester).
+P67: Specifies all functional requirements and user stories across the CovAI platform.
+P68: Lists key capabilities including project ingestion, isolated Docker test execution, test coverage analysis, AST/CFG generation, Cyclomatic Complexity calculation, and AI-assisted test generation.
+P69: Provides concise descriptions of desired functionality and user value for each backlog item.
+P70: Assigns priority levels (1 to 5) to each feature and function based on Agile/Scrum delivery milestones.
+P71: 
+P72: References
+P73: Table 1: References
+P74: 
+P75: 
+P76: 
+P77: Product Backlog
+P78: Product Backlog Specification
+P79: Priority and Estimates
+P80: Priorities are set from 1 to 5. 
+P81: ◦ The maximum priorities are 5 
+P82: ◦ The minimum priorities are 1 
+P83: ◦ Priorities of some user stories can be the same with others 
+P84: ◦ If a user story has dependencies, it must have lower priority than its dependencies
+P85: 
+P86: Table 1: Product Backlog Specification (Admin)
+P87: 
+P88: 
+P89: 
+P90: Table 2: Product Backlog Specification (Developer)
+P91: 
+P92: 
+P93: 
+P94: Table 3: Product Backlog Specification (QA Engineer / Tester)
+P95: 
+P96: 
+P97: 
+P98: Constraint
+P99: Table 4: Constraint
+P100: 
+P101: 
+P102: 
+P103: 
+P104: 
+P105: Stakeholders and User Descriptions Summary
+P106: 
+P107: Table 5: Stakeholders and User Descriptions Summary
+P108: 
+P109: 
+
+--- TABLE 0 (14x4) ---
+Row 0: ['Project acronym', 'COVAI', 'COVAI', 'COVAI']
+Row 1: ['Project Title', 'Test Coverage Analysis and AI-Driven Test Generation System', 'Test Coverage Analysis and AI-Driven Test Generation System', 'Test Coverage Analysis and AI-Driven Test Generation System']
+Row 2: ['Start Date', '10 Aug 2026', 'End Date', '12 Dec 2026']
+Row 3: ['Lead Institution', 'International School, Duy Tan University', 'International School, Duy Tan University', 'International School, Duy Tan University']
+Row 4: ['Project Mentor', 'Man, Nguyen Duc, Ph.D.', 'Man, Nguyen Duc, Ph.D.', 'Man, Nguyen Duc, Ph.D.']
+Row 5: ['Scrum master / Project Leader & contact details', 'Dinh, Huynh Tan Email: huynhtandinh.dev@gmail.com Tel: 0365 472 162 ID: 29219052500', 'Dinh, Huynh Tan Email: huynhtandinh.dev@gmail.com Tel: 0365 472 162 ID: 29219052500', 'Dinh, Huynh Tan Email: huynhtandinh.dev@gmail.com Tel: 0365 472 162 ID: 29219052500']
+Row 6: ['Partner Organization', 'Duy Tan University', 'Duy Tan University', 'Duy Tan University']
+Row 7: ['Project Web URL', '', '', '']
+Row 8: ['Team members', 'Name', 'Email', 'Tel']
+Row 9: ['Team members', 'Dinh, Huynh Tan', 'huynhtandinh.dev@gmail.com', '0365472162']
+Row 10: ['Team members', 'Hien, Nguyen Thanh Long', 'hiennguyen05102005@gmail.com', '0702747211']
+Row 11: ['Team members', 'Phuc, Tran Huu', 'phuc12435az@gmail.com', '0842644169']
+Row 12: ['Team members', 'Quy, Nguyen Duy', 'quylavip333@gmail.com', '0334814522']
+Row 13: ['Team members', 'Thuan, Ngo Huu', 'thuanhuugl@gmail.com', '0385591447']
+
+--- TABLE 1 (5x3) ---
+Row 0: ['Dinh, Huynh Tan Student ID: 29219052500 Scrum Master', 'Signature', 'Date']
+Row 1: ['Hien, Nguyen Thanh Long Student ID: 29219065409 Team Member', 'Signature', 'Date']
+Row 2: ['Phuc, Tran Huu Student ID: 29211458179 Team Member', 'Signature', 'Date']
+Row 3: ['Quy, Nguyen Duy Student ID: 29211158823 Team Member', 'Signature', 'Date']
+Row 4: ['Thuan, Ngo Huu Student ID: 29219065178 Team Member', 'Signature', 'Date']
+
+--- TABLE 2 (4x4) ---
+Row 0: ['Document Title', 'Product Backlog Document', 'Product Backlog Document', 'Product Backlog Document']
+Row 1: ['Author(s)', 'Dinh, Huynh Tan', 'Dinh, Huynh Tan', 'Dinh, Huynh Tan']
+Row 2: ['Role', 'Scrum Master', 'Scrum Master', 'Scrum Master']
+Row 3: ['Date', 'August 26th, 2026', 'File name:', 'C1SE.30_ProductBacklog_CovAI_ver1.1.doc']
+
+--- TABLE 3 (3x4) ---
+Row 0: ['Version', 'Person(s)', 'Date', 'Description']
+Row 1: ['1.0', 'Dinh, Huynh Tan', '1-Sep-2026', 'Create product backlog document']
+Row 2: ['1.1', 'C1SE.30', '10-Sep-2026', 'Update product backlog according to project proposal']
+
+--- TABLE 4 (7x3) ---
+Row 0: ['No', 'Reference', 'Note']
+Row 1: ['1', 'https://www.scrum.org/resources/scrum-guide', 'Scrum Guide & Agile Backlog Standards']
+Row 2: ['2', 'http://www.mountaingoatsoftware.com/agile/scrum/product-backlog/example/', 'Scrum Product Backlog Example & Estimation']
+Row 3: ['3', 'C1SE.30_Proposal_v1.1.docx', 'CovAI Project Proposal Document']
+Row 4: ['4', 'https://ai.google.dev/gemini-api/docs', 'Google Gemini API Documentation']
+Row 5: ['5', 'https://www.iso.org/standard/81291.html', 'ISO/IEC/IEEE 29119 Software Testing Standards']
+Row 6: ['6', 'https://docs.docker.com/guides/', 'Docker Containerization Documentation']
+
+--- TABLE 5 (6x6) ---
+Row 0: ['ID', 'Theme', 'As a/an', 'I want to', 'So that', 'Priority']
+Row 1: ['PB01', 'User Management', 'Admin', 'Manage user accounts and access permissions', 'I can control platform access, monitor user activity, and maintain system security', '5']
+Row 2: ['PB02', 'AI Token & Quota Management', 'Admin', 'Monitor and configure Google Gemini API token usage and rate limits for users', 'I can prevent API quota exhaustion and keep operational costs within budget', '5']
+Row 3: ['PB03', 'Queue & Worker Monitoring', 'Admin', 'Monitor BullMQ background job queues and worker execution status', 'I can detect bottlenecks, retry failed analysis jobs, and ensure smooth asynchronous processing', '4']
+Row 4: ['PB04', 'Sandbox & Container Oversight', 'Admin', 'Oversee Docker sandbox configurations, resource limits (CPU/RAM), and container lifecycles', 'I can ensure complete execution isolation and prevent host server performance degradation', '5']
+Row 5: ['PB05', 'System Dashboard & Audit', 'Admin', 'View system-wide dashboard metrics and security audit logs', 'I can assess overall platform health, track system usage, and verify security compliance', '4']
+
+--- TABLE 6 (12x6) ---
+Row 0: ['ID', 'Theme', 'As a/an', 'I want to', 'So that', 'Priority']
+Row 1: ['PB01', 'Authentication & Profile', 'Developer', 'Register, log in via credentials or GitHub OAuth, and securely configure my GitHub token', 'I can access my workspace and authorize repository integrations with AES-256-GCM encryption', '5']
+Row 2: ['PB02', 'Project Ingestion', 'Developer', 'Create projects by uploading ZIP files or importing directly from GitHub repositories', 'I can import my source code into CovAI with automated secret sanitization and archive bomb protection', '5']
+Row 3: ['PB03', 'Framework Detection', 'Developer', 'Have the system automatically detect testing frameworks (Jest, Vitest, Supertest, Cypress, Playwright)', 'I can run tests without manual configuration of test runners and commands', '5']
+Row 4: ['PB04', 'Automated Test Execution', 'Developer', 'Execute project tests automatically inside an isolated Docker sandbox', 'I can run tests safely with bounded CPU/RAM resources without affecting host integrity', '5']
+Row 5: ['PB05', 'Coverage Analysis', 'Developer', 'View multi-level test coverage reports (Statement, Branch, Function, Line) across projects and files', 'I can clearly identify which parts of my code are tested and where coverage is lacking', '5']
+Row 6: ['PB06', 'AST & CFG Visualization', 'Developer', 'View interactive Control Flow Graphs (CFG) generated from AST', 'I can visually trace execution flows and distinguish between covered and uncovered execution branches', '4']
+Row 7: ['PB07', 'Complexity & Gap Analysis', 'Developer', 'Inspect Cyclomatic Complexity and detected testing gaps for each function', 'I can pinpoint high-complexity code sections that have insufficient test coverage', '4']
+Row 8: ['PB08', 'AI-Assisted Test Generation', 'Developer', 'Generate test skeletons and full runnable test cases using Google Gemini AI for uncovered code', 'I can quickly create relevant tests for untested branches and improve overall test coverage', '5']
+Row 9: ['PB09', 'Test Code Review & Export', 'Developer', 'Review, edit, validate, and download AI-generated test files', 'I can verify test correctness and incorporate them directly into my codebase', '4']
+Row 10: ['PB10', 'GitHub Webhook Automation', 'Developer', 'Configure GitHub Webhooks to trigger automated analysis upon new code commits', 'I can maintain continuous coverage tracking without manual intervention', '4']
+Row 11: ['PB11', 'Real-time Notifications', 'Developer', 'Receive real-time notifications when background test execution or AI generation completes', 'I am immediately alerted to review analysis results without constantly refreshing the page', '3']
+
+--- TABLE 7 (8x6) ---
+Row 0: ['ID', 'Theme', 'As a/an', 'I want to', 'So that', 'Priority']
+Row 1: ['PB01', 'Quality Overview Dashboard', 'QA Engineer', 'View overall software quality scores including performance, security, coverage, and maintainability', 'I can comprehensively assess project release readiness and testing maturity', '5']
+Row 2: ['PB02', 'Snapshot & Version Tracking', 'QA Engineer', 'Track test coverage and quality metrics across multiple project snapshots and commit versions', 'I can monitor coverage trends over time and detect any test coverage regression', '5']
+Row 3: ['PB03', 'Testing Gaps Prioritization', 'QA Engineer', 'Filter and sort source files by lowest coverage and highest Cyclomatic Complexity', 'I can prioritize QA testing resources on high-risk, defect-prone modules', '5']
+Row 4: ['PB04', 'Multi-Framework Oversight', 'QA Engineer', 'Review test execution results across Unit, Integration, and System testing levels', 'I can verify that all testing layers (Jest, Vitest, Supertest, Cypress, Playwright) pass successfully', '4']
+Row 5: ['PB05', 'AI Test Case Validation', 'QA Engineer', 'Inspect AI-generated test cases against testing standards and coverage goals', 'I can ensure test cases meet QA quality criteria before they are approved and merged', '4']
+Row 6: ['PB06', 'Requirement Traceability', 'QA Engineer', 'Trace software requirements and user stories to corresponding test cases and coverage metrics', 'I can confirm full test verification against specified functional requirements', '4']
+Row 7: ['PB07', 'Quality Report Export', 'QA Engineer', 'Export detailed coverage and quality evaluation reports in structured formats', 'I can present test progress and quality evidence during Sprint Reviews and stakeholder meetings', '3']
+
+--- TABLE 8 (7x2) ---
+Row 0: ['Constraint', 'Condition']
+Row 1: ['Time', 'Project development duration is 18 weeks (from August 10, 2026 to December 12, 2026), structured into 3 four-week Sprints (Sprint 1: Core Foundation & Isolated Execution, Sprint 2: Static Analysis & AI Test Generation, Sprint 3: Interactive Visualization & Optimization) followed by final system testing and project handover.']
+Row 2: ['People constraint', 'The project is designed, engineered, and maintained by a team of 5 software engineering students from Duy Tan University (Huynh Tan Dinh, Nguyen Thanh Long Hien, Tran Huu Phuc, Nguyen Duy Quy, Ngo Huu Thuan) under the academic supervision of Ph.D. Nguyen Duc Man.']
+Row 3: ['Technology & Architecture', 'Built on a decoupled modern architecture: React + Vite (Frontend SPA), Express.js (Backend REST API), Prisma ORM + PostgreSQL (Database), BullMQ + Redis (Asynchronous Background Job Queue), Docker Engine (Isolated Execution Sandbox), Babel Parser (AST & CFG analysis), and Google Gemini API (AI-assisted test generation).']
+Row 4: ['Security & Isolation', 'Source code uploaded via ZIP or GitHub must be sanitized by automatically stripping secret files (.env, .pem, .key); anti-archive bomb safeguards enforce limits of 200MB compressed and 1GB uncompressed; GitHub tokens and credentials are encrypted using AES-256-GCM; user access is protected by JWT authentication; dynamic test execution is strictly confined within resource-constrained Docker containers (CPU/RAM caps).']
+Row 5: ['Economic & AI Budget', 'Total estimated budget is $3,100 ($2,700 for 1,350 student working hours and $400 for cloud infrastructure, PostgreSQL database, domain, and Google Gemini API limits). Content hashing is employed to cache AST/CFG and coverage analyses, preventing redundant computations and controlling token expenses.']
+Row 6: ['Standards & Quality', 'Development strictly adheres to Product Owner requirements, Agile/Scrum empirical process control, ISO/IEC/IEEE 29119 Software Testing standards, and ISO/IEC 25010 Software Quality models.']
+
+--- TABLE 9 (9x3) ---
+Row 0: ['Name', 'Description', 'Role']
+Row 1: ['Product Owner', 'Provides product vision, defines acceptance criteria, reviews Sprint deliverables, and accepts system increments.', 'Duy Tan University / Man, Nguyen Duc, Ph.D.']
+Row 2: ['Scrum Master', 'Leads agile processes, facilitates Daily Scrums and Sprint Planning, removes technical impediments, and ensures timely milestone delivery.', 'Dinh, Huynh Tan']
+Row 3: ['Frontend Developer', 'Designs and implements responsive UI/UX, interactive CFG graphs, real-time coverage dashboards, and notification components.', 'Hien, Nguyen Thanh Long']
+Row 4: ['Backend Developer', 'Builds RESTful APIs, BullMQ worker queues, Babel AST parser, CFG generator, and Docker Sandbox isolation environments.', 'Phuc, Tran Huu & Quy, Nguyen Duy']
+Row 5: ['Full-stack Developer', 'Leads system architecture, Prisma ORM schema design, Google Gemini AI prompt engineering pipelines, and end-to-end integration.', 'Thuan, Ngo Huu']
+Row 6: ['System Administrator', 'Manages cloud infrastructure, Docker host environments, BullMQ queues, database backups, security audits, and Gemini API quotas.', 'Group C1SE.30']
+Row 7: ['Software Developer (End-User)', 'Primary user who imports projects, executes automated test suites, inspects coverage/CFG graphs, and generates test cases via AI.', 'Software Developers & Students']
+Row 8: ['QA Engineer / Tester (End-User)', 'Evaluates test coverage metrics, traces requirements to tests, prioritizes coverage gaps, audits AI-generated tests, and exports quality reports.', 'QA Engineers & Testers']

@@ -1,0 +1,225 @@
+{
+  "config": {
+    "argv": [
+      "C:\\nvm4w\\nodejs\\node.exe",
+      "D:\\HuuThuan - Project\\NCKH\\CovAI\\scratch\\system-test-smoke\\node_modules\\playwright\\cli.js",
+      "test",
+      "--reporter=json",
+      "--retries=1",
+      "--config=.covai-system-test/playwright.config.mjs"
+    ],
+    "configFile": "D:\\HuuThuan - Project\\NCKH\\CovAI\\scratch\\system-test-smoke\\.covai-system-test\\playwright.config.mjs",
+    "rootDir": "D:/HuuThuan - Project/NCKH/CovAI/scratch/system-test-smoke",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "D:/HuuThuan - Project/NCKH/CovAI/scratch/system-test-smoke/test-results",
+        "repeatEach": 1,
+        "retries": 1,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "",
+        "name": "",
+        "testDir": "D:/HuuThuan - Project/NCKH/CovAI/scratch/system-test-smoke",
+        "testIgnore": [],
+        "testMatch": [
+          "**/e2e/**/*.spec.*",
+          "**/e2e/**/*.test.*",
+          "**/system/**/*.spec.*",
+          "**/system/**/*.test.*"
+        ],
+        "timeout": 30000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.63.0",
+    "workers": 8,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "e2e\\home.spec.js",
+      "file": "e2e/home.spec.js",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "public user flow",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 199,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-04T06:03:56.220Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "0dbf10610f6b5ca491e4-1b0cd184df8e150988a8",
+          "file": "e2e/home.spec.js",
+          "line": 1,
+          "column": 50
+        },
+        {
+          "title": "assertion failure is recorded",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 183,
+                  "error": {
+                    "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  getByRole('heading')\nExpected: \u001b[32m\"Wrong\"\u001b[39m\nReceived: \u001b[31m\"System smoke\"\u001b[39m\nTimeout:  100ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveText\" getByRole('heading') with timeout 100ms\u001b[22m\n\u001b[2m  - waiting for getByRole('heading')\u001b[22m\n\u001b[2m    3 × locator resolved to <h1>System smoke</h1>\u001b[22m\n\u001b[2m      - unexpected value \"System smoke\"\u001b[22m\n",
+                    "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  getByRole('heading')\nExpected: \u001b[32m\"Wrong\"\u001b[39m\nReceived: \u001b[31m\"System smoke\"\u001b[39m\nTimeout:  100ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveText\" getByRole('heading') with timeout 100ms\u001b[22m\n\u001b[2m  - waiting for getByRole('heading')\u001b[22m\n\u001b[2m    3 × locator resolved to <h1>System smoke</h1>\u001b[22m\n\u001b[2m      - unexpected value \"System smoke\"\u001b[22m\n\n    at D:\\HuuThuan - Project\\NCKH\\CovAI\\scratch\\system-test-smoke\\e2e\\home.spec.js:1:447",
+                    "location": {
+                      "file": "D:\\HuuThuan - Project\\NCKH\\CovAI\\scratch\\system-test-smoke\\e2e\\home.spec.js",
+                      "column": 447,
+                      "line": 1
+                    },
+                    "snippet": "> 1 | import { test, expect } from '@playwright/test'; test('public user flow', async ({page}) => { await page.goto('/'); await expect(page.getByRole('heading', {name:'System smoke'})).toBeVisible(); await page.getByRole('button', {name:'Continue'}).click(); await expect(page.getByRole('button', {name:'Done'})).toBeVisible(); }); test('assertion failure is recorded', async ({page}) => { await page.goto('/'); await expect(page.getByRole('heading')).toHaveText('Wrong', {timeout: 100}); });\n    |                                                                                                                                                                                                                                                                                                                                                                                                                                                               ^"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "D:\\HuuThuan - Project\\NCKH\\CovAI\\scratch\\system-test-smoke\\e2e\\home.spec.js",
+                        "column": 447,
+                        "line": 1
+                      },
+                      "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  getByRole('heading')\nExpected: \u001b[32m\"Wrong\"\u001b[39m\nReceived: \u001b[31m\"System smoke\"\u001b[39m\nTimeout:  100ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveText\" getByRole('heading') with timeout 100ms\u001b[22m\n\u001b[2m  - waiting for getByRole('heading')\u001b[22m\n\u001b[2m    3 × locator resolved to <h1>System smoke</h1>\u001b[22m\n\u001b[2m      - unexpected value \"System smoke\"\u001b[22m\n\n\n> 1 | import { test, expect } from '@playwright/test'; test('public user flow', async ({page}) => { await page.goto('/'); await expect(page.getByRole('heading', {name:'System smoke'})).toBeVisible(); await page.getByRole('button', {name:'Continue'}).click(); await expect(page.getByRole('button', {name:'Done'})).toBeVisible(); }); test('assertion failure is recorded', async ({page}) => { await page.goto('/'); await expect(page.getByRole('heading')).toHaveText('Wrong', {timeout: 100}); });\n    |                                                                                                                                                                                                                                                                                                                                                                                                                                                               ^\n    at D:\\HuuThuan - Project\\NCKH\\CovAI\\scratch\\system-test-smoke\\e2e\\home.spec.js:1:447"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-04T06:03:56.542Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "D:\\HuuThuan - Project\\NCKH\\CovAI\\scratch\\system-test-smoke\\test-results\\e2e-home-assertion-failure-is-recorded\\error-context.md"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "D:\\HuuThuan - Project\\NCKH\\CovAI\\scratch\\system-test-smoke\\e2e\\home.spec.js",
+                    "column": 447,
+                    "line": 1
+                  }
+                },
+                {
+                  "workerIndex": 1,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 231,
+                  "error": {
+                    "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  getByRole('heading')\nExpected: \u001b[32m\"Wrong\"\u001b[39m\nReceived: \u001b[31m\"System smoke\"\u001b[39m\nTimeout:  100ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveText\" getByRole('heading') with timeout 100ms\u001b[22m\n\u001b[2m  - waiting for getByRole('heading')\u001b[22m\n\u001b[2m    4 × locator resolved to <h1>System smoke</h1>\u001b[22m\n\u001b[2m      - unexpected value \"System smoke\"\u001b[22m\n",
+                    "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  getByRole('heading')\nExpected: \u001b[32m\"Wrong\"\u001b[39m\nReceived: \u001b[31m\"System smoke\"\u001b[39m\nTimeout:  100ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveText\" getByRole('heading') with timeout 100ms\u001b[22m\n\u001b[2m  - waiting for getByRole('heading')\u001b[22m\n\u001b[2m    4 × locator resolved to <h1>System smoke</h1>\u001b[22m\n\u001b[2m      - unexpected value \"System smoke\"\u001b[22m\n\n    at D:\\HuuThuan - Project\\NCKH\\CovAI\\scratch\\system-test-smoke\\e2e\\home.spec.js:1:447",
+                    "location": {
+                      "file": "D:\\HuuThuan - Project\\NCKH\\CovAI\\scratch\\system-test-smoke\\e2e\\home.spec.js",
+                      "column": 447,
+                      "line": 1
+                    },
+                    "snippet": "> 1 | import { test, expect } from '@playwright/test'; test('public user flow', async ({page}) => { await page.goto('/'); await expect(page.getByRole('heading', {name:'System smoke'})).toBeVisible(); await page.getByRole('button', {name:'Continue'}).click(); await expect(page.getByRole('button', {name:'Done'})).toBeVisible(); }); test('assertion failure is recorded', async ({page}) => { await page.goto('/'); await expect(page.getByRole('heading')).toHaveText('Wrong', {timeout: 100}); });\n    |                                                                                                                                                                                                                                                                                                                                                                                                                                                               ^"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "D:\\HuuThuan - Project\\NCKH\\CovAI\\scratch\\system-test-smoke\\e2e\\home.spec.js",
+                        "column": 447,
+                        "line": 1
+                      },
+                      "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveText\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  getByRole('heading')\nExpected: \u001b[32m\"Wrong\"\u001b[39m\nReceived: \u001b[31m\"System smoke\"\u001b[39m\nTimeout:  100ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveText\" getByRole('heading') with timeout 100ms\u001b[22m\n\u001b[2m  - waiting for getByRole('heading')\u001b[22m\n\u001b[2m    4 × locator resolved to <h1>System smoke</h1>\u001b[22m\n\u001b[2m      - unexpected value \"System smoke\"\u001b[22m\n\n\n> 1 | import { test, expect } from '@playwright/test'; test('public user flow', async ({page}) => { await page.goto('/'); await expect(page.getByRole('heading', {name:'System smoke'})).toBeVisible(); await page.getByRole('button', {name:'Continue'}).click(); await expect(page.getByRole('button', {name:'Done'})).toBeVisible(); }); test('assertion failure is recorded', async ({page}) => { await page.goto('/'); await expect(page.getByRole('heading')).toHaveText('Wrong', {timeout: 100}); });\n    |                                                                                                                                                                                                                                                                                                                                                                                                                                                               ^\n    at D:\\HuuThuan - Project\\NCKH\\CovAI\\scratch\\system-test-smoke\\e2e\\home.spec.js:1:447"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 1,
+                  "startTime": "2026-10-04T06:03:57.151Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "D:\\HuuThuan - Project\\NCKH\\CovAI\\scratch\\system-test-smoke\\test-results\\e2e-home-assertion-failure-is-recorded-retry1\\error-context.md"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "D:\\HuuThuan - Project\\NCKH\\CovAI\\scratch\\system-test-smoke\\e2e\\home.spec.js",
+                    "column": 447,
+                    "line": 1
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "0dbf10610f6b5ca491e4-dcfcb1c4adf4c6ca97db",
+          "file": "e2e/home.spec.js",
+          "line": 1,
+          "column": 327
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-10-04T06:03:55.836Z",
+    "duration": 1712.292,
+    "expected": 1,
+    "skipped": 0,
+    "unexpected": 1,
+    "flaky": 0
+  }
+}

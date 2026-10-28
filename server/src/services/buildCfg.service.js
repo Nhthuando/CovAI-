@@ -1,0 +1,102 @@
+import fs from 'fs';
+import path from 'path';
+import prisma from '../config/prisma.js';
+import {operationSnapshot,stagePreparedPublication} from './projectOperationWorkspace.service.js';
+import { extractFunctions } from './cyclomaticFunctionExtractor.service.js';
+import { calculateComplexityFromAst } from './cyclomaticCalculator.service.js';
+import { buildCFG } from './cfgBuilder.service.js';
+import { storeCfg } from './cfgStorage.service.js';
+
+/** CFG pipeline stage: generates CFG and cyclomatic artifacts only. */
+export async function buildCfgForSnapshot(snapshotId) {
+    const snapshot = await prisma.projectSnapshot.findUnique({
+        where: { id: snapshotId },
+        select: { rootDir: true }
+    });
+    if (!snapshot) throw new Error('Snapshot not found');
+
+    let rootDir = operationSnapshot({id:snapshotId,...snapshot}).rootDir;
+    if (!rootDir || !fs.existsSync(rootDir)) {
+        const fallbackPath = path.join(process.cwd(), 'uploads', 'snapshots', snapshotId);
+        if (!fs.existsSync(fallbackPath)) throw new Error(`Snapshot root directory not found for ${snapshotId}.`);
+        rootDir = fallbackPath;
+    }
+
+    const files = getAllFiles(rootDir);
+    let functionCount = 0;
+    await stagePreparedPublication(tx=>tx.cyclomatic.deleteMany({ where: { snapshotId } }));
+    await stagePreparedPublication(tx=>tx.cfg.deleteMany({ where: { snapshotId } }));
+
+    for (const file of files) {
+        if (!/\.(js|ts|jsx|tsx)$/.test(file)) continue;
+        const relativePath = path.relative(rootDir, file).replace(/\\/g, '/');
+        const functions = extractFunctions(fs.readFileSync(file, 'utf-8'));
+        const seenInFile = new Set();
+
+        for (const func of functions) {
+            functionCount++;
+            let graphJson = { nodes: [], edges: [] };
+            let complexity = 1;
+            try { graphJson = buildCFG(func.node).graphJson; } catch (error) {
+                console.error(`[BuildCFG] Failed to generate CFG for ${func.functionName} in ${relativePath}`);
+            }
+            try { complexity = calculateComplexityFromAst(func.node).value; } catch (error) {
+                console.error(`[BuildCFG] Failed to calculate complexity for ${func.functionName} in ${relativePath}`);
+            }
+
+            let uniqueName = func.functionName;
+            if (seenInFile.has(uniqueName)) {
+                uniqueName = `${func.functionName}@L${func.startLine || 1}`;
+            }
+            seenInFile.add(uniqueName);
+
+            await stagePreparedPublication(async tx=>{
+            const cfg = await storeCfg({
+                snapshotId,
+                filePath: relativePath,
+                functionName: uniqueName,
+                startLine: func.startLine,
+                endLine: func.endLine,
+                graphJson: JSON.stringify(graphJson),
+                skipSnapshotCheck: true
+            },tx);
+
+            await tx.cyclomatic.upsert({
+                where: {
+                    snapshotId_filePath_functionName: {
+                        snapshotId,
+                        filePath: relativePath,
+                        functionName: uniqueName
+                    }
+                },
+                update: {
+                    value: complexity,
+                    cfgId: cfg.id
+                },
+                create: {
+                    snapshotId,
+                    filePath: relativePath,
+                    functionName: uniqueName,
+                    value: complexity,
+                    cfgId: cfg.id
+                }
+            });
+            });
+        }
+    }
+
+    console.log(`[BuildCFG] Completed for snapshot ${snapshotId}: ${functionCount} functions processed`);
+    return { functionCount };
+}
+
+function getAllFiles(dirPath, files = []) {
+    for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
+        const filePath = path.join(dirPath, entry.name);
+        if (entry.isDirectory()) {
+            if (!['node_modules', '.git', '.covai-collaboration', '.covai-temp', '.covai-system-test', 'dist', 'build', 'coverage'].includes(entry.name)) getAllFiles(filePath, files);
+        } else {
+            files.push(filePath);
+        }
+    }
+    return files;
+}

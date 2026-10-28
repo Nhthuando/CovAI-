@@ -1,0 +1,300 @@
+@baseUrl = http://localhost:5000/api
+
+### Auth
+# @name register
+POST {{baseUrl}}/auth/register
+Content-Type: application/json
+
+{
+  "email": "dinh@gmail.com",
+  "password": "password123",
+  "name": "dinh"
+}
+
+###
+# @name login
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "dinh@gmail.com",
+  "password": "password123"
+}
+
+###
+# @name forgotPassword
+POST {{baseUrl}}/auth/forgotPassword
+Content-Type: application/json
+
+{
+  "email": "huynhtandinh.dev@gmail.com"
+}
+
+###
+# @name resetPassword
+# Dán token sau resetPassword/
+POST {{baseUrl}}/auth/resetPassword/1484ff0f9c5669498d52120db3c7741d81ea93eface28ec6f53a082f11e2b023
+Content-Type: application/json
+
+{
+  "newPassword": "newPassword123"
+}
+
+### User
+# @name getMe
+# Dán token sau Bearer
+GET {{baseUrl}}/users/me
+Authorization: Bearer {{token}}
+
+### Projects
+# @name createProject
+POST {{baseUrl}}/projects
+Authorization: Bearer YOUR_TOKEN_HERE
+Content-Type: application/json
+
+{
+  "name": "My New Project"
+}
+
+###
+# @name listProjects
+GET {{baseUrl}}/projects
+Authorization: Bearer {{token}}
+
+###
+# @name getProjectById
+GET {{baseUrl}}/projects/YOUR_PROJECT_ID
+Authorization: Bearer YOUR_TOKEN_HERE
+
+###
+# @name deleteProject
+DELETE {{baseUrl}}/projects/YOUR_PROJECT_ID
+Authorization: Bearer YOUR_TOKEN_HERE
+
+###
+# @name uploadZip
+POST {{baseUrl}}/projects/YOUR_PROJECT_ID/upload-zip
+Authorization: Bearer YOUR_TOKEN_HERE
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
+
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name
+###
+# @name getGithubAuthUrl
+# Lưu ý: Thay YOUR_CLIENT_ID bằng ID thực tế của bạn, truy cập vào link bên dưới để lấy code xác thực
+# https://github.com/login/oauth/authorize?client_id=Ov23liQyAORXbj6NeqAB&scope=user:email,repo
+# @name githubCallback
+# Sau khi lấy code thì tự động fallback về api Get bên dưới với tham số code để lấy access token
+# GET {{baseUrl}}/auth/github/callback?code=CODE
+
+###
+# @name githubOAuthAccess
+# Cái này cho việc bật/tắt truy cập vào private repository
+POST {{baseUrl}}/auth/github/access
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "token": "{{token}}",
+  "allowAccess": "yes"
+}
+
+###
+# @name listGithubRepositories
+GET {{baseUrl}}/auth/github/repositories
+Authorization: Bearer YOUR_TOKEN_HERE
+
+###
+# @name cloneGithubRepositoryByUrl
+POST {{baseUrl}}/projects/YOUR_PROJECT_ID/import-github-url
+Content-Type: application/json
+
+{
+  "url": "https://github.com/owner/repo"
+}
+
+###
+# @name importGithubRepository
+POST {{baseUrl}}/projects/YOUR_PROJECT_ID/import-github-repo
+Authorization: Bearer YOUR_TOKEN_HERE
+Content-Type: application/json
+
+{
+  "owner": "owner_name",
+  "repo": "repo_name"
+}
+
+
+### Lấy danh sách thông báo
+# @name listNotifications
+GET {{baseUrl}}/notifications?page=1&limit=10&unreadOnly=false
+Authorization: Bearer YOUR_TOKEN_HERE
+
+### Đánh dấu tất cả là đã đọc
+# @name markAllNotificationsAsRead
+PATCH {{baseUrl}}/notifications/read-all
+Authorization: Bearer YOUR_TOKEN_HERE
+
+### Đánh dấu 1 thông báo là đã đọc
+# @name markNotificationAsRead
+PATCH {{baseUrl}}/notifications/NHAP_ID_THONG_BAO_VAO_DAY/read
+Authorization: Bearer YOUR_TOKEN_HERE
+
+###
+# @name buildCfg
+POST {{baseUrl}}/projects/cmquk92q20000r4bv21vc5n6b/cfg/build
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "snapshotId": "cmquk96tw0001r4bvl5hetv1c"
+}
+
+###
+# @name getCfg
+GET {{baseUrl}}/projects/cmquk92q20000r4bv21vc5n6b/cfg?snapshotId=cmquk96tw0001r4bvl5hetv1c
+Authorization: Bearer {{token}}
+
+
+###
+# @name runAiTests
+POST {{baseUrl}}/projects//ai-tests
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "snapshotId": "cmqxpxbx70002n0bvoxxqmf6x"
+}
+
+### AI Tests
+# @name listAiTests
+GET {{baseUrl}}/ai-tests?projectId=cmqxpx9a40001n0bvrkj0vlk7&page=1&limit=10
+Authorization: Bearer {{token}}
+
+### 
+# @name GenerateFullTest
+POST {{baseUrl}}/projects/cmqxpx9a40001n0bvrkj0vlk7/ai/generate-full-test
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "snapshotId": "cmqxpxbx70002n0bvoxxqmf6x"
+}
+
+###
+# @name getAiTests
+GET {{baseUrl}}/projects/cmqxpx9a40001n0bvrkj0vlk7/ai/tests
+Authorization: Bearer {{token}}
+
+//Quy
+###
+# @name getNotifications
+GET {{baseUrl}}/notifications?page=1&limit=10&unreadOnly=false
+Authorization: Bearer {{token}}
+
+###
+# @name getUnreadCount
+GET {{baseUrl}}/notifications?unreadOnly=true
+Authorization: Bearer e{{token}}
+
+###
+# @name getUnreadCount
+GET {{baseUrl}}/notifications/unread-count
+Authorization: Bearer {{token}}
+
+###
+# @name markNotificationAsRead
+PATCH {{baseUrl}}/notifications/cmqyryx2000008cw5kqjbv2hz/read
+Authorization: Bearer {{token}}
+
+###
+# @name markAllNotificationsAsRead
+PATCH {{baseUrl}}/notifications/read-all
+Authorization: Bearer {{token}}
+
+###
+# @name createNotification
+
+POST {{baseUrl}}/notifications
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "type": "SYSTEM",
+  "title": "Test notification",
+  "message": "Hello world"
+}
+
+### Analytics
+# @name getDashboardAnalytics
+GET {{baseUrl}}/analytics/dashboard
+Authorization: Bearer {{token}}
+
+###
+# @name detectVitest
+POST {{baseUrl}}/projects/cmspgg2bo000016lmak0v5grh/detect-vitest
+Authorization: Bearer {{token}}
+
+### Chạy Vitest Tests
+# @name runVitest
+POST {{baseUrl}}/projects/cmsg1btlh00000vptmnj472y3/run-vitest
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "snapshotId": "cmsg1c66q00010vpt28gzunxv"
+}
+
+### Run Vitest Coverage
+# @name runVitestCoverage
+POST {{baseUrl}}/projects/cmsg1btlh00000vptmnj472y3/vitest-coverage
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "snapshotId": "cmsg1c66q00010vpt28gzunxv"
+}
+
+### Run Playwright Detection
+# @name detectPlaywright
+POST {{baseUrl}}/projects/cmsg1btlh00000vptmnj472y3/playwright-detection
+Authorization: Bearer 
+
+### Run System Test Analysis Pipeline (Standard Endpoint)
+# @name runSystemTests
+POST {{baseUrl}}/coverage/cmsi9ylbz001h0vpkt76dvghn/system/run
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "framework": "playwright"
+}
+
+### Get System Test Summary (Metrics & Scenarios)
+# @name getSystemTestSummary
+GET {{baseUrl}}/coverage/cmsi9ylbz001h0vpkt76dvghn/system/summary
+Authorization: Bearer {{token}}
+
+
+
+### System evidence assessment (requires migration and enabled evidence flags)
+@assessmentSnapshotId = replace-with-owned-snapshot-id
+@assessmentToken = replace-with-session-token
+POST http://localhost:5000/api/coverage/{{assessmentSnapshotId}}/system/assessments
+Authorization: Bearer {{assessmentToken}}
+Content-Type: application/json
+
+{
+  "testFiles": ["tests/system/app.spec.js"],
+  "runner": "playwright",
+  "executionMode": "full",
+  "repeatRuns": 2,
+  "coverageScope": {
+    "frontend": {"root": "client", "sourceDirectory": "src"},
+    "backend": {"root": "server", "sourceDirectory": "src"}
+  }
+}
+
+### Evidence capabilities: enabled flags and verified support are separate
+GET http://localhost:5000/api/coverage/{{assessmentSnapshotId}}/system/capabilities
+Authorization: Bearer {{assessmentToken}}

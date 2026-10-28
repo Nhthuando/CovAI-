@@ -1,0 +1,54 @@
+@startuml CovAI_System_Context
+!include <C4/C4_Context>
+
+' ==============================================================================
+' System Context Diagram (C4 Model - Level 1) for CovAI System
+' Standard: C4 Model (Simon Brown) / ISO/IEC/IEEE 42010
+' Specification: C1SE.30 Proposal v1.1 & Repository Implementation
+' ==============================================================================
+
+LAYOUT_WITH_LEGEND()
+
+title System Context Diagram for CovAI System
+caption [C4 Model - Level 1: System Context] Test Coverage Analysis and AI-Driven Test Generation Platform
+
+' ------------------------------------------------------------------------------
+' 1. Actors & Primary Systems
+' ------------------------------------------------------------------------------
+Person(developer, "Developer / QA Engineer", "Software developer, QA tester, or team lead who develops, tests, and analyzes JavaScript & TypeScript applications.")
+
+System(covai, "CovAI System", "AI-driven test coverage analysis & automated test generation platform. Ingests source code, auto-detects frameworks, executes tests in isolated Docker containers, computes 4-dimension coverage (stmt/branch/func/line), builds AST-based CFG & Cyclomatic Complexity, and generates AI tests & suggestions.")
+
+' ------------------------------------------------------------------------------
+' 2. External Systems
+' ------------------------------------------------------------------------------
+System_Ext(github, "GitHub", "VCS platform providing OAuth 2.0 authentication, repository metadata, source code cloning, and push/pull-request webhook triggers.")
+
+System_Ext(docker, "Docker Execution Environment", "Sandboxed container runtime that installs dependencies and runs test runners (Jest, Vitest, Supertest, Playwright, Cypress) in isolation, returning execution logs and coverage artifacts.")
+
+System_Ext(gemini, "Google Gemini AI Service", "External Cloud LLM service providing code analysis, coverage improvement recommendations, test skeletons, and full runnable test suites.")
+
+System_Ext(firebase, "Firebase Cloud Storage", "Cloud object storage for persistent storage of source snapshots, project ZIP archives, and raw coverage artifacts (LCOV, JSON).")
+
+System_Ext(email, "Email Service (SMTP)", "Transactional email delivery service for password resets, verification tokens, and critical analysis alerts.")
+
+' ------------------------------------------------------------------------------
+' 3. Relationships & Data Flows
+' ------------------------------------------------------------------------------
+Rel(developer, covai, "Manages projects, uploads ZIP, imports repos, triggers test analysis, views CFG/CC, requests AI tests", "HTTPS / Web Browser")
+Rel(covai, developer, "Delivers dashboards, coverage reports, interactive CFG, generated tests & real-time progress", "HTTPS / WebSocket")
+
+Rel(covai, github, "Authenticates via OAuth, fetches repo metadata, clones source code", "HTTPS / REST API / Git")
+Rel(github, covai, "Sends push / pull-request webhook events to trigger automated analysis", "HTTPS / Webhook")
+
+Rel(covai, docker, "Mounts source snapshot and executes testing commands", "Docker CLI / Container API")
+Rel(docker, covai, "Returns execution logs, exit codes, and coverage outputs (LCOV, JSON)", "Host Volume / stdout stream")
+
+Rel(covai, gemini, "Sends prompts with source AST, CFG, CC, and uncovered branches; receives generated tests & tips", "HTTPS / REST API")
+
+Rel(covai, firebase, "Uploads and downloads project snapshots, archives, and coverage files", "HTTPS / Firebase Admin SDK")
+
+Rel(covai, email, "Dispatches password reset and system notification emails", "SMTP / TLS")
+Rel(email, developer, "Delivers notification & verification emails", "Email Client")
+
+@enduml

@@ -1,0 +1,1 @@
+{"name": "assessment-fixture-api", "private": true, "type": "module", "scripts": {"start": "node src/index.js"}, "dependencies": {"pg": "8.21.0"}, "version": "1.0.0"}

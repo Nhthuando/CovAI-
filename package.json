@@ -1,0 +1,16 @@
+{
+  "name": "covai-root",
+  "private": true,
+  "scripts": {
+    "dev": "npx concurrently --names \"client,server\" --prefix-colors \"blue,green\" \"npm run dev --prefix client\" \"npm run dev --prefix server\"",
+    "install:all": "npm install --prefix client && npm install --prefix server"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.101.0",
+    "axios": "^1.18.1",
+    "esprima": "^4.0.1",
+    "recharts": "^3.8.1",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3"
+  }
+}

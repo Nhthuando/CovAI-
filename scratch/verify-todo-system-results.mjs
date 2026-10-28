@@ -1,0 +1,13 @@
+import prisma from '../server/src/config/prisma.js';
+import { isPortInUse } from '../server/src/services/autLifecycle.service.js';
+const snapshotId = 'cmutfh1uo0001co7k8lgrfm6y';
+const run = await prisma.testRun.findFirst({where:{snapshotId,type:'PLAYWRIGHT'},orderBy:{createdAt:'desc'},include:{scenarios:true}});
+const ai = await prisma.aiTest.findFirst({where:{snapshotId,mode:'PLAYWRIGHT_E2E'},orderBy:{createdAt:'desc'},select:{status:true,filePath:true}});
+const job = await prisma.job.findFirst({where:{snapshotId,type:'SYSTEM_TEST_ANALYSIS',status:'SUCCESS'},orderBy:{createdAt:'desc'},include:{logs:true}});
+const health = job?.logs.find(log => log.message.includes('[AUT Healthcheck] Successfully connected'));
+const port = Number(health?.message.match(/localhost:(\d+)/)?.[1]);
+const portReleased = port ? !await isPortInUse(port) : null;
+console.log(JSON.stringify({aiStatus:ai?.status,filePath:ai?.filePath,total:run?.totalTests,passed:run?.passedTests,failed:run?.failedTests,flaky:run?.flakyTests,scenarios:run?.scenarios.length,jobStatus:job?.status,autPort:port,portReleased},null,2));
+await prisma.$disconnect();
+if (ai?.status !== 'VERIFIED' || run?.totalTests !== 4 || run?.passedTests !== 4 || run?.scenarios.length !== 4 || !portReleased) process.exitCode = 1;
+process.exit(process.exitCode || 0);

@@ -1,0 +1,485 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+@import "tailwindcss";
+
+/* Ensure Tailwind v4 respects both data-theme attribute and .dark class */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *, .dark, .dark *));
+
+@theme {
+  --color-background: var(--color-bg);
+  --color-surface: var(--color-surface);
+  --color-surface-secondary: var(--color-surface-secondary);
+  --color-surface-raised: var(--color-surface-raised);
+  --color-surface-muted: var(--color-surface-muted);
+  --color-border-default: var(--color-border);
+  --color-border-strong: var(--color-border-strong);
+  --color-text-primary: var(--color-text);
+  --color-text-secondary: var(--color-text-secondary);
+  --color-text-muted: var(--color-text-muted);
+  --color-text-disabled: var(--color-text-disabled);
+  --color-primary: var(--color-primary);
+  --color-primary-hover: var(--color-primary-hover);
+  --color-primary-active: var(--color-primary-active);
+  --color-primary-foreground: var(--color-primary-foreground);
+  --color-secondary: var(--color-secondary);
+  --color-secondary-hover: var(--color-secondary-hover);
+  --color-success: var(--color-success);
+  --color-warning: var(--color-warning);
+  --color-danger: var(--color-danger);
+  --color-info: var(--color-info);
+  --color-focus-ring: var(--color-focus);
+
+  /* Unified Dashboard Semantic Tokens */
+  --color-ud-bg: var(--ud-bg);
+  --color-ud-surface: var(--ud-surface);
+  --color-ud-surface-2: var(--ud-surface-2);
+  --color-ud-border: var(--ud-border);
+  --color-ud-text: var(--ud-text);
+  --color-ud-muted: var(--ud-text-muted);
+  --color-ud-pass: var(--ud-pass);
+  --color-ud-fail: var(--ud-fail);
+  --color-ud-warn: var(--ud-warn);
+  --color-ud-unit: var(--ud-unit);
+  --color-ud-integration: var(--ud-integration);
+  --color-ud-system: var(--ud-system);
+  --color-ud-neutral: var(--ud-neutral);
+}
+
+/* ============================================================
+   COVAI DESIGN SYSTEM — DESIGN TOKENS
+   Standard Design Tokens per WCAG 2.2 AA Contrast Ratios
+   ============================================================ */
+
+:root {
+  /* Brand Primary (Indigo) - 6.4:1 contrast vs white */
+  --color-primary: #4f46e5;
+  --color-primary-hover: #4338ca;
+  --color-primary-active: #3730a3;
+  --color-primary-foreground: #ffffff;
+
+  /* Secondary (Sky) */
+  --color-secondary: #0284c7;
+  --color-secondary-hover: #0369a1;
+
+  /* Semantic Status Colors */
+  --color-success: #15803d;
+  --color-warning: #b45309;
+  --color-danger: #dc2626;
+  --color-info: #0284c7;
+
+  /* Light Theme Surfaces & Borders */
+  --color-bg: #ffffff;
+  --color-surface: #f8fafc;
+  --color-surface-secondary: #f1f5f9;
+  --color-surface-raised: #ffffff;
+  --color-surface-muted: #e2e8f0;
+  --color-border: #e2e8f0;
+  --color-border-strong: #cbd5e1;
+
+  /* Light Theme Typography - Contrast tested */
+  --color-text: #0f172a;           /* 15.8:1 AAA vs #fff */
+  --color-text-secondary: #475569; /* 7.6:1 AAA vs #fff */
+  --color-text-muted: #64748b;     /* 4.6:1 AA vs #fff */
+  --color-text-disabled: #94a3b8;  /* 2.8:1 inactive */
+
+  /* Interactive */
+  --color-focus: #4f46e5;
+
+  /* Radii */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+
+  /* Font families */
+  --font-sans:
+    "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+
+  /* Backward Compatibility Aliases for Existing Screens */
+  --surface-main: var(--color-bg);
+  --surface-container: var(--color-surface);
+  --surface-card: var(--color-surface);
+  --surface-variant: var(--color-surface-secondary);
+  --surface-elevated: var(--color-surface-raised);
+  --surface-overlay: var(--color-surface-raised);
+  --surface-hover: var(--color-surface-secondary);
+  --border-main: var(--color-border);
+  --accent-primary: var(--color-primary);
+  --error: var(--color-danger);
+  --primary: var(--color-primary);
+  --primary-light: var(--color-primary-hover);
+  --accent-cyan: var(--color-secondary);
+  --text-primary: var(--color-text);
+  --text-secondary: var(--color-text-secondary);
+  --text-muted: var(--color-text-muted);
+  --ide-border: var(--color-border);
+  --ide-bg: var(--color-bg);
+  --ide-sidebar: var(--color-surface);
+  --ide-activitybar: var(--color-surface-secondary);
+  --ide-tabbar: var(--color-surface-secondary);
+  --ide-active-tab: var(--color-bg);
+  --ide-line-num: var(--color-text-muted);
+  --ide-gutter: var(--color-surface);
+}
+
+[data-theme="dark"],
+.dark {
+  /* Brand Primary (Indigo Light) - 7.8:1 contrast vs #11161d */
+  --color-primary: #818cf8;
+  --color-primary-hover: #9da7fb;
+  --color-primary-active: #6366f1;
+  --color-primary-foreground: #0b0f14;
+
+  /* Secondary (Sky) */
+  --color-secondary: #38bdf8;
+  --color-secondary-hover: #7dd3fc;
+
+  /* Semantic Status Colors */
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-info: #38bdf8;
+
+  /* Dark Theme Surfaces & Borders */
+  --color-bg: #0b0f14;
+  --color-surface: #11161d;
+  --color-surface-secondary: #171d25;
+  --color-surface-raised: #1c232e;
+  --color-surface-muted: #222a36;
+  --color-border: #29313d;
+  --color-border-strong: #3f4957;
+
+  /* Dark Theme Typography - Contrast tested */
+  --color-text: #f8fafc;           /* 15.2:1 AAA vs #11161d */
+  --color-text-secondary: #cbd5e1; /* 11.4:1 AAA vs #11161d */
+  --color-text-muted: #94a3b8;     /* 6.9:1 AAA vs #11161d */
+  --color-text-disabled: #64748b;  /* 2.9:1 inactive */
+
+  --color-focus: #818cf8;
+
+  /* Backward Compatibility Aliases for Existing Screens */
+  --surface-main: var(--color-bg);
+  --surface-container: var(--color-surface);
+  --surface-card: var(--color-surface);
+  --surface-variant: var(--color-surface-secondary);
+  --surface-elevated: var(--color-surface-raised);
+  --surface-overlay: var(--color-surface-raised);
+  --surface-hover: var(--color-surface-secondary);
+  --border-main: var(--color-border);
+  --accent-primary: var(--color-primary);
+  --error: var(--color-danger);
+  --primary: var(--color-primary);
+  --primary-light: var(--color-primary-hover);
+  --accent-cyan: var(--color-secondary);
+  --text-primary: var(--color-text);
+  --text-secondary: var(--color-text-secondary);
+  --text-muted: var(--color-text-muted);
+  --ide-border: var(--color-border);
+  --ide-bg: var(--color-bg);
+  --ide-sidebar: var(--color-surface);
+  --ide-activitybar: var(--color-surface-secondary);
+  --ide-tabbar: var(--color-surface-secondary);
+  --ide-active-tab: var(--color-bg);
+  --ide-line-num: var(--color-text-muted);
+  --ide-gutter: var(--color-surface);
+}
+
+/* ============================================================
+   GLOBAL RESET & BASE
+   ============================================================ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-sans);
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  min-height: 100vh;
+  overflow-x: hidden;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease;
+}
+
+/* Developer layout container */
+.ide-root {
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--color-bg);
+}
+
+/* ============================================================
+   BROWSER AUTOFILL OVERRIDES
+   ============================================================ */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active,
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:hover,
+textarea:-webkit-autofill:focus,
+select:-webkit-autofill,
+select:-webkit-autofill:hover,
+select:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--color-text) !important;
+  caret-color: var(--color-text) !important;
+  -webkit-box-shadow: 0 0 0 1000px var(--color-surface) inset !important;
+  box-shadow: 0 0 0 1000px var(--color-surface) inset !important;
+  transition: background-color 600000s ease-in-out 0s !important;
+}
+
+/* ============================================================
+   SUBTLE SCROLLBARS (CLEAN & NON-GLOWING)
+   ============================================================ */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-button {
+  display: none !important;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: var(--radius-sm);
+  transition: background 0.15s ease;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+
+/* ============================================================
+   SYNTAX HIGHLIGHTING (TECHNICAL DEVELOPER TOKENS)
+   ============================================================ */
+.token-keyword {
+  color: #c084fc;
+}
+.token-type {
+  color: #38bdf8;
+}
+.token-fn {
+  color: #60a5fa;
+}
+.token-string {
+  color: #4ade80;
+}
+.token-number {
+  color: #fb923c;
+}
+.token-comment {
+  color: #64748b;
+  font-style: italic;
+}
+.token-plain {
+  color: var(--color-text);
+}
+
+/* Code gutter highlight lines */
+.line-covered {
+  background: rgba(34, 197, 94, 0.08);
+}
+.line-uncovered {
+  background: rgba(239, 68, 68, 0.08);
+}
+.line-partial {
+  background: rgba(245, 158, 11, 0.08);
+}
+
+/* Monaco Coverage Gutter Glyphs */
+.coverage-glyph-passed {
+  color: var(--color-success) !important;
+  font-weight: 700;
+  font-size: 13px;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  line-height: 1;
+}
+.coverage-glyph-passed::before {
+  content: "✓";
+}
+
+.coverage-glyph-uncovered {
+  color: var(--color-warning) !important;
+  font-weight: 700;
+  font-size: 13px;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  line-height: 1;
+}
+.coverage-glyph-uncovered::before {
+  content: "⚑";
+}
+
+.coverage-glyph-failed {
+  color: var(--color-danger) !important;
+  font-weight: 700;
+  font-size: 15px;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  line-height: 1;
+}
+.coverage-glyph-failed::before {
+  content: "×";
+}
+
+.coverage-line-failed {
+  background: rgba(239, 68, 68, 0.12) !important;
+}
+.coverage-line-uncovered {
+  background: rgba(245, 158, 11, 0.08) !important;
+}
+
+/* Independent scrollbar for code and test file panels */
+.file-panel-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.45) rgba(0, 0, 0, 0.04);
+  overscroll-behavior: contain;
+}
+
+.file-panel-scrollbar::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+.file-panel-scrollbar::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 4px;
+}
+
+.file-panel-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.5);
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background-clip: content-box;
+  transition: background-color 0.2s ease;
+}
+
+.file-panel-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(124, 58, 237, 0.8);
+  border: 1px solid transparent;
+  background-clip: content-box;
+}
+
+.dark .file-panel-scrollbar,
+[data-theme="dark"] .file-panel-scrollbar {
+  scrollbar-color: rgba(167, 139, 250, 0.4) rgba(255, 255, 255, 0.03);
+}
+
+.dark .file-panel-scrollbar::-webkit-scrollbar-track,
+[data-theme="dark"] .file-panel-scrollbar::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.dark .file-panel-scrollbar::-webkit-scrollbar-thumb,
+[data-theme="dark"] .file-panel-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(167, 139, 250, 0.45);
+}
+
+.dark .file-panel-scrollbar::-webkit-scrollbar-thumb:hover,
+[data-theme="dark"] .file-panel-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(167, 139, 250, 0.85);
+}
+
+/* ── Monaco Editor Function Active Range Decoration & Glow ── */
+.monaco-function-active-range {
+  background: rgba(56, 189, 248, 0.12) !important;
+  border-left: 3px solid #38bdf8 !important;
+  animation: functionPulseGlow 3.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.monaco-function-line-number-active {
+  color: #38bdf8 !important;
+  font-weight: 700 !important;
+}
+
+.monaco-function-glyph-marker {
+  background: #38bdf8 !important;
+  width: 4px !important;
+  border-radius: 2px;
+  margin-left: 3px;
+}
+
+@keyframes functionPulseGlow {
+  0% {
+    background: rgba(56, 189, 248, 0.28);
+    border-left-color: #38bdf8;
+  }
+  60% {
+    background: rgba(56, 189, 248, 0.12);
+    border-left-color: #38bdf8;
+  }
+  100% {
+    background: transparent;
+    border-left-color: transparent;
+  }
+}
+
+/* Dark primary buttons need dark foreground for readable system-test actions. */
+[data-theme="dark"] .system-test-primary-action { color: #0b0f14; }
+
+/* ============================================================
+   UNIFIED QUALITY & TESTING DASHBOARD — SCOPED TOKENS
+   Strict GitHub Primer / Technical Engineering theme
+   Light Mode Default, Dark Mode via [data-theme="dark"] / .dark
+   ============================================================ */
+.unified-dashboard {
+  --ud-bg: #f6f8fa;
+  --ud-surface: #ffffff;
+  --ud-surface-2: #f3f4f6;
+  --ud-border: #d0d7de;
+  --ud-text: #1f2328;
+  --ud-text-muted: #656d76;
+  --ud-pass: #1a7f37;
+  --ud-fail: #cf222e;
+  --ud-warn: #9a6700;
+  --ud-unit: #0969da;
+  --ud-integration: #8250df;
+  --ud-system: #1b7c83;
+  --ud-neutral: #8c959f;
+}
+
+[data-theme="dark"] .unified-dashboard,
+.dark .unified-dashboard {
+  --ud-bg: #0d1117;
+  --ud-surface: #161b22;
+  --ud-surface-2: #1f242c;
+  --ud-border: #30363d;
+  --ud-text: #f0f6fc;
+  --ud-text-muted: #8b949e;
+  --ud-pass: #3fb950;
+  --ud-fail: #f85149;
+  --ud-warn: #d29922;
+  --ud-unit: #58a6ff;
+  --ud-integration: #a371f7;
+  --ud-system: #39c5cf;
+  --ud-neutral: #6e7681;
+}

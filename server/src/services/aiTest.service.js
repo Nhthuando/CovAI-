@@ -1,0 +1,356 @@
+import { resolveProjectAccess, membershipWhere } from './projectAccess.service.js';
+import prisma from "../config/prisma.js";
+import { ServiceError } from "./project.service.js";
+import { generateText } from "./gemini.service.js";
+import { buildFullTestPrompt } from "./fullTestPromptBuilder.service.js";
+import { buildAiPayload, loadSourceCode } from "./aiContextBuilder.service.js";
+import { validateGeneratedTest } from "./testValidation.service.js";
+import { createAiTestsJob } from "./job.service.js";
+import { extractValidEndpoints } from "./apiEndpointParser.service.js";
+import { addJobToQueue } from "./queue.service.js";
+
+export const queueSupertestGeneration = async ({ projectId, snapshotId, userId, force, targetEndpoints, model }) => {
+  await resolveProjectAccess({ projectId, userId, capability: "ai.use" });
+  const db = prisma;
+
+  // 1. Verify project ownership
+  const project = await db.project.findUnique({
+    where: { id: projectId },
+    select: { ownerId: true },
+  });
+
+  if (!project) {
+    const err = new Error("Project not found");
+    err.status = 404;
+    throw err;
+  }
+
+  await resolveProjectAccess({ projectId, userId, capability: "project.read" });
+
+  // 2. Resolve snapshot — use the provided one or fall back to the latest
+  let resolvedSnapshotId = snapshotId;
+  if (!resolvedSnapshotId) {
+    const latestSnapshot = await db.projectSnapshot.findFirst({
+      where: { projectId },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
+
+    if (!latestSnapshot) {
+      const err = new Error("No snapshot found for this project");
+      err.status = 404;
+      throw err;
+    }
+
+    resolvedSnapshotId = latestSnapshot.id;
+  }
+
+  // 2.5 Ensure the job proceeds immediately to background processing.
+  // The worker will load source code and extract endpoints asynchronously.
+
+  // 2.8 Pre-flight Dirty Check (F-03)
+  if (!force) {
+    const allTests = await db.aiTest.findMany({
+      where: { snapshotId: resolvedSnapshotId }
+    });
+    const existingTests = allTests.filter(t => {
+      if (!t.metaJson) return false;
+      try {
+        return JSON.parse(t.metaJson).framework === "SUPERTEST";
+      } catch { return false; }
+    });
+    
+    let hasEdits = false;
+    const targetSet = (targetEndpoints && Array.isArray(targetEndpoints) && targetEndpoints.length > 0)
+      ? new Set(targetEndpoints.map(t => typeof t === 'string' ? t.trim().toUpperCase() : `${t.method} ${t.path || t.fullPath || t.route}`.trim().toUpperCase()))
+      : null;
+
+    for (const test of existingTests) {
+      if (test.metaJson) {
+        try {
+          const meta = JSON.parse(test.metaJson);
+          if (targetSet) {
+            // Only check requests matching the targeted endpoints
+            const targetRequests = meta.requests?.filter(r => {
+              const k = `${r.method} ${r.path}`.toUpperCase();
+              return targetSet.has(k);
+            }) || [];
+            if (targetRequests.some(r => r.userEdited || r.isManuallyAdded || r.enabled === false)) {
+              hasEdits = true;
+              break;
+            }
+          } else {
+            if (meta.userModified) {
+              hasEdits = true;
+              break;
+            }
+            if (meta.requests?.some(r => r.userEdited || r.isManuallyAdded || r.enabled === false)) {
+              hasEdits = true;
+              break;
+            }
+          }
+        } catch (e) {}
+      }
+    }
+    
+    if (hasEdits) {
+      const err = new Error("Cannot overwrite user-edited integration scenarios.");
+      err.status = 409;
+      err.code = "USER_MODIFICATIONS_EXIST";
+      throw err;
+    }
+  }
+
+  // 3. Create job (deduped — reuses active job if exists)
+  const job = await createAiTestsJob({
+    model,
+    projectId,
+    snapshotId: resolvedSnapshotId,
+    userId,
+    mode: "SUPERTEST",
+    targetEndpoints,
+  });
+
+  // Invalidate any stale endpoint cache so fresh status/paths are loaded
+  try {
+    const { invalidateEndpointCache } = await import("./integrationWorkspace.service.js");
+    invalidateEndpointCache(resolvedSnapshotId);
+  } catch (e) {}
+
+  // 4. Fire-and-forget queue addition (non-blocking)
+  if (!job.existing) {
+    addJobToQueue("AI_TESTS", job.id).catch((err) => {
+      console.error("[queueSupertestGeneration] Failed to add job to queue:", err);
+    });
+  }
+
+  return job;
+};
+
+export const getAiTestById = async ({ projectId, testId, userId }) => {
+  // 1. Verify project ownership
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, ...membershipWhere(userId) },
+  });
+
+  if (!project) {
+    throw new ServiceError("Project not found or unauthorized", 403);
+  }
+
+  // 2. Find the test
+  const aiTest = await prisma.aiTest.findFirst({
+    where: { id: testId, projectId },
+  });
+
+  if (!aiTest) {
+    throw new ServiceError("AI Test not found", 404);
+  }
+
+  return aiTest;
+};
+
+export const listAiTests = async ({
+  projectId,
+  userId,
+  page = 1,
+  limit = 10,
+}) => {
+  // 1. Verify project ownership
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, ...membershipWhere(userId) },
+  });
+
+  if (!project) {
+    throw new ServiceError("Project not found or unauthorized", 403);
+  }
+
+  // 2. Count total
+  const total = await prisma.aiTest.count({
+    where: { projectId },
+  });
+
+  // 3. Fetch paginated records
+  const items = await prisma.aiTest.findMany({
+    where: { projectId },
+    orderBy: { createdAt: "desc" },
+    skip: (page - 1) * limit,
+    take: parseInt(limit),
+  });
+
+  return {
+    items,
+    total,
+    page: parseInt(page),
+    limit: parseInt(limit),
+  };
+};
+
+export const saveAiTestResult = async (data) => {
+  const db = prisma;
+
+  if (!db) {
+    throw new Error("Prisma client instance is not properly initialized.");
+  }
+
+  const { aiTestId, status, output, error, duration } = data;
+
+  // Check whether aiTestId exists in AiTest table
+  const aiTest = await db.aiTest.findUnique({
+    where: { id: aiTestId },
+  });
+
+  if (!aiTest) throw new ServiceError("AI Test not found", 404);
+  await resolveProjectAccess({ projectId: aiTest.projectId, userId: data.userId, capability: "tests.run" });
+
+  return await db.aiTestResult.upsert({
+    where: { aiTestId },
+    update: { status, output, error, duration },
+    create: {
+      aiTestId,
+      status,
+      output,
+      error,
+      duration,
+    },
+  });
+};
+
+export const getAiTestsList = async ({
+  projectId,
+  userId,
+  page = 1,
+  limit = 20,
+  status,
+}) => {
+  const db = prisma;
+  if (!db)
+    throw new Error("Prisma client instance is not properly initialized.");
+
+  if (!projectId) {
+    const error = new Error("Project ID is required");
+    error.status = 400;
+    throw error;
+  }
+
+  // Security Check: Verify project ownership
+  const project = await db.project.findUnique({
+    where: { id: projectId },
+    select: { ownerId: true },
+  });
+
+  if (!project) {
+    const error = new Error("Project not found");
+    error.status = 404;
+    throw error;
+  }
+
+  await resolveProjectAccess({ projectId, userId, capability: "project.read" });
+
+  // Pagination calculations
+  const skip = (Math.max(1, page) - 1) * limit;
+
+  // Build Filter
+  const where = {
+    projectId,
+    ...(status && { AiTestResult: { status } }), // Filter by PASS/FAIL if provided
+  };
+
+  // Fetch data in parallel
+  const [total, tests] = await Promise.all([
+    db.aiTest.count({ where }),
+    db.aiTest.findMany({
+      where,
+      skip,
+      take: Number(limit),
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        projectId: true,
+        snapshotId: true,
+        mode: true,
+        filePath: true,
+        createdAt: true,
+        AiTestResult: {
+          select: {
+            id: true,
+            status: true,
+            duration: true,
+            error: true, // Return error summary so frontend knows the reason
+            createdAt: true,
+          },
+        },
+      },
+    }),
+  ]);
+
+  return {
+    data: tests,
+    pagination: {
+      total,
+      page: Number(page),
+      limit: Number(limit),
+      totalPages: Math.ceil(total / limit),
+    },
+  };
+};
+
+/**
+ * Verifies project ownership, resolves the latest snapshot if none specified,
+ * creates a deduped AI_TESTS job with mode="CYPRESS", and enqueues it.
+ *
+ * @param {{ projectId: string, snapshotId?: string, userId: string }} params
+ * @returns {Promise<{ id: string, snapshotId: string, status: string, existing: boolean }>}
+ */
+export const queueCypressGeneration = async ({ projectId, snapshotId, userId }) => {
+  await resolveProjectAccess({ projectId, userId, capability: "ai.use" });
+  const db = prisma;
+
+  // 1. Verify project ownership
+  const project = await db.project.findUnique({
+    where: { id: projectId },
+    select: { ownerId: true },
+  });
+
+  if (!project) {
+    const err = new Error("Project not found");
+    err.status = 404;
+    throw err;
+  }
+
+  await resolveProjectAccess({ projectId, userId, capability: "project.read" });
+
+  // 2. Resolve snapshot — use the provided one or fall back to the latest
+  let resolvedSnapshotId = snapshotId;
+  if (!resolvedSnapshotId) {
+    const latestSnapshot = await db.projectSnapshot.findFirst({
+      where: { projectId },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
+
+    if (!latestSnapshot) {
+      const err = new Error("No snapshot found for this project");
+      err.status = 404;
+      throw err;
+    }
+
+    resolvedSnapshotId = latestSnapshot.id;
+  }
+
+  // 3. Create job (deduped — reuses active CYPRESS job if exists)
+  const job = await createAiTestsJob({
+    projectId,
+    snapshotId: resolvedSnapshotId,
+    userId,
+    mode: "CYPRESS",
+  });
+
+  // 4. Fire-and-forget queue addition (non-blocking)
+  if (!job.existing) {
+    addJobToQueue("AI_TESTS", job.id).catch((err) => {
+      console.error("[queueCypressGeneration] Failed to add job to queue:", err);
+    });
+  }
+
+  return job;
+};

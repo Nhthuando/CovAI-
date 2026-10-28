@@ -1,0 +1,1075 @@
+--- PAGE 1 ---
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+International School  
+ 
+ 
+Capstone Project 1  
+CMU -SE 450  
+Project Plan  
+Version 1.0  
+Date: Sep 9th, 202 6 
+COVAI  
+TEST COVERAGE ANALYSIS AND AI -DRIVEN 
+TEST GENERATION SYSTEM  
+Created by C1SE.30  
+ 
+Dinh, Huynh Tan  
+Phuc, Tran Huu  
+Quy, Nguyen Duy  
+Thuan, Ngo Huu  
+Approved by  
+Man, Nguyen Duc, Ph.D.  
+ 
+   Project Plan Review Panel Representative:   
+                        
+    Name     Signature   Date  
+    
+Capstone Project 1 - Mentor:     
+                
+    Name     Signature   Date
+
+--- PAGE 2 ---
+ 
+ PROJECT INFORMATION  
+  
+Project acronym  COVAI  
+Project Title  Test Coverage Analysis and AI -Driven Test Generation System  
+Start Date  Aug 10, 2026  End Date  Dec 12, 2026  
+Lead Institution  International School, Duy Tan University  
+Project Mentor  Man, Nguyen Duc, Ph.D.  
+Scrum master  
+/ Project Leader 
+& contact details  Dinh, Huynh Tan  
+Email: huynhtandinh.dev@gmail.com  
+Tel: 0365 472 162  
+ID: 29219052500  
+Partner 
+Organization  Duy Tan University  
+Project Web 
+URL   
+Team members  Name  Email  Tel 
+29219052500  Dinh, Huynh Tan  huynhtandinh.dev@gmail.com   0365472162  
+29211458179  Phuc, Tran Huu  phuc12435az@gmail.com   0842644169  
+29211158823  Quy, Nguyen Duy  quylavip333@gmail.com   0334814522  
+29219065178  Thuan, Huu Ngo  thuanhuugl@gmail.com   0385591447  
+
+--- PAGE 3 ---
+ 
+ 
+ DOCUMENT APPROVALS  
+The following signatures are required for approval of this document.  
+Dinh, Huynh Tan  
+Student ID: 29219052500  
+Scrum Master  Signature  Date  
+Phuc, Tran Huu  
+Student ID: 29211458179  
+Team Member  Signature  Date  
+Quy, Nguyen Duy  
+Student ID: 29211158823  
+Team Member  Signature  Date  
+Thuan, Ngo Huu  
+Student ID: 29219065178  
+Team Member  Signature  Date  
+
+--- PAGE 4 ---
+ 
+ PROJECT PLAN DOCUMENT  
+Document Title  Project Plan Document  
+Author(s)  Dinh, Huynh Tan  
+Role  Scrum Master  
+Date   August 10, 2026  File name:  C1SE .30_ProjectPlan_v1.1.docx  
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+--- PAGE 5 ---
+ 
+ 
+  
+REVISION HISTORY  
+Version  Date  Comments  Author  
+1.0 Sep 09, 2026  Initial Document  Dinh  
+1.1 Sep 10, 2026  Update Document  Dinh  
+
+--- PAGE 6 ---
+ 
+ 
+  International School Capstone 1 – 2026 
+ PROJECT PLAN  
+  
+TABLE  OF CONTENTS  
+1. Introduction  ................................ ................................ ................................ ..............  1 
+1.1. Purpose  ................................ ................................ ................................ .............  1 
+1.2. Project Overview  ................................ ................................ ..............................  1 
+1.3. Project Deliverable  ................................ ................................ ...........................  2 
+2. Team Organization  ................................ ................................ ................................ ... 3 
+2.1. Scrum Team Information  ................................ ................................ .................  3 
+2.2. Role and Responsibility  ................................ ................................ ...................  3 
+2.3. Communication Methodology  ................................ ................................ .........  4 
+3. Development  ................................ ................................ ................................ ............  6 
+4. Schedule and Cost  ................................ ................................ ................................ .... 7 
+4.1. Detailed Schedule  ................................ ................................ .............................  7 
+4.2 Cost Person/Hours  ................................ ................................ ............................  9 
+4.3 Tooling, Infrastructure & Material Expenses ................................ .................  10 
+4.4 Total Cost Estimate  ................................ ................................ ........................  12 
+5. Project Risk  ................................ ................................ ................................ ............  14 
+6. Deliverables  ................................ ................................ ................................ ............  17 
+ 
+ 
+  
+  
+
+--- PAGE 7 ---
+ 
+ 
+  International School Capstone 1 – 2026 
+ PROJECT PLAN  
+LIST OF TABLES  
+Table 1 - Scrum Team Organization  ................................ ................................ ...............  3 
+Table 2 - Role and Responsibilities.  ................................ ................................ ................  3 
+Table 3 - Communication Methodology  ................................ ................................ .........  4 
+Table 4  - Communication and Report  ................................ ................................ .............  5 
+Table 5  - Detailed Schedule  ................................ ................................ ............................  7 
+Table 6  - Cost of person/hours  ................................ ................................ ........................  9 
+Table 7 - Labor & Resource Parameters  ................................ ................................ ....... 12 
+Table 8 - Total Project Cost Estimation  ................................ ................................ ........  13 
+Table 9  - Risk Rating  ................................ ................................ ................................ ..... 14 
+Table 10  - Project Risk  ................................ ................................ ................................ .. 14 
+Table 11  - Deliverables  ................................ ................................ ................................ . 17 
+ 
+ 
+  
+ 
+ 
+ 
+ 
+  
+
+--- PAGE 8 ---
+ 
+ 
+C1SE.30   Page 1 of 18 
+  International School Capstone 1 – 2026 
+ PROJECT PLAN  
+1. Introduction  
+1.1. Purpose  
+The purpose of this document is to provide a comprehensive project management 
+and development plan for the COVAI – Software Testing and AI Chatbot 
+Trustworthiness Evaluation System.  
+This document defines the project organization, team responsibilities, 
+communication methods, development methodology, implementation schedule, 
+resource allocation, risk management, and project deliverables.  
+The project plan serves as a guideline for the COVAI development team to 
+coordinate activities, monitor project progress, manage technical risks, and ensure that 
+the project is completed within the planned academic schedule.  
+The main goal is to successfully develop an AI -driven software quality platform that 
+supports automated software testing, test coverage analysis, code structure analysis, AI -
+assisted test generation, and project -specific evaluation of internal AI chatbot 
+trustworthiness.  
+1.2. Project Overview  
+The detailed project background, problem statement, proposed solution, system 
+scope, architecture, functional requirements, and non -functional requirements are 
+defined in:  
+C1SE.30_Proposal_ver1.2.docx  
+o COVAI is an AI -driven software quality platform that provides two major 
+capabilities:  
+o Software Testing and Quality Analysis: source -code ingestion, testing -
+framework detection, isolated test execution, coverage analysis, Control Flow 
+Graph analysis, Cyclomatic Complexity analysis, and AI -assisted test 
+generation.  
+o AI Chatbot Trustworthiness Evaluation: project -specific evaluation of internal 
+AI chatbots using business rules, knowledge bases, API specifications, expected 
+behaviors, and measurable trustworthiness criteria.  
+o COVAI initially focuses on JavaScript/TypeScript projects and supports 
+selected testing frameworks including Jest, Vitest, Supertest, Playwright, and 
+Cypress.  
+
+--- PAGE 9 ---
+ 
+ 
+C1SE.30   Page 2 of 18 
+  International School Capstone 1 – 2026 
+ PROJECT PLAN  
+1.3. Project Deliverable  
+Primary Software Deliverable  
+A functional academic prototype of the COVAI platform containing the following major 
+capabilities:  
+o User authentication and project management.  
+o Local source -code upload and GitHub repository import.  
+o Project snapshot management.  
+o Automatic testing -framework detection.  
+o Docker -based isolated test execution.  
+o Test coverage analysis.  
+o Control Flow Graph and Cyclomatic Complexity analysis.  
+o AI-assisted test generation.  
+o Multi -framework testing support.  
+o GitHub webhook automation.  
+o Background job processing and notifications.  
+o AI evaluation knowledge ingestion.  
+o Evaluation profile configuration.  
+o Benchmark and evaluation scenario generation.  
+o Internal AI chatbot evaluation.  
+o Trustworthiness scoring, diagnosis, comparison, and reporting.  
+Supporting Deliverables : 
+o Final Report Submission (Full)  
+o Project Proposal  
+o Project Plan (Project Plan, Sprint Plan)  
+o Requirements Engineering Documents (SRS, User Stories, Product Backlog)  
+o System Architecture Document (System Design, Database Design, Algorithm 
+Design)  
+o UI Design Document  
+o Software Test Plan  
+o Test Cases & Test Data  
+o Test Report & Bug Report  
+o Management Documents (Meeting Minutes, Teamwork Evidence)  
+
+--- PAGE 10 ---
+ 
+ 
+C1SE.30   Page 3 of 18 
+  International School Capstone 1 – 2026 
+ PROJECT PLAN  
+o Code Standards and Project Standards  
+o Reflection & 360 Peer Evaluation  
+o Technical Report (Scientific Paper / Project Summary Paper  
+o Source Code Repository  
+o Revised Documents and Presentation Slides  
+2. Team Organization   
+2.1. Scrum Team Information  
+Table 1 - Scrum Team Organization  
+Full Name  Phone  Email  Position  
+Nguyen Duc 
+Man, Ph.D.  0904235945  mannd@duytan.edu.vn  Project Mentor  
+Huynh Tan Dinh  0365472162  huynhtandinh.dev@gmail
+.com  Project Leader / 
+Scrum Master / AI 
+& Backend Lead  
+Tran Huu Phuc  0842644169  phuc12435az@gmail.com  Backend & 
+Integration 
+Developer  
+Nguyen Duy 
+Quy 0334814522  quylavip333@gmail.com  Data & Full -Stack 
+Developer  
+Ngo Huu Thuan  0385591447  thuanhuugl@gmail.com  Frontend Lead / 
+Full-Stack 
+Developer  
+2.2. Role and Responsibility  
+Table 2 - Role and Responsibilities.  
+Full Name  Project Role  Primary Responsibilities  
+Nguyen Duc Man, Ph.D.  Project Mentor  Guide project direction, review 
+milestones, monitor progress  
+
+--- PAGE 11 ---
+ 
+ 
+C1SE.30   Page 4 of 18 
+  International School Capstone 1 – 2026 
+ PROJECT PLAN  
+Full Name  Project Role  Primary Responsibilities  
+Huynh Tan Dinh  Project Leader / Scrum 
+Master / AI & Backend 
+Lead  System architecture, backend 
+core services, AI test 
+generation pipeline, and 
+CI/CD infrastructure  
+Tran Huu Phuc  Backend & Integration 
+Developer  Business logic APIs, database 
+schema design, system 
+integration, and end -to-end 
+testing  
+Nguyen Duy Quy  Data & Full -Stack 
+Developer  Database query optimization, 
+data analysis services, API 
+integration, and user interface 
+modules  
+Ngo Huu Thuan  Frontend Lead / Full -
+Stack Developer  Frontend architecture (React 
+dashboard), UI/UX design 
+implementation, state 
+management, and client 
+performance  
+2.3. Communication Methodology  
+Table 3 - Communication Methodology  
+Audience  Topic  Frequency  Method  
+Mentor & Project 
+Team  Project progress, technical 
+issues, scope review, 
+research direction  Weekly  Face -to-face / 
+Online Meeting / 
+Email  
+Project Team  Sprint progress, blockers, 
+task coordination  Daily  Messenger / Zalo / 
+Jira 
+Project Team  Source code, pull 
+requests, issue tracking  Continuous  GitHub  
+Project Team  Sprint planning and 
+backlog management  Beginning of 
+each Sprint  Jira / Meeting  
+
+--- PAGE 12 ---
+ 
+ 
+C1SE.30   Page 5 of 18 
+  International School Capstone 1 – 2026 
+ PROJECT PLAN  
+Audience  Topic  Frequency  Method  
+Project Team & 
+Mentor  Sprint result/demo/review  End of each 
+Sprint  Meeting / Demo  
+2.4. Communication and Report  
+Table 4 - Communication and Report  
+Type of 
+Communication  Methods / 
+Tools  Frequency  Information  People  
+Daily Scrum  Face -to-
+face / 
+Discord  Every 1–2 
+days Completed tasks, current 
+tasks, blockers and required 
+support  Project 
+Team  
+Sprint Planning  Face -to-
+face / 
+Online 
+Meeting + 
+Jira Beginning 
+of each 2 -
+week 
+Sprint  Select backlog items, 
+estimate workload, assign 
+tasks and define Sprint Goal  Project 
+Team  
+Technical 
+Review  GitHub / 
+Discord  During 
+Sprint  Review architecture, code, 
+pull requests and technical 
+issues  Project 
+Team  
+Sprint Review  Demo / 
+Meeting  End of 
+each Sprint  Demonstrate completed 
+functions and collect 
+feedback  Team & 
+Mentor  
+Sprint 
+Retrospective  Meeting  End of 
+each Sprint  Review what went well, 
+problems encountered and 
+improvements for the next 
+Sprint  Project 
+Team  
+Project Progress 
+Report  Document / 
+Meeting  Weekly  Overall progress, risks, 
+completed work and next 
+activities  Project 
+Leader 
+& 
+Mentor  
+
+--- PAGE 13 ---
+ 
+ 
+C1SE.30   Page 6 of 18 
+  International School Capstone 1 – 2026 
+ PROJECT PLAN  
+3. Development  
+ 
+The COVAI project follows the Agile Scrum methodology with iterative and 
+incremental development.  
+The project contains several interdependent technical components, including 
+frontend interfaces, backend APIs, Docker -based test execution, source -code analysis, 
+multiple testing frameworks, AI -assisted test generation, GitHub automation, and AI 
+chatbot tr ustworthiness evaluation.  
+Therefore, the system is divided into manageable development Sprints. Each Sprint 
+defines a specific goal and produces an increment that can be tested, reviewed, and 
+improved before proceeding to the next phase.  
+Scrum Activities : 
+o Product Backlog: Stores project requirements, user stories, technical tasks and 
+research tasks.  
+o Sprint Planning: Selects backlog items and defines the Sprint Goal.  
+o Development: Implements frontend, backend, testing, AI and integration tasks.  
+o Daily Scrum: Tracks current progress and blockers.  
+o Testing: Tests completed functionality during each Sprint.  
+o Sprint Review: Demonstrates completed features.  
+Figure 1 – Scrum Process  
+
+--- PAGE 14 ---
+ 
+ 
+C1SE.30   Page 7 of 18 
+  International School Capstone 1 – 2026 
+ PROJECT PLAN  
+o Sprint Retrospective: Identifies problems and improvements for the next Sprint.  
+Benefits of Scrum for COVAI : 
+o Supports changing technical and research requirements.  
+o Allows complex features to be implemented incrementally.  
+o Identifies integration problems early.  
+o Supports frequent testing and feedback.  
+o Reduces risk when integrating AI and multiple testing frameworks.  
+o Enables the team to prioritize core features under the limited Capstone schedule.  
+4. Schedule and Cost  
+4.1. Detailed Schedule  
+Table 5 - Detailed Schedule  
+No. Task Name  Duration 
+(Days)  Start Date  End Date  Assigned 
+To 
+— Project Timeline  131 Aug 10, 2026  Dec 26, 2026   
+1 Initial Project Phase  35 Aug 1 0, 2026  Sep 14, 2026   
+1.1 Kick -off Meeting  1 Aug 1 0, 2026  Aug 1 0, 2026  All 
+1.2 Discuss Project Idea  2 Aug 11, 2026  Aug 12, 2026  All 
+1.3 Proposal Document  4 Aug 13, 2026  Aug 16, 2026  All 
+1.4 Project Plan 
+Document  3 Aug 17, 2026  Aug 19, 2026  Dinh  
+1.5 Product Backlog  3 Aug 20, 2026  Aug 22, 2026  Thuan  
+1.6 User Stories  3 Aug 2 3, 2026  Aug 2 5, 2026  Dinh  
+1.7 Software 
+Requirements 
+Specification (SRS)  5 Aug 26, 2026  Aug 30, 2026  Quy, 
+Phuc , 
+Dinh  
+
+--- PAGE 15 ---
+ 
+ 
+C1SE.30   Page 8 of 18 
+  International School Capstone 1 – 2026 
+ PROJECT PLAN  
+No. Task Name  Duration 
+(Days)  Start Date  End Date  Assigned 
+To 
+1.8 System Architecture 
+Design  4 Aug 31, 2026  Sep 03, 2026  All 
+1.9 Database Design  3 Sep 0 4, 2026  Sep 06, 2026  Thuan  
+1.1
+0 User Interface Design  4 Sep 07, 2026  Sep 10, 2026  Thuan  
+1.1
+1 Sprint Plan  3 Sep 11, 2026  Sep 13, 2026  All 
+2 Development Phase  1 48 Sep 14, 2026  Oct 31, 2026   
+2.1 Sprint 1 – 
+Environment Setup, 
+Authentication & 
+Project Management  14 Sep 14, 2026  Sep 27, 2026  All 
+2.2 Sprint 2 – Source 
+Ingestion, Test 
+Execution & 
+Coverage Analysis  14 Sep 28, 2026  Oct 11, 2026  All 
+2.3 Sprint 3 – Code 
+Analysis, Multi -Test 
+Framework Support 
+& AI Test Generation  14 Oct 12, 2026  Oct 25, 2026  All 
+2.4 Sprint 4 – GitHub 
+Automation, 
+Monitoring & System 
+Integration  6 Oct 26, 2026  Oct 31, 2026  All 
+
+--- PAGE 16 ---
+ 
+ 
+C1SE.30   Page 9 of 18 
+  International School Capstone 1 – 2026 
+ PROJECT PLAN  
+No. Task Name  Duration 
+(Days)  Start Date  End Date  Assigned 
+To 
+3 Midterm Report  7 Nov 01, 2026  Nov 07, 2026  All 
+4 Development Phase 2  32 Nov 08, 2026  Dec 09, 2026   
+4.1 Sprint 5 – AI Chatbot 
+Trustworthiness 
+Evaluation Module  14 Nov 08, 2026  Nov 21, 2026  All 
+4.2 Sprint 6 – End-to-End 
+System Testing & 
+Quality Assurance  7 Nov 22, 2026  Nov 28, 2026  All 
+4.3 Sprint 7 – System 
+Deployment, Final 
+Fixes & Project 
+Delivery  11 Nov 29, 2026  Dec 09, 2026  All 
+5 Final Document 
+Submission  4 Dec 10, 2026  Dec 13, 2026  All 
+6 Project Retrospective 
+Meeting  3 Dec 14, 2026  Dec 16, 2026  All 
+7 Capstone Defense  10 Dec 17, 2026  Dec 26, 2026  All 
+ 
+4.2 Cost Person/Hours  
+Table 6 - Cost of person/hours  
+Team 
+Member  Role  Assigned 
+Days  Calculation  
+(6 hours/day)  Total Effort 
+(Hours)  
+Dinh, Huynh 
+Tan Team Leader / AI & 
+Backend Lead  107 107 x 6 642 
+
+--- PAGE 17 ---
+ 
+ 
+C1SE.30   Page 10 of 18 
+  International School Capstone 1 – 2026 
+ PROJECT PLAN  
+Thuan, Ngo 
+Huu Frontend Lead, Full -
+Stack Developer  107 107 x 6 642 
+Quy, Nguyen 
+Duy Data & Full -Stack 
+Developer  107 107 x 6 642 
+Phuc, Tran 
+Huu Backend & Integration 
+Developer  107 107 x 6 642 
+  
+Non-Billable Academic Labor:  
+o Since COVAI is an academic Capstone project, student labor is considered non -
+billable academic effort and is therefore not included as a direct monetary project 
+cost.   
+Standard Effort Unit:  
+o Standard working effort: Daily Rate = 6 hours/day/member.  
+Effort Breakdown by Member:  
+𝐸𝑓𝑓𝑜𝑟𝑡 𝐸𝑎𝑐 ℎ 𝑚𝑒𝑚𝑏𝑒𝑟  =107  𝑑𝑎𝑦𝑠 ∗ 6 ℎ𝑜𝑢𝑟𝑠 /𝑑𝑎𝑦  = 642  ℎ𝑜𝑢𝑟𝑠  
+Total Project Effort:  
+𝑇𝑜𝑡𝑎𝑙  𝐸𝑓𝑓𝑜𝑟  = 642 ∗4 = 2,568  𝑚𝑎𝑛 −ℎ𝑜𝑢𝑟𝑠  
+Deliverables Covered:  
+The committed 2, 568 man-hours encompass all scheduled iterations including Core 
+Development (Sprints 1 –4), Midterm Review, AI Evaluation Integration (Sprint 5), 
+System Testing & QA (Sprint 6), Deployment & Release (Sprint 7), Documentation, 
+and Capstone Defense preparation.   
+4.3 Tooling, Infrastructure & Material Expenses  
+Category  Item & 
+Description  Pricing Model / 
+Status  Estimated Cost 
+(VND)  
+Hardware  Personal 
+development 
+machines 
+(Laptops/PCs)  Existing student -
+owned equipment  0 VND  
+Infrastructure  Cloud VPS / 
+Database hosting Paid cloud instance 
+(monthly/quarterly)  250,000 – 400,000 
+VND  
+
+--- PAGE 18 ---
+ 
+ 
+C1SE.30   Page 11 of 18 
+  International School Capstone 1 – 2026 
+ PROJECT PLAN  
+Category  Item & 
+Description  Pricing Model / 
+Status  Estimated Cost 
+(VND)  
+(Testing & 
+Demo)  
+Domain & 
+Network  Custom domain 
+name & SSL  1-year registration / 
+Let's Encrypt  150,000 – 250,000 
+VND  
+AI Services  Gemini API & 
+LLM integration  Google AI Studio 
+(Free tier quota) + 
+buffer pay -as-you-go 100,000 VND  
+Software & 
+Tools  IDEs, Git 
+repository, 
+Docker, Open -
+source libs  GitHub Education / 
+Open -source licenses  0 VND  
+Academic 
+Deliverables  Poster printing, 
+capstone thesis 
+binding, demo 
+materials  Academic submission 
+expenses  200,000 – 300,000 
+VND  
+Contingency  Miscellaneous & 
+service overage 
+reserve (~10%)  Contingency buffer  100,000 VND  
+Total Estimated 
+Budget  All categories 
+combined  — 800,000 – 
+1,150,000 VND  
+ 
+Hardware & Development Workstations (0 VND):  
+o All development, testing, and debugging are performed using student -owned 
+personal computers and laptops.  
+o No institutional capital expenditure is required for workstation hardware.  
+Cloud Infrastructure & Production Hosting (250,000 - 400,000 VND):  
+o Procures a lightweight Virtual Private Server (VPS) and cloud database 
+instances (e.g., Ubuntu/Docker environment) for staging, public API testing, 
+and final defense live demo.  
+
+--- PAGE 19 ---
+ 
+ 
+C1SE.30   Page 12 of 18 
+  International School Capstone 1 – 2026 
+ PROJECT PLAN  
+o Budget formula: Cost_Infra = Monthly Fee x Demo Period (approx. 2 –3 
+months).  
+Domain & Network Configuration (150,000 - 250,000 VND):  
+o Covers 1 -year registration for a custom top -level domain (TLD) to serve public 
+webhooks (GitHub automation) and live production routing.  
+o Standard SSL/TLS encryption is provisioned via free automated certificates 
+(Let's Encrypt).  
+AI Services & LLM Integration (100,000 VND):  
+o Primary development relies on free -tier allowances from Google AI Studio / 
+Gemini API.  
+o The allocated 100,000 VND serves as a buffer for automated batch -scoring 
+runs, stress benchmarks, and token overages during system integration.  
+Software, Licenses & Tooling (0 VND):  
+o Maximizes open -source stacks (React, Node.js, Express, Docker, Jest, Cypress) 
+and student developer packs (GitHub Education, Visual Studio Code) to keep 
+software acquisition expenses at zero.  
+Academic Deliverables & Defense Expenses (200,000 - 300,000 VND):  
+o Allocated for professional hard -cover thesis bookbinding, poster printing for 
+academic reviews, and official capstone submission materials.  
+Contingency Reserve (100,000 VND):  
+o A standard reserve representing approximately 10% of total direct expenditures, 
+designated to absorb unexpected network bandwidth spikes or cloud storage 
+surcharges.  
+Total Financial Commitment:  
+o Total Project Budget = 800,000 - 1,150,000 VND  
+(Evenly split among team members as a non -reimbursable academic investment).  
+4.4 Total Cost Estimate   
+Table 7 - Labor & Resource Parameters  
+Parameter Description  Value  Unit  
+Team Size  4 Members  
+
+--- PAGE 20 ---
+ 
+ 
+C1SE.30   Page 13 of 18 
+  International School Capstone 1 – 2026 
+ PROJECT PLAN  
+Daily Working Effort  6 Hours/day  
+Nominal Labor Rate  3 USD/hour  
+Total Project Effort (4 Members)  2,568 Hours  
+Direct Operational & Material 
+Budget  50 USD (~1,150,000 VND)  
+ 
+Table 8 - Total Project Cost Estimation  
+No. Cost Category  Basis / Rate  Total Amount 
+(USD)  
+1 Development 
+Labor Effort  2,568 Hours @ 3 
+USD/Hour  7,704 
+2 Infrastructure, AI 
+Services & 
+Academic 
+Deliverables  Lump -sum direct 
+costs  50 
+— Total Estimated 
+Project Cost  Labor + Direct 
+Costs  7,754 
+ 
+Detailed Formulas & Explanations : 
+o Total Working Effort = 107 days x 6 h ours x 4 members  = 2,568 Man-hours.  
+o Total Labor Cost = 2, 568 hours x 3 USD/hour = 7, 704 USD.  
+o Operational & Deliverables Cost = 50 USD (~1,150,000 VND covering VPS, 
+domain, AI quota buffer, and thesis binding).  
+o Total Project Budget = 7, 704 USD + 50 USD = 7, 754 USD.  
+Note on Academic Context:  
+Because COVAI is an undergraduate capstone project, the calculated labor cost (7, 754 
+USD) represents a nominal academic valuation. The actual cash outlay required from 
+the team is strictly limited to the direct operational cost of approximately 50 USD 
+(1,150,000 VND).  
+
+--- PAGE 21 ---
+ 
+ 
+C1SE.30   Page 14 of 18 
+  International School Capstone 1 – 2026 
+ PROJECT PLAN  
+5. Project Risk  
+Table 9 - Risk Rating  
+Rating  Meaning  
+L Low 
+M Medium  
+H High  
+E Extreme / Very High  
+NA Not Assessed  
+  
+Table 10 - Project Risk  
+Risk  Category  Likeli
+hood  Impact  Mitigation Strategy  
+AI-generated tests 
+may be incorrect or 
+incomplete  AI / Technical  M H Validate generated 
+tests, execute them 
+when possible, and 
+provide 
+fallback/TODO 
+output  
+Test execution may 
+fail because of 
+dependencies or 
+configuration  Technical  H H Use isolated Docker 
+environments, 
+preflight checks, 
+timeout mechanisms 
+and clear logs  
+Multi -framework 
+support increases 
+system complexity  Technical  M H Use framework -
+specific adapters and 
+prioritize selected 
+frameworks  
+Large projects may 
+consume excessive 
+computing resources  Performance  M H Use job queues, 
+resource/time limits 
+and snapshot reuse  
+
+--- PAGE 22 ---
+ 
+ 
+C1SE.30   Page 15 of 18 
+  International School Capstone 1 – 2026 
+ PROJECT PLAN  
+Risk  Category  Likeli
+hood  Impact  Mitigation Strategy  
+Automated chatbot 
+scoring may be biased 
+or inconsistent  AI / Research  M H Prefer deterministic 
+checks, store 
+evaluation evidence, 
+calibrate scoring and 
+compare with human 
+judgments  
+Ground -truth business 
+rules may be 
+incomplete or 
+outdated  Domain  M H Require domain -
+expert confirmation 
+and version evaluation 
+profiles  
+Tool/action chatbot 
+evaluation may cause 
+unintended effects  Safety  L E Use 
+mocks/sandboxes, 
+non-production 
+accounts, 
+confirmation gates 
+and forbidden -action 
+rules  
+Sensitive 
+project/evaluation 
+data may be exposed  Security  M H Apply authorization, 
+minimize transmitted 
+data and prevent 
+unnecessary external 
+exposure  
+Limited academic 
+development time  Management  H H Prioritize core 
+functions and deliver 
+incrementally through 
+Scrum  
+
+--- PAGE 23 ---
+ 
+ 
+C1SE.30   Page 16 of 18 
+  International School Capstone 1 – 2026 
+ PROJECT PLAN  
+Risk  Category  Likeli
+hood  Impact  Mitigation Strategy  
+Target chatbot may 
+not expose sufficient 
+metadata  Integration  M M Use configurable 
+adapters and clearly 
+mark unavailable 
+evaluation evidence  
+ 
+  
+
+--- PAGE 24 ---
+ 
+ 
+C1SE.30   Page 17 of 18 
+  International School Capstone 1 – 2026 
+ PROJECT PLAN  
+6. Deliverables  
+Table 11 - Deliverables  
+No. Deliverable Item  Corresponding 
+Task / Milestone  Deadline  File Name / 
+Artifact  
+1 Project Proposal 
+Document  1.3 Proposal 
+Document Aug 16, 2026  C1SE.30_Proposal
+_ver1. 0.docx  
+2 Project Plan 
+Document  1.4 Project Plan 
+Document Aug 19, 2026  C1SE.30_ProjectPla
+n_ver1.0.docx  
+3 Product Backlog & 
+User Stories  1.5 & 1.6 
+Requirements 
+Backlog  Aug 25, 2026  C1SE.30_ProductBa
+cklog_ver1.0.xlsx  
+4 Software 
+Requirements 
+Specification 
+(SRS)  1.7 Software 
+Requirements 
+Specification  Aug 30, 2026  C1SE.30_SRS_ver1
+.0.docx  
+5 System 
+Architecture & 
+Database Design  1.8 System 
+Architecture & 1.9 
+Database Design  Sep 06, 2026  C1SE.30_Architectu
+re_DB_Design.docx  
+6 UI/UX Design 
+Prototypes  1.10 User Interface 
+Design  Sep 10, 2026  C1SE.30_Figma_UI
+_Prototype_Link  
+7 Sprint Plan 
+(Release 1)  1.11 Sprint Plan  Sep 13, 2026  C1SE.30_SprintPlan
+_Phase1.xlsx  
+8 Phase 1 Codebase 
+& Test Engine 
+Release  2. Development 
+Phase 1 (Sprints 1 –
+4) Oct 31, 2026  GitHub Tag: v0.4 -
+phase1 -testing  
+9 Midterm 
+Presentation & 
+Evaluation Report  3. Midterm Report  Nov 07, 2026  C1SE.30_Midterm_
+Report_Slide.pptx  
+
+--- PAGE 25 ---
+ 
+ 
+C1SE.30   Page 18 of 18 
+  International School Capstone 1 – 2026 
+ PROJECT PLAN  
+No. Deliverable Item  Corresponding 
+Task / Milestone  Deadline  File Name / 
+Artifact  
+10 Phase 2 AI 
+Evaluation Engine 
+Release  4. Development 
+Phase 2 (Sprints 5 –
+7) Dec 09, 2026  GitHub Tag: v1.0 -
+rc-production  
+11 Final Capstone 
+Thesis & 
+Documentation  5. Final Document 
+Submission  Dec 13, 2026  C1SE.30_Capstone_
+Thesis_ver1.0.docx  
+12 Project 
+Retrospective 
+Summary  6. Project 
+Retrospective 
+Meeting  Dec 16, 2026  C1SE.30_Sprint_Re
+trospective.pdf  
+13 Capstone Defense 
+Presentation & 
+Live Demo  7. Capstone Defense  Dec 26, 2026  C1SE.30_Final_Def
+ense_Slides.pptx  
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+END  
+ 
+
+--- PAGE 26 ---
+SPRINT 1 
+Project Name: COV AI
+Module Name: Sprint 1
+Development Team: C1SE.30
+Start Date: 09/14/26
+End Date: 09/27/26
+On Time
+No. Member Name Estimate (hours) Lately
+1 Dinh, Huynh Tan Dinh 84 Early
+2 Quy, Ngyen Duy Quy 84 Unfinished
+3 Thuan, Huu Ngo Thuan 84
+4 Phuc, Tran Huu Phuc 84
+Total 336
+Conponent No. Task NameResposible 
+MemberEstimate 
+(hours)
+14-thg 9-26
+15-thg 9-26
+16-thg 9-26
+17-thg 9-26
+18-thg 9-26
+19-thg 9-26
+20-thg 9-26
+21-thg 9-26
+22-thg 9-26
+23-thg 9-26
+24-thg 9-26
+25-thg 9-26
+26-thg 9-26
+27-thg 9-26
+28-thg 9-26
+Design UI  1 UI Home Page Thuan 8 6 2 0
+2 UI Registration Phuc 8 6 2 0
+3 UI Login Dinh 8 6 2 0
+5 UI Forgot Password Quy 8 6 2 0
+4 UI Landscape Dinh 8 - 4 4 0
+6 UI Profile User Phuc 8 - 4 4 0
+7 UI GitHub Repository Thuan 8 - 4 4 0
+8 UI Project Thuan 8 - - 2 - - 6 0
+9 UI Snapshot Phuc 8 - - - 6 2 0
+Database 10 Design database Quy, Thuan 24 - - - 12 12 0
+Front end11 (Front-end) Homepage Quy 8 - 4 4 0
+15 (Front-end) Forgot Password Dinh 8 - - 2 6 0
+12 (Front-end) Landscape Quy 8 - - 2 - - 6 0
+14 (Front-end) Login Phuc 8 - - - - 4 4 0
+16 (Front-end) GitHub Repository Phuc 8 - - 2 - - 2 4 0
+13 (Front-end) Registration Thuan 8 - - - - - - 6 2 0
+17 (Front-end) Project Management Quy 8 - - - - - - 6 2 0
+Back end18 (Back-end) Forgot Password Dinh 16 - - - - 6 6 4 0
+19 (Back-end) Reset Password Dinh 16 - - - - - - 2 6 6 2 0
+20 (Back-end) Registration Phuc 16 - - - - - - 2 6 6 2 0
+21 (Back-end) Login Thuan 16 - - - - - - - 4 6 6 0
+22 (Back-end) Profile Quy 16 - - - - - - - 4 6 6 0
+23 (Back-end) GitHub Repository Dinh 16 - - - - - - - - - 4 6 6 0
+24 (Back-end) Environment Setup Phuc 16 - - - - - - - - - 4 6 4 2 0
+25 (Back-end) Authentication Middleware Thuan 16 - - - - - - - - - - 6 6 4 0
+26 (Back-end) Snapshot Management Quy 16 - - - - - - - - - - 6 6 4 0
+Testing and fix bug28 Design Test Case for Login Phuc 4 - - - - - - - - - - - 2 2 0
+31 Design Test Case for Profile Dinh 4 - - - - - - - - - - - - 4 0
+27 Design Test Case for Registration Dinh 4 - - - - - - - - - - - - 2 2 0
+29 Design Test Case for Forgot Password Thuan 4 - - - - - - - - - - - - 2 2 0
+30 Design Test Case for Reset Password Phuc 4 - - - - - - - - - - - - 2 2 0
+32 Design Test Case for Homepage Thuan 4 - - - - - - - - - - - - - 4 0
+33 Design Test Case for Landscape Quy 4 - - - - - - - - - - - - 2 2 0
+34 Design Test Case for GitHub Repository Dinh 4 - - - - - - - - - - - - - 4 0
+35 Design Test Case for Project Management Quy 4 - - - - - - - - - - - - - 4 0
+36 Design Test Case for Snapshot Phuc 4 - - - - - - - - - - - - - 4 0
+TOTAL 336 24 24 24 24 24 24 24 24 24 24 24 24 24 24 -
+REMAIN 336 312 288 264 240 216 192 168 144 120 96 72 48 24 0 -
+
+--- PAGE 27 ---
+SPRINT 1 
+Project Name: COV AI
+Module Name: Sprint 1
+Development Team: C1SE.30
+Start Date: 09/14/26
+End Date: 09/27/26
+On Time
+No. Member Name Estimate Lately
+1 Dinh, Huynh Tan Dinh 84 Early
+2 Quy, Ngyen Duy Quy 84 Unfinished
+3 Thuan, Huu Ngo Thuan 84
+4 Phuc, Tran Huu Phuc 84
+Total 336
+Conponent No. Task NameResposible 
+MemberEstimate
+14-thg 9-26
+15-thg 9-26
+16-thg 9-26
+17-thg 9-26
+18-thg 9-26
+19-thg 9-26
+20-thg 9-26
+21-thg 9-26
+22-thg 9-26
+23-thg 9-26
+24-thg 9-26
+25-thg 9-26
+26-thg 9-26
+27-thg 9-26
+28-thg 9-26
+Design UI  1 UI Home Page Thuan 8
+2 UI Registration Phuc 8
+3 UI Login Dinh 8
+5 UI Forgot Password Quy 8
+4 UI Landscape Dinh 8
+6 UI Profile User Phuc 8
+7 UI GitHub Repository Thuan 8
+8 UI Project Thuan 8
+9 UI Snapshot Phuc 8
+Database 10 Design database Quy, Thuan 24
+Front end11 (Front-end) Homepage Quy 8
+15 (Front-end) Forgot Password Dinh 8
+12 (Front-end) Landscape Quy 8
+14 (Front-end) Login Phuc 8
+16 (Front-end) GitHub Repository Phuc 8
+13 (Front-end) Registration Thuan 8
+17 (Front-end) Project Management Quy 8
+Back end18 (Back-end) Forgot Password Dinh 16
+19 (Back-end) Reset Password Dinh 16
+20 (Back-end) Registration Phuc 16
+21 (Back-end) Login Thuan 16
+22 (Back-end) Profile Quy 16
+23 (Back-end) GitHub Repository Dinh 16
+24 (Back-end) Environment Setup Phuc 16
+25 (Back-end) Authentication Middleware Thuan 16
+26 (Back-end) Snapshot Management Quy 16
+Testing and fix bug28 Design Test Case for Login Phuc 4
+31 Design Test Case for Profile Dinh 4
+27 Design Test Case for Registration Dinh 4
+29 Design Test Case for Forgot Password Thuan 4
+30 Design Test Case for Reset Password Phuc 4
+32 Design Test Case for Homepage Thuan 4
+33 Design Test Case for Landscape Quy 4
+34 Design Test Case for GitHub Repository Dinh 4
+35 Design Test Case for Project Management Quy 4
+36 Design Test Case for Snapshot Phuc 4
+TOTAL 336 0 0 0 0 0 0 0 0 0 0 0 0 0 0 --
+REMAIN 336 336 336 336 336 336 336 336 336 336 336 336 336 336 336 --
+
+--- PAGE 28 ---
+Burn down chart Sprint 1
+Estimate Actual Date
+336 336 14-thg 9-26
+312 336 14-thg 9-26
+288 336 15-thg 9-26
+264 336 16-thg 9-26
+240 336 17-thg 9-26
+216 336 18-thg 9-26
+192 336 19-thg 9-26
+168 336 20-thg 9-26
+144 336 21-thg 9-26
+120 336 22-thg 9-26
+96 336 23-thg 9-26
+72 336 24-thg 9-26
+48 336 25-thg 9-26
+24 336 26-thg 9-26
+0 336 27-thg 9-26
+

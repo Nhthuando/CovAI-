@@ -1,0 +1,1132 @@
+import fs from "fs";
+import path from "path";
+import prisma from "../config/prisma.js";
+import { ServiceError } from "../utils/serviceError.js";
+import { getJobById, addJobLog } from "./job.service.js";
+import { updateJobStatus } from "./jobUpdate.service.js";
+import { buildAiPayload } from "./aiContextBuilder.service.js";
+import { buildFinalPrompt, buildPlaywrightPrompt } from "./aiPromptBuilder.service.js";
+import { buildCypressPrompt } from "./cypressPromptBuilder.service.js";
+import { buildSupertestPrompt } from "./supertestPromptBuilder.service.js";
+import { generateText } from "./gemini.service.js";
+import { processAiSuggestions } from "./aiSuggestionParser.service.js";
+import { processSkeletonTests } from "./skeletonPostProcessor.service.js";
+import { processFullTests } from "./fullTestsPostProcessor.service.js";
+import { processCypressTests } from "./cypressPostProcessor.service.js";
+import { processSupertestTests } from "./supertestPostProcessor.service.js";
+import { notificationService } from "./notification.service.js";
+import { invalidateEndpointCache } from "./integrationWorkspace.service.js";
+import { saveAiTestsToFilesystem, removeAiTestsFromFilesystem } from "./aiTestStorage.service.js";
+import crypto from "crypto";
+import { validateGeneratedTestCode } from "../validators/aiTestCode.validator.js";
+import { formatSystemTestFailure } from "../utils/systemTestFailure.js";
+import { dockerRunner } from "./dockerRunner.service.js";
+import { ensurePlaywrightPrerequisites, resolvePlaywrightCommand, runSystemTests } from "./systemTestRunner.service.js";
+import { validateFullSystemTest } from "./systemTestEvidence.service.js";
+import { generateVerifiedSystemTests } from './verifiedSystemGeneration.service.js';
+import { ensurePlaywrightExecutionSteps } from './playwrightExecutionSteps.service.js';
+import { validateSystemTestQuality } from './systemTestQuality.service.js';
+import { withPreparedProjectWorkspace } from './projectWorkspacePreparation.service.js';
+import { currentProjectOperation, operationSnapshot, stagePreparedPublication, assertProjectOperationActive } from './projectOperationWorkspace.service.js';
+import { resolveProjectAccess } from './projectAccess.service.js';
+import { resolveContainedProjectPath } from './projectFileVersion.service.js';
+import {
+    resolveAvailableAutPort,
+    prepareAutEnvironment,
+    startAutServer,
+    stopAutServer,
+} from "./autLifecycle.service.js";
+import {
+    registerJobAbortController,
+    unregisterJobAbortController,
+    isJobCanceled,
+} from "./jobCancellation.service.js";
+
+const broadcastAiJobProgress = (jobId, { progress, stage, message, status = "RUNNING", userId = null }) => {
+    // A terminal success must not reach sockets before files and metadata commit.
+    if (currentProjectOperation()?.preparedPublications && status === "SUCCESS") return;
+    try {
+        if (global.io) {
+            const payload = {
+                jobId,
+                progress,
+                stage: stage || message,
+                message,
+                status,
+                updatedAt: new Date().toISOString(),
+            };
+            if (userId) {
+                global.io.to(`user:${userId}`).emit("job:progress", payload);
+            }
+        }
+    } catch (err) {
+        console.warn(`[broadcastAiJobProgress] Error for job ${jobId}:`, err.message);
+    }
+};
+
+const updateGenerationJobStatus = async input => {
+    const operation = currentProjectOperation();
+    if (operation?.preparedPublications && ["SUCCESS", "FAILED"].includes(input.status)) {
+        return stagePreparedPublication(tx => updateJobStatus(input, tx));
+    }
+    if (operation) await assertProjectOperationActive(operation);
+    return updateJobStatus(input);
+};
+
+/**
+ * Orchestrates the full Skeleton Test Generation Pipeline
+ */
+const processAiTestsJobInWorkspace = async (jobId) => {
+    const abortController = new AbortController();
+    registerJobAbortController(jobId, abortController);
+    try {
+        const storedJob = await getJobById(jobId);
+        const job = storedJob && { ...storedJob, snapshot: operationSnapshot(storedJob.snapshot && { ...storedJob.snapshot, id: storedJob.snapshot.id || storedJob.snapshotId }) };
+
+        if (isJobCanceled(jobId, abortController.signal)) return { success: false, canceled: true };
+
+        if (!job) return { success: false, error: "Job not found" };
+
+        if (["CANCELED", "SUCCESS", "FAILED"].includes(job.status) || isJobCanceled(jobId, abortController.signal)) {
+            return { success: false, canceled: job.status === "CANCELED" };
+        }
+
+        // Only transition status to RUNNING if it is currently QUEUED
+        if (job.status === "QUEUED") {
+            try {
+                await updateGenerationJobStatus({
+                    jobId,
+                    status: "RUNNING",
+                    progress: 5,
+                });
+            } catch (err) {
+                if (["Only queued jobs can start", "Cannot start a canceled job", "Job not found"].includes(err.message)) {
+                    console.warn(`[AiTestsJob ${jobId}] Job status transition skipped: ${err.message}`);
+                    return { success: false, skipped: true };
+                }
+                throw err;
+            }
+        }
+
+        const { snapshotId, projectId } = job;
+
+        const project = await prisma.project.findUnique({
+            where: { id: projectId },
+            select: { hasJest: true, hasVitest: true }
+        });
+        const hasJest = project ? project.hasJest : false;
+        const hasVitest = project ? project.hasVitest : false;
+
+        const payloadJsonObj = JSON.parse(job.payloadJson || "{}");
+        const selectedAiModel=payloadJsonObj.model || process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+        await addJobLog(jobId,'INFO',`Using Gemini model: ${selectedAiModel}`);
+        const mode = payloadJsonObj.mode || "SKELETON";
+        const executionMode = payloadJsonObj.executionMode || "frontend";
+
+        if ((mode === 'PLAYWRIGHT_E2E' || mode === 'PLAYWRIGHT') && payloadJsonObj.executionMode === 'full') {
+            const rootDir=job.snapshot?.rootDir || operationSnapshot(await prisma.projectSnapshot.findUnique({where:{id:snapshotId},select:{id:true,rootDir:true}}))?.rootDir;
+            const result=await generateVerifiedSystemTests({rootDir,jobId,model:selectedAiModel,onProgress:async(progress,message)=>{
+                await updateGenerationJobStatus({jobId,progress});
+                await addJobLog(jobId,'INFO',message);
+                broadcastAiJobProgress(jobId,{progress,stage:message,message,userId:job.userId});
+            }});
+            const filePath='tests/system/ai-generated.spec.js';
+            if(!result.failed) {
+                const target=path.join(rootDir,filePath);
+                fs.mkdirSync(path.dirname(target),{recursive:true});
+                fs.writeFileSync(target,result.code,'utf8');
+            }
+            // Keep previous verified generations; a failed candidate must not erase them.
+            await stagePreparedPublication(tx => tx.aiTest.create({data:{
+                projectId,snapshotId,mode:'PLAYWRIGHT_E2E',status:result.failed?'FAILED':'VERIFIED',filePath,content:result.code,
+                metaJson:JSON.stringify({framework:'PLAYWRIGHT',executionMode:'full',dryRun:result.failed?'FAILED':'PASSED',attempts:result.attempts,verificationRuns:result.verificationRuns,contextHash:result.contextHash,quality:result.quality,scenarioCount:result.scenarioCount,contextComplete:result.contextComplete,omittedFiles:result.omittedFiles,error:result.error,verifiedAt:result.failed?undefined:new Date().toISOString()}),
+            }}));
+            await updateGenerationJobStatus({jobId,status:result.failed?'FAILED':'SUCCESS',progress:100,...(result.failed?{errorMessage:result.error}:{})});
+            // Completion notification is sent only after the prepared workspace commits.
+            return {success:!result.failed,dryRunPassed:!result.failed,filePath,error:result.error};
+        }
+
+        // SCRUM-393: Send AI context
+        await addJobLog(jobId, "INFO", `Building AI Context Payload for ${mode} Tests...`);
+        const aiPayloadResult = await buildAiPayload(snapshotId);
+        const payload = aiPayloadResult.payload;
+
+        await updateGenerationJobStatus({ jobId, progress: 30 });
+
+        await addJobLog(jobId, "INFO", `Constructing final prompt for ${mode} mode...`);
+
+        // ── Playwright E2E Generation & Dry-Run Branch (Phase 5) ─────────────
+        if (mode === "PLAYWRIGHT_E2E" || mode === "PLAYWRIGHT") {
+            const playwrightPrompt = buildPlaywrightPrompt(payload, {executionMode});
+
+            await updateGenerationJobStatus({ jobId, progress: 40 });
+            await addJobLog(jobId, "INFO", "Calling Gemini AI model to generate Playwright E2E tests...");
+            broadcastAiJobProgress(jobId, {
+                progress: 40,
+                stage: "Generating Playwright E2E tests with AI...",
+                message: "Calling Gemini AI model to generate Playwright E2E tests...",
+                userId: job.userId,
+            });
+
+            const aiResponseText = await generateText(playwrightPrompt, selectedAiModel);
+            if (!aiResponseText || !aiResponseText.trim()) {
+                throw new ServiceError("Gemini returned an empty response for Playwright test generation.", 500);
+            }
+
+            await updateGenerationJobStatus({ jobId, progress: 65 });
+            await addJobLog(jobId, "INFO", "Validating generated Playwright test syntax and safety via Babel AST...");
+            broadcastAiJobProgress(jobId, {
+                progress: 65,
+                stage: "Validating AST syntax & safety...",
+                message: "Validating generated Playwright test syntax and safety via Babel AST...",
+                userId: job.userId,
+            });
+
+            // Parse response: extract code from JSON or markdown block
+            let generatedCode = "";
+            let targetFilePath = executionMode === "full" ? "tests/system/ai-generated.spec.js" : "tests/e2e/ai-generated.spec.js";
+
+            try {
+                const cleaned = aiResponseText.replace(/^```json\s*/i, "").replace(/```\s*$/i, "").trim();
+                const parsed = JSON.parse(cleaned);
+                if (Array.isArray(parsed.tests) && parsed.tests.length > 0) {
+                    generatedCode = parsed.tests[0].content || "";
+                } else if (parsed.content) {
+                    generatedCode = parsed.content;
+                }
+            } catch {
+                const codeMatch = aiResponseText.match(/```(?:javascript|js|typescript|ts)?\s*([\s\S]*?)```/i);
+                if (codeMatch && codeMatch[1]) {
+                    generatedCode = codeMatch[1].trim();
+                } else {
+                    generatedCode = aiResponseText.trim();
+                }
+            }
+
+            if (!generatedCode) {
+                throw new ServiceError("Failed to extract valid test code from Gemini response.", 422);
+            }
+
+            // 1. AST Syntax & Security Validation
+            try {
+                validateGeneratedTestCode(generatedCode);
+                generatedCode = ensurePlaywrightExecutionSteps(generatedCode);
+                validateSystemTestQuality(validateGeneratedTestCode(generatedCode).ast);
+                if (executionMode === "full") validateFullSystemTest(generatedCode);
+                await addJobLog(jobId, "INFO", "AST Validation passed: Syntax is valid and no forbidden APIs detected.");
+            } catch (astError) {
+                await addJobLog(jobId, "WARN", `AST Validation failed: ${astError.message}`);
+
+                await stagePreparedPublication(tx => tx.aiTest.create({
+                    data: {
+                        projectId,
+                        snapshotId,
+                        mode: "PLAYWRIGHT_E2E",
+                        status: "FAILED",
+                        filePath: targetFilePath,
+                        content: generatedCode,
+                        metaJson: JSON.stringify({
+                            framework: "PLAYWRIGHT",
+                            executionMode,
+                            dryRun: "FAILED",
+                            error: `Syntax/Security check failed: ${astError.message}`,
+                        }),
+                    },
+                }));
+
+                await updateGenerationJobStatus({
+                    jobId,
+                    status: "FAILED",
+                    errorMessage: `AST Validation failed: ${astError.message}`,
+                });
+                return { success: false, dryRunPassed: false, error: astError.message };
+            }
+
+            // 2. Isolated Dry-Run Gate
+            await updateGenerationJobStatus({ jobId, progress: 75 });
+            await addJobLog(jobId, "INFO", "Starting isolated Dry-Run gate to verify test executability...");
+            broadcastAiJobProgress(jobId, {
+                progress: 75,
+                stage: "Verifying test syntax in isolated Dry-Run...",
+                message: "Starting isolated Dry-Run gate to verify test executability...",
+                userId: job.userId,
+            });
+
+            const snapshotRecord = operationSnapshot(await prisma.projectSnapshot.findUnique({
+                where: { id: snapshotId },
+                select: { id: true, rootDir: true }
+            }));
+            const rootDir = snapshotRecord?.rootDir || job.snapshot?.rootDir;
+
+            if (!rootDir || !fs.existsSync(rootDir)) {
+                throw new ServiceError("Snapshot root directory not found for dry-run", 404);
+            }
+
+            const tempDir = path.join(rootDir, ".covai-temp");
+            fs.mkdirSync(tempDir, { recursive: true });
+            const dryRunFile = path.join(tempDir, "dryrun.spec.js");
+            fs.writeFileSync(dryRunFile, generatedCode, "utf8");
+
+            let dryRunSuccess = false;
+            let dryRunError = "";
+            let autHandle = null;
+            let autPort = 4173;
+
+            try {
+                if (executionMode === "full") {
+                    const runRes = await runSystemTests({jobId, rootDir, executionMode, execution: {runner:"playwright", rootDir, testDirectory:"tests/system", testFile:dryRunFile}});
+                    dryRunSuccess = runRes.success;
+                    if (!runRes.success) dryRunError = formatSystemTestFailure({...runRes,stdout:fs.existsSync(runRes.reportPath) ? fs.readFileSync(runRes.reportPath,"utf8") : runRes.stdout});
+                } else {
+                try {
+                    autPort = await resolveAvailableAutPort(rootDir, 4173);
+                    await prepareAutEnvironment(rootDir, autPort, jobId);
+                    autHandle = await startAutServer({
+                        snapshotDir: rootDir,
+                        port: autPort,
+                        jobId,
+                        healthTimeoutMs: 15000,
+                    }).catch((err) => {
+                        console.warn(`[Dry-Run] AUT server auto-start skipped: ${err.message}`);
+                        return null;
+                    });
+                } catch (envErr) {
+                    console.warn(`[Dry-Run] Environment setup skipped: ${envErr.message}`);
+                }
+
+                const relativeDryRunPath = path.relative(rootDir, dryRunFile).replace(/\\/g, "/");
+                ensurePlaywrightPrerequisites(rootDir, autPort);
+                const dryConfig = path.join(tempDir, "playwright.config.mjs");
+                fs.writeFileSync(dryConfig, `export default { testDir: '.', testMatch: 'dryrun.spec.js', retries: 0, use: { headless: true, baseURL: process.env.PLAYWRIGHT_BASE_URL } };`, "utf8");
+                const dryRunCmd = `npx --yes playwright test "${relativeDryRunPath}" --config=.covai-temp/playwright.config.mjs --timeout=15000 --reporter=json`;
+                const runRes = await dockerRunner.run({
+                    snapshotPath: rootDir,
+                      command: resolvePlaywrightCommand(rootDir, dryRunCmd),
+                      timeoutMs: 120000,
+                    jobId,
+                      forceHost: true,
+                    env: {
+                        PLAYWRIGHT_BASE_URL: `http://localhost:${autPort}`,
+                    },
+                });
+                dryRunSuccess = runRes.success;
+                if (!runRes.success) {
+                    dryRunError = formatSystemTestFailure(runRes);
+                }
+                }
+            } catch (err) {
+                dryRunSuccess = false;
+                dryRunError = err.message;
+            } finally {
+                if (autHandle?.started && autHandle?.pid) {
+                    try {
+                        await stopAutServer(autHandle.pid, autHandle.port, jobId);
+                    } catch (_) {}
+                }
+                try {
+                    if (fs.existsSync(dryRunFile)) fs.unlinkSync(dryRunFile);
+                    const dryConfig = path.join(tempDir, "playwright.config.mjs");
+                    if (fs.existsSync(dryConfig)) fs.unlinkSync(dryConfig);
+                } catch (_) {}
+            }
+
+            await updateGenerationJobStatus({ jobId, progress: 90 });
+            broadcastAiJobProgress(jobId, {
+                progress: 90,
+                stage: "Persisting verified tests...",
+                message: "Saving verified tests to test suite...",
+                userId: job.userId,
+            });
+
+            // 3. Persist based on Dry-Run Result
+            if (dryRunSuccess) {
+                await stagePreparedPublication(tx => tx.aiTest.deleteMany({
+                    where: { snapshotId, mode: "PLAYWRIGHT_E2E" }
+                }));
+                // Dry-Run PASS: Save officially into tests/e2e/ai-generated.spec.js
+                const fullTargetPath = path.join(rootDir, targetFilePath);
+                fs.mkdirSync(path.dirname(fullTargetPath), { recursive: true });
+                fs.writeFileSync(fullTargetPath, generatedCode, "utf8");
+
+                await stagePreparedPublication(tx => tx.aiTest.create({
+                    data: {
+                        projectId,
+                        snapshotId,
+                        mode: "PLAYWRIGHT_E2E",
+                        status: "VERIFIED",
+                        filePath: targetFilePath,
+                        content: generatedCode,
+                        metaJson: JSON.stringify({
+                            framework: "PLAYWRIGHT",
+                            executionMode,
+                            dryRun: "PASSED",
+                            quality: validateSystemTestQuality(validateGeneratedTestCode(generatedCode).ast),
+                            verifiedAt: new Date().toISOString(),
+                        }),
+                    },
+                }));
+
+                await addJobLog(jobId, "INFO", `Dry-run passed! Saved verified test to ${targetFilePath}.`);
+                await updateGenerationJobStatus({ jobId, status: "SUCCESS", progress: 100 });
+                broadcastAiJobProgress(jobId, {
+                    progress: 100,
+                    stage: "Completed",
+                    message: `Dry-run passed! Saved verified test to ${targetFilePath}.`,
+                    status: "SUCCESS",
+                    userId: job.userId,
+                });
+                // Completion notification is sent only after the prepared workspace commits.
+                return { success: true, dryRunPassed: true, filePath: targetFilePath };
+            } else {
+                // Dry-Run FAIL: Do NOT save to main test suite. Save AiTest as FAILED for UI feedback.
+                await stagePreparedPublication(tx => tx.aiTest.create({
+                    data: {
+                        projectId,
+                        snapshotId,
+                        mode: "PLAYWRIGHT_E2E",
+                        status: "FAILED",
+                        filePath: targetFilePath,
+                        content: generatedCode,
+                        metaJson: JSON.stringify({
+                            framework: "PLAYWRIGHT",
+                            executionMode,
+                            dryRun: "FAILED",
+                            error: dryRunError.slice(0, 1500),
+                            failedAt: new Date().toISOString(),
+                        }),
+                    },
+                }));
+
+                await addJobLog(
+                    jobId,
+                    "WARN",
+                    `Dry-run failed: ${dryRunError.slice(0, 300)}. Test was not saved to project test suite.`,
+                );
+                await updateGenerationJobStatus({
+                    jobId,
+                    status: "FAILED",
+                    progress: 100,
+                    errorMessage: `Dry-run failed: ${dryRunError.slice(0, 300)}. Test was not saved to project test suite.`,
+                });
+                broadcastAiJobProgress(jobId, {
+                    progress: 100,
+                    stage: "Dry-Run Failed",
+                    message: `Dry-run failed: ${dryRunError.slice(0, 300)}`,
+                    status: "FAILED",
+                    userId: job.userId,
+                });
+                // Completion notification is sent only after the prepared workspace commits.
+                return { success: false, dryRunPassed: false, error: dryRunError };
+            }
+        }
+
+        // ── Supertest Integration Generation Branch ────────────────────────
+        if (mode === "INTEGRATION_GENERATION") {
+            const { runIntegrationGenerationPipeline } = await import("./integrationApiService.service.js");
+            const result = await runIntegrationGenerationPipeline({
+                jobId,
+                snapshotId,
+                projectId,
+                framework: payloadJsonObj.framework || "SUPERTEST",
+                targetEndpoints: payloadJsonObj.targetEndpoints || [],
+                model:selectedAiModel,
+                abortSignal: abortController.signal
+            });
+            return { success: true, ...result };
+        }
+
+        if (mode === "INTEGRATION_REGENERATE") {
+            const { runRegenerateScenarioPipeline } = await import("./integrationApiService.service.js");
+            const result = await runRegenerateScenarioPipeline({
+                jobId,
+                snapshotId,
+                scenarioId: payloadJsonObj.scenarioId,
+                framework: payloadJsonObj.framework || "SUPERTEST",
+                failureContext: payloadJsonObj.failureContext || null,
+                expectedVersion:payloadJsonObj.expectedVersion,
+                model:selectedAiModel,
+                abortSignal: abortController.signal
+            });
+            return { success: true, ...result };
+        }
+
+        if (mode === "SUPERTEST_REGENERATE") {
+            const { aiTestId, scenarioId } = payloadJsonObj;
+            
+            await updateGenerationJobStatus({ jobId, progress: 40 });
+            await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'GENERATE_AI_TESTS', label: "Regenerating scenario using AI...", progress: 40 }));
+            
+            const { resolvePathConstraintsForProject } = await import("./integrationGuidance.service.js");
+            const diagnostics = [];
+            const pathConstraints = await resolvePathConstraintsForProject(
+                { snapshotId, projectId },
+                { sourceFiles: payload.sourceCode, diagnostics }
+            ).catch(err => {
+                console.warn("[BackwardPathSlicing] Unexpected failure during constraint resolution in regenerate:", err.message);
+                diagnostics.push({ type: 'INTERNAL_ERROR', error: err.message });
+                return [];
+            });
+            payload.pathConstraints = pathConstraints;
+
+            const realIssues = diagnostics.filter(d => d.type !== 'FIRST_RUN_NO_COVERAGE');
+            if (realIssues.length > 0) {
+                const issueSummary = realIssues.map(d => `${d.type}: ${d.error || d.filePath || d.path}`).join("; ");
+                await addJobLog(jobId, "WARN", `[Backward Path Slicing] Diagnostics encountered during regenerate: ${issueSummary}`);
+            } else if (pathConstraints.length > 0) {
+                await addJobLog(jobId, "INFO", `[Backward Path Slicing] Loaded ${pathConstraints.length} uncovered branch path constraint(s) to guide scenario regeneration.`);
+            }
+
+            const { regenerateScenarioService } = await import("./scenarioManager.service.js");
+            const artifact = await prisma.aiTest.findUnique({where:{id:aiTestId}});
+            if (!artifact || artifact.projectId !== job.projectId || artifact.snapshotId !== job.snapshotId) throw new ServiceError('AiTest does not belong to this job snapshot',404);
+            const options = {userId:job.userId,snapshotId:job.snapshotId,expectedVersion:payloadJsonObj.expectedVersion};
+            const candidate = await regenerateScenarioService(aiTestId, scenarioId, {...payload,model:payloadJsonObj.model}, options);
+            const resolved = await resolveContainedProjectPath(job.snapshot,artifact.filePath);
+            options.metadataOnly = fs.existsSync(resolved.target) && fs.readFileSync(resolved.target,'utf8') === candidate.content;
+            fs.mkdirSync(path.dirname(resolved.target),{recursive:true});
+            fs.writeFileSync(resolved.target,candidate.content,'utf8');
+            
+            await updateGenerationJobStatus({ jobId, progress: 100, status: "SUCCESS" });
+            return;
+        }
+
+        if (mode === "SUPERTEST") {
+            const { extractValidEndpoints } = await import("./apiEndpointParser.service.js");
+            const allEndpoints = extractValidEndpoints(payload.sourceCode || []);
+            const CHUNK_SIZE = 2; // Strict requirement: start with 2
+            const allTestsCombined = [];
+            const suggestionsCombined = [];
+            let summaryCombined = { message: "" };
+
+            // Load Backward Path Slicing constraints for uncovered branches in the snapshot
+            const { resolvePathConstraintsForProject } = await import("./integrationGuidance.service.js");
+            const diagnostics = [];
+            const pathConstraints = await resolvePathConstraintsForProject(
+                { snapshotId, projectId },
+                { sourceFiles: payload.sourceCode, diagnostics }
+            ).catch(err => {
+                console.warn("[BackwardPathSlicing] Unexpected failure during constraint resolution:", err.message);
+                return [];
+            });
+            payload.pathConstraints = pathConstraints;
+
+            // Expose actionable diagnostics for unexpected issues without failing graceful first-runs
+            const realIssues = diagnostics.filter(d => d.type !== 'FIRST_RUN_NO_COVERAGE');
+            if (realIssues.length > 0) {
+                const issueSummary = realIssues.map(d => `${d.type}: ${d.error || d.filePath || d.path}`).join("; ");
+                await addJobLog(jobId, "WARN", `[Backward Path Slicing] Diagnostics encountered: ${issueSummary}`);
+            } else if (pathConstraints.length > 0) {
+                await addJobLog(jobId, "INFO", `[Backward Path Slicing] Loaded ${pathConstraints.length} uncovered branch path constraint(s) to guide scenario generation.`);
+            }
+
+            // Selective Generation: filter to targetEndpoints if specified
+            let targetEndpoints = allEndpoints;
+            const requestedTargets = payloadJsonObj?.targetEndpoints || payload?.targetEndpoints;
+            if (requestedTargets && Array.isArray(requestedTargets) && requestedTargets.length > 0) {
+                const targetSet = new Set(
+                    requestedTargets.map(t => typeof t === 'string' ? t.trim().toUpperCase() : `${t.method} ${t.path || t.fullPath || t.route}`.trim().toUpperCase())
+                );
+                targetEndpoints = allEndpoints.filter(ep => {
+                    const key = `${ep.method} ${ep.fullPath}`.toUpperCase();
+                    const altKey = `${ep.method} ${ep.path || ep.route}`.toUpperCase();
+                    return targetSet.has(key) || targetSet.has(altKey);
+                });
+                await addJobLog(jobId, "INFO", `Selective generation active: ${targetEndpoints.length} of ${allEndpoints.length} endpoints selected.`);
+            } else {
+                await addJobLog(jobId, "INFO", `Found ${allEndpoints.length} endpoints to generate tests for. Batching in chunks of ${CHUNK_SIZE}...`);
+            }
+
+            // Initialize tracker for target endpoints
+            const endpointTracker = new Map();
+            targetEndpoints.forEach(ep => {
+                endpointTracker.set(`${ep.method} ${ep.fullPath}`, {
+                    endpoint: ep,
+                    happy: false,
+                    error: false,
+                    negativeNotApplicable: false,
+                    negativeNotApplicableReason: null,
+                    generationCompleted: false,
+                    scenarios: [],
+                    failed: false,
+                    retries: 0
+                });
+            });
+
+            if (targetEndpoints.length === 0) {
+                await addJobLog(jobId, "WARN", "No matching API endpoints detected for generation. Aborting.");
+                await updateGenerationJobStatus({ jobId, status: "SUCCESS", progress: 100 });
+                return { success: true, count: 0, summary: summaryCombined };
+            }
+
+            const MAX_RETRIES = 2;
+            let currentQueue = Array.from(endpointTracker.keys());
+            let generationCycles = 0;
+
+            while (currentQueue.length > 0 && generationCycles < 5) { // Limit total cycles to prevent infinite loops
+                if (isJobCanceled(jobId, abortController.signal)) {
+                    await addJobLog(jobId, "INFO", "Generation loop stopped due to job cancellation.");
+                    break;
+                }
+                generationCycles++;
+                await addJobLog(jobId, "INFO", `Generation Cycle ${generationCycles}. Endpoints in queue: ${currentQueue.length}`);
+                
+                let nextQueue = [];
+                for (let i = 0; i < currentQueue.length; i += CHUNK_SIZE) {
+                    if (isJobCanceled(jobId, abortController.signal)) break;
+                    if (i > 0) {
+                        // Rate limit backoff between batches to prevent burst 429
+                        await new Promise(r => setTimeout(r, 2500));
+                    }
+                    if (isJobCanceled(jobId, abortController.signal)) break;
+                    const chunkKeys = currentQueue.slice(i, i + CHUNK_SIZE);
+                    const chunkEndpoints = chunkKeys.map(k => endpointTracker.get(k).endpoint);
+                    
+                    const chunkProgress = Math.min(80, Math.floor(40 + ((i / currentQueue.length) * 40 / generationCycles)));
+                    await updateGenerationJobStatus({ jobId, progress: chunkProgress });
+                    
+                    const batchId = `cycle-${generationCycles}-batch-${Math.floor(i / CHUNK_SIZE) + 1}`;
+                    await addJobLog(jobId, "INFO", JSON.stringify({ 
+                        stage: 'BUILD_CONTEXT', 
+                        label: `Calling Gemini for batch ${batchId} (${chunkEndpoints.length} endpoints)...`, 
+                        progress: chunkProgress 
+                    }));
+
+                    // We instruct the model precisely for the missing coverage types
+                    const promptChunk = chunkEndpoints.map(ep => {
+                        const tr = endpointTracker.get(`${ep.method} ${ep.fullPath}`);
+                        let missing = [];
+                        if (!tr.happy) missing.push("Happy Path (200/201)");
+                        if (!tr.error) missing.push("Error Edge Case (400/404/500)");
+                        return { ...ep, missingCoverageRequested: missing };
+                    });
+
+                    // Correlate constraints relevant to the current batch endpoints
+                    const chunkFiles = new Set();
+                    chunkEndpoints.forEach(ep => {
+                        if (ep.controllerFile) chunkFiles.add(ep.controllerFile.replace(/\\/g, '/').toLowerCase());
+                        if (ep.routeFile) chunkFiles.add(ep.routeFile.replace(/\\/g, '/').toLowerCase());
+                        if (ep.serviceLayer?.file) chunkFiles.add(ep.serviceLayer.file.replace(/\\/g, '/').toLowerCase());
+                    });
+
+                    let chunkConstraints = [];
+                    if (Array.isArray(pathConstraints) && pathConstraints.length > 0) {
+                        if (chunkFiles.size > 0) {
+                            chunkConstraints = pathConstraints.filter(c => {
+                                const cPath = (c.filePath || "").replace(/\\/g, '/').toLowerCase();
+                                for (const cf of chunkFiles) {
+                                    if (cPath.includes(cf) || cf.includes(cPath)) return true;
+                                }
+                                return false;
+                            });
+                        }
+                        if (chunkConstraints.length === 0) {
+                            chunkConstraints = pathConstraints.slice(0, 5);
+                        }
+                    }
+
+                    const supertestPrompt = buildSupertestPrompt(payload, promptChunk, chunkConstraints);
+                    
+                    let batchStatus = "SUCCESS";
+                    let acceptedScenarios = 0;
+                    let rejectedScenarios = 0;
+                    
+                    try {
+                        // The model name is hardcoded here but gemini.service resolves fallbacks internally
+                        const supertestResponseText = await generateText(supertestPrompt, selectedAiModel);
+                        
+                        if (supertestResponseText) {
+                            try {
+                                const { allTests, suggestions, summary } = processSupertestTests(supertestResponseText, { projectId, snapshotId });
+                                
+                                // Helper to match path with route params and query strings
+                                const matchEndpoint = (requestPath, requestMethod, validKeys) => {
+                                    const cleanPath = requestPath.split("?")[0].replace(/\/+$/, "") || "/";
+                                    for (const key of validKeys) {
+                                        const [method, path] = key.split(" ");
+                                        if (method !== requestMethod) continue;
+                                        
+                                        const cleanRoute = path.replace(/\/+$/, "") || "/";
+                                        
+                                        // 1. Exact or parameterized match: e.g. /api/users/:id matches /api/users/123
+                                        const regexStr = "^" + cleanRoute.replace(/:[^\/]+/g, "[^/]+") + "$";
+                                        const regex = new RegExp(regexStr);
+                                        if (regex.test(cleanPath)) {
+                                            return key;
+                                        }
+
+                                        // 2. Subpath suffix match: if key has subpath e.g. "/validate" or "/get/:id"
+                                        // and requestPath is full path "/api/cart/validate" or "/api/food-items/get/123"
+                                        if (cleanRoute !== "/" && cleanRoute !== "") {
+                                            const suffixRegexStr = cleanRoute.replace(/:[^\/]+/g, "[^/]+") + "$";
+                                            if (new RegExp(suffixRegexStr).test(cleanPath)) {
+                                                return key;
+                                            }
+                                        }
+
+                                        // 3. Fallback: if key is root "/" and cleanPath points to the endpoint resource
+                                        const epData = endpointTracker.get(key);
+                                        if (cleanRoute === "/" && epData?.endpoint?.sourceFile) {
+                                            const srcBase = epData.endpoint.sourceFile.split("/").pop().replace(/\.(js|ts)$/, "").replace(/[.\-_]/g, "").toLowerCase();
+                                            const pathCleaned = cleanPath.replace(/[.\-_/]/g, "").toLowerCase();
+                                            if (pathCleaned.includes(srcBase.replace("routes", "").replace("route", ""))) {
+                                                return key;
+                                            }
+                                        }
+                                    }
+                                    return null;
+                                };
+
+                                // VALIDATION: Strict per-endpoint output validation
+                                const validTestsForBatch = [];
+                                for (const testFile of allTests) {
+                                    const meta = JSON.parse(testFile.metaJson);
+                                    const originalRequests = Array.isArray(meta.requests) ? [...meta.requests] : [];
+                                    const validRequests = [];
+                                    const rejectedRequests = [];
+                                    
+                                    for (const req of meta.requests) {
+                                        const matchedKey = matchEndpoint(req.path, req.method, chunkKeys);
+                                        
+                                        // Verify that scenario is associated with a REAL endpoint IN THE CURRENT BATCH
+                                        if (!matchedKey) {
+                                            rejectedScenarios++;
+                                            await addJobLog(jobId, "WARN", `Rejected scenario '${req.testName}' for endpoint '${req.method} ${req.path}': Not in the requested batch or is an invented endpoint.`);
+                                            rejectedRequests.push(req);
+                                            continue;
+                                        }
+                                        
+                                        const tr = endpointTracker.get(matchedKey);
+                                        const name = req.testName.toLowerCase();
+                                        
+                                        // Distinguish Happy Path from Error Edge Case
+                                        let isHappy = name.includes('happy') || name.includes('200') || name.includes('201') || name.includes('success');
+                                        let isError = name.includes('error') || name.includes('400') || name.includes('401') || name.includes('404') || name.includes('500') || name.includes('fail') || name.includes('missing') || name.includes('invalid');
+                                        
+                                        if (!isHappy && !isError) {
+                                            // Fallback classification if naming is vague
+                                            isHappy = true;
+                                        }
+                                        
+                                        if (isHappy) tr.happy = true;
+                                        if (isError) tr.error = true;
+                                        
+                                        // Special case: Simple root health-check endpoints without parameters (like GET /) do not have meaningful error branches
+                                        if ((matchedKey.trim().toUpperCase() === "GET /" || matchedKey.trim().toUpperCase().endsWith(" /")) && tr.happy) {
+                                            tr.negativeNotApplicable = true;
+                                            tr.negativeNotApplicableReason = "Static parameterless health-check endpoint has no input validation or error branch";
+                                            tr.generationCompleted = true;
+                                        }
+
+                                        acceptedScenarios++;
+                                        validRequests.push(req);
+                                    }
+                                    
+                                    if (validRequests.length > 0) {
+                                        if (rejectedRequests.length > 0) {
+                                            const { pruneScenariosFromCode } = await import("./scenarioManager.service.js");
+                                            testFile.content = pruneScenariosFromCode(testFile.content, originalRequests, rejectedRequests);
+                                        }
+                                        meta.requests = validRequests;
+                                        testFile.metaJson = JSON.stringify(meta);
+                                        validTestsForBatch.push(testFile);
+                                    }
+                                }
+                                
+                                allTestsCombined.push(...validTestsForBatch);
+                                if (suggestions && Array.isArray(suggestions)) {
+                                    const validSuggestions = suggestions.filter(s => {
+                                        if (!s.functionName) return true;
+                                        const [sMethod, ...sPathParts] = s.functionName.split(" ");
+                                        const sPath = sPathParts.join(" ");
+                                        return !sPath || matchEndpoint(sPath, sMethod, chunkKeys);
+                                    });
+                                    suggestionsCombined.push(...validSuggestions);
+                                }
+                                
+                            } catch (e) {
+                                batchStatus = "PARSE_ERROR";
+                                await addJobLog(jobId, "WARN", `AI Model output parsing failed for batch: ${e.message}`);
+                            }
+                        } else {
+                            batchStatus = "EMPTY_RESPONSE";
+                            await addJobLog(jobId, "WARN", `AI Model returned empty response for batch.`);
+                        }
+                    } catch (genErr) {
+                        batchStatus = "PROVIDER_ERROR";
+                        await addJobLog(jobId, "ERROR", `Provider generation failed for batch ${batchId}: ${genErr.message}`);
+                    }
+                    
+                    // Evaluate missing coverage for the chunk and queue retries
+                    for (const key of chunkKeys) {
+                        const tr = endpointTracker.get(key);
+                        const isComplete = tr.happy && (tr.error || tr.negativeNotApplicable || tr.generationCompleted);
+                        if (!isComplete) {
+                            tr.retries++;
+                            if (tr.retries <= MAX_RETRIES) {
+                                await addJobLog(jobId, "WARN", `Endpoint ${key} missing required coverage (Happy: ${tr.happy}, Error: ${tr.error}, Negative Not Applicable: ${Boolean(tr.negativeNotApplicable)}). Queuing for retry (${tr.retries}/${MAX_RETRIES}).`);
+                                nextQueue.push(key);
+                            } else {
+                                tr.failed = true;
+                                await addJobLog(jobId, "ERROR", `Endpoint ${key} exhausted retries. Unresolved coverage.`);
+                            }
+                        }
+                    }
+                    
+                    // Log structured batch info
+                    await addJobLog(jobId, "INFO", JSON.stringify({
+                        batchId,
+                        endpoints: chunkKeys,
+                        attempt: generationCycles,
+                        status: batchStatus,
+                        acceptedScenarios,
+                        rejectedScenarios,
+                    }));
+                }
+                currentQueue = nextQueue;
+            }
+            
+            // Check Final Status
+            let completelyCovered = 0;
+            let partialCovered = 0;
+            let completelyMissed = 0;
+            const unresolvedEndpoints = [];
+
+            for (const [key, tr] of endpointTracker.entries()) {
+                if (tr.happy && tr.error) completelyCovered++;
+                else if (tr.happy || tr.error) {
+                    partialCovered++;
+                    unresolvedEndpoints.push(`${key} (Missing: ${!tr.happy ? 'Happy' : 'Error'})`);
+                } else {
+                    completelyMissed++;
+                    unresolvedEndpoints.push(`${key} (Missing: Both)`);
+                }
+            }
+
+            const finalJobStatus = (completelyMissed === targetEndpoints.length) ? "FAILED" : (unresolvedEndpoints.length > 0 ? "PARTIAL" : "SUCCESS");
+            await addJobLog(jobId, "INFO", `Coverage Results: ${completelyCovered} Complete, ${partialCovered} Partial, ${completelyMissed} Missed.`);
+
+            await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'GENERATE_AI_TESTS', label: "Consolidating test scenarios...", progress: 85 }));
+            await updateGenerationJobStatus({ jobId, progress: 85 });
+
+            await addJobLog(jobId, "INFO", "Replacing old Supertest tests atomically...");
+            const existingTests = await prisma.aiTest.findMany({
+                where: { snapshotId }
+            });
+            const supertestIds = [];
+            const testsToUpdate = [];
+            
+            const { stripAiScenariosService } = await import("./scenarioManager.service.js");
+
+            const successfullyGeneratedEndpoints = new Set();
+            for (const [key, tr] of endpointTracker.entries()) {
+                if (tr.happy || tr.error) successfullyGeneratedEndpoints.add(key);
+            }
+
+            existingTests.forEach(t => {
+                if (!t.metaJson) return;
+                try {
+                    const meta = JSON.parse(t.metaJson);
+                    if (meta.framework !== "SUPERTEST") return;
+                    
+                    let overlapsWithNew = false;
+                    if (meta.requests && Array.isArray(meta.requests)) {
+                        for (const req of meta.requests) {
+                            const key = `${req.method} ${req.path}`;
+                            // Use basic string matching or the regex matcher if needed. We assume path is normalized.
+                            // If this old test covers an endpoint we just generated, we consider it overlapping.
+                            // We can check if any successfully generated endpoint regex matches this req.path
+                            for (const successKey of successfullyGeneratedEndpoints) {
+                                const [sMethod, sPath] = successKey.split(" ");
+                                if (req.method === sMethod) {
+                                    const regexStr = "^" + sPath.replace(/:[^\/]+/g, "[^/]+") + "$";
+                                    if (new RegExp(regexStr).test(req.path)) {
+                                        overlapsWithNew = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (overlapsWithNew) break;
+                        }
+                    }
+
+                    if (meta.userModified || overlapsWithNew) {
+                        // If it overlaps, we MUST strip the old AI scenarios for those endpoints to replace them.
+                        // Wait, stripAiScenariosService strips ALL AI scenarios in the file.
+                        // This is acceptable because files usually group related endpoints.
+                        const stripped = stripAiScenariosService(t);
+                        if (stripped) {
+                            testsToUpdate.push(stripped);
+                        } else {
+                            if (overlapsWithNew) supertestIds.push(t.id);
+                        }
+                    } else {
+                        // If it doesn't overlap and wasn't user modified, we KEEP IT to preserve partial coverage!
+                        // Do not add to supertestIds.
+                    }
+                } catch { }
+            });
+
+            // Crucial: Check cancellation BEFORE persisting new results!
+            // If canceled, do NOT write partial files and do NOT delete old tests!
+            if (isJobCanceled(jobId, abortController.signal)) {
+                await addJobLog(jobId, "INFO", "Generation job was canceled. Skipping file saving and database commit to preserve existing test suite.");
+                return { success: false, canceled: true };
+            }
+
+            // Step 1: Write NEW files to unique staging paths
+            allTestsCombined.forEach(t => {
+                if (!t.id) t.id = crypto.randomUUID();
+                t.filePath = t.filePath.replace('.test.js', `-${t.id.substring(0, 8)}.test.js`);
+            });
+
+            if (allTestsCombined.length > 0) {
+                saveAiTestsToFilesystem(job.snapshot.rootDir, allTestsCombined);
+            }
+            if (testsToUpdate.length > 0) {
+                saveAiTestsToFilesystem(job.snapshot.rootDir, testsToUpdate);
+            }
+
+            // Step 2: Atomic DB Transaction
+            await stagePreparedPublication(async (tx) => {
+                if (supertestIds.length > 0) {
+                    await tx.aiTest.deleteMany({
+                        where: { id: { in: supertestIds } }
+                    });
+                }
+                
+                for (const updated of testsToUpdate) {
+                    await tx.aiTest.update({
+                        where: { id: updated.id },
+                        data: {
+                            content: updated.content,
+                            metaJson: updated.metaJson
+                        }
+                    });
+                }
+                
+                await tx.aiSuggestion.deleteMany({
+                    where: { snapshotId }
+                });
+                
+                if (suggestionsCombined && suggestionsCombined.length > 0) {
+                    await tx.aiSuggestion.createMany({ data: suggestionsCombined });
+                }
+
+                if (allTestsCombined.length > 0) {
+                    await tx.aiTest.createMany({ data: allTestsCombined });
+                }
+            }, { maxWait: 15000, timeout: 30000 });
+
+            // Step 3: Cleanup old files asynchronously
+            if (supertestIds.length > 0) {
+                try {
+                    // Assuming existing tests are retrieved above, we can filter them for cleanup.
+                    const existingSupertests = existingTests.filter(t => supertestIds.includes(t.id));
+                    removeAiTestsFromFilesystem(job.snapshot.rootDir, existingSupertests);
+                } catch (err) {
+                    console.error("[aiTestsJob] Failed to clean up old files after DB transaction", err);
+                    await addJobLog(jobId, "WARN", "Failed to clean up some old test files. New tests are safely saved.");
+                }
+            }
+
+            if (allTestsCombined.length > 0) {
+                await addJobLog(jobId, "INFO", `Successfully generated ${allTestsCombined.length} Supertest test files.`);
+            } else {
+                await addJobLog(jobId, "INFO", "No Supertest integration test files were generated.");
+            }
+
+            invalidateEndpointCache(snapshotId, job.snapshot?.rootDir);
+            try {
+                const { archiveVersionArtifact } = await import("./integrationVersionHistory.service.js");
+                archiveVersionArtifact(job.snapshot?.rootDir, jobId, "AI_TESTS", {
+                    count: allTestsCombined.length,
+                    tests: allTestsCombined.map(t => ({ id: t.id, filePath: t.filePath, metaJson: t.metaJson, content: t.content })),
+                    unresolvedEndpoints
+                });
+            } catch (_) {}
+            if (unresolvedEndpoints.length > 0) {
+                await addJobLog(jobId, "WARN", `⚠️ ${unresolvedEndpoints.length} endpoint(s) could not be generated (due to Gemini quota exhaustion or provider errors). Unresolved: ${unresolvedEndpoints.join(", ")}`);
+            }
+            await updateGenerationJobStatus({
+                jobId,
+                status: finalJobStatus === "PARTIAL" ? "SUCCESS" : finalJobStatus,
+                progress: 100,
+                resultJson: JSON.stringify({
+                    count: allTestsCombined.length,
+                    completelyCovered,
+                    partialCovered,
+                    completelyMissed,
+                    unresolvedEndpoints
+                })
+            });
+            // Notification follows the prepared commit.
+            return { 
+                success: finalJobStatus !== "FAILED", 
+                count: allTestsCombined.length, 
+                summary: { 
+                    message: `Coverage: ${completelyCovered} Complete, ${partialCovered} Partial, ${completelyMissed} Missed.`,
+                    unresolvedEndpoints,
+                    status: finalJobStatus
+                } 
+            };
+        }
+
+        // ── Cypress E2E Generation Branch ──────────────────────────────────
+        if (mode === "CYPRESS") {
+            const cypressPrompt = buildCypressPrompt(payload);
+
+            await updateGenerationJobStatus({ jobId, progress: 40 });
+
+            await addJobLog(jobId, "INFO", "Calling Gemini AI model for Cypress test generation...");
+            const cypressResponseText = await generateText(cypressPrompt, selectedAiModel);
+
+            if (!cypressResponseText) {
+                throw new Error("Gemini returned an empty response for Cypress generation.");
+            }
+
+            await updateGenerationJobStatus({ jobId, progress: 80 });
+
+            await addJobLog(jobId, "INFO", "Parsing and classifying Cypress test scenarios...");
+            const { allTests, summary } = processCypressTests(cypressResponseText, {
+                projectId,
+                snapshotId,
+            });
+
+            await addJobLog(jobId, "INFO", "Cleaning up old Cypress tests for this snapshot...");
+            await stagePreparedPublication(tx => tx.aiTest.deleteMany({
+                where: { snapshotId, mode: "CYPRESS" },
+            }));
+
+            if (allTests.length > 0) {
+                await stagePreparedPublication(tx => tx.aiTest.createMany({ data: allTests }));
+                await addJobLog(jobId, "INFO", summary.message);
+            } else {
+                await addJobLog(jobId, "INFO", "No Cypress test files were generated.");
+            }
+
+            await updateGenerationJobStatus({ jobId, status: "SUCCESS", progress: 100 });
+            // Completion notification is sent only after the prepared workspace commits.
+            return { success: true, count: allTests.length, summary };
+        }
+
+        // ── Jest / Vitest Generation Branch (existing) ─────────────────────
+        const finalPrompt = buildFinalPrompt(payload, { mode, hasJest, hasVitest });
+
+        await updateGenerationJobStatus({ jobId, progress: 40 });
+
+        // SCRUM-394: Call Gemini API
+        await addJobLog(jobId, "INFO", "Calling Gemini AI model...");
+        const responseText = await generateText(finalPrompt, selectedAiModel);
+
+        // SCRUM-396: Validate AI response
+        if (!responseText) {
+            throw new Error("Gemini returned an empty response.");
+        }
+
+        await updateGenerationJobStatus({ jobId, progress: 80 });
+
+        await addJobLog(jobId, "INFO", "Parsing AI response...");
+        const { suggestions, tests } = processAiSuggestions(responseText, projectId, snapshotId);
+
+        await addJobLog(jobId, "INFO", "Saving skeleton tests to database...");
+
+        // Clean up old ones for this snapshot
+        await stagePreparedPublication(tx => tx.aiTest.deleteMany({
+            where: { snapshotId }
+        }));
+        await stagePreparedPublication(tx => tx.aiSuggestion.deleteMany({
+            where: { snapshotId }
+        }));
+
+        // SCRUM-397: Generate mock suggestions
+        if (suggestions.length > 0) {
+            await stagePreparedPublication(tx => tx.aiSuggestion.createMany({
+                data: suggestions
+            }));
+            await addJobLog(jobId, "INFO", `Saved ${suggestions.length} mock suggestions.`);
+        } else {
+            await addJobLog(jobId, "INFO", "No mock suggestions were generated.");
+        }
+
+        // SCRUM-398: Generate tests
+        if (tests.length > 0) {
+            let processedTests, summary;
+
+            if (mode === "FULL") {
+                const result = processFullTests(tests);
+                processedTests = result.processedTests;
+                summary = result.summary;
+            } else {
+                const result = processSkeletonTests(tests);
+                processedTests = result.processedTests;
+                summary = result.summary;
+            }
+
+            await stagePreparedPublication(tx => tx.aiTest.createMany({
+                data: processedTests
+            }));
+            await addJobLog(jobId, "INFO", summary.message);
+        } else {
+            await addJobLog(jobId, "INFO", `No ${mode.toLowerCase()} test files were generated.`);
+        }
+
+        await updateGenerationJobStatus({
+            jobId,
+            status: "SUCCESS",
+            progress: 100,
+        });
+
+        // Notify user
+        // Completion notification is sent only after the prepared workspace commits.
+
+        return { success: true, count: tests.length };
+    } catch (error) {
+        if (isJobCanceled(jobId, abortController.signal)) {
+            return { success: false, canceled: true };
+        }
+        if (["Only queued jobs can start", "Cannot start a canceled job", "Job not found"].includes(error.message)) {
+            console.warn(`[AiTestsJob ${jobId}] Ignored queue state error: ${error.message}`);
+            return { success: false, skipped: true };
+        }
+        // SCRUM-395: Handle generation errors
+        console.error(`[AiTestsJob ${jobId}] Failed:`, error);
+
+        try {
+            await addJobLog(jobId, "ERROR", `Pipeline Error: ${error.message}`);
+        } catch (_) {}
+
+        try {
+            await updateGenerationJobStatus({
+                jobId,
+                status: "FAILED",
+                progress: 100,
+                errorMessage: error.message,
+            });
+        } catch (_) {}
+
+        throw error;
+    } finally {
+        unregisterJobAbortController(jobId);
+    }
+};
+
+export const processAiTestsJob = async jobId => {
+    const job = await getJobById(jobId);
+    if (!job) throw new ServiceError("Job not found", 404);
+    try {
+        const { project } = await resolveProjectAccess({ projectId: job.projectId, userId: job.userId, capability: "ai.use" });
+        const admitted = await prisma.projectOperation.findUnique({ where: { primaryJobId: jobId } });
+        const result = await withPreparedProjectWorkspace({
+            projectId: job.projectId, snapshotId: job.snapshotId, userId: job.userId, primaryJobId: jobId,
+            capability: "ai.use", expectedWorkspaceRevision: admitted?.capturedWorkspaceRevision ?? project.workspaceRevision,
+            type: "AI_TESTS", input: JSON.parse(job.payloadJson || "{}"),
+            publish: result => result?.success !== false,
+        }, () => processAiTestsJobInWorkspace(jobId));
+        if (!result?.skipped) await notificationService.createJobFinishedNotification(jobId);
+        return result;
+    } catch (error) {
+        await prisma.job.updateMany({ where: { id: jobId, status: { in: ["QUEUED", "RUNNING"] } },
+            data: { status: "FAILED", progress: 100, finishedAt: new Date(), errorMessage: error.message } }).catch(() => {});
+        throw error;
+    }
+};

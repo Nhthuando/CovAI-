@@ -1,0 +1,348 @@
+P0 [Normal]: 
+P1 [Normal]: International School
+P2 [Normal]: Capstone Project 1
+P3 [Normal]: CMU-IS 450 – C1SE.20
+P4 [Normal]: 
+P5 [Normal]: Database Design
+P6 [Normal]: Version 1.0 
+P7 [Normal]: Date: Sep 19th, 2025
+P8 [Normal]: CovAI
+P9 [Normal]: Real-Time Retail Optimization Powered by edge AI
+P10 [Normal]: Created by 
+P11 [Normal]: Dinh, Huynh Tan
+P12 [Normal]: Dat, Truong Thanh
+P13 [Normal]: Trang, Lieu Thi Thuy
+P14 [Normal]: Thu, Phan Nguyen Anh
+P15 [Normal]: Vy, Vo Thi Tuong
+P16 [Normal]: Approved by 
+P17 [Normal]: MSc Hieu, Vo Dinh
+P18 [Normal]: 
+P19 [Normal]: Database Design Review Panel Representative:	
+P20 [Normal]:       							  		                
+P21 [Normal]: Name				Signature		Date
+P22 [Normal]: 
+P23 [Normal]: 
+P24 [Normal]: 
+P25 [Normal]: Capstone Project 1 - Mentor:		
+P26 [Normal]: 									        
+P27 [Normal]: Name				Signature		Date
+P28 [Normal]: 
+P29 [Normal]: PROJECT INFORMATION
+P30 [Normal]: DOCUMENT APPROVALS
+P31 [Normal]: The following signatures are required for approval of this document.
+P32 [Normal]: 	
+P33 [Normal]: 
+P34 [Normal]: 
+P35 [Normal]: 
+P36 [Normal]: 
+P37 [Normal]: 
+P38 [Normal]: DATABASE DESIGN DOCUMENT
+P39 [Normal]: 
+P40 [Normal]: 
+P41 [Normal]: 
+P42 [Normal]: REVISION HISTORY
+P43 [Normal]: 
+P44 [Normal]: 
+P45 [Normal]: 
+P46 [Normal]: 
+P47 [Normal]: 
+P48 [Normal]: 
+P49 [Normal]: 
+P50 [Normal]: 
+P51 [Normal]: 
+P52 [Normal]: TABLE OF CONTENTS
+P53 [Heading 1]: 
+P54 [Heading 1]: 1. Introduction 
+P55 [Normal]: The Database Design maps the logical data model to the target database management system with consideration to the system’s performance requirements. The Database Design converts logical or conceptual data constructs to physical data constructs (e.g., tables...) of the target Database Management System.	
+P56 [Heading 2]: 1.1 Purpose
+P57 [Normal]: The purpose of the Database Design is to ensure that every database transaction meets or exceeds its performance requirements. This document takes into account data and transaction volume to produce a schema and environment that will meet necessary performance.
+P58 [Heading 2]: 1.2 Scope
+P59 [Normal]: The Database Design Document has the following objectives: 
+P60 [Normal]: To describe the design of a database, that is, a collection of related data stored in one or more computerized files that can be accessed by users or developers via a DBMS.
+P61 [Normal]: To serve as a basis for implementing the database and related software units. It provides the acquirer visibility into the design and provides information necessary for software development.
+P62 [Heading 2]: 1.3 Introduction about MongoDB
+P63 [Normal]: 	MongoDB is an open-source NoSQL database management system that stores data in flexible, JSON-like documents instead of traditional tables. It uses collections to group documents and allows each document to have its own structure, making it suitable for unstructured or semi-structured data. Unlike MySQL, MongoDB does not require a fixed schema, which gives developers more flexibility when modeling data.
+P64 [Normal]: Each document is stored in BSON format and can contain nested fields and arrays. Collections are similar to tables in relational databases but are more dynamic. MongoDB is commonly used in modern web and mobile applications due to its scalability, high performance, and easy integration with languages like Node.js, Python, and Java.
+P65 [Heading 1]: 2. Database Diagram
+P66 [Heading 2]: 	2.1 Table Overview
+P67 [Normal]: Table 1. Table Overview
+P68 [Heading 2]: 2.2 Table Relationship Diagram
+P69 [Normal]: 
+P70 [Normal]: 
+P71 [Normal]: 
+P72 [Normal]: 
+P73 [Normal]: 
+P74 [Normal]: Figure 6. Table Relationship Diagram
+P75 [Heading 1]: 3. Database Design for Sprint
+P76 [Heading 2]:  3.1 Table Users
+P77 [Normal]: Table 2. Table Users
+P78 [Heading 2]:  3.2 Table Cameras
+P79 [Normal]: Table 3. Table Cameras
+P80 [Heading 2]: 3.3 Table Heamaps
+P81 [Normal]: Table 4. Table Heatmaps
+P82 [Heading 2]: 3.4 Table Invoices
+P83 [Normal]: Table 5. Table Invoice
+P84 [Heading 2]: 
+P85 [Normal]: 
+P86 [Normal]: 
+P87 [Heading 2]: 3.5 Table PersonTrackings
+P88 [Normal]: Table 6. Table PersonTrackings
+P89 [Heading 2]: 3.6 Table Products
+P90 [Normal]: Table 7. Table Products
+P91 [Heading 2]: 3.7 Table Stores
+P92 [Normal]: Table 8. Table Stores
+P93 [Heading 2]: 3.8 Table StoresSumaries
+P94 [Normal]: Table 9. Table StoresSumaries
+P95 [Heading 2]: 3.9 Table Zones
+P96 [Normal]: Table 10. Table Zones
+P97 [Normal]: 
+P98 [Heading 2]: 3.10 Table ZonesSumaries
+P99 [Normal]: Table 11. Table ZonesSumaries
+P100 [Heading 1]: 4. Hardware and software Requirements
+P101 [Normal]: This section provides an overview of hardware and software requirements. Below are descriptions of the technological components of the Real-Time Retail Optimization Powered by edge AI:
+P102 [Normal]: Table 12. Attributes of Smart Lover Diary Application
+P103 [Normal]: 
+
+--- TABLE 0 (rows: 14, cols: 4) ---
+R0: Project acronym | StoreLens | StoreLens | StoreLens
+R1: Project Title | “StoreLens” – Real-Time Retail Optimization Powered by edge AI | “StoreLens” – Real-Time Retail Optimization Powered by edge AI | “StoreLens” – Real-Time Retail Optimization Powered by edge AI
+R2: Start Date | 2 Aug 2025 | End Date | 12 Dec  2025
+R3: Lead Institution | International School, Duy Tan University | International School, Duy Tan University | International School, Duy Tan University
+R4: Project Mentor | MSc Hieu, Vo Dinh | MSc Hieu, Vo Dinh | MSc Hieu, Vo Dinh
+R5: Scrum master / Project Leader & contact details | Duy, Nguyen Khanh Email: nguyenkhanhduy27032004@gmail.com Tel: 0889 266 484  ID: 28219228870 | Duy, Nguyen Khanh Email: nguyenkhanhduy27032004@gmail.com Tel: 0889 266 484  ID: 28219228870 | Duy, Nguyen Khanh Email: nguyenkhanhduy27032004@gmail.com Tel: 0889 266 484  ID: 28219228870
+R6: Product Owner | Thu, Phan Nguyen Anh | Thu, Phan Nguyen Anh | Thu, Phan Nguyen Anh
+R7: Partner Organization | Duy Tan University | Duy Tan University | Duy Tan University
+R8: Team members | Name | Email | Tel
+R9: 1 | Duy, Nguyen Khanh | nguyenkhanhduy9@dtu.edu.vn | 0889266484
+R10: 2 | Dat, Truong Thanh | thanhdatqs2004@gmail.com | 0905480556
+R11: 3 | Thu, Phan Nguyen Anh | phannanhthu1@dtu.edu.vn | 0911309340
+R12: 4 | Trang, Lieu Thi Thuy | lieutthuytrang@dtu.edu.vn | 0353093304
+R13: 5 | Vy, Vo Thi Tuong | vottuongvy5@dtu.edu.vn | 0762596410
+
+--- TABLE 1 (rows: 5, cols: 3) ---
+R0: Thu, Phan Nguyen Anh Student ID: 28201500155 Scrum Master | Signature | Date
+R1: Dat, Truong Thanh Student ID: 28211100559 Team Member | Signature | Date
+R2: Duy, Nguyen Khanh Student ID: 28219228870 Team Member | Signature | Date
+R3: Trang, Lieu Thi Thuy Student ID: 28209024783 Team Member | Signature | Date
+R4: Vy, Vo Thi Tuong Student ID: 28209203950 Team Member | Signature | Date
+
+--- TABLE 2 (rows: 3, cols: 4) ---
+R0: Document Title | Database Design Document | Database Design Document | Database Design Document
+R1: Author(s) | Duy, Nguyen Khanh | Duy, Nguyen Khanh | Duy, Nguyen Khanh
+R2: Date | Sep 12th,2025 | File name: | C1SE.20_DatabaseDesign_v1.1.doc
+
+--- TABLE 3 (rows: 2, cols: 5) ---
+R0: Version | Date | Comments | Author | Approval
+R1: 1.0 | Sep 19th 2025 | Official Document | Duy, Nguyen Khanh | 
+
+--- TABLE 4 (rows: 11, cols: 2) ---
+R0: Collection  Name | Short Description
+R1: User | Stores login accounts and permissions
+R2: Cameras | Manages the list of cameras and their operational status
+R3: Stores | Stores fixed information about the store
+R4: Zones | Stores that the manager custom-draws on the camera's frame. It saves the zone name, polygon coordinates, and the corresponding camera code
+R5: Products | The store's product catalog
+R6: Invoices | Details of each completed sales transaction.
+R7: Zonesummary | Detailed KPI report for each zone
+R8: Storesummary | Aggregated KPI report for the entire store
+R9: Heatmap | Processed data (coordinates, density) used to visualize heatmaps.
+R10: PersonTracking | Stores the detailed paths and stop events of each anonymized customer over time.
+
+--- TABLE 5 (rows: 10, cols: 5) ---
+R0: Users | Users | Users | Users | Users
+R1: Id | Field | Type | Constraint | Description
+R2: 1 | _id | ObjectId | Primary key | Auto-generated unique identifier by MongoDB.
+R3: 2 | account | String | Required, Unique | The username of the user.
+R4: 3 | password | String | Required | The (hashed) password of the user.
+R5: 4 | email | String | Required | The email address of the user.
+R6: 5 | role | String | Enum: ['staff', 'manager', 'admin'], Default: 'staff' | The user's role in the system.
+R7: 6 | store_id | String | Required | The ID of the store the user belongs to.
+R8: 7 | created_at | Date | Default: Date.now | Timestamp when the account was created.
+R9: 8 | updated_at | Date | Default: Date.now | Timestamp of the last account update.
+
+--- TABLE 6 (rows: 20, cols: 5) ---
+R0: Cameras | Cameras | Cameras | Cameras | Cameras
+R1: Id | Field | Type | Constraint | Description
+R2: 1 | _id | ObjectId | Primary key | Auto-generated unique identifier by MongoDB.
+R3: 2 | store_id | String | Required | ID of the store the camera belongs to.
+R4: 3 | camera_name | String | Required, Unique | The unique name of the camera (e.g., "Checkout 1").
+R5: 4 | camera_code | String | Required | A specific code for the camera.
+R6: 5 | rtsp_url | String | Required | The RTSP stream URL for the camera.
+R7: 6 | camera_spec.max_resolution | Object | Optional | The maximum resolution supported by the camera.
+R8: 6 | camera_spec.max_resolution.width | Number |  | Width (pixels).
+R9: 6 | camera_spec.max_resolution.height | Number |  | Height (pixels).
+R10: 7 | camera_spec.current_resolution | Object | Optional | The current resolution being used for processing.
+R11: 7 | camera_spec.current_resolution.width | Number |  | Width (pixels).
+R12: 7 | camera_spec.current_resolution.height | Number |  | Height (pixels).
+R13: 8 | camera_state.last_processed_time | Date | Default: Date.now | Timestamp when a frame from this camera was last processed.
+R14: 9 | camera_state.last_stop_time | Date | Default: Date.now | Timestamp when the camera last stopped (if applicable).
+R15: 10 | status | String | Enum: ["active", "inactive"], Default: "active" | The operational status of the camera (running or not).
+R16: 11 | last_heartbeat | Date | Default: Date.now | Timestamp of the last health check (heartbeat) signal.
+R17: 12 | installation_date | Date | Required | The date the camera was installed.
+R18: 13 | created_at | Date | Default: Date.now | Timestamp when the camera record was created.
+R19: 14 | updated_at | Date | Default: Date.now | Timestamp of the last record update.
+
+--- TABLE 7 (rows: 14, cols: 5) ---
+R0: Heamaps | Heamaps | Heamaps | Heamaps | Heamaps
+R1: Id | Field | Type | Constraint | Description
+R2: 1 | _id | ObjectId | Primary key | Auto-generated unique identifier by MongoDB.
+R3: 2 | store_id | String | Required | ID of the store.
+R4: 3 | camera_id | String | Required | ID of the camera that generated the heatmap.
+R5: 4 | time_stamp | Number | Optional | Timestamp of the heatmap data.
+R6: 5 | width_matrix | Number | Optional | The width of the heatmap matrix.
+R7: 6 | height_matrix | Number | Optional | The height of the heatmap matrix.
+R8: 7 | grid_size | Number | Optional | The size of each grid cell in the heatmap.
+R9: 8 | frame_width | Number | Optional | The original width of the video frame.
+R10: 9 | frame_height | Number | Optional | The original height of the video frame.
+R11: 10 | heatmap_matrix | Number | Optional | The 2D matrix storing heatmap values.
+R12: 11 | created_at | Date | Default: Date.now | Timestamp when the record was created.
+R13: 12 | updated_at | Date | Default: Date.now | Timestamp of the last record update.
+
+--- TABLE 8 (rows: 22, cols: 5) ---
+R0: Invoices | Invoices | Invoices | Invoices | Invoices
+R1: Id | Field | Type | Constraint | Description
+R2: 1 | _id | ObjectId | Primary key | Auto-generated unique identifier by MongoDB.
+R3: 2 | invoice_code | String | Required | The unique invoice code (e.g., "INV001").
+R4: 3 | store_id | String | Required | ID of the store where the invoice was issued.
+R5: 4 | user_id | String | Optional | ID of the user (staff) who created this invoice.
+R6: 5 | customer.name | String | Optional | The name of the customer.
+R7: 6 | customer.phone | String | Optional | The phone number of the customer.
+R8: 7 | zone_id | String | Optional | ID of the zone or checkout counter where payment occurred.
+R9: 8 | total_amount | Number | Optional | The final total amount of the invoice (after discounts).
+R10: 9 | discount | Number | Optional | The discount amount applied.
+R11: 10 | payment_method | String | Default: "cash" | Payment method (e.g., "cash", "card").
+R12: 11 | status | String | Default: "completed" | Status of the invoice (e.g., "completed", "pending", "refunded").
+R13: 12 | products | Array (Object) | Optional | A list of products included in the invoice.
+R14: 12 | products.product_id | String |  | The ID of the product.
+R15: 12 | products.name_product | String |  | The name of the product at the time of purchase.
+R16: 12 | products.quantity | Number |  | The quantity of the product purchased.
+R17: 12 | products.unit_price | Number |  | The price for a single unit of the product.
+R18: 12 | products.total_price | Number |  | The total price for this product (quantity * unit_price).
+R19: 13 | date | Date | Default: Date.now | The timestamp when the payment was completed.
+R20: 14 | created_at | Date | Default: Date.now | Timestamp when the invoice record was created in the DB.
+R21: 15 | updated_at | Date | Default: Date.now | Timestamp of the last record update.
+
+--- TABLE 9 (rows: 19, cols: 5) ---
+R0: PersonTrackings | PersonTrackings | PersonTrackings | PersonTrackings | PersonTrackings
+R1: Id | Field | Type | Constraint | Description
+R2: 1 | _id | ObjectId | Primary key | Auto-generated unique identifier by MongoDB.
+R3: 2 | store_id | String | Required | ID of the store.
+R4: 3 | camera_id | String | Required | ID of the camera that detected and tracked this person.
+R5: 4 | person_id | String | Required | A unique ID for the tracked person within a session.
+R6: 5 | session_id | String | Optional | The ID of the tracking session (e.g., a customer's visit).
+R7: 6 | timestamp | Number | Optional | Timestamp of the recorded event.
+R8: 7 | date | Date | Default: Date.now | The date the tracking event occurred.
+R9: 8 | class | String | Optional | The class of the detected object (e.g., "person", "customer").
+R10: 9 | confidence | Number | Optional | The confidence score (percentage) of the detection.
+R11: 10 | path_data | [[Number]] | Optional | A 2D array storing path data. Each element is [x, y, duration].
+R12: 11 | stop_events | Array (Object) | Optional | A list of stop (dwell) events for that person.
+R13: 11 | stop_events.position | [Number] |  | The [x, y] coordinate where the stop occurred.
+R14: 11 | stop_events.duration_s | Number |  | The duration of the stop (in seconds).
+R15: 11 | stop_events.duration_ms | Number |  | The duration of the stop (in milliseconds).
+R16: 12 | status | String | Enum: ["active", "inactive"], Default: "active" | Tracking status (e.g., "active" - still in frame, "inactive" - left frame).
+R17: 13 | created_at | Date | Default: Date.now | Timestamp when this tracking record was created.
+R18: 14 | updated_at | Date | Default: Date.now | Timestamp of the last record update.
+
+--- TABLE 10 (rows: 12, cols: 5) ---
+R0: Products | Products | Products | Products | Products
+R1: Id | Field | Type | Constraint | Description
+R2: 1 | _id | ObjectId | Primary key | Auto-generated unique identifier by MongoDB.
+R3: 2 | category_name | String | Required | The category name of the product.
+R4: 3 | name_product | String | Required | The name of the product.
+R5: 4 | brand | String | Optional | The brand of the product.
+R6: 5 | price | Number | Required | The selling price of the product.
+R7: 6 | unit | String | Default: "piece" | The unit of measurement (e.g., "piece", "kg").
+R8: 7 | stock_quantity | Number | Optional | The quantity currently in stock.
+R9: 8 | status | Boolean | Default: true | Product status (true: active/for sale, false: inactive).
+R10: 9 | created_at | Date | Default: Date.now | Timestamp when the product was created.
+R11: 10 | updated_at | Date | Default: Date.now | Timestamp of the last product update.
+
+--- TABLE 11 (rows: 14, cols: 5) ---
+R0: Stores | Stores | Stores | Stores | Stores
+R1: Id | Field | Type | Constraint | Description
+R2: 1 | _id | ObjectId | Primary key | Auto-generated unique identifier by MongoDB.
+R3: 2 | store_name | String | Required | The name of the store.
+R4: 3 | store_id | String | Required, Unique | The unique identifier code for the store.
+R5: 4 | address | String | Required | The physical address of the store.
+R6: 5 | manager_infor.name | String | Required | The name of the manager.
+R7: 6 | manager_infor.phone | String | Required | The phone number of the manager.
+R8: 7 | manager_infor.email | String | Required | The email address of the manager.
+R9: 8 | business_hours.open | String | Required | Opening time (e.g., "08:00").
+R10: 9 | business_hours.close | String | Required | Closing time (e.g., "22:00").
+R11: 10 | business_hours.timezone | String | Required | Timezone (e.g., "Asia/Ho_Chi_Minh").
+R12: 11 | created_at | Date | Default: Date.now | Timestamps for record creation
+R13: 12 | updated_at | Date | Default: Date.now | Timestamps for record last update.
+
+--- TABLE 12 (rows: 25, cols: 5) ---
+R0: StoresSumaries | StoresSumaries | StoresSumaries | StoresSumaries | StoresSumaries
+R1: Id | Field | Type | Constraint | Description
+R2: 1 | _id | ObjectId | Primary key | Auto-generated unique identifier by MongoDB.
+R3: 2 | date | Date | Required, Index | The date this summary data applies to.
+R4: 3 | store_id | String | Required, Index | The ID of the store being summarized.
+R5: 4 | kpis.total_visitors | Number | Default: 0 | (KPI) Total visitors to the store for the day.
+R6: 5 | kpis.total_revenue | Number | Default: 0 | (KPI) Total store revenue for the day.
+R7: 6 | kpis.total_invoices | Number | Default: 0 | (KPI) Total number of invoices issued for the day.
+R8: 7 | kpis.conversion_rate | Number | Default: 0 | (KPI) Overall conversion rate (total_invoices / total_visitors).
+R9: 8 | kpis.avg_store_dwell_time | Number | Default: 0 | (KPI) Average customer dwell time (in seconds or minutes).
+R10: 9 | kpis.avg_basket_value | Number | Default: 0 | (KPI) Average basket value (total_revenue / total_invoices).
+R11: 10 | realtime.people_current | Number | Default: 0 | (Real-time) CURRENT number of people in the store.
+R12: 11 | realtime.checkout_length | Number | Default: 0 | (Real-time) CURRENT checkout queue length (number of people).
+R13: 12 | chart_data | Array (Object) | Optional | Array for "Hourly Traffic & Sales" chart.
+R14: 12 | chart_data.hour | Number |  | The hour of the day (0-23).
+R15: 12 | chart_data.people_count | Number |  | Total people entering during that hour.
+R16: 12 | chart_data.total_revenue | Number |  | Total revenue generated during that hour.
+R17: 13 | top_products | Array (Object) | Optional | Array for "Top 5 Products" table.
+R18: 13 | top_products.product_id | String |  | The product's ID.
+R19: 13 | top_products.product_name | String |  | The product's name.
+R20: 13 | top_products.total_quantity | Number |  | Total quantity sold.
+R21: 13 | top_products.total_revenue | Number |  | Total revenue from this product.
+R22: 13 | top_products.rank | Number |  | The rank (1-5).
+R23: 14 | created_at | Date | Default: Date.now | Timestamps for summary record creation
+R24: 15 | updated_at | Date | Default: Date.now | Timestamps for summary record last update.
+
+--- TABLE 13 (rows: 16, cols: 5) ---
+R0: Zones | Zones | Zones | Zones | Zones
+R1: Id | Field | Type | Constraint | Description
+R2: 1 | _id | ObjectId | Primary key | Auto-generated unique identifier by MongoDB.
+R3: 2 | store_id | String | Required | ID of the store.
+R4: 3 | camera_code | String | Required | The camera code these zones are drawn on.
+R5: 4 | background_image | String | Optional | URL of the background image (frame) used for drawing.
+R6: 5 | width_frame | Number | Optional | Dimensions width of the background/original frame.
+R7: 6 | height_frame | Number | Optional | Dimensions height of the background/original frame.
+R8: 6 | zones | Array (Object) | Optional | An array containing the information for each zone.
+R9: 7 | zones.zone_id | String | Required, Unique | A unique ID for the specific zone (e.g., "zone_01").
+R10: 8 | zones.zone_name | String | Required | The name of the zone (e.g., "Candy Aisle", "Checkout").
+R11: 9 | zones.coordinates | [[Number]] | Optional | An array of [x, y] coordinates defining the zone's polygon.
+R12: 10 | zones.color | String | Optional | A color code (e.g., "#FF0000") for displaying the zone.
+R13: 11 | zones.products | Array (Object) | Optional | An array of products associated with this zone.
+R14: 12 | zones.products.product_id | String | Optional | The ID of the product.
+R15: 13 | zones.products.priority | Number | Optional | The priority of the product within this zone (if needed).
+
+--- TABLE 14 (rows: 19, cols: 5) ---
+R0: ZonesSumaries | ZonesSumaries | ZonesSumaries | ZonesSumaries | ZonesSumaries
+R1: Id | Field | Type | Constraint | Description
+R2: 1 | _id | ObjectId | Primary key | Auto-generated unique identifier by MongoDB.
+R3: 2 | date | Date | Required, Index | The date this summary data applies to.
+R4: 3 | store_id | String | Required, Index | ID of the store.
+R5: 4 | zone_id | String | Required, Index | ID of the specific zone being summarized.
+R6: 5 | camera_code | String | Required, Index | Camera code associated with this zone.
+R7: 6 | category_name | String | Optional | Name/Category of the zone (e.g., "Beverages", "Snacks").
+R8: 7 | performance.people_count | Number | Default: 0 | (Perf) Total people who entered this zone.
+R9: 8 | performance.total_sales_value | Number | Default: 0 | (Perf) Total sales value from this zone's products.
+R10: 9 | performance.total_invoices | Number | Default: 0 | (Perf) Total invoices containing products from this zone.
+R11: 10 | performance.conversion_rate | Number | Default: 0 | (Perf) Zone-specific conversion rate (invoices / people_count).
+R12: 11 | performance.avg_dwell_time | Number | Default: 0 | (Perf) Average dwell time in the zone (sec/min).
+R13: 12 | performance.total_stop_events | Number | Default: 0 | (Perf) Total stop events (pausing) within the zone.
+R14: 13 | performance.top_product_id | String | Optional | (Perf) ID of the top/featured product for this zone.
+R15: 14 | performance.peak_hour | Number | Default: 0 | (Perf) The peak hour (0-23) with the most traffic for this zone.
+R16: 15 | trend | String | Enum: ["up", "down", "steady"], Default: "steady" | Performance trend (up/down/steady) compared to the previous period.
+R17: 16 | created_at | Date | Default: Date.now | Timestamps for summary record creation .
+R18: 17 | updated_at | Date | Default: Date.now | Timestamps for summary record last update.
+
+--- TABLE 15 (rows: 6, cols: 2) ---
+R0: Attributes of Smart Lover Diary Application | Attributes of Smart Lover Diary Application
+R1: Attributes | Descriptions
+R2: Database | MongoDB
+R3: Software | Frontend: React  Backend: Python (Flask/FastAPI) , JavaScript (Node.js) AI Core: PyTorch , OpenCV
+R4: Hardware | Imou smart IP camera , Edge Video Processing Devices , Backend Serve
+R5: Library | Frameworks: Express.js , Tailwind CSS AI Models: YOLOv8 , DeepSORT , CSRNet

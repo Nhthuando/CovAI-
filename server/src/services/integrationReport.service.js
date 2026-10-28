@@ -1,0 +1,285 @@
+import prisma from '../config/prisma.js';
+import { loadSourceCode } from './aiContextBuilder.service.js';
+import { extractValidEndpoints } from './apiEndpointParser.service.js';
+import { extractTestRequests } from './testSourceParser.service.js';
+
+const isMatch = (parsedReq, discoveredEp) => {
+    if (parsedReq.method !== discoveredEp.method) return false;
+    
+    const cleanPath = parsedReq.path.split("?")[0].replace(/\/+$/, "") || "/";
+    const cleanRoute = discoveredEp.fullPath.replace(/\/+$/, "") || "/";
+    
+    const regexStr = "^" + cleanRoute.replace(/:[^\/]+/g, "[^/]+") + "$";
+    return new RegExp(regexStr).test(cleanPath);
+};
+
+export const getIntegrationAnalytics = async (projectId) => {
+    const report = {
+        overview: null,
+        latestExecution: null,
+        apiCoverage: null,
+        projectCodeCoverage: null,
+        history: {
+            executions: [],
+            coverage: [],
+            generations: []
+        }
+    };
+
+    // 1. History - Executions
+    const allSnapshots = await prisma.projectSnapshot.findMany({
+        where: { projectId },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true, createdAt: true }
+    });
+
+    if (allSnapshots.length === 0) {
+        return report;
+    }
+
+    const snapshotIds = allSnapshots.map(s => s.id);
+
+    const testRuns = await prisma.testRun.findMany({
+        where: { snapshotId: { in: snapshotIds }, type: 'SUPERTEST' },
+        orderBy: { createdAt: 'asc' }
+    });
+
+    report.history.executions = testRuns.map(tr => ({
+        testRunId: tr.id,
+        snapshotId: tr.snapshotId,
+        timestamp: tr.createdAt.toISOString(),
+        status: tr.status,
+        totalTests: tr.totalTests,
+        passedTests: tr.passedTests,
+        failedTests: tr.failedTests,
+        skippedTests: tr.skippedTests,
+        durationMs: tr.durationMs
+    }));
+
+    // 2. History - Coverage
+    const coverages = await prisma.coverageSummary.findMany({
+        where: { snapshotId: { in: snapshotIds } }
+    });
+    
+    report.history.coverage = coverages.map(c => {
+        const snap = allSnapshots.find(s => s.id === c.snapshotId);
+        return {
+            snapshotId: c.snapshotId,
+            timestamp: snap ? snap.createdAt.toISOString() : c.createdAt.toISOString(),
+            stmtsPct: c.stmtsPct
+        };
+    }).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+    // 3. History - Generations
+    const jobs = await prisma.job.findMany({
+        where: { snapshotId: { in: snapshotIds }, type: 'AI_TESTS' },
+        orderBy: { createdAt: 'asc' }
+    });
+
+    report.history.generations = jobs.map(j => {
+        let mode = "UNKNOWN";
+        if (j.payloadJson) {
+            try {
+                const payload = JSON.parse(j.payloadJson);
+                mode = payload.mode || "UNKNOWN";
+            } catch (e) {}
+        }
+        
+        return {
+            jobId: j.id,
+            snapshotId: j.snapshotId,
+            timestamp: j.createdAt.toISOString(),
+            status: j.status,
+            mode
+        };
+    }).filter(j => j.mode === 'FULL' || j.mode === 'SKELETON' || j.mode === 'SUPERTEST_REGENERATE');
+
+    // 4. Latest Snapshot context
+    const latestSnapshot = allSnapshots[allSnapshots.length - 1];
+    const snapshotId = latestSnapshot.id;
+
+    // Latest Execution
+    const latestRun = testRuns.filter(tr => tr.snapshotId === snapshotId && (tr.status === 'PASSED' || tr.status === 'SUCCESS' || tr.status === 'FAILED')).pop();
+    if (latestRun) {
+        report.latestExecution = {
+            testRunId: latestRun.id,
+            timestamp: latestRun.createdAt.toISOString(),
+            status: latestRun.status,
+            totalTests: latestRun.totalTests,
+            passedTests: latestRun.passedTests,
+            failedTests: latestRun.failedTests,
+            skippedTests: latestRun.skippedTests,
+            durationMs: latestRun.durationMs
+        };
+    }
+
+    // Latest Project Code Coverage
+    const latestCoverage = coverages.find(c => c.snapshotId === snapshotId);
+    if (latestCoverage) {
+        report.projectCodeCoverage = {
+            timestamp: latestSnapshot.createdAt.toISOString(),
+            stmtsPct: latestCoverage.stmtsPct,
+            warning: "Reflects the latest coverage parser execution for this snapshot and is not guaranteed to be Integration-Test-only coverage."
+        };
+    }
+
+    // Latest AiTests
+    const aiTests = await prisma.aiTest.findMany({
+        where: { snapshotId }
+    });
+    
+    const integrationTests = aiTests.filter(t => {
+        if (!t.metaJson) return false;
+        try {
+            const meta = typeof t.metaJson === 'string' ? JSON.parse(t.metaJson) : t.metaJson;
+            return meta.framework === "SUPERTEST";
+        } catch { return false; }
+    });
+
+    let totalScenarios = 0;
+    let unmodifiedAiScenarios = 0;
+    let modifiedScenarios = 0;
+
+    const allParsedRequests = [];
+    integrationTests.forEach(t => {
+        if (t.metaJson) {
+            try {
+                const meta = typeof t.metaJson === 'string' ? JSON.parse(t.metaJson) : t.metaJson;
+                const requests = Array.isArray(meta.requests) ? meta.requests : [];
+                totalScenarios += requests.length;
+                requests.forEach(r => {
+                    if (r.userEdited === true) modifiedScenarios++;
+                    else unmodifiedAiScenarios++;
+                });
+            } catch (e) {}
+        }
+        const reqs = extractTestRequests(t.content, t.filePath);
+        allParsedRequests.push(...reqs);
+    });
+
+    report.overview = {
+        snapshotId,
+        totalScenarios,
+        unmodifiedAiScenarios,
+        modifiedScenarios
+    };
+
+    // API Endpoint Coverage
+    let sourceCode = [];
+    try {
+        sourceCode = await loadSourceCode(snapshotId);
+    } catch(e) {}
+    
+    const discoveredEndpoints = extractValidEndpoints(sourceCode);
+    let testedApis = 0;
+    
+    discoveredEndpoints.forEach(ep => {
+        const mappedScenarios = allParsedRequests.filter(req => isMatch(req, ep));
+        
+        // Let's mimic what we did in workspace for consistency if we have access to executions.
+        // Wait, integrationReport doesn't have testScenarios execution statuses available!
+        // It just counts if they are "tested" by checking if any request targets it!
+        // So the old logic was:
+        // const isTested = allParsedRequests.some(req => isMatch(req, ep));
+        // if (isTested) testedApis++;
+        // Why is this 0 in the UI? 
+        // Oh, the UI uses the `summary` from `buildWorkspace`, not the `report`!
+        // So I just need to leave this as is if we don't have execution statuses here.
+        const isTested = allParsedRequests.some(req => isMatch(req, ep));
+        if (isTested) testedApis++;
+    });
+
+    const apiProvenance = {
+        source: "Endpoint Analysis",
+        metric: "API Endpoint Coverage",
+        formula: "testedApis / discoveredApis",
+        scope: "Express Routes",
+        snapshotId,
+        timestamp: new Date().toISOString(),
+        limitation: "Static mapping; does not guarantee runtime execution."
+    };
+
+    report.apiCoverage = {
+        discoveredApis: discoveredEndpoints.length,
+        testedApis,
+        uncoveredApis: discoveredEndpoints.length - testedApis,
+        coveragePercentage: discoveredEndpoints.length > 0 ? (testedApis / discoveredEndpoints.length) * 100 : 0,
+        provenance: apiProvenance
+    };
+
+    if (report.latestExecution) {
+        report.latestExecution.provenance = {
+            source: "TestRunner Report",
+            metric: "Execution Results",
+            formula: "Direct pass/fail counts from test runner",
+            scope: "Integration Tests",
+            snapshotId,
+            testRunId: report.latestExecution.testRunId,
+            timestamp: report.latestExecution.timestamp,
+            limitation: "Represents an isolated test run that may not reflect overall pipeline status."
+        };
+    }
+
+    if (report.projectCodeCoverage) {
+        report.projectCodeCoverage.provenance = {
+            source: "Coverage Parser",
+            metric: "Project Statement Coverage",
+            formula: "Executed Statements / Total Statements",
+            scope: "V8/Istanbul Code Coverage",
+            snapshotId,
+            timestamp: report.projectCodeCoverage.timestamp,
+            limitation: report.projectCodeCoverage.warning
+        };
+    }
+
+    report.overview.provenance = {
+        scenarioCount: {
+            source: "AI Test Generator / AST Parser",
+            metric: "Scenario Generation",
+            formula: "Count of explicitly mapped test scenarios",
+            scope: "Integration Scenarios",
+            snapshotId,
+            timestamp: new Date().toISOString(),
+            limitation: "Modified scenarios indicate user edits, but may also include regeneration effects."
+        }
+    };
+
+    
+    // 5. Route Coverage Matrix & Failure Logs
+    const latestRunScenarios = (latestRun && prisma.testScenario?.findMany) ? await prisma.testScenario.findMany({
+        where: { testRunId: latestRun.id }
+    }) : [];
+
+    const failureLogs = latestRunScenarios.filter(s => s.status === 'failed' || s.executionVerdict === 'FAIL').map(s => ({
+        id: s.id,
+        targetEndpoint: s.targetEndpoint || s.testFile,
+        title: s.title,
+        failureLayer: s.failureLayer || 'ASSERTION_FAILED',
+        responseStatus: s.responseStatus,
+        expectedStatus: s.expectedStatus,
+        errorMessage: s.failureMessage || 'Assertion or runtime failure during API test execution.',
+    }));
+
+    const routeMatrix = (discoveredEndpoints || []).map(ep => {
+        const isTested = allParsedRequests.some(req => isMatch(req, ep));
+        const matchedScenarios = latestRunScenarios.filter(s => s.targetEndpoint && s.targetEndpoint.includes(ep.fullPath));
+        const hasFail = matchedScenarios.some(s => s.status === 'failed' || s.executionVerdict === 'FAIL');
+        let status = 'UNCOVERED';
+        if (isTested || matchedScenarios.length > 0) {
+            status = hasFail ? 'FAILED' : 'COVERED';
+        }
+        return {
+            method: ep.method,
+            path: ep.fullPath,
+            handler: ep.controllerMethod || 'Inline Handler',
+            sourceFile: ep.sourceFile || 'routes/api.js',
+            status,
+            scenarioCount: matchedScenarios.length,
+        };
+    });
+
+    report.routeMatrix = routeMatrix;
+    report.failureLogs = failureLogs;
+
+    return report;
+};
