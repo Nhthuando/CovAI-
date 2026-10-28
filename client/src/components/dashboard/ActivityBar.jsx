@@ -1,5 +1,6 @@
 import { motion, AnimatePresence } from "framer-motion";
 import {
+  LayoutDashboard,
   Files,
   Settings,
   BarChart3,
@@ -12,6 +13,7 @@ import {
 import { useState } from "react";
 
 const TOP_ITEMS = [
+  { id: "overview", icon: LayoutDashboard, label: "Overview" },
   { id: "explorer", icon: Files, label: "Explorer" },
   { id: "git", icon: GitGraph, label: "Git Control" },
   { id: "coverage", icon: BarChart3, label: "Coverage" },

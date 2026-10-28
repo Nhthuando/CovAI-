@@ -2,8 +2,8 @@ FROM node:20-slim
 
 WORKDIR /app
 
-# Install openssl for Prisma and git for githubClone.service
-RUN apt-get update -y && apt-get install -y openssl git && rm -rf /var/lib/apt/lists/*
+# Install openssl for Prisma and git for githubClone.service, and configure safe.directory for container volume mounts
+RUN apt-get update -y && apt-get install -y openssl git && rm -rf /var/lib/apt/lists/* && git config --global --add safe.directory "*"
 
 # Copy package files
 COPY package*.json ./

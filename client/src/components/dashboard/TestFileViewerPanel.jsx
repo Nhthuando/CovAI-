@@ -742,17 +742,16 @@ export default function TestFileViewerPanel({
                 alignItems: "center",
                 gap: 8,
                 padding: "8px 16px",
-                borderRadius: 7,
+                borderRadius: 6,
                 fontSize: 12,
                 fontWeight: 600,
-                background: "linear-gradient(135deg, #7c3aed 0%, #6366f1 100%)",
-                color: "#ffffff",
-                border: "none",
+                background: "var(--color-primary)",
+                color: "var(--color-primary-foreground)",
+                border: "1px solid var(--color-primary)",
                 cursor: isLoadingSuggestions ? "wait" : "pointer",
-                boxShadow: "0 4px 14px rgba(124, 58, 237, 0.35)",
-                transition: "all 0.15s ease",
+                transition: "opacity 0.15s ease",
               }}
-              className="hover:opacity-95"
+              className="hover:opacity-90 disabled:opacity-50"
             >
               {isLoadingSuggestions ? (
                 <Loader2 size={15} className="animate-spin" />
@@ -845,12 +844,13 @@ export default function TestFileViewerPanel({
                       borderRadius: 6,
                       fontSize: 11,
                       fontWeight: 700,
-                      background: "linear-gradient(135deg, #059669 0%, #047857 100%)",
-                      color: "#ffffff",
-                      border: "none",
+                      background: "var(--color-success)",
+                      color: "var(--color-primary-foreground)",
+                      border: "1px solid var(--color-success)",
                       cursor: "pointer",
-                      boxShadow: "0 2px 8px rgba(5, 150, 105, 0.3)",
+                      transition: "opacity 0.15s ease",
                     }}
+                    className="hover:opacity-90"
                   >
                     <Layers size={13} />
                     <span>Apply all to project ({suggestions.filter((s) => s.status !== "REJECTED").length})</span>

@@ -225,12 +225,8 @@ export default function UnitTestExecutionVisualizer({
           alignItems: "center",
           flexWrap: "wrap",
           gap: 14,
-          background: isLight
-            ? "linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)"
-            : "linear-gradient(135deg, rgba(30, 41, 59, 0.5) 0%, rgba(15, 23, 42, 0.8) 100%)",
-          borderLeft: isLight
-            ? isFailed ? "4px solid #ef4444" : "4px solid #10b981"
-            : isFailed ? "4px solid #f87171" : "4px solid #34d399",
+          background: "var(--color-surface)",
+          borderLeft: isFailed ? "4px solid var(--color-danger)" : "4px solid var(--color-success)",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
@@ -852,10 +848,10 @@ export default function UnitTestExecutionVisualizer({
                           height: 24,
                           borderRadius: 6,
                           background: isSuiteFailed
-                            ? "linear-gradient(90deg, #ef4444 0%, #b91c1c 100%)"
+                            ? "var(--color-danger)"
                             : isSlow
-                              ? "linear-gradient(90deg, #f59e0b 0%, #d97706 100%)"
-                              : "linear-gradient(90deg, #10b981 0%, #059669 100%)",
+                              ? "var(--color-warning)"
+                              : "var(--color-success)",
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "space-between",
@@ -865,11 +861,7 @@ export default function UnitTestExecutionVisualizer({
                           fontWeight: 700,
                           fontFamily: "var(--font-mono)",
                           cursor: "pointer",
-                          boxShadow: isSuiteFailed
-                            ? "0 2px 6px rgba(239, 68, 68, 0.3)"
-                            : isSlow
-                              ? "0 2px 6px rgba(245, 158, 11, 0.3)"
-                              : "0 2px 6px rgba(16, 185, 129, 0.25)",
+                          boxShadow: "none",
                           transition: "width 0.3s ease, transform 0.15s ease",
                         }}
                         title={`Suite: ${suite.fileName} · Duration: ${duration}ms · Assertions: ${suite.assertions?.length || 0}`}

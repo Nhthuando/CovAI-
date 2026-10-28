@@ -145,7 +145,8 @@ export function invalidateCoverageQueries(snapshotId = null) {
         return (
           (domain === "coverageDashboard" ||
             domain === "fileCoverage" ||
-            domain === "integrationWorkspace") &&
+            domain === "integrationWorkspace" ||
+            domain === "unifiedDashboard") &&
           snap === snapshotId
         );
       },
@@ -154,6 +155,7 @@ export function invalidateCoverageQueries(snapshotId = null) {
     queryClient.invalidateQueries({ queryKey: ["coverageDashboard"] });
     queryClient.invalidateQueries({ queryKey: ["fileCoverage"] });
     queryClient.invalidateQueries({ queryKey: ["integrationWorkspace"] });
+    queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] });
   }
 }
 

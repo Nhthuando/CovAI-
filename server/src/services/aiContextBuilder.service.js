@@ -58,7 +58,7 @@ export const loadSourceCode = async (snapshotId) => {
 
     const isSourceMatch = (fileName, filePath) => {
         const ext = path.extname(fileName).toLowerCase();
-        const validExts = [".js", ".jsx", ".ts", ".tsx"];
+        const validExts = [".js", ".jsx", ".ts", ".tsx", ".prisma"];
         const isTest = fileName.includes(".test.") || fileName.includes(".spec.");
         return validExts.includes(ext) && !isTest;
     };

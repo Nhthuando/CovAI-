@@ -15,6 +15,7 @@ import { processFullTests } from "./fullTestsPostProcessor.service.js";
 import { processCypressTests } from "./cypressPostProcessor.service.js";
 import { processSupertestTests } from "./supertestPostProcessor.service.js";
 import { notificationService } from "./notification.service.js";
+import { invalidateEndpointCache } from "./integrationWorkspace.service.js";
 import { saveAiTestsToFilesystem, removeAiTestsFromFilesystem } from "./aiTestStorage.service.js";
 import crypto from "crypto";
 import { validateGeneratedTestCode } from "../validators/aiTestCode.validator.js";
@@ -35,6 +36,11 @@ import {
     startAutServer,
     stopAutServer,
 } from "./autLifecycle.service.js";
+import {
+    registerJobAbortController,
+    unregisterJobAbortController,
+    isJobCanceled,
+} from "./jobCancellation.service.js";
 
 const broadcastAiJobProgress = (jobId, { progress, stage, message, status = "RUNNING", userId = null }) => {
     // A terminal success must not reach sockets before files and metadata commit.
@@ -71,15 +77,36 @@ const updateGenerationJobStatus = async input => {
  * Orchestrates the full Skeleton Test Generation Pipeline
  */
 const processAiTestsJobInWorkspace = async (jobId) => {
+    const abortController = new AbortController();
+    registerJobAbortController(jobId, abortController);
     try {
         const storedJob = await getJobById(jobId);
         const job = storedJob && { ...storedJob, snapshot: operationSnapshot(storedJob.snapshot && { ...storedJob.snapshot, id: storedJob.snapshot.id || storedJob.snapshotId }) };
 
-        await updateGenerationJobStatus({
-            jobId,
-            status: "RUNNING",
-            progress: 5,
-        });
+        if (isJobCanceled(jobId, abortController.signal)) return { success: false, canceled: true };
+
+        if (!job) return { success: false, error: "Job not found" };
+
+        if (["CANCELED", "SUCCESS", "FAILED"].includes(job.status) || isJobCanceled(jobId, abortController.signal)) {
+            return { success: false, canceled: job.status === "CANCELED" };
+        }
+
+        // Only transition status to RUNNING if it is currently QUEUED
+        if (job.status === "QUEUED") {
+            try {
+                await updateGenerationJobStatus({
+                    jobId,
+                    status: "RUNNING",
+                    progress: 5,
+                });
+            } catch (err) {
+                if (["Only queued jobs can start", "Cannot start a canceled job", "Job not found"].includes(err.message)) {
+                    console.warn(`[AiTestsJob ${jobId}] Job status transition skipped: ${err.message}`);
+                    return { success: false, skipped: true };
+                }
+                throw err;
+            }
+        }
 
         const { snapshotId, projectId } = job;
 
@@ -394,12 +421,61 @@ const processAiTestsJobInWorkspace = async (jobId) => {
         }
 
         // ── Supertest Integration Generation Branch ────────────────────────
+        if (mode === "INTEGRATION_GENERATION") {
+            const { runIntegrationGenerationPipeline } = await import("./integrationApiService.service.js");
+            const result = await runIntegrationGenerationPipeline({
+                jobId,
+                snapshotId,
+                projectId,
+                framework: payloadJsonObj.framework || "SUPERTEST",
+                targetEndpoints: payloadJsonObj.targetEndpoints || [],
+                model:selectedAiModel,
+                abortSignal: abortController.signal
+            });
+            return { success: true, ...result };
+        }
+
+        if (mode === "INTEGRATION_REGENERATE") {
+            const { runRegenerateScenarioPipeline } = await import("./integrationApiService.service.js");
+            const result = await runRegenerateScenarioPipeline({
+                jobId,
+                snapshotId,
+                scenarioId: payloadJsonObj.scenarioId,
+                framework: payloadJsonObj.framework || "SUPERTEST",
+                failureContext: payloadJsonObj.failureContext || null,
+                expectedVersion:payloadJsonObj.expectedVersion,
+                model:selectedAiModel,
+                abortSignal: abortController.signal
+            });
+            return { success: true, ...result };
+        }
+
         if (mode === "SUPERTEST_REGENERATE") {
             const { aiTestId, scenarioId } = payloadJsonObj;
             
             await updateGenerationJobStatus({ jobId, progress: 40 });
             await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'GENERATE_AI_TESTS', label: "Regenerating scenario using AI...", progress: 40 }));
             
+            const { resolvePathConstraintsForProject } = await import("./integrationGuidance.service.js");
+            const diagnostics = [];
+            const pathConstraints = await resolvePathConstraintsForProject(
+                { snapshotId, projectId },
+                { sourceFiles: payload.sourceCode, diagnostics }
+            ).catch(err => {
+                console.warn("[BackwardPathSlicing] Unexpected failure during constraint resolution in regenerate:", err.message);
+                diagnostics.push({ type: 'INTERNAL_ERROR', error: err.message });
+                return [];
+            });
+            payload.pathConstraints = pathConstraints;
+
+            const realIssues = diagnostics.filter(d => d.type !== 'FIRST_RUN_NO_COVERAGE');
+            if (realIssues.length > 0) {
+                const issueSummary = realIssues.map(d => `${d.type}: ${d.error || d.filePath || d.path}`).join("; ");
+                await addJobLog(jobId, "WARN", `[Backward Path Slicing] Diagnostics encountered during regenerate: ${issueSummary}`);
+            } else if (pathConstraints.length > 0) {
+                await addJobLog(jobId, "INFO", `[Backward Path Slicing] Loaded ${pathConstraints.length} uncovered branch path constraint(s) to guide scenario regeneration.`);
+            }
+
             const { regenerateScenarioService } = await import("./scenarioManager.service.js");
             const artifact = await prisma.aiTest.findUnique({where:{id:aiTestId}});
             if (!artifact || artifact.projectId !== job.projectId || artifact.snapshotId !== job.snapshotId) throw new ServiceError('AiTest does not belong to this job snapshot',404);
@@ -422,11 +498,33 @@ const processAiTestsJobInWorkspace = async (jobId) => {
             const suggestionsCombined = [];
             let summaryCombined = { message: "" };
 
+            // Load Backward Path Slicing constraints for uncovered branches in the snapshot
+            const { resolvePathConstraintsForProject } = await import("./integrationGuidance.service.js");
+            const diagnostics = [];
+            const pathConstraints = await resolvePathConstraintsForProject(
+                { snapshotId, projectId },
+                { sourceFiles: payload.sourceCode, diagnostics }
+            ).catch(err => {
+                console.warn("[BackwardPathSlicing] Unexpected failure during constraint resolution:", err.message);
+                return [];
+            });
+            payload.pathConstraints = pathConstraints;
+
+            // Expose actionable diagnostics for unexpected issues without failing graceful first-runs
+            const realIssues = diagnostics.filter(d => d.type !== 'FIRST_RUN_NO_COVERAGE');
+            if (realIssues.length > 0) {
+                const issueSummary = realIssues.map(d => `${d.type}: ${d.error || d.filePath || d.path}`).join("; ");
+                await addJobLog(jobId, "WARN", `[Backward Path Slicing] Diagnostics encountered: ${issueSummary}`);
+            } else if (pathConstraints.length > 0) {
+                await addJobLog(jobId, "INFO", `[Backward Path Slicing] Loaded ${pathConstraints.length} uncovered branch path constraint(s) to guide scenario generation.`);
+            }
+
             // Selective Generation: filter to targetEndpoints if specified
             let targetEndpoints = allEndpoints;
-            if (payload.targetEndpoints && Array.isArray(payload.targetEndpoints) && payload.targetEndpoints.length > 0) {
+            const requestedTargets = payloadJsonObj?.targetEndpoints || payload?.targetEndpoints;
+            if (requestedTargets && Array.isArray(requestedTargets) && requestedTargets.length > 0) {
                 const targetSet = new Set(
-                    payload.targetEndpoints.map(t => typeof t === 'string' ? t.trim().toUpperCase() : `${t.method} ${t.path || t.fullPath || t.route}`.trim().toUpperCase())
+                    requestedTargets.map(t => typeof t === 'string' ? t.trim().toUpperCase() : `${t.method} ${t.path || t.fullPath || t.route}`.trim().toUpperCase())
                 );
                 targetEndpoints = allEndpoints.filter(ep => {
                     const key = `${ep.method} ${ep.fullPath}`.toUpperCase();
@@ -445,6 +543,9 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                     endpoint: ep,
                     happy: false,
                     error: false,
+                    negativeNotApplicable: false,
+                    negativeNotApplicableReason: null,
+                    generationCompleted: false,
                     scenarios: [],
                     failed: false,
                     retries: 0
@@ -462,11 +563,21 @@ const processAiTestsJobInWorkspace = async (jobId) => {
             let generationCycles = 0;
 
             while (currentQueue.length > 0 && generationCycles < 5) { // Limit total cycles to prevent infinite loops
+                if (isJobCanceled(jobId, abortController.signal)) {
+                    await addJobLog(jobId, "INFO", "Generation loop stopped due to job cancellation.");
+                    break;
+                }
                 generationCycles++;
                 await addJobLog(jobId, "INFO", `Generation Cycle ${generationCycles}. Endpoints in queue: ${currentQueue.length}`);
                 
                 let nextQueue = [];
                 for (let i = 0; i < currentQueue.length; i += CHUNK_SIZE) {
+                    if (isJobCanceled(jobId, abortController.signal)) break;
+                    if (i > 0) {
+                        // Rate limit backoff between batches to prevent burst 429
+                        await new Promise(r => setTimeout(r, 2500));
+                    }
+                    if (isJobCanceled(jobId, abortController.signal)) break;
                     const chunkKeys = currentQueue.slice(i, i + CHUNK_SIZE);
                     const chunkEndpoints = chunkKeys.map(k => endpointTracker.get(k).endpoint);
                     
@@ -489,7 +600,31 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                         return { ...ep, missingCoverageRequested: missing };
                     });
 
-                    const supertestPrompt = buildSupertestPrompt(payload, promptChunk);
+                    // Correlate constraints relevant to the current batch endpoints
+                    const chunkFiles = new Set();
+                    chunkEndpoints.forEach(ep => {
+                        if (ep.controllerFile) chunkFiles.add(ep.controllerFile.replace(/\\/g, '/').toLowerCase());
+                        if (ep.routeFile) chunkFiles.add(ep.routeFile.replace(/\\/g, '/').toLowerCase());
+                        if (ep.serviceLayer?.file) chunkFiles.add(ep.serviceLayer.file.replace(/\\/g, '/').toLowerCase());
+                    });
+
+                    let chunkConstraints = [];
+                    if (Array.isArray(pathConstraints) && pathConstraints.length > 0) {
+                        if (chunkFiles.size > 0) {
+                            chunkConstraints = pathConstraints.filter(c => {
+                                const cPath = (c.filePath || "").replace(/\\/g, '/').toLowerCase();
+                                for (const cf of chunkFiles) {
+                                    if (cPath.includes(cf) || cf.includes(cPath)) return true;
+                                }
+                                return false;
+                            });
+                        }
+                        if (chunkConstraints.length === 0) {
+                            chunkConstraints = pathConstraints.slice(0, 5);
+                        }
+                    }
+
+                    const supertestPrompt = buildSupertestPrompt(payload, promptChunk, chunkConstraints);
                     
                     let batchStatus = "SUCCESS";
                     let acceptedScenarios = 0;
@@ -512,11 +647,30 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                                         
                                         const cleanRoute = path.replace(/\/+$/, "") || "/";
                                         
-                                        // Convert express route /path/:id to regex ^/path/[^/]+$
+                                        // 1. Exact or parameterized match: e.g. /api/users/:id matches /api/users/123
                                         const regexStr = "^" + cleanRoute.replace(/:[^\/]+/g, "[^/]+") + "$";
                                         const regex = new RegExp(regexStr);
                                         if (regex.test(cleanPath)) {
                                             return key;
+                                        }
+
+                                        // 2. Subpath suffix match: if key has subpath e.g. "/validate" or "/get/:id"
+                                        // and requestPath is full path "/api/cart/validate" or "/api/food-items/get/123"
+                                        if (cleanRoute !== "/" && cleanRoute !== "") {
+                                            const suffixRegexStr = cleanRoute.replace(/:[^\/]+/g, "[^/]+") + "$";
+                                            if (new RegExp(suffixRegexStr).test(cleanPath)) {
+                                                return key;
+                                            }
+                                        }
+
+                                        // 3. Fallback: if key is root "/" and cleanPath points to the endpoint resource
+                                        const epData = endpointTracker.get(key);
+                                        if (cleanRoute === "/" && epData?.endpoint?.sourceFile) {
+                                            const srcBase = epData.endpoint.sourceFile.split("/").pop().replace(/\.(js|ts)$/, "").replace(/[.\-_]/g, "").toLowerCase();
+                                            const pathCleaned = cleanPath.replace(/[.\-_/]/g, "").toLowerCase();
+                                            if (pathCleaned.includes(srcBase.replace("routes", "").replace("route", ""))) {
+                                                return key;
+                                            }
                                         }
                                     }
                                     return null;
@@ -526,7 +680,9 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                                 const validTestsForBatch = [];
                                 for (const testFile of allTests) {
                                     const meta = JSON.parse(testFile.metaJson);
+                                    const originalRequests = Array.isArray(meta.requests) ? [...meta.requests] : [];
                                     const validRequests = [];
+                                    const rejectedRequests = [];
                                     
                                     for (const req of meta.requests) {
                                         const matchedKey = matchEndpoint(req.path, req.method, chunkKeys);
@@ -535,6 +691,7 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                                         if (!matchedKey) {
                                             rejectedScenarios++;
                                             await addJobLog(jobId, "WARN", `Rejected scenario '${req.testName}' for endpoint '${req.method} ${req.path}': Not in the requested batch or is an invented endpoint.`);
+                                            rejectedRequests.push(req);
                                             continue;
                                         }
                                         
@@ -553,11 +710,22 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                                         if (isHappy) tr.happy = true;
                                         if (isError) tr.error = true;
                                         
+                                        // Special case: Simple root health-check endpoints without parameters (like GET /) do not have meaningful error branches
+                                        if ((matchedKey.trim().toUpperCase() === "GET /" || matchedKey.trim().toUpperCase().endsWith(" /")) && tr.happy) {
+                                            tr.negativeNotApplicable = true;
+                                            tr.negativeNotApplicableReason = "Static parameterless health-check endpoint has no input validation or error branch";
+                                            tr.generationCompleted = true;
+                                        }
+
                                         acceptedScenarios++;
                                         validRequests.push(req);
                                     }
                                     
                                     if (validRequests.length > 0) {
+                                        if (rejectedRequests.length > 0) {
+                                            const { pruneScenariosFromCode } = await import("./scenarioManager.service.js");
+                                            testFile.content = pruneScenariosFromCode(testFile.content, originalRequests, rejectedRequests);
+                                        }
                                         meta.requests = validRequests;
                                         testFile.metaJson = JSON.stringify(meta);
                                         validTestsForBatch.push(testFile);
@@ -565,7 +733,15 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                                 }
                                 
                                 allTestsCombined.push(...validTestsForBatch);
-                                if (suggestions) suggestionsCombined.push(...suggestions);
+                                if (suggestions && Array.isArray(suggestions)) {
+                                    const validSuggestions = suggestions.filter(s => {
+                                        if (!s.functionName) return true;
+                                        const [sMethod, ...sPathParts] = s.functionName.split(" ");
+                                        const sPath = sPathParts.join(" ");
+                                        return !sPath || matchEndpoint(sPath, sMethod, chunkKeys);
+                                    });
+                                    suggestionsCombined.push(...validSuggestions);
+                                }
                                 
                             } catch (e) {
                                 batchStatus = "PARSE_ERROR";
@@ -583,10 +759,11 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                     // Evaluate missing coverage for the chunk and queue retries
                     for (const key of chunkKeys) {
                         const tr = endpointTracker.get(key);
-                        if (!tr.happy || !tr.error) {
+                        const isComplete = tr.happy && (tr.error || tr.negativeNotApplicable || tr.generationCompleted);
+                        if (!isComplete) {
                             tr.retries++;
                             if (tr.retries <= MAX_RETRIES) {
-                                await addJobLog(jobId, "WARN", `Endpoint ${key} missing required coverage (Happy: ${tr.happy}, Error: ${tr.error}). Queuing for retry (${tr.retries}/${MAX_RETRIES}).`);
+                                await addJobLog(jobId, "WARN", `Endpoint ${key} missing required coverage (Happy: ${tr.happy}, Error: ${tr.error}, Negative Not Applicable: ${Boolean(tr.negativeNotApplicable)}). Queuing for retry (${tr.retries}/${MAX_RETRIES}).`);
                                 nextQueue.push(key);
                             } else {
                                 tr.failed = true;
@@ -689,6 +866,13 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                 } catch { }
             });
 
+            // Crucial: Check cancellation BEFORE persisting new results!
+            // If canceled, do NOT write partial files and do NOT delete old tests!
+            if (isJobCanceled(jobId, abortController.signal)) {
+                await addJobLog(jobId, "INFO", "Generation job was canceled. Skipping file saving and database commit to preserve existing test suite.");
+                return { success: false, canceled: true };
+            }
+
             // Step 1: Write NEW files to unique staging paths
             allTestsCombined.forEach(t => {
                 if (!t.id) t.id = crypto.randomUUID();
@@ -731,7 +915,7 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                 if (allTestsCombined.length > 0) {
                     await tx.aiTest.createMany({ data: allTestsCombined });
                 }
-            });
+            }, { maxWait: 15000, timeout: 30000 });
 
             // Step 3: Cleanup old files asynchronously
             if (supertestIds.length > 0) {
@@ -751,8 +935,31 @@ const processAiTestsJobInWorkspace = async (jobId) => {
                 await addJobLog(jobId, "INFO", "No Supertest integration test files were generated.");
             }
 
-            await updateGenerationJobStatus({ jobId, status: finalJobStatus === "PARTIAL" ? "SUCCESS" : finalJobStatus, progress: 100 });
-            // Completion notification is sent only after the prepared workspace commits.
+            invalidateEndpointCache(snapshotId, job.snapshot?.rootDir);
+            try {
+                const { archiveVersionArtifact } = await import("./integrationVersionHistory.service.js");
+                archiveVersionArtifact(job.snapshot?.rootDir, jobId, "AI_TESTS", {
+                    count: allTestsCombined.length,
+                    tests: allTestsCombined.map(t => ({ id: t.id, filePath: t.filePath, metaJson: t.metaJson, content: t.content })),
+                    unresolvedEndpoints
+                });
+            } catch (_) {}
+            if (unresolvedEndpoints.length > 0) {
+                await addJobLog(jobId, "WARN", `⚠️ ${unresolvedEndpoints.length} endpoint(s) could not be generated (due to Gemini quota exhaustion or provider errors). Unresolved: ${unresolvedEndpoints.join(", ")}`);
+            }
+            await updateGenerationJobStatus({
+                jobId,
+                status: finalJobStatus === "PARTIAL" ? "SUCCESS" : finalJobStatus,
+                progress: 100,
+                resultJson: JSON.stringify({
+                    count: allTestsCombined.length,
+                    completelyCovered,
+                    partialCovered,
+                    completelyMissed,
+                    unresolvedEndpoints
+                })
+            });
+            // Notification follows the prepared commit.
             return { 
                 success: finalJobStatus !== "FAILED", 
                 count: allTestsCombined.length, 
@@ -874,6 +1081,13 @@ const processAiTestsJobInWorkspace = async (jobId) => {
 
         return { success: true, count: tests.length };
     } catch (error) {
+        if (isJobCanceled(jobId, abortController.signal)) {
+            return { success: false, canceled: true };
+        }
+        if (["Only queued jobs can start", "Cannot start a canceled job", "Job not found"].includes(error.message)) {
+            console.warn(`[AiTestsJob ${jobId}] Ignored queue state error: ${error.message}`);
+            return { success: false, skipped: true };
+        }
         // SCRUM-395: Handle generation errors
         console.error(`[AiTestsJob ${jobId}] Failed:`, error);
 
@@ -891,6 +1105,8 @@ const processAiTestsJobInWorkspace = async (jobId) => {
         } catch (_) {}
 
         throw error;
+    } finally {
+        unregisterJobAbortController(jobId);
     }
 };
 

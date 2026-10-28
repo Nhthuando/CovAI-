@@ -139,7 +139,8 @@ export async function getGithubRepositoriesApi() {
   }
 }
 
-export async function getFileContentApi(projectId, filePath, { snapshotId, signal } = {}) {
+export async function getFileContentApi(projectId, filePath, options = {}) {
+  const { snapshotId, signal } = typeof options === "string" ? { snapshotId: options } : options || {};
   const res = await fetch(
     `${BASE_URL}/projects/${projectId}/file-content?path=${encodeURIComponent(filePath)}${snapshotId ? `&snapshotId=${encodeURIComponent(snapshotId)}` : ""}`,
     {
@@ -449,5 +450,12 @@ export async function getArchitectureAiSummaryApi(
       body: JSON.stringify({ snapshotId, filePath, force }),
     },
   );
+  return handleResponse(res);
+}
+
+export async function getProjectIntegrationDetection(projectId) {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/integration/frameworks`, {
+    headers: getAuthHeaders(),
+  });
   return handleResponse(res);
 }

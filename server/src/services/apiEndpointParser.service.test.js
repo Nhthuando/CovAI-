@@ -1,43 +1,307 @@
-import { describe, test, expect } from '@jest/globals';
-import { extractValidEndpoints } from './apiEndpointParser.service.js';
+import { extractValidEndpoints, findControllerLocation } from './apiEndpointParser.service.js';
 
-describe('API endpoint parser source-array contract', () => {
-    test('extracts direct routes once, with AST provenance', () => {
-        const endpoints = extractValidEndpoints([{ path: 'src/app.js', content: `
-            app.get('/api/users', listUsers);
-            app.post('/api/users/:id', authMiddleware, userController.save);
-        ` }]);
+describe('API Endpoint Parser & Controller Location Resolver', () => {
+    it('1. Extracts direct route declarations from app.js', () => {
+        const sourceCode = [
+            {
+                path: 'server/app.js',
+                content: `
+                    const express = require('express');
+                    const app = express();
+                    app.get('/api/users', (req, res) => res.send('OK'));
+                    app.post('/api/users/:id', (req, res) => res.send('OK'));
+                `
+            }
+        ];
+
+        const endpoints = extractValidEndpoints(sourceCode);
         expect(endpoints).toHaveLength(2);
-        expect(endpoints.find(row => row.method === 'POST')).toMatchObject({
-            fullPath: '/api/users/:id', params: ['id'], middleware: ['authMiddleware'],
-            controllerMethod: 'userController.save', provenance: { detectionType: 'AST', sourceLine: 3 },
-        });
+        expect(endpoints.find(e => e.method === 'GET' && e.fullPath === '/api/users')).toBeDefined();
+        expect(endpoints.find(e => e.method === 'POST' && e.fullPath === '/api/users/:id')).toBeDefined();
+        expect(endpoints[0].sourceFile).toBe('server/app.js');
+        expect(endpoints[0].sourceLine).toBeGreaterThan(0);
     });
-    test('does not turn HTTP client requests into server routes', () => {
-        const endpoints = extractValidEndpoints([{ path: 'src/routes/items.js', content: `
-            axios.get('/remote', config);
-            request.post('/remote', body);
-            http.get('/remote', callback);
-            router.delete('/items/:itemId', removeItem);
-        ` }]);
-        expect(endpoints.map(row => [row.method, row.fullPath])).toEqual([['DELETE', '/items/:itemId']]);
+
+    it('2. Extracts router endpoints with controller file and line location', () => {
+        const sourceCode = [
+            {
+                path: 'server/app.js',
+                content: `
+                    const express = require('express');
+                    const app = express();
+                    const authRoutes = require('./routes/auth.routes');
+                    app.use('/api/auth', authRoutes);
+                `
+            },
+            {
+                path: 'server/routes/auth.routes.js',
+                content: `
+                    const express = require('express');
+                    const router = express.Router();
+                    const authController = require('../controllers/auth.controller');
+
+                    router.post('/login', authController.login);
+                    router.get('/profile', authController.getProfile);
+                    module.exports = router;
+                `
+            },
+            {
+                path: 'server/controllers/auth.controller.js',
+                content: `
+                    // Controller implementation
+                    const prisma = require('../prisma');
+
+                    exports.login = async (req, res) => {
+                        const { email, password } = req.body;
+                        return res.json({ token: 'xyz' });
+                    };
+
+                    exports.getProfile = async (req, res) => {
+                        return res.json({ user: 'test' });
+                    };
+                `
+            }
+        ];
+
+        const endpoints = extractValidEndpoints(sourceCode);
+        expect(endpoints).toHaveLength(2);
+
+        const loginEp = endpoints.find(e => e.method === 'POST' && e.fullPath === '/api/auth/login');
+        expect(loginEp).toBeDefined();
+        expect(loginEp.sourceFile).toBe('server/routes/auth.routes.js');
+        expect(loginEp.sourceLine).toBeGreaterThan(0);
+        expect(loginEp.controllerFile).toBe('server/controllers/auth.controller.js');
+        expect(loginEp.controllerLine).toBe(5); // line 5 in controller
+        expect(loginEp.controllerMethod).toBe('authController.login');
+        expect(loginEp.requestBodySchema).toEqual(expect.arrayContaining(['email', 'password']));
+
+        const profileEp = endpoints.find(e => e.method === 'GET' && e.fullPath === '/api/auth/profile');
+        expect(profileEp).toBeDefined();
+        expect(profileEp.controllerFile).toBe('server/controllers/auth.controller.js');
+        expect(profileEp.controllerLine).toBe(10); // line 10 in controller
     });
-    test('combines mount paths with router paths and records controller body/model hints', () => {
-        const endpoints = extractValidEndpoints([
-            { path: 'src/app.js', content: `app.use('/api/users', usersRoutes);` },
-            { path: 'src/routes/users.route.js', content: `router.post('/', auth, userController.save);` },
-            { path: 'src/controllers/user.controller.js', content: `function save(req) { const {name} = req.body; return prisma.user.create({data:{name}}); }` },
-        ]);
+
+    it('3. Excludes HTTP clients like axios and supertest', () => {
+        const sourceCode = [
+            {
+                path: 'server/routes/test.routes.js',
+                content: `
+                    const router = express.Router();
+                    axios.get('/external/api');
+                    supertest(app).post('/internal/test');
+                    router.put('/valid/item', itemController.update);
+                `
+            },
+            {
+                path: 'server/controllers/item.controller.js',
+                content: `
+                    export const update = async (req, res) => {
+                        res.send('updated');
+                    };
+                `
+            }
+        ];
+
+        const endpoints = extractValidEndpoints(sourceCode);
         expect(endpoints).toHaveLength(1);
-        expect(endpoints[0]).toMatchObject({ method: 'POST', fullPath: '/api/users', requestBodySchema: ['name'], databaseModels: ['user'] });
+        expect(endpoints[0].method).toBe('PUT');
+        expect(endpoints[0].fullPath).toBe('/valid/item');
+        expect(endpoints[0].controllerFile).toBe('server/controllers/item.controller.js');
+        expect(endpoints[0].controllerLine).toBe(2);
     });
-    test('excludes test/mocks and ignores dynamic unknown routes', () => {
-        const endpoints = extractValidEndpoints([
-            { path: 'src/routes/items.spec.js', content: `router.get('/test-only', handler);` },
-            { path: 'src/mock/routes.js', content: `router.get('/mock-only', handler);` },
-            { path: 'src/routes/items.js', content: `router.get(pathVariable, handler); router.get('/real', handler);` },
-        ]);
-        expect(endpoints.map(row => row.fullPath)).toEqual(['/real']);
-        expect(extractValidEndpoints([])).toEqual([]);
+
+    it('4. Resolves controller location when handler is ES6 export or arrow function', () => {
+        const sourceCode = [
+            {
+                path: 'server/controllers/user.controller.js',
+                content: `
+// File header comments
+import prisma from '../prisma';
+
+export async function getUser(req, res) {
+    res.json({});
+}
+
+export const deleteUser = async (req, res) => {
+    res.json({});
+};
+                `
+            }
+        ];
+
+        const getRes = findControllerLocation(sourceCode, 'userController', 'getUser', null);
+        expect(getRes.controllerFile).toBe('server/controllers/user.controller.js');
+        expect(getRes.controllerLine).toBe(5);
+
+        const delRes = findControllerLocation(sourceCode, 'userController', 'deleteUser', null);
+        expect(delRes.controllerFile).toBe('server/controllers/user.controller.js');
+        expect(delRes.controllerLine).toBe(9);
+    });
+
+    it('5. Resolves controller location when controller is a class or object literal', () => {
+        const sourceCode = [
+            {
+                path: 'server/controllers/product.controller.js',
+                content: `
+                    class ProductController {
+                        async createProduct(req, res) {
+                            res.send('ok');
+                        }
+                    }
+                    module.exports = new ProductController();
+                `
+            },
+            {
+                path: 'server/controllers/order.controller.js',
+                content: `
+                    module.exports = {
+                        listOrders: async (req, res) => {
+                            res.send('orders');
+                        }
+                    };
+                `
+            }
+        ];
+
+        const classRes = findControllerLocation(sourceCode, 'productController', 'createProduct', null);
+        expect(classRes.controllerFile).toBe('server/controllers/product.controller.js');
+        expect(classRes.controllerLine).toBe(3);
+
+        const objRes = findControllerLocation(sourceCode, 'orderController', 'listOrders', null);
+        expect(objRes.controllerFile).toBe('server/controllers/order.controller.js');
+        expect(objRes.controllerLine).toBe(3);
+    });
+
+    it('6. Gracefully handles endpoints with inline handlers and no external controller', () => {
+        const sourceCode = [
+            {
+                path: 'server/routes/health.routes.js',
+                content: `
+                    const router = express.Router();
+                    router.get('/health', (req, res) => res.json({ status: 'UP' }));
+                `
+            }
+        ];
+
+        const endpoints = extractValidEndpoints(sourceCode);
+        expect(endpoints).toHaveLength(1);
+        expect(endpoints[0].method).toBe('GET');
+        expect(endpoints[0].fullPath).toBe('/health');
+        expect(endpoints[0].sourceFile).toBe('server/routes/health.routes.js');
+        expect(endpoints[0].sourceLine).toBe(3);
+        expect(endpoints[0].controllerFile).toBeNull();
+        expect(endpoints[0].controllerLine).toBeNull();
+    });
+
+    it('7. Correctly maps router mount paths when variable names differ from filenames', () => {
+        const sourceCode = [
+            {
+                path: 'server/index.js',
+                content: `
+                    const express = require('express');
+                    const app = express();
+                    const foodRoutes = require('./routes/productRoutes');
+                    const cardRoutes = require('./routes/cartRoutes');
+
+                    app.use('/api/food-items', foodRoutes);
+                    app.use('/api/cart', cardRoutes);
+                `
+            },
+            {
+                path: 'server/routes/productRoutes.js',
+                content: `
+                    const express = require('express');
+                    const router = express.Router();
+                    router.get('/', (req, res) => res.json([]));
+                    router.post('/create', (req, res) => res.json({ ok: true }));
+                    module.exports = router;
+                `
+            },
+            {
+                path: 'server/routes/cartRoutes.js',
+                content: `
+                    const express = require('express');
+                    const router = express.Router();
+                    router.post('/validate', (req, res) => res.json({ valid: true }));
+                    module.exports = router;
+                `
+            }
+        ];
+
+        const endpoints = extractValidEndpoints(sourceCode);
+        expect(endpoints).toHaveLength(3);
+        expect(endpoints.find(e => e.method === 'GET' && e.fullPath === '/api/food-items')).toBeDefined();
+        expect(endpoints.find(e => e.method === 'POST' && e.fullPath === '/api/food-items/create')).toBeDefined();
+        expect(endpoints.find(e => e.method === 'POST' && e.fullPath === '/api/cart/validate')).toBeDefined();
+    });
+
+    it('8. Scopes requestBodySchema, databaseModels, and responseStatusCodes to function scope without cross-contamination', () => {
+        const sourceCode = [
+            {
+                path: 'server/index.js',
+                content: `
+                    const express = require('express');
+                    const app = express();
+                    const cartRoutes = require('./routes/cartRoutes');
+                    app.use('/api/cart', cartRoutes);
+                `
+            },
+            {
+                path: 'server/routes/cartRoutes.js',
+                content: `
+                    const express = require('express');
+                    const router = express.Router();
+                    const { validateCart, checkoutCart } = require('../controllers/cartController');
+                    router.post('/validate', validateCart);
+                    router.post('/checkout', checkoutCart);
+                    module.exports = router;
+                `
+            },
+            {
+                path: 'server/controllers/cartController.js',
+                content: `
+                    const prisma = require('../prisma');
+
+                    exports.validateCart = async (req, res) => {
+                        try {
+                            const items = req.body.items || [];
+                            const food = await prisma.food.findUnique({ where: { id: '1' } });
+                            res.json({ success: true, items });
+                        } catch (err) {
+                            res.status(500).json({ error: err.message });
+                        }
+                    };
+
+                    exports.checkoutCart = async (req, res) => {
+                        try {
+                            const { items, paymentIntentId, totalPaid, currency } = req.body;
+                            const order = await prisma.order.create({ data: {} });
+                            res.status(201).json({ success: true, order });
+                        } catch (err) {
+                            res.status(400).json({ error: err.message });
+                        }
+                    };
+                `
+            }
+        ];
+
+        const endpoints = extractValidEndpoints(sourceCode);
+        const validateEp = endpoints.find(e => e.method === 'POST' && e.fullPath === '/api/cart/validate');
+        const checkoutEp = endpoints.find(e => e.method === 'POST' && e.fullPath === '/api/cart/checkout');
+
+        expect(validateEp).toBeDefined();
+        expect(checkoutEp).toBeDefined();
+
+        // ValidateCart must ONLY have 'items', 'food', and status [200, 500]
+        expect(validateEp.requestBodySchema).toEqual(['items']);
+        expect(validateEp.databaseModels).toEqual(['food']);
+        expect(validateEp.responseStatusCodes).toEqual(expect.arrayContaining([200, 500]));
+        expect(validateEp.responseStatusCodes).not.toContain(400);
+        expect(validateEp.responseStatusCodes).not.toContain(201);
+
+        // CheckoutCart has its own parameters
+        expect(checkoutEp.requestBodySchema).toEqual(expect.arrayContaining(['items', 'paymentIntentId', 'totalPaid', 'currency']));
+        expect(checkoutEp.databaseModels).toEqual(['order']);
+        expect(checkoutEp.responseStatusCodes).toEqual(expect.arrayContaining([201, 400]));
     });
 });

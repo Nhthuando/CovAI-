@@ -52,7 +52,7 @@ suite('shared scenario artifact CAS against PostgreSQL',()=>{
   expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(1);
   expect(results.find(r=>r.status==='rejected').reason).toMatchObject({statusCode:409,code:'ARTIFACT_VERSION_CONFLICT'});
   expect((await prisma.project.findUnique({where:{id:project.id}})).workspaceRevision).toBe(1);
-  expect(await fs.readFile(path.join(root,'api.test.js'),'utf8')).toBe(artifact.content);
+  expect(await fs.readFile(path.join(root,'api.test.js'),'utf8')).toBe((await prisma.aiTest.findUnique({where:{id:artifact.id}})).content);
   const read=await getScenarioService(artifact.id,'one',opts(viewer));
   expect(read.version).not.toBe(scenarioArtifactVersion(artifact));
  });
@@ -90,6 +90,19 @@ suite('shared scenario artifact CAS against PostgreSQL',()=>{
   const job=await createAiTestsJob({projectId:project.id,snapshotId:snapshot.id,userId:editor.id,mode:'SUPERTEST_REGENERATE',aiTestId:artifact.id,scenarioId:'one',expectedVersion:scenarioArtifactVersion(artifact)});
   await expect(processAiTestsJob(job.id)).rejects.toBeDefined();
   expect((await prisma.aiTest.findUnique({where:{id:artifact.id}})).content).toContain('it.skip');
-  expect(await fs.readFile(path.join(root,'api.test.js'),'utf8')).toBe(artifact.content);
+  expect(await fs.readFile(path.join(root,'api.test.js'),'utf8')).toBe((await prisma.aiTest.findUnique({where:{id:artifact.id}})).content);
  });
+ test('new Integration API accepts Editor, rejects Viewer and enforces the displayed artifact version',async()=>{
+  const {updateIntegrationScenarioService,queueIntegrationTestGenerationService,detectIntegrationFrameworksService}=await import('../services/integrationApiService.service.js');
+  await expect(updateIntegrationScenarioService({snapshotId:snapshot.id,scenarioId:'one',userId:viewer.id,updates:{expectedVersion:scenarioArtifactVersion(artifact),code:"it('works',()=>{expect(3).toBe(3);});"}})).rejects.toMatchObject({statusCode:403});
+  await expect(queueIntegrationTestGenerationService({snapshotId:snapshot.id,userId:viewer.id})).rejects.toMatchObject({statusCode:403});
+  const updated=await updateIntegrationScenarioService({snapshotId:snapshot.id,scenarioId:'one',userId:editor.id,updates:{expectedVersion:scenarioArtifactVersion(artifact),code:"it('works',()=>{expect(3).toBe(3);});"}});
+  expect(updated.success).toBe(true);
+  expect(await fs.readFile(path.join(root,'api.test.js'),'utf8')).toBe(updated.aiTest.content);
+  await expect(updateIntegrationScenarioService({snapshotId:snapshot.id,scenarioId:'one',userId:owner.id,updates:{expectedVersion:scenarioArtifactVersion(artifact),code:"it('works',()=>{});"}})).rejects.toMatchObject({statusCode:409});
+  const generation=await queueIntegrationTestGenerationService({snapshotId:snapshot.id,userId:editor.id,force:true});
+  expect(await prisma.projectOperation.findUnique({where:{primaryJobId:generation.job.id}})).toMatchObject({actorId:editor.id,capability:'ai.use',status:'QUEUED'});
+  expect(await detectIntegrationFrameworksService({snapshotId:snapshot.id,userId:viewer.id})).toBeDefined();
+ });
+
 });

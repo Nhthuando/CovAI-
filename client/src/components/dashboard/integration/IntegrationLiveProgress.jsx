@@ -1,23 +1,27 @@
 import { useRef, useEffect } from "react";
-import { Check, Clock, AlertCircle } from "lucide-react";
+import { Check, Clock, AlertCircle, AlertTriangle } from "lucide-react";
 
 export default function IntegrationLiveProgress({
   activeJobId,
   activeJobType,
   activeJobStatus,
   error,
-  activeLogs,
+  activeLogs = [],
   parseProgressSteps,
+  onCancel,
+  isCancelling,
+  onInspectEndpoints,
 }) {
+  const safeLogs = Array.isArray(activeLogs) ? activeLogs : [];
   const logsEndRef = useRef(null);
 
   useEffect(() => {
     if (logsEndRef.current) {
       logsEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [activeLogs]);
+  }, [safeLogs]);
 
-  if (!activeJobId && activeLogs.length === 0) {
+  if (!activeJobId && safeLogs.length === 0) {
     return (
       <div className="p-12 text-center flex flex-col items-center justify-center gap-3 text-[var(--color-text-secondary)] font-sans">
         <Clock
@@ -37,7 +41,7 @@ export default function IntegrationLiveProgress({
     );
   }
 
-  const steps = parseProgressSteps(activeJobType, activeLogs);
+  const steps = typeof parseProgressSteps === "function" ? parseProgressSteps(activeJobType, safeLogs) : [];
 
   return (
     <div className="flex flex-col h-full font-sans text-[var(--color-text)]">
@@ -54,19 +58,54 @@ export default function IntegrationLiveProgress({
             <span className="font-semibold">
               {activeJobStatus === "FAILED"
                 ? "Failed"
-                : activeJobStatus === "SUCCESS"
-                  ? "Completed"
-                  : "Running..."}
+                : activeJobStatus === "CANCELED"
+                  ? "Cancelled"
+                  : activeJobStatus === "SUCCESS"
+                    ? "Completed"
+                    : isCancelling
+                      ? "Cancelling..."
+                      : "Running..."}
             </span>
           </div>
         </div>
 
-        {activeJobStatus === "FAILED" && (
-          <div className="bg-[var(--color-danger)]/10 text-[var(--color-danger)] border border-[var(--color-danger)]/25 px-3 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5">
-            <AlertCircle size={13} />
-            Job Failed
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          {activeJobStatus === "FAILED" && (
+            <div className="bg-[var(--color-danger)]/10 text-[var(--color-danger)] border border-[var(--color-danger)]/25 px-3 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5">
+              <AlertCircle size={13} />
+              Job Failed
+            </div>
+          )}
+
+          {activeJobStatus === "CANCELED" && (
+            <div className="bg-[var(--color-warning,#f59e0b)]/10 text-[var(--color-warning,#f59e0b)] border border-[var(--color-warning,#f59e0b)]/25 px-3 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5">
+              <AlertTriangle size={13} />
+              Job Cancelled
+            </div>
+          )}
+
+          {onCancel && activeJobStatus !== "SUCCESS" && activeJobStatus !== "FAILED" && activeJobStatus !== "CANCELED" && (
+            <div className="flex items-center gap-2">
+              {onInspectEndpoints && (
+                <button
+                  type="button"
+                  onClick={onInspectEndpoints}
+                  className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] text-[var(--color-text)] font-semibold transition-colors"
+                >
+                  Inspect Endpoints
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onCancel}
+                disabled={isCancelling}
+                className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/15 hover:bg-[var(--color-danger)]/25 text-[var(--color-danger)] font-semibold transition-colors disabled:opacity-50"
+              >
+                {isCancelling ? "Cancelling..." : "Cancel"}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="p-6 flex-1 overflow-y-auto">
@@ -124,21 +163,25 @@ export default function IntegrationLiveProgress({
             Raw Processing Logs
           </div>
           <div className="p-3 flex-1 font-mono text-xs overflow-y-auto flex flex-col gap-1 text-[var(--color-text)]">
-            {activeLogs.map((log, i) => (
+            {safeLogs.map((log, i) => (
               <div
                 key={i}
                 className={`leading-relaxed ${
-                  log.level === "ERROR"
+                  log?.level === "ERROR"
                     ? "text-[var(--color-danger)] font-semibold"
-                    : log.level === "WARN"
+                    : log?.level === "WARN"
                       ? "text-[var(--color-warning)]"
                       : "text-[var(--color-text-secondary)]"
                 }`}
               >
                 <span className="text-[var(--color-text-muted)] mr-2 select-none">
-                  [{new Date(log.createdAt).toLocaleTimeString()}]
+                  [{log?.createdAt ? new Date(log.createdAt).toLocaleTimeString() : "--:--:--"}]
                 </span>
-                {log.parsedMessage?.label || log.message}
+                {typeof log?.parsedMessage?.label === "string"
+                  ? log.parsedMessage.label
+                  : typeof log?.message === "string"
+                    ? log.message
+                    : JSON.stringify(log?.message || log || "")}
               </div>
             ))}
             <div ref={logsEndRef} />

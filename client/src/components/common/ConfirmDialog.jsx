@@ -96,7 +96,7 @@ export default function ConfirmDialog({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-xl)] p-6 shadow-xl text-[var(--color-text)] relative animate-in zoom-in-95 duration-150"
+        className="w-full max-w-md bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded-[var(--radius-xl)] p-6 shadow-xl text-[var(--color-text)] relative animate-in zoom-in-95 duration-150"
       >
         {/* Close Button in corner */}
         <button

@@ -28,11 +28,14 @@ export const projectEndpointRule = (family, method, path, input = {}) => {
             else if (["file-content", "files", "folders", "entries"].includes(parts[1])) capability = "files.write";
             else if (parts[1] === "ai-context") capability = parts[2] === "preview" ? "project.read" : method === "DELETE" && parts.length === 3 ? "chat.delete" : "memory.write";
             else if (parts[1] === "chat") capability = method === "DELETE" ? "chat.delete" : "chat.write";
+            else if (parts[1] === "integration" && parts[2] === "install-dependencies") capability = "integrations.write";
             else if (/ai-|\/ai\//.test(path)) capability = "ai.use";
         }
     } else if (family === "coverage") {
         snapshotId = parts[0];
-        if (!read && /\/(approve|confirm|confirm-expected|review)(?:\/|$)/.test(path)) capability = "evidence.approve";
+        if (!read && /\/install-dependencies$/.test(path)) capability = "integrations.write";
+        else if (!read && /\/apply-tests$/.test(path)) capability = "files.write";
+        else if (!read && /\/(approve|confirm|confirm-expected|review)(?:\/|$)/.test(path)) capability = "evidence.approve";
         else if (!read && /\/(apply|apply-suggestion|save-ai-test|materialize)(?:\/|$)/.test(path)) capability = "files.write";
         else if (!read && /generate|suggest|optimize|regenerate|improvements/.test(path)) capability = "ai.use";
         else if (method === "PUT" || method === "PATCH" || method === "DELETE") capability = "files.write";

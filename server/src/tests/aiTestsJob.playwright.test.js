@@ -14,6 +14,7 @@ const jobUpdate = {
 
 const aiContextBuilder = {
   buildAiPayload: jest.fn(),
+  loadSourceCode:jest.fn(async()=>[]),
 };
 
 const geminiService = {
@@ -49,8 +50,10 @@ const stage = async action => {
   return action(prismaMock);
 };
 await jest.unstable_mockModule("../services/projectOperationWorkspace.service.js", () => ({
-  currentProjectOperation: () => activeWorkspace,
+  deferPreparedCommit: jest.fn(),
+    currentProjectOperation: () => activeWorkspace,
   operationSnapshot: snapshot => activeWorkspace && snapshot?.id === activeWorkspace.snapshotId ? { ...snapshot, rootDir: activeWorkspace.rootDir } : snapshot,
+  stagePreparedValue: async (action,placeholder) => { if(activeWorkspace){await stage(action);return placeholder;}return action(prismaMock); },
   stagePreparedPublication: stage, assertProjectOperationActive: assertActive,
   withOperationPublishGuard: action => action(prismaMock),
   beginPreparedPublications: () => {}, flushPreparedPublications: async () => {},

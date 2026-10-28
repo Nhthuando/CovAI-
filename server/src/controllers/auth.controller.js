@@ -126,7 +126,62 @@ export const getGithubRepositories = async (req, res) => {
       page++;
     }
 
-    return res.status(200).json(repos);
+    // Enrich repositories with all languages used (via GitHub languages API)
+    // As long as the project uses JavaScript or TypeScript (or web frontend), it is supported.
+    const enrichedRepos = await Promise.all(
+      repos.map(async (repo) => {
+        let languages = [];
+        let hasJsOrTs = false;
+        const primLang = repo.language || "";
+
+        // 1. If GitHub already flags primary language as JS or TS
+        if (primLang === "JavaScript" || primLang === "TypeScript") {
+          hasJsOrTs = true;
+          languages = [primLang];
+        } else if (repo.languages_url) {
+          // 2. If GitHub primary language is HTML, Python, etc., check languages breakdown
+          try {
+            const langRes = await fetch(repo.languages_url, {
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                Accept: "application/vnd.github.v3+json",
+                "User-Agent": "CovAI-App",
+              },
+            });
+            if (langRes.ok) {
+              const langData = await langRes.json();
+              languages = Object.keys(langData || {});
+              hasJsOrTs = languages.some(
+                (l) =>
+                  l.toLowerCase() === "javascript" ||
+                  l.toLowerCase() === "typescript",
+              );
+            }
+          } catch (err) {
+            console.warn(
+              `[getGithubRepositories] Could not fetch languages for ${repo.name}:`,
+              err.message,
+            );
+          }
+        }
+
+        // 3. Web projects with primary language HTML/CSS/Vue commonly contain JavaScript
+        if (
+          !hasJsOrTs &&
+          (!primLang || ["HTML", "CSS", "Vue"].includes(primLang))
+        ) {
+          hasJsOrTs = true;
+        }
+
+        return {
+          ...repo,
+          languages,
+          hasJsOrTs,
+        };
+      }),
+    );
+
+    return res.status(200).json(enrichedRepos);
   } catch (error) {
     console.error(error);
     return res.status(500).json({ message: error.message });

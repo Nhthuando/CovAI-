@@ -407,9 +407,18 @@ model TestScenario {
   coverageLinesPct    Float?
   coverageBranchesPct Float?
   createdAt           DateTime @default(now())
+
+  // Integration Testing Reverse Traceability Fields (Phase 1)
+  targetEndpoint      String?
+  failureLayer        String?
+  responseStatus      Int?
+  responseData        Json?
+  isFaultyExistingTest Boolean  @default(false)
+
   testRun             TestRun  @relation(fields: [testRunId], references: [id], onDelete: Cascade)
 
   @@index([testRunId])
+  @@index([targetEndpoint])
 }
 
 model SystemTestFile {
@@ -560,6 +569,7 @@ enum JobType {
   QUALITY_ANALYSIS
   SECURITY_ANALYSIS
   SUPERTEST_COVERAGE
+  PLAYWRIGHT_API_COVERAGE
   RUN_VITEST_TESTS
   VITEST_COVERAGE
   SYSTEM_TEST_ANALYSIS
@@ -601,6 +611,7 @@ enum AiSuggestionPriority {
 enum TestType {
   JEST
   SUPERTEST
+  PLAYWRIGHT_API
   PLAYWRIGHT
   CYPRESS
   VITEST

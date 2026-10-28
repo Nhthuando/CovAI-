@@ -10,12 +10,14 @@ const updateJobProgress = jest.fn();
 const getJobById = jest.fn();
 const addJobLog = jest.fn();
 const saveJobOutput = jest.fn();
+const appendJobOutput = jest.fn();
 const runSupertest = jest.fn();
 const parseCoverageSummary = jest.fn();
 const storeCoverageOutputs = jest.fn();
 const parseCoverageFilesForSnapshot = jest.fn();
 const parseCoverageFunctionsForSnapshot = jest.fn();
 const mockAiTestFindMany = jest.fn();
+const mockDockerRun = jest.fn().mockResolvedValue({ success: true, exitCode: 0, stdout: '', stderr: '' });
 
 const mockPrisma = {
     aiTest: {
@@ -32,7 +34,10 @@ await jest.unstable_mockModule('../config/prisma.js', () => ({
 await jest.unstable_mockModule('../services/job.service.js', () => ({
     markJobRunning, markJobSuccess, markJobFailed, updateJobProgress, getJobById, addJobLog,
 }));
-await jest.unstable_mockModule('../services/jobOutput.service.js', () => ({ saveJobOutput }));
+await jest.unstable_mockModule('../services/jobOutput.service.js', () => ({ saveJobOutput, appendJobOutput }));
+await jest.unstable_mockModule('../services/dockerRunner.service.js', () => ({
+    dockerRunner: { run: mockDockerRun }
+}));
 await jest.unstable_mockModule('../services/supertestRunner.service.js', () => ({ runSupertest }));
 await jest.unstable_mockModule('../services/coverageSummaryParser.service.js', () => ({ parseCoverageSummary }));
 await jest.unstable_mockModule('../services/coverageStorage.service.js', () => ({ storeCoverageOutputs }));
@@ -62,6 +67,7 @@ describe('supertestCoverageJob.service', () => {
         ]);
         rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'supertest-job-'));
         fs.writeFileSync(path.join(rootDir, 'package.json'), JSON.stringify({ devDependencies: { supertest: '^7.0.0' } }));
+        fs.writeFileSync(path.join(rootDir, 'app.js'), "module.exports = {};\n");
         fs.writeFileSync(path.join(rootDir, 'api.test.js'), "import request from 'supertest';");
         getJobById.mockResolvedValue({
             snapshot: { rootDir, jestConfigPath: null }, snapshotId: 'snap1', projectId: 'proj1', userId: 'user1',
@@ -87,6 +93,7 @@ describe('supertestCoverageJob.service', () => {
     test('runs only detected Supertest files and stores its coverage result', async () => {
         await processSupertestCoverageJob('job123');
 
+        expect(markJobFailed).not.toHaveBeenCalled();
         expect(markJobRunning).toHaveBeenCalledWith('job123');
         expect(runSupertest).toHaveBeenCalledWith('job123', rootDir, null, [path.join(rootDir, 'api.test.js')]);
         expect(markJobSuccess).toHaveBeenCalledWith('job123', expect.objectContaining({

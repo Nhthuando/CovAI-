@@ -44,6 +44,7 @@ const updateJobStatusNow = async ({
     progress, // optional number 0-100
     startedAt, // optional Date|string
     finishedAt, // optional Date|string
+    resultJson, // optional serialized job result
     errorMessage, // optional string
 }, db = prisma) => {
     assertStringField(jobId, "jobId");
@@ -55,6 +56,7 @@ const updateJobStatusNow = async ({
 
     const updates = {};
     const logs = [];
+    if (resultJson !== undefined) updates.resultJson = resultJson === null || typeof resultJson === "string" ? resultJson : JSON.stringify(resultJson);
 
     // Status change validations
     if (typeof status !== "undefined" && status !== null) {

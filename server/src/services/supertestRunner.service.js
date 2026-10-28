@@ -4,6 +4,8 @@ import { dockerRunner } from "./dockerRunner.service.js";
 import { addJobLog } from "./job.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
+import { ensureSupertestDatabaseSetupFile } from "./databaseMockTemplate.service.js";
+import { getJobAbortSignal } from "./jobCancellation.service.js";
 
 const SUPERTEST_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -59,7 +61,7 @@ const assertValidRootDir = (rootDir) => {
 };
 
 /** Execute only Supertest test files in an isolated test environment. */
-export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFiles = []) => {
+export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFiles = [], options = {}) => {
     if (!Array.isArray(supertestFiles)) {
         throw new ServiceError("supertestFiles must be an array", 400);
     }
@@ -89,9 +91,22 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
 
     const testArgs = normalizedFiles.map(quoteForShell).join(" ");
     const usesEsm = shouldUseNodeJestDirect(resolvedRoot);
+    const nodePathCandidates = [
+        path.join(resolvedRoot, "node_modules"),
+        path.join(resolvedRoot, "server", "node_modules"),
+        path.join(resolvedRoot, "backend", "node_modules"),
+        path.join(resolvedRoot, "api", "node_modules")
+    ].filter((p) => fs.existsSync(p));
+
     const env = {
         CI: "true",
         NODE_ENV: "test",
+        COVAI_JOB_ID: jobId || "",
+        DATABASE_URL: options?.databaseUrl || process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || "postgresql://test:test@localhost:5432/test_db",
+        PORT: options?.port ? String(options.port) : "0",
+        STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY || "sk_test_covai_mock_secret_key_12345",
+        STRIPE_API_KEY: process.env.STRIPE_API_KEY || "sk_test_covai_mock_api_key_12345",
+        ...(nodePathCandidates.length > 0 ? { NODE_PATH: nodePathCandidates.join(path.delimiter) } : {}),
         ...(usesEsm ? { NODE_OPTIONS: "--experimental-vm-modules" } : {})
     };
     const jestBinary = "npx --no-install jest";
@@ -101,19 +116,53 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
         fs.mkdirSync(coverageDir, { recursive: true });
     }
     const resultsPath = path.join(coverageDir, "test-results.json");
-    // Remove stale results file from previous runs so a failed run does not report false success
+    // Remove stale results and evidence files from previous runs so a failed run does not report false success
     if (fs.existsSync(resultsPath)) {
         try { fs.unlinkSync(resultsPath); } catch (_) {}
     }
+    const evidencePath = path.join(coverageDir, "runtime-evidence.json");
+    if (fs.existsSync(evidencePath)) {
+        try { fs.unlinkSync(evidencePath); } catch (_) {}
+    }
+    const tempEvidencePath = path.join(resolvedRoot, ".covai-temp", "runtime-evidence.json");
+    if (fs.existsSync(tempEvidencePath)) {
+        try { fs.unlinkSync(tempEvidencePath); } catch (_) {}
+    }
     const relativeResultsPath = path.relative(resolvedRoot, resultsPath).replace(/\\/g, "/");
 
-    let jestCmd = `${jestBinary} --runInBand --coverage --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=${quoteForShell(relativeResultsPath)} --forceExit --testTimeout=30000`;
+    let setupArgs = "";
+    try {
+        const setupFileInfo = ensureSupertestDatabaseSetupFile(resolvedRoot);
+        if (setupFileInfo?.relativePath) {
+            const cleanRel = setupFileInfo.relativePath.replace(/\\/g, "/").replace(/^(\.\/)?/, "");
+            setupArgs = ` --setupFilesAfterEnv="<rootDir>/${cleanRel}"`;
+            await addJobLog(jobId, "INFO", `[SUPERTEST] Injected database mock setup: ${setupFileInfo.relativePath} (${setupFileInfo.dbInfo.primaryType})`).catch(() => { });
+        }
+    } catch (setupErr) {
+        console.warn("[SupertestRunner] Could not create database setup file:", setupErr.message);
+    }
+
+    let jestCmd = `${jestBinary} --runInBand --testEnvironment=node --coverage --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=${quoteForShell(relativeResultsPath)} --forceExit --testTimeout=30000${setupArgs}`;
     jestCmd += ` --runTestsByPath ${testArgs}`;
 
     if (jestConfigPath) {
         const resolvedConfig = path.resolve(jestConfigPath);
         const relativeConfig = path.relative(resolvedRoot, resolvedConfig).replace(/\\/g, "/");
-        if (relativeConfig && !relativeConfig.startsWith("../") && !path.isAbsolute(relativeConfig)) {
+        const lowerConfig = relativeConfig.toLowerCase();
+
+        let isFrontendConfig = lowerConfig.startsWith("client/") || lowerConfig.startsWith("frontend/") || lowerConfig.startsWith("ui/") || lowerConfig.startsWith("web/");
+        if (!isFrontendConfig && fs.existsSync(resolvedConfig)) {
+            try {
+                const configContent = fs.readFileSync(resolvedConfig, "utf8");
+                if (configContent.includes("jsdom") || configContent.includes("jest-environment-jsdom")) {
+                    isFrontendConfig = true;
+                }
+            } catch (_) {}
+        }
+
+        if (isFrontendConfig) {
+            await addJobLog(jobId, "WARN", `[SUPERTEST] Ignored client-side Jest config (${relativeConfig}) for server integration tests. Running with default Node test environment.`).catch(() => {});
+        } else if (relativeConfig && !relativeConfig.startsWith("../") && !path.isAbsolute(relativeConfig)) {
             jestCmd += ` --config=${quoteForShell(relativeConfig)}`;
         }
     }
@@ -121,8 +170,9 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
     await addJobLog(jobId, "INFO", "[SUPERTEST] Starting isolated integration tests.").catch(() => { });
     const startedAt = Date.now();
     let result;
+    const abortSignal = options?.signal || getJobAbortSignal(jobId);
     try {
-        result = await dockerRunner.run({ snapshotPath: resolvedRoot, command: jestCmd, timeoutMs: SUPERTEST_TIMEOUT_MS, jobId, env });
+        result = await dockerRunner.run({ snapshotPath: resolvedRoot, command: jestCmd, timeoutMs: SUPERTEST_TIMEOUT_MS, jobId, env, signal: abortSignal });
     } catch (error) {
         await addJobLog(jobId, "ERROR", `[SUPERTEST] Runner error: ${error.message}`).catch(() => { });
         throw error;

@@ -18,6 +18,8 @@ import JobQueue from "./JobQueue";
 import ProjectArchitecturePanel from "./ProjectArchitecturePanel";
 import CFGCalculator from "./CFGCalculator";
 import QualityDashboard from "./QualityDashboard";
+import UnifiedDashboard from "./unified/UnifiedDashboard";
+import { buildWorkspaceUrl } from "../../services/unifiedDashboard/workspaceNavigation";
 import SettingsSidebar from "./settings/SettingsSidebar";
 import ProjectMembersSettings from "./settings/ProjectMembersSettings";
 import { useProjectAccess } from "../../hooks/useProjectAccess";
@@ -141,7 +143,29 @@ function LayoutInner() {
       const type = params.get("coverageType") || params.get("type");
       if (type) setCoverageType(type);
     }
-  }, [location.search]);
+    const focusFile = params.get("focusFile");
+    const focusEndpoint = params.get("focusEndpoint");
+    const focusScenario = params.get("focusScenario");
+    if (focusFile) {
+      showToast({
+        type: "info",
+        title: "Navigated to Unit Tests",
+        message: `Focus target: ${focusFile}`,
+      });
+    } else if (focusEndpoint) {
+      showToast({
+        type: "info",
+        title: "Navigated to Integration Tests",
+        message: `Focus target: ${focusEndpoint}`,
+      });
+    } else if (focusScenario) {
+      showToast({
+        type: "info",
+        title: "Navigated to System Tests",
+        message: `Focus target: ${focusScenario}`,
+      });
+    }
+  }, [location.search, showToast]);
 
   const allowedSettings = ["profile", "appearance", "security", "notifications", "billing", "members"];
   const selectedSetting = searchParams.get("setting");
@@ -170,7 +194,7 @@ function LayoutInner() {
   const [activeFileId, setActiveFileId] = useState(null);
   const initialCoverageType = searchParams.get("coverageType") || searchParams.get("type") || (searchParams.get("tab") === "system" ? "system" : "unit");
   const [coverageType, setCoverageType] = useState(initialCoverageType);
-  const screenContext = useMemo(() => ({ activity: activeActivity, testType: activeActivity === "coverage" ? coverageType : undefined, filePath: activeActivity === "explorer" ? activeTabId || undefined : undefined }), [activeActivity, coverageType, activeTabId]);
+  const screenContext = useMemo(() => ({ activity: activeActivity, testType: activeActivity === "coverage" ? coverageType : activeActivity === "overview" ? "overview" : undefined, filePath: activeActivity === "explorer" ? activeTabId || undefined : undefined }), [activeActivity, coverageType, activeTabId]);
   const [showImport, setShowImport] = useState(false);
   const [showQualityDashboard, setShowQualityDashboard] = useState(false);
   const [cfgInitialContext, setCfgInitialContext] = useState(null);
@@ -254,9 +278,18 @@ function LayoutInner() {
     if (/file|workspace|snapshot/i.test(event.type || "")) setEditorRefreshTrigger(value => value + 1);
   });
 
+  const handleSelectCoverageType = (type) => {
+    setCoverageType(type);
+    const params = new URLSearchParams(location.search);
+    if (params.get("coverageType") !== type) {
+      params.set("coverageType", type);
+      navigate(`${location.pathname}?${params.toString()}`, { replace: true });
+    }
+  };
+
   const handleTriggerRunAnalysis = () => {
     setActiveActivity("coverage");
-    setCoverageType("unit");
+    handleSelectCoverageType("unit");
     setCoverageRunTrigger((prev) => prev + 1);
   };
 
@@ -367,7 +400,7 @@ function LayoutInner() {
                   const res = await getProjectTreeApi(targetProj.id);
                   return { tree: res?.data || [], snapshotId: res.snapshotId, workspaceRevision: res.workspaceRevision };
                 },
-                staleTime: 5 * 60 * 1000,
+                staleTime: 10 * 1000,
               });
               const sourceTree = Array.isArray(tree) ? tree : tree.tree;
               setTreeVersion(Array.isArray(tree) ? null : { snapshotId: tree.snapshotId, expectedWorkspaceRevision: tree.workspaceRevision });
@@ -902,7 +935,7 @@ function LayoutInner() {
           </motion.div>
         )}
         <AnimatePresence initial={false}>
-          {sidebarOpen && activeActivity !== "architecture" && (
+          {sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && (
             <motion.div
               key="sidebar"
               initial={
@@ -928,7 +961,8 @@ function LayoutInner() {
                     maxWidth: "85vw",
                     overflow: "hidden",
                     zIndex: 35,
-                    boxShadow: "4px 0 24px rgba(0,0,0,0.4)",
+                    borderRight: "1px solid var(--color-border-strong)",
+                    boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.25)",
                   }
                   : {
                     overflow: "hidden",
@@ -950,7 +984,7 @@ function LayoutInner() {
                 <CoveragePanel
                   sidebarWidth={sidebarWidth}
                   coverageType={coverageType}
-                  setCoverageType={setCoverageType}
+                  setCoverageType={handleSelectCoverageType}
                 />
               ) : activeActivity === "git" ? (
                 <GitPanel projectId={project?.id} onSync={handleGitSync} />
@@ -979,7 +1013,7 @@ function LayoutInner() {
             </motion.div>
           )}
         </AnimatePresence>
-        {!isMobile && sidebarOpen && activeActivity !== "architecture" && (
+        {!isMobile && sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && (
           <PanelResizer
             onMouseDown={handleSidebarResize}
             isDragging={isDraggingSidebar}
@@ -1022,12 +1056,33 @@ function LayoutInner() {
             />
           </div>
 
+          <div className={activeActivity === "overview" ? "w-full h-full overflow-y-auto" : "hidden"}>
+            <UnifiedDashboard
+              projectId={project?.id}
+              project={project}
+              snapshotId={
+                searchParams.get("snapshotId") ||
+                project?.latestSnapshotId ||
+                project?.snapshots?.[0]?.id ||
+                (project?.id
+                  ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                  : null) ||
+                testPromptSnapshotId
+              }
+              onNavigateWorkspace={(pillar, focus) => {
+                const targetUrl = buildWorkspaceUrl(location, pillar, focus);
+                navigate(targetUrl);
+              }}
+            />
+          </div>
+
           <div className={activeActivity === "coverage" ? "w-full h-full overflow-hidden" : "hidden"}>
             <div className={coverageType === "unit" ? "h-full overflow-y-auto" : "hidden"}>
               <UnitTestDashboard
                 snapshotId={
-                  project?.snapshots?.[0]?.id ||
+                  searchParams.get("snapshotId") ||
                   project?.latestSnapshotId ||
+                  project?.snapshots?.[0]?.id ||
                   (project?.id
                     ? localStorage.getItem(`latestSnapshot_${project.id}`)
                     : null) ||
@@ -1043,8 +1098,9 @@ function LayoutInner() {
             <div className={coverageType === "integration" ? "h-full overflow-hidden flex flex-col min-h-0" : "hidden"}>
               <IntegrationTestDashboard
                 snapshotId={
-                  project?.snapshots?.[0]?.id ||
+                  searchParams.get("snapshotId") ||
                   project?.latestSnapshotId ||
+                  project?.snapshots?.[0]?.id ||
                   (project?.id
                     ? localStorage.getItem(`latestSnapshot_${project.id}`)
                     : null) ||
@@ -1075,7 +1131,7 @@ function LayoutInner() {
             </div>
           </div>
 
-          <div className={activeActivity !== "settings" && activeActivity !== "jobs" && activeActivity !== "architecture" && activeActivity !== "coverage" ? "w-full h-full" : "hidden"}>
+          <div className={activeActivity !== "settings" && activeActivity !== "jobs" && activeActivity !== "architecture" && activeActivity !== "coverage" && activeActivity !== "overview" ? "w-full h-full" : "hidden"}>
                 <Editor
                   key={`${user?.id}:${project?.id}:${project?.snapshots?.[0]?.id || project?.latestSnapshotId || ""}`}
                   tabs={tabs}

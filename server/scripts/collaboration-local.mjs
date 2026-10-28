@@ -140,7 +140,7 @@ else if (command === 'restart') { await stopProcesses(); await start(); }
 else if (command === 'build') await run(process.execPath, ['node_modules/vite/bin/vite.js', 'build'], path.join(root, 'client'));
 else if (command === 'stop') await stop();
 else if (command === 'baseline') await baseline();
-else if (command === 'test') await run(process.execPath, ['node_modules/@playwright/test/cli.js', 'test', '--config', 'e2e/collaboration.config.mjs'], server);
+else if (command === 'test') await run(process.execPath, ['node_modules/@playwright/test/cli.js', 'test', '--config', 'e2e/collaboration.config.mjs', ...process.argv.slice(3)], server);
 else if (command === 'prisma') await prisma(process.argv.slice(3));
 else if (command === 'exec') { isolateProviderTests(); await run(process.execPath, process.argv.slice(3), server); }
 else throw new Error('Use prepare|start|stop|baseline|test|prisma <args>|exec <node args>');

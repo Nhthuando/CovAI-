@@ -622,11 +622,7 @@ function IdeChangesWidget({
               type="button"
               disabled={anyApplying}
               onClick={onApplyAll}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold text-white transition-all cursor-pointer"
-              style={{
-                background: "linear-gradient(135deg, #7c3aed, #9333ea)",
-                boxShadow: "0 0 10px rgba(124, 58, 237, 0.35)",
-              }}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-[var(--color-primary)] text-[var(--color-primary-foreground)] hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-50"
               title="Apply all suggested test files"
             >
               {anyApplying ? (
@@ -788,20 +784,16 @@ function IdeChangesWidget({
             borderTop: "1px solid rgba(124, 58, 237, 0.2)",
           }}
         >
-          <div className="text-[11px] text-purple-300 font-medium">
+          <div className="text-[11px] text-[var(--color-text-secondary)] font-medium">
             💡 Test files have been written to the project. Re-run analysis to verify coverage increase:
           </div>
           <button
             type="button"
             onClick={onRunAnalysis}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-all ml-auto cursor-pointer"
-            style={{
-              background: "linear-gradient(135deg, #7c3aed, #a855f7)",
-              boxShadow: "0 0 12px rgba(124, 58, 237, 0.4)",
-            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--color-primary)] text-[var(--color-primary-foreground)] hover:opacity-90 transition-opacity ml-auto cursor-pointer"
             title="Re-run Analysis Unit"
           >
-            <Play size={11} className="fill-white" />
+            <Play size={11} className="fill-current" />
             <span>Run Analysis Unit ↵</span>
           </button>
         </div>
@@ -2326,6 +2318,7 @@ export default function AIPanel({
   }, [projectId, projectAccess.role, activeSessionId, currentUserId, isRestoring, isLoadingSession]);
 
   useEffect(() => {
+    if (!projectId) return;
     let cancelled = false;
     const requestState = contextRequestRef;
     Promise.resolve().then(async () => {

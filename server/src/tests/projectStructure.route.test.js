@@ -10,6 +10,8 @@ await jest.unstable_mockModule('../config/prisma.js', () => ({ default: {
 } }));
 
 const controller = {
+  detectIntegrationFrameworks:(_req,res)=>res.json({success:true}),
+  installIntegrationDependencies:(_req,res)=>res.json({success:true}),
   getChatSessions: (_req, res) => res.status(200).json({ success: true }),
   createChatSession: (_req, res) => res.status(200).json({ success: true }),
   getChatSessionMessages: (_req, res) => res.status(200).json({ success: true }),

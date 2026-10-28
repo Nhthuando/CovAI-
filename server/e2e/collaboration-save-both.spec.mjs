@@ -52,8 +52,8 @@ test('coverage Save both reports partial success without resaving its committed 
         await page.locator('#auth-submit-btn').click();
         await expect(page).toHaveURL(/\/projects$/);
         await page.goto(`/main-editor?projectId=${projectId}&tab=coverage&type=unit`);
-        await page.getByTitle('Click to filter by Statement coverage', { exact: true }).click();
-        await page.getByText('src/sum.js', { exact: true }).first().click();
+        await page.getByRole('button', {name:/^Source file coverage/}).click();
+        await page.getByText('src/sum.js', { exact: true }).filter({visible:true}).first().click();
         await page.getByRole('button', { name: 'Edit Code', exact: true }).click();
         await page.getByRole('button', { name: 'Edit', exact: true }).click();
         const editors = page.getByRole('textbox', { name: 'Editor content', exact: true });

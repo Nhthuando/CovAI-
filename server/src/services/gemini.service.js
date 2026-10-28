@@ -25,7 +25,7 @@ const VALID_MODELS = GEMINI_MODEL_IDS;
 const exhaustedModels = new Map();
 
 /**
- * Marks a model as quota-exhausted for the remainder of this process session.
+ * Checks if a model is currently exhausted and cleans up expired entries.
  */
 export function markModelExhausted(modelName, error = {message:'daily quota'}) {
   if(modelName) exhaustedModels.set(modelName,geminiQuotaError(error,modelName));

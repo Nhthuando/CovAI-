@@ -111,6 +111,12 @@ export const queueSupertestGeneration = async ({ projectId, snapshotId, userId, 
     targetEndpoints,
   });
 
+  // Invalidate any stale endpoint cache so fresh status/paths are loaded
+  try {
+    const { invalidateEndpointCache } = await import("./integrationWorkspace.service.js");
+    invalidateEndpointCache(resolvedSnapshotId);
+  } catch (e) {}
+
   // 4. Fire-and-forget queue addition (non-blocking)
   if (!job.existing) {
     addJobToQueue("AI_TESTS", job.id).catch((err) => {

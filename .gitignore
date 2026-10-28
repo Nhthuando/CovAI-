@@ -41,7 +41,9 @@ specs/
 # Local export verification artifacts and dependency cache
 /.npm-cache/
 /temp/npm-cache/
-/server/.covai-temp/playwright-browsers/
+.covai-temp/
+/.covai-temp/
+/server/.covai-temp/
 /tmp/
 /output/
 

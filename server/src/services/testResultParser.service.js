@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { cleanStoragePath, cleanStorageText } from "../utils/pathSanitizer.js";
+import { extractTestRequests } from "./testSourceParser.service.js";
 
 /**
  * Helper to find a file by candidate names in either dir or dir's parent
@@ -18,9 +19,12 @@ const findExistingFile = (dir, names) => {
 /**
  * Parse Jest JSON output file
  * @param {string} coverageDir 
+ * @param {Object} [options]
+ * @param {Array} [options.aiTests] List of AiTest records with filePath and metaJson
+ * @param {string} [options.rootDir] Root directory of project snapshot
  * @returns {Object|null}
  */
-export const parseJestResults = (coverageDir) => {
+export const parseJestResults = (coverageDir, options = {}) => {
     const resultsPath = findExistingFile(coverageDir, ["jest-results.json", "test-results.json", "test-result.json"]);
     console.log(`[TEST-RESULT] parsing Jest results from: ${resultsPath || coverageDir}`);
 
@@ -51,20 +55,100 @@ export const parseJestResults = (coverageDir) => {
                     });
                 } else if (suite.status === "failed" || suite.message) {
                     // Test suite failed at module load or syntax phase
-                    scenarios.push({
-                        title: path.basename(cleanedSuiteFile || suite.name || "Test Suite"),
-                        suiteName: path.basename(cleanedSuiteFile || suite.name || "Test Suite"),
-                        status: "failed",
-                        duration: (suite.endTime && suite.startTime) ? (suite.endTime - suite.startTime) : 0,
-                        failureMessages: suite.message ? [cleanStorageText(suite.message)] : ["Test suite failed to run"],
-                        testFile: cleanedSuiteFile || null
-                    });
+                    const suiteFailMsg = suite.message ? cleanStorageText(suite.message) : "Test suite failed to run";
+                    
+                    // Recover registered scenarios for this test file
+                    let registeredScenarios = [];
+                    
+                    // 1. Match against options.aiTests if available
+                    if (Array.isArray(options.aiTests)) {
+                        const matchedAiTest = options.aiTests.find(t => {
+                            if (!t.filePath) return false;
+                            const normT = t.filePath.replace(/\\/g, '/');
+                            const normSuite = (cleanedSuiteFile || "").replace(/\\/g, '/');
+                            return normSuite.endsWith(normT) || normT.endsWith(normSuite);
+                        });
+
+                        if (matchedAiTest) {
+                            if (matchedAiTest.metaJson) {
+                                try {
+                                    const meta = typeof matchedAiTest.metaJson === 'string' ? JSON.parse(matchedAiTest.metaJson) : matchedAiTest.metaJson;
+                                    if (Array.isArray(meta.requests) && meta.requests.length > 0) {
+                                        registeredScenarios = meta.requests.map(r => ({
+                                            title: r.testName,
+                                            suiteName: r.suiteName || path.basename(cleanedSuiteFile),
+                                            scenarioId: r.scenarioId,
+                                            testId: matchedAiTest.id
+                                        }));
+                                    }
+                                } catch (_) {}
+                            }
+
+                            if (registeredScenarios.length === 0 && matchedAiTest.content) {
+                                try {
+                                    const reqs = extractTestRequests(matchedAiTest.content, cleanedSuiteFile);
+                                    if (Array.isArray(reqs) && reqs.length > 0) {
+                                        registeredScenarios = reqs.map(r => ({
+                                            title: r.testName,
+                                            suiteName: r.suiteName || path.basename(cleanedSuiteFile),
+                                            scenarioId: r.scenarioId || null,
+                                            testId: matchedAiTest.id
+                                        }));
+                                    }
+                                } catch (_) {}
+                            }
+                        }
+                    }
+
+                    // 2. Fallback: Parse test file directly from disk if not yet recovered
+                    if (registeredScenarios.length === 0 && cleanedSuiteFile && fs.existsSync(cleanedSuiteFile)) {
+                        try {
+                            const fileContent = fs.readFileSync(cleanedSuiteFile, 'utf8');
+                            const reqs = extractTestRequests(fileContent, cleanedSuiteFile);
+                            if (Array.isArray(reqs) && reqs.length > 0) {
+                                registeredScenarios = reqs.map(r => ({
+                                    title: r.testName,
+                                    suiteName: r.suiteName || path.basename(cleanedSuiteFile),
+                                    scenarioId: r.scenarioId || null,
+                                    testId: null
+                                }));
+                            }
+                        } catch (_) {}
+                    }
+
+                    // 3. Emit registered scenarios with TEST_SCRIPT_ERROR failure details
+                    if (registeredScenarios.length > 0) {
+                        for (const sc of registeredScenarios) {
+                            scenarios.push({
+                                title: sc.title,
+                                suiteName: sc.suiteName,
+                                status: "failed",
+                                duration: (suite.endTime && suite.startTime) ? (suite.endTime - suite.startTime) : 0,
+                                failureMessages: [suiteFailMsg],
+                                testFile: cleanedSuiteFile || null,
+                                scenarioId: sc.scenarioId || null,
+                                testId: sc.testId || null,
+                                isSuiteLevelFailure: true
+                            });
+                        }
+                    } else {
+                        // Fallback: suite-level placeholder only if no scenarios could be identified
+                        scenarios.push({
+                            title: path.basename(cleanedSuiteFile || suite.name || "Test Suite"),
+                            suiteName: path.basename(cleanedSuiteFile || suite.name || "Test Suite"),
+                            status: "failed",
+                            duration: (suite.endTime && suite.startTime) ? (suite.endTime - suite.startTime) : 0,
+                            failureMessages: [suiteFailMsg],
+                            testFile: cleanedSuiteFile || null,
+                            isSuiteLevelFailure: true
+                        });
+                    }
                 }
             });
         }
 
-        const totalTests = raw.numTotalTests || 0;
-        const failedTests = raw.numFailedTests || 0;
+        const totalTests = Math.max(raw.numTotalTests || 0, scenarios.length);
+        const failedTests = Math.max(raw.numFailedTests || 0, scenarios.filter(s => s.status === 'failed').length);
 
         const results = {
             totalTests,
@@ -106,7 +190,12 @@ export const formatScenariosForPrisma = (scenarios) => {
             status: s.status || "UNKNOWN",
             durationMs: typeof s.duration === "number" ? s.duration : (typeof s.durationMs === "number" ? s.durationMs : 0),
             failureMessages: (Array.isArray(s.failureMessages) ? s.failureMessages : (s.failureMessages ? [String(s.failureMessages)] : [])).map(m => cleanStorageText(m)),
-            testFile: cleanStoragePath(s.testFile) || null
+            testFile: cleanStoragePath(s.testFile) || null,
+            targetEndpoint: s.targetEndpoint || null,
+            failureLayer: s.failureLayer || null,
+            responseStatus: typeof s.responseStatus === 'number' ? s.responseStatus : null,
+            responseData: s.responseData ? (typeof s.responseData === 'object' ? s.responseData : null) : null,
+            isFaultyExistingTest: Boolean(s.isFaultyExistingTest)
         }))
     };
 };

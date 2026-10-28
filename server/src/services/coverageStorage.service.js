@@ -112,6 +112,16 @@ export const storeCoverageOutputs = async (snapshotId, projectId, coverageDir) =
         console.log(`[CoverageStorage] Uploaded integration-scenarios.json → ${dest}`);
     }
 
+    // ── Runtime Evidence ─────────────────────────────────────────────
+    const evidenceFile = path.join(coverageDir, "runtime-evidence.json");
+    if (fs.existsSync(evidenceFile)) {
+        const buf = fs.readFileSync(evidenceFile);
+        const dest = `${baseStoragePath}/runtime-evidence.json`;
+        await uploadBufferToFirebase(buf, dest, "application/json");
+        results.evidenceStoragePath = dest;
+        console.log(`[CoverageStorage] Uploaded runtime-evidence.json → ${dest}`);
+    }
+
     // Snapshot.storagePath identifies its original uploaded archive/Git source.
     // Coverage belongs to the job/operation result and must not replace that
     // source pointer when another member runs a new analysis.

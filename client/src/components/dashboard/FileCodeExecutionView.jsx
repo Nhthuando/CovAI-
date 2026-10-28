@@ -663,12 +663,12 @@ export default function FileCodeExecutionView({
                   padding: "4px 10px",
                   borderRadius: 5,
                   background: saveStatus === "success"
-                    ? (isLight ? "#16a34a" : "rgba(34, 197, 94, 0.2)")
+                    ? "var(--color-success)"
                     : (isDirty || isTestDirty)
-                      ? (isLight ? "#2563eb" : "linear-gradient(135deg, #0284c7 0%, #0369a1 100%)")
-                      : (isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.05)"),
-                  border: (isDirty || isTestDirty) ? "none" : (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)"),
-                  color: (isDirty || isTestDirty) || saveStatus === "success" ? "#ffffff" : (isLight ? "#94a3b8" : "#64748b"),
+                      ? "var(--color-primary)"
+                      : "var(--color-surface-secondary)",
+                  border: (isDirty || isTestDirty) || saveStatus === "success" ? "1px solid transparent" : "1px solid var(--color-border)",
+                  color: (isDirty || isTestDirty) || saveStatus === "success" ? "var(--color-primary-foreground)" : "var(--color-text-muted)",
                   fontSize: 11,
                   fontWeight: 600,
                   cursor: isSaving || !projectId ? "not-allowed" : "pointer",
@@ -1141,17 +1141,15 @@ export default function FileCodeExecutionView({
               borderRadius: 5,
               fontSize: 11,
               fontWeight: layoutMode === "split" ? 700 : 500,
-              border: "none",
               background: layoutMode === "split"
-                ? (isLight ? "#ffffff" : "linear-gradient(135deg, #7c3aed 0%, #6366f1 100%)")
+                ? "var(--color-surface-raised)"
                 : "transparent",
               color: layoutMode === "split"
-                ? (isLight ? "#4338ca" : "#ffffff")
-                : (isLight ? "#64748b" : "#8b949e"),
+                ? "var(--color-text)"
+                : "var(--color-text-secondary)",
+              border: layoutMode === "split" ? "1px solid var(--color-border)" : "1px solid transparent",
               cursor: "pointer",
-              boxShadow: layoutMode === "split"
-                ? (isLight ? "0 2px 4px rgba(0,0,0,0.08)" : "0 2px 6px rgba(124, 58, 237, 0.35)")
-                : "none",
+              boxShadow: layoutMode === "split" ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
               transition: "all 0.15s ease",
             }}
             title="Split View: Side-by-side Source Code and Test File"
@@ -1233,14 +1231,13 @@ export default function FileCodeExecutionView({
               borderRadius: 6,
               fontSize: 11,
               fontWeight: 700,
-              background: "linear-gradient(135deg, #7c3aed 0%, #6366f1 100%)",
-              color: "#ffffff",
-              border: "none",
+              background: "var(--color-primary)",
+              color: "var(--color-primary-foreground)",
+              border: "1px solid var(--color-primary)",
               cursor: isLoadingSuggestions ? "wait" : "pointer",
-              boxShadow: "0 2px 8px rgba(124, 58, 237, 0.35)",
-              transition: "all 0.15s ease",
+              transition: "opacity 0.15s ease",
             }}
-            className="hover:opacity-95"
+            className="hover:opacity-90 disabled:opacity-50"
             title="Suggest missing unit tests for this file"
           >
             {isLoadingSuggestions ? (

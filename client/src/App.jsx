@@ -21,6 +21,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import { RunningProcessProvider } from "./contexts/RunningProcessContext";
 import GlobalProcessIndicator from "./components/GlobalProcessIndicator";
 import { useAuth } from "./hooks/useAuth";
+import GlobalErrorBoundary from "./components/common/GlobalErrorBoundary";
 
 /* ── Landing Page ─────────────────────────────────────────── */
 function LandingPage() {
@@ -142,7 +143,9 @@ function App() {
     <ThemeProvider>
       <NotificationProvider>
         <RunningProcessProvider key={userId || "anonymous"} sessionUserId={userId}>
-          <AppContent />
+          <GlobalErrorBoundary>
+            <AppContent />
+          </GlobalErrorBoundary>
         </RunningProcessProvider>
       </NotificationProvider>
     </ThemeProvider>

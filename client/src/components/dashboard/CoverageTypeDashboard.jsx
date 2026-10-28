@@ -2111,10 +2111,10 @@ export default function CoverageTypeDashboard({
               style={{
                 ...buttonStyle(running || isGenerating ? "#38bdf8" : "#8b949e"),
                 background: running || isGenerating
-                  ? "linear-gradient(135deg, rgba(56,189,248,0.2) 0%, rgba(99,102,241,0.2) 100%)"
-                  : "rgba(255, 255, 255, 0.05)",
-                border: running || isGenerating ? "1px solid rgba(56,189,248,0.5)" : "1px solid rgba(255, 255, 255, 0.12)",
-                color: running || isGenerating ? "#38bdf8" : "#c9d1d9",
+                  ? "rgba(14, 165, 233, 0.15)"
+                  : "var(--color-surface-secondary)",
+                border: running || isGenerating ? "1px solid var(--color-primary)" : "1px solid var(--color-border)",
+                color: running || isGenerating ? "var(--color-primary)" : "var(--color-text)",
                 display: "flex",
                 alignItems: "center",
                 gap: 6,
@@ -2131,8 +2131,7 @@ export default function CoverageTypeDashboard({
                     width: 7,
                     height: 7,
                     borderRadius: "50%",
-                    backgroundColor: "#38bdf8",
-                    boxShadow: "0 0 6px #38bdf8",
+                    backgroundColor: "var(--color-primary)",
                   }}
                 />
               )}
@@ -2145,11 +2144,9 @@ export default function CoverageTypeDashboard({
                 disabled={!canUseAi || loading || running || isGenerating}
                 style={{
                   ...buttonStyle("#67e8f9"),
-                  background: isLight
-                    ? "linear-gradient(135deg, #f3e8ff 0%, #e0f2fe 100%)"
-                    : "linear-gradient(135deg, rgba(168,85,247,0.2) 0%, rgba(103,232,249,0.2) 100%)",
-                  border: isLight ? "1px solid #7dd3fc" : "1px solid rgba(103,232,249,0.45)",
-                  color: isLight ? "#0284c7" : "#67e8f9",
+                  background: "rgba(14, 165, 233, 0.1)",
+                  border: "1px solid rgba(14, 165, 233, 0.35)",
+                  color: "var(--color-primary)",
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
@@ -2367,8 +2364,8 @@ export default function CoverageTypeDashboard({
               disabled={!canWrite || isBulkApplying || running}
               style={{
                 padding: "6px 14px",
-                background: "linear-gradient(135deg, #16a34a 0%, #15803d 100%)",
-                border: "1px solid #22c55e",
+                background: "var(--color-success)",
+                border: "1px solid var(--color-success)",
                 borderRadius: 6,
                 color: "#ffffff",
                 fontSize: 12,
@@ -2377,7 +2374,6 @@ export default function CoverageTypeDashboard({
                 display: "flex",
                 alignItems: "center",
                 gap: 6,
-                boxShadow: "0 2px 8px rgba(22, 163, 74, 0.3)",
               }}
               className="hover:opacity-90"
             >
@@ -2403,15 +2399,13 @@ export default function CoverageTypeDashboard({
           style={{
             marginBottom: 20,
             padding: "12px 18px",
-            background: isLight
-              ? "linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)"
-              : "linear-gradient(135deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.95) 100%)",
-            border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(56, 189, 248, 0.4)",
+            background: "var(--color-surface-raised)",
+            border: "1px solid var(--color-border)",
             borderRadius: 10,
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            boxShadow: isLight ? "0 2px 8px rgba(0,0,0,0.06)" : "0 4px 14px rgba(0, 0, 0, 0.35)",
+            boxShadow: "var(--shadow-sm)",
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -4727,9 +4721,9 @@ export default function CoverageTypeDashboard({
                             disabled={isSavingAiTest || loading || running}
                             title="Save this AI-generated test to your project test suite"
                             style={{
-                              background: "linear-gradient(135deg, rgba(34, 197, 94, 0.2) 0%, rgba(16, 185, 129, 0.3) 100%)",
-                              border: "1px solid rgba(34, 197, 94, 0.5)",
-                              color: "#4ade80",
+                              background: "rgba(34, 197, 94, 0.15)",
+                              border: "1px solid var(--color-success)",
+                              color: "var(--color-success)",
                               borderRadius: 6,
                               padding: "4px 12px",
                               fontSize: 12,
@@ -4760,7 +4754,7 @@ export default function CoverageTypeDashboard({
                           <div>
                             <div style={{ fontSize: 11, fontWeight: 600, color: "#8b949e", marginBottom: 4 }}>AI-generated test code ({systemSummary.latestAiTest.filePath}):</div>
                             <pre style={{ margin: 0, padding: 8, background: "#0d1117", borderRadius: 6, fontSize: 11, color: "#c9d1d9", maxHeight: 180, overflowY: "auto", whiteSpace: "pre-wrap" }}>
-                              {systemSummary.latestAiTest.content}
+                                {systemSummary.latestAiTest.content}
                             </pre>
                           </div>
                         </div>
@@ -4772,9 +4766,10 @@ export default function CoverageTypeDashboard({
                       onClick={handleGenerateAiSystemTest}
                       disabled={!canUseAi || loading || running || isGenerating}
                       style={{
-                        ...buttonStyle("#67e8f9"),
-                        background: "linear-gradient(135deg, rgba(168,85,247,0.2) 0%, rgba(103,232,249,0.2) 100%)",
-                        border: "1px solid rgba(103,232,249,0.45)",
+                        ...buttonStyle("var(--color-primary)"),
+                        background: "var(--color-surface-raised)",
+                        border: "1px solid var(--color-border)",
+                        color: "var(--color-text)",
                         padding: "10px 18px",
                         fontSize: 13,
                         display: "flex",

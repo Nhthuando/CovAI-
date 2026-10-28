@@ -12,7 +12,6 @@ import {
   GitBranch,
   Clock,
   AlertTriangle,
-  Loader2,
   Star,
   LogOut,
   SlidersHorizontal,
