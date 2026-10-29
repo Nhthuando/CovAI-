@@ -19,7 +19,7 @@ const mockPrisma = {
   aiTest: { deleteMany: jest.fn() },
   jobLog: { deleteMany: jest.fn() },
   jobOutput: { deleteMany: jest.fn() },
-  job: { deleteMany: jest.fn() },
+  job: { deleteMany: jest.fn(), findFirst: jest.fn() },
   notification: { deleteMany: jest.fn() },
   $transaction: jest.fn(),
 };
@@ -32,6 +32,10 @@ const mockBucket = {
   file: jest.fn(() => mockFileObj),
   getFiles: jest.fn().mockResolvedValue([[]]),
 };
+const cleanupStorage = jest.fn();
+await jest.unstable_mockModule('../services/projectStorageCleanup.service.js', () => ({
+  cleanupProjectStorageAsync: cleanupStorage,
+}));
 
 await jest.unstable_mockModule('../config/prisma.js', () => ({
   default: mockPrisma,
@@ -41,7 +45,7 @@ await jest.unstable_mockModule('../config/firebase.js', () => ({
   getBucket: jest.fn(() => mockBucket),
 }));
 
-const { deleteProject, cleanupProjectStorageAsync, ServiceError } = await import(
+const { deleteProject } = await import(
   '../services/project.service.js'
 );
 
@@ -50,7 +54,9 @@ describe('deleteProject service', () => {
   const userId = 'user-abc';
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    jest.resetAllMocks();
+    cleanupStorage.mockResolvedValue();
+    mockPrisma.job.findFirst.mockResolvedValue(null);
   });
 
   it('throws 404 when project does not exist', async () => {
@@ -75,17 +81,32 @@ describe('deleteProject service', () => {
     );
   });
 
-  it('deletes project via native cascade delete in a single query and returns immediately', async () => {
+  it('awaits storage deletion before deleting project and snapshot metadata', async () => {
     mockPrisma.project.findUnique.mockResolvedValue({
       id: projectId,
       ownerId: userId,
     });
     mockPrisma.projectSnapshot.findMany.mockResolvedValue([
-      { rootDir: '/tmp/test-root', storagePath: 'projects/proj-123/snap1.zip' },
+      { id: 'snap1', rootDir: '/app/uploads/snapshots/snap1/repo/backend', storagePath: 'projects/proj-123/snap1.zip' },
     ]);
     mockPrisma.project.delete.mockResolvedValue({ id: projectId });
 
-    await deleteProject(projectId, userId);
+    let finishCleanup;
+    let startedCleanup;
+    const started = new Promise(resolve => { startedCleanup = resolve; });
+    cleanupStorage.mockImplementation(() => {
+      startedCleanup();
+      return new Promise(resolve => { finishCleanup = resolve; });
+    });
+    const deletion = deleteProject(projectId, userId);
+    await started;
+    expect(mockPrisma.project.delete).not.toHaveBeenCalled();
+    expect(cleanupStorage).toHaveBeenCalledWith(projectId, [expect.objectContaining({ id: 'snap1' })]);
+    expect(mockPrisma.projectSnapshot.findMany).toHaveBeenCalledWith({
+      where: { projectId }, select: { id: true, rootDir: true, storagePath: true },
+    });
+    finishCleanup();
+    await deletion;
 
     expect(mockPrisma.project.delete).toHaveBeenCalledWith({
       where: { id: projectId },
@@ -113,24 +134,22 @@ describe('deleteProject service', () => {
     expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
   });
 
-  it('cleans up Firebase files and prefix asynchronously in background', async () => {
-    const snapFile = { delete: jest.fn().mockResolvedValue({}) };
-    const prefixFile = { delete: jest.fn().mockResolvedValue({}) };
-    mockBucket.file.mockReturnValue(snapFile);
-    mockBucket.getFiles.mockResolvedValue([[prefixFile]]);
+  it('keeps metadata after cleanup fails and allows a subsequent deletion retry', async () => {
+    mockPrisma.project.findUnique.mockResolvedValue({ id: projectId, ownerId: userId });
+    mockPrisma.projectSnapshot.findMany.mockResolvedValue([{ id: 'snap1' }]);
+    cleanupStorage.mockRejectedValueOnce(new Error('Files locked'));
+    await expect(deleteProject(projectId, userId)).rejects.toThrow('Files locked');
+    expect(mockPrisma.project.delete).not.toHaveBeenCalled();
+    expect(mockPrisma.projectSnapshot.deleteMany).not.toHaveBeenCalled();
+    await deleteProject(projectId, userId);
+    expect(mockPrisma.project.delete).toHaveBeenCalledTimes(1);
+  });
 
-    cleanupProjectStorageAsync(projectId, [
-      { rootDir: null, storagePath: 'projects/proj-123/snap.zip' },
-    ]);
-
-    // Give setImmediate time to execute
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    expect(mockBucket.file).toHaveBeenCalledWith('projects/proj-123/snap.zip');
-    expect(snapFile.delete).toHaveBeenCalled();
-    expect(mockBucket.getFiles).toHaveBeenCalledWith({
-      prefix: `projects/${projectId}/`,
-    });
-    expect(prefixFile.delete).toHaveBeenCalled();
+  it('does not remove files while project jobs are queued or running', async () => {
+    mockPrisma.project.findUnique.mockResolvedValue({ id: projectId, ownerId: userId });
+    mockPrisma.job.findFirst.mockResolvedValue({ id: 'active-job' });
+    await expect(deleteProject(projectId, userId)).rejects.toMatchObject({ statusCode: 409 });
+    expect(cleanupStorage).not.toHaveBeenCalled();
+    expect(mockPrisma.project.delete).not.toHaveBeenCalled();
   });
 });

@@ -597,31 +597,8 @@ export default function UnitTestGuidedWorkflow({
         {/* Unified Primary CTA Button */}
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {currentViewStep === 3 ? (
-            /* Action Group for Stage 3: Review Diff + Apply All + Re-run */
+            /* Action Group for Stage 3: Review Diff + Apply All */
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              {onRun && (
-                <button
-                  onClick={() => onRun({ restart: !!running })}
-                  style={{
-                    background: running ? (isLight ? "#e0e7ff" : "rgba(99, 102, 241, 0.2)") : (isLight ? "#f1f5f9" : "var(--color-surface-secondary)"),
-                    border: running ? "1px solid #818cf8" : (isLight ? "1px solid #cbd5e1" : "1px solid var(--color-border)"),
-                    color: isLight ? "#1e293b" : "#f1f5f9",
-                    borderRadius: 7,
-                    padding: "9px 14px",
-                    fontSize: 12.5,
-                    fontWeight: 650,
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    transition: "all 0.15s ease",
-                  }}
-                  title={running ? "Analysis is running. Click to restart execution." : "Re-run test runner"}
-                >
-                  {running ? <RotateCcw size={13} className="animate-spin" /> : <Play size={13} fill="currentColor" />}
-                  <span>{running ? "Re-run Tests" : "Re-run Tests"}</span>
-                </button>
-              )}
 
               {onOpenReviewModal && (
                 <button
@@ -680,7 +657,7 @@ export default function UnitTestGuidedWorkflow({
                   {isBulkApplying ? (
                     <>
                       <Loader2 size={14} className="animate-spin" />
-                      <span>{bulkApplyStep || "Applying all..."}</span>
+                      <span>Applying...</span>
                     </>
                   ) : (
                     <>
@@ -727,31 +704,8 @@ export default function UnitTestGuidedWorkflow({
               )}
             </div>
           ) : currentViewStep === 2 && onBulkSuggest ? (
-            /* Action Group for Stage 2: Suggest Missing Tests + Re-run */
+            /* Action Group for Stage 2: Suggest Missing Tests */
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              {onRun && (
-                <button
-                  onClick={() => onRun({ restart: !!running })}
-                  style={{
-                    background: running ? (isLight ? "#e0e7ff" : "rgba(99, 102, 241, 0.2)") : (isLight ? "#f1f5f9" : "var(--color-surface-secondary)"),
-                    border: running ? "1px solid #818cf8" : (isLight ? "1px solid #cbd5e1" : "1px solid var(--color-border)"),
-                    color: isLight ? "#1e293b" : "#f1f5f9",
-                    borderRadius: 7,
-                    padding: "9px 14px",
-                    fontSize: 12.5,
-                    fontWeight: 650,
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    transition: "all 0.15s ease",
-                  }}
-                  title={running ? "Analysis is running. Click to restart execution." : "Re-run test runner"}
-                >
-                  {running ? <RotateCcw size={13} className="animate-spin" /> : <Play size={13} fill="currentColor" />}
-                  <span>{running ? "Re-run Tests" : "Re-run Tests"}</span>
-                </button>
-              )}
 
               <button
                 onClick={() => {
@@ -839,7 +793,7 @@ export default function UnitTestGuidedWorkflow({
                 </button>
               )}
               <button
-                onClick={() => onRun && onRun({ restart: !!running })}
+                onClick={() => onRun && onRun({ restart: true })}
                 style={{
                   background: is100Percent ? "#16a34a" : (isLight ? "#4f46e5" : "#6d5dfb"),
                   border: is100Percent ? "1px solid #15803d" : (isLight ? "1px solid #4338ca" : "1px solid #5b4be7"),
@@ -880,7 +834,7 @@ export default function UnitTestGuidedWorkflow({
             /* Primary CTA for Stage 1: Run Baseline Analysis */
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <button
-                onClick={() => onRun && onRun({ restart: !!running })}
+                onClick={() => onRun && onRun({ restart: Boolean(hasBaselineRun || running) })}
                 style={{
                   background: running
                     ? (isLight ? "#4f46e5" : "#6d5dfb")

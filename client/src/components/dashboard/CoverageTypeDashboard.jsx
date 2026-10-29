@@ -62,7 +62,6 @@ import FileFunctionCallGraphView from "./FileFunctionCallGraphView.jsx";
 import UnitTestExecutionProcess from "./UnitTestExecutionProcess.jsx";
 import UnitTestExecutionVisualizer from "./UnitTestExecutionVisualizer.jsx";
 import CFGCalculator from "./CFGCalculator.jsx";
-import WaveProgressBar from "./WaveProgressBar.jsx";
 import InlineTestSuggestions from "./InlineTestSuggestions.jsx";
 import JobQueue from "./JobQueue.jsx";
 import { CoverageDashboardSkeleton } from "../common/Skeleton.jsx";
@@ -1405,7 +1404,7 @@ export default function CoverageTypeDashboard({
     const fileMap = new Map();
 
     // Prioritize pending suggestions if available, otherwise preserve applied suggestions for diff review
-    const targetList = allPendingSuggestions.length > 0 ? allPendingSuggestions : allReviewSuggestions;
+    const targetList = allReviewSuggestions.length > 0 ? allReviewSuggestions : allPendingSuggestions;
 
     targetList.forEach((sug) => {
       const fPath = sug.sourceFile || sug.filePath;
@@ -1534,6 +1533,7 @@ export default function CoverageTypeDashboard({
           const res = await applyUnitTestSuggestion(snapshotId, {
             suggestions: cleanedSuggestions,
             projectId,
+            skipBackgroundJob: true,
           });
 
           const resultData = res?.data || res;
@@ -1625,20 +1625,9 @@ export default function CoverageTypeDashboard({
       invalidateCoverageQueries(snapshotId);
       await refetchCoverage();
 
-      // If backend returned a background analysis job, track it and auto-sync when it completes
-      if (lastResultData?.backgroundJob?.id) {
-        const bgJobId = lastResultData.backgroundJob.id;
-        startAnalysis({ snapshotId, projectId, type: "unit", jobId: bgJobId });
-        (async () => {
-          try {
-            await waitForJob(bgJobId, (prog) => {
-              updateAnalysisProgress({ progress: prog, message: "Refreshing full project coverage analysis..." });
-            });
-            completeAnalysis("✓ Full project unit test analysis completed! All metrics updated.");
-            invalidateCoverageQueries(snapshotId);
-            await refetchCoverage();
-          } catch (_) { }
-        })();
+      // Trigger authoritative full project unit test analysis once ALL files have been safely merged to disk
+      if (anyPassedGlobal) {
+        await run({ restart: true });
       }
 
       await Promise.all(filesWithPendingSuggestions.map((fPath) => ensureFileCoverage(fPath, true)));
@@ -1778,7 +1767,7 @@ export default function CoverageTypeDashboard({
     try {
       let response;
       try {
-        response = await runCoverageByType(snapshotId, type, undefined, type === "system" ? executionMode : undefined);
+        response = await runCoverageByType(snapshotId, type, undefined, type === "system" ? executionMode : undefined, options);
       } catch (err) {
         if (err.message && (err.message.includes("already queued") || err.message.includes("running") || err.message.includes("409"))) {
           const projJobs = await getProjectJobsApi(projectId).catch(() => ({ jobs: [] }));
@@ -1840,6 +1829,7 @@ export default function CoverageTypeDashboard({
       setRunProgress(100);
       setRunStep(type === "system" ? "System test completed successfully!" : "Analysis completed successfully!");
       completeAnalysis(true);
+      setApplyResultsByFile({});
       invalidateCoverageQueries(snapshotId);
       await refetchCoverage();
       if (type === "system") {
@@ -2634,15 +2624,7 @@ export default function CoverageTypeDashboard({
         </div>
       )}
 
-      {running && (
-        <WaveProgressBar
-          progress={runProgress}
-          step={runStep}
-          framework={activeFramework || (type === "unit" ? "Jest & Vitest" : config.title)}
-          color={config.accent}
-        />
-      )}
-      {generateError && (
+            {generateError && (
         <div
           style={{
             padding: "12px 15px",
@@ -5463,12 +5445,17 @@ export default function CoverageTypeDashboard({
           onClose={() => setReviewModalOpen(false)}
           files={reviewFiles}
           initialFileIndex={reviewInitialFileIndex}
-          onApplyFile={async (file) => {
+          onApplyFile={async (file, currentSuggestion) => {
             const cleanTarget = cleanDisplayPath(file.filePath);
-            const fileSugs = allPendingSuggestions.filter((s) => {
+            let fileSugs = allPendingSuggestions.filter((s) => {
               const sPath = s.sourceFile || s.filePath;
               return sPath === file.filePath || cleanDisplayPath(sPath) === cleanTarget;
             });
+            if (fileSugs.length === 0 && Array.isArray(file.suggestions) && file.suggestions.length > 0) {
+              fileSugs = file.suggestions;
+            } else if (fileSugs.length === 0 && currentSuggestion) {
+              fileSugs = [currentSuggestion];
+            }
             if (fileSugs.length > 0) {
               await handleApplyAllInline(file.filePath, fileSugs);
             }
@@ -5476,6 +5463,7 @@ export default function CoverageTypeDashboard({
           onApplyAll={handleApplyAllGlobal}
           onRunAnalysis={run}
           isApplying={isBulkApplying}
+          applyingStep={bulkApplyStep}
         />
       )}
 

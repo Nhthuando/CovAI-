@@ -496,8 +496,10 @@ function LayoutInner() {
       } else {
         setProjects((prev) => prev.filter((p) => p.id !== projectId));
       }
+      return true;
     } catch (err) {
-      showToast({ type: "error", title: "Delete failed" });
+      showToast({ type: "error", title: "Delete failed", message: err.message || "Could not delete the project. Please retry." });
+      return false;
     }
   };
 

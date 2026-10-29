@@ -6,7 +6,8 @@ import {
     findTestBlockIntervalByTitle,
     updateTestBlockByTitle,
     ensureJestMockVirtualOption,
-    balanceTestFileBraces
+    balanceTestFileBraces,
+    healControllerFixturesWithAst
 } from "../services/testSanitizer.service.js";
 import { relaxToHaveBeenCalled } from "../services/applyTestSuggestion.service.js";
 import { findAssociatedTestFile } from "../services/fileCoverage.service.js";
@@ -921,16 +922,14 @@ describe('suite', () => {
             expect(result).toContain("describe('suite', () => {");
         });
 
-        test("decouples glued inline imports and removes jest from @jest/globals", () => {
+        test("decouples glued inline imports and preserves jest from @jest/globals for ESM", () => {
             const gluedCode = `jest.mock('../../../src/handlers/search.handler.ts', () => mockStub(), { virtual: true });import { describe, test, it, expect, jest } from '@jest/globals';
 import { SearchTool } from '../../../src/tools/search.tool';
 describe('search', () => {
   it('works', () => { expect(true).toBe(true); });
 });`;
             const cleaned = cleanAndDeduplicateTestContent(gluedCode, "", "tests/unit/tools/search.tool.test.ts");
-            expect(cleaned).toContain("jest.mock('../../../src/handlers/search.handler.ts', () => mockStub(), { virtual: true });\nimport { describe, test, it, expect } from '@jest/globals';");
-            expect(cleaned).not.toContain(", jest }");
-            expect(cleaned).not.toContain("{ describe, test, it, expect, jest }");
+            expect(cleaned).toContain("jest.mock('../../../src/handlers/search.handler.ts', () => mockStub(), { virtual: true });\nimport { describe, test, it, expect, jest } from '@jest/globals';");
             expect(cleaned).toContain("// @ts-nocheck");
         });
 
@@ -993,7 +992,7 @@ describe('test', () => {
             // Count closing braces inside models mock
             const modelsSection = cleaned.slice(0, cleaned.indexOf("vi.mock"));
             expect(modelsSection.match(/^\}\s*$/gm) || []).toEqual([]);
-            expect(cleaned).toContain("models: {\n    Requirement: { findByPk: jest.fn() },\n  },\n}));");
+            expect(cleaned).toContain("models: {\n    Requirement: { findByPk: vi.fn() },\n  },\n}));");
             expect(cleaned).toContain("default: {\n    queue: { analysisQueueName: 'test-queue' },\n  }\n}));");
 
             const ast = parseJavaScriptCode(cleaned);
@@ -1028,6 +1027,112 @@ describe('delta tests', () => {
             expect(cleaned).not.toContain("        } catch (err) {\n            expect(err).toBeDefined();\n        }\n    } catch");
             const ast = parseJavaScriptCode(cleaned);
             expect(ast.success).toBe(true);
+        });
+    });
+
+    describe("Vitest & Monorepo Runner Invariants", () => {
+        test("normalizes dynamic import monorepo prefix in cleanAndDeduplicateTestContent", () => {
+            const code = `
+describe('config', () => {
+    test('load', async () => {
+        const config = (await import('../../backend/src/config/index')).default;
+        expect(config).toBeDefined();
+    });
+});`;
+            const sanitized = cleanAndDeduplicateTestContent(code, "", "tests/config/index.vitest.test.js");
+            expect(sanitized).toContain("import('../../src/config/index')");
+            expect(sanitized).not.toContain("../../backend/src/");
+        });
+
+        test("normalizes vi.mock monorepo prefix", () => {
+            const code = `
+vi.mock('../../backend/src/models', () => ({ models: {} }));
+import { models } from '../../src/models';`;
+            const sanitized = cleanAndDeduplicateTestContent(code, "", "tests/services/analysis.service.vitest.test.js");
+            expect(sanitized).toContain("vi.mock('../../src/models'");
+            expect(sanitized).not.toContain("vi.mock('../../backend/src/models'");
+        });
+
+        test("wires bull queue methods in beforeEach using vi.clearAllMocks for Vitest", () => {
+            const code = `
+import { analysisQueue, initAnalysisWorker } from '../../src/jobs/analysis.job';
+describe('Analysis Job Queue', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+    test('TC-01', () => {
+        initAnalysisWorker();
+        expect(analysisQueue.process).toHaveBeenCalled();
+    });
+});`;
+            const sanitized = cleanAndDeduplicateTestContent(code, "", "tests/jobs/analysis.job.vitest.test.js");
+            expect(sanitized).toContain("analysisQueue.process = mockProcess");
+            expect(sanitized).toContain("var mockProcess = ");
+            expect(sanitized).toContain("typeof vi.fn === 'function' ? vi.fn");
+        });
+
+        test("ensures models.Requirement methods have mockResolvedValue function in beforeEach", () => {
+            const code = `
+import { models } from '../../src/models';
+describe('service', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+    test('findByPk', async () => {
+        models.Requirement.findByPk.mockResolvedValue(null);
+    });
+});`;
+            const sanitized = cleanAndDeduplicateTestContent(code, "", "tests/services/analysis.service.vitest.test.js");
+            expect(sanitized).toContain("models.Requirement");
+            expect(sanitized).toContain("mockResolvedValue !== 'function'");
+        });
+
+        test("does not inject _reqM into config tests with analysisQueueName", () => {
+            const code = `
+describe('Config Module', () => {
+    beforeEach(() => {
+        vi.resetModules();
+    });
+    test('loads config', () => {
+        expect(config.queue.analysisQueueName).toBe('analysis-queue');
+    });
+});`;
+            const sanitized = cleanAndDeduplicateTestContent(code, "", "tests/config/index.vitest.test.js");
+            expect(sanitized).not.toContain("const _reqM = require");
+        });
+
+        test("healControllerFixturesWithAst safely injects req and res fixtures into beforeEach", () => {
+            const controllerCode = `describe("Requirement Controller Tests", () => {
+  let req, res, next;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  test("uploadDocument throws error", async () => {
+    req.file = null;
+  });
+});`;
+            const fixed = healControllerFixturesWithAst(controllerCode, "tests/controllers/requirement.controller.test.js");
+            expect(fixed).toContain("req = { body: {}, params: {}, query: {}, headers: {}, file: null");
+            expect(fixed).toContain("res = {");
+            expect(fixed).toContain("next = (typeof jest !== 'undefined'");
+            const parsed = parseJavaScriptCode(fixed);
+            expect(parsed.success).toBe(true);
+        });
+
+        test("healControllerFixturesWithAst creates beforeEach when missing in controller test suite", () => {
+            const controllerCodeWithoutBeforeEach = `describe("User Controller Tests", () => {
+  test("creates user", async () => {
+    req.body = { name: "Alice" };
+    await controller.create(req, res, next);
+  });
+});`;
+            const fixed = healControllerFixturesWithAst(controllerCodeWithoutBeforeEach, "tests/controllers/user.controller.test.js");
+            expect(fixed).toContain("beforeEach(() => {");
+            expect(fixed).toContain("req = { body: {}");
+            const parsed = parseJavaScriptCode(fixed);
+            expect(parsed.success).toBe(true);
         });
     });
 });

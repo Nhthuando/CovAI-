@@ -3126,7 +3126,7 @@ export const applySuggestion = async (req, res) => {
         if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
 
         const { snapshotId } = req.params;
-        let { projectId, suggestion, suggestions } = req.body || {};
+        let { projectId, suggestion, suggestions, skipBackgroundJob } = req.body || {};
 
         if (!suggestion && (!suggestions || suggestions.length === 0)) {
             return res.status(400).json({ success: false, message: "suggestion or suggestions array is required." });
@@ -3146,9 +3146,9 @@ export const applySuggestion = async (req, res) => {
             suggestions
         });
 
-        // Auto-trigger full project unit test analysis in the background
+        // Auto-trigger full project unit test analysis in the background (unless skipped for batch apply)
         let backgroundJob = null;
-        if (result && result.success && actualSnapshotId && actualProjectId) {
+        if (!skipBackgroundJob && result && result.success && actualSnapshotId && actualProjectId) {
             try {
                 const activeUnitJob = await prisma.job.findFirst({
                     where: {

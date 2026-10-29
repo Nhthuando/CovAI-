@@ -115,14 +115,23 @@ export async function getCoverageFrameworks(snapshotId) {
     return handleResponse(res);
 }
 
-export async function runCoverageByType(snapshotId, coverageType, framework, executionMode) {
+export async function runCoverageByType(snapshotId, coverageType, framework, executionMode, options = {}) {
     const headers = getAuthHeaders();
-    const options = {
-        method: "POST",
-        headers: framework || executionMode ? { ...headers, "Content-Type": "application/json" } : headers,
-        body: framework || executionMode ? JSON.stringify({ framework, executionMode }) : undefined,
+    const isRestart = Boolean(options?.restart);
+    const bodyPayload = {
+        ...(framework ? { framework } : {}),
+        ...(executionMode ? { executionMode } : {}),
+        ...(isRestart ? { restart: true } : {}),
     };
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/${coverageType}/run`, options);
+    const hasBody = Object.keys(bodyPayload).length > 0;
+    const url = isRestart
+        ? `${BASE_URL}/coverage/${snapshotId}/${coverageType}/run?restart=true`
+        : `${BASE_URL}/coverage/${snapshotId}/${coverageType}/run`;
+    const res = await fetch(url, {
+        method: "POST",
+        headers: hasBody ? { ...headers, "Content-Type": "application/json" } : headers,
+        body: hasBody ? JSON.stringify(bodyPayload) : undefined,
+    });
     return handleResponse(res);
 }
 
@@ -203,11 +212,11 @@ export async function getIntegrationWorkspace(snapshotId) {
     return handleResponse(res);
 }
 
-export async function applyUnitTestSuggestion(snapshotId, { suggestion, suggestions, projectId } = {}) {
+export async function applyUnitTestSuggestion(snapshotId, { suggestion, suggestions, projectId, skipBackgroundJob } = {}) {
     const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/apply-suggestion`, {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify({ suggestion, suggestions, projectId }),
+        body: JSON.stringify({ suggestion, suggestions, projectId, skipBackgroundJob: Boolean(skipBackgroundJob) }),
     });
     return handleResponse(res);
 }

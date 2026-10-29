@@ -15,6 +15,7 @@ await jest.unstable_mockModule("../services/gemini.service.js", () => ({
 const {
     buildStandardUnitTestPrompt,
     parseAndSanitizeAiTestResponse,
+    autoHealAstSyntax,
     generateAiUnitTestSuite
 } = await import("../services/unitTestGenerator.service.js");
 const { assembleUnitTestContext } = await import("../services/unitTestContextEngineering.service.js");
@@ -68,6 +69,7 @@ export function calculateTax(income, options = {}) {
             expect(prompt).toContain("### 2. TARGET FILE & IMPORT CONTRACT");
             expect(prompt).toContain("../src/services/tax.service");
             expect(prompt).toContain("calculateTax");
+            expect(prompt).toContain("An input rejected by an earlier guard cannot test a downstream");
 
             // 3. Current Coverage Diagnostics & Gaps
             expect(prompt).toContain("### 3. CURRENT COVERAGE DIAGNOSTICS & GAPS");
@@ -175,6 +177,43 @@ export function calculateTax(income, options = {}) {
             });
 
             expect(result.parsed).toBeDefined();
+        });
+
+        test("auto-heals 2:15 Missing semicolon and unseparated statements", () => {
+            const rawResponse = JSON.stringify({
+                explanation: "Tests with unseparated statements and missing semicolon",
+                suggestedTestCode: "const a = 1;\nconst x = '123' const y = 2;\ndescribe('calc', () => {\n  it('checks value', () => {\n    expect(x).toBe('123');\n  });\n});",
+                fullUpdatedContent: "const a = 1;\nconst x = '123' const y = 2;\ndescribe('calc', () => {\n  it('checks value', () => {\n    expect(x).toBe('123');\n  });\n});"
+            });
+
+            const result = parseAndSanitizeAiTestResponse({
+                rawResponse,
+                framework: "jest",
+                cleanSource: "src/calc.js"
+            });
+
+            expect(result.success).toBe(true);
+            expect(result.syntaxValid).toBe(true);
+            expect(result.errors).toHaveLength(0);
+            expect(result.parsed.fullUpdatedContent).toContain("const x = '123';");
+            expect(result.parsed.fullUpdatedContent).toContain("const y = 2;");
+        });
+
+        test("autoHealAstSyntax heals multiple AST error types iteratively", () => {
+            const gluedCode = "const req = {} const res = {}\ndescribe('api', () => {\n  it('works', () => {\n    expect(req).toBeDefined();\n  });\n});";
+            const healedGlued = autoHealAstSyntax(gluedCode);
+            expect(healedGlued.success).toBe(true);
+            expect(healedGlued.code).toContain("const req = {};");
+
+            const commaCode = "const data = { a: 1 b: 2 };\ndescribe('obj', () => {\n  it('has a', () => {\n    expect(data.a).toBe(1);\n  });\n});";
+            const healedComma = autoHealAstSyntax(commaCode);
+            expect(healedComma.success).toBe(true);
+            expect(healedComma.code).toContain("a: 1 , b: 2");
+
+            const unclosedBrace = "describe('unclosed', () => {\n  it('works', () => {\n    expect(true).toBe(true);";
+            const healedBrace = autoHealAstSyntax(unclosedBrace);
+            expect(healedBrace.success).toBe(true);
+            expect(healedBrace.code).toContain("});");
         });
 
         test("flags test code lacking expect assertions", () => {

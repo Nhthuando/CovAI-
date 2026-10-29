@@ -140,15 +140,14 @@ export const extractLineCoverage = (fileCoverageData, assertionFailures = {}) =>
     const lineStatements = {};
     const lineBranches = {};
 
-    // 1. Map statements to lines
+    // 1. Map statements to lines (Istanbul standard: each statement is mapped to its start line)
     if (fileCoverageData.statementMap && fileCoverageData.s) {
         for (const [id, range] of Object.entries(fileCoverageData.statementMap)) {
             const hits = fileCoverageData.s[id] ?? 0;
-            const startLine = range.start?.line || 1;
-            const endLine = range.end?.line || startLine;
-            for (let l = startLine; l <= endLine; l++) {
-                if (!lineStatements[l]) lineStatements[l] = [];
-                lineStatements[l].push(hits);
+            const startLine = range.start?.line;
+            if (startLine) {
+                if (!lineStatements[startLine]) lineStatements[startLine] = [];
+                lineStatements[startLine].push(hits);
             }
         }
     }
@@ -161,12 +160,9 @@ export const extractLineCoverage = (fileCoverageData, assertionFailures = {}) =>
                 branch.locations.forEach((loc, idx) => {
                     const hits = counts[idx] ?? 0;
                     const startLine = loc.start?.line || branch.line;
-                    const endLine = loc.end?.line || startLine;
                     if (startLine) {
-                        for (let l = startLine; l <= endLine; l++) {
-                            if (!lineBranches[l]) lineBranches[l] = [];
-                            lineBranches[l].push(hits);
-                        }
+                        if (!lineBranches[startLine]) lineBranches[startLine] = [];
+                        lineBranches[startLine].push(hits);
                     }
                 });
             } else if (branch.line) {
@@ -207,17 +203,26 @@ export const extractLineCoverage = (fileCoverageData, assertionFailures = {}) =>
 
         const hasZeroStmt = stmtHits.some(h => h === 0);
         const hasZeroBranch = branchHits.some(h => h === 0);
+        const maxHits = stmtHits.length ? Math.max(...stmtHits) : (branchHits.length ? Math.max(...branchHits) : 0);
 
-        if (hasZeroStmt || hasZeroBranch) {
+        if (hasZeroStmt || maxHits === 0) {
             lines[lineNum] = {
                 status: "uncovered",
                 icon: "⚑",
                 reason: hasZeroBranch && !hasZeroStmt ? "Uncovered branch" : "Uncovered statement",
-                hits: stmtHits.length ? Math.max(...stmtHits) : 0
+                hits: 0
             };
             uncoveredLines.push(lineNum);
-        } else if (stmtHits.length > 0 && stmtHits.every(h => h > 0)) {
-            const maxHits = Math.max(...stmtHits);
+        } else if (hasZeroBranch) {
+            lines[lineNum] = {
+                status: "partially_covered",
+                icon: "⚑",
+                reason: "Uncovered branch",
+                hits: maxHits,
+                hasUncoveredBranch: true
+            };
+            coveredLines.push(lineNum);
+        } else if (maxHits > 0) {
             lines[lineNum] = {
                 status: "covered",
                 icon: "✓",
@@ -1229,21 +1234,6 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
     const funcsCovered = officialSummary?.functions?.covered ?? rawFuncsCovered;
     const funcsPct = officialSummary?.functions?.pct ?? (dbCoverageFile?.funcsPct ?? calcPct(funcsCovered, funcsTotal));
 
-    // If branches are not 100% covered, make sure branch lines are registered in uncoveredLines
-    if (branchesPct < 100 && matchedFileCoverage.branchMap) {
-        for (const [id, branch] of Object.entries(matchedFileCoverage.branchMap)) {
-            const bLine = branch.line || branch.loc?.start?.line;
-            if (bLine && !lineCoverage.uncoveredLines.includes(bLine)) {
-                lineCoverage.uncoveredLines.push(bLine);
-                lineCoverage.lines[bLine] = {
-                    status: "uncovered",
-                    icon: "⚑",
-                    reason: `Uncovered branch (${branchesCovered}/${branchesTotal} branches covered, ${branchesPct}%)`,
-                    hits: 0
-                };
-            }
-        }
-    }
 
     const summary = {
         linesPct,

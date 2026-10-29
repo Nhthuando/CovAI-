@@ -825,9 +825,12 @@ export default function Sidebar({
         onClose={() => setProjectToDelete(null)}
         onConfirm={async () => {
           setIsDeleting(true);
-          await onDeleteProject(projectToDelete.id);
-          setIsDeleting(false);
-          setProjectToDelete(null);
+          try {
+            const deleted = await onDeleteProject(projectToDelete.id);
+            if (deleted !== false) setProjectToDelete(null);
+          } finally {
+            setIsDeleting(false);
+          }
         }}
         title="Delete Project?"
         message={`Are you sure you want to permanently delete "${projectToDelete?.name}"? All associated files, snapshots, and tests will be lost.`}

@@ -636,7 +636,14 @@ export default function UnitTestTraceabilityMatrix({
     try {
       const res = await getFileCoverage(snapshotId, filePath);
       if (res?.data) {
-        setFileCoverageCache((prev) => ({ ...prev, [filePath]: res.data }));
+        const clean = cleanDisplayPath(filePath);
+        const norm = filePath.replace(/\\/g, "/");
+        setFileCoverageCache((prev) => ({
+          ...prev,
+          [filePath]: res.data,
+          [norm]: res.data,
+          ...(clean ? { [clean]: res.data } : {}),
+        }));
       }
     } catch (err) {
       console.warn("Failed to load file coverage details for", filePath, err);
@@ -686,8 +693,7 @@ export default function UnitTestTraceabilityMatrix({
   const getSourceBaseKey = (filePath = "") => {
     const base = getFileBase(filePath);
     return base
-      .replace(/\.(test|spec|testcase|steps?)$/i, "")
-      .replace(/\.(controller|service|handler|router|route|util|helper|model)$/i, "");
+      .replace(/\.(test|spec|testcase|steps?)$/i, "");
   };
 
   // Build mapping: For each business function, find all test assertions that target it
@@ -733,7 +739,7 @@ export default function UnitTestTraceabilityMatrix({
 
       const isSrcFullyCovered = srcMeta
         ? ((srcMeta.stmtsPct ?? srcMeta.statementsPct ?? 0) >= 100 &&
-           ((srcMeta.branchesPct ?? 0) >= 100 || (srcMeta.branchesTotal ?? 0) === 0) &&
+           (srcMeta.branchesPct != null ? Number(srcMeta.branchesPct) >= 100 : (srcMeta.branchesTotal === 0)) &&
            (srcMeta.funcsPct ?? 0) >= 100 &&
            (srcMeta.linesPct ?? 0) >= 100)
         : false;
@@ -1019,7 +1025,25 @@ export default function UnitTestTraceabilityMatrix({
   const computeFunctionProof = (fn, fileCov, meta) => {
     const startLine = fn.startLine || fn.line || 1;
     const endLine = fn.endLine || (startLine + 35);
-    const fnHit = Number(fn.hit || fn.testCount || 0);
+
+    // Match exact function in fileCov if available
+    let matchedFnFromCov = null;
+    if (fileCov?.functions?.length) {
+      matchedFnFromCov = fileCov.functions.find(
+        (f) => (f.startLine === startLine || f.line === startLine || f.realName === fn.cleanName)
+      );
+    }
+
+    // Strict ground truth: fn.hit is from Istanbul's CoverageFunction. Never fallback to fn.testCount!
+    const rawHit = matchedFnFromCov ? matchedFnFromCov.hits : (fn.hit !== undefined && fn.hit !== null ? fn.hit : (fn.execCount !== undefined ? fn.execCount : null));
+    const fnHit = Number(rawHit ?? 0);
+
+    const fileFuncsPct = fileCov?.summary?.funcsPct ?? meta?.funcsPct ?? meta?.functionsPct ?? null;
+    const fileStmtsPct = fileCov?.summary?.stmtsPct ?? meta?.stmtsPct ?? meta?.statementsPct ?? null;
+    const fileBranchesPct = fileCov?.summary?.branchesPct ?? meta?.branchesPct ?? null;
+    const fileLinesPct = fileCov?.summary?.linesPct ?? meta?.linesPct ?? null;
+
+    const isFileZeroFuncs = fileFuncsPct !== null && Number(fileFuncsPct) === 0;
 
     // 1. Statements Calculation
     let stmtsInRange = [];
@@ -1035,9 +1059,16 @@ export default function UnitTestTraceabilityMatrix({
     if (stmtsTotalCount === 0) {
       // Fallback estimate
       stmtsTotalCount = Math.max(1, (endLine - startLine) || 1);
-      stmtsCoveredCount = fnHit > 0 ? stmtsTotalCount : 0;
+      if (isFileZeroFuncs || fnHit === 0) {
+        stmtsCoveredCount = 0;
+      } else {
+        const estPct = fileStmtsPct !== null ? Number(fileStmtsPct) / 100 : (fnHit > 0 ? 1 : 0);
+        stmtsCoveredCount = Math.round(stmtsTotalCount * estPct);
+      }
     }
-    const stmtsPct = stmtsTotalCount > 0 ? Number(((stmtsCoveredCount / stmtsTotalCount) * 100).toFixed(1)) : 100;
+    const stmtsPct = (isFileZeroFuncs && fnHit === 0)
+      ? 0
+      : stmtsTotalCount > 0 ? Number(((stmtsCoveredCount / stmtsTotalCount) * 100).toFixed(1)) : 100;
 
     // 2. Branches Calculation
     let branchesInRange = [];
@@ -1053,7 +1084,7 @@ export default function UnitTestTraceabilityMatrix({
             ? b.paths.map((p) => Number(p.hits ?? 0))
             : [];
 
-        if (counts.length === 0 && (b.status === "fully_covered" || (meta?.branchesPct ?? 0) >= 100)) {
+        if (counts.length === 0 && (b.status === "fully_covered" || (fileBranchesPct ?? 0) >= 100)) {
           const pCount = b.totalPathsCount || 2;
           counts = Array(pCount).fill(Math.max(1, fnHit));
         }
@@ -1064,7 +1095,7 @@ export default function UnitTestTraceabilityMatrix({
         let coveredCount = 0;
         if (counts.length > 0) {
           coveredCount = counts.filter((c) => (c || 0) > 0).length;
-        } else if (b.status === "fully_covered" || (meta?.branchesPct ?? 0) >= 100) {
+        } else if (b.status === "fully_covered" || (fileBranchesPct ?? 0) >= 100) {
           coveredCount = pathsCount;
         } else if (b.status === "partially_covered") {
           coveredCount = 1;
@@ -1073,15 +1104,18 @@ export default function UnitTestTraceabilityMatrix({
       }
     }
     const hasNoBranches = branchesInRange.length === 0;
-    const branchesPct = hasNoBranches
-      ? (fnHit > 0 ? 100 : 0)
-      : branchPathsTotal > 0
-        ? Number(((branchPathsCovered / branchPathsTotal) * 100).toFixed(1))
-        : (fnHit > 0 ? 100 : 0);
+    const branchesPct = (isFileZeroFuncs || fnHit === 0) && !hasNoBranches
+      ? 0
+      : hasNoBranches
+        ? ((isFileZeroFuncs || fnHit === 0) ? 0 : 100)
+        : branchPathsTotal > 0
+          ? Number(((branchPathsCovered / branchPathsTotal) * 100).toFixed(1))
+          : ((isFileZeroFuncs || fnHit === 0) ? 0 : 100);
 
     // 3. Functions Calculation
     const funcsTotal = 1;
-    const funcsCovered = fnHit > 0 || fn.tests.length > 0 ? 1 : 0;
+    // Strict ground truth: Function is covered ONLY if it was physically executed (fnHit > 0) AND file does not have 0% functions
+    const funcsCovered = (isFileZeroFuncs || fnHit === 0) ? 0 : (fnHit > 0 ? 1 : 0);
     const funcsPct = funcsCovered > 0 ? 100 : 0;
 
     // 4. Lines Calculation
@@ -1099,9 +1133,28 @@ export default function UnitTestTraceabilityMatrix({
     }
     if (linesTotalCount === 0) {
       linesTotalCount = Math.max(1, endLine - startLine + 1);
-      linesCoveredCount = fnHit > 0 ? linesTotalCount : 0;
+      if (isFileZeroFuncs || fnHit === 0) {
+        linesCoveredCount = 0;
+      } else {
+        const estPct = fileLinesPct !== null ? Number(fileLinesPct) / 100 : (fnHit > 0 ? 1 : 0);
+        linesCoveredCount = Math.round(linesTotalCount * estPct);
+      }
     }
-    const linesPct = linesTotalCount > 0 ? Number(((linesCoveredCount / linesTotalCount) * 100).toFixed(1)) : 100;
+    const linesPct = (isFileZeroFuncs && fnHit === 0)
+      ? 0
+      : linesTotalCount > 0 ? Number(((linesCoveredCount / linesTotalCount) * 100).toFixed(1)) : 100;
+
+    const uncoveredLines = linesInRange.filter((l) => (l.hits || 0) === 0 || l.status === "uncovered" || l.status === "failed");
+    const uncoveredBranches = branchesInRange.filter((b) => b.status === "uncovered" || b.status === "partially_covered" || (Array.isArray(b.counts) && b.counts.some((c) => (c || 0) === 0)));
+    const isFullyCovered =
+      !isFileZeroFuncs &&
+      fnHit > 0 &&
+      stmtsPct >= 100 &&
+      (branchesPct >= 100 || hasNoBranches) &&
+      funcsPct >= 100 &&
+      linesPct >= 100 &&
+      uncoveredLines.length === 0 &&
+      uncoveredBranches.length === 0;
 
     return {
       startLine,
@@ -1123,6 +1176,9 @@ export default function UnitTestTraceabilityMatrix({
       linesCoveredCount,
       linesPct,
       linesInRange,
+      uncoveredLines,
+      uncoveredBranches,
+      isFullyCovered,
     };
   };
 
@@ -1400,8 +1456,11 @@ export default function UnitTestTraceabilityMatrix({
               const isFileExpanded = expandedFiles.has(group.filePath);
               const isCallbacksExpanded = expandedCallbacksByFile.has(group.filePath);
               const meta = group.sourceMeta;
-              const fileCov = fileCoverageCache[group.filePath] || null;
               const cleanPath = cleanDisplayPath(group.filePath);
+              const fileCov = fileCoverageCache[group.filePath] ||
+                fileCoverageCache[group.filePath?.replace(/\\/g, "/")] ||
+                fileCoverageCache[cleanPath] ||
+                null;
 
               // File-level suggestion state
               const fileSugs = inlineSuggestions[group.filePath] ||
@@ -1414,16 +1473,17 @@ export default function UnitTestTraceabilityMatrix({
               const hasPassed = fileSugs.some((s) => s.status === "PASSED" || s.status === "APPLIED");
               const hasFailed = fileSugs.some((s) => s.status === "FAILED");
 
-              const sPct = meta?.stmtsPct ?? meta?.statementsPct ?? null;
-              const bPct = meta?.branchesPct ?? null;
-              const fPct = meta?.funcsPct ?? meta?.functionsPct ?? null;
-              const lPct = meta?.linesPct ?? null;
+              const sPct = fileCov?.summary?.stmtsPct ?? meta?.stmtsPct ?? meta?.statementsPct ?? null;
+              const bPct = fileCov?.summary?.branchesPct ?? meta?.branchesPct ?? null;
+              const fPct = fileCov?.summary?.funcsPct ?? meta?.funcsPct ?? meta?.functionsPct ?? null;
+              const lPct = fileCov?.summary?.linesPct ?? meta?.linesPct ?? null;
               const displayStmts = Number(sPct ?? 0);
               const displayBranches = Number(bPct ?? 0);
               const displayFuncs = Number(fPct ?? 0);
               const displayLines = Number(lPct ?? 0);
+              const branchesTotalCount = fileCov?.summary?.branchesTotal ?? meta?.branchesTotal ?? null;
               const isFileFullyCovered = displayLines >= 100 &&
-                (displayBranches >= 100 || (meta?.branchesTotal ?? 0) === 0) &&
+                (displayBranches >= 100 || (branchesTotalCount != null ? branchesTotalCount === 0 : false)) &&
                 (displayFuncs >= 100 || group.functions.length === 0) &&
                 displayStmts >= 100;
               const getColor = (pct) => pct >= 100 ? "#10b981" : pct > 0 ? "#f59e0b" : "#ef4444";
@@ -1864,19 +1924,19 @@ export default function UnitTestTraceabilityMatrix({
                                     fontWeight: 700,
                                     padding: "2px 8px",
                                     borderRadius: 4,
-                                    background: fn.tests.length === 0 && (fn.hit || 0) === 0
+                                    background: (proofData.fnHit || 0) === 0
                                       ? (isLight ? "#fff1f2" : "rgba(239, 68, 68, 0.15)")
-                                      : fn.isFullyCovered
+                                      : proofData.isFullyCovered
                                         ? (isLight ? "#ecfdf5" : "rgba(16, 185, 129, 0.15)")
                                         : (isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.15)"),
-                                    color: fn.tests.length === 0 && (fn.hit || 0) === 0
+                                    color: (proofData.fnHit || 0) === 0
                                       ? (isLight ? "#dc2626" : "#f87171")
-                                      : fn.isFullyCovered
+                                      : proofData.isFullyCovered
                                         ? (isLight ? "#059669" : "#4ade80")
                                         : (isLight ? "#b45309" : "#fbbf24"),
-                                    border: fn.tests.length === 0 && (fn.hit || 0) === 0
+                                    border: (proofData.fnHit || 0) === 0
                                       ? (isLight ? "1px solid #fecdd3" : "1px solid rgba(239, 68, 68, 0.3)")
-                                      : fn.isFullyCovered
+                                      : proofData.isFullyCovered
                                         ? (isLight ? "1px solid #a7f3d0" : "1px solid rgba(16, 185, 129, 0.3)")
                                         : (isLight ? "1px solid #fde68a" : "1px solid rgba(245, 158, 11, 0.3)"),
                                     display: "flex",
@@ -1884,12 +1944,12 @@ export default function UnitTestTraceabilityMatrix({
                                     gap: 4,
                                   }}
                                 >
-                                  {fn.tests.length === 0 && (fn.hit || 0) === 0 ? (
+                                  {(proofData.fnHit || 0) === 0 ? (
                                     <>
                                       <AlertCircle size={11} />
-                                      <span>Uncovered (0 tests)</span>
+                                      <span>Uncovered ({fn.tests.length} tests)</span>
                                     </>
-                                  ) : fn.isFullyCovered ? (
+                                  ) : proofData.isFullyCovered ? (
                                     <>
                                       <CheckCircle2 size={11} />
                                       <span>100% Covered ({fn.tests.length} tests)</span>
@@ -1996,7 +2056,7 @@ export default function UnitTestTraceabilityMatrix({
                                           </span>
                                         </div>
                                         <div style={{ fontSize: 10.5, color: isLight ? "#64748b" : "#8b949e", lineHeight: 1.4 }}>
-                                          <b>Formula:</b> ({proofData.stmtsCoveredCount} / {proofData.stmtsTotalCount}) × 100% = {proofData.stmtsPct}%. All AST statements in function executed.
+                                          <b>Formula:</b> ({proofData.stmtsCoveredCount} / {proofData.stmtsTotalCount}) × 100% = {proofData.stmtsPct}%. {proofData.stmtsCoveredCount >= proofData.stmtsTotalCount ? "All AST statements in function executed." : `${proofData.stmtsTotalCount - proofData.stmtsCoveredCount} statement(s) not executed.`}
                                         </div>
                                         {proofData.stmtsInRange.length > 0 && (
                                           <div style={{ maxHeight: 90, overflowY: "auto", fontSize: 10, fontFamily: "var(--font-mono)", display: "flex", flexDirection: "column", gap: 3, marginTop: 4 }}>
@@ -2127,7 +2187,7 @@ export default function UnitTestTraceabilityMatrix({
                                           </span>
                                         </div>
                                         <div style={{ fontSize: 10.5, color: isLight ? "#64748b" : "#8b949e", lineHeight: 1.4 }}>
-                                          <b>Formula:</b> ({proofData.linesCoveredCount} / {proofData.linesTotalCount}) × 100% = {proofData.linesPct}%. All executable lines received hits.
+                                          <b>Formula:</b> ({proofData.linesCoveredCount} / {proofData.linesTotalCount}) × 100% = {proofData.linesPct}%. {proofData.linesCoveredCount >= proofData.linesTotalCount ? "All executable lines received hits." : `${proofData.linesTotalCount - proofData.linesCoveredCount} line(s) missing hits.`}
                                         </div>
                                         {proofData.linesInRange.length > 0 && (
                                           <div style={{ maxHeight: 90, overflowY: "auto", fontSize: 10, fontFamily: "var(--font-mono)", display: "flex", flexDirection: "column", gap: 3, marginTop: 4 }}>
@@ -2159,14 +2219,20 @@ export default function UnitTestTraceabilityMatrix({
                                           <Target size={14} style={{ color: "#6366f1" }} />
                                           <span>Unit Test Suites Exercising <code>{fn.cleanName}()</code> ({fn.tests.length} tests)</span>
                                         </div>
-                                        <span style={{ fontSize: 11, color: isLight ? "#15803d" : "#4ade80", fontWeight: 650 }}>
-                                          ✓ Test Suites Passing Hermetically
-                                        </span>
+                                        {fn.tests.length > 0 && fn.tests.every(t => t.status === "passed") &&
+                                          !fileSugs.some(s => s.status === "FAILED" || s.testRunError) && (
+                                            <span style={{ fontSize: 11, color: isLight ? "#15803d" : "#4ade80", fontWeight: 650 }}>
+                                              ✓ Matched tests passed
+                                            </span>
+                                          )}
                                       </div>
 
                                       {fn.tests.length === 0 ? (
                                         <div style={{ fontSize: 11, color: isLight ? "#b45309" : "#fbbf24", background: isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.08)", padding: "6px 10px", borderRadius: 4 }}>
-                                          No dedicated test assertion specifically named <code>{fn.cleanName}</code> found in suite results, but function was traversed indirectly by caller integration/unit tests ({proofData.fnHit} hits recorded).
+                                          No dedicated test assertion specifically named <code>{fn.cleanName}</code> found in suite results.
+                                          {proofData.fnHit > 0
+                                            ? ` Function was traversed indirectly (${proofData.fnHit} hits recorded).`
+                                            : " No function execution hits recorded."}
                                         </div>
                                       ) : (
                                         <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 180, overflowY: "auto" }}>
@@ -2279,7 +2345,7 @@ export default function UnitTestTraceabilityMatrix({
                                 )}
 
                                 {/* Guidance & Suggest Action Footer */}
-                                {!fn.isFullyCovered ? (
+                                {!proofData.isFullyCovered ? (
                                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                                     <div
                                       style={{
@@ -2302,7 +2368,9 @@ export default function UnitTestTraceabilityMatrix({
                                         <span>
                                           {proofData.uncoveredLines?.length > 0 ? `${proofData.uncoveredLines.length} uncovered lines` : ""}
                                           {proofData.uncoveredBranches?.length > 0 ? ` (${proofData.uncoveredBranches.length} uncovered branches)` : ""}
-                                          {!proofData.uncoveredLines?.length && !proofData.uncoveredBranches?.length && fn.tests.length === 0 ? "No unit tests exercising this function yet." : ""}
+                                          {!proofData.uncoveredLines?.length && !proofData.uncoveredBranches?.length && proofData.linesPct < 100 ? `${proofData.linesTotalCount - proofData.linesCoveredCount} uncovered lines` : ""}
+                                          {!proofData.uncoveredLines?.length && !proofData.uncoveredBranches?.length && proofData.branchesPct < 100 ? `${proofData.branchPathsTotal - proofData.branchPathsCovered} uncovered branch paths` : ""}
+                                          {!proofData.uncoveredLines?.length && !proofData.uncoveredBranches?.length && proofData.linesPct >= 100 && proofData.branchesPct >= 100 && fn.tests.length === 0 ? "No unit tests exercising this function yet." : ""}
                                         </span>
                                       </div>
 
@@ -2427,7 +2495,7 @@ export default function UnitTestTraceabilityMatrix({
                                       >
                                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                                           <AlertCircle size={13} style={{ color: "#ef4444", flexShrink: 0 }} />
-                                          <span>
+                                          <span style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
                                             <b>Test Runner Error:</b> {fileSugs.find((s) => s.testRunError)?.testRunError || "Tests executed with failures. Click Review Diff to inspect or click Retry."}
                                           </span>
                                         </div>

@@ -13,6 +13,7 @@ import {
     computeSourceFilesHash,
     verifySourceFilesUnchanged,
     cleanTestRunnerError,
+    getTestRunnerFailure,
     resolveContainerOrHostTestPath
 } from "../services/applyTestSuggestion.service.js";
 import { runJestCoverage } from "../services/runTestsJob.service.js";
@@ -352,7 +353,7 @@ export const formatReceipt = (data) => data ? 'RECEIPT' : null;
     });
 
     describe("autoHealTestFailures", () => {
-        test("unskips skipped tests to restore coverage and relaxes assertions", () => {
+        test("does not rewrite failing mock assertions or existing skips from observed output", () => {
             const testDir = path.join(tempDir, "tests");
             fs.mkdirSync(testDir, { recursive: true });
             const testFile = path.join(testDir, "user.test.js");
@@ -388,14 +389,10 @@ describe('user tests', () => {
             };
 
             const healed = autoHealTestFailures(tempDir, ["tests/user.test.js"], fakeTestResults, "");
-            expect(healed).toBe(true);
+            expect(healed).toBe(false);
 
             const contentAfter = fs.readFileSync(testFile, "utf8");
-            expect(contentAfter).not.toContain("test.skip(");
-            expect(contentAfter).not.toContain("xit(");
-            expect(contentAfter).toContain("test('skipped test 1'");
-            expect(contentAfter).toContain("it('skipped test 2'");
-            expect(contentAfter).toContain("expect(myMock).toBeDefined()");
+            expect(contentAfter).toBe(testContent);
         });
 
         test("heals TDZ ReferenceError Cannot access path before initialization", () => {
@@ -547,6 +544,51 @@ describe('user tests', () => {
     });
 
     describe("cleanTestRunnerError", () => {
+        test.each([
+            "/app/uploads/snapshots/cmvqxxx1v0002s1lbnazxkujj/caculator/coverage/vitest-results.json",
+            "/app/storage/projects/cmvr09nzq00006hlbmtt2std6/github/1793124901204/repo/backend/coverage/runs/run-id/vitest-results.json"
+        ])("does not restore an informational report location as an error: %s", reportPath => {
+            const output = `  \u001b[32mJSON report written to ${reportPath}\u001b[39m\r\n`;
+            expect(cleanTestRunnerError(output)).toBe("");
+            expect(getTestRunnerFailure(null, output, 1)).toContain("exit code 1");
+            expect(getTestRunnerFailure(null, output, 1)).not.toContain("JSON report written");
+        });
+
+        test("extracts assertion failures from JSON reporter output", () => {
+            const results = { testResults: [{ assertionResults: [{
+                status: "failed", failureMessages: ["AssertionError: expected 2 to be 3"]
+            }] }] };
+            expect(getTestRunnerFailure(results, "JSON report written to /app/coverage/vitest-results.json", 1))
+                .toBe("AssertionError: expected 2 to be 3");
+        });
+
+        test("preserves the detailed object diff instead of the abbreviated JSON message", () => {
+            const results = { testResults: [{ assertionResults: [{ status: "failed",
+                failureMessages: ["AssertionError: expected { result: '', …(1) } to deeply equal { result: '', …(1) }"]
+            }] }] };
+            const output = `FAIL tests/evaluator.test.ts > rejects non-numbers
+AssertionError: expected { result: '', …(1) } to deeply equal { result: '', …(1) }
+- Expected
++ Received
+  {
+-   "error": "non-number result",
++   "error": "invalid characters",
+    "result": "",
+  }
+JSON report written to /app/coverage/results.json`;
+            const error = getTestRunnerFailure(results, output, 1);
+            expect(error).toContain('"error": "non-number result"');
+            expect(error).toContain('"error": "invalid characters"');
+            expect(error).not.toContain("JSON report written");
+        });
+
+        test("extracts collection errors and unhandled errors without assertions", () => {
+            expect(getTestRunnerFailure({ testResults: [{ message: "SyntaxError: Unexpected token" }] }, "", 1))
+                .toBe("SyntaxError: Unexpected token");
+            expect(getTestRunnerFailure({ errors: [{ message: "Error: Worker exited" }] }, "", 1))
+                .toBe("Error: Worker exited");
+        });
+
         test("strips ANSI color escapes and Vite CJS deprecation warning to uncover real transform error", () => {
             const raw = `\u001b[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.\u001b[39m\nJSON report written to /app/storage/projects/xyz/coverage/vitest-results.json\nTransform failed with 1 error:\n/app/storage/projects/xyz/tests/presets/index.vitest.test.ts:5296:31: ERROR: Unexpected "default"`;
             const cleaned = cleanTestRunnerError(raw);
@@ -599,7 +641,7 @@ describe('user tests', () => {
             expect(resolved.replace(/\\/g, "/")).not.toContain("backend/backend");
         });
 
-        test("autoHealTestFailures heals expect(received).toHaveLength(expected) mismatch", () => {
+        test("autoHealTestFailures preserves a failing length expectation", () => {
             const testDir = path.join(tempDir, "tests");
             fs.mkdirSync(testDir, { recursive: true });
             const testPath = path.join(testDir, "calc.test.js");
@@ -625,10 +667,10 @@ FAIL tests/calc.test.js
       at Object.toHaveLength (tests/calc.test.js:5:25)
 `;
             const modified = autoHealTestFailures(tempDir, ["tests/calc.test.js"], null, rawOutput);
-            expect(modified).toBe(true);
+            expect(modified).toBe(false);
 
             const healed = fs.readFileSync(testPath, "utf8");
-            expect(healed).toContain("expect(history).toHaveLength(2);");
+            expect(healed).toBe(testContent);
         });
     });
 });

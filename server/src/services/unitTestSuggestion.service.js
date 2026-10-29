@@ -4,6 +4,7 @@ import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { detectCoverageFrameworks } from "./coverageFramework.service.js";
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
+import { normalizeTestFrameworkCode } from "./testFrameworkNormalization.service.js";
 import { getFileCoverageDetails, normalizePath, findAssociatedTestFile } from "./fileCoverage.service.js";
 import {
     isBusinessLogicFile,
@@ -101,6 +102,13 @@ export const sanitizeSourceFilePath = (rootDir, filePath) => {
     norm = norm.replace(/^(?:.*?\/)?storage\/projects\/[^/]+\/[^/]+\/[^/]+\/repo\//i, "");
     norm = norm.replace(/^(?:.*?\/)?uploads\/snapshots\/[^/]+\/[^/]+\//i, "");
     norm = norm.replace(/^(?:.*?\/)?repo\//i, "");
+    norm = norm.replace(/^\/+/, "");
+    if (rootDir) {
+        const baseDir = path.basename(rootDir.replace(/\\/g, "/"));
+        if (baseDir && norm.toLowerCase().startsWith(baseDir.toLowerCase() + "/")) {
+            norm = norm.slice(baseDir.length + 1);
+        }
+    }
     return norm.replace(/^\/+/, "");
 };
 
@@ -186,6 +194,15 @@ export const computeRelativeImportPath = (targetTestFile, sourceFile, rootDir = 
     cleanImport = cleanImport.replace(/(?:^|\/)(?:\.\.\/)*storage\/projects\/[^/]+\/[^/]+\/[^/]+\/repo\//i, "../");
     cleanImport = cleanImport.replace(/(?:^|\/)(?:\.\.\/)*uploads\/snapshots\/[^/]+\/[^/]+\//i, "../");
     cleanImport = cleanImport.replace(/(?:^|\/)(?:\.\.\/)*repo\//i, "../");
+
+    // Safety guardrail: remove redundant monorepo package prefixes (e.g. ../../backend/src/... -> ../../src/...)
+    if (rootDir) {
+        const baseDir = path.basename(rootDir.replace(/\\/g, "/"));
+        if (baseDir) {
+            cleanImport = cleanImport.replace(new RegExp(`(^|\\.\\.\\/|\\.\\/)${baseDir}\\/src\\/`, "i"), "$1src/");
+        }
+    }
+    cleanImport = cleanImport.replace(/(^|\.\.\/|\.\/)(?:backend|frontend|server|client|api)\/src\//i, "$1src/");
 
     return cleanImport;
 };
@@ -517,7 +534,24 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
         try {
             ${isTs ? `const fnRef: any = ${safeFn};` : `const fnRef = ${safeFn};`}
             const defaultArgs = { requirement: 'Sample requirement', text: 'Sample text', description: 'Sample description', options: {}, id: '1', name: 'sample', amount: 100, status: 'active' };
-            const res = typeof fnRef === 'function' ? (fnRef.prototype && Object.getOwnPropertyNames(fnRef.prototype).length > 1 ? new fnRef() : fnRef(defaultArgs)) : fnRef;
+            let res;
+            if (typeof fnRef === 'function') {
+                if (fnRef.prototype && Object.getOwnPropertyNames(fnRef.prototype).length > 1) {
+                    res = new fnRef();
+                } else {
+                    try {
+                        res = fnRef(defaultArgs);
+                    } catch (_) {
+                        try {
+                            res = fnRef('2 + 3 * 4');
+                        } catch (__) {
+                            res = fnRef();
+                        }
+                    }
+                }
+            } else {
+                res = fnRef;
+            }
             if (res && typeof res.then === 'function') {
                 const resolved = await res.catch(${isTs ? "(e: any)" : "(e)"} => e);
                 expect(resolved).toBeDefined();
@@ -538,7 +572,15 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
                     { amount: 0, items: [], text: '', options: {} },
                     { amount: -1, items: [], text: '', options: {} },
                     0,
+                    -1,
                     '',
+                    '   ',
+                    '2 + 3 * 4',
+                    '10 × 2 ÷ 4 − 1',
+                    '5 / 0',
+                    '-5 / 0',
+                    '0.1 + 0.2',
+                    'invalid input',
                     []
                 ];
                 for (const input of boundaryInputs) {

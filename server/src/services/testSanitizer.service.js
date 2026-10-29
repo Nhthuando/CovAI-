@@ -2,6 +2,10 @@ import fs from "fs";
 import path from "path";
 import { normalizePath } from "./fileCoverage.service.js";
 import { parseJavaScriptCode } from "./babelParser.service.js";
+import { isVitestTestCode, normalizeTestFrameworkCode } from "./testFrameworkNormalization.service.js";
+import { parse } from "@babel/parser";
+import traversePkg from "@babel/traverse";
+const traverse = traversePkg?.default || traversePkg;
 
 const RESERVED_KEYWORDS = new Set([
     "jest", "require", "describe", "test", "it", "expect", "beforeEach", "afterEach",
@@ -9,6 +13,95 @@ const RESERVED_KEYWORDS = new Set([
     "console", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "Buffer",
     "window", "document", "undefined", "null", "NaN", "Infinity", "eval", "arguments"
 ]);
+
+export const STATEMENT_SEPARATION_EXCLUSIONS = new Set([
+    "export", "async", "function", "class", "type", "return", "yield",
+    "await", "new", "typeof", "instanceof", "delete", "void", "case", "default", "import"
+]);
+
+/**
+ * Automatically heals broken comments and test titles that were split across newlines
+ * (e.g. by over-aggressive statement decoupling regexes).
+ *
+ * @param {string} code
+ * @returns {string}
+ */
+export const healBrokenCommentSplits = (code) => {
+    if (!code || typeof code !== "string") return code;
+    let healed = code;
+
+    // 1. Heal broken string literals in test titles:
+    // e.g. test('... delta branch;\n test: covers ...' -> test('... delta branch test: covers ...'
+    healed = healed.replace(/(test\s*\(\s*['"][^'"\r\n]*?delta branch);[ \t]*\r?\n[ \t]*(test(?: \([^\)]+\))?:)/gi, "$1 $2");
+
+    // 2. Heal broken comments where a comment line (// ...) was severed by '; \n (test|it) <non-test word>'
+    // Run until fixed point so multiple consecutive split comment lines are all joined back into the comment.
+    let prev;
+    do {
+        prev = healed;
+        healed = healed.replace(/(\/\/[^\r\n]*?);[ \t]*\r?\n[ \t]*((?:test|it)\s+[a-zA-Z][^\r\n]*)/gi, (match, commentLine, orphanLine) => {
+            if (!orphanLine.includes("(") && !orphanLine.includes("=>") && !orphanLine.includes("{")) {
+                return `${commentLine} ${orphanLine}`;
+            }
+            if (orphanLine.endsWith(")") || orphanLine.endsWith(".") || orphanLine.includes("&") || orphanLine.includes("leaks")) {
+                return `${commentLine} ${orphanLine}`;
+            }
+            return match;
+        });
+    } while (healed !== prev);
+
+    return healed;
+};
+
+/**
+ * Safely decouples inline statements without ever splitting comments or test titles.
+ *
+ * @param {string} code
+ * @returns {string}
+ */
+export const safeDecoupleInlineStatements = (code) => {
+    if (!code || typeof code !== "string") return code;
+
+    // First heal any broken comments or strings
+    code = healBrokenCommentSplits(code);
+
+    const lines = code.split("\n");
+    const result = [];
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const trimmed = line.trim();
+
+        // Skip full line comments
+        if (trimmed.startsWith("//") || trimmed.startsWith("/*") || trimmed.startsWith("*")) {
+            result.push(line);
+            continue;
+        }
+
+        // Separate inline comment if exists
+        const commentIdx = line.indexOf("//");
+        let codePart = line;
+        let commentPart = "";
+        if (commentIdx !== -1) {
+            codePart = line.slice(0, commentIdx);
+            commentPart = line.slice(commentIdx);
+        }
+
+        // Decouple semicolons followed by declaration keywords
+        codePart = codePart.replace(/;[ \t]*(import\s+(?:[\w*\s{},]+from\s+)?['"][^'"]+['"];?)/g, ";\n$1");
+        codePart = codePart.replace(/;[ \t]*(const|let|var|describe|test|it)\s+/g, ";\n$1 ");
+
+        // Only decouple when preceded by a clean statement termination character:
+        // - closing curly brace `}`
+        // - closing parenthesis `)`
+        // CRITICAL: NEVER match arbitrary words / identifiers (\b\w+) because words like 'each', 'this', 'delta' in comments or test titles will get split!
+        codePart = codePart.replace(/([)}])\s*(const|let|var|describe|test|it)\b/g, "$1;\n$2");
+
+        result.push(codePart + commentPart);
+    }
+
+    return result.join("\n");
+};
 
 /**
  * Normalizes and heals any import specifiers in test files that inadvertently reference
@@ -24,7 +117,7 @@ export const healImportPathsInTestCode = (code, relTestPath = "tests/sample.test
     const testDir = path.dirname(relTestPath.replace(/\\/g, "/"));
 
     return code.replace(
-        /((?:import\s+(?:[\s\S]*?\s+from\s+)?|require\s*\(\s*|jest\.(?:mock|unstable_mockModule|doMock|dontMock|unmock|setMock|requireActual|requireMock)\s*\(\s*)['"])([^'"]+)(['"]\s*\)?)/g,
+        /((?:import\s+(?:[\s\S]*?\s+from\s+)?|import\s*\(\s*|require\s*\(\s*|(?:jest|vi)\.(?:mock|unstable_mockModule|doMock|dontMock|unmock|setMock|requireActual|requireMock|spyOn)\s*\(\s*)['"])([^'"]+)(['"]\s*\)?)/g,
         (match, prefix, importTarget, suffix) => {
             if (/storage\/projects\/[^/]+\/[^/]+\/[^/]+\/repo\//i.test(importTarget) || /(?:^|\/)\.\.\/.*repo\//i.test(importTarget)) {
                 const cleanSubpath = importTarget
@@ -70,12 +163,13 @@ export const healImportPathsInTestCode = (code, relTestPath = "tests/sample.test
                 const candAbsFromSrc = path.resolve(rootDir, srcSubDir, importTarget);
                 const cleanTarget = importTarget.replace(/^(\.\.\/|\.\/)+/, "").replace(/^\.?\//, "");
                 const cleanPkgTarget = cleanTarget.replace(/^(?:backend|frontend|server|client|api)\//, "");
+                const withoutSrc = cleanPkgTarget.replace(/^src\//, "");
                 const candidateAbsList = [
                     candAbsFromSrc,
+                    path.resolve(rootDir, cleanPkgTarget),
+                    path.resolve(rootDir, "src", withoutSrc),
                     path.resolve(rootDir, "src", cleanTarget),
-                    path.resolve(rootDir, cleanTarget),
-                    path.resolve(rootDir, "src", cleanPkgTarget),
-                    path.resolve(rootDir, cleanPkgTarget)
+                    path.resolve(rootDir, cleanTarget)
                 ];
 
                 for (const candAbs of candidateAbsList) {
@@ -144,18 +238,19 @@ export const healImportPathsInTestCode = (code, relTestPath = "tests/sample.test
                 }
             }
 
-            // Case 2: relative path pointing to src/...
+            // Case 2: relative path pointing to src/ or monorepo subproject (e.g. backend/src or backend/models)
             // Recalculate relative path to ensure the exact correct number of '../' for testDir depth
+            const pkgMatch = importTarget.match(/^(?:\.\.\/|\.\/)*(?:(?:backend|frontend|server|client|api)\/)(.*)$/);
             const srcMatch = importTarget.match(/^(?:\.\.\/|\.\/)*(?:(?:backend|frontend|server|client|api)\/)?(src\/.*)$/);
-            if (srcMatch) {
-                const cleanSrcPath = srcMatch[1];
+            if (pkgMatch || srcMatch) {
+                const cleanSubpath = pkgMatch ? (pkgMatch[1].startsWith("src/") ? pkgMatch[1] : `src/${pkgMatch[1]}`) : srcMatch[1];
                 let packagePrefix = "";
                 const parts = testDir.split("/");
                 const testIdx = parts.findIndex(p => p === "tests" || p === "test" || p === "__tests__");
                 if (testIdx > 0) {
                     packagePrefix = parts.slice(0, testIdx).join("/");
                 }
-                const targetPath = packagePrefix ? `${packagePrefix}/${cleanSrcPath}` : cleanSrcPath;
+                const targetPath = packagePrefix ? `${packagePrefix}/${cleanSubpath}` : cleanSubpath;
 
                 let rel = path.relative(testDir, targetPath).replace(/\\/g, "/");
                 if (!rel.startsWith(".")) {
@@ -215,7 +310,7 @@ export const healMultilineStrings = (code) => {
         if (parsed?.error && !parsed.error.toLowerCase().includes("unterminated string") && !parsed.error.toLowerCase().includes("unterminated template")) {
             return code;
         }
-    } catch (_) {}
+    } catch (_) { }
 
     const lines = code.split("\n");
     const result = [];
@@ -309,11 +404,126 @@ export const healMultilineStrings = (code) => {
  */
 export const stripCodeCommentsAndStrings = (code) => {
     if (!code) return "";
-    return code
-        .replace(/\/\*[\s\S]*?\*\//g, "")
-        .replace(/\/\/.*$/gm, "")
-        .replace(/(['"`])(?:\\.|(?!\1)[^\\])*\1/g, "")
-        .replace(/\/(?![*\/])(?:\\.|[^\\\/\r\n])+\/[a-z]*/g, "");
+    return code.replace(
+        /(['"`])(?:\\.|(?!\1)[^\\])*\1|\/\*[\s\S]*?\*\/|\/\/.*$/gm,
+        (match, quote) => (quote ? '""' : "")
+    );
+};
+
+/**
+ * Tokenizer-aware Delimiter Stack scanner that balances unclosed or extra
+ * parentheses and braces at both the line/statement level and block level.
+ */
+export const balanceTestFileBracesAndParens = (code) => {
+    if (!code || typeof code !== "string") return code;
+    let parsed = parseJavaScriptCode(code);
+    if (parsed.success) return code;
+
+    let cleaned = code;
+
+    // 1. Heal legacy unclosed ternary mock assignment if present
+    cleaned = cleaned.replace(
+        /var\s+([a-zA-Z0-9_$]+)\s*=\s*\(typeof\s+globalThis\['\1'\]\s*!==\s*['"]undefined['"]\s*\?\s*globalThis\['\1'\]\s*:\s*\(globalThis\['\1'\]\s*=\s*(\{[\s\S]*?\})\s*;(?!\))/g,
+        "var $1 = globalThis['$1'] = globalThis['$1'] || $2;"
+    );
+
+    parsed = parseJavaScriptCode(cleaned);
+    if (parsed.success) return cleaned;
+
+    // 2. Line-level statement delimiter balancing for statements ending with `;`
+    const lines = cleaned.split("\n");
+    let lineModified = false;
+    for (let i = 0; i < lines.length; i++) {
+        let rawLine = lines[i].replace(/;{2,}/g, ";");
+        const trimmed = rawLine.trim();
+
+        // Check if this line is a block closure (e.g. });, }, );, etc.)
+        const isBlockClosure = /^\s*[\}\)]+;?\s*$/.test(rawLine) ||
+                               trimmed.startsWith("}") ||
+                               trimmed.startsWith(")") ||
+                               trimmed.endsWith("});") ||
+                               trimmed.endsWith("})") ||
+                               trimmed.endsWith("};") ||
+                               trimmed === ");" ||
+                               trimmed === "});";
+
+        // Never strip or modify delimiters on block closures
+        if (isBlockClosure) continue;
+
+        // Skip lines that open functions or blocks
+        if (trimmed.endsWith("{") || trimmed.includes("=>")) continue;
+
+        if (!trimmed.endsWith(";")) continue;
+
+        // Strip comments, quotes, template literals from this line to count code delimiters
+        const stripped = rawLine
+            .replace(/\/\/.*$/, "")
+            .replace(/(['"`])(?:\\.|(?!\1)[^\\])*\1/g, "")
+            .replace(/\/(?![*\/])(?:\\.|[^\\\/\r\n])+\/[a-z]*/g, "");
+
+        let pOpen = 0, pClose = 0;
+        for (const ch of stripped) {
+            if (ch === "(") pOpen++;
+            else if (ch === ")") pClose++;
+        }
+
+        if (pOpen > pClose) {
+            const diff = pOpen - pClose;
+            const semiIdx = rawLine.lastIndexOf(";");
+            if (semiIdx !== -1) {
+                lines[i] = rawLine.slice(0, semiIdx) + ")".repeat(diff) + rawLine.slice(semiIdx);
+                lineModified = true;
+            }
+        } else if (pClose > pOpen && (rawLine.includes("expect(") || rawLine.includes(".to") || rawLine.includes("("))) {
+            const diff = pClose - pOpen;
+            let lineCopy = rawLine;
+            for (let d = 0; d < diff; d++) {
+                lineCopy = lineCopy.replace(/\)\s*;?\s*$/, ";");
+            }
+            lines[i] = lineCopy;
+            lineModified = true;
+        }
+    }
+
+    if (lineModified) {
+        const candidateCleaned = lines.join("\n");
+        const parsedCandidate = parseJavaScriptCode(candidateCleaned);
+        if (parsedCandidate.success) return candidateCleaned;
+        cleaned = candidateCleaned;
+    }
+
+    // 3. AST Error-Directed Local Line Healing via Babel coordinates
+    if (!parsed.success && parsed.error) {
+        const match = parsed.error.match(/\((\d+):(\d+)\)/);
+        if (match) {
+            const errLine = parseInt(match[1], 10);
+            const lines2 = cleaned.split("\n");
+            if (errLine > 0 && errLine <= lines2.length) {
+                const curLine = lines2[errLine - 1];
+                const stripped = curLine
+                    .replace(/\/\/.*$/, "")
+                    .replace(/(['"`])(?:\\.|(?!\1)[^\\])*\1/g, "");
+
+                let pOpen = 0, pClose = 0;
+                for (const ch of stripped) {
+                    if (ch === "(") pOpen++;
+                    else if (ch === ")") pClose++;
+                }
+
+                if (pOpen > pClose) {
+                    const semiIdx = curLine.lastIndexOf(";");
+                    if (semiIdx !== -1) {
+                        lines2[errLine - 1] = curLine.slice(0, semiIdx) + ")".repeat(pOpen - pClose) + curLine.slice(semiIdx);
+                        cleaned = lines2.join("\n");
+                        parsed = parseJavaScriptCode(cleaned);
+                        if (parsed.success) return cleaned;
+                    }
+                }
+            }
+        }
+    }
+
+    return cleaned;
 };
 
 /**
@@ -322,50 +532,173 @@ export const stripCodeCommentsAndStrings = (code) => {
  */
 export const balanceTestFileBraces = (code) => {
     if (!code || typeof code !== "string") return code;
+    // 1. If AST already parses cleanly, NEVER mutate or delete delimiters
     let parsed = parseJavaScriptCode(code);
     if (parsed.success) return code;
 
-    // Prune excessive runaway trailing closing brackets (e.g. cascaded additions from previous runs)
-    let candidate = code.replace(/(\n[ \t]*\}\s*\);\s*){3,}$/g, "\n    });\n});\n");
-    parsed = parseJavaScriptCode(candidate);
-    if (parsed.success) return candidate;
+    const balancedParens = balanceTestFileBracesAndParens(code);
+    parsed = parseJavaScriptCode(balancedParens);
+    if (parsed.success) return balancedParens;
+
+    let candidate = balancedParens;
+
+    // 2. AST-directed exact delimiter healing: check if AST error points directly to an unexpected closing delimiter
+    try {
+        const directAst = parse(candidate, {
+            sourceType: "unambiguous",
+            plugins: ["jsx", "typescript", "classProperties", "topLevelAwait"]
+        });
+        if (directAst) return candidate;
+    } catch (err) {
+        if (err && typeof err.pos === "number" && err.pos >= 0 && err.pos < candidate.length) {
+            const charAtPos = candidate[err.pos];
+            if (charAtPos === "}" || charAtPos === ")" || charAtPos === "]") {
+                const astRepaired = candidate.slice(0, err.pos) + candidate.slice(err.pos + 1);
+                if (parseJavaScriptCode(astRepaired).success) {
+                    return astRepaired;
+                }
+            }
+        }
+    }
+
+    // 3. Delimiter counting outside literals & comments for unclosed blocks at EOF
+    const codeWithoutLiterals = candidate
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/\/\/.*$/gm, "")
+        .replace(/(['"`])(?:\\.|(?!\1)[^\\])*\1/g, "");
 
     let b = 0, p = 0;
-    for (const c of candidate) {
-        if (c === '{') b++;
-        else if (c === '}') b--;
-        else if (c === '(') p++;
-        else if (c === ')') p--;
+    for (const c of codeWithoutLiterals) {
+        if (c === "{") b++;
+        else if (c === "}") b--;
+        else if (c === "(") p++;
+        else if (c === ")") p--;
     }
 
     let balanced = candidate;
     while (b > 0 && p > 0) {
-        balanced = balanced.trimEnd() + '\n});\n';
+        balanced = balanced.trimEnd() + "\n});\n";
         b--;
         p--;
     }
     while (b > 0) {
-        balanced = balanced.trimEnd() + '\n}\n';
+        balanced = balanced.trimEnd() + "\n}\n";
         b--;
     }
     while (p > 0) {
-        balanced = balanced.trimEnd() + '\n);\n';
+        balanced = balanced.trimEnd() + "\n);\n";
         p--;
     }
 
     parsed = parseJavaScriptCode(balanced);
     if (parsed.success) return balanced;
 
-    // Prune stray trailing closing brackets if candidate has extra closing brackets
-    let pruneCandidate = candidate;
-    let pruneCount = 0;
-    while ((pruneCandidate.endsWith('});\n') || pruneCandidate.endsWith('});') || pruneCandidate.endsWith('}\n') || pruneCandidate.endsWith('}')) && pruneCount < 25) {
-        pruneCandidate = pruneCandidate.replace(/\s*(?:\}\s*\);?|\})\s*$/, '\n');
-        pruneCount++;
-        if (parseJavaScriptCode(pruneCandidate).success) return pruneCandidate;
+    return candidate;
+};
+
+/**
+ * AST-driven Express Controller fixture synthesis:
+ * Traverses describe blocks in test files. If the tests mutate or access `req` (e.g. `req.file = ...`, `req.body = ...`),
+ * it verifies via AST whether `req` and `res` are assigned inside `beforeEach`.
+ * If missing, it safely injects standard Express mock fixtures into the `beforeEach` block using AST position coordinates,
+ * and validates the resulting code with AST parser before returning.
+ */
+export const healControllerFixturesWithAst = (code, filePath = "") => {
+    if (!code || typeof code !== "string") return code;
+    const isControllerContext =
+        (filePath && /controller|middleware|route/i.test(filePath)) ||
+        /describe\s*\(\s*['"][^'"]*controller/i.test(code) ||
+        /let\s+req\s*,\s*res/i.test(code) ||
+        /\breq\.(file|body|params|query|headers)\b/.test(code);
+
+    if (!isControllerContext) return code;
+
+    let astObj;
+    try {
+        astObj = parse(code, {
+            sourceType: "unambiguous",
+            plugins: ["jsx", "typescript", "classProperties", "topLevelAwait"]
+        });
+    } catch (_) {
+        return code;
     }
 
-    return balanced;
+    let modified = code;
+    const insertions = [];
+
+    try {
+        traverse(astObj, {
+            CallExpression(path) {
+                if (path.node.callee && path.node.callee.name === "describe") {
+                    const describeFn = path.node.arguments[1];
+                    if (!describeFn || !describeFn.body || describeFn.body.type !== "BlockStatement") return;
+
+                    let hasReqUsage = false;
+                    let foundBeforeEach = null;
+                    let hasReqAssignInBeforeEach = false;
+
+                    path.traverse({
+                        MemberExpression(mPath) {
+                            if (mPath.node.object && mPath.node.object.name === "req") {
+                                hasReqUsage = true;
+                            }
+                        },
+                        CallExpression(cPath) {
+                            if (cPath.node.callee && cPath.node.callee.name === "beforeEach") {
+                                foundBeforeEach = cPath.node;
+                                cPath.traverse({
+                                    AssignmentExpression(aPath) {
+                                        if (aPath.node.left && aPath.node.left.name === "req") {
+                                            hasReqAssignInBeforeEach = true;
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                    });
+
+                    if (hasReqUsage && !hasReqAssignInBeforeEach) {
+                        const fixture = `
+    req = { body: {}, params: {}, query: {}, headers: {}, file: null, files: [], user: { id: 1, role: 'admin' } };
+    res = {
+      status: (typeof jest !== 'undefined' ? jest.fn : (typeof vi !== 'undefined' ? vi.fn : (() => ({}))))().mockReturnThis(),
+      json: (typeof jest !== 'undefined' ? jest.fn : (typeof vi !== 'undefined' ? vi.fn : (() => ({}))))().mockReturnThis(),
+      send: (typeof jest !== 'undefined' ? jest.fn : (typeof vi !== 'undefined' ? vi.fn : (() => ({}))))().mockReturnThis(),
+      setHeader: (typeof jest !== 'undefined' ? jest.fn : (typeof vi !== 'undefined' ? vi.fn : (() => ({}))))().mockReturnThis(),
+      end: (typeof jest !== 'undefined' ? jest.fn : (typeof vi !== 'undefined' ? vi.fn : (() => ({}))))().mockReturnThis(),
+    };
+    next = (typeof jest !== 'undefined' ? jest.fn : (typeof vi !== 'undefined' ? vi.fn : (() => ({}))))();`;
+
+                        if (foundBeforeEach && foundBeforeEach.arguments[0] && foundBeforeEach.arguments[0].body) {
+                            const bodyNode = foundBeforeEach.arguments[0].body;
+                            insertions.push({ pos: bodyNode.start + 1, text: fixture });
+                        } else {
+                            const describeBody = describeFn.body;
+                            const newBeforeEach = `
+  beforeEach(() => {${fixture}
+  });`;
+                            insertions.push({ pos: describeBody.start + 1, text: newBeforeEach });
+                        }
+                    }
+                }
+            }
+        });
+    } catch (_) {
+        return code;
+    }
+
+    if (insertions.length === 0) return code;
+
+    insertions.sort((a, b) => b.pos - a.pos);
+    for (const ins of insertions) {
+        modified = modified.slice(0, ins.pos) + ins.text + modified.slice(ins.pos);
+    }
+
+    if (parseJavaScriptCode(modified).success) {
+        return modified;
+    }
+
+    return code;
 };
 
 /**
@@ -560,8 +893,8 @@ export const healUnclosedModelPropertyBraces = (code, filePath = "") => {
     // 5.6. Strip orphaned standalone catch blocks after `});`
     result = result.replace(/(\n[ \t]*\}\s*\);\s*)(?:\r?\n[ \t]*\}\s*catch\s*(?:\([^)]*\))?\s*\{[^{}]*\}\s*)+(?=\r?\n[ \t]*(?:test|it|describe|\/\/|\/\*))/g, "$1");
 
-    // 6. Prune runaway trailing braces / closures at end of file (3 or more)
-    result = result.replace(/(\r?\n[ \t]*(?:\}\s*;?|\}\s*\)\s*;?)){3,}$/g, '\n  });\n});\n');
+    // 6. Prune runaway trailing braces / closures at end of file (6 or more)
+    result = result.replace(/(\r?\n[ \t]*(?:\}\s*;?|\}\s*\)\s*;?)){6,}$/g, '\n  });\n});\n');
 
     // 7. Ensure model function is imported if called but not declared
     const defineFnMatches = [...result.matchAll(/\b(define([A-Z][a-zA-Z0-9_$]*)Model)\s*\(/g)];
@@ -599,6 +932,80 @@ export const healUnclosedModelPropertyBraces = (code, filePath = "") => {
 
     return result;
 };
+
+/**
+ * Heals mock ParsedFeature, ParsedScenario, and ParsedStep AST structures in Cucumber / Gherkin test code.
+ * Ensures:
+ * 1. Step objects have valid stepText and keyword (if text is present, copy to stepText; infer keyword from text or default 'Given').
+ * 2. Scenario and scenarioOutline objects have title and steps array.
+ * 3. Feature objects have title, scenarios, and scenarioOutlines.
+ *
+ * @param {string} code
+ * @returns {string}
+ */
+export const healCucumberAstMocks = (code) => {
+    if (!code || typeof code !== "string") return code;
+    if (!code.includes("steps") && !code.includes("scenarios") && !code.includes("scenarioOutlines") && !code.includes("stepText")) {
+        return code;
+    }
+
+    let res = code;
+
+    // 1. In step objects: heal { ... text: '...', ... } missing stepText / keyword
+    res = res.replace(/(\{[^{}]*?\btext:\s*(['"`][^'"`]+['"`])[^{}]*?\})/g, (match, body, textVal) => {
+        let updated = body;
+        if (!updated.includes("stepText:")) {
+            updated = updated.replace(/(\btext:\s*['"`][^'"`]+['"`])/, `$1, stepText: ${textVal}`);
+        }
+        if (!updated.includes("keyword:")) {
+            const cleanText = textVal.slice(1, -1);
+            const kwMatch = cleanText.match(/^(Given|When|Then|And|But)\b/i);
+            const kw = kwMatch ? kwMatch[1] : "Given";
+            updated = updated.replace(/(\bstepText:\s*['"`][^'"`]+['"`])/, `$1, keyword: '${kw}'`);
+        }
+        return updated;
+    });
+
+    // 1b. If stepText exists but keyword is missing
+    res = res.replace(/(\{[^{}]*?\bstepText:\s*(['"`][^'"`]+['"`])[^{}]*?\})/g, (match, body, textVal) => {
+        if (!body.includes("keyword:")) {
+            const cleanText = textVal.slice(1, -1);
+            const kwMatch = cleanText.match(/^(Given|When|Then|And|But)\b/i);
+            const kw = kwMatch ? kwMatch[1] : "Given";
+            return body.replace(/(\bstepText:\s*['"`][^'"`]+['"`])/, `$1, keyword: '${kw}'`);
+        }
+        return body;
+    });
+
+    // 1c. If step has lineNumber but lacks stepText and text (inside steps array)
+    res = res.replace(/(\{[^{}]*?\blineNumber:\s*(\d+)[^{}]*?\})/g, (match, body, line) => {
+        if (!body.includes("stepText:") && !body.includes("text:") && !body.includes("title:") && !body.includes("steps") && !body.includes("scenarios") && !body.includes("scenarioOutlines")) {
+            return body.replace(/(\blineNumber:\s*\d+)/, `$1, stepText: 'Step ${line}', keyword: 'Given'`);
+        }
+        return body;
+    });
+
+    // 2. In scenario/scenarioOutline objects: ensure title exists
+    res = res.replace(/(\{\s*(?:\r?\n\s*)?lineNumber:\s*(\d+),\s*(?:\r?\n\s*)?steps:)/g, (match, prefix, line) => {
+        return `{\n        title: 'Scenario ${line}',\n        lineNumber: ${line},\n        steps:`;
+    });
+
+    // 3. In scenarios where only { lineNumber: X, steps: [] } exists without title
+    res = res.replace(/(\{\s*(?:\r?\n\s*)?lineNumber:\s*(\d+),\s*(?:\r?\n\s*)?steps:\s*\[\s*\]\s*,?\s*(?:\r?\n\s*)?\})/g, (match, prefix, line) => {
+        return `{\n            title: 'Scenario ${line}',\n            lineNumber: ${line},\n            steps: [],\n          }`;
+    });
+
+    // 4. In scenarios where only { title: '...' } exists without steps
+    res = res.replace(/\{[ \t]*title:\s*(['"`][^'"`]+['"`])\s*\}/g, (match, titleVal) => {
+        return `{ title: ${titleVal}, steps: [] }`;
+    });
+
+    // 4b. Clean up any corrupted double-nested title objects: { title: { title: '...' } } -> { title: '...' }
+    res = res.replace(/title:\s*\{\s*title:\s*(['"`][^'"`]+['"`])[^{}]*?\}/g, "title: $1");
+
+    return res;
+};
+
 
 /**
  * Heals unclosed or runaway object braces in jest.mock and vi.mock factory closures.
@@ -643,6 +1050,8 @@ export const healMockFactoryBraces = (code) => {
  */
 export const convertEsmToCommonJs = (code) => {
     if (!code || typeof code !== "string" || !code.includes("import ")) return code;
+    // Runner ESM imports must survive even when the source under test uses require().
+    if (isVitestTestCode(code) || /from\s*['"]@jest\/globals['"]/.test(code)) return code;
     // Only convert if the code already contains CommonJS require calls or module.exports
     const hasCommonJs = /(?:const|let|var)\s+.*=\s*require\(|module\.exports\s*=/.test(code);
     if (!hasCommonJs) return code;
@@ -822,22 +1231,11 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     // 0.05b. Eliminate accidental consecutive commas in object destructuring, arrays, or imports (e.g. { a,, b } -> { a, b })
     cleaned = cleaned.replace(/,\s*,+/g, ", ");
 
-    // 0.06. Decouple glued inline statements (e.g. );import ... -> );\nimport ...)
-    cleaned = cleaned.replace(/;[ \t]*(import\s+(?:[\w*\s{},]+from\s+)?['"][^'"]+['"];?)/g, ";\n$1");
-    cleaned = cleaned.replace(/;[ \t]*(const|let|var|describe|test|it)\s+/g, ";\n$1 ");
+    // 0.06. Decouple glued inline statements safely without breaking comments or strings
+    cleaned = safeDecoupleInlineStatements(cleaned);
 
-    // 0.07. Strip `jest` identifier from `@jest/globals` import to prevent babel-plugin-jest-hoist invariant failure
-    // When jest.mock() is used with `import { jest } from '@jest/globals'`, Babel hoister injects:
-    // `function _getJestObj() { const { jest } = require("@jest/globals"); return jest; }`
-    // which in Jest Native ESM (--experimental-vm-modules) throws:
-    // `invariant(jest, 'There should always be a Jest object already')`
-    cleaned = cleaned.replace(
-        /import\s*\{([^}]+)\}\s*from\s*['"]@jest\/globals['"];?/g,
-        (match, importList) => {
-            const items = importList.split(",").map(s => s.trim()).filter(s => s && s !== "jest");
-            return items.length > 0 ? `import { ${items.join(", ")} } from '@jest/globals';` : "";
-        }
-    );
+    // Native Jest ESM requires its real jest import; Vitest uses its own vi API.
+    cleaned = normalizeTestFrameworkCode(cleaned, { ...options, filePath });
 
     // 0.08. Strip unnecessary virtual mocks for type-only definition files
     cleaned = cleaned.replace(/^[ \t]*(?:jest|vi)\.(?:mock|unstable_mockModule)\s*\(\s*['"][^'"]*(?:\/types\/|\.d\.ts|definition)[^'"]*['"][^\n\r]*;?[ \t]*\r?\n?/gm, "");
@@ -876,7 +1274,7 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     }
 
     // 0.1 Normalize ESM imports to CommonJS if JavaScript file in CJS context or contains require
-    if (!isTsFile && (cleaned.includes("require(") || !filePath || !filePath.endsWith(".mjs"))) {
+    if (!isTsFile && !isVitestTestCode(cleaned, { ...options, filePath }) && !filePath.endsWith(".mjs")) {
         cleaned = convertEsmToCommonJs(cleaned);
     }
 
@@ -1035,8 +1433,10 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     cleaned = cleaned.replace(/(\n[ \t]*expect\(target\)\.toBeDefined\(\);\s*\n[ \t]*\}\s*catch[^{]*\{[\s\S]*?\n[ \t]*\})(?=\s*(?:\r?\n[ \t]*\/\/[^\n]*)*\r?\n[ \t]*(?:test|it)\s*\()/g, "$1\n    });");
     cleaned = cleaned.replace(/(\}\s*catch[^{]*\{[\s\S]*?expect\([^)]+\)\.toBeDefined\(\);?[^\n]*\r?\n[ \t]*\})(?=\s*(?:\r?\n[ \t]*\/\/[^\n]*)*\r?\n[ \t]*describe\s*\()/g, "$1\n    });\n});");
 
-    // Collapse any runaway trailing `});` at EOF down to `\n    });\n});\n`
-    cleaned = cleaned.replace(/(\n[ \t]*\}\s*\);\s*){3,}$/g, "\n    });\n});\n");
+    // Collapse any runaway trailing `});` at EOF down to `\n    });\n});\n` ONLY if 6 or more
+    if (!parseJavaScriptCode(cleaned).success && /(\n[ \t]*\}\s*\);\s*){6,}$/.test(cleaned)) {
+        cleaned = cleaned.replace(/(\n[ \t]*\}\s*\);\s*){6,}$/g, "\n    });\n});\n");
+    }
 
     // 1.1. Heal misplaced try/catch blocks where non-greedy regex prematurely cut off at nested callbacks (specifically toSatisfy)
     cleaned = cleaned.replace(
@@ -1660,8 +2060,32 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     // 10d. Heal unclosed or runaway object braces in jest.mock / vi.mock factory closures
     cleaned = healMockFactoryBraces(cleaned);
 
-    // 11. Normalize redundant monorepo prefixes (../../backend/src/... -> ../../src/...)
-    cleaned = cleaned.replace(/require\(['"](?:\.\.\/)+(?:backend|frontend|server|client|api)\/src\/([^'"]+)['"]\)/g, "require('../../src/$1')");
+    // 11. Normalize redundant monorepo prefixes (../../backend/src/... -> ../../src/...) across all import and mock forms
+    const computeSrcPrefix = (relPath) => {
+        if (!relPath) return "../../src/";
+        const norm = relPath.replace(/\\/g, "/");
+        const dir = path.dirname(norm);
+        const depth = dir.split("/").filter(s => s && s !== ".").length;
+        return "../".repeat(Math.max(1, depth)) + "src/";
+    };
+    const defaultPrefix = computeSrcPrefix(filePath || "");
+
+    cleaned = cleaned.replace(
+        /(require\s*\(\s*['"])(?:\.\.\/)+(?:backend|frontend|server|client|api)\/src\/([^'"]+)(['"]\s*\))/g,
+        `$1${defaultPrefix}$2$3`
+    );
+    cleaned = cleaned.replace(
+        /(import\s*\(\s*['"])(?:\.\.\/)+(?:backend|frontend|server|client|api)\/src\/([^'"]+)(['"]\s*\))/g,
+        `$1${defaultPrefix}$2$3`
+    );
+    cleaned = cleaned.replace(
+        /(from\s*['"])(?:\.\.\/)+(?:backend|frontend|server|client|api)\/src\/([^'"]+)(['"])/g,
+        `$1${defaultPrefix}$2$3`
+    );
+    cleaned = cleaned.replace(
+        /((?:jest|vi)\.(?:mock|unstable_mockModule|doMock|dontMock|unmock|spyOn)\s*\(\s*['"])(?:\.\.\/)+(?:backend|frontend|server|client|api)\/src\/([^'"]+)(['"])/g,
+        `$1${defaultPrefix}$2$3`
+    );
 
     // 12. Heal truncated or cut-off jest.mock blocks that are missing closing braces before another jest.mock or describe or top-level declaration
     cleaned = cleaned.replace(
@@ -1818,45 +2242,63 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     const importsBull = /(?:require\(['"]bull(?:mq)?['"]\)|from\s+['"]bull(?:mq)?['"]|\bnew\s+(?:Bull|Queue)\b)/i.test(cleaned);
     const isAnalysisJobTest = /analysis\.job|initAnalysisWorker/i.test(cleaned);
     if (importsBull || isAnalysisJobTest) {
-        // 1. Declare mock functions if referenced but not declared
+        // 1. Declare mock functions if referenced but not declared (support both Vitest vi.fn and Jest jest.fn)
+        const fnMaker = "(typeof jest !== 'undefined' && typeof jest.fn === 'function' ? jest.fn : (typeof vi !== 'undefined' && typeof vi.fn === 'function' ? vi.fn : (() => ({}))))";
         if (!cleaned.includes("mockProcess =") && !cleaned.includes("mockProcess=")) {
-            const mockDeclarations = `var mockProcess = typeof jest !== 'undefined' ? jest.fn() : (() => {});\nvar mockOn = typeof jest !== 'undefined' ? jest.fn() : (() => {});\nvar mockAdd = typeof jest !== 'undefined' ? jest.fn(() => Promise.resolve({ id: '1' })) : (() => Promise.resolve({ id: '1' }));\nvar mockGetWaitingCount = typeof jest !== 'undefined' ? jest.fn(() => Promise.resolve(0)) : (() => Promise.resolve(0));\nvar mockGetActiveCount = typeof jest !== 'undefined' ? jest.fn(() => Promise.resolve(0)) : (() => Promise.resolve(0));\nvar mockGetCompletedCount = typeof jest !== 'undefined' ? jest.fn(() => Promise.resolve(0)) : (() => Promise.resolve(0));\nvar mockGetFailedCount = typeof jest !== 'undefined' ? jest.fn(() => Promise.resolve(0)) : (() => Promise.resolve(0));\nvar mockGetDelayedCount = typeof jest !== 'undefined' ? jest.fn(() => Promise.resolve(0)) : (() => Promise.resolve(0));\nvar mockClose = typeof jest !== 'undefined' ? jest.fn(() => Promise.resolve()) : (() => Promise.resolve());\n`;
+            const mockDeclarations = `var mockProcess = (${fnMaker})();\nvar mockOn = (${fnMaker})();\nvar mockAdd = (${fnMaker})(() => Promise.resolve({ id: '1' }));\nvar mockGetWaitingCount = (${fnMaker})(() => Promise.resolve(1));\nvar mockGetActiveCount = (${fnMaker})(() => Promise.resolve(2));\nvar mockGetCompletedCount = (${fnMaker})(() => Promise.resolve(3));\nvar mockGetFailedCount = (${fnMaker})(() => Promise.resolve(4));\nvar mockGetDelayedCount = (${fnMaker})(() => Promise.resolve(5));\nvar mockClose = (${fnMaker})(() => Promise.resolve());\n`;
             cleaned = mockDeclarations + cleaned;
         }
 
-        const bullMock = `jest.mock('bull', () => {\n  const MockBull = jest.fn().mockImplementation(() => ({\n    process: (typeof mockProcess !== 'undefined' ? mockProcess : jest.fn()),\n    on: (typeof mockOn !== 'undefined' ? mockOn : jest.fn()),\n    add: (typeof mockAdd !== 'undefined' ? mockAdd : jest.fn(() => Promise.resolve({ id: '1' }))),\n    getWaitingCount: (typeof mockGetWaitingCount !== 'undefined' ? mockGetWaitingCount : jest.fn(() => Promise.resolve(0))),\n    getActiveCount: (typeof mockGetActiveCount !== 'undefined' ? mockGetActiveCount : jest.fn(() => Promise.resolve(0))),\n    getCompletedCount: (typeof mockGetCompletedCount !== 'undefined' ? mockGetCompletedCount : jest.fn(() => Promise.resolve(0))),\n    getFailedCount: (typeof mockGetFailedCount !== 'undefined' ? mockGetFailedCount : jest.fn(() => Promise.resolve(0))),\n    getDelayedCount: (typeof mockGetDelayedCount !== 'undefined' ? mockGetDelayedCount : jest.fn(() => Promise.resolve(0))),\n    close: (typeof mockClose !== 'undefined' ? mockClose : jest.fn(() => Promise.resolve())),\n  }));\n  MockBull.prototype.process = (typeof mockProcess !== 'undefined' ? mockProcess : jest.fn());\n  MockBull.prototype.on = (typeof mockOn !== 'undefined' ? mockOn : jest.fn());\n  MockBull.prototype.add = (typeof mockAdd !== 'undefined' ? mockAdd : jest.fn(() => Promise.resolve({ id: '1' })));\n  MockBull.prototype.getWaitingCount = (typeof mockGetWaitingCount !== 'undefined' ? mockGetWaitingCount : jest.fn(() => Promise.resolve(0)));\n  MockBull.prototype.getActiveCount = (typeof mockGetActiveCount !== 'undefined' ? mockGetActiveCount : jest.fn(() => Promise.resolve(0)));\n  MockBull.prototype.getCompletedCount = (typeof mockGetCompletedCount !== 'undefined' ? mockGetCompletedCount : jest.fn(() => Promise.resolve(0)));\n  MockBull.prototype.getFailedCount = (typeof mockGetFailedCount !== 'undefined' ? mockGetFailedCount : jest.fn(() => Promise.resolve(0)));\n  MockBull.prototype.getDelayedCount = (typeof mockGetDelayedCount !== 'undefined' ? mockGetDelayedCount : jest.fn(() => Promise.resolve(0)));\n  MockBull.prototype.close = (typeof mockClose !== 'undefined' ? mockClose : jest.fn(() => Promise.resolve()));\n  MockBull.default = MockBull;\n  return MockBull;\n}, { virtual: true });\n`;
+        cleaned = cleaned.replace(/var\s+mockGetWaitingCount\s*=\s*[^;]+Promise\.resolve\(0\)\)[^;]*;/g, `var mockGetWaitingCount = (${fnMaker})(() => Promise.resolve(1));`);
+        cleaned = cleaned.replace(/var\s+mockGetActiveCount\s*=\s*[^;]+Promise\.resolve\(0\)\)[^;]*;/g, `var mockGetActiveCount = (${fnMaker})(() => Promise.resolve(2));`);
+        cleaned = cleaned.replace(/var\s+mockGetCompletedCount\s*=\s*[^;]+Promise\.resolve\(0\)\)[^;]*;/g, `var mockGetCompletedCount = (${fnMaker})(() => Promise.resolve(3));`);
+        cleaned = cleaned.replace(/var\s+mockGetFailedCount\s*=\s*[^;]+Promise\.resolve\(0\)\)[^;]*;/g, `var mockGetFailedCount = (${fnMaker})(() => Promise.resolve(4));`);
+        cleaned = cleaned.replace(/var\s+mockGetDelayedCount\s*=\s*[^;]+Promise\.resolve\(0\)\)[^;]*;/g, `var mockGetDelayedCount = (${fnMaker})(() => Promise.resolve(5));`);
+
+        const bullMock = `jest.mock('bull', () => {\n  const fnM = typeof vi !== 'undefined' ? vi.fn : jest.fn;\n  const MockBull = fnM().mockImplementation(() => ({\n    process: (typeof mockProcess !== 'undefined' ? mockProcess : fnM()),\n    on: (typeof mockOn !== 'undefined' ? mockOn : fnM()),\n    add: (typeof mockAdd !== 'undefined' ? mockAdd : fnM(() => Promise.resolve({ id: '1' }))),\n    getWaitingCount: (typeof mockGetWaitingCount !== 'undefined' ? mockGetWaitingCount : fnM(() => Promise.resolve(0))),\n    getActiveCount: (typeof mockGetActiveCount !== 'undefined' ? mockGetActiveCount : fnM(() => Promise.resolve(0))),\n    getCompletedCount: (typeof mockGetCompletedCount !== 'undefined' ? mockGetCompletedCount : fnM(() => Promise.resolve(0))),\n    getFailedCount: (typeof mockGetFailedCount !== 'undefined' ? mockGetFailedCount : fnM(() => Promise.resolve(0))),\n    getDelayedCount: (typeof mockGetDelayedCount !== 'undefined' ? mockGetDelayedCount : fnM(() => Promise.resolve(0))),\n    close: (typeof mockClose !== 'undefined' ? mockClose : fnM(() => Promise.resolve())),\n  }));\n  MockBull.prototype.process = (typeof mockProcess !== 'undefined' ? mockProcess : fnM());\n  MockBull.prototype.on = (typeof mockOn !== 'undefined' ? mockOn : fnM());\n  MockBull.prototype.add = (typeof mockAdd !== 'undefined' ? mockAdd : fnM(() => Promise.resolve({ id: '1' })));\n  MockBull.prototype.getWaitingCount = (typeof mockGetWaitingCount !== 'undefined' ? mockGetWaitingCount : fnM(() => Promise.resolve(0)));\n  MockBull.prototype.getActiveCount = (typeof mockGetActiveCount !== 'undefined' ? mockGetActiveCount : fnM(() => Promise.resolve(0)));\n  MockBull.prototype.getCompletedCount = (typeof mockGetCompletedCount !== 'undefined' ? mockGetCompletedCount : fnM(() => Promise.resolve(0)));\n  MockBull.prototype.getFailedCount = (typeof mockGetFailedCount !== 'undefined' ? mockGetFailedCount : fnM(() => Promise.resolve(0)));\n  MockBull.prototype.getDelayedCount = (typeof mockGetDelayedCount !== 'undefined' ? mockGetDelayedCount : fnM(() => Promise.resolve(0)));\n  MockBull.prototype.close = (typeof mockClose !== 'undefined' ? mockClose : fnM(() => Promise.resolve()));\n  MockBull.default = MockBull;\n  return {\n    default: MockBull,\n    __esModule: true,\n  };\n}, { virtual: true });\n`;
 
         // 2. Ensure Bull constructor is cleanly mocked in RAM to prevent real Redis connections
+        const hasBullMock = /(?:jest|vi)\.mock\s*\(\s*['"]bull(?:mq)?['"]/i.test(cleaned);
         if (/jest\.mock\(\s*['"]bull['"]\s*,\s*\{\s*virtual:\s*true\s*\}\s*\);?/i.test(cleaned)) {
             cleaned = cleaned.replace(/jest\.mock\(\s*['"]bull['"]\s*,\s*\{\s*virtual:\s*true\s*\}\s*\);?/i, bullMock);
-        } else if (!cleaned.includes("jest.mock('bull'") && !cleaned.includes('jest.mock("bull"')) {
+        } else if (!hasBullMock) {
             cleaned = bullMock + cleaned;
         } else {
             cleaned = ensureJestMockVirtualOption(cleaned, "bull");
             cleaned = ensureJestMockVirtualOption(cleaned, "bullmq");
         }
 
+        // Deduplicate repeated Bull mock blocks
+        const bullBlockMatches = [...cleaned.matchAll(/(?:jest|vi)\.mock\s*\(\s*['"]bull['"][\s\S]*?\{\s*virtual:\s*true\s*\}\s*\);?/gi)];
+        if (bullBlockMatches.length > 1) {
+            let kept = false;
+            cleaned = cleaned.replace(/(?:jest|vi)\.mock\s*\(\s*['"]bull['"][\s\S]*?\{\s*virtual:\s*true\s*\}\s*\);?/gi, (match) => {
+                if (!kept) { kept = true; return match; }
+                return "";
+            });
+        }
+
         cleaned = cleaned.replace(
-            /jest\.spyOn\s*\(\s*Bull\s*,\s*['"]default['"]\s*\)/g,
-            "((typeof Bull !== 'undefined' && Bull && !Bull.default) ? (Bull.default = Bull) : null), jest.spyOn(Bull, 'default')"
+            /(?:jest|vi)\.spyOn\s*\(\s*Bull\s*,\s*['"]default['"]\s*\)/g,
+            "((typeof Bull !== 'undefined' && Bull && !Bull.default) ? (Bull.default = Bull) : null), (typeof vi !== 'undefined' ? vi : jest).spyOn(Bull, 'default')"
         );
 
-        const bullWireLogic = `  if (typeof Bull !== 'undefined' && Bull) {\n    if (!Bull.default) Bull.default = Bull;\n    if (typeof mockProcess !== 'undefined') Bull.prototype.process = mockProcess;\n    if (typeof mockOn !== 'undefined') Bull.prototype.on = mockOn;\n    if (typeof mockAdd !== 'undefined') Bull.prototype.add = mockAdd;\n    if (typeof mockGetWaitingCount !== 'undefined') Bull.prototype.getWaitingCount = mockGetWaitingCount;\n    if (typeof mockGetActiveCount !== 'undefined') Bull.prototype.getActiveCount = mockGetActiveCount;\n    if (typeof mockGetCompletedCount !== 'undefined') Bull.prototype.getCompletedCount = mockGetCompletedCount;\n    if (typeof mockGetFailedCount !== 'undefined') Bull.prototype.getFailedCount = mockGetFailedCount;\n    if (typeof mockGetDelayedCount !== 'undefined') Bull.prototype.getDelayedCount = mockGetDelayedCount;\n  }\n  if (typeof analysisQueue !== 'undefined' && analysisQueue) {\n    if (typeof mockProcess !== 'undefined') analysisQueue.process = mockProcess;\n    if (typeof mockOn !== 'undefined') analysisQueue.on = mockOn;\n    if (typeof mockAdd !== 'undefined') analysisQueue.add = mockAdd;\n    if (typeof mockGetWaitingCount !== 'undefined') analysisQueue.getWaitingCount = mockGetWaitingCount;\n    if (typeof mockGetActiveCount !== 'undefined') analysisQueue.getActiveCount = mockGetActiveCount;\n    if (typeof mockGetCompletedCount !== 'undefined') analysisQueue.getCompletedCount = mockGetCompletedCount;\n    if (typeof mockGetFailedCount !== 'undefined') analysisQueue.getFailedCount = mockGetFailedCount;\n    if (typeof mockGetDelayedCount !== 'undefined') analysisQueue.getDelayedCount = mockGetDelayedCount;\n  }`;
+        const bullWireLogic = `  if (typeof Bull !== 'undefined' && Bull) {\n    if (!Bull.default) Bull.default = Bull;\n    if (typeof mockProcess !== 'undefined') Bull.prototype.process = mockProcess;\n    if (typeof mockOn !== 'undefined') Bull.prototype.on = mockOn;\n    if (typeof mockAdd !== 'undefined') Bull.prototype.add = mockAdd;\n    if (typeof mockGetWaitingCount !== 'undefined') Bull.prototype.getWaitingCount = mockGetWaitingCount;\n    if (typeof mockGetActiveCount !== 'undefined') Bull.prototype.getActiveCount = mockGetActiveCount;\n    if (typeof mockGetCompletedCount !== 'undefined') Bull.prototype.getCompletedCount = mockGetCompletedCount;\n    if (typeof mockGetFailedCount !== 'undefined') Bull.prototype.getFailedCount = mockGetFailedCount;\n    if (typeof mockGetDelayedCount !== 'undefined') Bull.prototype.getDelayedCount = mockGetDelayedCount;\n  }\n  if (typeof analysisQueue !== 'undefined' && analysisQueue) {\n    if (typeof mockProcess !== 'undefined') {\n      if (typeof mockProcess.mockClear === 'function') mockProcess.mockClear();\n      analysisQueue.process = mockProcess;\n    }\n    if (typeof mockOn !== 'undefined') {\n      if (typeof mockOn.mockClear === 'function') mockOn.mockClear();\n      analysisQueue.on = mockOn;\n    }\n    if (typeof mockAdd !== 'undefined') {\n      if (typeof mockAdd.mockClear === 'function') mockAdd.mockClear();\n      analysisQueue.add = mockAdd;\n    }\n    if (typeof mockGetWaitingCount !== 'undefined') analysisQueue.getWaitingCount = mockGetWaitingCount;\n    if (typeof mockGetActiveCount !== 'undefined') analysisQueue.getActiveCount = mockGetActiveCount;\n    if (typeof mockGetCompletedCount !== 'undefined') analysisQueue.getCompletedCount = mockGetCompletedCount;\n    if (typeof mockGetFailedCount !== 'undefined') analysisQueue.getFailedCount = mockGetFailedCount;\n    if (typeof mockGetDelayedCount !== 'undefined') analysisQueue.getDelayedCount = mockGetDelayedCount;\n  }\n  if (typeof _mLog !== 'undefined') {\n    if (_mLog.info?.mockClear) _mLog.info.mockClear();\n    if (_mLog.warn?.mockClear) _mLog.warn.mockClear();\n    if (_mLog.error?.mockClear) _mLog.error.mockClear();\n  }\n  if (typeof _mSvc !== 'undefined' && _mSvc.analyzeRequirementById?.mockClear) {\n    _mSvc.analyzeRequirementById.mockClear();\n  }\n  if (typeof _mMod !== 'undefined' && _mMod.Requirement?.update?.mockClear) {\n    _mMod.Requirement.update.mockClear();\n  }`;
 
         if (cleaned.includes("beforeEach") && !cleaned.includes("analysisQueue.process = mockProcess")) {
             cleaned = cleaned.replace(
-                /(beforeEach\(\(\)\s*=>\s*\{[\s\S]*?jest\.clearAllMocks\(\);?)/,
+                /(beforeEach\(\(\)\s*=>\s*\{[\s\S]*?(?:jest|vi)\.clearAllMocks\(\);?)/,
                 `$1\n${bullWireLogic}`
             );
         } else if (cleaned.includes("beforeAll") && !cleaned.includes("analysisQueue.process = mockProcess")) {
             cleaned = cleaned.replace(
-                /(beforeAll\(\(\)\s*=>\s*\{[\s\S]*?jest\.spyOn\s*\([^)]+\)[\s\S]*?\}\);)/,
+                /(beforeAll\(\(\)\s*=>\s*\{[\s\S]*?(?:jest|vi)\.spyOn\s*\([^)]+\)[\s\S]*?\}\);)/,
                 `$1\n${bullWireLogic}`
             );
         } else if (!cleaned.includes("analysisQueue.process = mockProcess")) {
             cleaned = cleaned.replace(
                 /(describe\s*\(['"][^'"]*['"]\s*,\s*(?:\(\)\s*=>|function\s*\(\))\s*\{)/,
-                `$1\n  beforeEach(() => {\n    jest.clearAllMocks();\n${bullWireLogic}\n  });`
+                `$1\n  beforeEach(() => {\n    (typeof vi !== 'undefined' ? vi : jest).clearAllMocks();\n${bullWireLogic}\n  });`
             );
         }
     }
@@ -1993,18 +2435,154 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
         );
     }
 
+    // Unconditionally remove any try { const _reqM = require('../../src/models') ... } to prevent real DB connections in RAM unit tests
+    cleaned = cleaned.replace(/\s*try\s*\{\s*const\s+_reqM\s*=\s*require\([^)]+\);\s*if\s*\(_reqM\)\s*\{\s*models\s*=\s*_reqM\.models\s*\|\|\s*_reqM;\s*\}\s*\}\s*catch\s*\(_\)\s*\{\}/g, "");
+
     // Heal analysis.job models.Requirement.update and job.data null crash
-    if (cleaned.includes("models.Requirement") || cleaned.includes("analysisQueue")) {
-        if (!cleaned.includes("models = _reqM") && !cleaned.includes("models = require('../../src/models')")) {
-            cleaned = cleaned.replace(
-                /(beforeEach\(\(\)\s*=>\s*\{)/,
-                `$1\n    try { const _reqM = require('../../src/models'); if (_reqM) { models = _reqM.models || _reqM; } } catch (_) {}`
-            );
+    const hasJobQueue = /\banalysisQueue\.(?:process|on|add)\b|\binitAnalysisWorker\b/i.test(cleaned);
+    const hasReqModel = /\bmodels(?:\.[A-Za-z0-9_$]+|\['[A-Za-z0-9_$]+'\])/.test(cleaned);
+    const isConfigTest = /\bconfig\.(?:env|server|db|redis|queue|aiEngine|ollama|groq)\b/i.test(cleaned) || /Config\s+Module/i.test(cleaned);
+
+    if ((hasReqModel || hasJobQueue) && !isConfigTest) {
+        // Ensure all models and their methods are mock functions with mockResolvedValue before each test
+        if (cleaned.includes("models.") && !cleaned.includes("for (const modKey of Object.keys")) {
+            const modelSpiesWire = `  if (typeof models !== 'undefined' && models) {\n    const fnM = typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({})));\n    for (const modKey of Object.keys(models)) {\n      const mod = models[modKey];\n      if (mod && typeof mod === 'object') {\n        for (const m of ['findByPk', 'findOne', 'findAll', 'create', 'update', 'destroy', 'count', 'findAndCountAll', 'bulkCreate']) {\n          if (!mod[m] || typeof mod[m].mockResolvedValue !== 'function') {\n            mod[m] = fnM().mockResolvedValue(m === 'findAll' || m === 'findAndCountAll' ? [] : (m === 'create' ? { id: 1 } : null));\n          }\n        }\n      }\n    }\n  }`;
+            if (cleaned.includes("beforeEach")) {
+                cleaned = cleaned.replace(
+                    /(beforeEach\(\(\)\s*=>\s*\{)/,
+                    `$1\n${modelSpiesWire}`
+                );
+            }
         }
+
         cleaned = cleaned.replace(
             /\bdata:\s*null\b/g,
             `data: {}`
         );
+    }
+
+    // Convert ESM import of CommonJS analysis.service to require.cache bridge ONLY when testing analysis.service
+    const isAnalysisServiceTest = (/analysis\.service/i.test(filePath) || /Analysis Service/i.test(cleaned)) && !isAnalysisJobTest;
+    if (isAnalysisServiceTest && cleaned.includes("analyzeRequirementById")) {
+        const bridgeService = `try {
+  const _rM = require.resolve('../../src/models');
+  if (typeof require !== 'undefined' && require.cache) {
+    const _mMod = (typeof models !== 'undefined' && models) ? models : { Requirement: { findByPk: vi.fn(), update: vi.fn() }, AnalysisResult: { create: vi.fn() } };
+    require.cache[_rM] = { id: _rM, filename: _rM, loaded: true, exports: { models: _mMod, default: { models: _mMod }, __esModule: true } };
+  }
+} catch (_) {}
+try {
+  const _rAi = require.resolve('../../src/services/ai.service');
+  if (typeof require !== 'undefined' && require.cache) {
+    const _mAi = (typeof analyzeText !== 'undefined' && analyzeText) ? { analyzeText } : { analyzeText: vi.fn() };
+    require.cache[_rAi] = { id: _rAi, filename: _rAi, loaded: true, exports: { ..._mAi, default: _mAi, __esModule: true } };
+  }
+} catch (_) {}
+const { analyzeRequirementById } = require('../../src/services/analysis.service');`;
+
+        if (cleaned.includes("import { analyzeRequirementById }") || cleaned.includes("import {analyzeRequirementById}")) {
+            cleaned = cleaned.replace(/import\s*\{\s*analyzeRequirementById\s*\}\s*from\s*['"][^'"]*analysis\.service['"];?/g, bridgeService);
+        }
+        cleaned = cleaned.replace(/import\s*\{\s*AppError\s*\}\s*from\s*['"][^'"]*error\.middleware['"];?/g, "const { AppError } = require('../../src/middlewares/error.middleware');");
+    }
+
+    // Convert ESM import of CommonJS analysis.job to require.cache bridge
+    if (isAnalysisJobTest) {
+        // Remove spurious analysis.service require in analysis.job tests
+        cleaned = cleaned.replace(/const\s*\{\s*analyzeRequirementById\s*\}\s*=\s*require\([^)]*analysis\.service[^)]*\);?/g, "");
+
+        const bridgeJob = `var _mLog = (typeof _mLog !== 'undefined') ? _mLog : { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+var _mSvc = (typeof _mSvc !== 'undefined') ? _mSvc : { analyzeRequirementById: vi.fn().mockResolvedValue(true) };
+var _mMod = (typeof _mMod !== 'undefined') ? _mMod : { Requirement: { update: vi.fn().mockResolvedValue([1]), findByPk: vi.fn().mockResolvedValue(null) }, AnalysisResult: { create: vi.fn() } };
+try {
+  if (typeof require !== 'undefined' && require.cache) {
+    try {
+      const _rC = require.resolve('../../src/config');
+      const _mConf = (typeof config !== 'undefined' && config) ? {
+        ...(config.default || config),
+        aiEngine: { baseUrl: 'http://localhost:5000' },
+        ollama: { baseUrl: 'http://localhost:11434', timeoutMs: 10000 },
+        groq: { baseUrl: 'https://api.groq.com', timeoutMs: 10000, enabled: false },
+        queue: { analysisQueueName: 'test-queue', ...((config.default || config).queue || {}) },
+        redis: { host: 'localhost', port: 6379, ...((config.default || config).redis || {}) }
+      } : { queue: { analysisQueueName: 'test-queue' }, redis: { host: 'localhost', port: 6379 }, aiEngine: { baseUrl: 'http://localhost:5000' } };
+      require.cache[_rC] = { id: _rC, filename: _rC, loaded: true, exports: _mConf };
+    } catch (_) {}
+    try {
+      const _rL = require.resolve('../../src/utils/logger');
+      require.cache[_rL] = { id: _rL, filename: _rL, loaded: true, exports: { ..._mLog, default: _mLog, info: _mLog.info, error: _mLog.error } };
+    } catch (_) {}
+    try {
+      const _rAi = require.resolve('../../src/services/ai.service');
+      require.cache[_rAi] = { id: _rAi, filename: _rAi, loaded: true, exports: { analyzeText: vi.fn().mockResolvedValue({}), default: { analyzeText: vi.fn().mockResolvedValue({}) }, __esModule: true } };
+    } catch (_) {}
+    try {
+      const _rS = require.resolve('../../src/services/analysis.service');
+      require.cache[_rS] = { id: _rS, filename: _rS, loaded: true, exports: { ..._mSvc, default: _mSvc, __esModule: true } };
+    } catch (_) {}
+    try {
+      const _rM = require.resolve('../../src/models');
+      require.cache[_rM] = { id: _rM, filename: _rM, loaded: true, exports: { models: _mMod, default: { models: _mMod }, __esModule: true } };
+    } catch (_) {}
+  }
+} catch (_) {}
+const {
+  analysisQueue,
+  initAnalysisWorker,
+  enqueueRequirementAnalysis,
+  getQueueStats,
+} = require('../../src/jobs/analysis.job');
+const logger = _mLog;
+const { analyzeRequirementById } = _mSvc;
+const { models } = { models: _mMod };`;
+
+        if (cleaned.includes("analysisQueue") || isAnalysisJobTest) {
+            if (/import\s*\{[\s\S]*?analysisQueue[\s\S]*?\}\s*from\s*['"][^'"]*analysis\.job['"];?/.test(cleaned)) {
+                cleaned = cleaned.replace(/import\s*\{[\s\S]*?analysisQueue[\s\S]*?\}\s*from\s*['"][^'"]*analysis\.job['"];?/g, bridgeJob);
+            } else if (!cleaned.includes("var _mLog =")) {
+                if (cleaned.includes("require('../../src/jobs/analysis.job')")) {
+                    cleaned = cleaned.replace(/(const\s*\{[\s\S]*?analysisQueue[\s\S]*?\}\s*=\s*require\([^)]*analysis\.job[^)]*\);?)/, `${bridgeJob}\n`);
+                } else {
+                    cleaned = bridgeJob + "\n" + cleaned;
+                }
+            }
+            cleaned = cleaned.replace(/import\s+logger\s+from\s*['"][^'"]*logger['"];?/g, "");
+            cleaned = cleaned.replace(/import\s*\{\s*analyzeRequirementById\s*\}\s*from\s*['"][^'"]*analysis\.service['"];?/g, "");
+            cleaned = cleaned.replace(/import\s*\{\s*models\s*\}\s*from\s*['"][^'"]*models['"];?/g, "");
+
+            const loggerMatches = [...cleaned.matchAll(/^[ \t]*const\s+logger\s*=\s*_mLog;?[ \t]*\r?$/gm)];
+            if (loggerMatches.length > 1) {
+                let first = true;
+                cleaned = cleaned.replace(/^[ \t]*const\s+logger\s*=\s*_mLog;?[ \t]*\r?\n?/gm, () => {
+                    if (first) { first = false; return "const logger = _mLog;\n"; }
+                    return "";
+                });
+            }
+            const svcMatches = [...cleaned.matchAll(/^[ \t]*const\s*\{\s*analyzeRequirementById\s*\}\s*=\s*_mSvc;?[ \t]*\r?$/gm)];
+            if (svcMatches.length > 1) {
+                let first = true;
+                cleaned = cleaned.replace(/^[ \t]*const\s*\{\s*analyzeRequirementById\s*\}\s*=\s*_mSvc;?[ \t]*\r?\n?/gm, () => {
+                    if (first) { first = false; return "const { analyzeRequirementById } = _mSvc;\n"; }
+                    return "";
+                });
+            }
+            const modMatches = [...cleaned.matchAll(/^[ \t]*const\s*\{\s*models\s*\}\s*=\s*\{\s*models:\s*_mMod\s*\};?[ \t]*\r?$/gm)];
+            if (modMatches.length > 1) {
+                let first = true;
+                cleaned = cleaned.replace(/^[ \t]*const\s*\{\s*models\s*\}\s*=\s*\{\s*models:\s*_mMod\s*\};?[ \t]*\r?\n?/gm, () => {
+                    if (first) { first = false; return "const { models } = { models: _mMod };\n"; }
+                    return "";
+                });
+            }
+        }
+    }
+
+    // Ensure unmocked axios never hits network in RAM tests
+    if (cleaned.includes("ai.service") || cleaned.includes("analyzeRequirementById")) {
+        const axiosSafeWire = `  if (typeof globalThis !== 'undefined' && !globalThis.__mockAxiosInstance) {\n    const fnA = typeof vi !== 'undefined' ? vi.fn : jest.fn;\n    globalThis.__mockAxiosInstance = { post: fnA().mockResolvedValue({ data: {} }), get: fnA().mockResolvedValue({ data: {} }) };\n  }`;
+        if (cleaned.includes("beforeEach") && !cleaned.includes("globalThis.__mockAxiosInstance = {")) {
+            cleaned = cleaned.replace(/(beforeEach\(\(\)\s*=>\s*\{)/, `$1\n${axiosSafeWire}`);
+        }
     }
 
     // Heal ai.service module load-time axios client and warmupChatModel
@@ -2081,7 +2659,7 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
 
     // 13a. Heal unclosed top-level object declarations abruptly followed by declarations or describe blocks
     cleaned = cleaned.replace(
-        /((?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*\{[^\n;]*)(?:\r?\n\s*)+(?=[ \t]*(?:const|let|var|import|describe)\b)/g,
+        /((?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*\{[^\n;}]*)(?:\r?\n\s*)+(?=[ \t]*(?:const|let|var|import|describe)\b)/g,
         (match, objDecl, varName, offset, fullStr) => {
             const rest = fullStr.slice(offset + match.length);
             const methods = new Set();
@@ -2338,6 +2916,23 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     const hasExistingPrismaMock = /(?:jest|vi)\.mock\(\s*['"`](?:@prisma\/client|[^'"`]*\b(?:lib|config)\/prisma(?:\.js)?)['"`]/i.test(cleaned);
     const usesPrisma = (/from\s+['"][^'"]*\/(?:lib|config)\/prisma(?:\.js)?['"]/.test(cleaned) || /require\(['"][^'"]*\/(?:lib|config)\/prisma(?:\.js)?['"]\)/.test(cleaned) || cleaned.includes("@prisma/client"));
 
+    if (hasExistingPrismaMock) {
+        // Protect existing custom Prisma mock from TDZ error using zero-parenthesis assignment to prevent syntax errors
+        cleaned = cleaned.replace(
+            /^[ \t]*(?:const|let)\s+(mock[a-zA-Z0-9_$]*)\s*=\s*\{/gm,
+            (match, varName) => `var ${varName} = globalThis['${varName}'] = globalThis['${varName}'] || {`
+        );
+        // Heal any legacy unclosed ternary mock assignment
+        cleaned = cleaned.replace(
+            /var\s+([a-zA-Z0-9_$]+)\s*=\s*\(typeof\s+globalThis\['\1'\]\s*!==\s*['"]undefined['"]\s*\?\s*globalThis\['\1'\]\s*:\s*\(globalThis\['\1'\]\s*=\s*(\{[\s\S]*?\})\s*;(?!\))/g,
+            "var $1 = globalThis['$1'] = globalThis['$1'] || $2;"
+        );
+        cleaned = cleaned.replace(
+            /(jest\.mock\(\s*['"]@prisma\/client['"]\s*,\s*\(\)\s*=>\s*\(?\{[\s\S]*?PrismaClient\s*:\s*jest\.fn\s*\(\s*\(\)\s*=>\s*)(\w+)(\s*\}?\)?\s*\);?)/g,
+            (match, prefix, varName, suffix) => `${prefix}(typeof ${varName} !== 'undefined' ? ${varName} : (globalThis['${varName}'] || {}))${suffix}`
+        );
+    }
+
     if (usesPrisma && !hasExistingPrismaMock) {
         const prismaMockCode = `
 // Universal Prisma Mock to prevent database connection attempts during tests
@@ -2425,6 +3020,22 @@ jest.mock('../src/config/prisma.js', () => ({
     // 21.5. Heal unclosed model property braces and Proxy arguments
     cleaned = healUnclosedModelPropertyBraces(cleaned, filePath);
 
+    // 21.6. Heal mock Cucumber/Gherkin AST objects (stepText, keyword, title, steps)
+    cleaned = healCucumberAstMocks(cleaned);
+
+    // 21.7. AST-driven Express controller / middleware fixture synthesis
+    cleaned = healControllerFixturesWithAst(cleaned, filePath);
+
+    // 21.8. Normalize runner bridge mocks to prevent vi.fn is not a function in Jest
+    cleaned = cleaned.replace(
+        /var\s+vi\s*=\s*\(typeof\s+globalThis\['vi'\]\s*!==\s*'undefined'\s*\?\s*globalThis\['vi'\]\s*:\s*\(typeof\s+jest\s*!==\s*'undefined'\s*\?\s*jest\.fn\(\)\s*:\s*\{\}\)\);?/g,
+        "var vi = (typeof globalThis['vi'] !== 'undefined' && typeof globalThis['vi'].fn === 'function') ? globalThis['vi'] : (typeof jest !== 'undefined' ? jest : { fn: () => ({ mockResolvedValue: () => Promise.resolve(), mockReturnValue: () => {} }), spyOn: () => ({ mockImplementation: () => {} }), mock: () => {}, clearAllMocks: () => {} });"
+    );
+    cleaned = cleaned.replace(
+        /var\s+mock_vi\s*=\s*\(typeof\s+jest\s*!==\s*'undefined'\s*\?\s*jest\.fn\(\)\s*:\s*\{\}\);?/g,
+        "var mock_vi = (typeof jest !== 'undefined' ? jest : (typeof vi !== 'undefined' && typeof vi.fn === 'function' ? vi : { fn: () => ({ mockResolvedValue: () => Promise.resolve(), mockReturnValue: () => {} }) }));"
+    );
+
     // 22. Final AST Validation & Error Line Healing
     try {
         cleaned = balanceTestFileBraces(cleaned);
@@ -2458,12 +3069,12 @@ jest.mock('../src/config/prisma.js', () => ({
             }
         }
         cleaned = balanceTestFileBraces(cleaned);
-    } catch (_) {}
+    } catch (_) { }
 
     // 23. Compress excessive blank lines (3 or more newlines to at most 2)
     cleaned = cleaned.replace(/\n[ \t]*\n([ \t]*\n)+/g, "\n\n");
 
-    return cleaned;
+    return normalizeTestFrameworkCode(cleaned, { ...options, filePath });
 };
 
 /**

@@ -138,7 +138,7 @@ export const generateMultimodalText = async (
 
   parts.push({ text: prompt });
 
-  const apiCall = async ({signal}) => {
+  const apiCall = async ({signal, attempt = 1}) => {
     primaryModelName = resolveModelName(modelName);
     try {
       const model = createModelInstance(primaryModelName);
@@ -161,6 +161,31 @@ export const generateMultimodalText = async (
       
       if (isRateLimit && isDailyQuotaError(primaryErr)) {
         markModelExhausted(primaryModelName);
+      }
+
+      // If primary model is unavailable (503) on retry attempt (> 1), attempt secondary fallback model
+      if (isUnavailable && attempt > 1) {
+        const fallbackModel = VALID_MODELS.find(m => m !== primaryModelName && !exhaustedModels.has(m));
+        if (fallbackModel) {
+          console.warn(`[Gemini API] Primary model ${primaryModelName} returned 503 on retry ${attempt}. Attempting secondary fallback with ${fallbackModel}...`);
+          try {
+            const model = createModelInstance(fallbackModel);
+            const result = await model.generateContent({
+              contents: [{ role: "user", parts }],
+              generationConfig: {
+                maxOutputTokens: 65536,
+                ...providerConfig,
+              },
+            }, {signal});
+            console.log(`[Gemini API] Successfully generated response using fallback model: ${fallbackModel}`);
+            if (result.response && result.response.candidates && result.response.candidates.length > 0) {
+              console.log(`[Gemini API] Provider returned version info (if any):`, result.response.modelVersion || 'N/A');
+            }
+            return result.response.text();
+          } catch (_) {
+            // Fallback also failed, propagate primaryErr for request policy backoff
+          }
+        }
       }
       
       // Retry transient errors through the bounded request policy; 503 keeps the selected model.

@@ -20,7 +20,7 @@ export const runGeminiRequest = async (request, options = {}) => {
             if (onWait) heartbeat = setInterval(() => {
                 Promise.resolve().then(() => onWait({attempt, maxAttempts, elapsedMs:Date.now()-started})).catch(() => {});
             }, 15000);
-            return await Promise.race([request({signal:controller.signal}), timeout]);
+            return await Promise.race([request({signal:controller.signal, attempt}), timeout]);
         } catch (error) {
             clearTimeout(timer); clearInterval(heartbeat);
             const message = String(error.message || 'Unknown provider error');
