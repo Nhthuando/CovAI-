@@ -1006,7 +1006,13 @@ export default function CoverageTypeDashboard({
         }));
 
         const res = await applyUnitTestSuggestion(snapshotId, {
-          suggestion,
+          suggestion: {
+            ...suggestion,
+            proposalBase: suggestion.proposalBase || {
+              snapshotId,
+              workspaceRevision: treeVersion?.expectedWorkspaceRevision ?? 0,
+            },
+          },
           projectId,
         });
 
@@ -1161,7 +1167,13 @@ export default function CoverageTypeDashboard({
         }));
 
         const res = await applyUnitTestSuggestion(snapshotId, {
-          suggestions,
+          suggestions: suggestions.map((s) => ({
+            ...s,
+            proposalBase: s.proposalBase || {
+              snapshotId,
+              workspaceRevision: treeVersion?.expectedWorkspaceRevision ?? 0,
+            },
+          })),
           projectId,
         });
 
@@ -1516,6 +1528,7 @@ export default function CoverageTypeDashboard({
         });
 
         const cleanedSuggestions = fileSugs.map((s) => ({
+          ...s,
           suggestionId: s.suggestionId || s.id,
           sourceFile: s.sourceFile || fPath,
           testFile: s.testFile || s.targetTestFile,
@@ -1525,6 +1538,10 @@ export default function CoverageTypeDashboard({
           framework: s.framework,
           targetLines: s.targetLines,
           targetBranches: s.targetBranches,
+          proposalBase: s.proposalBase || {
+            snapshotId,
+            workspaceRevision: treeVersion?.expectedWorkspaceRevision ?? 0,
+          },
         }));
 
         const thisFileSugIds = fileSugs.map((s) => s.suggestionId || s.id);
@@ -2144,6 +2161,10 @@ export default function CoverageTypeDashboard({
             testFile: targetTestFile,
             generatedCode,
             framework: framework || activeFramework || "vitest",
+            proposalBase: {
+              snapshotId,
+              workspaceRevision: treeVersion?.expectedWorkspaceRevision ?? 0,
+            },
           },
         });
         if (res?.success) {

@@ -14,7 +14,8 @@ import {
     verifySourceFilesUnchanged,
     cleanTestRunnerError,
     getTestRunnerFailure,
-    resolveContainerOrHostTestPath
+    resolveContainerOrHostTestPath,
+    applyUnitTestSuggestion
 } from "../services/applyTestSuggestion.service.js";
 import { runJestCoverage } from "../services/runTestsJob.service.js";
 import { dockerRunner } from "../services/dockerRunner.service.js";
@@ -671,6 +672,15 @@ FAIL tests/calc.test.js
 
             const healed = fs.readFileSync(testPath, "utf8");
             expect(healed).toBe(testContent);
+        });
+    });
+
+    describe("applyUnitTestSuggestion Self-Healing Contract", () => {
+        test("throws 400 when no suggestion or suggestions provided", async () => {
+            await expect(applyUnitTestSuggestion({ snapshotId: "s1" })).rejects.toMatchObject({
+                statusCode: 400,
+                code: "INVALID_SUGGESTION"
+            });
         });
     });
 });

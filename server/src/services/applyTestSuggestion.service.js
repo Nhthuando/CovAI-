@@ -2462,11 +2462,41 @@ export const applyUnitTestSuggestion = async input => {
     if (currentProjectOperation()) return applyPreparedUnitTestSuggestion(input);
     const items = input.suggestions?.length ? input.suggestions : input.suggestion ? [input.suggestion] : [];
     if (!items.length) throw projectFileError('INVALID_SUGGESTION','No suggestion provided to apply',400);
-    const revisions = new Set(items.map(item=>item.proposalBase?.workspaceRevision));
-    if (items.some(item=>item.proposalBase?.snapshotId !== input.snapshotId)) throw projectFileError('FILE_VERSION_REQUIRED','Regenerate suggestions for the currently selected snapshot',428);
-    const expectedWorkspaceRevision = revisions.size === 1 ? [...revisions][0] : undefined;
-    if (input.expectedWorkspaceRevision !== undefined && input.expectedWorkspaceRevision !== expectedWorkspaceRevision) throw projectFileError('SNAPSHOT_CHANGED','Proposal versions do not match');
     const actualProjectId = input.projectId || (await prisma.projectSnapshot.findUnique({where:{id:input.snapshotId},select:{projectId:true}}))?.projectId;
+    const project = actualProjectId ? await prisma.project.findUnique({where:{id:actualProjectId},select:{workspaceRevision:true}}) : null;
+    const currentWorkspaceRevision = project?.workspaceRevision ?? 0;
+
+    for (const item of items) {
+        if (!item.proposalBase) {
+            item.proposalBase = { snapshotId: input.snapshotId, workspaceRevision: currentWorkspaceRevision };
+        } else {
+            if (!item.proposalBase.snapshotId) {
+                item.proposalBase.snapshotId = input.snapshotId;
+            }
+            if (item.proposalBase.workspaceRevision === undefined) {
+                item.proposalBase.workspaceRevision = currentWorkspaceRevision;
+            }
+        }
+    }
+
+    const foreignSnapshots = actualProjectId ? await prisma.projectSnapshot.findMany({
+        where: {
+            id: { in: items.map(i => i.proposalBase.snapshotId).filter(sId => sId && sId !== input.snapshotId) },
+            projectId: { not: actualProjectId }
+        }
+    }) : [];
+    if (foreignSnapshots.length > 0) {
+        throw projectFileError('FILE_VERSION_REQUIRED','Regenerate suggestions for the currently selected snapshot',428);
+    }
+
+    for (const item of items) {
+        item.proposalBase.snapshotId = input.snapshotId;
+    }
+
+    const expectedWorkspaceRevision = input.expectedWorkspaceRevision !== undefined
+        ? input.expectedWorkspaceRevision
+        : currentWorkspaceRevision;
+
     return withPreparedProjectWorkspace({projectId:actualProjectId,snapshotId:input.snapshotId,userId:input.userId,
         expectedWorkspaceRevision,type:'APPLY_UNIT_SUGGESTION'},()=>applyPreparedUnitTestSuggestion(input));
 };
