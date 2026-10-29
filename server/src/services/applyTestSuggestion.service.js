@@ -3439,19 +3439,6 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
                             ...item.metrics
                         }
                     });
-                        where: {
-                            snapshotId_filePath: {
-                                snapshotId,
-                                filePath: item.cleanSfKey
-                            }
-                        },
-                        update: item.metrics,
-                        create: {
-                            snapshotId,
-                            filePath: item.cleanSfKey,
-                            ...item.metrics
-                        }
-                    });
                 }
                 if (summaryMetrics) {
                     await tx.coverageSummary.upsert({

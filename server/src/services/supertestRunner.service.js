@@ -167,7 +167,6 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
         } else if (relativeConfig && !relativeConfig.startsWith("../") && !path.isAbsolute(relativeConfig)) {
             jestCmd += ` --config=${quoteForShell(relativeConfig)}`;
         }
-        }
     }
 
     await addJobLog(jobId, "INFO", "[SUPERTEST] Starting isolated integration tests.").catch(() => { });

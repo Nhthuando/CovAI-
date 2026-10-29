@@ -454,6 +454,7 @@ select:-webkit-autofill:focus {
   width: 3px !important;
   border-radius: 1px;
   margin-left: 3px;
+}
 
 /* Dark primary buttons need dark foreground for readable system-test actions. */
 [data-theme="dark"] .system-test-primary-action { color: #0b0f14; }

@@ -1198,21 +1198,23 @@ export const getPackageForFile = (relFile, root) => {
 export const jestParallelFlags = command => /(?:^|\s)--(?:runInBand|maxWorkers)(?:[=\s]|$)/.test(command) ? '' : ' --maxWorkers=50%';
 
 export const resolveJestBin = (dir, isEsm = false, customCommand = null) => {
-    if (customCommand && typeof customCommand === "string" && customCommand.trim()) {
-        const trimmed = customCommand.trim();
-        if (trimmed.includes("jest")) {
-            return trimmed.replace(/\s*(--coverage|--watch|--watchAll).*$/, "").trim();
-        }
-    }
     const nodePrefix = isEsm ? "node --experimental-vm-modules" : "node";
     const directJest = path.join(dir, "node_modules", "jest", "bin", "jest.js");
-    if (fs.existsSync(directJest)) return `${nodePrefix} node_modules/jest/bin/jest.js`;
+    let base;
+    if (fs.existsSync(directJest)) base = `${nodePrefix} node_modules/jest/bin/jest.js`;
     const localBin = path.join(dir, "node_modules", ".bin", "jest");
-    if (fs.existsSync(localBin)) return isEsm ? `${nodePrefix} node_modules/jest/bin/jest.js` : "./node_modules/.bin/jest";
+    if (!base && fs.existsSync(localBin)) base = `${nodePrefix} node_modules/jest/bin/jest.js`;
     const parentBin = path.join(dir, "..", "node_modules", ".bin", "jest");
-    if (fs.existsSync(parentBin)) return isEsm ? `node --experimental-vm-modules ../node_modules/jest/bin/jest.js` : "../node_modules/.bin/jest";
-    if (fs.existsSync("/app/node_modules/.bin/jest")) return "/app/node_modules/.bin/jest";
-    return isEsm ? "node --experimental-vm-modules node_modules/jest/bin/jest.js" : "npx jest";
+    if (!base && fs.existsSync(parentBin)) base = `${nodePrefix} ../node_modules/jest/bin/jest.js`;
+    if (!base && fs.existsSync("/app/node_modules/.bin/jest")) base = `${nodePrefix} /app/node_modules/jest/bin/jest.js`;
+    base ||= isEsm ? "node --experimental-vm-modules node_modules/jest/bin/jest.js" : "npx --no-install jest";
+    if (typeof customCommand === 'string' && customCommand.trim()) {
+        const trimmed = customCommand.trim().replace(/(?:^|\s)--(?:coverage|watch(?:All)?)(?:=(?:true|false))?(?=\s|$)/g, ' ').trim();
+        const bare = trimmed.match(/^(?:npx(?:\.cmd)?(?:\s+--no-install)?\s+)?jest(?:\.cmd)?(?=\s|$)(.*)$/i);
+        if (bare) return `${base}${bare[1].trim() ? ` ${bare[1].trim()}` : ''}`;
+        if (trimmed.includes('jest')) return trimmed;
+    }
+    return base;
 };
 
 /**
