@@ -961,15 +961,16 @@ export const deleteProject = async (projectId, userId) => {
 };
 
 export const getProjectTree = async (projectId, userId, options = {}) => {
-  return withProjectGuard({projectId,userId,capability:'project.read'}, async (tx,access) => {
+  const meta = await withProjectGuard({projectId,userId,capability:'project.read',maxWait:30000,timeout:60000}, async (tx,access) => {
     const snapshot = await tx.projectSnapshot.findFirst({where:{projectId,...(options.snapshotId ? {id:options.snapshotId} : {})},orderBy:options.snapshotId ? undefined : {createdAt:'desc'}});
     if (!snapshot?.rootDir) throw new ServiceError("Project snapshot not ready", 202);
     const workspaceRoot = projectEditableWorkspaceRoot(snapshot);
     const {recoverProjectMutationMarkers} = await import('./projectMutationRecovery.service.js');
     await recoverProjectMutationMarkers({tx,project:access.project,snapshot,root:workspaceRoot});
-    const tree = buildTree(workspaceRoot);
-    return options.withMetadata ? {tree,snapshotId:snapshot.id,workspaceRevision:access.project.workspaceRevision} : tree;
+    return { snapshotId: snapshot.id, workspaceRevision: access.project.workspaceRevision, workspaceRoot };
   });
+  const tree = buildTree(meta.workspaceRoot);
+  return options.withMetadata ? {tree,snapshotId:meta.snapshotId,workspaceRevision:meta.workspaceRevision} : tree;
 };
 
 export const getFileContent = (projectId, userId, filePath, options = {}) =>

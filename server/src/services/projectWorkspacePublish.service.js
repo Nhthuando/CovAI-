@@ -55,7 +55,7 @@ export const publishPreparedWorkspace = async ({projectId,snapshotId,userId,capa
         changes.push({path:name,beforeHash:beforeFiles.get(name)?.sha256 || null,afterHash:next?.sha256 || null,content});
     }
     if (total > (includeGitMetadata ? 256 : 16) * 1024 * 1024) throw projectFileError('MUTATION_TOO_LARGE','Prepared changes exceed the publication size limit',413);
-    const committed = await withProjectGuard({projectId,userId,capability,db},async(tx,access) => {
+    const committed = await withProjectGuard({projectId,userId,capability,db,maxWait:60000,timeout:120000},async(tx,access) => {
         const {assertProjectOperationActive} = await import('./projectOperationWorkspace.service.js');
         await assertProjectOperationActive(undefined,tx);
         const snapshot = await findEditableSnapshot(tx,projectId,snapshotId);

@@ -37,12 +37,12 @@ export async function resolveJobAccess({ jobId, userId, capability, db = prisma 
     if (!job) throw failure('Job not found', 404, 'RESOURCE_NOT_FOUND');
     return { ...await resolveProjectAccess({ projectId: job.projectId, userId, capability, db }), job, snapshot: job.snapshot };
 }
-export async function withProjectGuard({ projectId, userId, capability, db = prisma }, run) {
+export async function withProjectGuard({ projectId, userId, capability, db = prisma, maxWait = 30000, timeout = 60000 }, run) {
     // Transaction lock is shared by membership changes and final source publication.
     // Never automatically retry a callback that may have filesystem side effects.
     return db.$transaction(async tx => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${projectId}, 0))`;
         const access = await resolveProjectAccess({ projectId, userId, capability, db: tx });
         return run(tx, access);
-    }, { maxWait: 10000, timeout: 15000 });
+    }, { maxWait, timeout });
 }
