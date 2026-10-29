@@ -5,3 +5,4 @@ export const AI_MODELS = [
   { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', provider: 'Google', badge: 'Flash', badgeColor: '#a78bfa', desc: 'Gemini Flash' },
 ];
 export const GEMINI_MODEL_IDS = AI_MODELS.map(model => model.id);
+
