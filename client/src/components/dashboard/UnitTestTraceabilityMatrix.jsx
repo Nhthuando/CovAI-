@@ -656,14 +656,22 @@ export default function UnitTestTraceabilityMatrix({
     }
   };
 
-  // Auto-fetch file coverage for any expanded files
+  // Auto-fetch file coverage for expanded files AND files with coverage gaps (< 100%)
   useEffect(() => {
-    expandedFiles.forEach((fPath) => {
-      if (fPath && !fileCoverageCache[fPath] && !loadingFiles.has(fPath)) {
+    (groupedByFile || []).forEach((group) => {
+      const fPath = group?.filePath;
+      if (!fPath) return;
+      const meta = group?.sourceMeta;
+      const bPct = meta?.branchesPct ?? 100;
+      const lPct = meta?.linesPct ?? 100;
+      const sPct = meta?.stmtsPct ?? 100;
+      const isExpanded = expandedFiles.has(fPath);
+      const hasGap = Number(bPct) < 100 || Number(lPct) < 100 || Number(sPct) < 100;
+      if ((isExpanded || hasGap) && !fileCoverageCache[fPath] && !loadingFiles.has(fPath)) {
         fetchFileCoverage(fPath);
       }
     });
-  }, [expandedFiles]);
+  }, [expandedFiles, groupedByFile]);
 
   // Aggregate all assertions across test suites
   const allAssertions = useMemo(() => {
@@ -1495,15 +1503,15 @@ export default function UnitTestTraceabilityMatrix({
               const branchesTotalCount = fileCov?.summary?.branchesTotal ?? meta?.branchesTotal ?? null;
               const isFileFullyCovered = displayLines >= 100 &&
                 (displayBranches >= 100 || (branchesTotalCount != null ? branchesTotalCount === 0 : false)) &&
-                (displayFuncs >= 100 || group.functions.length === 0) &&
+                (displayFuncs >= 100 || (group?.functions?.length || 0) === 0) &&
                 displayStmts >= 100;
               const getColor = (pct) => pct >= 100 ? "#10b981" : pct > 0 ? "#f59e0b" : "#ef4444";
 
               // Separate genuine business functions from internal anonymous callbacks
               const businessFunctions = group.functions.filter((fn) => !isAnonymousName(fn.cleanName));
               const callbackFunctions = group.functions.filter((fn) => isAnonymousName(fn.cleanName));
-              const primaryFunctions = businessFunctions.length > 0 ? businessFunctions : callbackFunctions;
-              const secondaryCallbacks = businessFunctions.length > 0 ? callbackFunctions : [];
+              const primaryFunctions = (businessFunctions?.length || 0) > 0 ? businessFunctions : callbackFunctions;
+              const secondaryCallbacks = (businessFunctions?.length || 0) > 0 ? callbackFunctions : [];
               const fileBaseName = cleanPath.split("/").pop()?.replace(/\.[^.]+$/, "") || "Module";
 
               return (
@@ -1559,8 +1567,8 @@ export default function UnitTestTraceabilityMatrix({
                         <span style={{ color: getColor(displayBranches) }}>
                           Branches: {displayBranches}%
                         </span>
-                        <span style={{ color: (group.functions.length === 0) ? (isLight ? "#64748b" : "#94a3b8") : getColor(displayFuncs) }}>
-                          Funcs: {group.functions.length === 0 ? "N/A (0 fns)" : `${displayFuncs}%`}
+                        <span style={{ color: ((group?.functions?.length || 0) === 0) ? (isLight ? "#64748b" : "#94a3b8") : getColor(displayFuncs) }}>
+                          Funcs: {(group?.functions?.length || 0) === 0 ? "N/A (0 fns)" : `${displayFuncs}%`}
                         </span>
                         <span style={{ color: getColor(displayLines) }}>
                           Lines: {displayLines}%
@@ -1795,7 +1803,7 @@ export default function UnitTestTraceabilityMatrix({
                   {/* Functions in this file */}
                   {isFileExpanded && (
                     <div style={{ padding: "8px 18px 14px 34px", display: "flex", flexDirection: "column", gap: 10 }}>
-                      {group.functions.length === 0 ? (
+                      {(group?.functions?.length || 0) === 0 ? (
                         <div
                           style={{
                             padding: "12px 16px",
@@ -1823,7 +1831,7 @@ export default function UnitTestTraceabilityMatrix({
                         const activeTab = "proof"; // always show 4-metric execution proof
                         const proofData = computeFunctionProof(fn, fileCov, meta);
                         const isAnon = isAnonymousName(fn.cleanName);
-                        const displayFnName = isAnon ? (businessFunctions.length === 0 ? `${fileBaseName} [default]` : fn.cleanName) : fn.cleanName;
+                        const displayFnName = isAnon ? ((businessFunctions?.length || 0) === 0 ? `${fileBaseName} [default]` : fn.cleanName) : fn.cleanName;
 
                         return (
                           <div
@@ -2069,7 +2077,7 @@ export default function UnitTestTraceabilityMatrix({
                                         <div style={{ fontSize: 10.5, color: isLight ? "#64748b" : "#8b949e", lineHeight: 1.4 }}>
                                           <b>Formula:</b> ({proofData.stmtsCoveredCount} / {proofData.stmtsTotalCount}) × 100% = {proofData.stmtsPct}%. {proofData.stmtsCoveredCount >= proofData.stmtsTotalCount ? "All AST statements in function executed." : `${proofData.stmtsTotalCount - proofData.stmtsCoveredCount} statement(s) not executed.`}
                                         </div>
-                                        {proofData.stmtsInRange.length > 0 && (
+                                        {proofData?.stmtsInRange?.length > 0 && (
                                           <div style={{ maxHeight: 90, overflowY: "auto", fontSize: 10, fontFamily: "var(--font-mono)", display: "flex", flexDirection: "column", gap: 3, marginTop: 4 }}>
                                             {proofData.stmtsInRange.slice(0, 5).map((s, idx) => (
                                               <div key={idx} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: isLight ? "#f1f5f9" : "rgba(255,255,255,0.03)", padding: "2px 5px", borderRadius: 3 }}>
@@ -2112,7 +2120,7 @@ export default function UnitTestTraceabilityMatrix({
                                             <span><b>Formula:</b> ({proofData.branchPathsCovered} / {proofData.branchPathsTotal} paths) × 100% = {proofData.branchesPct}%. Both True & False paths traversed.</span>
                                           )}
                                         </div>
-                                        {proofData.branchesInRange.length > 0 && (
+                                        {proofData?.branchesInRange?.length > 0 && (
                                           <div style={{ maxHeight: 90, overflowY: "auto", fontSize: 10, fontFamily: "var(--font-mono)", display: "flex", flexDirection: "column", gap: 3, marginTop: 4 }}>
                                             {proofData.branchesInRange.map((b, idx) => {
                                               const bCounts = Array.isArray(b.counts) && b.counts.length > 0
@@ -2200,7 +2208,7 @@ export default function UnitTestTraceabilityMatrix({
                                         <div style={{ fontSize: 10.5, color: isLight ? "#64748b" : "#8b949e", lineHeight: 1.4 }}>
                                           <b>Formula:</b> ({proofData.linesCoveredCount} / {proofData.linesTotalCount}) × 100% = {proofData.linesPct}%. {proofData.linesCoveredCount >= proofData.linesTotalCount ? "All executable lines received hits." : `${proofData.linesTotalCount - proofData.linesCoveredCount} line(s) missing hits.`}
                                         </div>
-                                        {proofData.linesInRange.length > 0 && (
+                                        {proofData?.linesInRange?.length > 0 && (
                                           <div style={{ maxHeight: 90, overflowY: "auto", fontSize: 10, fontFamily: "var(--font-mono)", display: "flex", flexDirection: "column", gap: 3, marginTop: 4 }}>
                                             {proofData.linesInRange.slice(0, 6).map((l, idx) => (
                                               <div key={idx} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: isLight ? "#f1f5f9" : "rgba(255,255,255,0.03)", padding: "2px 5px", borderRadius: 3 }}>

@@ -128,7 +128,7 @@ Cannot find module 'path' from 'src/index.js'
     afterEach(() => {
       try {
         fs.rmSync(tmpDir, { recursive: true, force: true });
-      } catch {}
+      } catch { }
     });
 
     test("detects when dependency is not in package.json and not in node_modules", () => {
@@ -162,3 +162,4 @@ Cannot find module 'path' from 'src/index.js'
     });
   });
 });
+

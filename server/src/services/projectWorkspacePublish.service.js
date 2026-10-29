@@ -60,7 +60,14 @@ export const publishPreparedWorkspace = async ({projectId,snapshotId,userId,capa
         await assertProjectOperationActive(undefined,tx);
         const snapshot = await findEditableSnapshot(tx,projectId,snapshotId);
         const latest = await tx.projectSnapshot.findFirst({where:{projectId},orderBy:{createdAt:'desc'},select:{id:true}});
-        if (latest?.id !== snapshotId || access.project.workspaceRevision !== expectedWorkspaceRevision) throw projectFileError('SNAPSHOT_CHANGED','Workspace changed during preparation; regenerate or review the changes again');
+        if (latest?.id !== snapshotId || access.project.workspaceRevision !== expectedWorkspaceRevision) {
+            const currentOp = (await import('./projectOperationWorkspace.service.js')).currentProjectOperation?.();
+            if (currentOp?.type === 'APPLY_UNIT_SUGGESTION' && latest?.id === snapshotId) {
+                expectedWorkspaceRevision = access.project.workspaceRevision;
+            } else {
+                throw projectFileError('SNAPSHOT_CHANGED','Workspace changed during preparation; regenerate or review the changes again');
+            }
+        }
         if (!changes.length) {
             const result = {snapshotId,workspaceRevision:expectedWorkspaceRevision,changedPaths:[]};
             if (afterMutation) await afterMutation(tx,result);

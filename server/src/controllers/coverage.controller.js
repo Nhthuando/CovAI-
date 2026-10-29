@@ -353,11 +353,41 @@ export const getCoverageSummary = async (req, res) => {
         let rawTotals = null;
         const resolvedRootDir = resolveSnapshotRootDir(snapshot.rootDir);
         if (resolvedRootDir) {
-            const summaryFile = path.join(resolvedRootDir, "coverage", "coverage-summary.json");
-            if (fs.existsSync(summaryFile)) {
-                try {
-                    const raw = JSON.parse(fs.readFileSync(summaryFile, "utf8"));
-                    if (raw) {
+            const candidateSummaryFiles = [
+                path.join(resolvedRootDir, "coverage", "coverage-summary.json"),
+                path.join(resolvedRootDir, "server", "coverage", "coverage-summary.json"),
+                path.join(resolvedRootDir, "client", "coverage", "coverage-summary.json"),
+                path.join(resolvedRootDir, "backend", "coverage", "coverage-summary.json"),
+                path.join(resolvedRootDir, "coverage-summary.json"),
+                path.join(resolvedRootDir, "coverage", "jest-coverage-summary.json"),
+                path.join(resolvedRootDir, "coverage", "vitest-coverage-summary.json"),
+            ];
+
+            // Scan immediate subdirectories for monorepo packages (e.g. server, app, pkg)
+            try {
+                const subEntries = fs.readdirSync(resolvedRootDir, { withFileTypes: true });
+                for (const entry of subEntries) {
+                    if (entry.isDirectory() && !["node_modules", ".git", "dist", ".gemini", "storage"].includes(entry.name)) {
+                        candidateSummaryFiles.push(path.join(resolvedRootDir, entry.name, "coverage", "coverage-summary.json"));
+                        candidateSummaryFiles.push(path.join(resolvedRootDir, entry.name, "coverage-summary.json"));
+                    }
+                }
+            } catch (_) {}
+
+            let raw = null;
+            for (const summaryFile of candidateSummaryFiles) {
+                if (fs.existsSync(summaryFile)) {
+                    try {
+                        const parsed = JSON.parse(fs.readFileSync(summaryFile, "utf8"));
+                        if (parsed && typeof parsed === "object") {
+                            raw = parsed;
+                            break;
+                        }
+                    } catch (_) {}
+                }
+            }
+
+            if (raw) {
                         if (typeFilter === "unit") {
                             // Extract path-matched threshold exceptions from Jest's coverageThreshold (if any)
                             const thresholdExceptions = new Set();
@@ -573,8 +603,96 @@ export const getCoverageSummary = async (req, res) => {
                             };
                         }
                     }
-                } catch (_) { }
+        }
+
+        // Database fallback: if no JSON file on disk, check if coverage was stored in DB
+        if (!rawTotals) {
+            try {
+                const dbFiles = await prisma.coverageFile.findMany({
+                    where: { snapshotId: snapshot.id },
+                    select: {
+                        filePath: true,
+                        linesPct: true,
+                        branchesPct: true,
+                        funcsPct: true,
+                        stmtsPct: true,
+                        linesTotal: true,
+                        linesCovered: true,
+                        branchesTotal: true,
+                        branchesCovered: true,
+                        funcsTotal: true,
+                        funcsCovered: true,
+                        stmtsTotal: true,
+                        stmtsCovered: true,
+                    }
+                });
+
+                if (dbFiles && dbFiles.length > 0) {
+                    const configExclusions = resolvedRootDir ? extractProjectCoverageExclusions(resolvedRootDir) : [];
+                    let sTot = 0, sCov = 0, bTot = 0, bCov = 0, fTot = 0, fCov = 0, lTot = 0, lCov = 0;
+                    let matchedFileCount = 0;
+
+                    for (const f of dbFiles) {
+                        const can = resolvedRootDir ? (canonicalizeFilePath(f.filePath, resolvedRootDir) || f.filePath) : f.filePath;
+                        if (typeFilter === "unit" && !isBusinessLogicSourceFile(can, configExclusions)) continue;
+                        if (typeFilter === "integration" && !isApiFilePath(can)) continue;
+
+                        matchedFileCount++;
+                        sTot += f.stmtsTotal || 0;
+                        sCov += f.stmtsCovered || 0;
+                        bTot += f.branchesTotal || 0;
+                        bCov += f.branchesCovered || 0;
+                        fTot += f.funcsTotal || 0;
+                        fCov += f.funcsCovered || 0;
+                        lTot += f.linesTotal || 0;
+                        lCov += f.linesCovered || 0;
+                    }
+
+                    if (matchedFileCount > 0 && (sTot > 0 || lTot > 0)) {
+                        const sPct = sTot > 0 ? Number(((sCov / sTot) * 100).toFixed(1)) : 0;
+                        const bPct = bTot > 0 ? Number(((bCov / bTot) * 100).toFixed(1)) : (lCov > 0 ? 100 : 0);
+                        const fPct = fTot > 0 ? Number(((fCov / fTot) * 100).toFixed(1)) : 0;
+                        const lPct = lTot > 0 ? Number(((lCov / lTot) * 100).toFixed(1)) : 0;
+
+                        rawTotals = {
+                            statements: { total: sTot, covered: sCov, pct: sPct },
+                            branches: { total: bTot, covered: bCov, pct: bPct },
+                            functions: { total: fTot, covered: fCov, pct: fPct },
+                            lines: { total: lTot, covered: lCov, pct: lPct },
+                        };
+                        coverage = {
+                            statements: sPct,
+                            branches: bPct,
+                            functions: fPct,
+                            lines: lPct,
+                        };
+                    }
+                }
+            } catch (dbAggErr) {
+                console.warn("[CoverageSummary] DB fallback aggregation error:", dbAggErr.message);
             }
+        }
+
+        if (!rawTotals) {
+            try {
+                const dbSummary = await prisma.coverageSummary.findUnique({
+                    where: { snapshotId: snapshot.id }
+                });
+                if (dbSummary && (dbSummary.stmtsTotal > 0 || dbSummary.linesTotal > 0)) {
+                    rawTotals = {
+                        statements: { total: dbSummary.stmtsTotal || 0, covered: dbSummary.stmtsCovered || 0, pct: dbSummary.statementsPct || 0 },
+                        branches: { total: dbSummary.branchesTotal || 0, covered: dbSummary.branchesCovered || 0, pct: dbSummary.branchesPct || 0 },
+                        functions: { total: dbSummary.funcsTotal || 0, covered: dbSummary.funcsCovered || 0, pct: dbSummary.functionsPct || 0 },
+                        lines: { total: dbSummary.linesTotal || 0, covered: dbSummary.linesCovered || 0, pct: dbSummary.linesPct || 0 },
+                    };
+                    coverage = {
+                        statements: dbSummary.statementsPct || 0,
+                        branches: dbSummary.branchesPct || 0,
+                        functions: dbSummary.functionsPct || 0,
+                        lines: dbSummary.linesPct || 0,
+                    };
+                }
+            } catch (_) {}
         }
 
         // If unit test and no explicit summary file found, compute baseline 0% totals across all business logic files

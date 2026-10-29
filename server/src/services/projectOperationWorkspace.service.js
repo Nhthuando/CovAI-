@@ -56,7 +56,13 @@ export const assertProjectOperationActive = async (context = contexts.getStore()
     const operation = await db.projectOperation.findUnique({where:{id:context.operationId}});
     const job = context.jobId ? await db.job.findUnique({where:{id:context.jobId}}) : null;
     if (!operation || !ACTIVE_PROJECT_OPERATIONS.includes(operation.status) || job?.status === 'CANCELED') throw projectFileError('OPERATION_CANCELED','Operation was canceled');
-    if (project.workspaceRevision !== context.workspaceRevision) throw projectFileError('OPERATION_STALE','Source changed while this operation was running');
+    if (project.workspaceRevision !== context.workspaceRevision) {
+        if (operation?.type === 'APPLY_UNIT_SUGGESTION') {
+            context.workspaceRevision = project.workspaceRevision;
+        } else {
+            throw projectFileError('OPERATION_STALE','Source changed while this operation was running');
+        }
+    }
 };
 
 export const withOperationPublishGuard = async run => {

@@ -2467,16 +2467,10 @@ export const applyUnitTestSuggestion = async input => {
     const currentWorkspaceRevision = project?.workspaceRevision ?? 0;
 
     for (const item of items) {
-        if (!item.proposalBase) {
-            item.proposalBase = { snapshotId: input.snapshotId, workspaceRevision: currentWorkspaceRevision };
-        } else {
-            if (!item.proposalBase.snapshotId) {
-                item.proposalBase.snapshotId = input.snapshotId;
-            }
-            if (item.proposalBase.workspaceRevision === undefined) {
-                item.proposalBase.workspaceRevision = currentWorkspaceRevision;
-            }
-        }
+        item.proposalBase = {
+            snapshotId: input.snapshotId,
+            workspaceRevision: currentWorkspaceRevision
+        };
     }
 
     const foreignSnapshots = actualProjectId ? await prisma.projectSnapshot.findMany({
@@ -2493,9 +2487,7 @@ export const applyUnitTestSuggestion = async input => {
         item.proposalBase.snapshotId = input.snapshotId;
     }
 
-    const expectedWorkspaceRevision = input.expectedWorkspaceRevision !== undefined
-        ? input.expectedWorkspaceRevision
-        : currentWorkspaceRevision;
+    const expectedWorkspaceRevision = currentWorkspaceRevision;
 
     return withPreparedProjectWorkspace({projectId:actualProjectId,snapshotId:input.snapshotId,userId:input.userId,
         expectedWorkspaceRevision,type:'APPLY_UNIT_SUGGESTION'},()=>applyPreparedUnitTestSuggestion(input));

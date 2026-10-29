@@ -61,6 +61,7 @@ const mockCreateSystemTestAnalysisJob = jest.fn().mockResolvedValue({ id: 'syste
 const mockEnsureMinimalPackageJson = jest.fn();
 jest.unstable_mockModule('../utils/projectRootResolver.js', () => ({
     resolveProjectRoot: root => root,
+    resolveSnapshotRootDir: root => root,
     hasSourceCodeFiles: () => true,
     ensureMinimalPackageJson: mockEnsureMinimalPackageJson,
 }));

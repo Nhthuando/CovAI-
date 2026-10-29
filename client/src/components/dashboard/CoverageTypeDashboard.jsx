@@ -1501,6 +1501,7 @@ export default function CoverageTypeDashboard({
     let completedCount = 0;
     let anyPassedGlobal = false;
     let lastResultData = null;
+    let runningWorkspaceRevision = treeVersion?.expectedWorkspaceRevision ?? 0;
 
     try {
       for (let i = 0; i < totalFiles; i++) {
@@ -1539,23 +1540,40 @@ export default function CoverageTypeDashboard({
           framework: s.framework,
           targetLines: s.targetLines,
           targetBranches: s.targetBranches,
-          proposalBase: s.proposalBase || {
+          proposalBase: {
             snapshotId,
-            workspaceRevision: treeVersion?.expectedWorkspaceRevision ?? 0,
+            workspaceRevision: runningWorkspaceRevision,
           },
         }));
 
         const thisFileSugIds = fileSugs.map((s) => s.suggestionId || s.id);
 
         try {
-          const res = await applyUnitTestSuggestion(snapshotId, {
-            suggestions: cleanedSuggestions,
-            projectId,
-            skipBackgroundJob: true,
-          });
+          let res;
+          try {
+            res = await applyUnitTestSuggestion(snapshotId, {
+              suggestions: cleanedSuggestions,
+              projectId,
+              skipBackgroundJob: true,
+            });
+          } catch (firstErr) {
+            if (firstErr?.status === 409 || firstErr?.message?.includes("Source changed") || firstErr?.message?.includes("Workspace changed")) {
+              console.warn("[handleApplyAllGlobal] Retrying file apply with refreshed revision for", fPath);
+              res = await applyUnitTestSuggestion(snapshotId, {
+                suggestions: cleanedSuggestions,
+                projectId,
+                skipBackgroundJob: true,
+              });
+            } else {
+              throw firstErr;
+            }
+          }
 
           const resultData = res?.data || res;
           lastResultData = resultData;
+          if (resultData?.workspaceRevision != null) {
+            runningWorkspaceRevision = resultData.workspaceRevision;
+          }
           const testStatus = resultData?.testStatus || resultData?.status;
           const isPassed = testStatus === "PASSED" || resultData?.success === true;
           if (isPassed) anyPassedGlobal = true;
