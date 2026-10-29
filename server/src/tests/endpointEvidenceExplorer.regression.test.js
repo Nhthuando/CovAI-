@@ -6,6 +6,8 @@ import crypto from "node:crypto";
 
 // Mock Prisma and other external dependencies
 const prismaMock = {
+    $transaction:jest.fn(async run=>run(prismaMock)),
+    $executeRaw:jest.fn(async()=>1),
     project: { findFirst: jest.fn(), findUnique: jest.fn() },
     projectSnapshot: { findFirst: jest.fn(), findUnique: jest.fn(), findMany: jest.fn() },
     job: { findMany: jest.fn() },
@@ -442,7 +444,7 @@ module.exports = authMiddleware;
 
         await expect(getFileContent("proj-1", "user-1", "../private.txt", "snap-secure"))
             .rejects
-            .toThrow("Invalid file path");
+            .toMatchObject({code:"INVALID_FILE_PATH",statusCode:400});
     });
 
     /**

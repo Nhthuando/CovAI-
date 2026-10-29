@@ -31,8 +31,8 @@ if (process.env.DATABASE_URL) {
                             return await query(args);
                         } catch (error) {
                             attempts++;
-                            const isDbUnreachable = 
-                                error?.code === "P1001" || 
+                            const isDbUnreachable =
+                                error?.code === "P1001" ||
                                 error?.message?.includes("Can't reach database server") ||
                                 error?.message?.includes("DatabaseNotReachable") ||
                                 error?.message?.includes("Connection terminated");

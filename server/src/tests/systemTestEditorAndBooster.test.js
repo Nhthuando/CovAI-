@@ -1,6 +1,14 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 
 const prismaMock = {
+    project: { findFirst: jest.fn(async ({where})=> {
+        const calls=[prismaMock.projectSnapshot.findUnique,prismaMock.projectSnapshot.findFirst]
+            .flatMap(fn=>fn.mock.results.map((row,index)=>({value:row.value,order:fn.mock.invocationCallOrder[index]}))).sort((a,b)=>b.order-a.order);
+        const snapshot=await calls[0]?.value;
+        const owner=snapshot?.project === null ? null : snapshot?.project?.ownerId || 'u-1';
+        const actor=where.OR?.[0]?.ownerId || where.ownerId;
+        return owner===actor ? {id:where.id,ownerId:owner,workspaceRevision:1} : null;
+    }) },
     projectSnapshot: {
         findUnique: jest.fn(),
         findFirst: jest.fn(),
@@ -113,6 +121,19 @@ jest.unstable_mockModule('../services/applyTestSuggestion.service.js', () => ({
     applyUnitTestSuggestion: jest.fn(),
 }));
 
+prismaMock.$executeRaw=jest.fn(async()=>1);
+prismaMock.$transaction=jest.fn(action=>action(prismaMock));
+const mockReadVersioned=jest.fn(async input=>({snapshotId:input.snapshotId,path:input.path,content:mockFiles.get('/repo/'+input.path),size:(mockFiles.get('/repo/'+input.path)||'').length,version:{revision:0,sha256:'base'},workspaceRevision:0}));
+const mockMutate=jest.fn(async input=>{
+ if(!input.expectedVersion) throw Object.assign(new Error('Version required'),{statusCode:428,code:'FILE_VERSION_REQUIRED'});
+ mockFiles.set('/repo/'+input.path,input.content);
+ return {snapshotId:input.snapshotId,version:{revision:1,sha256:'new'},workspaceRevision:1};
+});
+jest.unstable_mockModule('../services/projectFileVersion.service.js',()=>({readVersionedProjectFile:mockReadVersioned,
+ projectEditableWorkspaceRoot:snapshot=>snapshot.rootDir,
+ projectFileError:(code,message,statusCode=409)=>Object.assign(new Error(message),{code,statusCode}),
+ hashFileContent:jest.fn(),resolveContainedProjectPath:jest.fn(),fileVersion:jest.fn(),findEditableSnapshot:jest.fn(),MAX_PROJECT_FILE_BYTES:1048576,normalizeProjectPath:jest.fn()}));
+jest.unstable_mockModule('../services/projectMutation.service.js',()=>({mutateProjectWorkspace:mockMutate}));
 const mockAddJobToQueue = jest.fn().mockResolvedValue(true);
 const evidenceRedisValues = new Map();
 const evidenceRedis = {
@@ -184,7 +205,7 @@ describe('Phase 5: Test Editor & AI Coverage Booster', () => {
         it('returns 404 when test file does not exist on disk', async () => {
             prismaMock.projectSnapshot.findFirst.mockResolvedValueOnce({
                 id: 'snap-1',
-                rootDir: '/repo',
+                projectId:'p-1',rootDir: '/repo',
             });
             const req = {
                 user: { id: 'u-1' },
@@ -203,7 +224,7 @@ describe('Phase 5: Test Editor & AI Coverage Booster', () => {
         it('reads and parses Playwright test file successfully', async () => {
             prismaMock.projectSnapshot.findFirst.mockResolvedValueOnce({
                 id: 'snap-1',
-                rootDir: '/repo',
+                projectId:'p-1',rootDir: '/repo',
             });
             const sampleCode = `import { test, expect } from '@playwright/test';
 
@@ -240,10 +261,20 @@ test.describe('Menu catalog', () => {
     });
 
     describe('PUT /api/coverage/:snapshotId/system/tests/content', () => {
+        it('requires the file version without writing or discarding the draft', async () => {
+            prismaMock.projectSnapshot.findFirst.mockResolvedValueOnce({ id: 'snap-1', projectId: 'p-1', rootDir: '/repo' });
+            const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+            const code = "import { test } from '@playwright/test'; test('example', async ({ page }) => { await page.goto('/'); });";
+            await updateSystemTestFileContent({ user: { id: 'u-1' }, params: { snapshotId: 'snap-1' }, body: { filePath: 'tests/e2e/example.spec.js', content: code } }, res);
+            expect(res.status).toHaveBeenCalledWith(428);
+            expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'FILE_VERSION_REQUIRED' }));
+            expect(mockWriteFileSync).not.toHaveBeenCalled();
+            expect(prismaMock.aiTest.updateMany).not.toHaveBeenCalled();
+        });
         it('rejects invalid syntax with 422', async () => {
             prismaMock.projectSnapshot.findFirst.mockResolvedValueOnce({
                 id: 'snap-1',
-                rootDir: '/repo',
+                projectId:'p-1',rootDir: '/repo',
             });
             const badCode = `test('broken syntax', async ({ page } => {`; // missing closing paren
             const req = {
@@ -263,7 +294,7 @@ test.describe('Menu catalog', () => {
         it('rejects forbidden module imports with 422', async () => {
             prismaMock.projectSnapshot.findFirst.mockResolvedValueOnce({
                 id: 'snap-1',
-                rootDir: '/repo',
+                projectId:'p-1',rootDir: '/repo',
             });
             const dangerousCode = `import cp from 'child_process';
 test('bad', () => {});`;
@@ -284,7 +315,7 @@ test('bad', () => {});`;
         it('saves valid updated test code and synchronizes metadata', async () => {
             prismaMock.projectSnapshot.findFirst.mockResolvedValueOnce({
                 id: 'snap-1',
-                rootDir: '/repo',
+                projectId:'p-1',rootDir: '/repo',
             });
             const validCode = `import { test, expect } from '@playwright/test';
 
@@ -299,7 +330,7 @@ test.describe('Updated suite', () => {
             const req = {
                 user: { id: 'u-1' },
                 params: { snapshotId: 'snap-1' },
-                body: { filePath: 'tests/e2e/updated.spec.js', content: validCode },
+                body: { filePath: 'tests/e2e/updated.spec.js', content: validCode, expectedVersion:{revision:0,sha256:'base'} },
             };
             const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
 
@@ -394,6 +425,16 @@ test.describe('Updated suite', () => {
     });
 
     describe('systemTestBooster.service.js', () => {
+        it('accepts append-only output while retaining original assertions and bounded generation', async () => {
+            const before="import {test,expect} from '@playwright/test';test('old',async({page})=>{await expect(page.getByText('item')).toBeVisible();});";
+            mockFiles.set('/repo/tests/e2e/menu.spec.js',before);
+            mockGenerateText.mockResolvedValueOnce(JSON.stringify({additionalTests:"test('new',async({page})=>{await expect(page.getByText('other')).toBeVisible();});"}));
+            const result=await optimizeSystemTest({rootDir:'/repo',filePath:'tests/e2e/menu.spec.js',model:'gemini-3.1-flash-lite'});
+            expect(result.optimizedCode.startsWith(before+'\n\n')).toBe(true);
+            expect(result.addedScenarios).toEqual(['new']);
+            expect(mockGenerateText.mock.calls.at(-1)[1]).toBe('gemini-3.1-flash-lite');
+            expect(mockGenerateText.mock.calls.at(-1)[3]).toMatchObject({maxOutputTokens:5000,maxAttempts:2});
+        });
         it('boosts coverage using Gemini response when available', async () => {
             const initialCode = `import { test, expect } from '@playwright/test';
 test.describe('Menu', () => {
@@ -449,7 +490,7 @@ test.describe('Menu', () => {
         it('calls optimizeSystemTestController and returns optimized code', async () => {
             prismaMock.projectSnapshot.findFirst.mockResolvedValueOnce({
                 id: 'snap-1',
-                rootDir: '/repo',
+                projectId:'p-1',rootDir: '/repo',
             });
             const initialCode = `import { test, expect } from '@playwright/test';
 test('sample', async ({ page }) => {

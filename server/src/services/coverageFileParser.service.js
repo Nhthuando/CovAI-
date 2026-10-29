@@ -1,5 +1,8 @@
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
+import path from "node:path";
+import { resolveProjectAccess } from "./projectAccess.service.js";
+import { operationSnapshot,currentProjectOperation,stagePreparedPublication } from "./projectOperationWorkspace.service.js";
 
 const assertStringField = (value, fieldName) => {
   if (!value || typeof value !== "string" || value.trim().length === 0) {
@@ -44,7 +47,7 @@ const calculatePct = (section) => {
   return null;
 };
 
-const extractFilePath = (entry, key) => {
+const extractFilePath = (entry, key, rootDir) => {
   let raw = null;
   if (entry.path && typeof entry.path === "string") {
     raw = entry.path;
@@ -56,6 +59,10 @@ const extractFilePath = (entry, key) => {
     raw = key;
   }
   if (!raw || typeof raw !== "string") return null;
+  if (rootDir && path.isAbsolute(raw)) {
+    const relative = path.relative(rootDir, raw);
+    if (relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)) raw = relative;
+  }
 
   let norm = raw.replace(/\\/g, "/").replace(/^[a-zA-Z]:[\\/]/, "");
   norm = norm.replace(/^(?:.*?\/)?storage\/projects\/[^/]+\/[^/]+\/[^/]+\/repo\//i, "");
@@ -83,7 +90,7 @@ const calculateIstanbulPct = (map) => {
   return (coveredCount / values.length) * 100;
 };
 
-const getCoverageRecords = (coverageReport) => {
+const getCoverageRecords = (coverageReport, rootDir) => {
   if (!coverageReport || typeof coverageReport !== "object") {
     return [];
   }
@@ -108,7 +115,7 @@ const getCoverageRecords = (coverageReport) => {
     .map((entry, index) => {
       const filePath = extractFilePath(
         entry,
-        entry.filePath || entry.path || index,
+        entry.filePath || entry.path || index, rootDir,
       );
       if (!filePath || typeof filePath !== "string") {
         return null;
@@ -187,7 +194,7 @@ export const parseCoverageFilesForSnapshot = async ({
     throw new ServiceError("Invalid coverage report", 400);
   }
 
-  const snapshot = await prisma.projectSnapshot.findFirst({
+  let snapshot = await prisma.projectSnapshot.findFirst({
     where: {
       id: snapshotId,
       projectId,
@@ -205,19 +212,10 @@ export const parseCoverageFilesForSnapshot = async ({
     throw new ServiceError("Snapshot not found for this project", 404);
   }
 
-  const effectiveUserId = userId || snapshot.project?.ownerId;
-  if (!effectiveUserId) {
-    throw new ServiceError("Cannot determine owner for snapshot", 403);
-  }
+  await resolveProjectAccess({ projectId, userId, capability: "tests.run" });
+    snapshot = operationSnapshot(snapshot);
 
-  if (userId && snapshot.project && snapshot.project.ownerId !== userId) {
-    throw new ServiceError(
-      "You do not have permission to update coverage for this project",
-      403,
-    );
-  }
-
-  const coverageRows = getCoverageRecords(coverageReport);
+  const coverageRows = getCoverageRecords(coverageReport, snapshot.rootDir);
 
   const testType = coverageReport.testType || "UNIT"; // 'UNIT' or 'INTEGRATION'
 
@@ -247,35 +245,39 @@ export const parseCoverageFilesForSnapshot = async ({
     return 0;
   };
 
-  await prisma.coverageFile.deleteMany({
-    where: { snapshotId },
-  });
-
-  if (formattedRows.length > 0) {
-    await prisma.coverageFile.createMany({
-      data: formattedRows,
-      skipDuplicates: true,
-    });
-  }
-
-  if (rawSummary) {
-    await prisma.coverageSummary.upsert({
+  const persist = async tx => {
+    await tx.coverageFile.deleteMany({
       where: { snapshotId },
-      update: {
-        linesPct: safeNum(summaryRow.linesPct),
-        branchesPct: safeNum(summaryRow.branchesPct),
-        funcsPct: safeNum(summaryRow.funcsPct),
-        stmtsPct: safeNum(summaryRow.stmtsPct),
-      },
-      create: {
-        snapshotId,
-        linesPct: safeNum(summaryRow.linesPct),
-        branchesPct: safeNum(summaryRow.branchesPct),
-        funcsPct: safeNum(summaryRow.funcsPct),
-        stmtsPct: safeNum(summaryRow.stmtsPct),
-      },
     });
-  }
+
+    if (formattedRows.length > 0) {
+      await tx.coverageFile.createMany({
+        data: formattedRows,
+        skipDuplicates: true,
+      });
+    }
+
+    if (rawSummary) {
+      await tx.coverageSummary.upsert({
+        where: { snapshotId },
+        update: {
+          linesPct: safeNum(summaryRow.linesPct),
+          branchesPct: safeNum(summaryRow.branchesPct),
+          funcsPct: safeNum(summaryRow.funcsPct),
+          stmtsPct: safeNum(summaryRow.stmtsPct),
+        },
+        create: {
+          snapshotId,
+          linesPct: safeNum(summaryRow.linesPct),
+          branchesPct: safeNum(summaryRow.branchesPct),
+          funcsPct: safeNum(summaryRow.funcsPct),
+          stmtsPct: safeNum(summaryRow.stmtsPct),
+        },
+      });
+    }
+  };
+  if (currentProjectOperation()?.preparedPublications) await stagePreparedPublication(persist);
+  else await prisma.$transaction(persist);
 
   return {
     totalFiles: formattedRows.length,

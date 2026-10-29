@@ -1,3 +1,4 @@
+import {prepareVitestOperationRoot} from "./projectVitestWorkspace.service.js";
 import {
     markJobRunning,
     markJobSuccess,
@@ -22,7 +23,7 @@ export const processRunVitestJob = async (jobId) => {
         await markJobRunning(jobId);
 
         const job = await getJobById(jobId);
-        const { rootDir } = job.snapshot;
+        const rootDir = prepareVitestOperationRoot(job.snapshot.rootDir);
 
         // Read vitestCommand from project 
         const project = await prisma.project.findUnique({

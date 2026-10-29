@@ -1,4 +1,6 @@
 import prisma from "../config/prisma.js";
+import { currentProjectOperation,stagePreparedValue } from "./projectOperationWorkspace.service.js";
+import {randomUUID} from "node:crypto";
 import { ServiceError } from "../utils/serviceError.js";
 import { analyzeProjectStructure } from "./projectStructureAnalyzer.service.js";
 import {
@@ -64,7 +66,7 @@ export const processAnalysisJob = async (jobId) => {
 
         await updateJobProgress(jobId, 15);
         await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'LOAD_SOURCE', label: "Scanning snapshot for source code files...", progress: 15 }));
-        
+
         if (isJobCanceled(jobId, abortController.signal)) return;
 
         // In non-test runtime, yield to event loop during source loading stage
@@ -103,9 +105,11 @@ export const processAnalysisJob = async (jobId) => {
         }
 
         await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'MAP_DEPENDENCIES', label: "Saving analysis results to database...", progress: 85 }));
-        const analysis = await prisma.projectStructureAnalysis.upsert({
+        const plannedId = currentProjectOperation()?.preparedPublications ? (await prisma.projectStructureAnalysis.findUnique({where:{snapshotId:job.snapshotId},select:{id:true}}))?.id || randomUUID() : undefined;
+        const analysis = await stagePreparedValue(tx => tx.projectStructureAnalysis.upsert({
             where: { snapshotId: job.snapshotId },
             create: {
+                ...(plannedId ? {id:plannedId} : {}),
                 snapshotId: job.snapshotId,
                 schemaVersion: result.schemaVersion,
                 resultJson: JSON.stringify(result),
@@ -114,7 +118,7 @@ export const processAnalysisJob = async (jobId) => {
                 schemaVersion: result.schemaVersion,
                 resultJson: JSON.stringify(result),
             },
-        });
+        }),{id:plannedId});
 
         if (isJobCanceled(jobId, abortController.signal)) return;
 
@@ -156,4 +160,3 @@ export const processAnalysisJob = async (jobId) => {
         unregisterJobAbortController(jobId);
     }
 };
-

@@ -1,3 +1,5 @@
+import { currentProjectOperation, deferPreparedCommit } from './projectOperationWorkspace.service.js';
+import { withProjectGuard } from './projectAccess.service.js';
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
@@ -704,6 +706,18 @@ export function compareTestRuns(previousRun, currentRun, options = {}) {
  * Persists an archived version artifact to local disk for permanent, deterministic retrieval.
  */
 export function archiveVersionArtifact(rootDir, jobId, type, data) {
+    const operation = currentProjectOperation();
+    if (operation?.preparedPublications) {
+        deferPreparedCommit(() => withProjectGuard({projectId:operation.projectId,userId:operation.userId,capability:operation.capability},async tx => {
+            const job = await tx.job.findUnique({where:{id:jobId}});
+            const snapshot = await tx.projectSnapshot.findFirst({where:{id:operation.snapshotId,projectId:operation.projectId}});
+            if (job?.status === 'SUCCESS' && snapshot?.rootDir) writeVersionArtifact(snapshot.rootDir,jobId,type,data);
+        }));
+        return true;
+    }
+    return writeVersionArtifact(rootDir,jobId,type,data);
+}
+function writeVersionArtifact(rootDir, jobId, type, data) {
     if (!rootDir || !jobId) return false;
     try {
         const versionsDir = path.join(rootDir, ".covai-temp", "versions");

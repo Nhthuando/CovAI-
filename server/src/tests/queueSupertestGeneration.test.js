@@ -46,7 +46,8 @@ describe('queueSupertestGeneration F-03 Dirty-State Detection', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    prisma.project.findUnique.mockResolvedValue({ ownerId: userId });
+    prisma.project.findUnique.mockResolvedValue({ id: projectId, ownerId: userId });
+    prisma.project.findFirst.mockResolvedValue({id:projectId,ownerId:userId});
     loadSourceCode.mockResolvedValue([]);
     extractValidEndpoints.mockReturnValue([{ method: 'GET', path: '/api' }]);
     createAiTestsJob.mockResolvedValue({ id: 'job1', existing: false });

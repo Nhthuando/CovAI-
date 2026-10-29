@@ -661,7 +661,7 @@ export default function CFGCalculator({
     async function fetchCode() {
       if (selectedFile && project?.id) {
         try {
-          const res = await getFileContentApi(project.id, selectedFile);
+          const res = await getFileContentApi(project.id, selectedFile, { snapshotId: project.snapshots?.[0]?.id || project.latestSnapshotId });
           setSourceCode(res.data.content);
         } catch (err) {
           setSourceCode("// Failed to load source code");

@@ -1,3 +1,4 @@
+import { resolveProjectAccess } from './projectAccess.service.js';
 import prisma from '../config/prisma.js';
 
 export const getAiSuggestions = async ({ projectId, filePath, functionName, userId }) => {
@@ -28,11 +29,7 @@ export const getAiSuggestions = async ({ projectId, filePath, functionName, user
     }
 
     // 4. Verify ownership
-    if (project.ownerId !== userId) {
-        const error = new Error('Forbidden');
-        error.status = 403;
-        throw error;
-    }
+    await resolveProjectAccess({ projectId, userId, capability: "project.read" });
 
     // 5. Build Prisma filters dynamically
     const where = {
@@ -78,6 +75,7 @@ export const getAiSuggestions = async ({ projectId, filePath, functionName, user
 };
 
 export const refreshAiSuggestions = async ({ projectId, userId }) => {
+    await resolveProjectAccess({ projectId, userId, capability: "ai.use" });
     // 1. Validate authentication
     if (!userId) {
         const error = new Error('Unauthorized');
@@ -97,14 +95,10 @@ export const refreshAiSuggestions = async ({ projectId, userId }) => {
         throw error;
     }
 
-    if (project.ownerId !== userId) {
-        const error = new Error('Forbidden');
-        error.status = 403;
-        throw error;
-    }
+    await resolveProjectAccess({ projectId, userId, capability: "project.read" });
 
     // 3. Logic to refresh suggestions
-    const latestSnapshot = await prisma.snapshot.findFirst({
+    const latestSnapshot = await prisma.projectSnapshot.findFirst({
         where: { projectId },
         orderBy: { createdAt: 'desc' },
         select: { id: true }
@@ -116,12 +110,9 @@ export const refreshAiSuggestions = async ({ projectId, userId }) => {
         throw error;
     }
 
-    // Import dynamically to avoid circular dependency if needed
-    const { processAiSuggestJob } = await import('./aiSuggestJob.service.js');
-    
-    // Create a dummy job or trigger directly
-    // For simplicity, we trigger the job logic directly
-    await processAiSuggestJob(latestSnapshot.id);
-    
-    return { success: true, message: 'Suggestions refreshed successfully' };
+    const { createAiSuggestJob } = await import('./job.service.js');
+    const { addJobToQueue } = await import('./queue.service.js');
+    const job = await createAiSuggestJob({ projectId, snapshotId: latestSnapshot.id, userId });
+    if (!job.reused && !job.existing) await addJobToQueue('AI_SUGGEST', job.id);
+    return { success: true, message: 'Suggestions refresh queued', jobId: job.id };
 };

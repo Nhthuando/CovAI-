@@ -2,7 +2,9 @@ import { jest, beforeEach, describe, expect, it } from "@jest/globals";
 import path from "node:path";
 
 const run = jest.fn();
+const prepareDependencies=jest.fn();
 await jest.unstable_mockModule("../services/dockerRunner.service.js", () => ({ dockerRunner: { run } }));
+await jest.unstable_mockModule('../services/projectDependencies.service.js',()=>({prepareProjectDependencies:prepareDependencies}));
 
 const fsMock = {
   mkdirSync: jest.fn(),
@@ -37,6 +39,7 @@ describe("runSystemTests", () => {
     jest.clearAllMocks();
     fsMock.existsSync.mockReturnValue(false);
     run.mockResolvedValue({ success: true, exitCode: 0 });
+    prepareDependencies.mockReset().mockResolvedValue({manager:'npm',command:'npm'});
     prepareAutEnvironment.mockResolvedValue({ created: true });
     runSeedDataIfPresent.mockResolvedValue({ executed: false });
     startAutServer.mockResolvedValue({ started: true, pid: 12345, port: 4173 });
@@ -60,26 +63,25 @@ describe("runSystemTests", () => {
     fsMock.readFileSync.mockReturnValue("export default { webServer: { command: 'npm run dev' } }");
     await runSystemTests({ jobId: "web-server-job", rootDir,
       execution: { runner: "playwright", configPath: "playwright.config.ts", command: "npx playwright test", reportDirectory: "C:/snapshot/.covai-system-test" } });
-    expect(run).toHaveBeenCalledTimes(3);
-    expect(run.mock.calls[0][0]).toEqual(expect.objectContaining({ snapshotPath: rootDir, jobId: "web-server-job", forceHost: true,
-      command: expect.stringContaining("npm install --include=dev"), env: expect.objectContaining({ NODE_ENV: "development" }) }));
-    expect(run.mock.calls[1][0].command).toMatch(/cli\.js" install$/);
-    expect(run.mock.calls[2][0].command).toContain('--config=".covai-system-test/playwright.config.mjs"');
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(prepareDependencies).toHaveBeenCalledWith({directory:rootDir,repositoryRoot:rootDir,jobId:'web-server-job'});
+    expect(run.mock.calls[0][0].command).toMatch(/cli\.js" install$/);
+    expect(run.mock.calls[1][0].command).toContain('--config=".covai-system-test/playwright.config.mjs"');
     const wrapper = fsMock.writeFileSync.mock.calls.find(([file]) => file === path.join(rootDir, ".covai-system-test", "playwright.config.mjs"))[1];
     expect(wrapper).toContain("screenshot: 'on'");
     expect(wrapper).toContain("cwd: path.resolve(root, item.cwd || '.')");
     expect(wrapper).toContain("const managedServer = false");
-    expect(run.mock.calls[2][0].env.PLAYWRIGHT_BROWSERS_PATH).toBe(run.mock.calls[1][0].env.PLAYWRIGHT_BROWSERS_PATH);
+    expect(run.mock.calls[1][0].env.PLAYWRIGHT_BROWSERS_PATH).toBe(run.mock.calls[0][0].env.PLAYWRIGHT_BROWSERS_PATH);
     expect(startAutServer).not.toHaveBeenCalled();
   });
 
   it("stops before Playwright when web server dependencies cannot be installed", async () => {
     fsMock.existsSync.mockImplementation(file => file === path.join("C:/snapshot", "package.json"));
     fsMock.readFileSync.mockReturnValue("export default { webServer: {} }");
-    run.mockResolvedValueOnce({ success: false, exitCode: 1, stderr: "npm ERR! installation failed" });
+    prepareDependencies.mockRejectedValueOnce(new Error('Application dependency installation failed'));
     await expect(runSystemTests({ rootDir: "C:/snapshot",
-      execution: { runner: "playwright", configPath: "playwright.config.ts", command: "npx playwright test", reportDirectory: "C:/snapshot/.covai-system-test" } })).rejects.toThrow("System test dependency installation failed (exit 1): npm ERR! installation failed");
-    expect(run).toHaveBeenCalledTimes(1);
+      execution: { runner: "playwright", configPath: "playwright.config.ts", command: "npx playwright test", reportDirectory: "C:/snapshot/.covai-system-test" } })).rejects.toThrow("Application dependency installation failed");
+    expect(run).not.toHaveBeenCalled();
     expect(startAutServer).not.toHaveBeenCalled();
   });
   it("filters a config-owned frontend run to the explicitly selected spec", async () => {
@@ -123,7 +125,7 @@ describe("runSystemTests", () => {
     expect(fsMock.mkdirSync).toHaveBeenCalledWith("C:/snapshot/.covai-system-test", { recursive: true });
     expect(prepareAutEnvironment).toHaveBeenCalledWith("C:/snapshot", 4173, "job-1");
     expect(runSeedDataIfPresent).toHaveBeenCalledWith({ snapshotDir: "C:/snapshot", jobId: "job-1" });
-    expect(startAutServer).toHaveBeenCalledWith({ snapshotDir: "C:/snapshot", port: 4173, jobId: "job-1", requireHealthy: true });
+    expect(startAutServer).toHaveBeenCalledWith({ snapshotDir: "C:/snapshot", repositoryRoot:'C:/snapshot', port: 4173, jobId: "job-1", requireHealthy: true });
     expect(run).toHaveBeenCalledWith(expect.objectContaining({
       snapshotPath: "C:/snapshot",
       jobId: "job-1",

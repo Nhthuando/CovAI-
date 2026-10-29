@@ -11,6 +11,8 @@ import {
 } from "./job.service.js";;
 import { saveJobOutput } from "./jobOutput.service.js";
 import { runVitestCoverage } from "./vitestRunner.service.js";
+import {prepareVitestOperationRoot} from "./projectVitestWorkspace.service.js";
+import { stagePreparedPublication,withOperationPublishGuard } from "./projectOperationWorkspace.service.js";
 import { parseCoverageSummary } from "./coverageSummaryParser.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { storeCoverageOutputs } from "./coverageStorage.service.js";
@@ -31,7 +33,7 @@ export const processVitestCoverageJob = async (jobId) => {
             throw new ServiceError("Snapshot is not ready to run Vitest.", 409);
         }
 
-        const { rootDir } = job.snapshot;
+        const rootDir = prepareVitestOperationRoot(job.snapshot.rootDir);
         const snapshotId = job.snapshotId;
         const projectId = job.projectId;
         const userId = job.userId;
@@ -76,7 +78,7 @@ export const processVitestCoverageJob = async (jobId) => {
         }
 
         // 3. Parse global coverage summary
-        const summaryResult = await parseCoverageSummary(coverageDir, snapshotId);
+        const summaryResult = await withOperationPublishGuard(()=>parseCoverageSummary(coverageDir, snapshotId));
 
         // 4. Parse test results
         const vitestResults = parseVitestResults(coverageDir);
@@ -97,7 +99,7 @@ export const processVitestCoverageJob = async (jobId) => {
             if (formattedScenarios) {
                 dataPayload.scenarios = formattedScenarios;
             }
-            await prisma.testRun.create({ data: dataPayload });
+            await stagePreparedPublication(tx=>tx.testRun.create({ data: dataPayload }));
             await addJobLog(jobId, "INFO", `Saved TestRun (VITEST): ${vitestResults.totalTests} tests.`).catch(() => { });
         }
 

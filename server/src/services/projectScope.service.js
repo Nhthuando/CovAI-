@@ -1,11 +1,11 @@
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
+import { resolveProjectAccess } from './projectAccess.service.js';
 
 const notFound = () => new ServiceError("Project or snapshot not found", 404);
 
-export const resolveLatestOwnedProjectSnapshot = async ({ projectId, userId, requireRoot = false }) => {
-    const project = await prisma.project.findFirst({ where: { id: projectId, ownerId: userId }, select: { id: true } });
-    if (!project) throw notFound();
+export const resolveLatestOwnedProjectSnapshot = async ({ projectId, userId, requireRoot = false, capability = 'project.read' }) => {
+    const { project } = await resolveProjectAccess({ projectId, userId, capability });
 
     const snapshot = await prisma.projectSnapshot.findFirst({
         where: { projectId },
@@ -19,9 +19,8 @@ export const resolveLatestOwnedProjectSnapshot = async ({ projectId, userId, req
     return { project, snapshot };
 };
 
-export const resolveOwnedProjectSnapshot = async ({ projectId, snapshotId, userId, requireRoot = false }) => {
-    const project = await prisma.project.findFirst({ where: { id: projectId, ownerId: userId }, select: { id: true } });
-    if (!project) throw notFound();
+export const resolveOwnedProjectSnapshot = async ({ projectId, snapshotId, userId, requireRoot = false, capability = 'project.read' }) => {
+    const { project } = await resolveProjectAccess({ projectId, userId, capability });
     const snapshot = await prisma.projectSnapshot.findFirst({
         where: { ...(snapshotId ? { id: snapshotId } : {}), projectId },
         orderBy: snapshotId ? undefined : { createdAt: "desc" },
@@ -32,7 +31,8 @@ export const resolveOwnedProjectSnapshot = async ({ projectId, snapshotId, userI
 };
 
 export const resolveOwnedJob = async ({ jobId, userId }) => {
-    const job = await prisma.job.findFirst({ where: { id: jobId, project: { ownerId: userId } }, include: { logs: { orderBy: { createdAt: "asc" } }, output: true } });
+    const job = await prisma.job.findFirst({ where: { id: jobId }, include: { logs: { orderBy: { createdAt: "asc" } }, output: true } });
     if (!job) throw new ServiceError("Job not found", 404);
+    await resolveProjectAccess({projectId:job.projectId,userId,capability:'project.read'});
     return job;
 };

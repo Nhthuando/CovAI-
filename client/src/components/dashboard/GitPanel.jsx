@@ -1,3 +1,4 @@
+import { useProjectAccess } from "../../hooks/useProjectAccess";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -81,6 +82,7 @@ function getStatusBadge(status) {
 }
 
 export const GitPanel = ({ projectId, onSync }) => {
+  const projectAccess = useProjectAccess(projectId);
   const [statusData, setStatusData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [commitMessage, setCommitMessage] = useState("");
@@ -190,6 +192,7 @@ export const GitPanel = ({ projectId, onSync }) => {
 
   /* ── Actions ────────────────────────────────────────────── */
   const handleInitRepo = async () => {
+    if (!projectAccess.can("integrations.write")) return;
     setInitializing(true);
     setErrorMsg("");
     try {
@@ -207,6 +210,7 @@ export const GitPanel = ({ projectId, onSync }) => {
   };
 
   const handleSetRemote = async () => {
+    if (!projectAccess.can("integrations.write")) return;
     if (!remoteInput.trim()) return;
     setSavingRemote(true);
     setErrorMsg("");
@@ -227,6 +231,7 @@ export const GitPanel = ({ projectId, onSync }) => {
   };
 
   const handleStage = async (files) => {
+    if (!projectAccess.can("integrations.write")) return;
     setActionLoading(true);
     try {
       const res = await gitService.stageFiles(projectId, files);
@@ -244,6 +249,7 @@ export const GitPanel = ({ projectId, onSync }) => {
   };
 
   const handleUnstage = async (files) => {
+    if (!projectAccess.can("integrations.write")) return;
     setActionLoading(true);
     try {
       const res = await gitService.unstageFiles(projectId, files);
@@ -261,6 +267,7 @@ export const GitPanel = ({ projectId, onSync }) => {
   };
 
   const handleDiscard = async (filePath, isUntracked = false) => {
+    if (!projectAccess.can("integrations.write")) return;
     setActionLoading(true);
     try {
       const res = await gitService.discardChanges(
@@ -282,6 +289,7 @@ export const GitPanel = ({ projectId, onSync }) => {
   };
 
   const handleCommit = async (e) => {
+    if (!projectAccess.can("integrations.write")) return;
     e?.preventDefault();
     if (!commitMessage.trim()) return;
 
@@ -316,6 +324,7 @@ export const GitPanel = ({ projectId, onSync }) => {
   };
 
   const handlePush = async () => {
+    if (!projectAccess.can("integrations.write")) return;
     setPushing(true);
     setErrorMsg("");
     try {
@@ -336,6 +345,7 @@ export const GitPanel = ({ projectId, onSync }) => {
   };
 
   const handlePull = async () => {
+    if (!projectAccess.can("integrations.write")) return;
     setPulling(true);
     setErrorMsg("");
     try {
@@ -359,6 +369,7 @@ export const GitPanel = ({ projectId, onSync }) => {
   };
 
   const handleCheckout = async (branchName, createNew = false) => {
+    if (!projectAccess.can("integrations.write")) return;
     setActionLoading(true);
     setErrorMsg("");
     try {
@@ -654,7 +665,7 @@ export const GitPanel = ({ projectId, onSync }) => {
             </div>
             <button
               onClick={handleInitRepo}
-              disabled={initializing}
+              disabled={initializing || !projectAccess.can("integrations.write")}
               className="px-4 py-2 rounded-[var(--radius-md)] text-xs font-semibold text-white bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] shadow-none border-none transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
             >
               {initializing ? (
@@ -695,7 +706,7 @@ export const GitPanel = ({ projectId, onSync }) => {
                     <div className="flex items-center gap-1.5 mt-1">
                       <button
                         onClick={handleSetRemote}
-                        disabled={savingRemote || !remoteInput.trim()}
+                        disabled={savingRemote || !remoteInput.trim() || !projectAccess.can("integrations.write")}
                         className="flex-1 py-1 rounded-[var(--radius-md)] bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-medium flex items-center justify-center gap-1 disabled:opacity-50 cursor-pointer"
                       >
                         {savingRemote ? (
@@ -961,7 +972,7 @@ export const GitPanel = ({ projectId, onSync }) => {
                   </button>
                   <button
                     onClick={() => handleUnstage("all")}
-                    disabled={actionLoading}
+                    disabled={actionLoading || !projectAccess.can("integrations.write")}
                     className="p-1 rounded-[var(--radius-sm)] hover:bg-[var(--color-surface-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
                     title="Unstage All Changes"
                   >
@@ -1044,7 +1055,7 @@ export const GitPanel = ({ projectId, onSync }) => {
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => handleStage("all")}
-                      disabled={actionLoading}
+                      disabled={actionLoading || !projectAccess.can("integrations.write")}
                       className="p-1 rounded-[var(--radius-sm)] hover:bg-[var(--color-surface-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
                       title="Stage All Changes"
                     >

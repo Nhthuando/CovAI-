@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import { ServiceError } from "../utils/serviceError.js";
 import { generateInputHash, reuseCachedContext, saveCacheRecord } from "./aiContextCache.service.js";
+import { currentProjectOperation, operationSnapshot } from "./projectOperationWorkspace.service.js";
 
 // Helper to collect files recursively
 function collectFiles(dir, isMatch, rootDir = dir) {
@@ -50,7 +51,7 @@ function collectFiles(dir, isMatch, rootDir = dir) {
  * SCRUM-380: Load source code
  */
 export const loadSourceCode = async (snapshotId) => {
-    const snapshot = await prisma.projectSnapshot.findUnique({ where: { id: snapshotId } });
+    const snapshot = operationSnapshot(await prisma.projectSnapshot.findUnique({ where: { id: snapshotId } }));
     if (!snapshot || !snapshot.rootDir) {
         throw new ServiceError("Snapshot root directory not found", 404);
     }
@@ -69,7 +70,7 @@ export const loadSourceCode = async (snapshotId) => {
  * SCRUM-383: Load existing test files
  */
 export const loadTestFiles = async (snapshotId) => {
-    const snapshot = await prisma.projectSnapshot.findUnique({ where: { id: snapshotId } });
+    const snapshot = operationSnapshot(await prisma.projectSnapshot.findUnique({ where: { id: snapshotId } }));
     if (!snapshot || !snapshot.rootDir) {
         throw new ServiceError("Snapshot root directory not found", 404);
     }
@@ -168,7 +169,7 @@ export const buildAiPayload = async (snapshotId, forceRebuild = false) => {
         const selectedTestingFramework = ["jest", "vitest"].includes(snapshot?.selectedTestingFramework)
             ? snapshot.selectedTestingFramework
             : null;
-        if (!forceRebuild) {
+        if (!forceRebuild && !currentProjectOperation()) {
             try {
                 const cachedPayload = await reuseCachedContext(snapshotId);
                 if (cachedPayload) {

@@ -11,6 +11,8 @@ import {
   Loader2,
 } from "lucide-react";
 import { loginApi, registerApi } from "../../services/auth.service";
+import { consumeAuthReturn } from "../../lib/authReturn";
+import { queryClient } from "../../lib/queryClient";
 
 function GithubIcon({ size = 16, className = "" }) {
   return (
@@ -85,6 +87,8 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
     setStatus("loading");
 
     try {
+      await queryClient.cancelQueries();
+      queryClient.clear();
       if (isLogin) {
         const data = await loginApi({
           email: formData.email,
@@ -105,7 +109,7 @@ export default function AuthForm({ mode, onToggleMode, setMode }) {
       }
       setStatus("success");
       setTimeout(() => {
-        window.location.href = "/projects";
+        window.location.href = consumeAuthReturn();
       }, 1000);
     } catch (err) {
       setStatus("error");

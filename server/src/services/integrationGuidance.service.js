@@ -10,7 +10,21 @@ const traverseAst = _traverse.default || _traverse;
 const generateCode = _generate.default || _generate;
 
 export const getIntegrationGuidance = async (projectId, options = {}) => {
-    const analytics = options.analytics || await getIntegrationAnalytics(projectId);
+const withEvidenceData = (rules, analytics) => rules.map(rule => {
+    const latest = analytics.latestExecution;
+    const evidence = {
+        RULE_NO_DATA: { scenarios: 0, testRuns: 0, coverageSummaries: 0 },
+        RULE_NO_EXECUTION: { scenarios: analytics.overview?.totalScenarios || 0, testRuns: 0 },
+        RULE_SOME_FAILED: { failed: latest?.failedTests || 0, total: latest?.totalTests || 0 },
+        RULE_ALL_PASSED: { passed: latest?.passedTests || 0, failed: 0 },
+        RULE_ENDPOINTS_UNCOVERED: { testedEndpoints: analytics.apiCoverage?.testedApis || 0, totalEndpoints: analytics.apiCoverage?.discoveredApis || 0, uncoveredEndpoints: analytics.apiCoverage?.uncoveredApis || 0 },
+        RULE_SKIPPED_SCENARIOS: { skipped: latest?.skippedTests || 0 },
+    }[rule.id];
+    return evidence ? { ...rule, evidenceData: evidence } : rule;
+});
+
+    const raw = options.analytics || await getIntegrationAnalytics(projectId);
+    const analytics = { ...raw, history: { executions: raw.history?.executions || [], coverage: raw.history?.coverage || [], generations: raw.history?.generations || [] } };
     const rules = [];
 
     // Precedence 1: RULE_NO_DATA
@@ -32,7 +46,7 @@ export const getIntegrationGuidance = async (projectId, options = {}) => {
             actionType: 'OPEN_GENERATE_MODAL',
             verification: 'After generation, check that scenarios exist in the summary.'
         });
-        return { success: true, data: { rules } };
+        return { success: true, data: { rules: withEvidenceData(rules, analytics) } };
     }
 
     // Precedence 2: RULE_NO_EXECUTION
@@ -54,7 +68,7 @@ export const getIntegrationGuidance = async (projectId, options = {}) => {
             actionType: 'EXECUTE_TESTS',
             verification: 'After execution, an Execution Summary should appear.'
         });
-        return { success: true, data: { rules } };
+        return { success: true, data: { rules: withEvidenceData(rules, analytics) } };
     }
 
     const latestRun = analytics.latestExecution;
@@ -240,7 +254,39 @@ export const getIntegrationGuidance = async (projectId, options = {}) => {
         });
     }
 
-    // Sort by severity (ERROR -> WARNING -> SUCCESS -> INFO), 
+    if (semanticState === 'SUCCESS' && latestRun.totalTests > 0
+        && latestRun.passedTests === latestRun.totalTests && !latestRun.skippedTests) {
+        rules.push({ id: 'RULE_ALL_PASSED', severity: 'SUCCESS',
+            finding: 'The latest completed Integration Test execution passed all executed scenarios.',
+            meaning: 'This describes the executed scenarios only; it does not establish complete endpoint or code coverage.',
+            evidence: { source: 'TestRun Report', snapshotId: analytics.snapshotId || null, testRunId: latestRun.id },
+            actionType: 'VIEW_HISTORY', recommendedAction: 'Review uncovered endpoints and code coverage separately.' });
+    }
+    const validCoverage = analytics.history.coverage.filter(row => Number.isFinite(row.stmtsPct) && row.stmtsPct >= 0 && row.stmtsPct <= 100);
+    if (validCoverage.length >= 2) {
+        const previous = validCoverage.at(-2), current = validCoverage.at(-1);
+        if (current.stmtsPct !== previous.stmtsPct) rules.push({
+            id: current.stmtsPct > previous.stmtsPct ? 'RULE_COVERAGE_IMPROVED' : 'RULE_COVERAGE_DECREASED',
+            severity: current.stmtsPct > previous.stmtsPct ? 'INFO' : 'WARNING',
+            finding: current.stmtsPct > previous.stmtsPct ? 'Recorded statement coverage increased' : 'Recorded statement coverage decreased',
+            meaning: 'The last two recorded snapshots differ. Source and test changes must be reviewed before attributing the difference to generation.',
+            evidence: { source: 'Coverage history', snapshotId: current.snapshotId || null },
+            evidenceData: { currentStmtsPct: current.stmtsPct, previousStmtsPct: previous.stmtsPct },
+            actionType: 'VIEW_HISTORY', recommendedAction: 'Compare source scope and execution history.' });
+    }
+    const generatedSnapshots = new Set(analytics.history.generations.filter(row => ['FULL', 'SKELETON'].includes(row.mode)).map(row => row.snapshotId));
+    const recentGenerated = [...new Map(validCoverage.filter(row => generatedSnapshots.has(row.snapshotId)).map(row => [row.snapshotId, row])).values()].slice(-3);
+    if (recentGenerated.length === 3) {
+        const values = recentGenerated.map(row => row.stmtsPct);
+        const variance = Math.max(...values) - Math.min(...values);
+        if (variance < 1) rules.push({ id: 'RULE_DIMINISHING_RETURNS', severity: 'INFO',
+            finding: 'Recorded coverage changed by less than one point across three generated snapshots',
+            meaning: 'This small observed range does not prove comparable source scope or that further improvement is impossible.',
+            evidence: { source: 'Generation and coverage history', snapshotId: recentGenerated.at(-1).snapshotId },
+            evidenceData: { variance }, actionType: 'VIEW_HISTORY', recommendedAction: 'Review source comparability and uncovered behavior before generating again.' });
+    }
+
+    // Sort by severity (ERROR -> WARNING -> SUCCESS -> INFO),
     // maintaining deterministic order for rules with the same severity using stable sort behavior
     const severityOrder = { ERROR: 1, WARNING: 2, SUCCESS: 3, INFO: 4 };
     
@@ -257,7 +303,7 @@ export const getIntegrationGuidance = async (projectId, options = {}) => {
         return rest;
     });
 
-    return { success: true, data: { rules: finalRules } };
+    return { success: true, data: { rules: withEvidenceData(finalRules, analytics) } };
 };
 
 // ============================================================

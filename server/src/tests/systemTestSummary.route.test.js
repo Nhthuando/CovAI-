@@ -6,6 +6,11 @@ import path from 'node:path';
 import { describe, expect, it, jest, beforeEach } from "@jest/globals";
 
 const prismaMock = {
+    project: { findFirst: jest.fn(async ({where})=> {
+        const snapshot=await prismaMock.projectSnapshot.findUnique.mock.results.at(-1)?.value;
+        const actor=where.OR?.[0]?.ownerId || where.ownerId;
+        return snapshot && (snapshot.project?.ownerId || 'user-123')===actor ? {id:where.id,ownerId:actor} : null;
+    }) },
     projectSnapshot: {
         findFirst: jest.fn(),
         findUnique: jest.fn(),
@@ -19,6 +24,8 @@ const prismaMock = {
     },
 };
 
+prismaMock.projectSnapshot.findFirst=prismaMock.projectSnapshot.findUnique;
+beforeEach(()=>{jest.clearAllMocks();prismaMock.projectSnapshot.findUnique.mockReset();prismaMock.testRun.findMany.mockReset().mockResolvedValue([]);prismaMock.aiTest.findFirst.mockReset().mockResolvedValue(null);});
 await jest.unstable_mockModule("../config/prisma.js", () => ({
     default: prismaMock,
 }));
@@ -42,8 +49,8 @@ app.use("/api/coverage", coverageRouter);
 describe('system evidence ownership',()=>{
     beforeEach(()=>{prismaMock.projectSnapshot.findFirst.mockReset();prismaMock.testScenario.findFirst.mockReset();});
     it('does not save a failed AI candidate as VERIFIED',async()=>{
-        prismaMock.projectSnapshot.findUnique.mockResolvedValueOnce({id:'snap',rootDir:'/not-used',project:{ownerId:'user-123'}});
-        prismaMock.aiTest.findFirst.mockResolvedValueOnce({status:'FAILED',filePath:'tests/system/candidate.spec.js'});
+        prismaMock.projectSnapshot.findUnique.mockResolvedValue({id:'snap',projectId:'p-1',rootDir:'/not-used',project:{ownerId:'user-123'}});
+        prismaMock.aiTest.findFirst.mockResolvedValue({status:'FAILED',filePath:'tests/system/candidate.spec.js'});
         const response=await request(app).post('/api/coverage/snap/system/save-ai-test');
         expect(response.status).toBe(409);
         expect(response.body.message).toContain('verification');
@@ -53,10 +60,10 @@ describe('system evidence ownership',()=>{
         expect(response.status).toBe(401);
     });
     it('does not disclose evidence for another user snapshot',async()=>{
-        prismaMock.projectSnapshot.findFirst.mockResolvedValueOnce(null);
+        prismaMock.projectSnapshot.findFirst.mockResolvedValue(null);
         const response=await request(app).get('/api/coverage/snap/system/scenarios/scenario/evidence');
         expect(response.status).toBe(404);
-        expect(prismaMock.projectSnapshot.findFirst).toHaveBeenCalledWith(expect.objectContaining({where:{id:'snap',project:{ownerId:'user-123'}}}));
+        expect(prismaMock.projectSnapshot.findFirst).toHaveBeenCalledWith(expect.objectContaining({where:{id:'snap'}}));
         expect(prismaMock.testScenario.findFirst).not.toHaveBeenCalled();
     });
     it('serves an owned PNG from the hidden artifact directory',async()=>{
@@ -64,8 +71,8 @@ describe('system evidence ownership',()=>{
         const screenshotPath='.covai-system-test/evidence/run/test.png';
         fs.mkdirSync(path.dirname(path.join(root,screenshotPath)),{recursive:true});
         fs.writeFileSync(path.join(root,screenshotPath),Buffer.from([137,80,78,71,13,10,26,10]));
-        prismaMock.projectSnapshot.findFirst.mockResolvedValueOnce({id:'snap',rootDir:root});
-        prismaMock.testScenario.findFirst.mockResolvedValueOnce({screenshotPath});
+        prismaMock.projectSnapshot.findFirst.mockResolvedValue({id:'snap',projectId:'p-1',rootDir:root});
+        prismaMock.testScenario.findFirst.mockResolvedValue({screenshotPath});
         try {
             const response=await request(app).get('/api/coverage/snap/system/scenarios/scenario/evidence').set('Accept','image/png');
             expect(response.status).toBe(200);
@@ -87,7 +94,7 @@ describe("GET /api/coverage/:snapshotId/system/summary route", () => {
     });
 
     it("returns 404 if snapshot does not exist", async () => {
-        prismaMock.projectSnapshot.findUnique.mockResolvedValueOnce(null);
+        prismaMock.projectSnapshot.findUnique.mockResolvedValue(null);
 
         const res = await request(app).get("/api/coverage/snap-999/system/summary");
 
@@ -96,7 +103,7 @@ describe("GET /api/coverage/:snapshotId/system/summary route", () => {
     });
 
     it("returns 403 if project is not owned by user", async () => {
-        prismaMock.projectSnapshot.findUnique.mockResolvedValueOnce({
+        prismaMock.projectSnapshot.findUnique.mockResolvedValue({
             id: "snap-1",
             projectId: "p-1",
             rootDir: "/tmp/repo",
@@ -105,18 +112,18 @@ describe("GET /api/coverage/:snapshotId/system/summary route", () => {
 
         const res = await request(app).get("/api/coverage/snap-1/system/summary");
 
-        expect(res.status).toBe(403);
+        expect(res.status).toBe(404);
         expect(res.body.success).toBe(false);
     });
 
     it("returns Empty State (DoD 1.1) when no E2E test runs have been executed", async () => {
-        prismaMock.projectSnapshot.findUnique.mockResolvedValueOnce({
+        prismaMock.projectSnapshot.findUnique.mockResolvedValue({
             id: "snap-1",
             projectId: "p-1",
             rootDir: "/tmp/repo",
             project: { ownerId: "user-123", name: "My Project" },
         });
-        prismaMock.testRun.findMany.mockResolvedValueOnce([]);
+        prismaMock.testRun.findMany.mockResolvedValue([]);
 
         const res = await request(app).get("/api/coverage/snap-1/system/summary");
 
@@ -140,13 +147,13 @@ describe("GET /api/coverage/:snapshotId/system/summary route", () => {
     });
 
     it("returns Populated State (DoD 1.2) when a Playwright test run exists", async () => {
-        prismaMock.projectSnapshot.findUnique.mockResolvedValueOnce({
+        prismaMock.projectSnapshot.findUnique.mockResolvedValue({
             id: "snap-1",
             projectId: "p-1",
             rootDir: "/tmp/repo",
             project: { ownerId: "user-123", name: "My Project" },
         });
-        prismaMock.testRun.findMany.mockResolvedValueOnce([
+        prismaMock.testRun.findMany.mockResolvedValue([
             {
                 id: "run-e2e-1",
                 snapshotId: "snap-1",
@@ -179,13 +186,13 @@ describe("GET /api/coverage/:snapshotId/system/summary route", () => {
     });
 
     it("returns Populated State with scenarios from DB and flaky count", async () => {
-        prismaMock.projectSnapshot.findUnique.mockResolvedValueOnce({
+        prismaMock.projectSnapshot.findUnique.mockResolvedValue({
             id: "snap-2",
             projectId: "p-1",
             rootDir: "/tmp/repo",
             project: { ownerId: "user-123", name: "My Project" },
         });
-        prismaMock.testRun.findMany.mockResolvedValueOnce([
+        prismaMock.testRun.findMany.mockResolvedValue([
             {
                 id: "run-e2e-2",
                 snapshotId: "snap-2",

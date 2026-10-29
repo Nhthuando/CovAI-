@@ -305,4 +305,3 @@ export const deleteUser = async (req, res) => {
         expect(checkoutEp.responseStatusCodes).toEqual(expect.arrayContaining([201, 400]));
     });
 });
-

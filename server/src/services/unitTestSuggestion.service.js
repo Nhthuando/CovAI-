@@ -831,6 +831,7 @@ export const extractSourceGapsAndDecisions = ({ sourceCode = "", fileCoverageDat
  * Generates suggestion for a single framework.
  */
 const generateSuggestionForFramework = async ({
+    userId,
     framework,
     snapshot,
     sourceFileToInspect,
@@ -840,6 +841,7 @@ const generateSuggestionForFramework = async ({
     filePath
 }) => {
     return generateAiUnitTestSuite({
+        userId,
         framework,
         snapshot,
         sourceFileToInspect,
@@ -854,12 +856,15 @@ const generateSuggestionForFramework = async ({
  * AI Agent for suggesting unit test cases for uncovered lines, branches, and assertion errors.
  */
 export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, userId, framework: requestedFramework }) => {
+    const { resolveProjectAccess } = await import("./projectAccess.service.js");
+    const proposalAccess = await resolveProjectAccess({ projectId, userId, capability: "ai.use" });
+    const capturedWorkspaceRevision = proposalAccess.project.workspaceRevision;
     if (!projectId || !filePath) {
         throw new ServiceError("projectId and filePath are required", 400);
     }
 
     const project = await prisma.project.findFirst({
-        where: { id: projectId, ownerId: userId },
+        where: { id: projectId },
         include: {
             snapshots: {
                 where: snapshotId ? { id: snapshotId } : undefined,
@@ -1084,6 +1089,7 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
     const suggestions = await Promise.all(
         frameworksToGenerate.map(fw =>
             generateSuggestionForFramework({
+                userId,
                 framework: fw,
                 snapshot,
                 sourceFileToInspect,
@@ -1095,6 +1101,9 @@ export const suggestUnitTestcases = async ({ projectId, snapshotId, filePath, us
         )
     );
 
+    for (const suggestion of suggestions) {
+        suggestion.proposalBase = { ...(suggestion.proposalBase || {}), snapshotId: snapshot.id, workspaceRevision: capturedWorkspaceRevision };
+    }
     const primary = suggestions[0];
     return {
         ...primary,

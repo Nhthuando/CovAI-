@@ -2,6 +2,8 @@ import { useEffect, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { oAuthGithubApi } from "../services/auth.service";
 import { Loader2 } from "lucide-react";
+import { consumeAuthReturn } from "../lib/authReturn";
+import { queryClient } from "../lib/queryClient";
 
 export default function GithubCallbackPage() {
   const [searchParams] = useSearchParams();
@@ -37,7 +39,8 @@ export default function GithubCallbackPage() {
           localStorage.setItem("user", JSON.stringify(userPayload));
           localStorage.setItem("userName", data.name);
           localStorage.setItem("userEmail", data.email);
-          navigate("/projects");
+          queryClient.clear();
+          navigate(consumeAuthReturn(), { replace: true });
         })
         .catch((err) => {
           alert("GitHub login error: " + err.message);

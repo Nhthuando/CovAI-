@@ -1,6 +1,7 @@
 import prisma from "../config/prisma.js";
 import crypto from "crypto";
 import { ServiceError } from "../utils/serviceError.js";
+import { stagePreparedPublication } from "./projectOperationWorkspace.service.js";
 
 /**
  * SCRUM-280: Generate input hash
@@ -65,7 +66,7 @@ export const saveCacheRecord = async (snapshotId, inputHash, payloadJson) => {
     try {
         const dataStr = typeof payloadJson === "string" ? payloadJson : JSON.stringify(payloadJson);
 
-        const cache = await prisma.aiContextCache.upsert({
+        const cache = await stagePreparedPublication(tx => tx.aiContextCache.upsert({
             where: { snapshotId },
             update: {
                 inputHash,
@@ -76,7 +77,7 @@ export const saveCacheRecord = async (snapshotId, inputHash, payloadJson) => {
                 inputHash,
                 payloadJson: dataStr
             }
-        });
+        }));
         return cache;
     } catch (error) {
         console.error(`[AiContextCache] Error saving cache for snapshot ${snapshotId}:`, error);

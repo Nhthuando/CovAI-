@@ -1,4 +1,6 @@
 import prisma from '../config/prisma.js';
+import {randomUUID} from 'node:crypto';
+import {currentProjectOperation,stagePreparedPublication,deferPreparedCommit} from './projectOperationWorkspace.service.js';
 import { calculatePerformance } from './performanceCalculator.service.js';
 import { storePerformanceMetric } from './performance.service.js';
 import { eventDispatcher, PERFORMANCE_COMPLETED_EVENT } from '../utils/eventDispatcher.js';
@@ -29,6 +31,15 @@ export const runPerformancePipelineStage = async ({ snapshotId }) => {
         executionTimeMs: testJob?.computeTimeMs ?? 0,
         testExecutionType
     });
+    if (currentProjectOperation()?.preparedPublications) {
+        const existing = await prisma.performanceMetric.findUnique({where:{snapshotId},select:{id:true}});
+        const id = existing?.id || randomUUID();
+        await stagePreparedPublication(async tx=>{
+            const metric = await storePerformanceMetric(result,tx,id);
+            deferPreparedCommit(()=>eventDispatcher.emit(PERFORMANCE_COMPLETED_EVENT,{snapshotId,metric,result}));
+        });
+        return {metric:{id},result};
+    }
     const metric = await storePerformanceMetric(result);
     eventDispatcher.emit(PERFORMANCE_COMPLETED_EVENT, { snapshotId, metric, result });
     return { metric, result };

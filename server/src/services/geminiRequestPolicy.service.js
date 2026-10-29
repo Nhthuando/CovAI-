@@ -1,5 +1,6 @@
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-export const isDailyQuotaError = error => /PerDay|per[_ -]?day|daily quota/i.test(String(error.message || ''));
+import { isDailyGeminiQuota } from '../utils/geminiQuota.js';
+export const isDailyQuotaError = isDailyGeminiQuota;
 
 export const runGeminiRequest = async (request, options = {}) => {
     const { requestTimeoutMs = 120000, totalTimeoutMs = 300000, maxAttempts = 4, onRetry, onWait, retryBaseDelayMs = 1000 } = options;

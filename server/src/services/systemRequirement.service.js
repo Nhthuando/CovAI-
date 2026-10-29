@@ -25,7 +25,13 @@ export const createAssertionBinding = async ({ client, snapshotId, rootDir, revi
     const assertion = analysis.assertionSites.find(site => site.id === input.assertionId && site.supported);
     const scenario = analysis.scenarioSites.find(site => site.line === assertion?.scenarioLine);
     if (!assertion || !scenario) throw new ServiceError('Assertion execution evidence is unsupported for this site', 422);
-    return client.systemAssertionBinding.create({ data: { revisionId, criterionId: input.criterionId, testFile: input.testFile, assertionId: assertion.id, scenarioId: scenario.id, testHash: digest(content), bindingJson: { expectedOutcome: input.expectedOutcome, assertionCode: assertion.code, assertionHash: assertion.hash, scenarioTitle: scenario.title } } });
+    const testHash = digest(content);
+    const existing = await client.systemAssertionBinding.findFirst({ where: { revisionId, assertionId: assertion.id, testHash } });
+    if (existing) {
+        if (existing.criterionId !== input.criterionId || existing.bindingJson.expectedOutcome !== input.expectedOutcome) throw new ServiceError('Assertion is already bound to a different expected outcome', 409);
+        return existing;
+    }
+    return client.systemAssertionBinding.create({ data: { revisionId, criterionId: input.criterionId, testFile: input.testFile, assertionId: assertion.id, scenarioId: scenario.id, testHash, bindingJson: { expectedOutcome: input.expectedOutcome, assertionCode: assertion.code, assertionHash: assertion.hash, scenarioTitle: scenario.title } } });
 };
 export const approveAssertionBinding = async ({ client, snapshotId, rootDir, bindingId, testHash, bindingHash, userId }) => {
     const binding = await client.systemAssertionBinding.findFirst({ where: { id: bindingId, revision: { snapshotId, status: 'CONFIRMED' } } });

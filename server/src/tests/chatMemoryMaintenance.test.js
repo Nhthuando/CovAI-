@@ -2,7 +2,7 @@ import { beforeEach, expect, it } from "@jest/globals";
 import { db, resetContextFixture, generate, settings, session } from "./helpers/aiContextFixture.js";
 const { processChatContextMaintenance, parseMemoryExtraction } = await import("../services/chatMemoryMaintenance.service.js");
 beforeEach(resetContextFixture);
-const job = { projectId: "project-1", userId: "owner-1", sessionId: "session-1", userMessageId: "user-1", memoryGeneration: 0, extractMemory: true };
+const job = { projectId: "project-1", userId: "owner-1", sessionId: "session-1", userMessageId: "user-1", memoryGeneration: 0, settingsRevision: 0, extractMemory: true };
 
 it("accepts only exact user quotes and excludes credentials", () => {
     const result = parseMemoryExtraction(JSON.stringify({ notes: [{ quote: "Use Jest" }, { quote: "Invented decision" }, { quote: "api_key=verysecretcredential" }] }), "Use Jest; api_key=verysecretcredential");

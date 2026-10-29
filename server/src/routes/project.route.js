@@ -1,3 +1,4 @@
+import { enforceProjectEndpointPolicy } from '../middlewares/projectEndpointPolicy.js';
 import express from "express";
 import { aiContextController } from "../controllers/aiContext.controller.js";
 import projectController from "./../controllers/project.controller.js";
@@ -10,6 +11,7 @@ import {
 } from "../controllers/quality.controller.js";
 
 const router = express.Router();
+router.use(authMiddleware, enforceProjectEndpointPolicy('projects'));
 
 router.use(authMiddleware);
 
@@ -113,6 +115,7 @@ router.delete(
   aiContextController.deleteSession,
 );
 router.post("/:id/chat", aiContextController.chat);
+router.get("/:id/chat/requests/:requestId", aiContextController.chatRequest);
 router.get("/:id/cfg", projectController.getCfg);
 router.get("/:id/cc", projectController.getCc);
 router.get("/:id/ai/tests", projectController.getAiTests);

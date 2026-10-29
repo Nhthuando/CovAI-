@@ -1,3 +1,11 @@
+import { withPreparedProjectWorkspace } from '../services/projectWorkspacePreparation.service.js';
+import { stagePreparedPublication } from '../services/projectOperationWorkspace.service.js';
+import { membershipWhere, resolveProjectAccess, resolveSnapshotAccess, withProjectGuard } from '../services/projectAccess.service.js';
+import { readVersionedProjectFile } from '../services/projectFileVersion.service.js';
+import { mutateProjectWorkspace } from '../services/projectMutation.service.js';
+import { snapshotWorkspaceRoot } from '../utils/snapshotWorkspace.js';
+import { requestedAiModel } from '../utils/selectedAiModel.js';
+import { resolveSystemScreenshot } from '../services/systemScreenshotPath.service.js';
 import { coverageSummaryFor } from '../services/systemAssessmentContract.service.js';
 import { parseSystemTestResultQuery } from '../validators/systemTestResultQuery.validator.js';
 import fs from "fs";
@@ -25,7 +33,7 @@ import { getFileCoverageDetails } from "../services/fileCoverage.service.js";
 import { suggestUnitTestcases } from "../services/unitTestSuggestion.service.js";
 import { applyUnitTestSuggestion } from "../services/applyTestSuggestion.service.js";
 import { classifyTestFile } from "../utils/testingFrameworkDetector.js";
-import { resolveProjectRoot, hasSourceCodeFiles, ensureMinimalPackageJson } from "../utils/projectRootResolver.js";
+import { resolveProjectRoot, hasSourceCodeFiles } from "../utils/projectRootResolver.js";
 import { findLogicSourceFiles } from "../services/runTestsJob.service.js";
 import {
     updateScenarioService,
@@ -78,7 +86,7 @@ export const resolveSnapshotRootDir = (rootDir) => {
 };
 
 const findOwnedSnapshot = (snapshotId, userId) => prisma.projectSnapshot.findFirst({
-    where: { id: snapshotId, project: { ownerId: userId } },
+    where: { id: snapshotId, project: membershipWhere(userId) },
     select: { id: true, projectId: true, rootDir: true },
 });
 
@@ -105,11 +113,6 @@ export const getCoverageFrameworks = async (req, res) => {
         if (!snapshot.rootDir) return res.status(409).json({ success: false, message: "Snapshot is not ready for analysis." });
 
         const resolvedRootDir = resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir;
-        if (resolvedRootDir !== snapshot.rootDir && fs.existsSync(path.join(resolvedRootDir, "package.json"))) {
-            if (typeof prisma?.projectSnapshot?.update === "function") {
-                prisma.projectSnapshot.update({ where: { id: snapshot.id }, data: { rootDir: resolvedRootDir } }).catch(() => { });
-            }
-        }
 
         if (frameworksCache.has(snapshot.id)) {
             return res.json({ success: true, data: frameworksCache.get(snapshot.id) });
@@ -133,11 +136,6 @@ export const runCoverageByType = async (req, res) => {
         if (!snapshot.rootDir) return res.status(409).json({ success: false, message: "Snapshot is not ready for analysis." });
 
         const resolvedRootDir = resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir;
-        if (resolvedRootDir !== snapshot.rootDir && fs.existsSync(path.join(resolvedRootDir, "package.json"))) {
-            if (typeof prisma?.projectSnapshot?.update === "function") {
-                prisma.projectSnapshot.update({ where: { id: snapshot.id }, data: { rootDir: resolvedRootDir } }).catch(() => { });
-            }
-        }
 
         const detection = detectCoverageFrameworks(resolvedRootDir);
         let job;
@@ -289,9 +287,7 @@ export const getCoverageSummary = async (req, res) => {
             return res.status(404).json({ success: false, message: "Snapshot does not exist." });
         }
 
-        if (snapshot.project.ownerId !== userId) {
-            return res.status(403).json({ success: false, message: "You do not have access to this snapshot." });
-        }
+        await resolveProjectAccess({ projectId: snapshot.projectId, userId, capability: "project.read" });
 
         // Retrieve CoverageSummary
         const summary = await prisma.coverageSummary.findUnique({
@@ -625,7 +621,7 @@ export const getCoverageSummary = async (req, res) => {
         if (error instanceof ServiceError) {
             return res.status(error.statusCode).json({ success: false, message: error.message });
         }
-        return res.status(500).json({ success: false, message: "Internal server error!" });
+        return res.status(error.statusCode || 500).json({ success: false, message: "Internal server error!" });
     }
 };
 
@@ -665,9 +661,7 @@ export const runCoverage = async (req, res) => {
         if (!snapshot) {
             return res.status(404).json({ success: false, message: "Snapshot does not exist." });
         }
-        if (snapshot.project.ownerId !== userId) {
-            return res.status(403).json({ success: false, message: "You do not have access to this snapshot." });
-        }
+        await resolveProjectAccess({ projectId: snapshot.projectId, userId, capability: "tests.run" });
 
         // Snapshot must have rootDir (INGEST job completed)
         if (!snapshot.rootDir) {
@@ -682,11 +676,6 @@ export const runCoverage = async (req, res) => {
         }
 
         const resolvedRootDir = resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir;
-        if (resolvedRootDir !== snapshot.rootDir && fs.existsSync(path.join(resolvedRootDir, "package.json"))) {
-            if (typeof prisma?.projectSnapshot?.update === "function") {
-                prisma.projectSnapshot.update({ where: { id: snapshot.id }, data: { rootDir: resolvedRootDir } }).catch(() => { });
-            }
-        }
         const candidateDirs = ["", "server", "backend", "api", "client", "frontend", "web", "app"];
         const hasPackageJson = candidateDirs.some((cand) =>
             fs.existsSync(cand ? path.join(snapshot.rootDir, cand, "package.json") : path.join(resolvedRootDir, "package.json"))
@@ -695,37 +684,17 @@ export const runCoverage = async (req, res) => {
             return res.status(422).json({ success: false, message: "Invalid Node.js project: package.json was not found in the uploaded project." });
         }
 
-        const packageJsonPath = path.join(resolvedRootDir, "package.json");
-        if (!fs.existsSync(packageJsonPath)) {
-            if (hasSourceCodeFiles(resolvedRootDir) || hasSourceCodeFiles(snapshot.rootDir)) {
-                ensureMinimalPackageJson(resolvedRootDir);
-            } else {
-                return res.status(422).json({ success: false, message: "Invalid Node.js project: package.json was not found in the uploaded project." });
-            }
-        }
+        // Missing manifests are prepared only in the admitted worker's private
+        // workspace. HTTP admission must not modify canonical source files.
 
-        // Create INSTALL_DEPS Job
-        const installJob = await createInstallDepsJob({
-            projectId: snapshot.projectId,
-            snapshotId,
-            userId,
-        });
-
-        // Kick-off async pipeline via Queue (COVERAGE_PIPELINE)
-        addJobToQueue("COVERAGE_PIPELINE", installJob.id, {
-            snapshotId,
-            userId,
-            projectId: snapshot.projectId
-        }).catch((err) => {
-            console.error(`[Coverage Pipeline] Error adding to queue:`, err);
-        });
-
+        // RUN_TESTS owns dependency setup inside its guarded private workspace.
+        // Return the same trackable ID for admission, execution and completion.
+        const runJob = await createRunTestsJob({projectId:snapshot.projectId,snapshotId,userId});
+        await addJobToQueue('RUN_TESTS',runJob.id);
         return res.status(200).json({
-            success: true,
-            message: "Coverage pipeline started (INSTALL_DEPS → RUN_TESTS).",
-            installJobId: installJob.id,
-            snapshotId,
-            hint: "Poll GET /api/job/:jobId to track status.",
+            success:true,message:'Coverage pipeline started.',jobId:runJob.id,
+            installJobId:runJob.id,snapshotId,reused:Boolean(runJob.reused),
+            hint:'Poll GET /api/job/:jobId to track status.',
         });
 
     } catch (error) {
@@ -733,7 +702,7 @@ export const runCoverage = async (req, res) => {
         if (error instanceof ServiceError) {
             return res.status(error.statusCode).json({ success: false, message: error.message });
         }
-        return res.status(500).json({ success: false, message: "Internal server error!" });
+        return res.status(error.statusCode || 500).json({ success: false, message: "Internal server error!" });
     }
 };
 
@@ -756,29 +725,20 @@ export const runSupertestCoverage = async (req, res) => {
             select: { id: true, projectId: true, rootDir: true, project: { select: { ownerId: true } } },
         });
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
-        if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
+        await resolveProjectAccess({ projectId: snapshot.projectId, userId, capability: "tests.run" });
         if (!snapshot.rootDir) return res.status(409).json({ success: false, message: "Snapshot is not ready to run tests." });
 
         const resolvedRootDir = resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir;
-        if (resolvedRootDir !== snapshot.rootDir && fs.existsSync(path.join(resolvedRootDir, "package.json"))) {
-            if (typeof prisma?.projectSnapshot?.update === "function") {
-                prisma.projectSnapshot.update({ where: { id: snapshot.id }, data: { rootDir: resolvedRootDir } }).catch(() => { });
-            }
-        }
 
         const candidateDirs = ["", "server", "backend", "api", "client", "frontend", "web", "app"];
         const hasPackageJson = candidateDirs.some((cand) =>
             fs.existsSync(cand ? path.join(snapshot.rootDir, cand, "package.json") : path.join(resolvedRootDir, "package.json"))
         );
-        if (!hasPackageJson) {
-            if (hasSourceCodeFiles(resolvedRootDir) || hasSourceCodeFiles(snapshot.rootDir)) {
-                ensureMinimalPackageJson(resolvedRootDir);
-            } else {
-                return res.status(422).json({ success: false, message: "Invalid Node.js project: package.json was not found in the uploaded project." });
-            }
+        if (!hasPackageJson && !hasSourceCodeFiles(resolvedRootDir) && !hasSourceCodeFiles(snapshot.rootDir)) {
+            return res.status(422).json({ success: false, message: "Invalid Node.js project: package.json was not found in the uploaded project." });
         }
 
-        const supertestInfo = await detectSupertest(snapshot.rootDir);
+        const supertestInfo = await detectSupertest(resolvedRootDir);
         if (!supertestInfo.detected || supertestInfo.supertestFiles.length === 0) {
             return res.status(422).json({ success: false, message: "No Supertest test files were found in this snapshot." });
         }
@@ -808,7 +768,7 @@ export const runSupertestCoverage = async (req, res) => {
     } catch (error) {
         console.error("[RunSupertestCoverage] Server error:", error);
         if (error instanceof ServiceError) return res.status(error.statusCode).json({ success: false, message: error.message });
-        return res.status(500).json({ success: false, message: "Unable to queue Supertest coverage." });
+        return res.status(error.statusCode || 500).json({ success: false, message: "Unable to queue Supertest coverage." });
     }
 };
 
@@ -871,12 +831,7 @@ export const getCoverageFiles = async (req, res) => {
             return res.status(404).json({ success: false, message: "Snapshot does not exist." });
         }
 
-        if (snapshot.project.ownerId !== userId) {
-            return res.status(403).json({
-                success: false,
-                message: "You do not have access to this snapshot.",
-            });
-        }
+        await resolveProjectAccess({ projectId: snapshot.projectId, userId, capability: "project.read" });
 
         // ── SCRUM-157: Retrieve CoverageFile records ─────────────────────────
         const typeFilter = req.query?.type || req.query?.coverageType || null;
@@ -1003,7 +958,7 @@ export const getCoverageFiles = async (req, res) => {
         if (error instanceof ServiceError) {
             return res.status(error.statusCode).json({ success: false, message: error.message });
         }
-        return res.status(500).json({ success: false, message: "Internal server error!" });
+        return res.status(error.statusCode || 500).json({ success: false, message: "Internal server error!" });
     }
 };
 
@@ -1032,11 +987,11 @@ export const getTestExecution = async (req, res) => {
 
         const snapshot = await prisma.projectSnapshot.findUnique({
             where: { id: snapshotId },
-            select: { project: { select: { ownerId: true } } }
+            select: { projectId: true, project: { select: { ownerId: true } } }
         });
 
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
-        if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
+        await resolveProjectAccess({ projectId: snapshot.projectId, userId, capability: "project.read" });
 
         const testRuns = (prisma.testRun?.findMany
             ? await prisma.testRun.findMany({
@@ -1073,7 +1028,7 @@ export const getTestExecution = async (req, res) => {
         });
     } catch (error) {
         console.error("[getTestExecution] Error:", error);
-        return res.status(500).json({ success: false, message: "Server error." });
+        return res.status(error.statusCode || 500).json({ success: false, message: "Server error." });
     }
 };
 
@@ -1212,7 +1167,7 @@ export const getCoverageTestSuites = async (req, res) => {
         });
 
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
-        if (snapshot.project?.ownerId && snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
+        await resolveProjectAccess({ projectId: snapshot.projectId, userId, capability: "project.read" });
 
         const cacheKey = `${snapshotId}:${requestedType}`;
         const cached = testSuitesCache.get(cacheKey);
@@ -1563,12 +1518,7 @@ export const getCoverageFunctions = async (req, res) => {
             return res.status(404).json({ success: false, message: "Snapshot does not exist." });
         }
 
-        if (snapshot.project.ownerId !== userId) {
-            return res.status(403).json({
-                success: false,
-                message: "You do not have access to this snapshot.",
-            });
-        }
+        await resolveProjectAccess({ projectId: snapshot.projectId, userId, capability: "project.read" });
 
         // ── SCRUM-162: Retrieve CoverageFunction records ───────────────────────
         const typeFilter = req.query?.type || req.query?.coverageType || null;
@@ -1662,7 +1612,7 @@ export const getCoverageFunctions = async (req, res) => {
         if (error instanceof ServiceError) {
             return res.status(error.statusCode).json({ success: false, message: error.message });
         }
-        return res.status(500).json({ success: false, message: "Internal server error!" });
+        return res.status(error.statusCode || 500).json({ success: false, message: "Internal server error!" });
     }
 };
 
@@ -1682,23 +1632,13 @@ export const getIntegrationDetectionController = async (req, res) => {
         const { snapshotId } = req.params;
         if (!snapshotId) return res.status(400).json({ success: false, message: "snapshotId is required." });
 
-        const snapshot = await prisma.projectSnapshot.findUnique({
-            where: { id: snapshotId },
-            select: { id: true, rootDir: true, storagePath: true, project: { select: { ownerId: true } } }
-        });
-
-        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
-        if (snapshot.project?.ownerId && snapshot.project.ownerId !== userId) {
-            return res.status(403).json({ success: false, message: "Forbidden." });
-        }
-
-        const rootDir = snapshot.rootDir || snapshot.storagePath;
-        const detection = await detectIntegrationFrameworks(rootDir);
+        const {detectIntegrationFrameworksService} = await import('../services/integrationApiService.service.js');
+        const detection = await detectIntegrationFrameworksService({snapshotId,userId});
 
         return res.status(200).json({ success: true, data: detection });
     } catch (error) {
         console.error("[getIntegrationDetectionController] Error:", error);
-        return res.status(500).json({ success: false, message: error.message || "Failed to detect integration frameworks." });
+        return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to detect integration frameworks." });
     }
 };
 
@@ -1724,7 +1664,9 @@ export const generateIntegrationTestsController = async (req, res) => {
             userId,
             framework: framework || "supertest",
             targetEndpoints: targetEndpoints || [],
-            force: Boolean(force)
+            force: Boolean(force),
+            model:requestedAiModel(req),
+            requestId:req.get("Idempotency-Key")
         });
 
         return res.status(202).json({
@@ -1758,7 +1700,10 @@ export const regenerateIntegrationScenarioController = async (req, res) => {
             userId,
             scenarioId: scenarioId || req.params.scenarioId,
             framework: framework || "supertest",
-            failureContext: failureContext || null
+            failureContext: failureContext || null,
+            expectedVersion:req.body?.expectedVersion,
+            model:requestedAiModel(req),
+            requestId:req.get("Idempotency-Key")
         });
 
         return res.status(202).json({
@@ -1849,24 +1794,9 @@ export const installIntegrationDependenciesController = async (req, res) => {
         const { snapshotId } = req.params;
         const { packages, framework } = req.body || {};
 
-        const snapshot = await prisma.projectSnapshot.findUnique({
-            where: { id: snapshotId },
-            select: { id: true, rootDir: true, storagePath: true, project: { select: { ownerId: true } } }
-        });
-
-        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
-        if (snapshot.project?.ownerId && snapshot.project.ownerId !== userId) {
-            return res.status(403).json({ success: false, message: "Forbidden." });
-        }
-
-        const rootDir = snapshot.rootDir || snapshot.storagePath;
-        const installResult = await installIntegrationDependencies({
-            rootDir,
-            packages,
-            framework: framework || "supertest",
-        });
-
-        const updatedDetection = await detectIntegrationFrameworks(rootDir);
+        const {installIntegrationDependenciesService,detectIntegrationFrameworksService} = await import('../services/integrationApiService.service.js');
+        const installResult = await installIntegrationDependenciesService({snapshotId,userId,packages,framework:framework || 'supertest'});
+        const updatedDetection = await detectIntegrationFrameworksService({snapshotId,userId});
 
         return res.status(200).json({
             success: true,
@@ -1876,7 +1806,7 @@ export const installIntegrationDependenciesController = async (req, res) => {
         });
     } catch (error) {
         console.error("[installIntegrationDependenciesController] Error:", error);
-        return res.status(500).json({ success: false, message: error.message || "Failed to install dependencies." });
+        return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to install dependencies." });
     }
 };
 
@@ -1890,11 +1820,11 @@ export const getIntegrationWorkspace = async (req, res) => {
 
         const snapshot = await prisma.projectSnapshot.findUnique({
             where: { id: snapshotId },
-            select: { project: { select: { ownerId: true } } }
+            select: { projectId: true, project: { select: { ownerId: true } } }
         });
 
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
-        if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
+        await resolveProjectAccess({ projectId: snapshot.projectId, userId, capability: "project.read" });
 
         const workspaceData = await buildIntegrationWorkspace(snapshotId);
 
@@ -1904,7 +1834,7 @@ export const getIntegrationWorkspace = async (req, res) => {
         if (error.statusCode) {
             return res.status(error.statusCode).json({ success: false, message: error.message });
         }
-        return res.status(500).json({ success: false, message: "Server error while fetching integration workspace." });
+        return res.status(error.statusCode || 500).json({ success: false, message: "Server error while fetching integration workspace." });
     }
 };
 
@@ -1923,11 +1853,11 @@ export const approveIntegrationTests = async (req, res) => {
 
         const snapshot = await prisma.projectSnapshot.findUnique({
             where: { id: snapshotId },
-            select: { project: { select: { ownerId: true } } }
+            select: { projectId: true, project: { select: { ownerId: true } } }
         });
 
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
-        if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
+        await resolveProjectAccess({ projectId: snapshot.projectId, userId, capability: "project.read" });
 
         // Group approved scenarios by AiTest ID
         const approvedScenariosByTestId = {};
@@ -1969,7 +1899,7 @@ export const approveIntegrationTests = async (req, res) => {
         return res.status(200).json({ success: true, message: "Approved successfully." });
     } catch (error) {
         console.error("[approveIntegrationTests] Server error:", error);
-        return res.status(500).json({ success: false, message: "Server error while approving tests." });
+        return res.status(error.statusCode || 500).json({ success: false, message: "Server error while approving tests." });
     }
 };
 
@@ -2031,11 +1961,11 @@ export const getIntegrationHistory = async (req, res) => {
 
         const snapshot = await prisma.projectSnapshot.findUnique({
             where: { id: snapshotId },
-            select: { project: { select: { ownerId: true } } }
+            select: { projectId:true, project: { select: { ownerId: true } } }
         });
 
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
-        if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
+        await resolveProjectAccess({projectId:snapshot.projectId,userId,capability:"project.read"});
 
         const result = await getIntegrationHistoryService(snapshotId);
         return res.status(200).json({ success: true, data: result });
@@ -2055,11 +1985,11 @@ export const getIntegrationVersionHistory = async (req, res) => {
 
         const snapshot = await prisma.projectSnapshot.findUnique({
             where: { id: snapshotId },
-            select: { project: { select: { ownerId: true } } }
+            select: { projectId:true, project: { select: { ownerId: true } } }
         });
 
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
-        if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
+        await resolveProjectAccess({projectId:snapshot.projectId,userId,capability:"project.read"});
 
         const result = await getIntegrationVersionHistoryService(snapshotId, req.query);
         return res.status(200).json({ success: true, data: result });
@@ -2084,11 +2014,11 @@ export const compareIntegrationVersions = async (req, res) => {
 
         const snapshot = await prisma.projectSnapshot.findUnique({
             where: { id: snapshotId },
-            select: { project: { select: { ownerId: true } } }
+            select: { projectId:true, project: { select: { ownerId: true } } }
         });
 
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
-        if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
+        await resolveProjectAccess({projectId:snapshot.projectId,userId,capability:"project.read"});
 
         const result = await compareVersionsService(snapshotId, versionAId, versionBId, type);
         return res.status(200).json({ success: true, data: result });
@@ -2111,11 +2041,11 @@ export const getHistoricalWorkspaceVersion = async (req, res) => {
 
         const snapshot = await prisma.projectSnapshot.findUnique({
             where: { id: snapshotId },
-            select: { project: { select: { ownerId: true } } }
+            select: { projectId:true, project: { select: { ownerId: true } } }
         });
 
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
-        if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
+        await resolveProjectAccess({projectId:snapshot.projectId,userId,capability:"project.read"});
 
         const result = await getHistoricalWorkspaceVersionService(snapshotId, versionId, type);
         return res.status(200).json({ success: true, data: result });
@@ -2190,16 +2120,13 @@ export const getSourceFileDiff = async (req, res) => {
 const verifyAiTestOwnership = async (aiTestId, userId, res, expectedSnapshotId = null) => {
     const aiTest = await prisma.aiTest.findUnique({
         where: { id: aiTestId },
-        select: { snapshotId: true, project: { select: { ownerId: true } } }
+        select: { projectId: true, snapshotId: true, project: { select: { ownerId: true } } }
     });
     if (!aiTest) {
         res.status(404).json({ success: false, message: "AiTest not found." });
         return false;
     }
-    if (aiTest.project.ownerId !== userId) {
-        res.status(403).json({ success: false, message: "Forbidden." });
-        return false;
-    }
+    await resolveProjectAccess({ projectId: aiTest.projectId, userId, capability: "project.read" });
     if (expectedSnapshotId && aiTest.snapshotId !== expectedSnapshotId) {
         res.status(403).json({ success: false, message: "Snapshot mismatch." });
         return false;
@@ -2212,16 +2139,14 @@ export const updateScenario = async (req, res) => {
         const { snapshotId, aiTestId, scenarioId } = req.params;
         const { code } = req.body;
 
-        if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res, snapshotId))) return;
+        if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res, req.params.snapshotId))) return;
 
-        const updatedTest = await updateScenarioService(aiTestId, decodeURIComponent(scenarioId), code);
-        if (snapshotId) {
-            invalidateEndpointCache(snapshotId);
-        }
+        const updatedTest = await updateScenarioService(aiTestId, decodeURIComponent(scenarioId), code, {userId:req.user.id,snapshotId:req.params.snapshotId,expectedVersion:req.body?.expectedVersion});
+        if (snapshotId) invalidateEndpointCache(snapshotId);
         return res.status(200).json({ success: true, data: updatedTest });
     } catch (error) {
         console.error('[updateScenario] Error:', error);
-        return res.status(500).json({ success: false, message: error.message });
+        return res.status(error.statusCode || 500).json({ success: false, message: error.message, code:error.code });
     }
 };
 
@@ -2230,16 +2155,14 @@ export const addScenario = async (req, res) => {
         const { snapshotId, aiTestId } = req.params;
         const { code, endpoint } = req.body;
 
-        if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res, snapshotId))) return;
+        if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res, req.params.snapshotId))) return;
 
-        const updatedTest = await addScenarioService(aiTestId, code, endpoint);
-        if (snapshotId) {
-            invalidateEndpointCache(snapshotId);
-        }
+        const updatedTest = await addScenarioService(aiTestId, code, endpoint, {userId:req.user.id,snapshotId:req.params.snapshotId,expectedVersion:req.body?.expectedVersion});
+        if (snapshotId) invalidateEndpointCache(snapshotId);
         return res.status(200).json({ success: true, data: updatedTest });
     } catch (error) {
         console.error('[addScenario] Error:', error);
-        return res.status(500).json({ success: false, message: error.message });
+        return res.status(error.statusCode || 500).json({ success: false, message: error.message, code:error.code });
     }
 };
 
@@ -2247,16 +2170,14 @@ export const deleteScenario = async (req, res) => {
     try {
         const { snapshotId, aiTestId, scenarioId } = req.params;
 
-        if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res, snapshotId))) return;
+        if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res, req.params.snapshotId))) return;
 
-        const updatedTest = await deleteScenarioService(aiTestId, decodeURIComponent(scenarioId));
-        if (snapshotId) {
-            invalidateEndpointCache(snapshotId);
-        }
+        const updatedTest = await deleteScenarioService(aiTestId, decodeURIComponent(scenarioId), {userId:req.user.id,snapshotId:req.params.snapshotId,expectedVersion:req.body?.expectedVersion});
+        if (snapshotId) invalidateEndpointCache(snapshotId);
         return res.status(200).json({ success: true, data: updatedTest });
     } catch (error) {
         console.error('[deleteScenario] Error:', error);
-        return res.status(500).json({ success: false, message: error.message });
+        return res.status(error.statusCode || 500).json({ success: false, message: error.message, code:error.code });
     }
 };
 
@@ -2265,16 +2186,14 @@ export const toggleScenario = async (req, res) => {
         const { snapshotId, aiTestId, scenarioId } = req.params;
         const { enable } = req.body;
 
-        if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res, snapshotId))) return;
+        if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res, req.params.snapshotId))) return;
 
-        const updatedTest = await toggleScenarioService(aiTestId, decodeURIComponent(scenarioId), enable);
-        if (snapshotId) {
-            invalidateEndpointCache(snapshotId);
-        }
+        const updatedTest = await toggleScenarioService(aiTestId, decodeURIComponent(scenarioId), enable, {userId:req.user.id,snapshotId:req.params.snapshotId,expectedVersion:req.body?.expectedVersion});
+        if (snapshotId) invalidateEndpointCache(snapshotId);
         return res.status(200).json({ success: true, data: updatedTest });
     } catch (error) {
         console.error('[toggleScenario] Error:', error);
-        return res.status(500).json({ success: false, message: error.message });
+        return res.status(error.statusCode || 500).json({ success: false, message: error.message, code:error.code });
     }
 };
 
@@ -2287,28 +2206,19 @@ export const regenerateScenario = async (req, res) => {
         const snapshot = await prisma.projectSnapshot.findUnique({ where: { id: snapshotId } });
         if (!snapshot) throw new Error("Snapshot not found");
 
-        const decodedScenarioId = decodeURIComponent(scenarioId);
-
-        const job = await prisma.job.create({
-            data: {
-                userId: req.user.id,
-                projectId: snapshot.projectId,
-                snapshotId,
-                type: 'AI_TESTS',
-                status: 'QUEUED',
-                payloadJson: JSON.stringify({ mode: 'SUPERTEST_REGENERATE', aiTestId, scenarioId: decodedScenarioId })
-            }
-        });
-
-        await addJobToQueue('AI_TESTS', job.id, { mode: 'SUPERTEST_REGENERATE', aiTestId, scenarioId: decodedScenarioId });
-        if (snapshotId) {
-            invalidateEndpointCache(snapshotId);
-        }
+        const { assertScenarioVersion } = await import('../services/scenarioManager.service.js');
+        const { createAiTestsJob } = await import('../services/job.service.js');
+        const artifact = await prisma.aiTest.findUnique({where:{id:aiTestId}});
+        assertScenarioVersion(artifact,req.body?.expectedVersion);
+        const job = await createAiTestsJob({projectId:snapshot.projectId,snapshotId,userId:req.user.id,
+            mode:'SUPERTEST_REGENERATE',aiTestId,scenarioId:decodeURIComponent(scenarioId),expectedVersion:req.body.expectedVersion,model:requestedAiModel(req)});
+        if (!job.reused) await addJobToQueue('AI_TESTS',job.id,{snapshotId,userId:req.user.id,projectId:snapshot.projectId});
+        if (snapshotId) invalidateEndpointCache(snapshotId);
 
         return res.status(200).json({ success: true, message: "Regeneration job queued", jobId: job.id });
     } catch (error) {
         console.error('[regenerateScenario] Error:', error);
-        return res.status(500).json({ success: false, message: error.message });
+        return res.status(error.statusCode || 500).json({ success: false, message: error.message, code:error.code });
     }
 };
 
@@ -2317,12 +2227,12 @@ export const getScenario = async (req, res) => {
     try {
         const { aiTestId, scenarioId } = req.params;
 
-        if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res))) return;
+        if (!(await verifyAiTestOwnership(aiTestId, req.user.id, res, req.params.snapshotId))) return;
 
-        const result = await getScenarioService(aiTestId, decodeURIComponent(scenarioId));
+        const result = await getScenarioService(aiTestId, decodeURIComponent(scenarioId), {userId:req.user.id,snapshotId:req.params.snapshotId});
         return res.status(200).json({ success: true, data: result });
     } catch (error) {
-        return res.status(500).json({ success: false, message: error.message });
+        return res.status(error.statusCode || 500).json({ success: false, message: error.message, code:error.code });
     }
 };
 
@@ -2364,9 +2274,8 @@ export const getSystemTestEvidence = async (req, res) => {
 
         // Otherwise attempt to serve screenshot image
         if (scenario.screenshotPath && scenario.screenshotPath.startsWith(".covai-system-test/evidence/")) {
-            const { containedPath } = await import("../services/fullSystemLifecycle.service.js");
-            const file = containedPath(snapshot.rootDir, scenario.screenshotPath);
-            if (fs.existsSync(file)) {
+            const file = resolveSystemScreenshot(snapshot.rootDir, scenario.screenshotPath);
+            if (file) {
                 res.set({ "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" });
                 return res.type("png").sendFile(file, { dotfiles: "allow" });
             }
@@ -2424,9 +2333,7 @@ export const runSystemTestCoverage = async (req, res) => {
         if (!snapshot) {
             return res.status(404).json({ success: false, message: "Snapshot not found." });
         }
-        if (snapshot.project.ownerId !== userId) {
-            return res.status(403).json({ success: false, message: "Forbidden: You do not own this snapshot." });
-        }
+        await resolveProjectAccess({ projectId: snapshot.projectId, userId, capability: "project.read" });
         if (!snapshot.rootDir || !fs.existsSync(snapshot.rootDir)) {
             return res.status(409).json({ success: false, message: "Snapshot files are not ready on disk." });
         }
@@ -2532,9 +2439,7 @@ export const getSystemTestSummary = async (req, res) => {
             return res.status(404).json({ success: false, message: "Snapshot not found." });
         }
 
-        if (snapshot.project.ownerId !== userId) {
-            return res.status(403).json({ success: false, message: "Forbidden." });
-        }
+        await resolveProjectAccess({ projectId: snapshot.projectId, userId, capability: "project.read" });
 
         const resultFilter = parseSystemTestResultQuery(req.query);
         const testRuns = await prisma.testRun.findMany({
@@ -2938,7 +2843,7 @@ export const saveAiSystemTest = async (req, res) => {
         });
 
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
-        if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
+        await resolveProjectAccess({ projectId: snapshot.projectId, userId, capability: "project.read" });
 
         const aiTest = await prisma.aiTest.findFirst({
             where: {
@@ -2953,17 +2858,22 @@ export const saveAiSystemTest = async (req, res) => {
         }
         if (aiTest.status !== 'VERIFIED') return res.status(409).json({success:false,message:'Only tests that pass full-system verification can be saved. Regenerate to repair this candidate.'});
 
-        const rootDir = snapshot.rootDir;
         const targetFilePath = aiTest.filePath;
-        const fullTargetPath = path.join(rootDir, targetFilePath);
-
-        fs.mkdirSync(path.dirname(fullTargetPath), { recursive: true });
-        fs.writeFileSync(fullTargetPath, aiTest.content, "utf8");
-
         let meta = {};
         try {
             meta = typeof aiTest.metaJson === "string" ? JSON.parse(aiTest.metaJson) : (aiTest.metaJson || {});
         } catch (_) {}
+        if (meta.applied === true) return res.status(200).json({ success: true, data: { id: aiTest.id, snapshotId, alreadyApplied: true, filePath: aiTest.filePath }, message: "This generated candidate was already applied." });
+        const base = meta.proposalBase || meta;
+        if (base.snapshotId !== snapshotId || !Number.isSafeInteger(base.workspaceRevision)
+            || base.isExisting !== false && !base.baseVersion) {
+            throw Object.assign(new ServiceError("This generated candidate has no captured file version. Regenerate it before applying.", 428), { code: "FILE_VERSION_REQUIRED" });
+        }
+        const canonicalPath = path.relative(snapshotWorkspaceRoot(snapshot), containedPath(snapshot.rootDir, targetFilePath)).replaceAll("\\", "/");
+        const mutation = await mutateProjectWorkspace({ projectId: snapshot.projectId, snapshotId, userId,
+            path: canonicalPath, kind: base.isExisting === false ? "CREATE_FILE" : "WRITE_FILE", content: aiTest.content,
+            expectedVersion: base.baseVersion, expectedWorkspaceRevision: base.workspaceRevision,
+            requestId: req.body?.requestId || `apply-system-${aiTest.id}` });
 
         meta.dryRun = "MANUALLY_SAVED";
         meta.savedAt = new Date().toISOString();
@@ -2984,13 +2894,14 @@ export const saveAiSystemTest = async (req, res) => {
                 status: updatedAiTest.status,
                 filePath: updatedAiTest.filePath,
                 content: updatedAiTest.content,
+                ...mutation,
                 meta,
                 createdAt: updatedAiTest.createdAt,
             },
         });
     } catch (error) {
         console.error("[saveAiSystemTest] Error:", error);
-        return res.status(500).json({ success: false, message: error.message || "Server error while saving AI test." });
+        return res.status(error.statusCode || 500).json({ success: false, code: error.code, details: error.details, message: error.message || "Server error while saving AI test." });
     }
 };
 
@@ -3020,9 +2931,7 @@ export const generateColdStartSystemTestsController = async (req, res) => {
         if (!snapshot) {
             return res.status(404).json({ success: false, message: "Snapshot not found." });
         }
-        if (snapshot.project?.ownerId !== userId) {
-            return res.status(403).json({ success: false, message: "Forbidden: You do not own this snapshot." });
-        }
+        const generationAccess = await resolveProjectAccess({ projectId: snapshot.projectId, userId, capability: "ai.use" });
 
         const rootDir = snapshot.rootDir;
         if (!rootDir || !fs.existsSync(rootDir)) {
@@ -3037,67 +2946,40 @@ export const generateColdStartSystemTestsController = async (req, res) => {
             ? req.body.routes
             : [];
 
-        // Generate cold-start system tests
-        const generationResult = await generateColdStartSystemTests({
-            rootDir,
-            framework,
-            targetRoutes,
-        });
+        const executionMode = req.body?.executionMode === 'full' ? 'full' : 'frontend';
 
-        // Upsert AI test in database
-        const aiMode = framework === "cypress" ? "CYPRESS_E2E" : "PLAYWRIGHT_E2E";
-        const aiTest = await prisma.aiTest.create({
-            data: {
-                projectId: snapshot.projectId,
-                snapshotId,
-                filePath: generationResult.filePath,
-                content: generationResult.code,
-                status: "VERIFIED",
-                mode: aiMode,
-                metaJson: JSON.stringify({
-                    coldStart: true,
-                    suiteCount: generationResult.suiteCount,
-                    scenarioCount: generationResult.scenarioCount,
-                    suites: generationResult.suites,
-                    scenarios: generationResult.scenarios,
-                    configCreated: generationResult.configCreated,
-                    configPath: generationResult.configPath,
-                }),
-            },
+        let aiTest;
+        const generationResult = await withPreparedProjectWorkspace({
+            projectId: snapshot.projectId, snapshotId, userId, capability: "ai.use",
+            expectedWorkspaceRevision: generationAccess.project.workspaceRevision,
+            type: "AI_COLDSTART", input: { framework, targetRoutes, executionMode, model: requestedAiModel(req) || null },
+        }, async context => {
+            const result = await generateColdStartSystemTests({
+                model: requestedAiModel(req), rootDir: path.join(context.rootDir, context.analysisRelative),
+                framework, targetRoutes, executionMode,
+            });
+            await stagePreparedPublication(async tx => {
+                aiTest = await tx.aiTest.create({ data: {
+                    projectId: snapshot.projectId, snapshotId, filePath: result.filePath,
+                    content: result.code, status: "VERIFIED", mode: framework === "cypress" ? "CYPRESS_E2E" : "PLAYWRIGHT_E2E",
+                    metaJson: JSON.stringify({
+                        coldStart: true, applied: true, suiteCount: result.suiteCount, scenarioCount: result.scenarioCount,
+                        suites: result.suites, scenarios: result.scenarios, configCreated: result.configCreated, configPath: result.configPath,
+                        proposalBase: { snapshotId, workspaceRevision: context.workspaceRevision },
+                    }),
+                } });
+                // SystemTestFile belongs to an actual TestRun, not a snapshot.
+                // Generation metadata stays in AiTest; execution creates its own
+                // file rows without inventing a successful run here.
+            });
+            return result;
         });
-
-        // Upsert SystemTestFile in DB if model exists
-        if (prisma.systemTestFile) {
-            try {
-                await prisma.systemTestFile.upsert({
-                    where: {
-                        snapshotId_filePath: {
-                            snapshotId,
-                            filePath: generationResult.filePath,
-                        },
-                    },
-                    create: {
-                        snapshotId,
-                        filePath: generationResult.filePath,
-                        framework: generationResult.framework,
-                        suiteCount: generationResult.suiteCount,
-                        scenarioCount: generationResult.scenarioCount,
-                    },
-                    update: {
-                        framework: generationResult.framework,
-                        suiteCount: generationResult.suiteCount,
-                        scenarioCount: generationResult.scenarioCount,
-                    },
-                });
-            } catch (dbErr) {
-                console.warn("[generateColdStartSystemTestsController] systemTestFile upsert warning:", dbErr.message);
-            }
-        }
 
         // Refresh framework detection for snapshot to update hasTestFiles and isZeroTestProject
+        invalidateCoverageCache(snapshotId);
         let frameworks = null;
         try {
-            frameworks = await detectSystemTestFrameworksForSnapshot(snapshotId);
+            frameworks = await detectSystemTestFrameworksForSnapshot(snapshotId, snapshot);
         } catch (_) {}
 
         return res.status(200).json({
@@ -3105,6 +2987,9 @@ export const generateColdStartSystemTestsController = async (req, res) => {
             message: `Successfully generated ${generationResult.framework} system tests with ${generationResult.scenarioCount} scenarios.`,
             data: {
                 aiTestId: aiTest.id,
+                snapshotId,
+                workspaceRevision: generationResult.workspaceRevision,
+                applied: true,
                 framework: generationResult.framework,
                 filePath: generationResult.filePath,
                 configCreated: generationResult.configCreated,
@@ -3182,7 +3067,7 @@ export const getSystemTestFileContent = async (req, res) => {
             return res.status(400).json({ success: false, message: "filePath query parameter is required." });
         }
 
-        const snapshot = await findOwnedSnapshot(snapshotId, userId);
+        const { snapshot } = await resolveSnapshotAccess({ snapshotId, userId, capability: "project.read" });
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
         if (!snapshot.rootDir || !fs.existsSync(snapshot.rootDir)) {
             return res.status(409).json({ success: false, message: "Snapshot directory not found." });
@@ -3193,8 +3078,9 @@ export const getSystemTestFileContent = async (req, res) => {
             return res.status(404).json({ success: false, message: `Test file not found: ${filePath}` });
         }
 
-        const content = fs.readFileSync(fullPath, "utf8");
-        const stat = fs.statSync(fullPath);
+        const canonicalPath = path.relative(snapshotWorkspaceRoot(snapshot), fullPath).replaceAll("\\", "/");
+        const versioned = await readVersionedProjectFile({ projectId: snapshot.projectId, snapshotId, userId, path: canonicalPath });
+        const { content } = versioned;
         const isCypress = filePath.toLowerCase().includes("cypress") || /\bcy\./.test(content);
         const framework = isCypress ? "cypress" : "playwright";
         const { suites, scenarios } = extractSuitesAndScenarios(content, framework.toUpperCase());
@@ -3204,8 +3090,11 @@ export const getSystemTestFileContent = async (req, res) => {
             data: {
                 filePath: filePath.trim(),
                 content,
+                snapshotId: versioned.snapshotId,
+                version: versioned.version,
+                workspaceRevision: versioned.workspaceRevision,
                 framework,
-                size: stat.size,
+                size: versioned.size,
                 lineCount: content.split("\n").length,
                 suites,
                 scenarios,
@@ -3224,7 +3113,6 @@ export const getSystemTestFileContent = async (req, res) => {
  * Updates and saves modified test file content to disk and synchronizes DB records.
  */
 export const updateSystemTestFileContent = async (req, res) => {
-    let writeLease;
     try {
         const userId = req.user?.id;
         if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
@@ -3238,23 +3126,20 @@ export const updateSystemTestFileContent = async (req, res) => {
             return res.status(400).json({ success: false, message: "content string is required." });
         }
 
-        const snapshot = await findOwnedSnapshot(snapshotId, userId);
+        const { snapshot } = await resolveSnapshotAccess({ snapshotId, userId, capability: "files.write" });
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
         if (!snapshot.rootDir || !fs.existsSync(snapshot.rootDir)) {
             return res.status(409).json({ success: false, message: "Snapshot directory not found." });
         }
 
         // Validate syntax and dangerous imports using AST validator
-        if (process.env.SYSTEM_ASSESSMENT_ENABLED === 'true') {
-            const {acquireSnapshotLease} = await import('../services/systemAssessmentWorkspace.service.js');
-            const {getSystemEvidenceRedis}=await import('../services/queue.service.js');
-            writeLease = await acquireSnapshotLease({redis:getSystemEvidenceRedis(),snapshotId});
-        }
         validateGeneratedTestCode(content);
 
         const fullPath = containedPath(snapshot.rootDir, filePath.trim());
-        fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-        fs.writeFileSync(fullPath, content, "utf8");
+        const canonicalPath = path.relative(snapshotWorkspaceRoot(snapshot), fullPath).replaceAll("\\", "/");
+        const mutation = await mutateProjectWorkspace({ projectId: snapshot.projectId, snapshotId, userId,
+            path: canonicalPath, content, kind: "WRITE_FILE", expectedVersion: req.body.expectedVersion,
+            expectedWorkspaceRevision: req.body.expectedWorkspaceRevision, requestId: req.body.requestId });
 
         const isCypress = filePath.toLowerCase().includes("cypress") || /\bcy\./.test(content);
         const framework = isCypress ? "cypress" : "playwright";
@@ -3262,9 +3147,9 @@ export const updateSystemTestFileContent = async (req, res) => {
 
         // Update any associated AiTest record
         try {
-            await prisma.aiTest.updateMany({
-                where: { snapshotId, filePath: filePath.trim() },
-                data: { content },
+            await withProjectGuard({ projectId: snapshot.projectId, userId, capability: "files.write" }, async (tx, access) => {
+                if (access.project.workspaceRevision !== mutation.workspaceRevision) return;
+                await tx.aiTest.updateMany({ where: { snapshotId, filePath: filePath.trim() }, data: { content } });
             });
         } catch (_) {}
 
@@ -3272,6 +3157,9 @@ export const updateSystemTestFileContent = async (req, res) => {
             success: true,
             message: "Test file saved successfully.",
             data: {
+                snapshotId: mutation.snapshotId,
+                version: mutation.version,
+                workspaceRevision: mutation.workspaceRevision,
                 filePath: filePath.trim(),
                 framework,
                 suiteCount: suites.length,
@@ -3282,9 +3170,7 @@ export const updateSystemTestFileContent = async (req, res) => {
         });
     } catch (error) {
         console.error("[updateSystemTestFileContent] Error:", error);
-        return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to update test file." });
-    } finally {
-        await writeLease?.release();
+        return res.status(error.statusCode || 500).json({ success: false, code: error.code, details: error.details, message: error.message || "Failed to update test file." });
     }
 };
 
@@ -3310,7 +3196,7 @@ export const runSingleSystemTest = async (req, res) => {
         });
 
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
-        if (snapshot.project.ownerId !== userId) return res.status(403).json({ success: false, message: "Forbidden." });
+        await resolveProjectAccess({ projectId: snapshot.projectId, userId, capability: "project.read" });
         if (!snapshot.rootDir || !fs.existsSync(snapshot.rootDir)) {
             return res.status(409).json({ success: false, message: "Snapshot repository not ready on disk." });
         }
@@ -3397,6 +3283,7 @@ export const optimizeSystemTestController = async (req, res) => {
             if (!scenarioData) return res.status(404).json({success:false,message:'Scenario not found for this snapshot and test file'});
         }
         const optimizationResult = await optimizeSystemTest({
+            model: requestedAiModel(req),
             rootDir: snapshot.rootDir,
             snapshotId,
             filePath: filePath.trim(),

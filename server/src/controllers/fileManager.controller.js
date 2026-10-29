@@ -1,51 +1,19 @@
-import fs from 'fs';
-import path from 'path';
+import { getProjectTree } from '../services/project.service.js';
+import { readVersionedProjectFile } from '../services/projectFileVersion.service.js';
+import { mutateProjectWorkspace } from '../services/projectMutation.service.js';
 import { ServiceError } from '../utils/serviceError.js';
 
-export const getFileTree = async (req, res) => {
-    const { rootDir } = req.query;
-    if (!rootDir) throw new ServiceError("Missing rootDir", 400);
-
-    const walk = (dir) => {
-        const files = fs.readdirSync(dir);
-        return files.map(file => {
-            const fullPath = path.join(dir, file);
-            const stat = fs.statSync(fullPath);
-            return {
-                name: file,
-                path: fullPath,
-                isDirectory: stat.isDirectory(),
-                children: stat.isDirectory() ? walk(fullPath) : null
-            };
-        });
-    };
-    res.json(walk(rootDir));
-};
-
-export const readFile = async (req, res) => {
-    const { filePath } = req.body;
-    if (!fs.existsSync(filePath)) throw new ServiceError("File not found", 404);
-    res.send(fs.readFileSync(filePath, 'utf-8'));
-};
-
-export const saveFile = async (req, res) => {
-    const { filePath, content } = req.body;
-    if (!filePath || !fs.existsSync(filePath)) throw new ServiceError("Invalid file path", 400);
-
+const endpoint = action => async (req, res) => {
     try {
-        fs.writeFileSync(filePath, content, 'utf-8');
-        res.json({ message: "Saved" });
+        const input = { ...req.query, ...req.body };
+        if (input.filePath !== undefined || input.rootDir !== undefined) throw new ServiceError('Host paths are no longer accepted; use projectId, snapshotId and a project-relative path.', 400);
+        const result = await action({ ...input, userId: req.user.id });
+        return res.json({ success: true, data: result });
     } catch (error) {
-        throw new ServiceError("Failed to save file", 500);
+        return res.status(error.statusCode || 500).json({ success: false, code: error.code, message: error.statusCode ? error.message : 'File operation failed', details: error.details });
     }
 };
-
-export const deleteFile = async (req, res) => {
-    const { filePath } = req.body;
-    if (fs.lstatSync(filePath).isDirectory()) {
-        fs.rmSync(filePath, { recursive: true });
-    } else {
-        fs.unlinkSync(filePath);
-    }
-    res.json({ message: "Deleted" });
-};
+export const getFileTree = endpoint(input => getProjectTree(input.projectId, input.userId, { snapshotId: input.snapshotId, withMetadata: true }));
+export const readFile = endpoint(input => readVersionedProjectFile(input));
+export const saveFile = endpoint(input => mutateProjectWorkspace({ ...input, kind: 'WRITE_FILE' }));
+export const deleteFile = endpoint(input => mutateProjectWorkspace({ ...input, kind: 'DELETE_ENTRY' }));

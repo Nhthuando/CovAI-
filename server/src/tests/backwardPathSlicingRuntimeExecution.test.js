@@ -311,7 +311,7 @@ function checkoutHandler(req, res) {
     // PRODUCTION AI GENERATION PIPELINE VERIFICATION (LIVE MODEL PROVIDER)
     // Traces: Slicer -> Prompt -> Gemini API -> Post-Processor -> Execution
     // =========================================================================
-    describe('Production AI Generation Verification with Live Model Provider', () => {
+    (process.env.COVAI_OFFLINE_TESTS === 'true' ? describe.skip : describe)('Production AI Generation Verification with Live Model Provider', () => {
         it('invokes production pipeline via Gemini, captures provenance, executes generated scenario, and records branch hit count 0 -> 1', async () => {
             // Find VIP branch ID
             const liveFileCoverage = globalThis.__coverage__[controllerFilePath];

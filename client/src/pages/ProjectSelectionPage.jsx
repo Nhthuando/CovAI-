@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { queryClient } from "../lib/queryClient";
 import {
@@ -26,9 +26,10 @@ const DEFAULT_AI_PANEL_WIDTH = 340;
 
 export default function ProjectSelectionPage() {
   const { user, logout } = useAuth();
+  const userId = user?.id;
   const navigate = useNavigate();
   const location = useLocation();
-  const { isMobile, isTablet } = useBreakpoints();
+  const { isMobile } = useBreakpoints();
 
   // URL query parameter for demo vs live data mode
   const [dataMode, setDataMode] = useState(() => {
@@ -89,6 +90,7 @@ export default function ProjectSelectionPage() {
     try {
       setIsDeleting(true);
       await deleteProjectApi(targetProject.id);
+      queryClient.invalidateQueries({ queryKey: ["projects", userId] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["projectsPortfolio"] });
       setProjectToDelete(null);
@@ -228,6 +230,16 @@ export default function ProjectSelectionPage() {
       <div className="flex flex-1 overflow-hidden relative min-h-0">
         {/* Main 5-Zone Projects Portfolio Dashboard */}
         <main className="flex-1 overflow-y-auto custom-scrollbar min-w-0">
+          {location.state?.projectAccessLost && (
+            <div className="max-w-[1600px] mx-auto px-4 sm:px-6 pt-4">
+              <div
+                role="alert"
+                className="rounded-lg border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/10 p-4 text-sm text-[var(--color-text)]"
+              >
+                Your access to this project has been removed. Your unsaved editor drafts are kept in this browser.
+              </div>
+            </div>
+          )}
           <ProjectsPortfolioDashboard
             dataMode={dataMode}
             onChangeDataMode={handleChangeDataMode}
@@ -352,6 +364,7 @@ export default function ProjectSelectionPage() {
           onClose={() => setShowImport(false)}
           onSuccess={() => {
             setShowImport(false);
+            queryClient.invalidateQueries({ queryKey: ["projects", userId] });
             queryClient.invalidateQueries({ queryKey: ["projects"] });
             queryClient.invalidateQueries({ queryKey: ["projectsPortfolio"] });
           }}

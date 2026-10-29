@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   User,
   Palette,
@@ -7,6 +7,7 @@ import {
   CreditCard,
   LogOut,
   Settings,
+  Users,
 } from "lucide-react";
 import { useAuth } from "../../../hooks/useAuth";
 import { useNavigate } from "react-router-dom";
@@ -44,10 +45,15 @@ export default function SettingsSidebar({
   activeSetting,
   onSelectSetting,
   variant = "sidebar",
+  project,
 }) {
   const { logout } = useAuth();
   const navigate = useNavigate();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const tabsRef = useRef(null);
+  useEffect(() => {
+    if (variant === "tabs") tabsRef.current?.querySelector(`[data-setting="${activeSetting}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [variant, activeSetting]);
 
   const handleLogout = () => {
     setShowLogoutConfirm(false);
@@ -57,13 +63,14 @@ export default function SettingsSidebar({
 
   if (variant === "tabs") {
     return (
-      <div className="flex gap-1.5 p-2.5 overflow-x-auto border-b border-[var(--color-border)] bg-[var(--color-surface)] sticky top-0 z-10 font-sans">
-        {SETTINGS_OPTIONS.map((option) => {
+      <div ref={tabsRef} className="flex gap-1.5 p-2.5 overflow-x-auto border-b border-[var(--color-border)] bg-[var(--color-surface)] sticky top-0 z-10 font-sans">
+        {[...SETTINGS_OPTIONS, ...(project?.id ? [{ id: "members", label: "Members & access", icon: Users }] : [])].map((option) => {
           const Icon = option.icon;
           const isActive = activeSetting === option.id;
           return (
             <button
               key={option.id}
+              data-setting={option.id}
               onClick={() => onSelectSetting(option.id)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-md)] text-xs font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer border ${
                 isActive
@@ -141,6 +148,13 @@ export default function SettingsSidebar({
             );
           })}
         </div>
+        {project?.id && <div className="mt-5 px-2.5">
+          <div className="px-0 pb-2 text-[11px] font-medium text-[var(--color-text-muted)] truncate" title={project.name}>PROJECT · {project.name}</div>
+          <button type="button" onClick={() => onSelectSetting("members")} className={`flex items-center gap-3 p-2.5 rounded-[var(--radius-md)] text-xs transition-colors cursor-pointer text-left w-full border ${activeSetting === "members" ? "bg-[var(--color-primary)]/10 text-[var(--color-text)] border-[var(--color-primary)]/30 font-semibold" : "border-transparent text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)] hover:text-[var(--color-text)]"}`}>
+            <div className={`w-7 h-7 rounded-[var(--radius-md)] flex items-center justify-center shrink-0 ${activeSetting === "members" ? "bg-[var(--color-primary)]/20 text-[var(--color-primary)]" : "bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)]"}`}><Users size={15} /></div>
+            <div><div className="text-xs font-semibold">Members &amp; access</div><div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 font-normal">Invitations, roles &amp; access</div></div>
+          </button>
+        </div>}
       </div>
 
       <div className="p-3 border-t border-[var(--color-border)]">

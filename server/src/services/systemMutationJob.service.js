@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import prisma from '../config/prisma.js';
+import { withOperationPublishGuard,stagePreparedPublication } from './projectOperationWorkspace.service.js';
 import { containedPath } from './fullSystemConfig.service.js';
 import { createAssessmentWorkspace, snapshotIdentity } from './systemAssessmentWorkspace.service.js';
 import { assessSystemWorkspace } from './systemAssessmentJob.service.js';
@@ -11,7 +12,7 @@ export const processSystemMutationJob = async (jobId, lease) => {
     await markJobRunning(jobId);
     const job = await getJobById(jobId), input = JSON.parse(job.payloadJson);
     try {
-        await prisma.systemMutationRun.update({where:{jobId},data:{state:'RUNNING'}});
+        await withOperationPublishGuard(tx=>tx.systemMutationRun.update({where:{jobId},data:{state:'RUNNING'}}));
         if (process.env.SYSTEM_MUTATION_TRUSTED_LOCAL !== 'true') throw new ServiceError('Mutation requires an explicitly configured trusted local execution environment', 409);
         const assessment = await prisma.systemTestAssessment.findFirst({ where: { id: input.assessmentId, snapshotId: job.snapshotId, status: 'COMPLETED' } });
         if (!assessment) throw new ServiceError('Assessment not found', 404);
@@ -53,7 +54,7 @@ export const processSystemMutationJob = async (jobId, lease) => {
         const evaluated = results.filter(r => ['KILLED_ASSERTION', 'SURVIVED', 'NOT_EXERCISED'].includes(r.status));
         const killed = results.filter(r => r.status === 'KILLED_ASSERTION').length;
         const resultJson = { requested: selected.length, evaluated: evaluated.length, killed, detectedPct: evaluated.length ? 100 * killed / evaluated.length : null, results, limitations: ['Ratio applies only to the evaluated, selected faults; unresolved results are excluded and listed.'] };
-        await prisma.systemMutationRun.update({ where: { jobId }, data: { state: 'COMPLETED', resultJson: JSON.parse(JSON.stringify(resultJson)) } });
+        await stagePreparedPublication(tx=>tx.systemMutationRun.update({ where: { jobId }, data: { state: 'COMPLETED', resultJson: JSON.parse(JSON.stringify(resultJson)) } }));
         await markJobSuccess(jobId, resultJson);
     } catch (error) { await prisma.systemMutationRun.updateMany({ where: { jobId }, data: { state: 'FAILED' } }); await markJobFailed(jobId, error); throw error; }
 };

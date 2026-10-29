@@ -1,6 +1,12 @@
 import prisma from '../config/prisma.js';
 
-export const upsertPerformanceMetric = (result) => {
+const publicMetric = row => {
+    if (!row) return row;
+    let metrics = {};
+    try { metrics = JSON.parse(row.metricsJson || '{}'); } catch { /* Legacy malformed payload remains readable. */ }
+    return { ...metrics, ...row };
+};
+export const upsertPerformanceMetric = async (result,db = prisma,id) => {
     const data = {
         performanceScore: result.performanceScore,
         executionScore: result.executionScore,
@@ -11,15 +17,16 @@ export const upsertPerformanceMetric = (result) => {
         testExecutionType: result.testExecutionType,
         riskLevel: result.riskLevel
     };
-    return prisma.performanceMetric.upsert({
+    const metric = await db.performanceMetric.upsert({
         where: { snapshotId: result.snapshotId },
-        create: { snapshotId: result.snapshotId, ...data },
-        update: data
+        create: { ...(id ? {id} : {}), snapshotId: result.snapshotId, metricsJson: JSON.stringify(data) },
+        update: { metricsJson: JSON.stringify(data) }
     });
+    return publicMetric(metric);
 };
 
 export const findPerformanceReportData = (snapshotId) => Promise.all([
-    prisma.performanceMetric.findUnique({ where: { snapshotId } }),
+    prisma.performanceMetric.findUnique({ where: { snapshotId } }).then(publicMetric),
     prisma.cyclomatic.findMany({ where: { snapshotId } }),
     prisma.coverageFunction.findMany({ where: { snapshotId } })
 ]);

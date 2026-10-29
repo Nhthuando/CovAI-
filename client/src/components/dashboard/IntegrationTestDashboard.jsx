@@ -1,15 +1,17 @@
+import { useProjectAccess } from "../../hooks/useProjectAccess";
 import { useState } from "react";
 import IntegrationWorkspace from "./IntegrationWorkspace.jsx";
 import { generateIntegrationTestApi } from "../../services/project.service.js";
 import ConfirmDialog from "../common/ConfirmDialog.jsx";
 
 export default function IntegrationTestDashboard(props) {
+  const projectAccess = useProjectAccess(props.projectId);
   const [generating, setGenerating] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [pendingTargets, setPendingTargets] = useState(null);
 
   const handleGenerate = async (force = false, targetEndpoints = null) => {
-    if (!props.projectId || !props.snapshotId) return null;
+    if (!projectAccess.can("ai.use") || !props.projectId || !props.snapshotId) return null;
     setGenerating(true);
     try {
       const res = await generateIntegrationTestApi(props.projectId, props.snapshotId, force, targetEndpoints);

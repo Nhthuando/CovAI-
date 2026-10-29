@@ -1,9 +1,13 @@
+import { enforceProjectEndpointPolicy } from '../middlewares/projectEndpointPolicy.js';
 import express from "express";
-import { processAnalysisPipeline } from "../services/analysisPipeline.service.js";
+import { createAnalysisJob } from "../services/job.service.js";
+import { addJobToQueue } from "../services/queue.service.js";
+import { resolveSnapshotAccess } from "../services/projectAccess.service.js";
 import { authMiddleware } from "../middlewares/auth.middleware.js";
 import { getProjectById } from "../services/project.service.js";
 
 const router = express.Router();
+router.use(authMiddleware, enforceProjectEndpointPolicy('pipeline'));
 
 /**
  * POST /pipeline/:projectId/run-analysis
@@ -23,8 +27,11 @@ router.post("/:projectId/run-analysis", authMiddleware, async (req, res) => {
     }
 
     // Create and start pipeline (non-blocking)
-    const { testType } = req.body;
-    const jobId = await processAnalysisPipeline(projectId, testType);
+    const { testType, snapshotId } = req.body;
+    const { snapshot } = await resolveSnapshotAccess({ projectId, snapshotId, userId: req.user.id, capability: "tests.run" });
+    const job = await createAnalysisJob({ projectId, snapshotId: snapshot.id, userId: req.user.id });
+    if (!job.reused && !job.existing) await addJobToQueue("ANALYSIS", job.id);
+    const jobId = job.id;
     return res.status(202).json({
       success: true,
       message: `Analysis job for ${testType || "all"} queued successfully.`,
@@ -32,7 +39,7 @@ router.post("/:projectId/run-analysis", authMiddleware, async (req, res) => {
     });
   } catch (error) {
     console.error("[Pipeline Route] Error:", error);
-    return res.status(500).json({
+    return res.status(error.statusCode || 500).json({
       success: false,
       message: "An error occurred while starting the analysis.",
     });
