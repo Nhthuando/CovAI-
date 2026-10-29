@@ -42,6 +42,19 @@ await jest.unstable_mockModule("../config/prisma.js", () => ({
     default: mockPrisma
 }));
 
+// This suite verifies the refinement algorithm with deterministic runner output.
+// Real copy/CAS/recovery behavior is exercised by projectWorkspacePublish.integration.
+await jest.unstable_mockModule('../services/projectWorkspacePreparation.service.js',()=>({
+    withPreparedProjectWorkspace:jest.fn(async (options,run)=>{
+        expect(options.expectedWorkspaceRevision).toBe(0);
+        expect(options.snapshotId).toBe('snap-1');
+        return run({});
+    }),
+}));
+await jest.unstable_mockModule('../services/dependencyInstallation.service.js',()=>({
+    dependencyInstallationService:{install:jest.fn(async()=>({success:true,installed:true,stdout:'',stderr:''}))},
+}));
+
 const mockAiResponse = JSON.stringify({
     explanation: "Comprehensive unit tests for processOrder covering all branches and edge cases",
     suggestedTestCode: `describe('processOrder', () => {
@@ -140,6 +153,7 @@ export function processOrder(order) {
             mockPrisma.project.findFirst.mockResolvedValue({
                 id: "proj-1",
                 ownerId: "user-1",
+                workspaceRevision:0,
                 snapshots: [{
                     id: "snap-1",
                     rootDir: tempDir,

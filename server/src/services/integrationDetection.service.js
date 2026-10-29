@@ -429,6 +429,8 @@ export const installIntegrationDependencies = async ({
         }
     }
 
+    const allowedPackages = new Set(['supertest','jest','@playwright/test']);
+    if (!Array.isArray(packages) || installList.some(name => !allowedPackages.has(name))) throw new Error('Unsupported integration test dependency');
     const pkgCmd = installList.join(" ");
     const command = `npm install --save-dev ${pkgCmd} --legacy-peer-deps --no-audit --no-fund`;
 

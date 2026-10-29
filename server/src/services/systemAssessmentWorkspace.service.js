@@ -1,3 +1,5 @@
+import { operationAbortReason } from './systemOperationError.service.js';
+import { registerDependencyWorkspace } from './projectDependencyCache.service.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -5,8 +7,9 @@ import crypto from 'node:crypto';
 import { containedPath } from './fullSystemConfig.service.js';
 import { digest } from './systemTestStaticAnalysis.service.js';
 import { ServiceError } from '../utils/serviceError.js';
+import { runtimeIgnoredDirectories } from './projectRuntimePlan.service.js';
 
-const ignored = new Set(['node_modules', '.git', '.agents', '.codex', '.specify', 'dist', 'build', 'coverage', '.covai-temp', '.covai-system-test', 'test-results', '.npm-cache']);
+const ignored = new Set([...runtimeIgnoredDirectories, '.specify', '.npm-cache']);
 const secret = name => /^\.env(?:\.|$)/i.test(name) || /(?:credential|service[-_]?account|secret|private[-_]?key)/i.test(name) || /\.(pem|key|p12)$/i.test(name);
 export const snapshotIdentity = rootDir => {
     const files = [];
@@ -33,14 +36,35 @@ export const createAssessmentWorkspace = ({ rootDir, operationId = crypto.random
     const base = path.join(os.tmpdir(), 'covai-assessments');
     fs.mkdirSync(base, { recursive: true });
     const target = fs.mkdtempSync(path.join(base, 'operation-'));
+    const extraFiles = [];
     try {
         for (const file of identity.files) {
             const destination = containedPath(target, file.path);
             fs.mkdirSync(path.dirname(destination), { recursive: true });
             fs.copyFileSync(containedPath(rootDir, file.path), destination);
         }
+        // In imported monorepos where snapshot rootDir is pointed at the backend package (e.g. server),
+        // copy any sibling frontend package (e.g. client, frontend) into the workspace so the frontend
+        // AUT server can be resolved and launched alongside the test runner.
+        const parent = path.dirname(rootDir);
+        if (['server', 'backend', 'api'].includes(path.basename(rootDir)) && (fs.existsSync(path.join(parent, '.git')) || ['client', 'frontend', 'web', 'ui', 'app'].some(n => fs.existsSync(path.join(parent, n, 'package.json'))))) {
+            const siblingNames = ['client', 'frontend', 'web', 'ui', 'app'];
+            for (const sibling of siblingNames) {
+                const siblingDir = path.join(parent, sibling);
+                if (fs.existsSync(path.join(siblingDir, 'package.json')) && !fs.existsSync(path.join(rootDir, sibling))) {
+                    const siblingIdentity = snapshotIdentity(siblingDir);
+                    for (const file of siblingIdentity.files) {
+                        const destination = path.join(target, sibling, file.path);
+                        fs.mkdirSync(path.dirname(destination), { recursive: true });
+                        fs.copyFileSync(containedPath(siblingDir, file.path), destination);
+                        extraFiles.push({ path: `${sibling}/${file.path}`, hash: file.hash });
+                    }
+                }
+            }
+        }
     } catch (error) { fs.rmSync(target, { recursive: true, force: true }); throw error; }
-    return { rootDir: target, originalRoot: rootDir, operationId, ...identity, release: () => {
+    registerDependencyWorkspace(target);
+    return { rootDir: target, originalRoot: rootDir, operationId, ...identity, files: [...identity.files, ...extraFiles], release: () => {
         const real = fs.realpathSync(target);
         const rel = path.relative(fs.realpathSync(base), real);
         if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) throw new ServiceError('Invalid cleanup workspace', 500);
@@ -48,18 +72,30 @@ export const createAssessmentWorkspace = ({ rootDir, operationId = crypto.random
     } };
 };
 
-export const acquireSnapshotLease = async ({ redis, snapshotId }) => {
+export const acquireSnapshotLease = async ({ redis, snapshotId, maxRetries = 3, retryDelayMs = 250 }) => {
     const key = `system-assessment:snapshot:${snapshotId}`;
     const token = crypto.randomUUID();
-    if (await redis.set(key, token, 'PX', 60000, 'NX') !== 'OK') throw new ServiceError('Another system operation is active for this snapshot', 409);
+    let acquired = false;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        if (await redis.set(key, token, 'PX', 60000, 'NX') === 'OK') {
+            acquired = true;
+            break;
+        }
+        if (attempt < maxRetries) {
+            await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+        }
+    }
+    if (!acquired) throw new ServiceError('Another system operation is active for this snapshot', 409);
     let lost = false;
     const refresh = async () => {
         try { if (await redis.eval("if redis.call('get',KEYS[1]) == ARGV[1] then return redis.call('pexpire',KEYS[1],ARGV[2]) else return 0 end", 1, key, token, 60000) !== 1) lost = true; }
         catch { lost = true; }
     };
     const timer = setInterval(refresh, 15000); timer.unref();
+    const assertOwnership=async()=>{if(lost || await redis.get(key)!==token)throw new ServiceError('System operation lease was lost',409);};
     const lease = {
-        assertHeld: async () => { if (lease.signal?.aborted) throw new ServiceError('System operation canceled or resource budget exceeded',409); if (lost || await redis.get(key) !== token) throw new ServiceError('System operation lease was lost', 409); },
+        assertOwnership,
+        assertHeld: async () => { if (lease.signal?.aborted) throw operationAbortReason(lease.signal); await assertOwnership(); },
         release: async () => { clearInterval(timer); await redis.eval("if redis.call('get',KEYS[1]) == ARGV[1] then return redis.call('del',KEYS[1]) else return 0 end", 1, key, token); },
     };
     return lease;

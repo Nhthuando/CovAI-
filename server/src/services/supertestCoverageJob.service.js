@@ -20,6 +20,10 @@ import { dockerRunner } from "./dockerRunner.service.js";
 import babel from "@babel/core";
 import transformCommonJsPlugin from "@babel/plugin-transform-modules-commonjs";
 import prisma from "../config/prisma.js";
+import { randomUUID } from 'node:crypto';
+import { currentProjectOperation, withOperationPublishGuard, stagePreparedPublication } from './projectOperationWorkspace.service.js';
+import { resolveContainedProjectPath } from './projectFileVersion.service.js';
+import { resolveProjectRoot, ensureMinimalPackageJson } from '../utils/projectRootResolver.js';
 import {
     registerJobAbortController,
     unregisterJobAbortController,
@@ -116,10 +120,16 @@ export const processSupertestCoverageJob = async (jobId) => {
         if (!job?.snapshot?.rootDir) {
             throw new ServiceError("Snapshot is not ready to run Supertest.", 409);
         }
-        const { rootDir, jestConfigPath } = job.snapshot;
+        const { jestConfigPath } = job.snapshot;
+        const rootDir = resolveProjectRoot(job.snapshot.rootDir) || job.snapshot.rootDir;
         const snapshotId = job.snapshotId;
         const projectId = job.projectId;
         const userId = job.userId;
+        if (currentProjectOperation()) {
+            ensureMinimalPackageJson(rootDir);
+            const { runNpmInstall } = await import('./runTestsJob.service.js');
+            await runNpmInstall(jobId, rootDir);
+        }
 
         const supertestInfo = await detectSupertest(rootDir);
         
@@ -140,7 +150,7 @@ export const processSupertestCoverageJob = async (jobId) => {
             if (meta.framework && String(meta.framework).toUpperCase() !== "SUPERTEST") continue;
             if (meta.status === "REJECTED" || meta.status === "DISABLED") continue;
             
-            const filePath = path.join(rootDir, t.filePath);
+            const filePath = (await resolveContainedProjectPath(job.snapshot, t.filePath)).target;
             
             const testCode = t.content || (fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '');
             if (!testCode) continue;
@@ -236,7 +246,7 @@ export const processSupertestCoverageJob = async (jobId) => {
             const reason = errorSnippet ? `: ${errorSnippet.slice(-300)}` : "";
             throw new ServiceError(`Supertest completed without producing the required coverage JSON files${reason}`, 422);
         }
-        const summaryResult = await parseCoverageSummary(coverageDir, snapshotId);
+        const summaryResult = await withOperationPublishGuard(() => parseCoverageSummary(coverageDir, snapshotId));
 
         // Parse test results
         const supertestResults = parseJestResults(coverageDir, { aiTests, rootDir });
@@ -252,16 +262,16 @@ export const processSupertestCoverageJob = async (jobId) => {
                 skippedTests: supertestResults.skippedTests,
                 durationMs: supertestResults.durationMs,
                 status: supertestResults.status, // PASSED or FAILED
-                startedAt: new Date(), // TODO: Get actual start time
-                finishedAt: new Date() // TODO: Get actual finish time
+                startedAt: job.startedAt || new Date(),
+                finishedAt: new Date()
             };
             if (formattedScenarios) {
                 dataPayload.scenarios = formattedScenarios;
             }
-            const createdTestRun = await prisma.testRun.create({
-                data: dataPayload,
-                include: { scenarios: true }
-            });
+            dataPayload.id = randomUUID();
+            if (dataPayload.scenarios?.create) dataPayload.scenarios.create = dataPayload.scenarios.create.map(row=>({...row,id:row.id || randomUUID()}));
+            let createdTestRun = {...dataPayload,scenarios:dataPayload.scenarios?.create || []};
+            await stagePreparedPublication(async tx => { const stored = await tx.testRun.create({data:dataPayload,include:{scenarios:true}});if(stored?.id)createdTestRun=stored; });
             await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'PARSE_COVERAGE', label: `[SCRUM-141] Saved TestRun (SUPERTEST): ${supertestResults.totalTests} tests.`, progress: 60 })).catch(() => { });
 
             // Enrich runtime evidence with testRunId and scenarioId
@@ -300,8 +310,8 @@ export const processSupertestCoverageJob = async (jobId) => {
 
         await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'MAP_RESULTS', label: "Parsing coverage files and functions...", progress: 70 }));
         const coverageReport = JSON.parse(fs.readFileSync(finalPath, "utf8"));
-        await parseCoverageFilesForSnapshot({ projectId, snapshotId, coverageReport, userId });
-        await parseCoverageFunctionsForSnapshot({ projectId, snapshotId, coverageReport, userId });
+        await withOperationPublishGuard(() => parseCoverageFilesForSnapshot({ projectId, snapshotId, coverageReport, userId }));
+        await withOperationPublishGuard(() => parseCoverageFunctionsForSnapshot({ projectId, snapshotId, coverageReport, userId }));
 
         await updateJobProgress(jobId, 80);
 
@@ -328,17 +338,17 @@ export const processSupertestCoverageJob = async (jobId) => {
     } catch (error) {
         if (isJobCanceled(jobId, abortController.signal) || error?.message?.includes("canceled") || error?.message?.includes("cancelled") || error?.statusCode === 409) {
             await addJobLog(jobId, "INFO", "[SUPERTEST] Run Tests canceled by user. Preserving partial execution evidence.").catch(() => {});
-            
+
             // Safely stage partial evidence without overwriting previous successful run
             try {
                 const job = await getJobById(jobId).catch(() => null);
                 const snapshotId = job?.snapshotId;
                 const rootDir = job?.snapshot?.rootDir;
-                
+
                 if (snapshotId && rootDir) {
                     const coverageDir = path.join(rootDir, "coverage");
                     let scenarios = [];
-                    
+
                     // 1. Try to read partial Jest results if Jest managed to output before abort
                     try {
                         const partialJest = parseJestResults(coverageDir, { rootDir });

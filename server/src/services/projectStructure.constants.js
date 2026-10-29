@@ -6,7 +6,7 @@ export const SUPPORTED_SOURCE_EXTENSIONS = Object.freeze([
 
 export const IGNORED_DIRECTORY_NAMES = new Set([
     "node_modules", ".git", "dist", "build", "coverage", ".cache",
-    ".next", ".nuxt", ".turbo", "vendor",
+    ".next", ".nuxt", ".turbo", "vendor", ".covai-collaboration",
 ]);
 
 export const MODULE_FORMATS = Object.freeze({

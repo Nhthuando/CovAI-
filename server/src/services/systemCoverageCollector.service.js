@@ -36,7 +36,13 @@ export const collectSystemCoverage = ({ preparation, runtimeArtifacts = [], test
                 artifactManifestHash: digest({ ...preparation.manifest, directory: undefined, runtimeArtifacts: observed }),
                 scope: { ...preparation.manifest.coverageScope[tier], eligibleFiles: prepared.inventory.length, instrumentedFiles: Object.keys(prepared.zeroMaps).length, omittedFiles, window: 'AUT_LIFECYCLE', startupIncluded: true },
                 counters: Object.fromEntries(['lines', 'branches', 'functions', 'statements'].map(key => [key, counter(summary[key].covered, summary[key].total)])),
-                files: map.files().map(file => ({ filePath: file, counters: Object.fromEntries(['lines', 'branches', 'functions', 'statements'].map(key => { const s = map.fileCoverageFor(file).toSummary().data[key]; return [key, counter(s.covered, s.total)]; })), uncoveredLines: map.fileCoverageFor(file).getUncoveredLines() })), reasonCodes: omittedFiles.length ? ['INCOMPLETE_SOURCE_SCOPE'] : [],
+                files: map.files().map(file => {
+                    const coverage=map.fileCoverageFor(file),data=coverage.data,summary=coverage.toSummary().data;
+                    return {filePath:file,counters:Object.fromEntries(['lines','branches','functions','statements'].map(key=>[key,counter(summary[key].covered,summary[key].total)])),uncoveredLines:coverage.getUncoveredLines(),
+                        uncoveredBranches:Object.entries(data.b).flatMap(([id,hits])=>hits.flatMap((hit,index)=>hit===0?[{id,index,line:data.branchMap[id].locations?.[index]?.start.line || data.branchMap[id].loc.start.line}]:[])),
+                        uncoveredFunctions:Object.entries(data.f).filter(([,hit])=>hit===0).map(([id])=>({id,line:data.fnMap[id].loc.start.line})),
+                        uncoveredStatements:Object.entries(data.s).filter(([,hit])=>hit===0).map(([id])=>({id,line:data.statementMap[id].start.line}))};
+                }), reasonCodes: omittedFiles.length ? ['INCOMPLETE_SOURCE_SCOPE'] : [],
             };
             tiers[tier] = validateMeasurement(measurement);
         } catch (error) { tiers[tier] = unknownMeasurement('INVALID', error.message); }

@@ -25,7 +25,7 @@ const ARCHITECTURE_PILLARS = [
   },
 ];
 
-export default function AuthLayout({ initialMode = "login" }) {
+export default function AuthLayout({ initialMode = "login", children, invitationNotice }) {
   const [mode, setMode] = useState(initialMode);
 
   const toggleMode = () =>
@@ -117,13 +117,14 @@ export default function AuthLayout({ initialMode = "login" }) {
 
         {/* Center: Auth Form */}
         <div className="my-auto py-8">
-          {mode === "forgot_password" ? (
+          {invitationNotice && <p role="status" className="max-w-[380px] mx-auto mb-5 p-3 text-xs rounded-md border border-[var(--color-primary)]/30 bg-[var(--color-primary)]/10 text-[var(--color-text-secondary)]">{invitationNotice}</p>}
+          {children || (mode === "forgot_password" ? (
             <ForgotPasswordForm setMode={setMode} />
           ) : mode === "reset_password" ? (
             <ResetPasswordForm />
           ) : (
             <AuthForm mode={mode} onToggleMode={toggleMode} setMode={setMode} />
-          )}
+          ))}
         </div>
 
         {/* Bottom footer note */}

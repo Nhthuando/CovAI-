@@ -1,3 +1,4 @@
+import {resolveProjectAccess} from './projectAccess.service.js';
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
@@ -211,7 +212,7 @@ export async function compareSourceCodeService({
         select: { id: true, ownerId: true }
     });
     if (!project) throw new ServiceError("Project not found", 404);
-    if (userId && project.ownerId !== userId) throw new ServiceError("Forbidden", 403);
+    if (userId && project.ownerId !== userId) await resolveProjectAccess({projectId,userId,capability:"project.read"});
 
     // Fetch both snapshots
     const [snapA, snapB] = await Promise.all([
@@ -435,7 +436,7 @@ export async function getSourceFileDiffService({
         select: { id: true, ownerId: true }
     });
     if (!project) throw new ServiceError("Project not found", 404);
-    if (userId && project.ownerId !== userId) throw new ServiceError("Forbidden", 403);
+    if (userId && project.ownerId !== userId) await resolveProjectAccess({projectId,userId,capability:"project.read"});
 
     const [snapA, snapB] = await Promise.all([
         prisma.projectSnapshot.findUnique({ where: { id: baselineSnapshotId } }),
@@ -1047,7 +1048,7 @@ export async function getBeforeAfterComparisonService({
         select: { id: true, ownerId: true }
     });
     if (!project) throw new ServiceError("Project not found", 404);
-    if (userId && project.ownerId !== userId) throw new ServiceError("Forbidden", 403);
+    if (userId && project.ownerId !== userId) await resolveProjectAccess({projectId,userId,capability:"project.read"});
 
     // Disambiguate snapshot selection
     let snapAId = baselineSnapshotId;

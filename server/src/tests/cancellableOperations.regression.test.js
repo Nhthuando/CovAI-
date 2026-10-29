@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, jest } from "@jest/globals";
 
 // Mock dependencies for unit/regression testing
 const prismaMock = {
+  projectOperation:{updateMany:jest.fn(async()=>({count:1}))},
+  project:{findFirst:jest.fn(async()=>null)},
+  $executeRaw:jest.fn(async()=>1),
   job: {
     findUnique: jest.fn(),
     update: jest.fn(),
@@ -37,7 +40,7 @@ const prismaMock = {
   projectSnapshot: {
     findUnique: jest.fn(),
   },
-  $transaction: jest.fn(),
+  $transaction: jest.fn(async run=>run(prismaMock)),
 };
 
 const jobServiceMock = {
@@ -166,9 +169,9 @@ describe("COVAI Phase 1: Cancellable Operations & Preserved Results", () => {
   });
 
   // 4. Không cho user khác hủy Job không thuộc quyền truy cập
-  it("4. Prevents unauthorized users from cancelling jobs belonging to others (403)", async () => {
+  it("4. Prevents unauthorized users from cancelling jobs belonging to an inaccessible project (404)", async () => {
     const job = {
-      id: "job-user-a",
+      id: "job-user-a",projectId:"unrelated-project",
       userId: "user-a",
       status: "RUNNING",
     };
@@ -186,11 +189,11 @@ describe("COVAI Phase 1: Cancellable Operations & Preserved Results", () => {
 
     await cancelJobController(req, res);
 
-    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.status).toHaveBeenCalledWith(404);
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({
         success: false,
-        message: expect.stringMatching(/not authorized/i),
+        message: expect.stringMatching(/Project not found/i),
       })
     );
     expect(prismaMock.job.update).not.toHaveBeenCalled();

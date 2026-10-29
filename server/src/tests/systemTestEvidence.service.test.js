@@ -10,6 +10,18 @@ const roots=[];
 const root=()=>{const directory=fs.mkdtempSync(path.join(os.tmpdir(),'covai-evidence-'));roots.push(directory);return directory;};
 afterEach(()=>{for(const directory of roots.splice(0)) fs.rmSync(directory,{recursive:true,force:true});});
 describe('real system execution and evidence',()=>{
+  it('limits a selected scenario run to its literal Playwright title',()=>{
+    const directory=root();fs.mkdirSync(path.join(directory,'e2e'));
+    const file=path.join(directory,'e2e/items.spec.js');
+    fs.writeFileSync(file,"import {test,expect} from '@playwright/test'; test('A [item]',async({page})=>{await expect(page).toHaveTitle('A');}); test('Other',async({page})=>{await expect(page).toHaveTitle('B');});");
+    const result=prepareSystemPlaywright({rootDir:directory,execution:{selectedFiles:[file],selectedTitles:['A [item]']},executionMode:'frontend',frontendPort:4173,runKey:'selected'});
+    const config=fs.readFileSync(path.join(result.directory,'playwright.config.mjs'),'utf8');
+    expect(config).toContain('grep:new RegExp(');
+    const pattern=JSON.parse(config.match(/grep:new RegExp\((".*?")\)/)[1]);
+    expect(new RegExp(pattern).test('suite A [item]')).toBe(true);
+    expect(new RegExp(pattern).test('suite Other')).toBe(false);
+    expect(new RegExp(pattern).test('suite A i')).toBe(false);
+  });
   it('automatically records user-written steps in an execution copy and preserves config-owned servers',()=>{
     const directory=root();fs.mkdirSync(path.join(directory,'e2e'));
     const source="import {test,expect} from '@playwright/test'; test('title',async({page})=>{await page.goto('/');await expect(page).toHaveTitle('Wrong title');});";

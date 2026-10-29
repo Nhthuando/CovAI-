@@ -1,3 +1,5 @@
+import { installIntegrationDependenciesService,detectIntegrationFrameworksService } from '../services/integrationApiService.service.js';
+import { requestedAiModel } from '../utils/selectedAiModel.js';
 import fs from "fs";
 import { parseCreateProject } from "../validators/project.validation.js";
 import { processIngestJob } from "../services/ingestJob.service.js";
@@ -18,6 +20,7 @@ import {
   detectSystemTestFrameworksForSnapshot,
 } from "../services/systemTestFrameworkDetection.service.js";
 import prisma from "../config/prisma.js";
+import { resolveProjectAccess, membershipWhere } from '../services/projectAccess.service.js';
 import { detectIntegrationFrameworks as scanIntegration, installIntegrationDependencies as runInstallIntegration } from "../services/integrationDetection.service.js";
 import {
   ServiceError,
@@ -62,10 +65,7 @@ const queueSystemTestAnalysis = async ({
   runner,
   userId,
 }) => {
-  const project = await prisma.project.findFirst({
-    where: { id: projectId, ownerId: userId },
-    select: { id: true },
-  });
+  const { project } = await resolveProjectAccess({ projectId, userId, capability: 'tests.run' });
   if (!project)
     throw new ServiceError("Project not found or unauthorized", 404);
 
@@ -109,19 +109,18 @@ const queueSystemTestAnalysis = async ({
 
 const handleEntryMutation = async (req, res, operation, failureMessage) => {
   try {
-    const result = await operation(
-      req.params.id,
-      req.user.id,
-      req.body.path,
-      req.body.content,
-      req.body.newPath,
-    );
+    const options = { snapshotId: req.body.snapshotId, expectedVersion: req.body.expectedVersion,
+      expectedWorkspaceRevision: req.body.expectedWorkspaceRevision, requestId: req.body.requestId };
+    const args = [req.params.id, req.user.id, req.body.path];
+    const result = operation === createProjectFolder ? await operation(...args, options)
+      : operation === renameProjectEntry ? await operation(...args, req.body.content, req.body.newPath, options)
+        : await operation(...args, req.body.content, options);
     return res.status(201).json({ success: true, data: result });
   } catch (error) {
     if (error instanceof ServiceError)
       return res
         .status(error.statusCode)
-        .json({ success: false, message: error.message });
+        .json({ success: false, message: error.message, code: error.code, details: error.details });
     console.error(error);
     return res.status(500).json({ success: false, message: failureMessage });
   }
@@ -153,7 +152,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
 
       if (error && error.code === "P2002") {
@@ -211,7 +210,7 @@ class ProjectController {
   async getProjectById(req, res) {
     try {
       const { id } = req.params;
-      const project = await getProjectById(id);
+      const project = await getProjectById(id, req.user.id);
 
       return res.status(200).json({ success: true, data: project });
     } catch (error) {
@@ -220,7 +219,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
 
       return res.status(500).json({
@@ -244,7 +243,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
       console.error("[listSnapshots] Error:", error);
       return res
@@ -270,7 +269,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
       console.error("[createSnapshot] Error:", error);
       return res.status(500).json({
@@ -296,7 +295,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
       console.error("[restoreSnapshot] Error:", error);
       return res.status(500).json({
@@ -324,7 +323,7 @@ class ProjectController {
         }
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
       console.error(error);
       return res.status(500).json({
@@ -366,7 +365,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
       console.error(error);
       return res.status(500).json({
@@ -394,7 +393,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
       console.error(error);
       return res.status(500).json({
@@ -410,13 +409,13 @@ class ProjectController {
   async getProjectTree(req, res) {
     try {
       const { id } = req.params;
-      const tree = await getProjectTree(id, req.user.id);
-      return res.status(200).json({ success: true, data: tree });
+      const result = await getProjectTree(id, req.user.id, { snapshotId: req.query.snapshotId, withMetadata: true });
+      return res.status(200).json({ success: true, data: result.tree, snapshotId: result.snapshotId, workspaceRevision: result.workspaceRevision });
     } catch (error) {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
       console.error(error);
       return res.status(500).json({
@@ -442,13 +441,13 @@ class ProjectController {
         });
       }
 
-      const result = await getFileContent(id, req.user.id, filePath, snapshotId);
+      const result = await getFileContent(id, req.user.id, filePath, { snapshotId: req.query.snapshotId });
       return res.status(200).json({ success: true, data: result });
     } catch (error) {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
       console.error(error);
       return res.status(500).json({
@@ -478,13 +477,15 @@ class ProjectController {
         req.user.id,
         filePath,
         content,
+        { snapshotId: req.body.snapshotId, expectedVersion: req.body.expectedVersion,
+          expectedWorkspaceRevision: req.body.expectedWorkspaceRevision, requestId: req.body.requestId },
       );
       return res.status(200).json({ success: true, data: result });
     } catch (error) {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
       console.error(error);
       return res.status(500).json({
@@ -527,13 +528,17 @@ class ProjectController {
         req.params.id,
         req.user.id,
         req.query.path,
+          { snapshotId: req.query.snapshotId,
+            expectedWorkspaceRevision: req.query.expectedWorkspaceRevision === undefined ? undefined : Number(req.query.expectedWorkspaceRevision),
+            expectedVersion: req.query.expectedVersion ? JSON.parse(req.query.expectedVersion) : undefined,
+            requestId: req.query.requestId },
       );
       return res.status(200).json({ success: true, data: result });
     } catch (error) {
       if (error instanceof ServiceError)
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       console.error(error);
       return res
         .status(500)
@@ -631,7 +636,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
 
       return res.status(500).json({
@@ -668,6 +673,7 @@ class ProjectController {
         userId: req.user.id,
         mode: mode || "FULL",
         testType: req.body?.testType,
+        requestId: req.get('Idempotency-Key') || req.body?.requestId,
       });
       const reused = queuedJob.reused === true;
       const { reused: _reused, ...job } = queuedJob;
@@ -698,7 +704,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
 
       return res.status(500).json({
@@ -759,7 +765,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
 
       return res.status(500).json({
@@ -805,7 +811,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
 
       return res.status(500).json({
@@ -851,7 +857,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
 
       return res.status(500).json({
@@ -876,7 +882,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
 
       return res.status(500).json({
@@ -901,10 +907,10 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
       console.error(error);
-      return res.status(500).json({ success: false, message: error.message });
+      return res.status(500).json({ success: false, message: error.message, code: error.code, details: error.details });
     }
   }
 
@@ -914,16 +920,16 @@ class ProjectController {
   async detectMissingTestFramework(req, res) {
     try {
       const { id } = req.params;
-      const data = await detectMissingTests(id);
+      const data = await detectMissingTests(id, req.user.id);
       return res.status(200).json(data);
     } catch (error) {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
       console.error(error);
-      return res.status(500).json({ success: false, message: error.message });
+      return res.status(500).json({ success: false, message: error.message, code: error.code, details: error.details });
     }
   }
 
@@ -942,7 +948,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
 
       return res.status(500).json({
@@ -985,7 +991,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
 
       return res.status(500).json({
@@ -1007,7 +1013,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
       console.error(error);
       return res
@@ -1029,7 +1035,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
       console.error(error);
       return res
@@ -1054,7 +1060,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
       console.error(error);
       return res
@@ -1080,7 +1086,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
       console.error(error);
       return res
@@ -1113,7 +1119,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
 
       return res.status(500).json({
@@ -1138,7 +1144,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
 
       return res.status(500).json({
@@ -1163,7 +1169,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
 
       return res.status(500).json({
@@ -1184,7 +1190,7 @@ class ProjectController {
 
       // Verify project ownership
       const project = await prisma.project.findFirst({
-        where: { id: projectId, ownerId: req.user.id },
+        where: { id: projectId, ...membershipWhere(req.user.id) },
         select: { id: true },
       });
 
@@ -1257,7 +1263,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
 
       if (error && error.code === "P2025") {
@@ -1284,7 +1290,7 @@ class ProjectController {
       }
 
       const project = await prisma.project.findFirst({
-        where: { id: projectId, ownerId: req.user.id },
+        where: { id: projectId, ...membershipWhere(req.user.id) },
       });
 
       if (!project) {
@@ -1353,7 +1359,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
 
       return res
@@ -1375,6 +1381,7 @@ class ProjectController {
       }
 
       const job = await createAiSuggestJob({
+        payloadJson: {model: requestedAiModel(req)},
         projectId,
         snapshotId,
         userId: req.user.id,
@@ -1405,7 +1412,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
 
       return res.status(500).json({
@@ -1439,6 +1446,7 @@ class ProjectController {
         await import("../services/aiTestsJob.service.js");
 
       const job = await createAiTestsJob({
+        model: requestedAiModel(req),
         projectId,
         snapshotId,
         userId: req.user.id,
@@ -1470,7 +1478,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
 
       return res.status(500).json({
@@ -1487,7 +1495,7 @@ class ProjectController {
 
       // Verify project ownership
       const project = await prisma.project.findFirst({
-        where: { id: projectId, ownerId: req.user.id },
+        where: { id: projectId, ...membershipWhere(req.user.id) },
       });
       if (!project) {
         return res.status(404).json({
@@ -1534,7 +1542,7 @@ class ProjectController {
 
       // Verify project ownership
       const project = await prisma.project.findFirst({
-        where: { id: projectId, ownerId: req.user.id },
+        where: { id: projectId, ...membershipWhere(req.user.id) },
       });
       if (!project) {
         return res.status(404).json({
@@ -1592,7 +1600,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
 
       return res.status(500).json({
@@ -1621,7 +1629,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
 
       return res.status(500).json({
@@ -1646,6 +1654,7 @@ class ProjectController {
         await import("../services/aiTest.service.js");
 
       const job = await queueSupertestGeneration({
+        model: requestedAiModel(req),
         projectId,
         snapshotId,
         userId: req.user.id,
@@ -1663,7 +1672,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
 
       if (error.status) {
@@ -1721,7 +1730,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
 
       return res.status(500).json({
@@ -1772,7 +1781,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
 
       return res.status(500).json({
@@ -1836,7 +1845,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
 
       return res.status(500).json({
@@ -1887,7 +1896,7 @@ class ProjectController {
       if (error instanceof ServiceError) {
         return res
           .status(error.statusCode)
-          .json({ success: false, message: error.message });
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
       }
 
       return res.status(500).json({
@@ -2012,25 +2021,8 @@ class ProjectController {
       const { id } = req.params;
       const { packages, framework } = req.body || {};
 
-      const project = await prisma.project.findUnique({
-        where: { id },
-        include: {
-          snapshots: { orderBy: { createdAt: "desc" }, take: 1 },
-        },
-      });
-      if (!project) return res.status(404).json({ success: false, message: "Project not found" });
-
-      const latest = project.snapshots[0];
-      const rootDir = latest?.rootDir || latest?.storagePath || project.rootDir;
-      if (!rootDir) return res.status(400).json({ success: false, message: "Project storage path not available" });
-
-      const installResult = await runInstallIntegration({
-        rootDir,
-        packages,
-        framework: framework || "supertest",
-      });
-
-      const updatedDetection = await scanIntegration(rootDir);
+      const installResult = await installIntegrationDependenciesService({projectId:id,userId:req.user.id,packages,framework:framework || 'supertest'});
+      const updatedDetection = await detectIntegrationFrameworksService({projectId:id,userId:req.user.id});
 
       return res.status(200).json({
         success: true,
@@ -2045,5 +2037,3 @@ class ProjectController {
 }
 
 export default new ProjectController();
-
-

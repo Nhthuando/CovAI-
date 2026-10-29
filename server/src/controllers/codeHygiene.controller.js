@@ -1,10 +1,11 @@
+import { membershipWhere } from '../services/projectAccess.service.js';
 import * as service from '../services/codeHygiene.service.js';
 import { createCodeHygieneJob } from '../services/job.service.js';
 import { addJobToQueue } from '../services/queue.service.js';
 import prisma from '../config/prisma.js';
 
 const findOwnedSnapshot = (snapshotId, userId) => prisma.projectSnapshot.findFirst({
-    where: { id: snapshotId, project: { ownerId: userId } },
+    where: { id: snapshotId, project: membershipWhere(userId) },
     select: { id: true, projectId: true, rootDir: true, storagePath: true }
 });
 
@@ -40,7 +41,7 @@ export const getReport = async (req, res) => {
 
 export const getProjectStats = async (req, res) => {
     try {
-        const project = await prisma.project.findFirst({ where: { id: req.params.projectId, ownerId: req.user.id } });
+        const project = await prisma.project.findFirst({ where: { id: req.params.projectId, ...membershipWhere(req.user.id) } });
         if (!project) return res.status(404).json({ error: 'Project not found' });
 
         const summaries = await prisma.codeHygieneSummary.findMany({

@@ -1,3 +1,4 @@
+import { membershipWhere } from './projectAccess.service.js';
 import path from "node:path";
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
@@ -8,7 +9,7 @@ const snapshotSelect = { id: true, projectId: true, source: true, checksum: true
 export const loadExportScope = async ({ projectId, snapshotId, userId }) => {
     // Fail closed if an authenticated token does not contain an actual user ID.
     if (!userId) throw new ServiceError("Authentication required", 401);
-    const project = await prisma.project.findFirst({ where: { id: projectId, ownerId: userId }, select: projectSelect });
+    const project = await prisma.project.findFirst({ where: { id: projectId, ...membershipWhere(userId) }, select: projectSelect });
     if (!project) throw new ServiceError("Project or snapshot not found", 404);
     const snapshot = await prisma.projectSnapshot.findFirst({
         where: { projectId, ...(snapshotId ? { id: snapshotId } : {}) },

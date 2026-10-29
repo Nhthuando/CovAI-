@@ -1,3 +1,4 @@
+import { membershipWhere, resolveProjectAccess } from './projectAccess.service.js';
 import fs from "fs";
 import path from "path";
 import prisma from "../config/prisma.js";
@@ -21,6 +22,7 @@ export const getArchitectureAiSummary = async ({
   if (!projectId || !snapshotId || !filePath) {
     throw new ServiceError("Missing required parameters", 400);
   }
+  await resolveProjectAccess({ projectId, userId, capability: "ai.use" });
 
   const cacheKey = `${snapshotId}:${filePath}`;
   if (!force && memoryCache.has(cacheKey)) {
@@ -31,7 +33,7 @@ export const getArchitectureAiSummary = async ({
     where: {
       id: snapshotId,
       projectId,
-      project: { ownerId: userId },
+      project: membershipWhere(userId),
     },
     select: { id: true, rootDir: true },
   });

@@ -12,8 +12,28 @@ export const prepareSystemCoverage = ({ workspace, coverageScope, measurementId 
     for (const tier of ['frontend', 'backend']) {
         const scope = coverageScope[tier];
         if (!scope) { tiers[tier] = { ...unknownMeasurement('NOT_MEASURED', 'TIER_NOT_SELECTED'), zeroMaps: {} }; continue; }
-        const root = containedPath(workspace.rootDir, scope.root);
-        const prefix = (scope.root === '.' ? '' : scope.root + '/') + (scope.sourceDirectory === '.' ? '' : scope.sourceDirectory + '/');
+        let root = containedPath(workspace.rootDir, scope.root);
+        let prefix = (scope.root === '.' ? '' : scope.root + '/') + (scope.sourceDirectory === '.' ? '' : scope.sourceDirectory + '/');
+        if (tier === 'frontend' && scope.root === '.') {
+            const hasDirectVite = (() => {
+                try {
+                    const p = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+                    return Boolean(p.dependencies?.vite || p.devDependencies?.vite);
+                } catch { return false; }
+            })();
+            if (!hasDirectVite) {
+                const sub = ['client', 'frontend', 'web', 'ui', 'app'].find(n => {
+                    try {
+                        const p = JSON.parse(fs.readFileSync(path.join(workspace.rootDir, n, 'package.json'), 'utf8'));
+                        return Boolean(p.dependencies?.vite || p.devDependencies?.vite);
+                    } catch { return false; }
+                });
+                if (sub) {
+                    root = path.join(workspace.rootDir, sub);
+                    prefix = `${sub}/${fs.existsSync(path.join(root, 'src')) ? 'src/' : (scope.sourceDirectory === '.' ? '' : scope.sourceDirectory + '/')}`;
+                }
+            }
+        }
         const inventory = workspace.files.filter(file => file.path.startsWith(prefix) && /\.[cm]?[jt]sx?$/.test(file.path) && !/\.(test|spec|cy|d)\./.test(file.path) && !/(?:^|\/)(?:__tests__|tests?|e2e|fixtures|__mocks__)(?:\/|$)/.test(file.path) && !/(?:^|\/)[^/]*\.config\.[cm]?[jt]s$/.test(file.path));
         const zeroMaps = {}, omittedFiles = [];
         if (tier === 'backend') {

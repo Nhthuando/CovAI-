@@ -10,9 +10,27 @@ import {
     mergeCoverageSummaries,
     buildJestModuleNameMapper,
     readProjectJestConfig,
-    isEsmProjectForRepo
+    isEsmProjectForRepo,
+    resolveJestBin,
+    jestParallelFlags
 } from "../services/runTestsJob.service.js";
 import { isApiFilePath } from "../utils/apiFileDetector.js";
+
+describe('Jest script commands in isolated host workspaces', () => {
+    it('uses the installed JS executable for a bare Jest script while preserving runInBand', () => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(),'covai-jest-command-'));
+        try {
+            fs.mkdirSync(path.join(root,'node_modules/jest/bin'),{recursive:true});
+            fs.writeFileSync(path.join(root,'node_modules/jest/bin/jest.js'),'');
+            const command = resolveJestBin(root,false,'jest --runInBand --coverage');
+            expect(command).toBe('node node_modules/jest/bin/jest.js --runInBand');
+            expect(jestParallelFlags(command)).toBe('');
+            expect(resolveJestBin(root,true,'npx jest --watch --runInBand')).toBe('node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand');
+            expect(jestParallelFlags('node jest.js --maxWorkers=2')).toBe('');
+            expect(jestParallelFlags('node jest.js')).toBe(' --maxWorkers=50%');
+        } finally { fs.rmSync(root,{recursive:true,force:true}); }
+    });
+});
 
 describe("isApiFilePath", () => {
     it("identifies API routes, controllers, endpoints, and server entry files", () => {

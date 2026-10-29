@@ -1,3 +1,4 @@
+import { operationTimeout, operationCanceled } from './systemOperationError.service.js';
 import { acquireSnapshotLease } from './systemAssessmentWorkspace.service.js';
 import { ServiceError } from '../utils/serviceError.js';
 import { Queue, Worker, FlowProducer } from 'bullmq';
@@ -27,8 +28,14 @@ import {
   createRunTestsJob,
 } from './job.service.js';
 import prisma from '../config/prisma.js';
+import { runJobInOperationWorkspace } from './projectOperationWorkspace.service.js';
+import { runPreparedSystemJob } from './projectSystemOperation.service.js';
+import {failInterruptedProjectOperation} from './projectOperationRecovery.service.js';
 
 let isRedisConnected = false;
+const durableOperationTypes = new Set(['RUN_TESTS', 'ANALYSIS', 'AI_TESTS', 'AI_SUGGEST',
+  'SUPERTEST_COVERAGE', 'INSTALL_DEPS', 'RUN_VITEST_TESTS', 'VITEST_COVERAGE', 'BUILD_CFG', 'PERFORMANCE_ANALYSIS', 'CODE_HYGIENE', 'QUALITY_ANALYSIS', 'SECURITY_ANALYSIS', 'COVERAGE', 'SYSTEM_TEST_ANALYSIS', 'SYSTEM_TEST_ASSESSMENT',
+  'SYSTEM_TEST_IMPROVEMENT', 'SYSTEM_TEST_MUTATION']);
 
 const redisOptions = {
   maxRetriesPerRequest: null,
@@ -103,6 +110,11 @@ if (typeof flowProducer?.on === 'function') {
 }
 
 export const executeJobDirectly = async (type, jobId, customData = {}) => {
+  if (['RUN_TESTS','ANALYSIS','SUPERTEST_COVERAGE','INSTALL_DEPS','RUN_VITEST_TESTS','VITEST_COVERAGE','BUILD_CFG','PERFORMANCE_ANALYSIS','CODE_HYGIENE','QUALITY_ANALYSIS','SECURITY_ANALYSIS','COVERAGE'].includes(type)) return runJobInOperationWorkspace(jobId,()=>executeUnscopedJob(type,jobId,customData));
+  return executeUnscopedJob(type,jobId,customData);
+};
+
+const executeUnscopedJob = async (type, jobId, customData = {}) => {
   console.log(`[DirectExecutor] Running job directly: type=${type}, jobId=${jobId}`);
   try {
     switch (type) {
@@ -160,7 +172,7 @@ export const executeJobDirectly = async (type, jobId, customData = {}) => {
 
         console.log(`[Queue] SUPERTEST_COVERAGE_PIPELINE became runnable: installJob=${installJobId} reached SUCCESS; starting processSupertestCoverageJob(${supertestJobId})`);
         if (supertestJobId) {
-          await processSupertestCoverageJob(supertestJobId);
+          await executeJobDirectly('SUPERTEST_COVERAGE', supertestJobId);
         }
         break;
       }
@@ -196,21 +208,8 @@ export const executeJobDirectly = async (type, jobId, customData = {}) => {
       case 'COVERAGE':
         await processCoverageJob(jobId);
         break;
-      case 'COVERAGE_PIPELINE': {
-        await processInstallDepsJob(jobId);
-        const updatedInstallJob = await prisma.job.findUnique({ where: { id: jobId }, select: { status: true } });
-        if (updatedInstallJob?.status !== 'SUCCESS') {
-          console.error(`[Queue] INSTALL_DEPS failed, stopping COVERAGE_PIPELINE`);
-          return;
-        }
-        const runJob = await createRunTestsJob({
-          projectId: customData.projectId,
-          snapshotId: customData.snapshotId,
-          userId: customData.userId,
-        });
-        await processCoverageJob(runJob.id);
-        break;
-      }
+      case 'COVERAGE_PIPELINE':
+        throw new ServiceError('Legacy coverage orchestration must be submitted again through the current coverage API',409,'OPERATION_CONTEXT_REQUIRED');
       case 'CODE_HYGIENE':
         await processCodeHygieneJob(jobId);
         break;
@@ -231,16 +230,18 @@ export const executeJobDirectly = async (type, jobId, customData = {}) => {
         }
         const abortController = new AbortController();
         lease.signal = abortController.signal;
-        const budget = setTimeout(()=>abortController.abort(),20*60*1000);budget.unref();
+        const budget = setTimeout(()=>abortController.abort(operationTimeout()),20*60*1000);budget.unref();
         const heartbeat = setInterval(async () => {
-          try {await lease.assertHeld();const current=await getJobById(jobId);if(current.status === 'CANCELED') abortController.abort();else await (await import('./job.service.js')).addJobLog(jobId,'INFO','System evidence operation heartbeat');}
-          catch {abortController.abort();}
+          try {await lease.assertHeld();const current=await getJobById(jobId);if(current.status === 'CANCELED') abortController.abort(operationCanceled());else await (await import('./job.service.js')).addJobLog(jobId,'INFO','System evidence operation heartbeat');}
+          catch (error) {abortController.abort(error);}
         },15000);
         heartbeat.unref();
         try {
-          if (type === 'SYSTEM_TEST_ASSESSMENT') await (await import('./systemAssessmentJob.service.js')).processSystemAssessmentJob(jobId,lease);
-          if (type === 'SYSTEM_TEST_IMPROVEMENT') await (await import('./systemTestImprovementJob.service.js')).processSystemImprovementJob(jobId,lease);
-          if (type === 'SYSTEM_TEST_MUTATION') await (await import('./systemMutationJob.service.js')).processSystemMutationJob(jobId,lease);
+          await runPreparedSystemJob(jobId,async()=>{
+            if (type === 'SYSTEM_TEST_ASSESSMENT') await (await import('./systemAssessmentJob.service.js')).processSystemAssessmentJob(jobId,lease);
+            if (type === 'SYSTEM_TEST_IMPROVEMENT') await (await import('./systemTestImprovementJob.service.js')).processSystemImprovementJob(jobId,lease);
+            if (type === 'SYSTEM_TEST_MUTATION') await (await import('./systemMutationJob.service.js')).processSystemMutationJob(jobId,lease);
+          },lease);
         } finally {clearTimeout(budget);clearInterval(heartbeat);await lease.release();}
         break;
       }
@@ -249,7 +250,7 @@ export const executeJobDirectly = async (type, jobId, customData = {}) => {
       case 'CYPRESS_SYSTEM_COVERAGE':
       case 'PLAYWRIGHT_SYSTEM_TEST':
       case 'PLAYWRIGHT_SYSTEM_COVERAGE':
-        await processSystemTestAnalysisJob(jobId);
+        await runPreparedSystemJob(jobId,()=>processSystemTestAnalysisJob(jobId));
         break;
       default:
         console.warn(`[DirectExecutor] Unknown job type: ${type}`);
@@ -275,6 +276,17 @@ const worker = new Worker(
 
     try {
       console.log(`[Queue] job.data = ${JSON.stringify({ type, jobId, ...customData })}`);
+      if ((Number(job.attemptsStarted) > 1 || Number(job.stalledCounter) > 0)) {
+        const recoveryIds = type === 'SUPERTEST_COVERAGE_PIPELINE'
+          ? [customData.installJobId,customData.supertestJobId].filter(Boolean)
+          : durableOperationTypes.has(type) ? [jobId] : [];
+        let stopRecoveredDelivery = false;
+        for (const recoveryJobId of recoveryIds) {
+          const recovery = await failInterruptedProjectOperation({jobId:recoveryJobId});
+          if (recovery.interrupted || recovery.reconciled) stopRecoveredDelivery = true;
+        }
+        if (stopRecoveredDelivery) return;
+      }
       await executeJobDirectly(type, jobId, customData);
       console.log(`[Queue] Completed Job ${jobId} (Type: ${type})`);
     } catch (error) {
@@ -319,6 +331,7 @@ worker.on('error', (err) => {
 
 export const addJobToQueue = async (type, jobId, customData = {}, jobOptions = {}) => {
   if (!isRedisConnected && process.env.NODE_ENV !== 'test') {
+    if (durableOperationTypes.has(type)) throw new ServiceError('Redis must be ready before this operation can be queued',503,'DEPENDENCY_UNAVAILABLE');
     console.warn(`[Queue] Redis unavailable. Executing Job ${jobId} (${type}) directly in-memory...`);
     setTimeout(() => executeJobDirectly(type, jobId, customData), 10);
     return;
@@ -329,6 +342,7 @@ export const addJobToQueue = async (type, jobId, customData = {}, jobOptions = {
     await jobQueue.add(type, { type, jobId, ...customData }, { jobId: dedupeKey, removeOnComplete: true, removeOnFail: true, ...jobOptions });
     console.log(`[Queue] Queued Job ${jobId} (Type: ${type}) with dedupe key ${dedupeKey}.`);
   } catch (redisErr) {
+    if (durableOperationTypes.has(type)) throw new ServiceError('Unable to enqueue project operation; it remains queued for recovery',503,'DEPENDENCY_UNAVAILABLE');
     if (process.env.NODE_ENV !== 'test') {
       console.warn(`[Queue] Error adding job to Redis (${redisErr.message}). Falling back to direct in-memory execution...`);
       setTimeout(() => executeJobDirectly(type, jobId, customData), 10);
@@ -345,12 +359,7 @@ export const addSupertestCoveragePipeline = async (installJobId, supertestJobId,
   const pipelineJobId = `${supertestJobId}-pipeline`;
 
   if (!isRedisConnected && process.env.NODE_ENV !== 'test') {
-    console.warn(`[Queue] Redis unavailable for Supertest pipeline. Running directly in-memory...`);
-    setTimeout(async () => {
-      await executeJobDirectly('INSTALL_DEPS', installJobId);
-      await executeJobDirectly('SUPERTEST_COVERAGE', supertestJobId);
-    }, 10);
-    return { name: 'SUPERTEST_COVERAGE_PIPELINE' };
+    throw new ServiceError('Redis must be ready before this operation can be queued',503,'DEPENDENCY_UNAVAILABLE');
   }
 
   try {
@@ -391,11 +400,6 @@ export const addSupertestCoveragePipeline = async (installJobId, supertestJobId,
     console.log(`[Queue] Supertest pipeline created with flow=${JSON.stringify(flow)}`);
     return flow;
   } catch (error) {
-    console.warn(`[Queue] Error creating Supertest pipeline in Redis (${error.message}). Running in-memory...`);
-    setTimeout(async () => {
-      await executeJobDirectly('INSTALL_DEPS', installJobId);
-      await executeJobDirectly('SUPERTEST_COVERAGE', supertestJobId);
-    }, 10);
-    return { name: 'SUPERTEST_COVERAGE_PIPELINE' };
+    throw new ServiceError('Unable to enqueue Supertest pipeline; operations remain queued for recovery',503,'DEPENDENCY_UNAVAILABLE');
   }
 };

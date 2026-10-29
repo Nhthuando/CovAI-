@@ -19,6 +19,7 @@ import { dockerRunner } from "./dockerRunner.service.js";
 import { parseJestResults, parseVitestResults, formatScenariosForPrisma } from "./testResultParser.service.js";
 import { detectTestingFrameworks, classifyTestFile } from "../utils/testingFrameworkDetector.js";
 import prisma from "../config/prisma.js";
+import { currentProjectOperation, withOperationPublishGuard, stagePreparedPublication, stagePreparedFailure, deferPreparedCommit } from "./projectOperationWorkspace.service.js";
 import { resolveProjectRoot, hasSourceCodeFiles, ensureMinimalPackageJson } from "../utils/projectRootResolver.js";
 import { extractFunctions } from "./cyclomaticFunctionExtractor.service.js";
 import { parseJavaScriptCode } from "./babelParser.service.js";
@@ -409,7 +410,7 @@ export const findUnitFiles = (rootDir) => {
     const detectedUnit = frameworkDetection?.unit || [];
 
     const IGNORED_DIRS = new Set([
-        "node_modules", ".git", "coverage", "dist", "build",
+        "node_modules", ".git", ".covai-collaboration", "coverage", "dist", "build",
         ".next", ".vite", ".vitest", ".cache", "storage",
         "client", "frontend", "ui", "web", "test-data", "test_data",
         "fixtures", "mocks", "__mocks__"
@@ -553,7 +554,7 @@ export const findLogicSourceFiles = (rootDir) => {
     }
 
     const IGNORED_DIRS = new Set([
-        "node_modules", ".git", "coverage", "dist", "build",
+        "node_modules", ".git", ".covai-collaboration", "coverage", "dist", "build",
         ".next", ".vite", ".vitest", ".cache", "storage",
         "client", "frontend", "ui", "web", "test-data", "test_data",
         "fixtures", "mocks", "__mocks__", "public", "assets", "static"
@@ -883,7 +884,7 @@ export const healAllTestFiles = (_rootDir, _specificFiles = []) => {
  * SCRUM-139: Run npm install in rootDir via Docker if dependencies missing.
  * @returns {Promise<void>}
  */
-const runNpmInstall = async (jobId, rootDir) => {
+export const runNpmInstall = async (jobId, rootDir) => {
     const rootPkg = path.join(rootDir, "package.json");
     const hasRootPkg = fs.existsSync(rootPkg);
     const nodeModulesDir = path.join(rootDir, "node_modules");
@@ -926,7 +927,7 @@ const runNpmInstall = async (jobId, rootDir) => {
             if (depth > 3) return list;
             try {
                 for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
-                    if (item.isDirectory() && !["node_modules", ".git", "coverage", "dist", "build", "storage", "client", "frontend"].includes(item.name)) {
+                    if (item.isDirectory() && !["node_modules", ".git", ".covai-collaboration", "coverage", "dist", "build", "storage", "client", "frontend"].includes(item.name)) {
                         const subDir = path.join(dir, item.name);
                         const subPkg = path.join(subDir, "package.json");
                         if (fs.existsSync(subPkg)) {
@@ -1000,23 +1001,29 @@ const getPackageForFile = (relFile, root) => {
     return "";
 };
 
-const resolveJestBin = (dir, isEsm = false, customCommand = null) => {
-    if (customCommand && typeof customCommand === "string" && customCommand.trim()) {
-        const trimmed = customCommand.trim();
-        if (trimmed.includes("jest")) {
-            return trimmed.replace(/\s*(--coverage|--watch|--watchAll).*$/, "").trim();
-        }
-    }
+export const resolveJestBin = (dir, isEsm = false, customCommand = null) => {
     const nodePrefix = isEsm ? "node --experimental-vm-modules" : "node";
     const directJest = path.join(dir, "node_modules", "jest", "bin", "jest.js");
-    if (fs.existsSync(directJest)) return `${nodePrefix} node_modules/jest/bin/jest.js`;
+    let base;
+    if (fs.existsSync(directJest)) base = `${nodePrefix} node_modules/jest/bin/jest.js`;
     const localBin = path.join(dir, "node_modules", ".bin", "jest");
-    if (fs.existsSync(localBin)) return isEsm ? `${nodePrefix} node_modules/jest/bin/jest.js` : "./node_modules/.bin/jest";
+    if (!base && fs.existsSync(localBin)) base = `${nodePrefix} node_modules/jest/bin/jest.js`;
     const parentBin = path.join(dir, "..", "node_modules", ".bin", "jest");
-    if (fs.existsSync(parentBin)) return isEsm ? `node --experimental-vm-modules ../node_modules/jest/bin/jest.js` : "../node_modules/.bin/jest";
-    if (fs.existsSync("/app/node_modules/.bin/jest")) return "/app/node_modules/.bin/jest";
-    return isEsm ? "node --experimental-vm-modules node_modules/jest/bin/jest.js" : "npx jest";
+    if (!base && fs.existsSync(parentBin)) base = `${nodePrefix} ../node_modules/jest/bin/jest.js`;
+    if (!base && fs.existsSync("/app/node_modules/.bin/jest")) base = `${nodePrefix} /app/node_modules/jest/bin/jest.js`;
+    base ||= isEsm ? "node --experimental-vm-modules node_modules/jest/bin/jest.js" : "npx --no-install jest";
+    if (typeof customCommand === 'string' && customCommand.trim()) {
+        const trimmed = customCommand.trim().replace(/(?:^|\s)--(?:coverage|watch(?:All)?)(?:=(?:true|false))?(?=\s|$)/g,' ').trim();
+        // npm scripts normally resolve `jest` through npm's PATH. Our runner
+        // launches its command directly, so use the installed JS entry point.
+        const bare = trimmed.match(/^(?:npx(?:\.cmd)?(?:\s+--no-install)?\s+)?jest(?:\.cmd)?(?=\s|$)(.*)$/i);
+        if (bare) return `${base}${bare[1].trim() ? ` ${bare[1].trim()}` : ''}`;
+        if (trimmed.includes('jest')) return trimmed;
+    }
+    return base;
 };
+
+export const jestParallelFlags = command => /(?:^|\s)--(?:runInBand|maxWorkers)(?:[=\s]|$)/.test(command) ? '' : ' --maxWorkers=50%';
 
 export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFiles = [], customJestCommand = null) => {
     const covDir = path.join(rootDir, "coverage");
@@ -1057,7 +1064,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
     const isEsmProject = isEsmProjectForRepo(rootDir, projectJestConfig);
 
     const rootJestBin = resolveJestBin(rootDir, isEsmProject, customJestCommand);
-    let jestCmd = `${rootJestBin} --coverage --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=coverage/jest-results.json --forceExit --testTimeout=30000 --maxWorkers=50% --cache`;
+    let jestCmd = `${rootJestBin} --coverage --passWithNoTests --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=coverage/jest-results.json --forceExit --testTimeout=30000${jestParallelFlags(rootJestBin)} --cache`;
 
     let tempConfigCreated = false;
     const tempConfigName = "covai-jest-runner.json";
@@ -1472,7 +1479,7 @@ export const runJestCoverage = async (jobId, rootDir, jestConfigPath, specificFi
                 if (depth > 5) return;
                 const entries = fs.readdirSync(dir, { withFileTypes: true });
                 for (const e of entries) {
-                    if (["node_modules", ".git", "coverage", "dist", "build", ".next", ".vite"].includes(e.name)) continue;
+                    if (["node_modules", ".git", ".covai-collaboration", "coverage", "dist", "build", ".next", ".vite"].includes(e.name)) continue;
                     const p = path.join(dir, e.name);
                     if (e.isDirectory()) scanForEmpty(p, depth + 1);
                     else if (e.isFile() && /\.(test|spec)\.[cm]?[jt]s$/i.test(e.name)) {
@@ -2247,7 +2254,7 @@ export const processRunTestsJob = async (jobId) => {
 
     let rootDir = resolveProjectRoot(job.snapshot.rootDir) || job.snapshot.rootDir;
     ensureMinimalPackageJson(rootDir);
-    if (rootDir !== job.snapshot.rootDir && fs.existsSync(path.join(rootDir, "package.json"))) {
+    if (!currentProjectOperation() && rootDir !== job.snapshot.rootDir && fs.existsSync(path.join(rootDir, "package.json"))) {
         if (typeof prisma?.projectSnapshot?.update === "function") {
             prisma.projectSnapshot.update({
                 where: { id: job.snapshotId },
@@ -2404,7 +2411,7 @@ export const processRunTestsJob = async (jobId) => {
                         finishedAt: new Date()
                     };
                     if (formattedScenarios) dataPayload.scenarios = formattedScenarios;
-                    await prisma.testRun.create({ data: dataPayload });
+                    await stagePreparedPublication(tx => tx.testRun.create({ data: dataPayload }));
                     await addJobLog(jobId, "INFO", `[SCRUM-141] Saved TestRun (JEST): ${jestRunData.totalTests} tests (${jestRunData.passedTests} passed).`).catch(() => { });
                 }
             } catch (e) {
@@ -2425,7 +2432,7 @@ export const processRunTestsJob = async (jobId) => {
                         finishedAt: new Date()
                     };
                     if (formattedScenarios) dataPayload.scenarios = formattedScenarios;
-                    await prisma.testRun.create({ data: dataPayload });
+                    await stagePreparedPublication(tx => tx.testRun.create({ data: dataPayload }));
                     await addJobLog(jobId, "INFO", `[SCRUM-141] Saved TestRun (VITEST): ${vitestRunData.totalTests} tests (${vitestRunData.passedTests} passed).`).catch(() => { });
                 }
             } catch (e) {
@@ -2451,7 +2458,7 @@ export const processRunTestsJob = async (jobId) => {
                     finishedAt: new Date()
                 };
                 if (formattedScenarios) dataPayload.scenarios = formattedScenarios;
-                await prisma.testRun.create({ data: dataPayload });
+                await stagePreparedPublication(tx => tx.testRun.create({ data: dataPayload }));
                 await addJobLog(jobId, "INFO", `[SCRUM-141] Saved TestRun (VITEST): ${testResults.totalTests} tests.`).catch(() => { });
             }
         } else if (hasJest) {
@@ -2472,7 +2479,7 @@ export const processRunTestsJob = async (jobId) => {
                     finishedAt: new Date()
                 };
                 if (formattedScenarios) dataPayload.scenarios = formattedScenarios;
-                await prisma.testRun.create({ data: dataPayload });
+                await stagePreparedPublication(tx => tx.testRun.create({ data: dataPayload }));
                 await addJobLog(jobId, "INFO", `[SCRUM-141] Saved TestRun (JEST): ${testResults.totalTests} tests.`).catch(() => { });
             }
         } else {
@@ -2494,7 +2501,7 @@ export const processRunTestsJob = async (jobId) => {
 
                 // Create a baseline TestRun with 0 tests
                 try {
-                    await prisma.testRun.create({
+                    await stagePreparedPublication(tx => tx.testRun.create({
                         data: {
                             snapshotId,
                             type: "JEST",
@@ -2507,7 +2514,7 @@ export const processRunTestsJob = async (jobId) => {
                             startedAt: new Date(),
                             finishedAt: new Date(),
                         }
-                    });
+                    }));
                     await addJobLog(jobId, "INFO", `[RUN_TESTS] Baseline TestRun saved. Ready for unit test suggestions.`).catch(() => { });
                 } catch (trErr) {
                     console.warn("[RUN_TESTS] Warning saving baseline TestRun:", trErr.message);
@@ -2570,7 +2577,7 @@ export const processRunTestsJob = async (jobId) => {
 
                 // Persist failed test run in DB for accurate history
                 try {
-                    await prisma.testRun.create({
+                    await stagePreparedFailure(tx => tx.testRun.create({
                         data: {
                             snapshotId,
                             type: hasVitest && !hasJest ? "VITEST" : "JEST",
@@ -2591,7 +2598,7 @@ export const processRunTestsJob = async (jobId) => {
                                 }]
                             }
                         }
-                    });
+                    }));
                 } catch { }
 
                 const failErr = new Error(failMessage);
@@ -2621,7 +2628,7 @@ export const processRunTestsJob = async (jobId) => {
         // Parse coverage-summary.json → CoverageSummary + CoverageFile (from summary)
         let summaryResult = null;
         try {
-            summaryResult = await parseCoverageSummary(coverageDir, snapshotId);
+            summaryResult = await withOperationPublishGuard(() => parseCoverageSummary(coverageDir, snapshotId));
             await addJobLog(
                 jobId,
                 "INFO",
@@ -2635,10 +2642,10 @@ export const processRunTestsJob = async (jobId) => {
         }
 
         // Parse coverage-final.json → CoverageFile (per-file detail)
-        await parseFinalCoverageFiles(jobId, snapshotId, projectId, userId, coverageDir);
+        await withOperationPublishGuard(() => parseFinalCoverageFiles(jobId, snapshotId, projectId, userId, coverageDir));
 
         // Parse coverage-final.json → CoverageFunction (per-function detail)
-        await parseFinalCoverageFunctions(jobId, snapshotId, projectId, userId, coverageDir);
+        await withOperationPublishGuard(() => parseFinalCoverageFunctions(jobId, snapshotId, projectId, userId, coverageDir));
 
         // Verify lcov.info
         const lcovPath = path.join(coverageDir, "lcov.info");
@@ -2676,12 +2683,14 @@ export const processRunTestsJob = async (jobId) => {
         const coverageResult = coverageResultFromSummary(summaryResult);
         await markJobSuccess(jobId, {
             coverageResult,
+            storageBasePath: storageResult.baseStoragePath,
             hasTestFailures: runnerResult && runnerResult.exitCode !== 0,
             exitCode: runnerResult?.exitCode ?? 0
         });
         await addJobLog(jobId, "INFO", "RUN_TESTS pipeline completed successfully.").catch(() => { });
 
-        // Invalidate in-memory coverage & testSuites cache
+        const afterPublication = async () => {
+        // Cache invalidation and dependent work must see committed coverage.
         try {
             const { invalidateCoverageCache } = await import("../controllers/coverage.controller.js");
             invalidateCoverageCache(snapshotId);
@@ -2692,10 +2701,16 @@ export const processRunTestsJob = async (jobId) => {
         // Chain to BUILD_CFG
         try {
             const { default: prisma } = await import("../config/prisma.js");
-            const buildCfgJob = await prisma.job.findFirst({
+            let buildCfgJob = await prisma.job.findFirst({
                 where: { snapshotId, type: "BUILD_CFG", status: "QUEUED" },
                 orderBy: { createdAt: "desc" }
             });
+            let input = {};
+            try { input = typeof job.payloadJson === 'string' ? JSON.parse(job.payloadJson) : job.payloadJson || {}; } catch { /* Legacy jobs may lack typed input. */ }
+            if (!buildCfgJob && input.chainBuildCfg) {
+                const { createBuildCfgJob } = await import('./job.service.js');
+                buildCfgJob = await createBuildCfgJob({projectId:job.projectId,snapshotId,userId:job.userId});
+            }
             if (buildCfgJob) {
                 const { addJobToQueue } = await import("./queue.service.js");
                 await addJobToQueue("BUILD_CFG", buildCfgJob.id);
@@ -2704,6 +2719,9 @@ export const processRunTestsJob = async (jobId) => {
         } catch (chainErr) {
             console.error(`[RunTestsJob ${jobId}] Error triggering BUILD_CFG:`, chainErr);
         }
+        };
+        if (currentProjectOperation()?.preparedPublications) deferPreparedCommit(afterPublication);
+        else await afterPublication();
     } catch (error) {
         console.error(`[RunTestsJob ${jobId}] Failed:`, error);
         const jobBeforeFail = await getJobById(jobId).catch(() => null);

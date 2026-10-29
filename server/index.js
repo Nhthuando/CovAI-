@@ -16,6 +16,13 @@ import refreshRoute from "./src/routes/refresh.route.js";
 import userRoute from "./src/routes/user.route.js";
 import cookieParser from "cookie-parser";
 import projectRoutes from "./src/routes/project.route.js";
+import projectMemberRoutes from './src/routes/projectMember.route.js';
+import projectInvitationRoutes from './src/routes/projectInvitation.route.js';
+import { startInvitationDeliveryWorker } from './src/services/invitationDelivery.service.js';
+import projectEventRoutes from './src/routes/projectEvent.route.js';
+import { attachProjectSubscriptions } from './src/services/projectSubscription.service.js';
+import { isCollaborationLocalTest } from './src/config/collaborationLocal.js';
+import { recoverQueuedProjectOperations } from './src/services/projectOperationRecovery.service.js';
 import pipelineRoutes from "./src/routes/pipeline.route.js";
 import prisma from "./src/config/prisma.js";
 import uploadRoute from "./src/routes/upload.route.js";
@@ -78,6 +85,7 @@ app.use(cookieParser());
 
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
+app.use('/invitations', (_req, res, next) => { res.setHeader('Referrer-Policy', 'no-referrer'); next(); });
 
 // Global rate limiter
 app.use(globalLimiter);
@@ -85,6 +93,13 @@ app.use(globalLimiter);
 app.use("/api/auth", authRoute);
 app.use("/api/refresh", refreshRoute);
 app.use("/api/users", userRoute);
+app.use('/api/projects', projectMemberRoutes);
+app.use('/api/projects', projectEventRoutes);
+app.use('/api/invitations', projectInvitationRoutes);
+app.get('/api/health', async (_req, res) => {
+  try { await prisma.$queryRaw`SELECT 1`; res.json({ success: true }); }
+  catch { res.status(503).json({ success: false }); }
+});
 app.use("/api/projects", projectRoutes);
 app.use("/api/pipeline", pipelineRoutes);
 app.use("/api/upload", uploadRoute);
@@ -128,13 +143,20 @@ io.on("connection", (socket) => {
 
 // Make io available globally for services
 global.io = io;
+attachProjectSubscriptions(io);
 
 async function startServer() {
   try {
+    if (process.env.COLLABORATION_E2E_ENABLED === 'true' && !isCollaborationLocalTest()) throw new Error('Collaboration E2E profile requires isolated localhost database and non-production mode');
     await prisma.$connect();
+    startInvitationDeliveryWorker();
+    const recover = () => recoverQueuedProjectOperations().catch(() => console.error('[operations] Queue recovery unavailable; retrying'));
+    const recoveryTimer = setInterval(recover, 10000);
+    recoveryTimer.unref();
+    void recover();
     console.log("Database connected successfully.");
 
-    httpServer.listen(PORT, () => {
+    httpServer.listen(PORT, isCollaborationLocalTest() ? '127.0.0.1' : undefined, () => {
       console.log("-----------------------------------------------");
       console.log("CovAI server is running on port: " + PORT);
       console.log("-----------------------------------------------");

@@ -1,0 +1,15 @@
+import { Router } from 'express';
+import { authMiddleware } from '../middlewares/auth.middleware.js';
+import * as controller from '../controllers/projectMember.controller.js';
+const router = Router();
+router.use(authMiddleware);
+router.get('/:id/access', controller.access);
+router.get('/:id/members', controller.members);
+router.patch('/:id/members/:memberId', controller.changeMember);
+router.delete('/:id/members/:memberId', controller.removeMember);
+router.post('/:id/leave', controller.leave);
+router.get('/:id/invitations', controller.invitations);
+router.post('/:id/invitations', controller.invite);
+router.post('/:id/invitations/:invitationId/resend', controller.resend);
+router.delete('/:id/invitations/:invitationId', controller.revoke);
+export default router;

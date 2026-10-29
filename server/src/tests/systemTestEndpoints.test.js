@@ -2,6 +2,14 @@ import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { AiTestMode } from '@prisma/client';
 
 const prismaMock = {
+    project: { findFirst: jest.fn(async ({where})=> {
+        const calls=[prismaMock.projectSnapshot.findUnique,prismaMock.projectSnapshot.findFirst]
+            .flatMap(fn=>fn.mock.results.map((row,index)=>({value:row.value,order:fn.mock.invocationCallOrder[index]}))).sort((a,b)=>b.order-a.order);
+        const snapshot=await calls[0]?.value;
+        const owner=snapshot?.project === null ? null : snapshot?.project?.ownerId || 'user-1';
+        const actor=where.OR?.[0]?.ownerId || where.ownerId;
+        return owner===actor ? {id:where.id,ownerId:owner,workspaceRevision:1} : null;
+    }) },
     projectSnapshot: {
         findUnique: jest.fn(),
         findFirst: jest.fn(),
@@ -24,6 +32,9 @@ const prismaMock = {
 
 jest.unstable_mockModule('../config/prisma.js', () => ({
     default: prismaMock,
+}));
+jest.unstable_mockModule('../services/projectWorkspacePreparation.service.js', () => ({
+    withPreparedProjectWorkspace: async (_options, action) => action({ rootDir: '/repo', analysisRelative: '', workspaceRevision: 1 }),
 }));
 
 const mockExistsSync = jest.fn().mockReturnValue(true);
@@ -175,7 +186,7 @@ describe('Cold-start system test persistence', () => {
         await generateColdStartSystemTestsController({
             user: { id: 'user-1' }, params: { snapshotId: 'snap-1' }, body: {},
         }, res);
-        expect(res.status).toHaveBeenCalledWith(403);
+        expect(res.status).toHaveBeenCalledWith(404);
         expect(mockGenerateColdStart).not.toHaveBeenCalled();
         expect(prismaMock.aiTest.create).not.toHaveBeenCalled();
     });
@@ -224,7 +235,7 @@ describe('System Test Phase 4 Endpoints', () => {
             const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
 
             await runSystemTestCoverage(req, res);
-            expect(res.status).toHaveBeenCalledWith(403);
+            expect(res.status).toHaveBeenCalledWith(404);
         });
 
         it('returns 400 if invalid runner is passed', async () => {
@@ -380,7 +391,7 @@ describe('System Test Phase 4 Endpoints', () => {
 
     describe('GET /api/coverage/:snapshotId/system/summary', () => {
         it.each(['frontend', 'full'])('selects the latest %s results within the selected runner', async executionMode => {
-            prismaMock.projectSnapshot.findUnique.mockResolvedValueOnce({id:'snap-1',project:{ownerId:'user-1'}});
+            prismaMock.projectSnapshot.findUnique.mockResolvedValueOnce({id:'snap-1',projectId:'p-1',project:{ownerId:'user-1'}});
             prismaMock.aiTest.findFirst.mockResolvedValueOnce(null);
             prismaMock.testRun.findMany.mockResolvedValueOnce([{id:`run-${executionMode}`,type:'PLAYWRIGHT',executionMode,totalTests:2,passedTests:2,scenarios:[],testFiles:[]}]);
             const res={status:jest.fn().mockReturnThis(),json:jest.fn()};
@@ -390,7 +401,7 @@ describe('System Test Phase 4 Endpoints', () => {
         });
 
         it('returns an empty result for an unrun mode instead of falling back to another mode', async () => {
-            prismaMock.projectSnapshot.findUnique.mockResolvedValueOnce({id:'snap-1',project:{ownerId:'user-1'}});
+            prismaMock.projectSnapshot.findUnique.mockResolvedValueOnce({id:'snap-1',projectId:'p-1',project:{ownerId:'user-1'}});
             prismaMock.aiTest.findFirst.mockResolvedValueOnce(null);
             prismaMock.testRun.findMany.mockResolvedValueOnce([]);
             const res={status:jest.fn().mockReturnThis(),json:jest.fn()};
@@ -400,7 +411,7 @@ describe('System Test Phase 4 Endpoints', () => {
         });
 
         it.each([{executionMode:'invalid'},{runner:'invalid'},{executionMode:['full','frontend']}])('rejects invalid result filters %j',async query => {
-            prismaMock.projectSnapshot.findUnique.mockResolvedValueOnce({id:'snap-1',project:{ownerId:'user-1'}});
+            prismaMock.projectSnapshot.findUnique.mockResolvedValueOnce({id:'snap-1',projectId:'p-1',project:{ownerId:'user-1'}});
             const res={status:jest.fn().mockReturnThis(),json:jest.fn()};
             await getSystemTestSummary({user:{id:'user-1'},params:{snapshotId:'snap-1'},query},res);
             expect(res.status).toHaveBeenCalledWith(400);
@@ -511,7 +522,7 @@ describe('System Test Phase 4 Endpoints', () => {
 
     describe('GET /api/coverage/:snapshotId/system/scenarios', () => {
         it('returns persisted execution details and historical null detail within the pinned owned run', async () => {
-            prismaMock.projectSnapshot.findFirst.mockResolvedValueOnce({ id: 'snap-1', rootDir: '/repo' });
+            prismaMock.projectSnapshot.findFirst.mockResolvedValueOnce({ id: 'snap-1', projectId:'p-1',rootDir: '/repo' });
             const executionDetails = { version: 1, attempts: [{ index: 0, status: 'failed', steps: [{ title: 'Submit', error: 'timeout' }] }] };
             prismaMock.testRun.findFirst.mockResolvedValueOnce({ id: 'run-1', type: 'PLAYWRIGHT', executionMode: 'full', testFiles: [], scenarios: [
                 { id: 'new', title: 'Login', testFile: 'login.spec.js', durationMs: 0, executionDetails },
@@ -530,7 +541,7 @@ describe('System Test Phase 4 Endpoints', () => {
             const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
             await getSystemTestScenarios({ user: { id: 'other' }, params: { snapshotId: 'snap-1' }, query: {} }, res);
             expect(res.status).toHaveBeenCalledWith(404);
-            expect(prismaMock.projectSnapshot.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ project: { ownerId: 'other' } }) }));
+            expect(prismaMock.projectSnapshot.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ project: { OR:[{ownerId:'other'},{members:{some:{userId:'other'}}}] } }) }));
             expect(prismaMock.testRun.findFirst).not.toHaveBeenCalled();
         });
         it.each(['frontend','full'])('pins scenarios to the requested %s run and runner', async executionMode => {
@@ -701,7 +712,7 @@ describe('System Test Phase 4 Endpoints', () => {
         it('returns 404 if scenario does not exist', async () => {
             prismaMock.projectSnapshot.findFirst.mockResolvedValueOnce({
                 id: 'snap-1',
-                rootDir: '/repo',
+                projectId:'p-1',rootDir: '/repo',
             });
             prismaMock.testScenario.findFirst.mockResolvedValueOnce(null);
 
@@ -719,7 +730,7 @@ describe('System Test Phase 4 Endpoints', () => {
         it('returns DOM snapshot as JSON when ?type=dom is requested', async () => {
             prismaMock.projectSnapshot.findFirst.mockResolvedValueOnce({
                 id: 'snap-1',
-                rootDir: '/repo',
+                projectId:'p-1',rootDir: '/repo',
             });
             prismaMock.testScenario.findFirst.mockResolvedValueOnce({
                 id: 'sc-1',
@@ -750,7 +761,7 @@ describe('System Test Phase 4 Endpoints', () => {
         it('serves screenshot image when screenshot exists on disk', async () => {
             prismaMock.projectSnapshot.findFirst.mockResolvedValueOnce({
                 id: 'snap-1',
-                rootDir: '/repo',
+                projectId:'p-1',rootDir: '/repo',
             });
             prismaMock.testScenario.findFirst.mockResolvedValueOnce({
                 id: 'sc-1',
@@ -779,14 +790,14 @@ describe('System Test Phase 4 Endpoints', () => {
         it('falls back to DOM snapshot JSON if screenshot file is missing on disk', async () => {
             prismaMock.projectSnapshot.findFirst.mockResolvedValueOnce({
                 id: 'snap-1',
-                rootDir: '/repo',
+                projectId:'p-1',rootDir: '/repo',
             });
             prismaMock.testScenario.findFirst.mockResolvedValueOnce({
                 id: 'sc-1',
                 screenshotPath: '.covai-system-test/evidence/missing.png',
                 domSnapshot: '<div>Fallback DOM</div>',
             });
-            mockExistsSync.mockReturnValueOnce(false); // file not found on disk
+            mockExistsSync.mockImplementation(file => !String(file).endsWith('missing.png'));
 
             const req = {
                 user: { id: 'user-1' },

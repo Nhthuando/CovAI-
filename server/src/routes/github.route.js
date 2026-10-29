@@ -1,3 +1,4 @@
+import { enforceProjectEndpointPolicy } from '../middlewares/projectEndpointPolicy.js';
 import express from "express";
 import {
   cloneGitHubRepositoryByUrl,
@@ -6,6 +7,7 @@ import {
 import { authMiddleware } from "../middlewares/auth.middleware.js";
 
 const router = express.Router();
+router.use(authMiddleware, enforceProjectEndpointPolicy('github'));
 
 router.post(
   "/projects/:projectId/import-github-url",

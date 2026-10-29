@@ -30,10 +30,41 @@ describe('Real instrumentation and run attribution', () => {
             expect(result.tiers.backend.counters.lines.pct).toBeLessThan(100);
             expect(result.tiers.backend.counters.statements.total).toBeGreaterThan(result.tiers.backend.counters.lines.total);
             expect(result.tiers.backend.files.find(file => file.filePath.endsWith('unvisited.cjs')).counters.lines.covered).toBe(0);
+            const unvisited=result.tiers.backend.files.find(file=>file.filePath.endsWith('unvisited.cjs'));
+            expect(unvisited.uncoveredFunctions).toEqual([expect.objectContaining({line:1})]);
+            expect(unvisited.uncoveredStatements.length).toBeGreaterThan(0);
+            expect(result.tiers.backend.files.find(file=>file.filePath.endsWith('app.cjs')).uncoveredBranches).toEqual([expect.objectContaining({line:1})]);
             const stale = collectSystemCoverage({ preparation, runtimeArtifacts: [{ tier: 'backend', measurementId: 'old', sourceHash: workspace.sourceHash, coverage: context.__coverage__ }] });
             expect(stale.tiers.backend.status).toBe('INVALID');
             expect(snapshotIdentity(root)).toEqual(before);
         } finally { workspace?.release(); fs.rmSync(root, { recursive: true, force: true }); }
+    });
+    it('resolves sibling frontend package with Vite when workspace root is a backend directory', () => {
+        const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'covai-sibling-cov-'));
+        let workspace;
+        try {
+            fs.mkdirSync(path.join(repo, '.git'));
+            fs.mkdirSync(path.join(repo, 'server/src'), { recursive: true });
+            fs.writeFileSync(path.join(repo, 'server/package.json'), '{"scripts":{"start":"node src/index.js"}}');
+            fs.writeFileSync(path.join(repo, 'server/src/index.js'), 'console.log("server");');
+            fs.mkdirSync(path.join(repo, 'client/src'), { recursive: true });
+            fs.writeFileSync(path.join(repo, 'client/package.json'), '{"dependencies":{"vite":"^5.0.0"},"scripts":{"dev":"vite"}}');
+            fs.writeFileSync(path.join(repo, 'client/src/App.jsx'), 'export default function App() { return <h1>Hello</h1>; }');
+
+            workspace = createAssessmentWorkspace({ rootDir: path.join(repo, 'server') });
+            const preparation = prepareSystemCoverage({
+                workspace,
+                coverageScope: { frontend: { root: '.', sourceDirectory: '.' } },
+                measurementId: 'measurement-frontend-1',
+            });
+
+            expect(preparation.tiers.frontend.status).toBeUndefined();
+            expect(preparation.tiers.frontend.inventory).toContain('client/src/App.jsx');
+            expect(Object.keys(preparation.tiers.frontend.zeroMaps)).toContain('client/src/App.jsx');
+        } finally {
+            workspace?.release();
+            fs.rmSync(repo, { recursive: true, force: true });
+        }
     });
     it('flags smoke assertions without declaring a business quality score', () => {
         const content = "import {test,expect} from '@playwright/test'; test('smoke',async({page})=>{await expect(page.locator('body')).toBeVisible();});";

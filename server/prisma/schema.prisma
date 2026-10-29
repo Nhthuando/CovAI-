@@ -34,10 +34,25 @@ model User {
   requirementApprovals SystemRequirementRevision[] @relation("RequirementApprover")
   bindingApprovals SystemAssertionBinding[] @relation("BindingApprover")
   proposalApplications SystemTestProposal[] @relation("ProposalApplier")
+  projectMemberships ProjectMember[] @relation("MemberUser")
+  membershipsAdded ProjectMember[] @relation("MemberAddedBy")
+  sentProjectInvitations ProjectInvitation[] @relation("InvitationSender")
+  acceptedProjectInvitations ProjectInvitation[] @relation("InvitationAccepter")
+  projectEvents ProjectEvent[]
+  projectFileVersions ProjectFileVersion[]
+  projectMutations ProjectMutation[]
+  projectOperations ProjectOperation[]
+  projectOperationRequests ProjectOperationRequest[]
+  sentChatMessages ChatMessage[] @relation("ChatSender")
+  chatRequests ChatRequest[]
+  aiQuotaReservations AiQuotaReservation[]
 }
 
 model Project {
   id                   String            @id @default(cuid())
+  accessRevision       Int               @default(0)
+  workspaceRevision    Int               @default(0)
+  eventSequence        Int               @default(0)
   ownerId              String
   name                 String
   description          String?
@@ -73,12 +88,21 @@ model Project {
   chatSessions         ChatSession[]
   aiContextSettings    AiContextSettings?
   projectMemories      ProjectMemory[]
+  members              ProjectMember[]
+  invitations          ProjectInvitation[]
+  events               ProjectEvent[]
+  mutations            ProjectMutation[]
+  operations           ProjectOperation[]
+  operationRequests    ProjectOperationRequest[]
 
   @@index([ownerId])
 }
 
 model ProjectSnapshot {
   id                          String                    @id @default(cuid())
+  fileVersions                ProjectFileVersion[]
+  mutations                   ProjectMutation[]
+  operations                  ProjectOperation[]
   projectId                   String
   source                      SnapshotSource
   checksum                    String?
@@ -127,6 +151,7 @@ model ProjectSnapshot {
   systemRequirements SystemRequirementRevision[]
   systemAssessments SystemTestAssessment[]
   systemProposals SystemTestProposal[]
+  systemScenarios SystemScenario[]
 
 }
 
@@ -183,6 +208,7 @@ model Job {
   user          User?            @relation("UserJobs", fields: [userId], references: [id])
   logs          JobLog[]
   output        JobOutput?
+  projectOperation ProjectOperation?
 
   @@unique([projectId, snapshotId, type], map: "Job_active_singleton_per_snapshot_key", where: raw("((type IN ('ANALYSIS'::\"JobType\", 'SUPERTEST_COVERAGE'::\"JobType\")) AND (\"snapshotId\" IS NOT NULL) AND (status = ANY (ARRAY['QUEUED'::\"JobStatus\", 'RUNNING'::\"JobStatus\"])))"))
   @@index([projectId])
@@ -451,7 +477,7 @@ model PerformanceMetric {
 model ChatSession {
   id        String        @id @default(cuid())
   projectId String
-  userId    String
+  userId    String?
   title     String        @default("New Chat")
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
@@ -467,7 +493,8 @@ model ChatSession {
   processingUntil DateTime?
   messages  ChatMessage[]
   project   Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  requests ChatRequest[]
 
   @@index([projectId, userId])
   @@index([projectId, updatedAt])
@@ -476,6 +503,10 @@ model ChatSession {
 model ChatMessage {
   id          String      @id @default(cuid())
   sessionId   String
+  senderUserId String?
+  senderUser User? @relation("ChatSender", fields: [senderUserId], references: [id], onDelete: SetNull)
+  requestId String?
+  replyToMessageId String?
   role        String      // "user" | "assistant" | "system"
   content     String      @db.Text
   model       String?     // e.g. "gemini-1.5-pro"
@@ -489,19 +520,20 @@ model ChatMessage {
 
 model AiContextSettings {
   projectId String @id
-  userId String
+  userId String?
   automaticMemory Boolean @default(false)
   guidance String @default("") @db.Text
   revision Int @default(0)
   memoryGeneration Int @default(0)
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 }
 
 model ProjectMemory {
   id String @id @default(cuid())
   projectId String
-  userId String
+  userId String?
+  updatedByUserId String?
   content String @db.Text
   fingerprint String
   pinned Boolean @default(false)
@@ -512,9 +544,9 @@ model ProjectMemory {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  sourceMessage ChatMessage? @relation(fields: [sourceMessageId], references: [id], onDelete: Cascade)
-  @@unique([projectId, userId, fingerprint])
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  sourceMessage ChatMessage? @relation(fields: [sourceMessageId], references: [id], onDelete: SetNull)
+  @@unique([projectId, fingerprint])
   @@index([projectId, userId, status])
 }
 
@@ -651,7 +683,59 @@ model SystemTestAssessment {
   requirements SystemRequirementRevision? @relation(fields: [requirementRevisionId], references: [id], onDelete: SetNull)
   proposals SystemTestProposal[]
   mutations SystemMutationRun[]
+  events SystemRunEvent[]
+  artifacts SystemRunArtifact[]
   @@index([snapshotId, createdAt])
+}
+model SystemScenario {
+  id String @id @default(cuid())
+  snapshotId String
+  scenarioKey String
+  source String
+  filePath String?
+  title String
+  flowJson Json
+  inputJson Json
+  expectedJson Json
+  criterionIds Json
+  reviewState String @default("DRAFT")
+  requirementRevisionId String?
+  scenarioHash String
+  testHash String?
+  assertionHashes Json
+  reviewedByUserId String?
+  reviewedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  @@unique([snapshotId, scenarioKey])
+  @@index([snapshotId, reviewState])
+}
+model SystemRunEvent {
+  id String @id @default(cuid())
+  assessmentId String
+  sequence Int
+  runIndex Int
+  scenarioKey String?
+  type String
+  payloadJson Json
+  createdAt DateTime @default(now())
+  assessment SystemTestAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  @@unique([assessmentId, sequence])
+  @@index([assessmentId, scenarioKey])
+}
+model SystemRunArtifact {
+  id String @id @default(cuid())
+  assessmentId String
+  scenarioKey String?
+  kind String
+  relativePath String
+  sha256 String
+  mimeType String
+  byteSize Int
+  createdAt DateTime @default(now())
+  assessment SystemTestAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  @@index([assessmentId, scenarioKey])
 }
 model SystemTestProposal {
   id String @id @default(cuid())
@@ -680,4 +764,164 @@ model SystemMutationRun {
   resultJson Json
   createdAt DateTime @default(now())
   assessment SystemTestAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+}
+
+model ProjectMember {
+  id String @id @default(cuid())
+  projectId String
+  userId String
+  role String
+  revision Int @default(0)
+  addedByUserId String?
+  joinedAt DateTime @default(now())
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user User @relation("MemberUser", fields: [userId], references: [id], onDelete: Cascade)
+  addedBy User? @relation("MemberAddedBy", fields: [addedByUserId], references: [id], onDelete: SetNull)
+  @@unique([projectId, userId])
+  @@index([userId])
+}
+model ProjectInvitation {
+  id String @id @default(cuid())
+  projectId String
+  canonicalEmail String
+  role String
+  tokenHash String @unique
+  revision Int @default(0)
+  status String @default("PENDING")
+  invitedByUserId String?
+  acceptedByUserId String?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  acceptedAt DateTime?
+  requestId String?
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  invitedBy User? @relation("InvitationSender", fields: [invitedByUserId], references: [id], onDelete: SetNull)
+  acceptedBy User? @relation("InvitationAccepter", fields: [acceptedByUserId], references: [id], onDelete: SetNull)
+  deliveries InvitationDelivery[]
+  @@unique([projectId, invitedByUserId, requestId])
+  @@unique([projectId, canonicalEmail], map: "ProjectInvitation_pending_email_key", where: raw("(status = 'PENDING'::text)"))
+  @@index([projectId, status])
+}
+model InvitationDelivery {
+  id String @id @default(cuid())
+  invitationId String
+  invitationRevision Int
+  encryptedPayload String? @db.Text
+  status String @default("QUEUED")
+  attempts Int @default(0)
+  nextAttemptAt DateTime @default(now())
+  lockedUntil DateTime?
+  lastErrorCode String?
+  createdAt DateTime @default(now())
+  invitation ProjectInvitation @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+  @@unique([invitationId, invitationRevision])
+  @@index([status, nextAttemptAt])
+}
+model ProjectEvent {
+  id String @id @default(cuid())
+  projectId String
+  sequence Int
+  type String
+  actorId String?
+  resourceId String?
+  revision Int?
+  payload Json
+  createdAt DateTime @default(now())
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  @@unique([projectId, sequence])
+}
+model ProjectFileVersion {
+  id String @id @default(cuid())
+  snapshotId String
+  relativePath String
+  revision Int @default(0)
+  sha256 String?
+  deleted Boolean @default(false)
+  updatedByUserId String?
+  updatedAt DateTime @updatedAt
+  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  updatedBy User? @relation(fields: [updatedByUserId], references: [id], onDelete: SetNull)
+  @@unique([snapshotId, relativePath])
+}
+model ProjectMutation {
+  id String @id @default(cuid())
+  inputHash String
+  requestId String
+  projectId String
+  snapshotId String
+  actorId String?
+  kind String
+  expectedWorkspaceRevision Int
+  nextWorkspaceRevision Int
+  journalPath String
+  state String @default("PREPARED")
+  createdAt DateTime @default(now())
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  @@unique([projectId, requestId])
+}
+model ProjectOperation {
+  id String @id @default(cuid())
+  projectId String
+  snapshotId String?
+  actorId String?
+  capability String
+  type String
+  requestId String
+  semanticKey String
+  capturedWorkspaceRevision Int
+  status String @default("ADMITTED")
+  primaryJobId String? @unique
+  inputJson Json?
+  resultJson Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  snapshot ProjectSnapshot? @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  primaryJob Job? @relation(fields: [primaryJobId], references: [id], onDelete: SetNull)
+  requests ProjectOperationRequest[]
+  @@unique([projectId, actorId, requestId])
+  @@unique([projectId, semanticKey], map: "ProjectOperation_active_semantic_key", where: raw("(status = ANY (ARRAY['ADMITTED'::text, 'QUEUED'::text, 'RUNNING'::text, 'PUBLISHING'::text]))"))
+}
+model ProjectOperationRequest {
+  id String @id @default(cuid())
+  projectId String
+  actorId String
+  requestId String
+  operationId String
+  createdAt DateTime @default(now())
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  actor User @relation(fields: [actorId], references: [id], onDelete: Cascade)
+  operation ProjectOperation @relation(fields: [operationId], references: [id], onDelete: Cascade)
+  @@unique([projectId, actorId, requestId])
+  @@index([operationId])
+}
+model ChatRequest {
+  id String @id @default(cuid())
+  sessionId String
+  actorId String?
+  clientRequestId String
+  inputHash String
+  status String @default("PROCESSING")
+  processingToken String?
+  userMessageId String?
+  assistantMessageId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  session ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  @@unique([sessionId, actorId, clientRequestId])
+}
+model AiQuotaReservation {
+  id String @id @default(cuid())
+  userId String
+  requestKey String
+  usageDate String
+  status String @default("RESERVED")
+  createdAt DateTime @default(now())
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, requestKey])
 }

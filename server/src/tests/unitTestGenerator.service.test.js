@@ -7,6 +7,9 @@ const mockAiResponse = JSON.stringify({
 });
 
 export const mockGenerateText = jest.fn().mockResolvedValue(mockAiResponse);
+const captureBase = jest.fn(async () => ({ snapshotId: "snapshot-captured", workspaceRevision: 7,
+    baseVersion: { revision: 2, sha256: "captured-before-provider" }, isExisting: true, existingContent: "// saved base" }));
+await jest.unstable_mockModule("../services/projectProposalBase.service.js", () => ({ captureProjectProposalBase: captureBase }));
 
 await jest.unstable_mockModule("../services/gemini.service.js", () => ({
     generateText: mockGenerateText
@@ -18,6 +21,17 @@ const {
     generateAiUnitTestSuite
 } = await import("../services/unitTestGenerator.service.js");
 const { assembleUnitTestContext } = await import("../services/unitTestContextEngineering.service.js");
+
+test("captures proposal versions before provider dispatch and never trusts model-supplied versions", async () => {
+    mockGenerateText.mockResolvedValueOnce(mockAiResponse);
+    const result = await generateAiUnitTestSuite({ userId: "editor", framework: "jest",
+        snapshot: { id: "snapshot-captured", projectId: "project", rootDir: "/missing-test-workspace" },
+        sourceFileToInspect: "src/calc.js", sourceCode: "export const calc = value => value + 1;", coverageDetails: {} });
+    expect(captureBase.mock.invocationCallOrder[0]).toBeLessThan(mockGenerateText.mock.invocationCallOrder[0]);
+    expect(result).toMatchObject({ snapshotId: "snapshot-captured", workspaceRevision: 7, baseVersion: { revision: 2, sha256: "captured-before-provider" } });
+    expect(result.proposalBase).toMatchObject({ snapshotId: "snapshot-captured", workspaceRevision: 7 });
+    expect(result.proposalBase.existingContent).toBeUndefined();
+});
 
 describe("AI Test Generator Service - Phase 3 Verification", () => {
     const mockSourceCode = `

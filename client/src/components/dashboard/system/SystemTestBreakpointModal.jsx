@@ -116,6 +116,7 @@ export default function SystemTestBreakpointModal({
             </div>
           </div>
           <button
+            aria-label="Close evidence"
             onClick={onClose}
             className="p-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer"
           >

@@ -6,7 +6,7 @@ import path from "node:path";
 // Mock Prisma
 const prismaMock = {
     projectSnapshot: { findUnique: jest.fn(), findMany: jest.fn() },
-    project: { findUnique: jest.fn() },
+    project: { findUnique: jest.fn(), findFirst:jest.fn(async()=>null) },
     job: { findMany: jest.fn(), findUnique: jest.fn() },
     testRun: { findMany: jest.fn(), findUnique: jest.fn() }
 };
@@ -423,13 +423,13 @@ describe("COVAI Phase 3 — Version History, Provenance & Old/New Tracking Regre
 
         // 2. Forbidden (user does not own the project)
         prismaMock.projectSnapshot.findUnique.mockResolvedValue({
-            id: "snap-1",
+            id: "snap-1",projectId:"proj-1",
             project: { ownerId: "owner-999" }
         });
         const reqForbidden = { params: { snapshotId: "snap-1" }, user: { id: "user-attacker" } };
         const resForbidden = { status: jest.fn().mockReturnThis(), json: jest.fn() };
         await getIntegrationVersionHistory(reqForbidden, resForbidden);
-        expect(resForbidden.status).toHaveBeenCalledWith(403);
+        expect(resForbidden.status).toHaveBeenCalledWith(404);
 
         // 3. Compare endpoint query validation
         const reqMissingQuery = {

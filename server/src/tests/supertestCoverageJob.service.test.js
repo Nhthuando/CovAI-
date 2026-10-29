@@ -67,6 +67,7 @@ describe('supertestCoverageJob.service', () => {
         ]);
         rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'supertest-job-'));
         fs.writeFileSync(path.join(rootDir, 'package.json'), JSON.stringify({ devDependencies: { supertest: '^7.0.0' } }));
+        fs.writeFileSync(path.join(rootDir, 'app.js'), "module.exports = {};\n");
         fs.writeFileSync(path.join(rootDir, 'api.test.js'), "import request from 'supertest';");
         getJobById.mockResolvedValue({
             snapshot: { rootDir, jestConfigPath: null }, snapshotId: 'snap1', projectId: 'proj1', userId: 'user1',
@@ -92,6 +93,7 @@ describe('supertestCoverageJob.service', () => {
     test('runs only detected Supertest files and stores its coverage result', async () => {
         await processSupertestCoverageJob('job123');
 
+        expect(markJobFailed).not.toHaveBeenCalled();
         expect(markJobRunning).toHaveBeenCalledWith('job123');
         expect(runSupertest).toHaveBeenCalledWith('job123', rootDir, null, [path.join(rootDir, 'api.test.js')]);
         expect(markJobSuccess).toHaveBeenCalledWith('job123', expect.objectContaining({

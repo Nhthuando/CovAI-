@@ -1,9 +1,11 @@
+import { enforceProjectEndpointPolicy } from '../middlewares/projectEndpointPolicy.js';
 import express from 'express';
 import { getFiles } from '../controllers/file.controller.js';
 import { storeAiTestResult } from '../controllers/aiTest.controller.js';
 import { authMiddleware } from '../middlewares/auth.middleware.js';
 
 const router = express.Router();
+router.use(authMiddleware, enforceProjectEndpointPolicy('files'));
 
 // Endpoint: GET /api/files?projectId=...&snapshotId=...
 router.get('/', authMiddleware, getFiles);

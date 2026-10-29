@@ -20,7 +20,7 @@ it("checks project ownership before reading settings or sessions", async () => {
     db.project.findFirst.mockResolvedValue(null);
     expect((await request(app).get("/api/projects/project-1/ai-context").set("Authorization", auth())).status).toBe(404);
     expect(db.aiContextSettings.upsert).not.toHaveBeenCalled();
-    expect(db.project.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "project-1", ownerId: "owner-1" } }));
+    expect(db.project.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "project-1", OR: [{ownerId:"owner-1"},{members:{some:{userId:"owner-1"}}}] } }));
 });
 it("defaults memory off and rejects unknown settings/credential forms", async () => {
     const response = await request(app).get("/api/projects/project-1/ai-context").set("Authorization", auth());
@@ -49,7 +49,7 @@ it("clearing memory invalidates queued extractions and keeps transcripts", async
 it("forget keeps a tombstone and does not expose another user's note", async () => {
     db.projectMemory.updateMany.mockResolvedValue({ count: 0 });
     await expect(forgetProjectMemory("project-1", "owner-1", "foreign-note")).rejects.toMatchObject({ statusCode: 404 });
-    expect(db.projectMemory.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "foreign-note", projectId: "project-1", userId: "owner-1" } }));
+    expect(db.projectMemory.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "foreign-note", projectId: "project-1" } }));
 });
 it("selects bounded pinned/relevant notes and excludes forgotten/review notes", () => {
     const rows = [{ id: "a", content: "Use Jest", pinned: true, status: "ACTIVE", updatedAt: new Date() }, { id: "b", content: "Coverage decisions", pinned: false, status: "ACTIVE", updatedAt: new Date() }, { id: "c", content: "Use Jest instead", pinned: true, status: "REVIEW" }, { id: "d", content: "Use Jest", pinned: true, status: "FORGOTTEN" }];
@@ -57,7 +57,7 @@ it("selects bounded pinned/relevant notes and excludes forgotten/review notes", 
 });
 it("does not silently create a session when an explicit source is inaccessible", async () => {
     db.chatSession.findFirst.mockResolvedValue(null);
-    const response = await request(app).post("/api/projects/project-1/chat").set("Authorization", auth()).send({ message: "hello", sessionId: "foreign-session" });
+    const response = await request(app).post("/api/projects/project-1/chat").set("Authorization", auth()).send({ clientRequestId:"test-request", message: "hello", sessionId: "foreign-session" });
     expect(response.status).toBe(404); expect(db.chatSession.create).not.toHaveBeenCalled();
 });
 it("materializes an independent branch through the selected boundary", async () => {
@@ -93,7 +93,7 @@ it("accepting a conflicting note forgets only its owned predecessor", async () =
     db.projectMemory.findFirst.mockResolvedValue({ id: "review", content: "Use Jest", status: "REVIEW", conflictsWithId: "old", sourceMessageId: "evidence" });
     await editProjectMemory("project-1", "owner-1", "review", { content: "Use Jest", pinned: true, revision: 0 });
     expect(db.projectMemory.updateMany.mock.calls[0][0].data).not.toHaveProperty("sourceMessageId");
-    expect(db.projectMemory.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({ where: { id: "old", projectId: "project-1", userId: "owner-1", status: "ACTIVE" }, data: expect.objectContaining({ status: "FORGOTTEN", content: "" }) }));
+    expect(db.projectMemory.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({ where: { id: "old", projectId: "project-1", status: "ACTIVE" }, data: expect.objectContaining({ status: "FORGOTTEN", content: "" }) }));
 });
 it("branches retain snapshot provenance and remap their summary cursor to copied messages", async () => {
     db.chatSession.findFirst.mockResolvedValue({ ...session, snapshotId: "old-snapshot", summary: "Earlier goals", summaryThroughId: "m1" });

@@ -10,6 +10,7 @@ export const storeAiTestResult = async (req, res) => {
     }
 
     const result = await aiTestService.saveAiTestResult({
+      userId: req.user.id,
       aiTestId,
       status,
       output,
@@ -19,7 +20,7 @@ export const storeAiTestResult = async (req, res) => {
     res.status(201).json(result);
   } catch (error) {
     console.error('Error storing AI test result:', error);
-    res.status(500).json({ error: 'Failed to store AI test result', details: error.message });
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Failed to store AI test result' });
   }
 };
 

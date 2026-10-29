@@ -1,3 +1,6 @@
+import { getIntegrationScenarioApi, mutateIntegrationScenarioApi } from "../../../services/integrationScenario.service";
+import { getJobDetailApi } from "../../../services/job.service";
+import { useToast } from "../ToastContext";
 import React, { useState, useMemo, useRef, useEffect } from "react";
 import IntegrationScenarioEditorModal, { getScenarioMonacoMarkers } from "./IntegrationScenarioEditorModal.jsx";
 import ConfirmDialog from "../../common/ConfirmDialog";
@@ -255,7 +258,11 @@ export default function IntegrationScenariosPane({
   isApprovingAndRunning = false,
   onReGenerateSelected,
   onOpenApplyModal,
+  readOnly = false,
+  canGenerate = true,
+  canApprove = true,
 }) {
+  const { showToast } = useToast();
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorCode, setEditorCode] = useState("");
   const [editorTitle, setEditorTitle] = useState("");
@@ -353,11 +360,13 @@ export default function IntegrationScenariosPane({
             filePath: t.filePath,
             scenarios: [],
             testFileId: t.id,
+            version: t.version,
             fileStatus: t.status,
           };
         }
         map[epKey].scenarios.push({
           ...r,
+          version: t.version,
           id: `${t.id}::${r.scenarioId || r.testName || idx}`,
           testName: r.testName || `Scenario ${idx + 1}`,
           enabled: r.enabled !== false,
@@ -647,73 +656,52 @@ export default function IntegrationScenariosPane({
     setCollapsedModules(allModNames);
   };
 
+  const reportError = (error, editing = false) => {
+    const message = error.status === 409
+      ? `${error.message} ${editing ? "Your draft is preserved. Close and reopen the editor to review the latest version." : "Refresh the scenario list before retrying."}`
+      : error.message;
+    onError?.(message);
+    showToast({ type: "error", title: error.status === 409 ? "Scenario changed" : "Scenario action failed", message });
+  };
+
   const handleAction = async (action, scenario) => {
-    if (processingScenarioId) return;
+    if (readOnly || (action === "REGENERATE" && !canGenerate) || processingScenarioId) return;
     setProcessingScenarioId(scenario.id);
     setActiveMenuScenarioId(null);
-
     try {
-      const parts = scenario.id.split("::");
-      const aiTestId = parts[0];
-      const scenarioId = encodeURIComponent(parts.slice(1).join("::"));
-
-      let url = `${BASE_URL}/coverage/${snapshotId}/integration/ai-test/${aiTestId}/scenario/${scenarioId}`;
-      let method = "POST";
-      let body = {};
-
-      if (action === "DELETE") {
-        method = "DELETE";
-        setSelectedTestIds((prev) => prev.filter((id) => id !== scenario.id));
-      } else if (action === "TOGGLE") {
-        url += "/toggle";
-        method = "PATCH";
-        body = { enable: !scenario.enabled };
-        if (scenario.enabled) {
-          setSelectedTestIds((prev) => prev.filter((id) => id !== scenario.id));
-        }
-      } else if (action === "REGENERATE") {
-        url += "/regenerate";
-      }
-
-      const res = await fetch(url, {
-        method,
-        headers: getAuthHeaders(),
-        body: method !== "DELETE" ? JSON.stringify(body) : undefined,
+      const [aiTestId, ...parts] = scenario.id.split("::");
+      const result = await mutateIntegrationScenarioApi({
+        snapshotId, aiTestId, scenarioId: parts.join("::"), action,
+        expectedVersion: scenario.version,
+        ...(action === "TOGGLE" ? { enable: !scenario.enabled } : {}),
       });
-      const result = await res.json();
-      if (!res.ok) throw new Error(result.message || "Action failed");
-
-      if (result.jobId) {
+      if (action === "DELETE" || (action === "TOGGLE" && scenario.enabled)) {
+        setSelectedTestIds(previous => previous.filter(id => id !== scenario.id));
+      }
+      const jobId = result.jobId || result.job?.id;
+      if (jobId) {
         while (true) {
-          await new Promise((r) => setTimeout(r, 1500));
-          const jobRes = await fetch(`${BASE_URL}/job/${result.jobId}`, {
-            headers: getAuthHeaders(),
-          });
-          if (!jobRes.ok) break;
-          const jobData = await jobRes.json();
-          const job = jobData.job || jobData.data;
-          if (!job) break;
-          if (job.status === "SUCCESS") {
-            break;
-          }
-          if (job.status === "FAILED" || job.status === "CANCELED") {
-            throw new Error(job.errorMessage || "Regeneration failed");
-          }
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          const response = await getJobDetailApi(jobId);
+          const job = response.job || response.data;
+          if (!job) throw new Error("Could not read regeneration status");
+          if (job.status === "SUCCESS") break;
+          if (["FAILED", "CANCELED"].includes(job.status)) throw new Error(job.errorMessage || "Regeneration failed");
         }
       }
-
-      if (onScenarioChange) await onScenarioChange();
-    } catch (err) {
-      console.error("[handleAction] Error:", err);
-      if (onError) onError(err.message || "Action failed");
+      onScenarioChange?.();
+    } catch (error) {
+      reportError(error);
     } finally {
       setProcessingScenarioId(null);
     }
   };
 
   const handleAddClick = (data) => {
+    if (readOnly) return;
     setAddingToEndpoint({
       aiTestId: data.testFileId,
+      expectedVersion: data.version,
       endpoint: { method: data.method, path: data.path },
     });
     setEditingScenario(null);
@@ -731,6 +719,7 @@ export default function IntegrationScenariosPane({
           method: ep.method,
           path: ep.path || ep.route,
           testFileId: data?.testFileId || aiTests[0]?.id,
+          version: data ? data.version : aiTests[0]?.version,
         };
       });
     }
@@ -738,6 +727,7 @@ export default function IntegrationScenariosPane({
       method: d.method,
       path: d.path,
       testFileId: d.testFileId,
+      version: d.version,
     }));
   }, [endpoints, scenariosByEndpoint, aiTests]);
 
@@ -749,6 +739,7 @@ export default function IntegrationScenariosPane({
       if (!targetData) {
         targetData = {
           testFileId: aiTests[0]?.id,
+          version: aiTests[0]?.version,
           method: selectedEndpoint.method,
           path: selectedEndpoint.path || selectedEndpoint.route,
         };
@@ -757,6 +748,7 @@ export default function IntegrationScenariosPane({
       const first = availableTargetEndpoints[0];
       targetData = scenariosByEndpoint[`${first.method} ${first.path}`] || {
         testFileId: first.testFileId,
+        version: first.version,
         method: first.method,
         path: first.path,
       };
@@ -775,77 +767,55 @@ export default function IntegrationScenariosPane({
     return (epData?.scenarios || []).map((s) => s.testName);
   }, [addingToEndpoint, scenariosByEndpoint]);
 
-  const handleOpenEditorForScenario = (scenario) => {
-    const parts = scenario.id.split("::");
-    const aiTestId = parts[0];
-    const scenarioId = parts.slice(1).join("::");
-    fetch(
-      `${BASE_URL}/coverage/${snapshotId}/integration/ai-test/${aiTestId}/scenario/${encodeURIComponent(scenarioId)}`,
-      { headers: getAuthHeaders() },
-    )
-      .then((r) => r.json())
-      .then((res) => {
-        if (res.success) {
-          setEditingScenario({ aiTestId, scenarioId });
-          setAddingToEndpoint(null);
-          setEditorTitle(`Edit Scenario: ${scenario.testName}`);
-          setEditorCode(res.data.code);
-          setEditorOpen(true);
-        }
-      })
-      .catch((err) => {
-        if (onError) onError(err.message);
-      });
+  const handleOpenEditorForScenario = async scenario => {
+    if (readOnly || processingScenarioId) return;
+    const [aiTestId, ...parts] = scenario.id.split("::");
+    const scenarioId = parts.join("::");
+    setProcessingScenarioId(scenario.id);
+    try {
+      const result = await getIntegrationScenarioApi(snapshotId, aiTestId, scenarioId);
+      setEditingScenario({ aiTestId, scenarioId, expectedVersion: result.version || result.aiTest?.version });
+      setAddingToEndpoint(null);
+      setEditorTitle(`Edit Scenario: ${scenario.testName}`);
+      setEditorCode(result.code);
+      setEditorOpen(true);
+    } catch (error) {
+      reportError(error);
+    } finally {
+      setProcessingScenarioId(null);
+    }
   };
 
-  const handleSaveEditor = async (code) => {
+  const handleSaveEditor = async code => {
+    if (readOnly) return false;
     setEditorLoading(true);
     try {
       if (addingToEndpoint) {
-        const res = await fetch(
-          `${BASE_URL}/coverage/${snapshotId}/integration/ai-test/${addingToEndpoint.aiTestId}/scenario`,
-          {
-            method: "POST",
-            headers: getAuthHeaders(),
-            body: JSON.stringify({
-              code,
-              endpoint: addingToEndpoint.endpoint,
-            }),
-          },
-        );
-        const result = await res.json();
-        if (!res.ok) throw new Error(result.message);
+        await mutateIntegrationScenarioApi({ snapshotId, aiTestId: addingToEndpoint.aiTestId, action: "ADD", code,
+          endpoint: addingToEndpoint.endpoint, expectedVersion: addingToEndpoint.expectedVersion });
       } else if (editingScenario) {
-        const scenarioId = encodeURIComponent(editingScenario.scenarioId);
-        const res = await fetch(
-          `${BASE_URL}/coverage/${snapshotId}/integration/ai-test/${editingScenario.aiTestId}/scenario/${scenarioId}`,
-          {
-            method: "PUT",
-            headers: getAuthHeaders(),
-            body: JSON.stringify({ code }),
-          },
-        );
-        const result = await res.json();
-        if (!res.ok) throw new Error(result.message);
+        await mutateIntegrationScenarioApi({ snapshotId, aiTestId: editingScenario.aiTestId,
+          scenarioId: editingScenario.scenarioId, action: "UPDATE", code, expectedVersion: editingScenario.expectedVersion });
       }
-
       setEditorOpen(false);
-      if (onScenarioChange) await onScenarioChange();
-    } catch (err) {
-      if (onError) onError(err.message);
+      await onScenarioChange?.();
+      return true;
+    } catch (error) {
+      reportError(error, true);
+      return false;
     } finally {
       setEditorLoading(false);
     }
   };
 
   const handleSaveAndApplyEditor = async (code) => {
-    await handleSaveEditor(code);
-    if (onOpenApplyModal) {
+    const saved = await handleSaveEditor(code);
+    if (saved && onOpenApplyModal) {
       onOpenApplyModal();
     }
   };
 
-  if (!hasAnalysis) {
+  if (!hasAnalysis && !hasGeneratedTests) {
     return (
       <div className="p-12 text-center flex flex-col items-center justify-center h-full gap-3 text-[var(--color-text-secondary)] font-sans">
         <div className="w-12 h-12 rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)] flex items-center justify-center mb-1">
@@ -890,7 +860,7 @@ export default function IntegrationScenariosPane({
             <button
               type="button"
               onClick={onReGenerateSelected}
-              disabled={isGenerating}
+              disabled={!canGenerate || isGenerating}
               className="px-4 py-2 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer inline-flex items-center gap-2 shadow-sm disabled:opacity-50"
             >
               <Sparkles size={14} />
@@ -953,7 +923,7 @@ export default function IntegrationScenariosPane({
             <button
               type="button"
               onClick={handleHeaderReGenerate}
-              disabled={isGenerating || isApprovingAndRunning}
+              disabled={!canApprove || isGenerating || isApprovingAndRunning}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-semibold hover:bg-[var(--color-surface-hover)] transition-colors shadow-xs disabled:opacity-40 cursor-pointer"
               title={reGenerateInfo.tooltip}
             >
@@ -1390,7 +1360,7 @@ export default function IntegrationScenariosPane({
                                         setGeneratingEndpointKey(epKey);
                                         onGenerateThisEndpoint(epKey);
                                       }}
-                                      disabled={isGenerating}
+                                      disabled={!canGenerate || isGenerating}
                                       className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer disabled:opacity-50"
                                       title={`Regenerate scenarios for ${epKey}`}
                                     >
@@ -1526,7 +1496,7 @@ export default function IntegrationScenariosPane({
                                           <div className="relative shrink-0" data-context-menu>
                                             <button
                                               type="button"
-                                              disabled={isProcessing}
+                                              disabled={readOnly || isProcessing}
                                               onClick={(e) => {
                                                 e.stopPropagation();
                                                 setActiveMenuScenarioId(isMenuOpen ? null : scenario.id);
@@ -1552,7 +1522,7 @@ export default function IntegrationScenariosPane({
                                                 {getScenarioOrigin(scenario).type === "USER_MODIFIED" && (
                                                   <button
                                                     type="button"
-                                                    disabled={isProcessing}
+                                                    disabled={readOnly || isProcessing}
                                                     onClick={(e) => {
                                                       e.stopPropagation();
                                                       handleAction("REGENERATE", scenario);
@@ -1567,7 +1537,7 @@ export default function IntegrationScenariosPane({
 
                                                 <button
                                                   type="button"
-                                                  disabled={isProcessing}
+                                                  disabled={readOnly || isProcessing}
                                                   onClick={(e) => {
                                                     e.stopPropagation();
                                                     handleAction("REGENERATE", scenario);
@@ -1586,7 +1556,7 @@ export default function IntegrationScenariosPane({
                                                 </button>
                                                 <button
                                                   type="button"
-                                                  disabled={isProcessing}
+                                                  disabled={readOnly || isProcessing}
                                                   onClick={(e) => {
                                                     e.stopPropagation();
                                                     handleAction("TOGGLE", scenario);
@@ -1599,7 +1569,7 @@ export default function IntegrationScenariosPane({
                                                 <div className="my-1 border-t border-[var(--color-border)]" />
                                                 <button
                                                   type="button"
-                                                  disabled={isProcessing}
+                                                  disabled={readOnly || isProcessing}
                                                   onClick={(e) => {
                                                     e.stopPropagation();
                                                     setActiveMenuScenarioId(null);
@@ -1652,6 +1622,7 @@ export default function IntegrationScenariosPane({
         onSelectTargetEndpoint={(newEp) => {
           setAddingToEndpoint({
             aiTestId: newEp.testFileId,
+            expectedVersion: newEp.version,
             endpoint: { method: newEp.method, path: newEp.path },
           });
           setEditorTitle(`Add Scenario: ${newEp.method} ${newEp.path}`);

@@ -670,6 +670,12 @@ export const findAllAssociatedTestFiles = (rootDir, rawSourceFilePath, framework
     } else if (hasTestsUnit) {
         defaultNewTestPath = normalizePath(`tests/unit/${baseName}.test${ext}`);
     }
+    if (framework === "vitest" && fs.existsSync(path.join(rootDir, defaultNewTestPath))) {
+        const existing = fs.readFileSync(path.join(rootDir, defaultNewTestPath), "utf8");
+        if (/\bjest\b|@jest\/globals/i.test(existing) && !/\bvitest\b/i.test(existing)) {
+            defaultNewTestPath = defaultNewTestPath.replace(/\.test(\.[^.]+)$/, ".vitest.test$1");
+        }
+    }
 
     const linkedMap = new Map();
 
@@ -678,6 +684,7 @@ export const findAllAssociatedTestFiles = (rootDir, rawSourceFilePath, framework
     try {
         const astImports = findTestsImportingSource(rootDir, normSource);
         for (const match of astImports) {
+            if (framework === "vitest" && /\bjest\b|@jest\/globals/i.test(match.testCode || "") && !/\bvitest\b/i.test(match.testCode || "")) continue;
             linkedMap.set(match.filePath, {
                 found: true,
                 filePath: match.filePath,
@@ -816,6 +823,9 @@ export const findAllAssociatedTestFiles = (rootDir, rawSourceFilePath, framework
                 const fullP = path.join(rootDir, cand);
                 if (fs.existsSync(fullP)) {
                     const content = fs.readFileSync(fullP, "utf8");
+                    // A convention match must not repurpose an explicitly Jest
+                    // suite as the target of a Vitest proposal.
+                    if (!/vitest/i.test(cand) && /\bjest\b|@jest\/globals/i.test(content) && !/\bvitest\b/i.test(content)) continue;
                     const rel = normalizePath(cand);
                     linkedMap.set(rel, {
                         found: true,
@@ -947,9 +957,8 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
     if (!snapshot) {
         throw new ServiceError("Snapshot not found", 404);
     }
-    if (snapshot.project.ownerId !== userId) {
-        throw new ServiceError("Forbidden: Unauthorized project access", 403);
-    }
+    const { resolveProjectAccess } = await import("./projectAccess.service.js");
+    await resolveProjectAccess({ projectId: snapshot.projectId, userId, capability: "project.read" });
 
     const resolveRootDir = (r) => {
         if (!r) return null;
