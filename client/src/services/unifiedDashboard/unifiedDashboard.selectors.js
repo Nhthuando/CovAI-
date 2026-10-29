@@ -157,14 +157,20 @@ export function computeQualityGate(pillars = {}, matrixRows = []) {
     {
       id: "chk-unit-branch",
       label: "Unit Branch Coverage >= 75%",
-      currentValue: unitBranchVal !== null ? `${Number(unitBranchVal).toFixed(1)}%` : "0.0%",
+      currentValue:
+        unitBranchVal !== null && Number.isFinite(Number(unitBranchVal))
+          ? `${Number(unitBranchVal).toFixed(1)}%`
+          : "0.0%",
       passed: unitBranchPassed,
       status: unitBranchPassed ? "pass" : "fail",
     },
     {
       id: "chk-api-endpoint",
       label: "API Endpoint Coverage >= 80%",
-      currentValue: apiCovVal !== null ? `${Number(apiCovVal).toFixed(1)}%` : "0.0%",
+      currentValue:
+        apiCovVal !== null && Number.isFinite(Number(apiCovVal))
+          ? `${Number(apiCovVal).toFixed(1)}%`
+          : "0.0%",
       passed: apiCovPassed,
       status: apiCovPassed ? "pass" : "fail",
     },

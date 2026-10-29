@@ -3550,7 +3550,7 @@ export default function AIPanel({
       {/* ── Chat History Drawer (ChatGPT style) ──────────── */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 border-b border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)]">
         <span>{isRestoring ? "Restoring conversation..." : activeSessionMeta?.sourceSessionId ? "Branched conversation" : activeSessionId ? "Saved conversation" : "New conversation"}</span>
-        <span>Current screen: {screenContext?.activity === "overview" || screenContext?.testType === "overview" ? "Unified Quality Overview" : ({ unit: "Unit Test", integration: "Integration Test", system: "System Test" })[screenContext?.testType] || ({ overview: "Unified Quality Overview", explorer: "Code", jobs: "Run history", architecture: "Architecture", settings: "Settings" })[screenContext?.activity] || "Project"}</span>
+        <span>Current screen: {screenContext?.activity === "projects-portfolio" || screenContext?.testType === "portfolio" ? "Projects Portfolio Overview" : screenContext?.activity === "overview" || screenContext?.testType === "overview" ? "Unified Quality Overview" : ({ unit: "Unit Test", integration: "Integration Test", system: "System Test", portfolio: "Projects Portfolio Overview" })[screenContext?.testType] || ({ "projects-portfolio": "Projects Portfolio Overview", overview: "Unified Quality Overview", explorer: "Code", jobs: "Run history", architecture: "Architecture", settings: "Settings" })[screenContext?.activity] || "Project"}</span>
         <label className="flex items-center gap-1" title={memoryAvailable ? 'Use saved preferences in this chat' : 'Optional: enable memory in What AI knows. AI follows your screen even when memory is off.'}><input type="checkbox" aria-label="Use memory in this chat" checked={memoryAvailable && useProjectMemory} disabled={!memoryAvailable || isTyping || isRestoring || isLoadingSession} onChange={event => { setUseProjectMemory(event.target.checked); if (storageKey) localStorage.setItem(storageKey, JSON.stringify({ id: activeSessionId, useMemory: event.target.checked })); }} />Use memory</label>
         <button type="button" className="underline cursor-pointer" disabled={isTyping || isRestoring} onClick={() => setContextDialog("context")}>View context</button>
         {contextInfo?.warnings?.map(warning => <span key={warning} className="w-full">{warning}</span>)}
@@ -3975,6 +3975,120 @@ export default function AIPanel({
               </p>
             </div>
 
+            {screenContext?.activity === "projects-portfolio" || screenContext?.testType === "portfolio" ? (
+              <div className="flex flex-col gap-2">
+                {/* Portfolio Prompt 1: Highest release risk */}
+                <motion.button
+                  whileHover={{ scale: 1.01, x: 2 }}
+                  whileTap={{ scale: 0.99 }}
+                  onClick={() =>
+                    handleSend(
+                      "Which project in my portfolio has the highest release risk right now? Break down the critical blockers, failure layers, and missing test suites."
+                    )
+                  }
+                  className="flex items-center gap-2.5 p-2.5 rounded-xl text-left cursor-pointer transition-all bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-bg)] hover:border-[var(--color-primary)]"
+                >
+                  <div
+                    style={{
+                      width: 26,
+                      height: 26,
+                      borderRadius: 6,
+                      background: "rgba(248, 81, 73, 0.15)",
+                      border: "1px solid rgba(248, 81, 73, 0.3)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Shield size={13} style={{ color: "var(--ud-fail)" }} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text)" }}>
+                      Highest release risk projects
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      Identify release blockers and failing testing layers
+                    </div>
+                  </div>
+                  <ChevronRight size={13} style={{ color: "var(--color-text-muted)" }} />
+                </motion.button>
+
+                {/* Portfolio Prompt 2: Summarize coverage gaps */}
+                <motion.button
+                  whileHover={{ scale: 1.01, x: 2 }}
+                  whileTap={{ scale: 0.99 }}
+                  onClick={() =>
+                    handleSend(
+                      "Summarize coverage gaps across all my projects. Which projects have missing test layers (Unit, API, or System E2E)?"
+                    )
+                  }
+                  className="flex items-center gap-2.5 p-2.5 rounded-xl text-left cursor-pointer transition-all bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-bg)] hover:border-[var(--color-primary)]"
+                >
+                  <div
+                    style={{
+                      width: 26,
+                      height: 26,
+                      borderRadius: 6,
+                      background: "rgba(210, 153, 34, 0.15)",
+                      border: "1px solid rgba(210, 153, 34, 0.3)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Zap size={13} style={{ color: "var(--ud-warn)" }} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text)" }}>
+                      Summarize portfolio coverage gaps
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      Detect missing unit suites and uncovered API endpoints
+                    </div>
+                  </div>
+                  <ChevronRight size={13} style={{ color: "var(--color-text-muted)" }} />
+                </motion.button>
+
+                {/* Portfolio Prompt 3: Recommend AI test generation */}
+                <motion.button
+                  whileHover={{ scale: 1.01, x: 2 }}
+                  whileTap={{ scale: 0.99 }}
+                  onClick={() =>
+                    handleSend(
+                      "Recommend where to run AI test generation first across my account to maximize overall release quality."
+                    )
+                  }
+                  className="flex items-center gap-2.5 p-2.5 rounded-xl text-left cursor-pointer transition-all bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-bg)] hover:border-[var(--color-primary)]"
+                >
+                  <div
+                    style={{
+                      width: 26,
+                      height: 26,
+                      borderRadius: 6,
+                      background: "rgba(163, 113, 247, 0.15)",
+                      border: "1px solid rgba(163, 113, 247, 0.3)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Sparkles size={13} style={{ color: "var(--ud-integration)" }} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text)" }}>
+                      Recommend AI test synthesis priority
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      Prioritize AI generation by risk and layer deficit
+                    </div>
+                  </div>
+                  <ChevronRight size={13} style={{ color: "var(--color-text-muted)" }} />
+                </motion.button>
+              </div>
+            ) : (
             <div className="flex flex-col gap-2">
               {/* 1. Find edge cases */}
               <motion.button
@@ -4334,6 +4448,7 @@ export default function AIPanel({
                 />
               </motion.button>
             </div>
+            )}
           </div>
         )}
 

@@ -7,6 +7,7 @@ const ToastContext = createContext(null);
 let toastIdCounter = 0;
 
 export function ToastProvider({ children }) {
+  const parentCtx = useContext(ToastContext);
   const [toasts, setToasts] = useState([]);
   const timersRef = useRef({});
 
@@ -39,8 +40,13 @@ export function ToastProvider({ children }) {
     [removeToast]
   );
 
+  // If already inside a global ToastProvider, pass children through without mounting a duplicate fixed container
+  if (parentCtx) {
+    return children;
+  }
+
   return (
-    <ToastContext.Provider value={{ showToast, removeToast }}>
+    <ToastContext.Provider value={{ showToast, addToast: showToast, removeToast }}>
       {children}
 
       {/* Toast Container — fixed bottom-right */}
@@ -74,10 +80,18 @@ export function ToastProvider({ children }) {
   );
 }
 
+const FALLBACK_TOAST_CTX = {
+  showToast: () => null,
+  addToast: () => null,
+  removeToast: () => {},
+};
+
 export function useToast() {
   const ctx = useContext(ToastContext);
   if (!ctx) {
-    throw new Error("useToast must be used within a ToastProvider");
+    console.warn("[ToastContext] useToast called outside ToastProvider; using no-op fallback.");
+    return FALLBACK_TOAST_CTX;
   }
   return ctx;
 }
+
