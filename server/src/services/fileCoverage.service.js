@@ -10,7 +10,7 @@ import { findTestsImportingSource, countTestCases } from "./testDependencyResolv
  * Normalizes file paths across Windows/Linux, stripping leading slashes and dot-slashes.
  */
 export const normalizePath = (p = "") => {
-    return p.replace(/\\/g, "/").replace(/^\.?\//, "").trim();
+    return p.replace(/[\\/]+/g, "/").replace(/^\.?\//, "").trim();
 };
 
 /**
@@ -26,7 +26,8 @@ export const cleanRelativePath = (rootDir, targetPath) => {
 
         try {
             if (fs.existsSync(path.join(rootDir, norm))) {
-                return norm.replace(/^\/+/, "");
+                norm = norm.replace(/[\\/]+/g, "/");
+    return norm.replace(/^\/+/, "");
             }
         } catch (_) {}
 
@@ -69,10 +70,11 @@ export const cleanRelativePath = (rootDir, targetPath) => {
             }
         }
     }
-    norm = norm.replace(/^[a-zA-Z]:[\\/]/, "");
+    norm = norm.replace(/^[a-zA-Z]:[\\/]+/, "");
     norm = norm.replace(/^.*?\/storage\/projects\/[^/]+\/[^/]+\/[^/]+\/repo\//i, "");
     norm = norm.replace(/^.*?\/uploads\/snapshots\/[^/]+\/[^/]+\//i, "");
     norm = norm.replace(/^.*?\/repo\//i, "");
+    norm = norm.replace(/[\\/]+/g, "/");
     return norm.replace(/^\/+/, "");
 };
 
@@ -80,12 +82,13 @@ export const cleanRelativePath = (rootDir, targetPath) => {
  * Checks if a candidate path from Istanbul coverage or stack traces matches the target file.
  */
 export const matchesFilePath = (candidatePath = "", targetPath = "") => {
-    const normCandidate = cleanRelativePath(null, candidatePath);
-    const normTarget = cleanRelativePath(null, targetPath);
+    const normCandidate = cleanRelativePath(null, candidatePath).replace(/[\\/]+/g, "/");
+    const normTarget = cleanRelativePath(null, targetPath).replace(/[\\/]+/g, "/");
     if (!normCandidate || !normTarget) return false;
     return normCandidate === normTarget ||
         normCandidate.endsWith("/" + normTarget) ||
-        normTarget.endsWith("/" + normCandidate);
+        normTarget.endsWith("/" + normCandidate) ||
+        (path.basename(normCandidate) === path.basename(normTarget) && (normCandidate.includes(normTarget) || normTarget.includes(normCandidate)));
 };
 
 /**
@@ -1065,8 +1068,15 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
         return "";
     };
 
+    const targetSubpackage = targetFilePath.replace(/[\\/]+/g, "/").split("/")[0];
     const candidateCoveragePaths = [
         path.join(rootDir, "coverage", "coverage-final.json"),
+        path.join(rootDir, targetSubpackage, "coverage", "coverage-final.json"),
+        path.join(rootDir, targetSubpackage, "coverage-final.json"),
+        path.join(rootDir, path.dirname(targetFilePath), "coverage", "coverage-final.json"),
+        path.join(rootDir, "server", "coverage", "coverage-final.json"),
+        path.join(rootDir, "client", "coverage", "coverage-final.json"),
+        path.join(rootDir, "backend", "coverage", "coverage-final.json"),
         path.join(rootDir, "coverage-final.json")
     ];
 
@@ -1085,6 +1095,10 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
     // Check test-results.json
     const candidateResultPaths = [
         path.join(rootDir, "coverage", "test-results.json"),
+        path.join(rootDir, targetSubpackage, "coverage", "test-results.json"),
+        path.join(rootDir, "server", "coverage", "test-results.json"),
+        path.join(rootDir, "client", "coverage", "test-results.json"),
+        path.join(rootDir, "backend", "coverage", "test-results.json"),
         path.join(rootDir, "coverage", "test-result.json"),
         path.join(rootDir, "test-results.json"),
         path.join(rootDir, "test-result.json")
@@ -1189,6 +1203,11 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
     let officialSummary = null;
     const summaryCandidatePaths = [
         path.join(rootDir, "coverage", "coverage-summary.json"),
+        path.join(rootDir, targetSubpackage, "coverage", "coverage-summary.json"),
+        path.join(rootDir, targetSubpackage, "coverage-summary.json"),
+        path.join(rootDir, "server", "coverage", "coverage-summary.json"),
+        path.join(rootDir, "client", "coverage", "coverage-summary.json"),
+        path.join(rootDir, "backend", "coverage", "coverage-summary.json"),
         path.join(rootDir, "coverage", "jest-coverage-summary.json"),
         path.join(rootDir, "coverage", "vitest-coverage-summary.json"),
         path.join(rootDir, "coverage-summary.json")

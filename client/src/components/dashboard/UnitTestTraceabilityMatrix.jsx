@@ -394,7 +394,7 @@ function CategoryMatrix4Cards({
                       color: cat.hasCategory ? cat.color : "#94a3b8",
                     }}
                   >
-                    {cat.hasCategory ? cat.tests.length : "0"}
+                    {cat.hasCategory ? (cat.tests?.length || 0) : "0"}
                   </span>
                 </div>
               ) : (
@@ -433,7 +433,7 @@ function CategoryMatrix4Cards({
                           color: cat.hasCategory ? cat.color : "#94a3b8",
                         }}
                       >
-                        {cat.hasCategory ? `${cat.tests.length} tests` : "Missing"}
+                        {cat.hasCategory ? `${cat.tests?.length || 0} tests` : "Missing"}
                       </span>
                       <button
                         onClick={(e) => handleToggleCollapse(idx, e)}
@@ -656,6 +656,15 @@ export default function UnitTestTraceabilityMatrix({
     }
   };
 
+  // Auto-fetch file coverage for any expanded files
+  useEffect(() => {
+    expandedFiles.forEach((fPath) => {
+      if (fPath && !fileCoverageCache[fPath] && !loadingFiles.has(fPath)) {
+        fetchFileCoverage(fPath);
+      }
+    });
+  }, [expandedFiles]);
+
   // Aggregate all assertions across test suites
   const allAssertions = useMemo(() => {
     const list = [];
@@ -877,23 +886,23 @@ export default function UnitTestTraceabilityMatrix({
 
   // Aggregate Cyclomatic Complexity & Basis Path statistics
   const { avgComplexity, maxComplexity, highestComplexityFn, basisPathsMetCount, highComplexityCount } = useMemo(() => {
-    if (!functionTraceability.length) {
+    if (!functionTraceability?.length) {
       return { avgComplexity: 1, maxComplexity: 1, highestComplexityFn: null, basisPathsMetCount: 0, highComplexityCount: 0 };
     }
-    const totalCyc = functionTraceability.reduce((acc, f) => acc + (f.complexity || 1), 0);
+    const totalCyc = (functionTraceability || []).reduce((acc, f) => acc + (f.complexity || 1), 0);
     let maxCyc = 1;
     let maxFn = null;
-    for (const f of functionTraceability) {
+    for (const f of (functionTraceability || [])) {
       const c = f.complexity || 1;
       if (c > maxCyc) {
         maxCyc = c;
         maxFn = f;
       }
     }
-    const met = functionTraceability.filter((f) => f.meetsBasisPaths).length;
-    const high = functionTraceability.filter((f) => (f.complexity || 1) > 10).length;
+    const met = (functionTraceability || []).filter((f) => f.meetsBasisPaths).length;
+    const high = (functionTraceability || []).filter((f) => (f.complexity || 1) > 10).length;
     return {
-      avgComplexity: totalCyc / functionTraceability.length,
+      avgComplexity: totalCyc / (functionTraceability?.length || 1),
       maxComplexity: maxCyc,
       highestComplexityFn: maxFn,
       basisPathsMetCount: met,
@@ -913,7 +922,7 @@ export default function UnitTestTraceabilityMatrix({
       sourceMetaByNorm.set(norm(s.filePath), s);
     }
 
-    for (const fn of functionTraceability) {
+    for (const fn of (functionTraceability || [])) {
       if (isTestFile(fn.filePath)) continue;
       const fPath = fn.filePath || "unknown";
       const fNorm = norm(fPath);
@@ -1104,10 +1113,11 @@ export default function UnitTestTraceabilityMatrix({
       }
     }
     const hasNoBranches = branchesInRange.length === 0;
+    const isFileBranchGap = fileBranchesPct !== null && Number(fileBranchesPct) < 100;
     const branchesPct = (isFileZeroFuncs || fnHit === 0) && !hasNoBranches
       ? 0
       : hasNoBranches
-        ? ((isFileZeroFuncs || fnHit === 0) ? 0 : 100)
+        ? ((isFileZeroFuncs || fnHit === 0) ? 0 : (!fileCov && isFileBranchGap ? Number(fileBranchesPct) : 100))
         : branchPathsTotal > 0
           ? Number(((branchPathsCovered / branchPathsTotal) * 100).toFixed(1))
           : ((isFileZeroFuncs || fnHit === 0) ? 0 : 100);
@@ -1150,11 +1160,12 @@ export default function UnitTestTraceabilityMatrix({
       !isFileZeroFuncs &&
       fnHit > 0 &&
       stmtsPct >= 100 &&
-      (branchesPct >= 100 || hasNoBranches) &&
+      (branchesPct >= 100 || (hasNoBranches && !isFileBranchGap)) &&
       funcsPct >= 100 &&
       linesPct >= 100 &&
       uncoveredLines.length === 0 &&
-      uncoveredBranches.length === 0;
+      uncoveredBranches.length === 0 &&
+      (!fileCov ? !isFileBranchGap : true);
 
     return {
       startLine,
@@ -1211,7 +1222,7 @@ export default function UnitTestTraceabilityMatrix({
               Business Logic ↔ Test Case Traceability Matrix
             </span>
             <span style={{ fontSize: 11, color: isLight ? "#64748b" : "#8b949e", fontWeight: 500 }}>
-              ({filteredFiles.length} source files · {functionTraceability.length} business functions)
+              ({filteredFiles.length} source files · {(functionTraceability?.length || 0)} business functions)
             </span>
           </div>
 
@@ -1947,17 +1958,17 @@ export default function UnitTestTraceabilityMatrix({
                                   {(proofData.fnHit || 0) === 0 ? (
                                     <>
                                       <AlertCircle size={11} />
-                                      <span>Uncovered ({fn.tests.length} tests)</span>
+                                      <span>Uncovered ({(fn.tests?.length || 0)} tests)</span>
                                     </>
                                   ) : proofData.isFullyCovered ? (
                                     <>
                                       <CheckCircle2 size={11} />
-                                      <span>100% Covered ({fn.tests.length} tests)</span>
+                                      <span>100% Covered ({(fn.tests?.length || 0)} tests)</span>
                                     </>
                                   ) : (
                                     <>
                                       <AlertTriangle size={11} />
-                                      <span>Partial Coverage ({fn.tests.length} tests)</span>
+                                      <span>Partial Coverage ({(fn.tests?.length || 0)} tests)</span>
                                     </>
                                   )}
                                 </span>
@@ -2217,9 +2228,9 @@ export default function UnitTestTraceabilityMatrix({
                                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                                         <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 750, color: isLight ? "#0f172a" : "#f8fafc" }}>
                                           <Target size={14} style={{ color: "#6366f1" }} />
-                                          <span>Unit Test Suites Exercising <code>{fn.cleanName}()</code> ({fn.tests.length} tests)</span>
+                                          <span>Unit Test Suites Exercising <code>{fn.cleanName}()</code> ({(fn.tests?.length || 0)} tests)</span>
                                         </div>
-                                        {fn.tests.length > 0 && fn.tests.every(t => t.status === "passed") &&
+                                        {(fn.tests?.length || 0) > 0 && fn.tests.every(t => t.status === "passed") &&
                                           !fileSugs.some(s => s.status === "FAILED" || s.testRunError) && (
                                             <span style={{ fontSize: 11, color: isLight ? "#15803d" : "#4ade80", fontWeight: 650 }}>
                                               ✓ Matched tests passed
@@ -2227,7 +2238,7 @@ export default function UnitTestTraceabilityMatrix({
                                           )}
                                       </div>
 
-                                      {fn.tests.length === 0 ? (
+                                      {(!fn.tests || fn.tests.length === 0) ? (
                                         <div style={{ fontSize: 11, color: isLight ? "#b45309" : "#fbbf24", background: isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.08)", padding: "6px 10px", borderRadius: 4 }}>
                                           No dedicated test assertion specifically named <code>{fn.cleanName}</code> found in suite results.
                                           {proofData.fnHit > 0
@@ -2379,7 +2390,7 @@ export default function UnitTestTraceabilityMatrix({
                                           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                                             <CheckCircle2 size={12} style={{ color: isLight ? "#15803d" : "#4ade80" }} />
                                             <span style={{ fontSize: 11.5, fontWeight: 700, color: isLight ? "#15803d" : "#4ade80" }}>
-                                              {fileSugs.length} test suggestion{fileSugs.length > 1 ? "s" : ""} ready
+                                              {(fileSugs?.length || 0)} test suggestion{(fileSugs?.length || 0) > 1 ? "s" : ""} ready
                                             </span>
                                           </div>
                                           {onReviewDiff && (
@@ -2546,7 +2557,7 @@ export default function UnitTestTraceabilityMatrix({
                       }))}
 
                       {/* Secondary Internal Callbacks & Arrow Functions Section */}
-                      {secondaryCallbacks.length > 0 && (
+                      {secondaryCallbacks?.length > 0 && (
                         <div style={{ marginTop: 6, paddingTop: 8, borderTop: isLight ? "1px dashed #e2e8f0" : "1px dashed rgba(255, 255, 255, 0.08)" }}>
                           <button
                             onClick={(e) => {
@@ -2572,7 +2583,7 @@ export default function UnitTestTraceabilityMatrix({
                             }}
                           >
                             {isCallbacksExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                            <span>{isCallbacksExpanded ? "Hide" : "Show"} {secondaryCallbacks.length} internal callback{secondaryCallbacks.length > 1 ? "s" : ""} & arrow function{secondaryCallbacks.length > 1 ? "s" : ""}</span>
+                            <span>{isCallbacksExpanded ? "Hide" : "Show"} {secondaryCallbacks?.length || 0} internal callback{(secondaryCallbacks?.length || 0) > 1 ? "s" : ""} & arrow function{(secondaryCallbacks?.length || 0) > 1 ? "s" : ""}</span>
                           </button>
                           {isCallbacksExpanded && (
                             <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -2656,15 +2667,15 @@ export default function UnitTestTraceabilityMatrix({
                                             fontWeight: 650,
                                             padding: "2px 7px",
                                             borderRadius: 4,
-                                            background: fn.tests.length === 0 && (fn.hit || 0) === 0
+                                            background: (!fn.tests || fn.tests.length === 0) && (fn.hit || 0) === 0
                                               ? (isLight ? "#fff1f2" : "rgba(239, 68, 68, 0.15)")
                                               : (isLight ? "#ecfdf5" : "rgba(16, 185, 129, 0.15)"),
-                                            color: fn.tests.length === 0 && (fn.hit || 0) === 0
+                                            color: (!fn.tests || fn.tests.length === 0) && (fn.hit || 0) === 0
                                               ? (isLight ? "#dc2626" : "#f87171")
                                               : (isLight ? "#059669" : "#4ade80"),
                                           }}
                                         >
-                                          {fn.tests.length === 0 && (fn.hit || 0) === 0 ? "Uncovered" : `${fn.hit || fn.tests.length || 1} hits`}
+                                          {(!fn.tests || fn.tests.length === 0) && (fn.hit || 0) === 0 ? "Uncovered" : `${fn.hit || fn.tests?.length || 1} hits`}
                                         </span>
                                       </div>
                                     </div>
