@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import {
   Terminal,
+  Package,
+  Download,
   CheckCircle2,
   XCircle,
   Clock,
@@ -32,6 +34,9 @@ export default function UnitTestExecutionProcess({
   runStep = "",
   rawTotals = null,
   summary = null,
+  missingDependency = null,
+  onInstallDependency = null,
+  isInstallingDependency = false,
 }) {
   // Inner tabs for the terminal console window: "terminal" | "pipeline" | "files"
   const [activeConsoleTab, setActiveConsoleTab] = useState("terminal");
@@ -967,6 +972,63 @@ export default function UnitTestExecutionProcess({
         {/* ── Tab Content Area ── */}
         {activeConsoleTab === "terminal" ? (
           /* Terminal Output Screen */
+          <>
+            {missingDependency && (
+              <div
+                style={{
+                  padding: "10px 16px",
+                  background: "rgba(239, 68, 68, 0.12)",
+                  borderBottom: "1px solid rgba(239, 68, 68, 0.3)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  flexWrap: "wrap",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Package size={15} style={{ color: "#f87171", flexShrink: 0 }} />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#fca5a5" }}>
+                    Missing Dependency: <code>{missingDependency.packageName}</code>
+                  </span>
+                  {missingDependency.importedFrom && (
+                    <span style={{ fontSize: 11, color: "#94a3b8" }}>
+                      (required by {missingDependency.importedFrom})
+                    </span>
+                  )}
+                </div>
+
+                <button
+                  onClick={() => onInstallDependency && onInstallDependency(missingDependency.packageName)}
+                  disabled={isInstallingDependency}
+                  style={{
+                    background: "#dc2626",
+                    border: "1px solid #ef4444",
+                    color: "#ffffff",
+                    padding: "4px 12px",
+                    borderRadius: 5,
+                    fontSize: 11.5,
+                    fontWeight: 700,
+                    cursor: isInstallingDependency ? "wait" : "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 5,
+                  }}
+                >
+                  {isInstallingDependency ? (
+                    <>
+                      <Loader2 size={12} className="animate-spin" />
+                      <span>Installing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Download size={12} />
+                      <span>Install '{missingDependency.packageName}'</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
           <div
             style={{
               padding: "16px 20px",
@@ -984,6 +1046,7 @@ export default function UnitTestExecutionProcess({
             {logLines.map((line, idx) => renderLogLine(line, idx))}
             <div ref={terminalEndRef} />
           </div>
+          </>
         ) : activeConsoleTab === "pipeline" ? (
           /* Pipeline Steps Detailed List */
           <div

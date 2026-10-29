@@ -143,6 +143,15 @@ export async function getSystemTestEvidence(snapshotId, scenarioId, signal) {
     return response.blob();
 }
 
+export async function installMissingDependency(snapshotId, packageName, isDev = false, rerunTests = true) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/install-dependency`, {
+        method: "POST",
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ packageName, isDev, rerunTests }),
+    });
+    return handleResponse(res);
+}
+
 export async function getFileCoverage(snapshotId, filePath) {
     const res = await fetch(
         `${BASE_URL}/coverage/${snapshotId}/file-coverage?filePath=${encodeURIComponent(filePath)}`,

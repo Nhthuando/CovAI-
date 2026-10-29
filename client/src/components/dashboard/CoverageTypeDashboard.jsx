@@ -42,6 +42,7 @@ import {
   getTestExecution,
   runCoverageByType,
   getFileCoverage,
+  installMissingDependency,
   suggestUnitTestcase,
   applyUnitTestSuggestion,
   getSystemCoverageSummary,
@@ -1767,6 +1768,27 @@ export default function CoverageTypeDashboard({
       return res?.data;
     }
   }, [snapshotId, type, loadSystemSummary, refetchCoverage]);
+  const [installingDependencyName, setInstallingDependencyName] = useState(null);
+
+  const handleInstallDependency = async (packageName, isDev = false) => {
+    if (!snapshotId || !packageName || installingDependencyName) return;
+    setInstallingDependencyName(packageName);
+    try {
+      const res = await installMissingDependency(snapshotId, packageName, isDev, true);
+      if (res?.success) {
+        invalidateCoverageQueries(snapshotId);
+        await refetchCoverage();
+      } else {
+        setError(res?.message || `Failed to install ${packageName}`);
+      }
+    } catch (err) {
+      console.error("[handleInstallDependency] Error:", err);
+      setError(err.message || `Error installing ${packageName}`);
+    } finally {
+      setInstallingDependencyName(null);
+    }
+  };
+
   const run = async (options = {}) => {
     if (!snapshotId) return;
     activeJobIdRef.current = null;
@@ -2574,6 +2596,9 @@ export default function CoverageTypeDashboard({
           activeTab={activeMetricView}
           onChangeTab={(tabId) => setActiveMetricView(tabId)}
           isLight={isLight}
+          missingDependency={summary?.missingDependency}
+          onInstallDependency={handleInstallDependency}
+          isInstallingDependency={Boolean(installingDependencyName)}
         />
       )}
 
@@ -3474,6 +3499,9 @@ export default function CoverageTypeDashboard({
                 runningStatus={runningStatus}
                 rawTotals={rawTotals}
                 summary={summary}
+                missingDependency={summary?.missingDependency}
+                onInstallDependency={handleInstallDependency}
+                isInstallingDependency={Boolean(installingDependencyName)}
               />
             </div>
           ) : type === "unit" && activeMetricView === "testcases" ? (

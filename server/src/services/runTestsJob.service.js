@@ -28,6 +28,7 @@ import { parseJavaScriptCode } from "./babelParser.service.js";
 import { sanitizeAllProjectTestFiles, cleanAndDeduplicateTestContent, healImportPathsInTestCode } from "./testSanitizer.service.js";
 import { cleanStoragePath, cleanStorageText, canonicalizeFilePath } from "../utils/pathSanitizer.js";
 import { isBusinessLogicSourceFile, extractProjectCoverageExclusions } from "../utils/businessLogicFileDetector.js";
+import { extractMissingDependency, inspectWorkspaceDependency } from "./dependencyResolution.service.js";
 
 const INSTALL_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const JEST_TIMEOUT_MS = 10 * 60 * 1000;   // 10 minutes (prevents premature timeouts on large suites)
@@ -527,6 +528,22 @@ export const parseModuleResolutionError = (errorOutput, rootDir = "") => {
             }
         } catch { }
 
+        let missingDependency = null;
+        try {
+            const dep = extractMissingDependency(errorOutput);
+            if (dep) {
+                const inspection = inspectWorkspaceDependency({
+                    rootDir,
+                    packageName: dep.packageName,
+                    importedFrom: dep.importedFrom || testFile,
+                });
+                missingDependency = {
+                    ...dep,
+                    ...inspection,
+                };
+            }
+        } catch { }
+
         return {
             type: "MODULE_RESOLUTION_ERROR",
             missingModule,
@@ -535,9 +552,39 @@ export const parseModuleResolutionError = (errorOutput, rootDir = "") => {
             workingDirectory: rootDir,
             expectedSourcePath,
             actualError: cannotFindMatch[0],
-            rawOutput: errorOutput.slice(0, 1000)
+            rawOutput: errorOutput.slice(0, 1000),
+            missingDependency,
         };
     }
+
+    // Also catch Vitest / Node loader errors
+    const dep = extractMissingDependency(errorOutput);
+    if (dep) {
+        let inspection = { inPackageJson: false, inNodeModules: false, suggestedCommand: `npm install ${dep.packageName}` };
+        try {
+            inspection = inspectWorkspaceDependency({
+                rootDir,
+                packageName: dep.packageName,
+                importedFrom: dep.importedFrom,
+            });
+        } catch { }
+
+        return {
+            type: "MODULE_RESOLUTION_ERROR",
+            missingModule: dep.packageName,
+            testFile: dep.importedFrom || "unknown",
+            pathResolving: dep.rawSpecifier,
+            workingDirectory: rootDir,
+            expectedSourcePath: path.resolve(rootDir, "node_modules", dep.packageName),
+            actualError: `Cannot find module '${dep.packageName}'`,
+            rawOutput: errorOutput.slice(0, 1000),
+            missingDependency: {
+                ...dep,
+                ...inspection,
+            },
+        };
+    }
+
     return null;
 };
 
@@ -1080,7 +1127,21 @@ const runNpmInstall = async (jobId, rootDir) => {
     const backendModulesDir = path.join(rootDir, "backend", "node_modules");
     const backendPkg = path.join(rootDir, "backend", "package.json");
 
-    const rootHasDeps = !hasRootPkg || (fs.existsSync(nodeModulesDir) && fs.readdirSync(nodeModulesDir).length > 3);
+    let hasAllDeclaredDeps = true;
+    if (hasRootPkg && fs.existsSync(nodeModulesDir)) {
+        try {
+            const pkg = JSON.parse(fs.readFileSync(rootPkg, "utf8"));
+            const declaredDeps = Object.keys(pkg.dependencies || {});
+            for (const d of declaredDeps) {
+                if (!fs.existsSync(path.join(nodeModulesDir, d))) {
+                    hasAllDeclaredDeps = false;
+                    break;
+                }
+            }
+        } catch { }
+    }
+
+    const rootHasDeps = !hasRootPkg || (fs.existsSync(nodeModulesDir) && fs.readdirSync(nodeModulesDir).length > 3 && hasAllDeclaredDeps);
     const backendHasDeps = !fs.existsSync(backendPkg) || (fs.existsSync(backendModulesDir) && fs.readdirSync(backendModulesDir).length > 3);
 
     if (rootHasDeps && backendHasDeps) {
@@ -3336,7 +3397,11 @@ export const processRunTestsJob = async (jobId) => {
                                 create: [{
                                     title: modResError ? `Module resolution: ${modResError.missingModule}` : "Test execution failed",
                                     status: "failed",
-                                    failureMessages: [cleanStorageText(failMessage), cleanStorageText(fullOutput.slice(0, 1000))].filter(Boolean),
+                                    failureMessages: [
+                                    cleanStorageText(failMessage),
+                                    modResError?.missingDependency ? `[MISSING_DEPENDENCY]:${JSON.stringify(modResError.missingDependency)}` : null,
+                                    cleanStorageText(fullOutput.slice(0, 1000))
+                                ].filter(Boolean),
                                     testFile: cleanStoragePath(modResError?.testFile) || null
                                 }]
                             }

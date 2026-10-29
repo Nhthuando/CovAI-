@@ -703,6 +703,42 @@ export const getCoverageSummary = async (req, res) => {
             }))
         } : null;
 
+        let missingDependency = null;
+        const allMessages = [
+            ...(latestTestRun?.scenarios?.flatMap(s => s.failureMessages || []) || []),
+            latestJob?.errorMessage || "",
+            latestRunError || ""
+        ];
+        for (const msg of allMessages) {
+            if (msg && msg.includes("[MISSING_DEPENDENCY]:")) {
+                try {
+                    const rawJson = msg.split("[MISSING_DEPENDENCY]:")[1].trim();
+                    missingDependency = JSON.parse(rawJson);
+                    break;
+                } catch { }
+            }
+        }
+        if (!missingDependency) {
+            const { extractMissingDependency, inspectWorkspaceDependency } = await import("../services/dependencyResolution.service.js").catch(() => ({}));
+            if (extractMissingDependency) {
+                for (const msg of allMessages) {
+                    const dep = extractMissingDependency(msg);
+                    if (dep) {
+                        const inspection = inspectWorkspaceDependency ? inspectWorkspaceDependency({
+                            rootDir: snapshot.rootDir,
+                            packageName: dep.packageName,
+                            importedFrom: dep.importedFrom || failedSuite
+                        }) : {};
+                        missingDependency = {
+                            ...dep,
+                            ...inspection
+                        };
+                        break;
+                    }
+                }
+            }
+        }
+
         // Return formatted response with explicit distinction between current run and last successful coverage
         return res.status(200).json({
             success: true,
@@ -719,6 +755,7 @@ export const getCoverageSummary = async (req, res) => {
                 isPreviousResult: isFatalFailure,
                 latestRunStatus,
                 latestRunError,
+                missingDependency,
                 failedSuite,
                 hasTestFailures,
                 testExecution: sanitizedTestExecution,
@@ -2181,6 +2218,70 @@ export const installIntegrationDependenciesController = async (req, res) => {
     } catch (error) {
         console.error("[installIntegrationDependenciesController] Error:", error);
         return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to install dependencies." });
+    }
+};
+
+export const installMissingDependencyController = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
+
+        const { snapshotId } = req.params;
+        const { packageName, isDev = false, rerunTests = true } = req.body || {};
+
+        if (!packageName || typeof packageName !== "string") {
+            return res.status(400).json({ success: false, message: "packageName is required." });
+        }
+
+        const snapshot = await findOwnedSnapshot(snapshotId, userId);
+        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
+        if (!snapshot.rootDir) return res.status(409).json({ success: false, message: "Snapshot directory is not available." });
+
+        const { installPackageInWorkspace, isValidNpmPackageName } = await import("../services/dependencyResolution.service.js");
+        if (!isValidNpmPackageName(packageName)) {
+            return res.status(400).json({ success: false, message: `Invalid or unsafe package name: '${packageName}'` });
+        }
+
+        const installResult = await installPackageInWorkspace({
+            rootDir: snapshot.rootDir,
+            packageName: packageName.trim(),
+            isDev: Boolean(isDev)
+        });
+
+        if (!installResult.success) {
+            return res.status(500).json({
+                success: false,
+                message: `Failed to install '${packageName}': ${installResult.stderr || installResult.stdout || "npm install failed"}`,
+                installResult
+            });
+        }
+
+        let newJob = null;
+        if (rerunTests) {
+            const { createRunTestsJob } = await import("../services/job.service.js");
+            const { addJobToQueue } = await import("../services/queue.service.js");
+
+            newJob = await createRunTestsJob({
+                projectId: snapshot.projectId,
+                snapshotId: snapshot.id,
+                userId,
+                mode: "FULL"
+            });
+            await addJobToQueue("RUN_TESTS", newJob.id);
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: `Installed package '${packageName}' successfully.${rerunTests ? " Test re-execution initiated." : ""}`,
+            installResult,
+            newJobId: newJob?.id || null
+        });
+    } catch (error) {
+        console.error("[installMissingDependencyController] Error:", error);
+        return res.status(error.statusCode || 500).json({
+            success: false,
+            message: error.message || "Failed to install dependency."
+        });
     }
 };
 

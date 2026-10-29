@@ -38,6 +38,7 @@ import {
     updateIntegrationScenarioController,
     applyIntegrationTestsController,
     installIntegrationDependenciesController,
+    installMissingDependencyController,
 } from "../controllers/coverage.controller.js";
 
 const router = express.Router();
@@ -77,6 +78,9 @@ router.post("/:snapshotId/run", authMiddleware, runCoverage);
 
 router.post("/:snapshotId/supertest/run", authMiddleware, runSupertestCoverage);
 router.post("/:snapshotId/:coverageType/run", authMiddleware, runCoverageByType);
+
+// POST /api/coverage/:snapshotId/install-dependency — install missing external npm package & rerun tests
+router.post("/:snapshotId/install-dependency", authMiddleware, installMissingDependencyController);
 
 // GET /api/coverage/:snapshotId/functions — fetch CoverageFunction list
 // Query: ?filePath=<filter>&sortBy=functionName|filePath|hit|startLine&order=asc|desc&page=1&limit=50
