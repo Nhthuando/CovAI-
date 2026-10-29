@@ -3,16 +3,54 @@ import { StackedBar } from "../primitives/StackedBar.jsx";
 import { MeterBar } from "../primitives/MeterBar.jsx";
 import { fmtPct, fmtDuration } from "../../../../services/unifiedDashboard/format.js";
 
-export function IntegrationPillarCard({ pillarData, onNavigateWorkspace }) {
+const FAILURE_LAYERS = [
+  { key: "route", label: "Route" },
+  { key: "middlewareAuth", label: "Middleware/Auth" },
+  { key: "controller", label: "Controller" },
+  { key: "database", label: "Database" },
+];
+
+export function IntegrationPillarCard({
+  pillarData,
+  onNavigateWorkspace,
+  activeCrossFilter = null,
+  onSelectCrossFilter = null,
+}) {
   const p = pillarData || {};
   const cov = p.coverageMetrics || {};
-  const status = p.failedTests > 0 ? "fail" : p.totalTests > 0 ? "pass" : "untested";
-  const dist = p.failureDistribution || { route: 0, middlewareAuth: 0, controller: 0, database: 0 };
+
+  const passedTests = Number(p.passedTests || 0);
+  const failedTests = Number(p.failedTests || 0);
+  const uncoveredApis = Number(cov.uncoveredApis || 0);
+  const totalApis = Number(
+    cov.totalApis ?? (passedTests + failedTests + uncoveredApis || p.totalTests || 0)
+  );
+
+  // Never show green "Passed" when Covered = 0 and Uncovered > 0!
+  let status = "untested";
+  if (failedTests > 0) {
+    status = "fail";
+  } else if (passedTests === 0 && uncoveredApis > 0) {
+    status = "warn";
+  } else if (passedTests > 0 && uncoveredApis > 0 && (cov.apiEndpoint ?? 0) < 80) {
+    status = "warn";
+  } else if (passedTests > 0) {
+    status = "pass";
+  }
+
+  const statusLabel = `${passedTests}/${totalApis} Covered`;
+
+  const dist = p.failureDistribution || {
+    route: 0,
+    middlewareAuth: 0,
+    controller: 0,
+    database: 0,
+  };
 
   const endpointSegments = [
-    { key: "passed", value: p.passedTests || 0, tone: "pass", label: "Covered" },
-    { key: "failed", value: p.failedTests || 0, tone: "fail", label: "Failed" },
-    { key: "uncovered", value: cov.uncoveredApis || 0, tone: "neutral", label: "Uncovered" },
+    { key: "passed", value: passedTests, tone: "pass", label: "Covered" },
+    { key: "failed", value: failedTests, tone: "fail", label: "Failed" },
+    { key: "uncovered", value: uncoveredApis, tone: "neutral", label: "Uncovered" },
   ];
 
   return (
@@ -20,7 +58,7 @@ export function IntegrationPillarCard({ pillarData, onNavigateWorkspace }) {
       pillar="integration"
       framework={p.framework || "Supertest"}
       status={status}
-      counts={`${p.passedTests || 0}/${p.totalTests || 0} APIs`}
+      statusLabel={statusLabel}
       buttonLabel="Open Integration Workspace"
       buttonId="ud-pillar-integration-open"
       onOpenWorkspace={() => onNavigateWorkspace("integration")}
@@ -30,7 +68,12 @@ export function IntegrationPillarCard({ pillarData, onNavigateWorkspace }) {
         <span className="text-[11px] font-semibold text-[var(--ud-text-muted)] uppercase tracking-wider block mb-2">
           API Endpoint Distribution
         </span>
-        <StackedBar segments={endpointSegments} height={6} showLegend={true} />
+        <StackedBar
+          segments={endpointSegments}
+          total={totalApis}
+          height={6}
+          showLegend={true}
+        />
       </div>
 
       {/* Dual Coverage Gauges */}
@@ -58,28 +101,51 @@ export function IntegrationPillarCard({ pillarData, onNavigateWorkspace }) {
         </div>
       </div>
 
-      {/* Failure Layer Breakdown */}
+      {/* Failure Layer Breakdown (Interactive Cross-Filter Trigger) */}
       <div>
-        <span className="text-[11px] font-semibold text-[var(--ud-text-muted)] uppercase tracking-wider block mb-1.5">
-          Failure Layer Breakdown
-        </span>
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="text-[11px] font-semibold text-[var(--ud-text-muted)] uppercase tracking-wider">
+            Failure Layer Breakdown
+          </span>
+          <span className="text-[10px] font-mono text-[var(--ud-text-muted)]">Click to filter</span>
+        </div>
         <div className="grid grid-cols-2 gap-1.5 text-xs font-mono">
-          <div className="flex items-center justify-between p-1.5 rounded-[var(--radius-sm)] bg-[var(--ud-surface-2)]">
-            <span className="text-[var(--ud-text-muted)] text-[11px] font-sans">Route:</span>
-            <span className="font-semibold text-[var(--ud-text)]">{dist.route || 0}</span>
-          </div>
-          <div className="flex items-center justify-between p-1.5 rounded-[var(--radius-sm)] bg-[var(--ud-surface-2)]">
-            <span className="text-[var(--ud-text-muted)] text-[11px] font-sans">Middleware/Auth:</span>
-            <span className="font-semibold text-[var(--ud-text)]">{dist.middlewareAuth || 0}</span>
-          </div>
-          <div className="flex items-center justify-between p-1.5 rounded-[var(--radius-sm)] bg-[var(--ud-surface-2)]">
-            <span className="text-[var(--ud-text-muted)] text-[11px] font-sans">Controller:</span>
-            <span className="font-semibold text-[var(--ud-text)]">{dist.controller || 0}</span>
-          </div>
-          <div className="flex items-center justify-between p-1.5 rounded-[var(--radius-sm)] bg-[var(--ud-surface-2)]">
-            <span className="text-[var(--ud-text-muted)] text-[11px] font-sans">Database:</span>
-            <span className="font-semibold text-[var(--ud-text)]">{dist.database || 0}</span>
-          </div>
+          {FAILURE_LAYERS.map((layer) => {
+            const count = Number(dist[layer.key] || 0);
+            const isSelected =
+              activeCrossFilter?.pillar === "integration" &&
+              activeCrossFilter?.category === layer.key;
+            return (
+              <button
+                key={layer.key}
+                type="button"
+                onClick={() =>
+                  onSelectCrossFilter?.({
+                    pillar: "integration",
+                    category: layer.key,
+                    label: `Integration • ${layer.label} Layer`,
+                  })
+                }
+                className={`flex items-center justify-between p-1.5 rounded-[var(--radius-sm)] border transition-colors cursor-pointer text-left ${
+                  isSelected
+                    ? "border-[var(--ud-integration)] bg-[var(--ud-integration)]/15"
+                    : "border-transparent bg-[var(--ud-surface-2)] hover:border-[var(--ud-border)]"
+                }`}
+                title={`Filter Matrix & Actions by ${layer.label} failures`}
+              >
+                <span className="text-[var(--ud-text-muted)] text-[11px] font-sans truncate">
+                  {layer.label}:
+                </span>
+                <span
+                  className={`font-semibold tabular-nums ${
+                    count > 0 ? "text-[var(--ud-fail)]" : "text-[var(--ud-text)]"
+                  }`}
+                >
+                  {count}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 

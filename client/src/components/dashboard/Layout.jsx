@@ -194,7 +194,7 @@ function LayoutInner() {
   const [activeFileId, setActiveFileId] = useState(null);
   const initialCoverageType = searchParams.get("coverageType") || searchParams.get("type") || (searchParams.get("tab") === "system" ? "system" : "unit");
   const [coverageType, setCoverageType] = useState(initialCoverageType);
-  const screenContext = useMemo(() => ({ activity: activeActivity, testType: activeActivity === "coverage" ? coverageType : activeActivity === "overview" ? "overview" : undefined, filePath: activeActivity === "explorer" ? activeTabId || undefined : undefined }), [activeActivity, coverageType, activeTabId]);
+  const screenContext = useMemo(() => ({ activity: activeActivity, testType: activeActivity === "coverage" ? coverageType : undefined, filePath: activeActivity === "explorer" ? activeTabId || undefined : undefined }), [activeActivity, coverageType, activeTabId]);
   const [showImport, setShowImport] = useState(false);
   const [showQualityDashboard, setShowQualityDashboard] = useState(false);
   const [cfgInitialContext, setCfgInitialContext] = useState(null);
@@ -253,6 +253,24 @@ function LayoutInner() {
       setPendingAiSuggestion({ filePath, ...options, timestamp: Date.now() });
     }
   };
+
+  const handleAskAiPrompt = useCallback((promptText) => {
+    if (!promptText) return;
+    setAiPanelOpen(true);
+    setPendingAiSuggestion({ promptText, timestamp: Date.now() });
+  }, []);
+
+  useEffect(() => {
+    const onPrefillEvent = (e) => {
+      const text = e.detail?.promptText;
+      if (text) {
+        setAiPanelOpen(true);
+        setPendingAiSuggestion({ promptText: text, timestamp: Date.now() });
+      }
+    };
+    window.addEventListener("covai:prefill-prompt", onPrefillEvent);
+    return () => window.removeEventListener("covai:prefill-prompt", onPrefillEvent);
+  }, []);
 
   const [projects, setProjects] = useState([]);
   const [project, setProject] = useState(null);
@@ -1073,6 +1091,7 @@ function LayoutInner() {
                 const targetUrl = buildWorkspaceUrl(location, pillar, focus);
                 navigate(targetUrl);
               }}
+              onAskAi={handleAskAiPrompt}
             />
           </div>
 

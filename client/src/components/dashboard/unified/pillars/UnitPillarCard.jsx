@@ -2,10 +2,26 @@ import { PillarCardShell } from "./PillarCardShell.jsx";
 import { MeterBar } from "../primitives/MeterBar.jsx";
 import { fmtPct, fmtDuration } from "../../../../services/unifiedDashboard/format.js";
 
-export function UnitPillarCard({ pillarData, onNavigateWorkspace }) {
+export function UnitPillarCard({
+  pillarData,
+  onNavigateWorkspace,
+  activeCrossFilter = null,
+  onSelectCrossFilter = null,
+}) {
   const p = pillarData || {};
   const cov = p.coverageMetrics || {};
-  const status = p.failedTests > 0 ? "fail" : p.totalTests > 0 ? "pass" : "untested";
+  const totalTests = Number(p.totalTests || 0);
+  const passedTests = Number(p.passedTests || 0);
+  const failedTests = Number(p.failedTests || 0);
+
+  const status = failedTests > 0 ? "fail" : totalTests > 0 ? "pass" : "untested";
+  const statusLabel =
+    totalTests === 0
+      ? "0/0 Tests"
+      : failedTests > 0
+      ? `${passedTests}/${totalTests} Passed`
+      : `${passedTests}/${totalTests} Passed`;
+
   const lowBranches = p.lowCoverageItems || [];
 
   return (
@@ -13,7 +29,7 @@ export function UnitPillarCard({ pillarData, onNavigateWorkspace }) {
       pillar="unit"
       framework={p.framework || "Jest"}
       status={status}
-      counts={`${p.passedTests || 0}/${p.totalTests || 0}`}
+      statusLabel={statusLabel}
       buttonLabel="Open Unit Workspace"
       buttonId="ud-pillar-unit-open"
       onOpenWorkspace={() => onNavigateWorkspace("unit")}
@@ -76,31 +92,55 @@ export function UnitPillarCard({ pillarData, onNavigateWorkspace }) {
           <span className="text-[11px] font-semibold text-[var(--ud-text-muted)] uppercase tracking-wider">
             Lowest Branch Coverage
           </span>
-          <span className="text-[10px] text-[var(--ud-text-muted)] font-mono">Top {lowBranches.length}</span>
+          <span className="text-[10px] text-[var(--ud-text-muted)] font-mono">
+            {lowBranches.length > 0 ? `Top ${lowBranches.length}` : "0 files"}
+          </span>
         </div>
 
         {lowBranches.length > 0 ? (
           <div className="space-y-1 text-xs">
-            {lowBranches.map((item, idx) => (
-              <button
-                key={idx}
-                type="button"
-                onClick={() => onNavigateWorkspace("unit", { focusFile: item.filePath })}
-                className="w-full flex items-center justify-between p-1.5 rounded-[var(--radius-sm)] border border-transparent hover:border-[var(--ud-border)] hover:bg-[var(--ud-surface-2)] transition-colors cursor-pointer text-left"
-                title={`Open ${item.filePath} in Unit Workspace`}
-              >
-                <span className="font-mono text-[11px] text-[var(--ud-text)] truncate max-w-[170px]">
-                  {item.name || item.filePath}
-                </span>
-                <span className="font-mono text-[11px] font-semibold text-[var(--ud-warn)] tabular-nums shrink-0">
-                  {fmtPct(item.branchesPct)}
-                </span>
-              </button>
-            ))}
+            {lowBranches.map((item, idx) => {
+              const isFiltered =
+                activeCrossFilter?.pillar === "unit" &&
+                activeCrossFilter?.file === item.filePath;
+              return (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => {
+                    if (onSelectCrossFilter) {
+                      onSelectCrossFilter({
+                        pillar: "unit",
+                        category: "low_coverage",
+                        file: item.filePath,
+                        label: `Unit • ${item.name || item.filePath}`,
+                      });
+                    } else {
+                      onNavigateWorkspace("unit", { focusFile: item.filePath });
+                    }
+                  }}
+                  className={`w-full flex items-center justify-between p-1.5 rounded-[var(--radius-sm)] border transition-colors cursor-pointer text-left ${
+                    isFiltered
+                      ? "border-[var(--ud-unit)] bg-[var(--ud-unit)]/10"
+                      : "border-transparent bg-[var(--ud-surface-2)]/50 hover:border-[var(--ud-border)] hover:bg-[var(--ud-surface-2)]"
+                  }`}
+                  title={`Filter Traceability Matrix by ${item.name || item.filePath}`}
+                >
+                  <span className="font-mono text-[11px] text-[var(--ud-text)] truncate max-w-[170px]">
+                    {item.name || item.filePath}
+                  </span>
+                  <span className="font-mono text-[11px] font-semibold text-[var(--ud-warn)] tabular-nums shrink-0">
+                    {fmtPct(item.branchesPct)}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         ) : (
           <div className="text-[11px] text-[var(--ud-text-muted)] p-2 rounded-[var(--radius-sm)] bg-[var(--ud-surface-2)] text-center">
-            No branch coverage bottlenecks found.
+            {totalTests === 0
+              ? "No unit coverage run recorded yet."
+              : "No branch coverage bottlenecks found."}
           </div>
         )}
       </div>

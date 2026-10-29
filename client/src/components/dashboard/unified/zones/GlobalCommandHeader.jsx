@@ -1,51 +1,60 @@
 import { useState } from "react";
-import { Play, Sparkles, Download, GitBranch, Clock, FileText, Code2 } from "lucide-react";
+import { Play, Sparkles, Download, GitBranch, Clock, Database, Layers } from "lucide-react";
 import { QualityGateBadge } from "../primitives/QualityGateBadge.jsx";
 import { PillarBadge } from "../primitives/PillarBadge.jsx";
 import { StatusPill } from "../primitives/StatusPill.jsx";
+import { SegmentedFilter } from "../primitives/SegmentedFilter.jsx";
+import { ExportReportModal } from "../modals/ExportReportModal.jsx";
 import { Button } from "../../../common/Button.jsx";
 import ConfirmDialog from "../../../common/ConfirmDialog.jsx";
 import { fmtRelativeTime } from "../../../../services/unifiedDashboard/format.js";
-import { exportUnifiedDashboardReport } from "../../../../services/unifiedDashboard/unifiedDashboard.export.js";
-import { useToast } from "../../ToastContext.jsx";
+import { MOCK_SNAPSHOT_PRESETS } from "../../../../services/unifiedDashboard/unifiedDashboard.mock.js";
 
 export function GlobalCommandHeader({
   vm,
+  dataMode = "live",
+  onChangeDataMode,
   onSelectSnapshot,
   runAllState,
   onNavigateWorkspace,
   className = "",
 }) {
-  const { addToast } = useToast();
   const [showConfirmRun, setShowConfirmRun] = useState(false);
-  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
 
   const context = vm?.context || {};
-  const qualityGate = vm?.qualityGate || { status: "PASSED", label: "READY TO RELEASE", reasons: [] };
-  const snapshots = context.snapshots || [];
-
-  const { runAll, isRunning, stepStates, cancelRemaining } = runAllState;
-
-  const handleExport = (format) => {
-    setShowExportMenu(false);
-    try {
-      const filename = exportUnifiedDashboardReport(vm, format);
-      addToast({
-        title: "Report Exported",
-        message: `Downloaded ${filename} successfully.`,
-        type: "success",
-      });
-    } catch (err) {
-      addToast({
-        title: "Export Failed",
-        message: err.message || "Could not generate export report.",
-        type: "error",
-      });
-    }
+  const qualityGate = vm?.qualityGate || {
+    status: "PASSED",
+    label: "READY TO RELEASE",
+    reasons: [],
+    checklist: [],
   };
 
+  // Merge project snapshots with preset snapshots so the Snapshot Selector Dropdown is always interactive
+  const rawSnapshots = Array.isArray(context.snapshots) && context.snapshots.length > 0
+    ? context.snapshots
+    : MOCK_SNAPSHOT_PRESETS;
+
+  const snapshotOptions = [...rawSnapshots];
+  if (
+    context.snapshotId &&
+    !snapshotOptions.some((s) => s.id === context.snapshotId)
+  ) {
+    snapshotOptions.unshift({
+      id: context.snapshotId,
+      label: context.snapshotId.slice(0, 8),
+      branch: "active",
+    });
+  }
+  for (const preset of MOCK_SNAPSHOT_PRESETS) {
+    if (!snapshotOptions.some((s) => s.id === preset.id)) {
+      snapshotOptions.push(preset);
+    }
+  }
+
+  const { runAll, isRunning, stepStates, cancelRemaining } = runAllState || {};
+
   const handleAiOptimize = () => {
-    // Navigate to the top priority action item's workspace or unit by default
     const topAction = vm?.actions?.items?.[0];
     if (topAction) {
       onNavigateWorkspace(topAction.pillar, topAction.focusParams);
@@ -59,46 +68,41 @@ export function GlobalCommandHeader({
       id="ud-global-header"
       className={`rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-4 shadow-xs transition-colors ${className}`}
     >
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-        {/* Left: Project title & Snapshot selector */}
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+        {/* Left: Project title, Snapshot Dropdown & Data Mode Switcher */}
         <div className="flex flex-wrap items-center gap-3 min-w-0">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-base font-bold text-[var(--ud-text)] tracking-tight">
                 {context.projectName || "CovAI Project"}
               </h1>
               <span className="text-[11px] font-mono text-[var(--ud-text-muted)] bg-[var(--ud-surface-2)] px-1.5 py-0.5 rounded border border-[var(--ud-border)] select-none">
-                Overview
+                Unified Quality Overview
               </span>
             </div>
-            <div className="flex items-center gap-3 mt-1 text-xs text-[var(--ud-text-muted)]">
-              {/* Snapshot selector */}
-              {snapshots.length > 0 ? (
-                <div className="inline-flex items-center gap-1.5">
-                  <GitBranch size={13} className="shrink-0 text-[var(--ud-text-muted)]" />
-                  <label htmlFor="ud-snapshot-select" className="sr-only">
-                    Select Snapshot
-                  </label>
-                  <select
-                    id="ud-snapshot-select"
-                    value={context.snapshotId || ""}
-                    onChange={(e) => onSelectSnapshot(e.target.value)}
-                    className="font-mono text-xs rounded-[var(--radius-sm)] border border-[var(--ud-border)] bg-[var(--ud-surface-2)] text-[var(--ud-text)] py-0.5 px-2 focus:outline-hidden focus:border-[var(--color-focus)] cursor-pointer"
-                  >
-                    {snapshots.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.label || s.id.slice(0, 8)} {s.branch ? `(${s.branch})` : ""}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ) : (
-                <span className="font-mono text-xs text-[var(--ud-text-muted)]">
-                  {context.snapshotId ? `Snapshot: ${context.snapshotId.slice(0, 8)}` : "No active snapshot"}
-                </span>
-              )}
 
-              <span className="text-[var(--ud-border)]">•</span>
+            <div className="flex flex-wrap items-center gap-3 mt-1.5 text-xs text-[var(--ud-text-muted)]">
+              {/* Interactive Snapshot Selector Dropdown */}
+              <div className="inline-flex items-center gap-1.5">
+                <GitBranch size={13} className="shrink-0 text-[var(--ud-unit)]" />
+                <label htmlFor="ud-snapshot-select" className="text-[11px] font-sans text-[var(--ud-text-muted)]">
+                  Snapshot:
+                </label>
+                <select
+                  id="ud-snapshot-select"
+                  value={context.snapshotId || snapshotOptions[0]?.id || ""}
+                  onChange={(e) => onSelectSnapshot?.(e.target.value)}
+                  className="font-mono text-xs rounded-[var(--radius-sm)] border border-[var(--ud-border)] bg-[var(--ud-surface-2)] text-[var(--ud-text)] py-0.5 px-2 focus:outline-hidden focus:border-[var(--ud-unit)] cursor-pointer"
+                >
+                  {snapshotOptions.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {(s.label || s.id).slice(0, 8)} {s.branch ? `(${s.branch})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <span className="text-[var(--ud-border)] hidden sm:inline">•</span>
 
               {/* Last Updated */}
               <div className="inline-flex items-center gap-1">
@@ -109,14 +113,31 @@ export function GlobalCommandHeader({
           </div>
         </div>
 
-        {/* Right: Quality Gate Badge + Command Actions */}
-        <div className="flex flex-wrap items-center gap-3 shrink-0">
-          {/* Quality Gate Status */}
+        {/* Right: Data Mode Switcher + Quality Gate Badge + Command Actions */}
+        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+          {/* Data Mode Switcher: Live State vs. Demo Showcase */}
+          {onChangeDataMode && (
+            <SegmentedFilter
+              idPrefix="ud-data-mode"
+              options={[
+                { label: "Live State", value: "live", icon: Database },
+                { label: "Demo Showcase", value: "demo", icon: Layers },
+              ]}
+              value={dataMode}
+              onChange={onChangeDataMode}
+              size="sm"
+            />
+          )}
+
+          <div className="h-5 w-px bg-[var(--ud-border)] hidden sm:block" />
+
+          {/* Quality Gate Status with 4-Condition Prerequisite Checklist Popover */}
           <QualityGateBadge
             id="ud-header-quality-gate"
             status={qualityGate.status}
             label={qualityGate.label}
             reasons={qualityGate.reasons}
+            checklist={qualityGate.checklist}
           />
 
           <div className="h-5 w-px bg-[var(--ud-border)] hidden sm:block" />
@@ -147,48 +168,21 @@ export function GlobalCommandHeader({
             AI Optimize
           </Button>
 
-          {/* Action 3: Export Report Dropdown */}
-          <div className="relative">
-            <Button
-              id="ud-header-export"
-              variant="outline"
-              size="sm"
-              icon={Download}
-              onClick={() => setShowExportMenu((prev) => !prev)}
-            >
-              Export Report
-            </Button>
-
-            {showExportMenu && (
-              <div
-                role="menu"
-                className="absolute right-0 top-full mt-1.5 z-50 w-44 rounded-[var(--radius-md)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-1 text-[var(--ud-text)] shadow-lg text-xs"
-              >
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => handleExport("markdown")}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-[var(--radius-sm)] text-left hover:bg-[var(--ud-surface-2)] transition-colors cursor-pointer"
-                >
-                  <FileText size={14} className="text-[var(--ud-unit)]" />
-                  <span>Markdown (.md)</span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => handleExport("json")}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-[var(--radius-sm)] text-left hover:bg-[var(--ud-surface-2)] transition-colors cursor-pointer"
-                >
-                  <Code2 size={14} className="text-[var(--ud-integration)]" />
-                  <span>Raw Data (.json)</span>
-                </button>
-              </div>
-            )}
-          </div>
+          {/* Action 3: Export Report Modal Trigger */}
+          <Button
+            id="ud-header-export"
+            variant="outline"
+            size="sm"
+            icon={Download}
+            onClick={() => setShowExportModal(true)}
+            className="ud-no-print"
+          >
+            Export Report
+          </Button>
         </div>
       </div>
 
-      {/* Sequential Run Progress Banner (renders when running or newly finished) */}
+      {/* Sequential Run Progress Banner */}
       {isRunning && (
         <div className="mt-4 pt-3 border-t border-[var(--ud-border)] flex flex-wrap items-center justify-between gap-3 bg-[var(--ud-surface-2)]/50 p-2.5 rounded-[var(--radius-md)]">
           <div className="flex flex-wrap items-center gap-3 text-xs">
@@ -198,17 +192,17 @@ export function GlobalCommandHeader({
             </span>
             <div className="flex items-center gap-2">
               <PillarBadge pillar="unit" size="sm" />
-              <StatusPill status={stepStates.unit} size="sm" />
+              <StatusPill status={stepStates?.unit} size="sm" />
             </div>
             <span className="text-[var(--ud-text-muted)]">→</span>
             <div className="flex items-center gap-2">
               <PillarBadge pillar="integration" size="sm" />
-              <StatusPill status={stepStates.integration} size="sm" />
+              <StatusPill status={stepStates?.integration} size="sm" />
             </div>
             <span className="text-[var(--ud-text-muted)]">→</span>
             <div className="flex items-center gap-2">
               <PillarBadge pillar="system" size="sm" />
-              <StatusPill status={stepStates.system} size="sm" />
+              <StatusPill status={stepStates?.system} size="sm" />
             </div>
           </div>
           <button
@@ -227,7 +221,7 @@ export function GlobalCommandHeader({
         onClose={() => setShowConfirmRun(false)}
         onConfirm={() => {
           setShowConfirmRun(false);
-          runAll();
+          runAll?.();
         }}
         title="Execute All Testing Suites?"
         message="This will run Unit Tests, Integration API Tests, and System E2E Scenarios sequentially against this snapshot. Depending on project size, this may take a few minutes."
@@ -235,6 +229,13 @@ export function GlobalCommandHeader({
         cancelText="Cancel"
         variant="primary"
         icon={Play}
+      />
+
+      {/* Export Report Modal */}
+      <ExportReportModal
+        isOpen={showExportModal}
+        onClose={() => setShowExportModal(false)}
+        vm={vm}
       />
     </header>
   );

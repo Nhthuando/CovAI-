@@ -1,7 +1,13 @@
 import { CoverageTrendChart } from "../charts/CoverageTrendChart.jsx";
 import { UnifiedRecentRunsTable } from "../history/UnifiedRecentRunsTable.jsx";
 
-export function TrendsAndHistoryZone({ vm, onNavigateWorkspace, className = "" }) {
+export function TrendsAndHistoryZone({
+  vm,
+  onNavigateWorkspace,
+  onInspectItem,
+  onSwitchToDemo,
+  className = "",
+}) {
   const trend = vm?.trend || {};
   const history = vm?.history || {};
 
@@ -9,7 +15,10 @@ export function TrendsAndHistoryZone({ vm, onNavigateWorkspace, className = "" }
     <div className={`grid grid-cols-12 gap-4 ${className}`}>
       {/* Left 6 Cols: Coverage & Quality Trends Chart */}
       <div className="col-span-12 xl:col-span-6">
-        <CoverageTrendChart trendData={trend} />
+        <CoverageTrendChart
+          trendData={trend}
+          onSwitchToDemo={onSwitchToDemo}
+        />
       </div>
 
       {/* Right 6 Cols: Unified Execution History Table */}
@@ -17,6 +26,8 @@ export function TrendsAndHistoryZone({ vm, onNavigateWorkspace, className = "" }
         <UnifiedRecentRunsTable
           historyData={history}
           onNavigateWorkspace={onNavigateWorkspace}
+          onInspectItem={onInspectItem}
+          onSwitchToDemo={onSwitchToDemo}
         />
       </div>
     </div>
