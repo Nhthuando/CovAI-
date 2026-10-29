@@ -1,4 +1,4 @@
-import { AI_MODELS } from '../../../shared/aiModels.js';
+import { AI_MODELS } from '../shared/aiModels.js';
 export const getSelectedAIModel = () => {
   const stored=localStorage.getItem('covai.aiModel');
   return AI_MODELS.some(model=>model.id===stored) ? stored : AI_MODELS[0].id;

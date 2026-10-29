@@ -102,8 +102,6 @@ export const extractValidEndpoints = (sourceCodeOrRootDir, scanDir = null) => {
     return parseEndpointsFromFiles(sourceFiles);
 };
 
-export const parseEndpointsFromFiles = (sourceCode = []) => {
-
 /**
  * Helper to resolve middlewares to their definitions and classifications.
  */
@@ -530,9 +528,10 @@ export function findControllerLocation(sourceCode, controllerName, methodName, r
     return { controllerFile: null, controllerLine: null, matchedFile: null };
 }
 
-export const extractValidEndpoints = (sourceCode) => {
+export const parseEndpointsFromFiles = (sourceCode) => {
     if (!sourceCode || sourceCode.length === 0) return [];
 
+    const sourceFiles = Array.isArray(sourceCode) ? sourceCode : [];
     const controllerIndexCache = new Map();
     const mounts = extractMountPaths(sourceCode);
 
