@@ -110,6 +110,10 @@ function LayoutInner() {
   };
 
   const handleSelectActivity = (id) => {
+    if (id === "portfolio") {
+      navigate("/projects");
+      return;
+    }
     if (id === "logout") {
       setShowLogoutConfirm(true);
       return;
@@ -767,8 +771,17 @@ function LayoutInner() {
           {project?.name && (
             <div className="hidden sm:flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] font-mono min-w-0 overflow-hidden">
               <span className="flex-shrink-0 select-none">/</span>
+              <button
+                type="button"
+                onClick={() => navigate("/projects")}
+                className="text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] font-medium transition-colors cursor-pointer"
+                title="Return to Projects Quality Portfolio"
+              >
+                Projects
+              </button>
+              <span className="flex-shrink-0 select-none">/</span>
               <span
-                className="text-[var(--color-text-secondary)] font-medium truncate max-w-[120px] md:max-w-[180px]"
+                className="text-[var(--color-text)] font-semibold truncate max-w-[120px] md:max-w-[180px]"
                 title={project.name}
               >
                 {project.name}
@@ -1018,6 +1031,8 @@ function LayoutInner() {
             <UnifiedDashboard
               projectId={project?.id}
               project={project}
+              projects={projects}
+              onSelectProject={handleChangeProject}
               snapshotId={
                 searchParams.get("snapshotId") ||
                 project?.latestSnapshotId ||

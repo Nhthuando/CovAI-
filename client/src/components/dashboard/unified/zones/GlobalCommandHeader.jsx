@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Play, Sparkles, Download, GitBranch, Clock, Database, Layers } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Play, Sparkles, Download, GitBranch, Clock, Database, Layers, ArrowLeftRight } from "lucide-react";
 import { QualityGateBadge } from "../primitives/QualityGateBadge.jsx";
 import { PillarBadge } from "../primitives/PillarBadge.jsx";
 import { StatusPill } from "../primitives/StatusPill.jsx";
@@ -12,6 +13,8 @@ import { MOCK_SNAPSHOT_PRESETS } from "../../../../services/unifiedDashboard/uni
 
 export function GlobalCommandHeader({
   vm,
+  projects = [],
+  onSelectProject,
   dataMode = "live",
   onChangeDataMode,
   onSelectSnapshot,
@@ -19,6 +22,7 @@ export function GlobalCommandHeader({
   onNavigateWorkspace,
   className = "",
 }) {
+  const navigate = useNavigate();
   const [showConfirmRun, setShowConfirmRun] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
 
@@ -76,6 +80,32 @@ export function GlobalCommandHeader({
               <h1 className="text-base font-bold text-[var(--ud-text)] tracking-tight">
                 {context.projectName || "CovAI Project"}
               </h1>
+              {/* Quick Project Switcher Dropdown */}
+              <select
+                aria-label="Quick Project Switcher"
+                value={context.projectId || ""}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === "__portfolio__") {
+                    navigate("/projects");
+                  } else if (val) {
+                    if (onSelectProject) {
+                      onSelectProject(val);
+                    } else {
+                      navigate(`/main-editor?projectId=${val}&tab=overview`);
+                    }
+                  }
+                }}
+                className="font-mono text-xs rounded-[var(--radius-sm)] border border-[var(--ud-border)] bg-[var(--ud-surface-2)] text-[var(--ud-text)] py-0.5 px-2 focus:outline-hidden focus:border-[var(--ud-unit)] cursor-pointer"
+                title="Switch active project or return to Portfolio"
+              >
+                <option value="__portfolio__">⇄ View All Projects Portfolio</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    ● {p.name}
+                  </option>
+                ))}
+              </select>
               <span className="text-[11px] font-mono text-[var(--ud-text-muted)] bg-[var(--ud-surface-2)] px-1.5 py-0.5 rounded border border-[var(--ud-border)] select-none">
                 Unified Quality Overview
               </span>

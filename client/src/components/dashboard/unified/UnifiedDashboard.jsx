@@ -17,6 +17,8 @@ import { AlertTriangle, RefreshCw, FlaskConical, Play, Info } from "lucide-react
 export function UnifiedDashboard({
   projectId,
   project,
+  projects = [],
+  onSelectProject = null,
   snapshotId,
   onNavigateWorkspace = null,
   onAskAi = null,
@@ -165,6 +167,8 @@ export function UnifiedDashboard({
         <ZoneErrorBoundary zoneTitle="Command Header" onRetry={refetch}>
           <GlobalCommandHeader
             vm={vm}
+            projects={projects}
+            onSelectProject={onSelectProject}
             dataMode={dataMode}
             onChangeDataMode={handleChangeDataMode}
             onSelectSnapshot={handleSelectSnapshot}

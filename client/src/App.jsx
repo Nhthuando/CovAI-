@@ -18,6 +18,7 @@ import IntegrationReportPage from "./pages/IntegrationReportPage";
 import { NotificationProvider } from "./contexts/NotificationContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { RunningProcessProvider } from "./contexts/RunningProcessContext";
+import { ToastProvider } from "./components/dashboard/ToastContext";
 import GlobalProcessIndicator from "./components/GlobalProcessIndicator";
 import { useAuth } from "./hooks/useAuth";
 import GlobalErrorBoundary from "./components/common/GlobalErrorBoundary";
@@ -140,9 +141,11 @@ function App() {
     <ThemeProvider>
       <NotificationProvider>
         <RunningProcessProvider>
-          <GlobalErrorBoundary>
-            <AppContent />
-          </GlobalErrorBoundary>
+          <ToastProvider>
+            <GlobalErrorBoundary>
+              <AppContent />
+            </GlobalErrorBoundary>
+          </ToastProvider>
         </RunningProcessProvider>
       </NotificationProvider>
     </ThemeProvider>
