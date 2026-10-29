@@ -15,11 +15,14 @@ import ProjectSelectionPage from "./pages/ProjectSelectionPage";
 import GithubCallbackPage from "./pages/GithubCallbackPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
 import IntegrationReportPage from "./pages/IntegrationReportPage";
+import InvitationPage from "./pages/InvitationPage";
 import { NotificationProvider } from "./contexts/NotificationContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { RunningProcessProvider } from "./contexts/RunningProcessContext";
+import { ToastProvider } from "./components/dashboard/ToastContext";
 import GlobalProcessIndicator from "./components/GlobalProcessIndicator";
 import { useAuth } from "./hooks/useAuth";
+import GlobalErrorBoundary from "./components/common/GlobalErrorBoundary";
 
 /* ── Landing Page ─────────────────────────────────────────── */
 function LandingPage() {
@@ -71,6 +74,7 @@ function AppContent() {
   return (
     <>
       <Routes>
+        <Route path="/invitations/:token" element={<InvitationPage />} />
         <Route
           path="/"
           element={
@@ -135,11 +139,16 @@ function AppContent() {
 }
 
 function App() {
+  const { userId } = useAuth();
   return (
     <ThemeProvider>
       <NotificationProvider>
-        <RunningProcessProvider>
-          <AppContent />
+        <RunningProcessProvider key={userId || "anonymous"} sessionUserId={userId}>
+          <ToastProvider>
+            <GlobalErrorBoundary>
+              <AppContent />
+            </GlobalErrorBoundary>
+          </ToastProvider>
         </RunningProcessProvider>
       </NotificationProvider>
     </ThemeProvider>

@@ -1,9 +1,15 @@
 import { jest } from '@jest/globals';
 
 const prismaMock = {
+    project: { findFirst: jest.fn(async()=> {
+        const snapshot=await prismaMock.projectSnapshot.findUnique();
+        return snapshot ? {id:snapshot.projectId,ownerId:snapshot.project?.ownerId || 'user-1'} : null;
+    }) },
+    projectMember: {findUnique:jest.fn(async()=>null)},
     projectSnapshot: {
         findUnique: jest.fn(),
         findFirst: jest.fn(),
+        update: jest.fn(),
     },
     coverageSummary: {
         findUnique: jest.fn(),
@@ -52,6 +58,12 @@ jest.unstable_mockModule('fs', () => ({
 }));
 
 const mockCreateSystemTestAnalysisJob = jest.fn().mockResolvedValue({ id: 'system-job-1', type: 'SYSTEM_TEST_ANALYSIS' });
+const mockEnsureMinimalPackageJson = jest.fn();
+jest.unstable_mockModule('../utils/projectRootResolver.js', () => ({
+    resolveProjectRoot: root => root,
+    hasSourceCodeFiles: () => true,
+    ensureMinimalPackageJson: mockEnsureMinimalPackageJson,
+}));
 
 jest.unstable_mockModule('../services/job.service.js', () => ({
     createInstallDepsJob: jest.fn().mockResolvedValue({ id: 'install-1' }),
@@ -114,6 +126,7 @@ const {
     suggestUnitTestcase,
     getCoverageTestSuites,
     getSystemTestSummary,
+    getTestExecution,
     runCoverageByType,
     classifyTestCategory,
 } = await import('../controllers/coverage.controller.js');
@@ -121,6 +134,17 @@ const {
 describe('coverage controller empty-state behavior', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+    });
+
+    test('snapshot read authorization selects its actual project ID', async () => {
+        prismaMock.project.findFirst.mockResolvedValueOnce({ id: 'proj-1', ownerId: 'user-1' });
+        prismaMock.projectSnapshot.findUnique.mockImplementationOnce(async ({ select }) => {
+            expect(select.projectId).toBe(true);
+            return { projectId: 'proj-1', project: { ownerId: 'user-1' } };
+        });
+        const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+        await getTestExecution({ user: { id: 'user-1' }, params: { snapshotId: 'snap-1' }, query: {} }, res);
+        expect(res.status).toHaveBeenCalledWith(200);
     });
 
     test('runSupertestCoverage propagates queue creation failures instead of returning false success', async () => {
@@ -150,6 +174,22 @@ describe('coverage controller empty-state behavior', () => {
 
         expect(res.status).toHaveBeenCalledWith(500);
         expect(res.json).toHaveBeenCalledWith({ success: false, message: 'Unable to queue Supertest coverage.' });
+    });
+
+    test('Supertest admission for a source-only project queues without changing canonical source or root', async () => {
+        prismaMock.projectSnapshot.findUnique.mockResolvedValue({ id: 'snap-1', projectId: 'proj-1', rootDir: '/tmp/source-only', project: { ownerId: 'user-1' } });
+        const detectSupertest = (await import('../services/supertestDetection.service.js')).detectSupertest;
+        detectSupertest.mockResolvedValue({ detected: true, supertestFiles: ['tests/app.test.js'] });
+        const fs = (await import('fs')).default;
+        fs.existsSync.mockImplementation(file => !String(file).endsWith('package.json'));
+        mockAddSupertestCoveragePipeline.mockResolvedValueOnce({});
+        const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+        try {
+            await runSupertestCoverage({ user: { id: 'user-1' }, params: { snapshotId: 'snap-1' } }, res);
+            expect(res.status).toHaveBeenCalledWith(202);
+            expect(mockEnsureMinimalPackageJson).not.toHaveBeenCalled();
+            expect(prismaMock.projectSnapshot.update).not.toHaveBeenCalled();
+        } finally { fs.existsSync.mockReturnValue(true); }
     });
 
     test('returns 200 with zeroed coverage when summary does not exist yet', async () => {
@@ -405,7 +445,8 @@ describe('coverage controller empty-state behavior', () => {
             expect(res.status).toHaveBeenCalledWith(404);
         });
 
-        test('returns 403 if user is not the owner of the project', async () => {
+        test('returns 404 if user is outside the project', async () => {
+            prismaMock.project.findFirst.mockResolvedValueOnce(null);
             prismaMock.projectSnapshot.findUnique.mockResolvedValueOnce({
                 id: 'snap-1',
                 projectId: 'proj-1',
@@ -415,7 +456,7 @@ describe('coverage controller empty-state behavior', () => {
             const req = { user: { id: 'user-1' }, params: { snapshotId: 'snap-1' } };
             const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
             await getSystemTestSummary(req, res);
-            expect(res.status).toHaveBeenCalledWith(403);
+            expect(res.status).toHaveBeenCalledWith(404);
         });
 
         test('returns Empty State when no Playwright/Cypress test runs exist (DoD 1.1)', async () => {

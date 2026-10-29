@@ -1,3 +1,4 @@
+import { enforceProjectEndpointPolicy } from '../middlewares/projectEndpointPolicy.js';
 import express from "express";
 import { aiContextController } from "../controllers/aiContext.controller.js";
 import projectController from "./../controllers/project.controller.js";
@@ -10,6 +11,7 @@ import {
 } from "../controllers/quality.controller.js";
 
 const router = express.Router();
+router.use(authMiddleware, enforceProjectEndpointPolicy('projects'));
 
 router.use(authMiddleware);
 
@@ -113,6 +115,7 @@ router.delete(
   aiContextController.deleteSession,
 );
 router.post("/:id/chat", aiContextController.chat);
+router.get("/:id/chat/requests/:requestId", aiContextController.chatRequest);
 router.get("/:id/cfg", projectController.getCfg);
 router.get("/:id/cc", projectController.getCc);
 router.get("/:id/ai/tests", projectController.getAiTests);
@@ -141,6 +144,27 @@ router.get(
   "/:id/system-test/frameworks",
   authMiddleware,
   projectController.detectSystemTestFrameworks.bind(projectController),
+);
+
+router.get(
+  "/:id/integration/detection",
+  authMiddleware,
+  projectController.detectIntegrationFrameworks.bind(projectController),
+);
+router.get(
+  "/:id/integration/frameworks",
+  authMiddleware,
+  projectController.detectIntegrationFrameworks.bind(projectController),
+);
+router.post(
+  "/:id/integration/generate-tests",
+  authMiddleware,
+  projectController.generateIntegrationTest.bind(projectController),
+);
+router.post(
+  "/:id/integration/install-dependencies",
+  authMiddleware,
+  projectController.installIntegrationDependencies.bind(projectController),
 );
 
 export default router;

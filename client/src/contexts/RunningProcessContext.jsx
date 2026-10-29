@@ -47,9 +47,9 @@ const initialProcesses = {
   },
 };
 
-function loadStoredProcesses() {
+function loadStoredProcesses(sessionUserId) {
   try {
-    const raw = sessionStorage.getItem(STORAGE_KEY);
+    const raw = sessionStorage.getItem(`${STORAGE_KEY}_${sessionUserId || "anonymous"}`);
     if (!raw) return initialProcesses;
     const parsed = JSON.parse(raw);
     const loadedAnalysis = { ...initialProcesses.analysis, ...(parsed.analysis || {}) };
@@ -91,8 +91,8 @@ function loadStoredProcesses() {
   }
 }
 
-export function RunningProcessProvider({ children }) {
-  const [processes, setProcesses] = useState(loadStoredProcesses);
+export function RunningProcessProvider({ children, sessionUserId }) {
+  const [processes, setProcesses] = useState(() => loadStoredProcesses(sessionUserId));
   const suggestionsCacheRef = useRef({});
   const pollingRef = useRef(null);
   const autoDismissTimersRef = useRef({});
@@ -100,9 +100,9 @@ export function RunningProcessProvider({ children }) {
   // Sync processes to sessionStorage
   useEffect(() => {
     try {
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(processes));
+      sessionStorage.setItem(`${STORAGE_KEY}_${sessionUserId || "anonymous"}`, JSON.stringify(processes));
     } catch (_) { }
-  }, [processes]);
+  }, [processes, sessionUserId]);
 
   // Clean dismiss of a single process or all processes
   const dismissProcess = useCallback((processKey) => {
@@ -495,7 +495,7 @@ const sanitizeCachedSuggestions = (sugsMap) => {
       return sanitizeCachedSuggestions(suggestionsCacheRef.current[snapshotId]);
     }
     try {
-      const raw = sessionStorage.getItem(`${SUGGESTIONS_STORAGE_PREFIX}${snapshotId}`);
+      const raw = sessionStorage.getItem(`${SUGGESTIONS_STORAGE_PREFIX}${sessionUserId || "anonymous"}_${snapshotId}`);
       if (raw) {
         const parsed = JSON.parse(raw);
         suggestionsCacheRef.current[snapshotId] = parsed;
@@ -503,15 +503,15 @@ const sanitizeCachedSuggestions = (sugsMap) => {
       }
     } catch (_) { }
     return {};
-  }, []);
+  }, [sessionUserId]);
 
   const saveSuggestions = useCallback((snapshotId, sugsMap) => {
     if (!snapshotId) return;
     suggestionsCacheRef.current[snapshotId] = sugsMap;
     try {
-      sessionStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${snapshotId}`, JSON.stringify(sugsMap));
+      sessionStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${sessionUserId || "anonymous"}_${snapshotId}`, JSON.stringify(sugsMap));
     } catch (_) { }
-  }, []);
+  }, [sessionUserId]);
 
   const saveFileSuggestions = useCallback((snapshotId, filePath, fileSugs) => {
     if (!snapshotId || !filePath) return;
@@ -522,9 +522,9 @@ const sanitizeCachedSuggestions = (sugsMap) => {
     };
     suggestionsCacheRef.current[snapshotId] = updated;
     try {
-      sessionStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${snapshotId}`, JSON.stringify(updated));
+      sessionStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${sessionUserId || "anonymous"}_${snapshotId}`, JSON.stringify(updated));
     } catch (_) { }
-  }, []);
+  }, [sessionUserId]);
 
   const updateSingleSuggestionCode = useCallback((snapshotId, filePath, sugId, newCode) => {
     if (!snapshotId || !filePath) return;
@@ -538,9 +538,9 @@ const sanitizeCachedSuggestions = (sugsMap) => {
     const updated = { ...current, [filePath]: updatedList };
     suggestionsCacheRef.current[snapshotId] = updated;
     try {
-      sessionStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${snapshotId}`, JSON.stringify(updated));
+      sessionStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${sessionUserId || "anonymous"}_${snapshotId}`, JSON.stringify(updated));
     } catch (_) { }
-  }, []);
+  }, [sessionUserId]);
 
   const removeFileSuggestions = useCallback((snapshotId, filePath) => {
     if (!snapshotId || !filePath) return;
@@ -555,9 +555,9 @@ const sanitizeCachedSuggestions = (sugsMap) => {
     });
     suggestionsCacheRef.current[snapshotId] = updated;
     try {
-      sessionStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${snapshotId}`, JSON.stringify(updated));
+      sessionStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${sessionUserId || "anonymous"}_${snapshotId}`, JSON.stringify(updated));
     } catch (_) { }
-  }, []);
+  }, [sessionUserId]);
 
   // Computed summary
   const hasActiveProcess = Boolean(

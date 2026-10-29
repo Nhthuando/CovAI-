@@ -25,7 +25,7 @@ describe('supertestRunner.service', () => {
         fs.rmSync(tempDir, { recursive: true, force: true });
     });
 
-    test('executes supertest in CI with coverage and the detected file list', async () => {
+    test('executes supertest in CI with coverage, setup file, and the detected file list', async () => {
         dockerRunner.run = jest.fn().mockResolvedValue({ success: true, exitCode: 0, stdout: '', stderr: '' });
 
         const file = path.join(tempDir, 'src', 'api.test.js');
@@ -33,15 +33,13 @@ describe('supertestRunner.service', () => {
 
         expect(result.exitCode).toBe(0);
         expect(dockerRunner.run).toHaveBeenCalledTimes(1);
-        const callArg = dockerRunner.run.mock.calls[0][0];
-        const command = callArg.command;
-        const env = callArg.env || {};
-        expect(env.CI || command.includes('CI=true')).toBeTruthy();
-        expect(env.NODE_ENV || command.includes('NODE_ENV=test')).toBeTruthy();
-        expect(command).toContain('--runInBand');
-        expect(command).toContain('--coverage');
-        expect(command).toContain('--coverageReporters=json-summary');
-        expect(command).toContain('src/api.test.js');
+        const runOptions = dockerRunner.run.mock.calls[0][0];
+        expect(runOptions.env).toEqual(expect.objectContaining({ CI: 'true', NODE_ENV: 'test' }));
+        expect(runOptions.command).toContain('--runInBand');
+        expect(runOptions.command).toContain('--coverage');
+        expect(runOptions.command).toContain('--coverageReporters=json-summary');
+        expect(runOptions.command).toContain('--setupFilesAfterEnv=');
+        expect(runOptions.command).toContain('src/api.test.js');
     });
 
     test('invokes Jest with Node ESM support for module-based projects', async () => {
@@ -51,11 +49,9 @@ describe('supertestRunner.service', () => {
         const file = path.join(tempDir, 'src', 'api.test.js');
         await runSupertest('job1', tempDir, null, [file]);
 
-        const callArg = dockerRunner.run.mock.calls[0][0];
-        const command = callArg.command;
-        const env = callArg.env || {};
-        expect(env.NODE_OPTIONS || command).toMatch(/--experimental-vm-modules/);
-        expect(command).toContain('npx --no-install jest');
+        const runOptions = dockerRunner.run.mock.calls[0][0];
+        expect(runOptions.env.NODE_OPTIONS).toContain('--experimental-vm-modules');
+        expect(runOptions.command).toContain('npx --no-install jest');
     });
 
     test('rejects missing or invalid project roots', async () => {

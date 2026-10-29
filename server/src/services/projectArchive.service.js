@@ -5,6 +5,7 @@ import AdmZip from "adm-zip";
 import { ServiceError } from "../utils/serviceError.js";
 
 const excludedDirectories = new Set([
+    '.covai-collaboration', '.covai-temp', '.covai-system-test',
     ".git", ".svn", ".hg", "node_modules", "vendor", "dist", "build", "coverage", ".cache", ".next", ".nuxt", ".turbo",
     "playwright-report", "test-results", ".aws", ".ssh", ".gnupg", "__pycache__", ".venv", "venv",
 ]);

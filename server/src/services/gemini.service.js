@@ -1,6 +1,11 @@
+import { GEMINI_MODEL_IDS } from '../../../shared/aiModels.js';
+import { geminiQuotaError } from '../utils/geminiQuota.js';
+import { ServiceError } from '../utils/serviceError.js';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import dotenv from "dotenv";
 import { runGeminiRequest, isDailyQuotaError } from './geminiRequestPolicy.service.js';
+import { currentAiJobBudget } from './aiJobBudget.service.js';
+import { isCollaborationLocalTest } from '../config/collaborationLocal.js';
 
 dotenv.config();
 
@@ -16,20 +21,14 @@ if (apiKey) {
   );
 }
 
-const VALID_MODELS = [
-  "gemini-2.5-flash-lite",
-  "gemini-flash-lite-latest",
-  "gemini-3.8-flash",
-  "gemini-3.1-pro-preview",
-  "gemini-3.1-flash-lite"
-];
-const exhaustedModels = new Set();
+const VALID_MODELS = GEMINI_MODEL_IDS;
+const exhaustedModels = new Map();
 
 /**
- * Marks a model as quota-exhausted for the remainder of this process session.
+ * Checks if a model is currently exhausted and cleans up expired entries.
  */
-export function markModelExhausted(modelName) {
-  if (modelName) exhaustedModels.add(modelName);
+export function markModelExhausted(modelName, error = {message:'daily quota'}) {
+  if(modelName) exhaustedModels.set(modelName,geminiQuotaError(error,modelName));
 }
 
 /**
@@ -37,17 +36,12 @@ export function markModelExhausted(modelName) {
  * with the currently active and verified models.
  */
 function resolveModelName(requestedModel) {
-  const preferred = (requestedModel && requestedModel.trim()) || process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
-  
-  if (VALID_MODELS.includes(preferred) && !exhaustedModels.has(preferred)) {
-    return preferred;
-  }
-  for (const m of VALID_MODELS) {
-    if (!exhaustedModels.has(m)) return m;
-  }
-  
-  // If we reach here, all configured fallback models are exhausted.
-  throw new Error("PROVIDER_QUOTA_EXHAUSTED: All available Gemini models have exhausted their free-tier quota.");
+  const preferred = (requestedModel && requestedModel.trim()) || process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+  if(!VALID_MODELS.includes(preferred)) throw new ServiceError('Select one of the four supported Gemini models.',400);
+  const blocked=exhaustedModels.get(preferred);
+  if(blocked?.resetAt && Date.parse(blocked.resetAt)>Date.now()) throw blocked;
+  exhaustedModels.delete(preferred);
+  return preferred;
 }
 
 /**
@@ -92,6 +86,14 @@ export const generateMultimodalText = async (
   modelNameOrConfig = null,
   maybeConfig = {}
 ) => {
+  if (process.env.AI_PROVIDER_MODE === "fixture") {
+    if (!isCollaborationLocalTest()) {
+      throw new ServiceError("Fixture AI is restricted to the isolated collaboration test environment", 503);
+    }
+    if (String(prompt).startsWith("Extract only explicit durable USER requirements")) return '{"notes":[]}';
+    if (String(prompt).startsWith("Summarize stored chat DATA")) return "[LOCAL AI FIXTURE] Shared conversation context retained for the collaboration test.";
+    return "[LOCAL AI FIXTURE] Shared project chat response. This deterministic response verifies collaboration; no live Gemini request was made.";
+  }
   if (!genAI) {
     throw new Error("GEMINI_API_KEY is not configured.");
   }
@@ -138,8 +140,11 @@ export const generateMultimodalText = async (
 
   parts.push({ text: prompt });
 
-  const apiCall = async ({signal, attempt = 1}) => {
+  const apiCall = async ({signal}) => {
     primaryModelName = resolveModelName(modelName);
+    const budget = currentAiJobBudget();
+    await budget?.beforeRequest();
+    const requestSignal = budget?.signal ? AbortSignal.any([signal, budget.signal]) : signal;
     try {
       const model = createModelInstance(primaryModelName);
       const result = await model.generateContent({
@@ -148,7 +153,9 @@ export const generateMultimodalText = async (
           maxOutputTokens: 65536,
           ...providerConfig,
         },
-      }, {signal});
+      }, {signal:requestSignal});
+      if (requestSignal.aborted) throw requestSignal.reason || new Error('AI request canceled');
+      await budget?.record(result.response?.usageMetadata);
       console.log(`[Gemini API] Successfully generated response using primary model: ${primaryModelName}`);
       if (result.response && result.response.candidates && result.response.candidates.length > 0) {
         console.log(`[Gemini API] Provider returned version info (if any):`, result.response.modelVersion || 'N/A');
@@ -156,59 +163,11 @@ export const generateMultimodalText = async (
       return result.response.text();
     } catch (primaryErr) {
       if (signal.aborted) throw primaryErr;
-      const isRateLimit = primaryErr.status === 429 || (primaryErr.message && (primaryErr.message.includes("Quota exceeded") || primaryErr.message.includes("429")));
-      const isUnavailable = primaryErr.status === 503 || (primaryErr.message && (primaryErr.message.includes("503") || primaryErr.message.includes("Service Unavailable")));
-      
-      if (isRateLimit && isDailyQuotaError(primaryErr)) {
-        markModelExhausted(primaryModelName);
+      if(primaryErr.status === 429 || /429|quota exceeded|RESOURCE_EXHAUSTED/i.test(primaryErr.message || '')) {
+        if(isDailyQuotaError(primaryErr)) markModelExhausted(primaryModelName,primaryErr);
+        throw geminiQuotaError(primaryErr,primaryModelName);
       }
-
-      // If primary model is unavailable (503) on retry attempt (> 1), attempt secondary fallback model
-      if (isUnavailable && attempt > 1) {
-        const fallbackModel = VALID_MODELS.find(m => m !== primaryModelName && !exhaustedModels.has(m));
-        if (fallbackModel) {
-          console.warn(`[Gemini API] Primary model ${primaryModelName} returned 503 on retry ${attempt}. Attempting secondary fallback with ${fallbackModel}...`);
-          try {
-            const model = createModelInstance(fallbackModel);
-            const result = await model.generateContent({
-              contents: [{ role: "user", parts }],
-              generationConfig: {
-                maxOutputTokens: 65536,
-                ...providerConfig,
-              },
-            }, {signal});
-            console.log(`[Gemini API] Successfully generated response using fallback model: ${fallbackModel}`);
-            if (result.response && result.response.candidates && result.response.candidates.length > 0) {
-              console.log(`[Gemini API] Provider returned version info (if any):`, result.response.modelVersion || 'N/A');
-            }
-            return result.response.text();
-          } catch (_) {
-            // Fallback also failed, propagate primaryErr for request policy backoff
-          }
-        }
-      }
-      
-      // Retry transient errors through the bounded request policy; 503 keeps the selected model.
-      if (isUnavailable || isRateLimit || primaryErr.status >= 500 || primaryErr.message?.includes('fetch failed')) {
-         throw primaryErr;
-      }
-
-      // If primary model failed with 404 or other model error, try secondary fallback model
-      const fallbackModel = VALID_MODELS.find(m => m !== primaryModelName && !exhaustedModels.has(m)) || "gemini-3.8-flash";
-      console.warn(`[Gemini API] Primary model ${primaryModelName} error: ${primaryErr.message}. Attempting fallback with ${fallbackModel}...`);
-      const model = createModelInstance(fallbackModel);
-      const result = await model.generateContent({
-        contents: [{ role: "user", parts }],
-        generationConfig: {
-          maxOutputTokens: 65536,
-          ...providerConfig,
-        },
-      }, {signal});
-      console.log(`[Gemini API] Successfully generated response using fallback model: ${fallbackModel}`);
-      if (result.response && result.response.candidates && result.response.candidates.length > 0) {
-        console.log(`[Gemini API] Provider returned version info (if any):`, result.response.modelVersion || 'N/A');
-      }
-      return result.response.text();
+      throw primaryErr;
     }
   };
 

@@ -10,6 +10,9 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import prisma from "../config/prisma.js";
+import { currentProjectOperation, operationSnapshot, stagePreparedPublication } from "./projectOperationWorkspace.service.js";
+import { withPreparedProjectWorkspace } from "./projectWorkspacePreparation.service.js";
+import { projectFileError } from "./projectFileVersion.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import {
     runJestCoverage,
@@ -2455,7 +2458,20 @@ export const autoRefineCoverageGaps = async ({
  * @param {Function} [params.runCoverageFn] - Optional custom coverage runner function
  * @returns {Promise<Object>}
  */
-export const applyUnitTestSuggestion = async ({ snapshotId, projectId, userId, suggestion, suggestions = [], runCoverageFn = null }) => {
+export const applyUnitTestSuggestion = async input => {
+    if (currentProjectOperation()) return applyPreparedUnitTestSuggestion(input);
+    const items = input.suggestions?.length ? input.suggestions : input.suggestion ? [input.suggestion] : [];
+    if (!items.length) throw projectFileError('INVALID_SUGGESTION','No suggestion provided to apply',400);
+    const revisions = new Set(items.map(item=>item.proposalBase?.workspaceRevision));
+    if (items.some(item=>item.proposalBase?.snapshotId !== input.snapshotId)) throw projectFileError('FILE_VERSION_REQUIRED','Regenerate suggestions for the currently selected snapshot',428);
+    const expectedWorkspaceRevision = revisions.size === 1 ? [...revisions][0] : undefined;
+    if (input.expectedWorkspaceRevision !== undefined && input.expectedWorkspaceRevision !== expectedWorkspaceRevision) throw projectFileError('SNAPSHOT_CHANGED','Proposal versions do not match');
+    const actualProjectId = input.projectId || (await prisma.projectSnapshot.findUnique({where:{id:input.snapshotId},select:{projectId:true}}))?.projectId;
+    return withPreparedProjectWorkspace({projectId:actualProjectId,snapshotId:input.snapshotId,userId:input.userId,
+        expectedWorkspaceRevision,type:'APPLY_UNIT_SUGGESTION'},()=>applyPreparedUnitTestSuggestion(input));
+};
+
+const applyPreparedUnitTestSuggestion = async ({ snapshotId, projectId, userId, suggestion, suggestions = [], runCoverageFn = null }) => {
     if (!snapshotId) {
         throw new ServiceError("snapshotId is required", 400);
     }
@@ -2512,7 +2528,8 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
     }
     const actualProjectId = snapshot.projectId || projectId;
 
-    const rootDir = resolveSnapshotRootDir(snapshot.rootDir);
+    const activeSnapshot = typeof operationSnapshot === "function" ? operationSnapshot(snapshot) : snapshot;
+    const rootDir = resolveSnapshotRootDir(activeSnapshot?.rootDir || snapshot.rootDir);
     if (!rootDir || !fs.existsSync(rootDir)) {
         throw new ServiceError("Project snapshot root directory not found on filesystem", 409);
     }
@@ -3409,6 +3426,19 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
                 }
                 for (const item of coverageFilesToPersist) {
                     await tx.coverageFile.upsert({
+                        where: {
+                            snapshotId_filePath: {
+                                snapshotId,
+                                filePath: item.cleanSfKey
+                            }
+                        },
+                        update: item.metrics,
+                        create: {
+                            snapshotId,
+                            filePath: item.cleanSfKey,
+                            ...item.metrics
+                        }
+                    });
                         where: {
                             snapshotId_filePath: {
                                 snapshotId,

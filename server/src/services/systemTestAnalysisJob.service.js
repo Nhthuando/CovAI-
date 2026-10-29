@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import prisma from "../config/prisma.js";
+import { currentProjectOperation,stagePreparedPublication,stagePreparedValue } from "./projectOperationWorkspace.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import {
   addJobLog,
@@ -205,7 +206,7 @@ export const processSystemTestAnalysisJob = async (jobId) => {
     if(executionMode === 'full' && execution.runner === 'playwright') {
       const prepared=await prepareFullSystemExecution({rootDir:job.snapshot.rootDir,execution,jobId,onProgress:onPreparing});
       execution=prepared.execution;
-      if(prepared.generated) await prisma.aiTest.create({data:{projectId:job.projectId,snapshotId:job.snapshotId,filePath:prepared.generated.filePath,content:prepared.generated.code,mode:'PLAYWRIGHT_E2E',status:'VERIFIED',metaJson:JSON.stringify({executionMode:'full',verificationRuns:prepared.generated.verificationRuns,attempts:prepared.generated.attempts,contextHash:prepared.generated.contextHash,quality:prepared.generated.quality})}});
+      if(prepared.generated) await stagePreparedPublication(tx=>tx.aiTest.create({data:{projectId:job.projectId,snapshotId:job.snapshotId,filePath:prepared.generated.filePath,content:prepared.generated.code,mode:'PLAYWRIGHT_E2E',status:'VERIFIED',metaJson:JSON.stringify({executionMode:'full',verificationRuns:prepared.generated.verificationRuns,attempts:prepared.generated.attempts,contextHash:prepared.generated.contextHash,quality:prepared.generated.quality})}}));
     }
 
     const startedAt = new Date();
@@ -266,8 +267,10 @@ export const processSystemTestAnalysisJob = async (jobId) => {
     const { scenarios = [] } = testRun;
     const mappingFile = executionResult.reportPath && path.join(path.dirname(executionResult.reportPath), 'source-map.json');
     const sourceMap = mappingFile && fs.existsSync(mappingFile) ? JSON.parse(fs.readFileSync(mappingFile, 'utf8')) : {};
-    const createdTestRun = await prisma.testRun.create({
+    const plannedTestRunId = currentProjectOperation()?.preparedPublications ? crypto.randomUUID() : undefined;
+    const createdTestRun = await stagePreparedValue(tx=>tx.testRun.create({
       data: {
+        ...(plannedTestRunId ? {id:plannedTestRunId} : {}),
         snapshotId: job.snapshotId,
         type: testTypeFor(execution.runner),
         executionMode,
@@ -316,7 +319,7 @@ export const processSystemTestAnalysisJob = async (jobId) => {
           }
           : {}),
       },
-    });
+    }),{id:plannedTestRunId});
 
     if (
       prisma.systemTestFile &&
@@ -325,7 +328,7 @@ export const processSystemTestAnalysisJob = async (jobId) => {
     ) {
       for (const fileItem of systemCoverage.fileBreakdown) {
         try {
-          await prisma.systemTestFile.create({
+          await stagePreparedPublication(tx=>tx.systemTestFile.create({
             data: {
               testRunId: createdTestRun.id,
               filePath: fileItem.filePath,
@@ -335,15 +338,15 @@ export const processSystemTestAnalysisJob = async (jobId) => {
               durationMs: fileItem.durationMs,
               coverageLinesPct: fileItem.coverageLinesPct,
             },
-          });
+          }));
         } catch (_) { }
       }
     }
 
     await broadcastJobProgress(jobId, {
       progress: 85,
-      stage: "Measuring coverage...",
-      message: `System test coverage: ${systemCoverage.summary.linesPct}% lines, ${systemCoverage.summary.branchesPct}% branches`,
+      stage: "Finalizing evidence...",
+      message: "System results recorded. Source coverage requires run-specific instrumentation.",
       userId: job.userId,
       snapshotId: jobSnapshotId,
       runner: execution.runner,

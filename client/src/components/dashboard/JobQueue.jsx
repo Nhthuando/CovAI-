@@ -1,3 +1,5 @@
+import { useProjectAccess } from "../../hooks/useProjectAccess";
+import { useAuth } from "../../hooks/useAuth";
 /* eslint-disable no-unused-vars */
 import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -40,6 +42,16 @@ import { SnapshotsListSkeleton, JobsListSkeleton } from "../common/Skeleton";
 /* ── Helpers: map backend enums to UI props ────────────────── */
 
 const JOB_TYPE_CONFIG = {
+  SYSTEM_TEST_IMPROVEMENT: {
+    label: "AI Test Improvement",
+    icon: Sparkles,
+    taskLabel: "Generating tests and verifying measured coverage gains",
+  },
+  SYSTEM_TEST_ASSESSMENT: {
+    label: "System Test Assessment",
+    icon: TestTube2,
+    taskLabel: "Running independent tests and measuring coverage",
+  },
   INGEST: {
     label: "Source Ingest",
     icon: PackageOpen,
@@ -201,6 +213,8 @@ const POLL_SLOW = 15000;
 
 /* ── Component ─────────────────────────────────────────────── */
 export default function JobQueue({ projectId, onSync }) {
+  const projectAccess = useProjectAccess(projectId);
+  const { userId } = useAuth();
   // Main view mode: "snapshots" | "jobs"
   const [activeTab, setActiveTab] = useState("snapshots");
 
@@ -226,6 +240,8 @@ export default function JobQueue({ projectId, onSync }) {
   const intervalRef = useRef(null);
 
   const handleCancelJob = async (jobId) => {
+    const job = jobs.find(row => row.id === jobId);
+    if (!projectAccess.can("tests.run") || (projectAccess.role !== "OWNER" && job?.userId !== userId)) return;
     try {
       setCancelingJobId(jobId);
       await cancelJobApi(jobId);
@@ -306,6 +322,8 @@ export default function JobQueue({ projectId, onSync }) {
 
   // Create snapshot handler
   const handleCreateSnapshot = async (e) => {
+    e.preventDefault();
+    if (!projectAccess.can("snapshot.restore")) return;
     e?.preventDefault();
     if (!projectId || creatingSnapshot) return;
     setCreatingSnapshot(true);
@@ -337,6 +355,7 @@ export default function JobQueue({ projectId, onSync }) {
 
   // Restore snapshot handler
   const handleConfirmRestore = async () => {
+    if (!projectAccess.can("snapshot.restore")) return;
     if (!projectId || !confirmRestoreSnapshot || restoring) return;
     setRestoring(true);
     try {
@@ -1072,7 +1091,7 @@ export default function JobQueue({ projectId, onSync }) {
                   whileHover={{ scale: 1.01 }}
                   whileTap={{ scale: 0.98 }}
                   type="submit"
-                  disabled={creatingSnapshot}
+                  disabled={creatingSnapshot || !projectAccess.can("snapshot.restore")}
                   className="w-full flex items-center justify-center gap-1.5 rounded-[var(--radius-md)] py-2 text-xs font-semibold cursor-pointer mt-1"
                   style={{
                     background: "var(--color-primary)",
@@ -1399,7 +1418,7 @@ export default function JobQueue({ projectId, onSync }) {
                           </div>
                         </div>
 
-                        {isActive && (
+                        {isActive && projectAccess.can("tests.run") && (projectAccess.role === "OWNER" || job.userId === userId) && (
                           <button
                             type="button"
                             onClick={() => handleCancelJob(job.id)}
@@ -1435,7 +1454,7 @@ export default function JobQueue({ projectId, onSync }) {
                             border: `1px solid ${visual.border}`,
                           }}
                         >
-                          {isActive && (
+                          {isActive && projectAccess.can("tests.run") && (projectAccess.role === "OWNER" || job.userId === userId) && (
                             <motion.div
                               animate={{ opacity: [1, 0.4, 1] }}
                               transition={{ duration: 1.5, repeat: Infinity }}
@@ -1840,7 +1859,7 @@ export default function JobQueue({ projectId, onSync }) {
                     whileHover={{ scale: 1.01 }}
                     whileTap={{ scale: 0.98 }}
                     type="submit"
-                    disabled={creatingSnapshot}
+                    disabled={creatingSnapshot || !projectAccess.can("snapshot.restore")}
                     className="flex items-center gap-1.5 px-4 py-1.5 rounded-[var(--radius-md)] text-xs font-semibold cursor-pointer"
                     style={{
                       background: "var(--color-primary)",
@@ -1966,7 +1985,7 @@ export default function JobQueue({ projectId, onSync }) {
               <div className="flex items-center justify-end gap-2.5 pt-2">
                 <button
                   type="button"
-                  disabled={restoring}
+                  disabled={restoring || !projectAccess.can("snapshot.restore")}
                   onClick={() => setConfirmRestoreSnapshot(null)}
                   className="px-3.5 py-1.5 rounded-[var(--radius-md)] text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer transition-colors"
                   style={{
@@ -1980,7 +1999,7 @@ export default function JobQueue({ projectId, onSync }) {
                   whileHover={{ scale: 1.01 }}
                   whileTap={{ scale: 0.98 }}
                   type="button"
-                  disabled={restoring}
+                  disabled={restoring || !projectAccess.can("snapshot.restore")}
                   onClick={handleConfirmRestore}
                   className="flex items-center gap-1.5 px-4 py-1.5 rounded-[var(--radius-md)] text-xs font-semibold cursor-pointer"
                   style={{

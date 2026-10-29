@@ -1195,7 +1195,9 @@ export const getPackageForFile = (relFile, root) => {
     return "";
 };
 
-const resolveJestBin = (dir, isEsm = false, customCommand = null) => {
+export const jestParallelFlags = command => /(?:^|\s)--(?:runInBand|maxWorkers)(?:[=\s]|$)/.test(command) ? '' : ' --maxWorkers=50%';
+
+export const resolveJestBin = (dir, isEsm = false, customCommand = null) => {
     if (customCommand && typeof customCommand === "string" && customCommand.trim()) {
         const trimmed = customCommand.trim();
         if (trimmed.includes("jest")) {

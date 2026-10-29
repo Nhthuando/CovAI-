@@ -38,6 +38,10 @@ import {
 import { getFileCoverage } from "../../services/coverage.service";
 import { resolveTestOrFunctionLine } from "../../services/navigation.service";
 import { EditorCodeSkeleton } from "../common/Skeleton";
+import { useProjectAccess } from "../../hooks/useProjectAccess";
+import { useAuth } from "../../hooks/useAuth";
+import FileConflictDialog from "./FileConflictDialog";
+import { downloadEditorDraft } from "../../lib/editorDraft";
 
 /* ── Smart File Icon Resolver ────────────────────────────── */
 function getFileIcon(fileName = "") {
@@ -471,18 +475,32 @@ export default function Editor({
   jumpTarget,
 }) {
   const { resolvedTheme } = useTheme();
+  const projectAccess = useProjectAccess(projectId);
+  const { userId: draftUserId } = useAuth();
+  const canEdit = projectAccess.can("files.write");
+  const [conflict, setConflict] = useState(null);
   const [fileContents, setFileContents] = useState({});
   const fetchedRef = useRef(new Set());
   const saveHandlerRef = useRef(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [showGitPanel, setShowGitPanel] = useState(false);
+  const draftStorageKey = useCallback(path => `covai_draft_${draftUserId}_${projectId}_${snapshotId}_${path}`, [draftUserId, projectId, snapshotId]);
+  useEffect(() => {
+    if (!draftUserId || !projectId) return;
+    for (const [path, file] of Object.entries(fileContents)) {
+      const key = `covai_draft_${draftUserId}_${projectId}_${snapshotId}_${path}`;
+      if (file.draft !== undefined && file.draft !== file.content) {
+        sessionStorage.setItem(key, JSON.stringify({ draft: file.draft, version: file.version, snapshotId: file.snapshotId }));
+      } else if (file.content !== undefined) sessionStorage.removeItem(key);
+    }
+  }, [draftUserId, projectId, snapshotId, fileContents]);
 
   // Invalidate cache and reload current file when external sync occurs (e.g. Git pull / checkout)
   useEffect(() => {
     if (refreshTrigger) {
       fetchedRef.current.clear();
-      setFileContents({});
+      setFileContents(previous => Object.fromEntries(Object.entries(previous).filter(([, file]) => file.draft !== undefined && file.draft !== file.content)));
     }
   }, [refreshTrigger]);
 
@@ -632,12 +650,18 @@ export default function Editor({
       [activeTabId]: { content: undefined, loading: true, error: null },
     }));
 
-    getFileContentApi(projectId, activeTabId)
+    getFileContentApi(projectId, activeTabId, { snapshotId })
       .then((res) => {
+        let recovered = null;
+        try { recovered = JSON.parse(sessionStorage.getItem(draftStorageKey(activeTabId)) || "null"); } catch { /* Invalid local recovery data is ignored. */ }
         setFileContents((prev) => ({
           ...prev,
           [activeTabId]: {
             content: res.data.content,
+            version: recovered?.version || res.data.version,
+            draft: typeof recovered?.draft === "string" ? recovered.draft : undefined,
+            snapshotId: res.data.snapshotId,
+            workspaceRevision: res.data.workspaceRevision,
             loading: false,
             error: null,
           },
@@ -653,7 +677,7 @@ export default function Editor({
           },
         }));
       });
-  }, [activeTabId, projectId, fileContents]);
+  }, [activeTabId, projectId, snapshotId, fileContents, draftStorageKey]);
 
   const currentFile = fileContents[activeTabId] || {};
   const activeTab = tabs.find((t) => t.id === activeTabId);
@@ -735,6 +759,7 @@ export default function Editor({
   const breadcrumb = activeTabId ? activeTabId.split("/") : [];
 
   const handleChange = (value) => {
+    if (!canEdit) return;
     setSaveError("");
     setFileContents((prev) => ({
       ...prev,
@@ -746,6 +771,7 @@ export default function Editor({
     const file = fileContents[activeTabId];
     if (
       !projectId ||
+      !canEdit ||
       !activeTabId ||
       !file ||
       file.draft === undefined ||
@@ -756,16 +782,19 @@ export default function Editor({
     setSaving(true);
     setSaveError("");
     try {
-      await updateFileContentApi(projectId, activeTabId, file.draft);
+      const saved = await updateFileContentApi(projectId, activeTabId, file.draft, { snapshotId: file.snapshotId, expectedVersion: file.version, expectedWorkspaceRevision: file.workspaceRevision });
       setFileContents((prev) => ({
         ...prev,
         [activeTabId]: {
           ...prev[activeTabId],
           content: file.draft,
-          draft: undefined,
+          draft: prev[activeTabId]?.draft === file.draft ? undefined : prev[activeTabId]?.draft,
+          version: saved.data?.version,
+          workspaceRevision: saved.data?.workspaceRevision,
         },
       }));
     } catch (err) {
+      if (err.status === 409) setConflict({ path: activeTabId, draft: file.draft, snapshotId: file.snapshotId, details: err.details });
       setSaveError(err.message || "Could not save file");
     } finally {
       setSaving(false);
@@ -1206,7 +1235,8 @@ export default function Editor({
           {snapshotId && !isCurrentTestFile && (
             <button
               type="button"
-              onClick={() => onSuggestTestcase?.(activeTabId)}
+              onClick={() => { if (projectAccess.can("ai.use")) onSuggestTestcase?.(activeTabId); }}
+              disabled={!projectAccess.can("ai.use")}
               className="flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-semibold"
               style={{
                 background: "rgba(168, 85, 247, 0.15)",
@@ -1230,7 +1260,7 @@ export default function Editor({
           <button
             type="button"
             onClick={handleSave}
-            disabled={!hasUnsavedChanges || saving}
+            disabled={!canEdit || !hasUnsavedChanges || saving}
             className="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-all"
             style={{
               color: hasUnsavedChanges ? "#fff" : "var(--color-text-secondary)",
@@ -1379,6 +1409,7 @@ export default function Editor({
               beforeMount={handleEditorWillMount}
               onMount={handleEditorDidMount}
               options={{
+                readOnly: !canEdit,
                 fontSize: 13.5,
                 fontFamily: "var(--font-mono), monospace",
                 lineHeight: 22,
@@ -1456,6 +1487,17 @@ export default function Editor({
           <span>Spaces: 2</span>
         </div>
       </div>
+      <FileConflictDialog conflict={conflict} loading={saving} onClose={() => setConflict(null)} onReload={async () => {
+        if (!conflict) return;
+        downloadEditorDraft(conflict.path, conflict.draft);
+        setSaving(true);
+        try {
+          const response = await getFileContentApi(projectId, conflict.path, { snapshotId: conflict.snapshotId });
+          setFileContents(previous => ({ ...previous, [conflict.path]: { ...response.data, loading: false, error: null } }));
+          setConflict(null); setSaveError("");
+        } catch (err) { setSaveError(err.message); }
+        finally { setSaving(false); }
+      }} />
     </motion.div>
   );
 }

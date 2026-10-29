@@ -4,6 +4,39 @@ import { ServiceError } from "../utils/serviceError.js";
 import { analyzeFailureBreakpoint } from "./failureBreakpointAnalyzer.service.js";
 import { normalizeExecutionDetails } from "./systemTestExecutionDetails.service.js";
 import { readPlaywrightStepPlan } from "./systemTestStepPlan.service.js";
+import { containedPath } from './fullSystemConfig.service.js';
+
+const readInteractionEvidence = (result, rootDir) => {
+  const attachment = result?.attachments?.find(item => item.name === 'covai-interaction-evidence' && item.contentType === 'application/json');
+  if (!attachment) return null;
+  try {
+    let text;
+    if (typeof attachment.body === 'string' && attachment.body.length <= 64000) text = Buffer.from(attachment.body, 'base64').toString('utf8');
+    else if (rootDir && typeof attachment.path === 'string') {
+      const file = containedPath(rootDir, path.relative(rootDir, attachment.path));
+      if (fs.statSync(file).size > 48000) return null;
+      text = fs.readFileSync(file, 'utf8');
+    }
+    const evidence = JSON.parse(text);
+    return Array.isArray(evidence.controls) ? evidence : null;
+  } catch { return null; }
+};
+
+const readApiEvidence = (result, rootDir) => {
+  const attachment = result?.attachments?.find(item => item.name === 'covai-api-evidence' && item.contentType === 'application/json');
+  if (!attachment) return [];
+  try {
+    let text;
+    if (typeof attachment.body === 'string' && attachment.body.length <= 64000) text = Buffer.from(attachment.body, 'base64').toString('utf8');
+    else if (rootDir && typeof attachment.path === 'string') {
+      const file = containedPath(rootDir, path.relative(rootDir, attachment.path));
+      if (fs.statSync(file).size > 48000) return [];
+      text = fs.readFileSync(file, 'utf8');
+    }
+    const calls = JSON.parse(text);
+    return Array.isArray(calls) ? calls.slice(0, 50).filter(call => /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$/.test(call.method) && /^\/api\/[A-Za-z0-9/_%.-]*$/.test(call.path) && Number.isInteger(call.status) && call.status >= 100 && call.status <= 599).map(call => ({ method: call.method, path: call.path, status: call.status, durationMs: Number.isFinite(call.durationMs) ? Math.min(600000, Math.max(0, call.durationMs)) : null, requestId: typeof call.requestId === 'string' ? call.requestId.slice(0, 100) : null })) : [];
+  } catch { return []; }
+};
 
 const readReport = (resultPath) => {
   if (!fs.existsSync(resultPath)) {
@@ -86,6 +119,7 @@ const normalisePlaywright = (report, startedAt, finishedAt, rootDir = null) => {
           });
         }
 
+        const interactionEvidence = readInteractionEvidence(lastResult, rootDir);
         scenarios.push({
           title: spec.title || "Unnamed Test",
           suiteName: suite.title || null,
@@ -94,6 +128,7 @@ const normalisePlaywright = (report, startedAt, finishedAt, rootDir = null) => {
           executionDetails: normalizeExecutionDetails({ runner: 'playwright', test, rootDir, plannedSteps: readPlaywrightStepPlan(rootDir, { ...spec, file: report.config?.rootDir ? path.resolve(report.config.rootDir, spec.file || currentFile) : spec.file || currentFile }) }),
           failureMessages,
           testFile: currentFile || spec.file || null,
+          apiCalls: readApiEvidence(lastResult, rootDir),
           screenshotSource: (() => {
             const attachments=results.at(-1)?.attachments || [];
             const attachment=attachments.find(item=>item.name==='evidence' && item.contentType==='image/png' && (item.path || item.body)) || attachments.find(item=>item.contentType==='image/png' && item.path);
@@ -102,7 +137,7 @@ const normalisePlaywright = (report, startedAt, finishedAt, rootDir = null) => {
           failureStep: breakpoint.failureStep,
           failureCategory: breakpoint.failureCategory,
           failureCodeSnippet: breakpoint.failureCodeSnippet,
-          domSnapshot: breakpoint.domSnapshot,
+          domSnapshot: interactionEvidence ? JSON.stringify(interactionEvidence) : breakpoint.domSnapshot,
         });
       }
     }
@@ -177,7 +212,7 @@ const normalisePlaywright = (report, startedAt, finishedAt, rootDir = null) => {
     totalTests = Math.max(totalTests, passedTests + failedTests + flakyTests + skippedTests);
   }
 
-  const stabilityScorePct = totalTests > 0 ? Number(((passedTests / totalTests) * 100).toFixed(1)) : 0;
+  const passRatePct = totalTests > 0 ? Number(((passedTests / totalTests) * 100).toFixed(1)) : null;
 
   return {
     totalTests,
@@ -185,7 +220,8 @@ const normalisePlaywright = (report, startedAt, finishedAt, rootDir = null) => {
     failedTests,
     flakyTests,
     skippedTests,
-    stabilityScorePct,
+    stabilityScorePct: null,
+    passRatePct,
     durationMs: Number(stats.duration) || Math.max(0, finishedAt - startedAt),
     status: (failedTests > 0 || runnerErrors.length > 0) ? "FAILED" : "PASSED",
     startedAt,
@@ -276,7 +312,7 @@ const normaliseCypress = (report, startedAt, finishedAt, rootDir = null) => {
     }
   }
 
-  const stabilityScorePct = totalTests > 0 ? Number(((passedTests / totalTests) * 100).toFixed(1)) : 0;
+  const passRatePct = totalTests > 0 ? Number(((passedTests / totalTests) * 100).toFixed(1)) : null;
 
   return {
     totalTests,
@@ -284,7 +320,8 @@ const normaliseCypress = (report, startedAt, finishedAt, rootDir = null) => {
     failedTests,
     flakyTests,
     skippedTests,
-    stabilityScorePct,
+    stabilityScorePct: null,
+    passRatePct,
     durationMs: Number(stats.duration) || Math.max(0, finishedAt - startedAt),
     status: failedTests > 0 ? "FAILED" : "PASSED",
     startedAt,

@@ -11,6 +11,7 @@ import {
 import { runQualityAiAnalysis } from "./qualityAiAnalysis.service.js";
 import fs from "fs";
 import path from "path";
+import { operationSnapshot, stagePreparedPublication } from './projectOperationWorkspace.service.js';
 
 /**
  * Reads source files from the snapshot directory for AI context.
@@ -36,8 +37,11 @@ const loadSourceFilesForAi = (rootDir, cyclomatics, coverageFunctions) => {
     const results = [];
     for (const relativePath of riskFiles) {
         if (results.length >= 15) break;
-        const absPath = path.join(rootDir, relativePath);
         try {
+            const base = fs.realpathSync(rootDir);
+            const absPath = fs.realpathSync(path.resolve(base, relativePath));
+            const relative = path.relative(base, absPath);
+            if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) continue;
             if (fs.existsSync(absPath)) {
                 const content = fs.readFileSync(absPath, "utf-8");
                 results.push({ path: relativePath, content: content.slice(0, 5000) });
@@ -105,10 +109,11 @@ export const processQualityAnalysisJob = async (jobId) => {
         // ── Phase 3: AI analysis ────────────────────────────────
         await addJobLog(jobId, "INFO", "Running AI security and debug analysis...");
 
-        const snapshot = await prisma.projectSnapshot.findUnique({
+        const rawSnapshot = await prisma.projectSnapshot.findUnique({
             where: { id: snapshotId },
             select: { rootDir: true },
         });
+        const snapshot = rawSnapshot ? operationSnapshot({ id: snapshotId, ...rawSnapshot }) : null;
 
         const sourceFiles = loadSourceFilesForAi(
             snapshot?.rootDir,
@@ -145,7 +150,7 @@ export const processQualityAnalysisJob = async (jobId) => {
         // ── Phase 5: Persist ────────────────────────────────────
         await addJobLog(jobId, "INFO", "Saving quality report...");
 
-        await prisma.qualityReport.upsert({
+        await stagePreparedPublication(tx => tx.qualityReport.upsert({
             where: { snapshotId },
             create: {
                 snapshotId,
@@ -175,7 +180,7 @@ export const processQualityAnalysisJob = async (jobId) => {
                 aiAvailable: aiResult.aiAvailable,
                 aiError: aiResult.aiError,
             },
-        });
+        }));
 
         await updateJobStatus({ jobId, status: "SUCCESS", progress: 100 });
         await addJobLog(jobId, "INFO", `Quality analysis completed. Overall score: ${overallScore}`);

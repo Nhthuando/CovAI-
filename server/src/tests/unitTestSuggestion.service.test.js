@@ -141,7 +141,7 @@ describe("unitTestSuggestion.service unit tests", () => {
                 snapshotId: "snap-123",
                 filePath: "tests/calculator.test.js",
                 userId: "user-123"
-            })).rejects.toThrow("Project not found or unauthorized");
+            })).rejects.toThrow("Project not found");
         }, 15000);
     });
 

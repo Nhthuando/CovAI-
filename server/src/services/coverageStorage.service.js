@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import prisma from "../config/prisma.js";
+import { currentProjectOperation } from "./projectOperationWorkspace.service.js";
 import { getBucket } from "../config/firebase.js";
 import { ServiceError } from "../utils/serviceError.js";
 
@@ -50,7 +50,7 @@ const uploadBufferToFirebase = async (buffer, destPath, mimeType) => {
  *  - SCRUM-115: coverage-final.json
  *  - SCRUM-116: lcov.info
  *
- * SCRUM-117: Save storage prefix to ProjectSnapshot.storagePath
+ * Return the artifact prefix for persistence in the scoped job result.
  *
  * @param {string} snapshotId
  * @param {string} projectId
@@ -62,7 +62,8 @@ export const storeCoverageOutputs = async (snapshotId, projectId, coverageDir) =
         throw new ServiceError("snapshotId, projectId and coverageDir are required", 400);
     }
 
-    const baseStoragePath = `projects/${projectId}/snapshots/${snapshotId}/coverage`;
+    const operation = currentProjectOperation();
+    const baseStoragePath = `projects/${projectId}/snapshots/${snapshotId}${operation ? `/operations/${operation.operationId}` : ""}/coverage`;
     const results = {};
 
     // ── SCRUM-114: Upload coverage-summary.json ───────────────────────────
@@ -111,16 +112,19 @@ export const storeCoverageOutputs = async (snapshotId, projectId, coverageDir) =
         console.log(`[CoverageStorage] Uploaded integration-scenarios.json → ${dest}`);
     }
 
-    // ── SCRUM-117: Associate outputs with Snapshot ────────────────────────
-    // ProjectSnapshot uses the real Prisma field `storagePath`, not `storageBasePath`.
-    await prisma.projectSnapshot.update({
-        where: { id: snapshotId },
-        data: {
-            storagePath: baseStoragePath,
-        },
-    });
+    // ── Runtime Evidence ─────────────────────────────────────────────
+    const evidenceFile = path.join(coverageDir, "runtime-evidence.json");
+    if (fs.existsSync(evidenceFile)) {
+        const buf = fs.readFileSync(evidenceFile);
+        const dest = `${baseStoragePath}/runtime-evidence.json`;
+        await uploadBufferToFirebase(buf, dest, "application/json");
+        results.evidenceStoragePath = dest;
+        console.log(`[CoverageStorage] Uploaded runtime-evidence.json → ${dest}`);
+    }
 
-    console.log(`[CoverageStorage] Snapshot ${snapshotId} updated storagePath = ${baseStoragePath}`);
+    // Snapshot.storagePath identifies its original uploaded archive/Git source.
+    // Coverage belongs to the job/operation result and must not replace that
+    // source pointer when another member runs a new analysis.
 
     return {
         baseStoragePath,

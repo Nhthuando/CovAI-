@@ -124,7 +124,7 @@ export const extractFailureCodeSnippet = ({ stack = "", testFile = null, rootDir
   if (!stack || typeof stack !== "string") return null;
 
   // Match: at ... (tests/e2e/file.spec.js:28:15) or at file.spec.js:28:15
-  const lineMatch = stack.match(/(?:at\s+.*?\s+\(?|at\s+)(?:.*?\/)?([^/\\:\s]+\.(?:spec|cy|test)\.[cm]?[jt]sx?):(\d+):(\d+)\)?/i);
+  const lineMatch = stack.match(/([^/\\:\s()]+\.(?:spec|cy|test)\.[cm]?[jt]sx?):(\d+):(\d+)/i);
   if (!lineMatch) return null;
 
   const matchedFileName = lineMatch[1];

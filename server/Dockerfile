@@ -2,8 +2,8 @@ FROM node:24-slim
 
 WORKDIR /app
 
-# Install openssl for Prisma, git for githubClone.service, and procps (ps) for process tree management
-RUN apt-get update -y && apt-get install -y openssl git procps && rm -rf /var/lib/apt/lists/*
+# Install openssl for Prisma, git for githubClone.service, procps (ps) for process tree management, and configure safe.directory for container volume mounts
+RUN apt-get update -y && apt-get install -y openssl git procps && rm -rf /var/lib/apt/lists/* && git config --global --add safe.directory "*"
 
 # Copy package files
 COPY package*.json ./

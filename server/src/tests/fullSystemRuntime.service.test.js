@@ -29,6 +29,17 @@ it('deploys committed migrations instead of pushing the schema when migrations e
     await prepareFullSystemPackage({directory,env:{DATABASE_URL:'mysql://isolated'},database:true});
     expect(run.mock.calls[2][0].command).toContain('migrate deploy');
 });
+it('synchronizes the current Prisma model for an explicitly isolated push strategy despite historical migrations',async()=>{
+    const directory=fixture();fs.mkdirSync(path.join(directory,'prisma/migrations/001'),{recursive:true});
+    fs.writeFileSync(path.join(directory,'prisma/migrations/001/migration.sql'),'CREATE TABLE old_version(id INT);');
+    await prepareFullSystemPackage({directory,env:{DATABASE_URL:'mysql://covai:password@127.0.0.1:50001/covai_test'},database:true,schemaStrategy:'push'});
+    expect(run.mock.calls[2][0].command).toContain('db push --accept-data-loss');
+});
+it('refuses an explicit push strategy for a database outside the owned test address',async()=>{
+    const directory=fixture();
+    await expect(prepareFullSystemPackage({directory,env:{DATABASE_URL:'mysql://live.example/production'},database:true,schemaStrategy:'push'})).rejects.toThrow(/isolated/);
+    expect(run).not.toHaveBeenCalled();
+});
 it('rejects a literal datasource URL before executing Prisma database operations',async()=>{
     const directory=fixture();fs.writeFileSync(path.join(directory,'prisma/schema.prisma'),'datasource db { url = "mysql://live-db" }');
     await expect(prepareFullSystemPackage({directory,env:{DATABASE_URL:'mysql://isolated'},database:true})).rejects.toThrow('environment variable');
@@ -38,6 +49,16 @@ it('stops on install failure and redacts the database credentials',async()=>{
     const directory=fixture();run.mockResolvedValueOnce({success:false,stderr:'error secret-password'});
     await expect(prepareFullSystemPackage({directory,env:{DB_PASSWORD:'secret-password'},database:true})).rejects.toThrow('error [redacted]');
     expect(run).toHaveBeenCalledTimes(1);
+});
+it('resolves the source-owned Prisma CLI hoisted to a controlling workspace',async()=>{
+    const repositoryRoot=fixture();
+    fs.writeFileSync(path.join(repositoryRoot,'package.json'),JSON.stringify({private:true,workspaces:['apps/*']}));
+    fs.writeFileSync(path.join(repositoryRoot,'node_modules/prisma/package.json'),JSON.stringify({name:'prisma',bin:{prisma:'build/index.js'}}));
+    const directory=path.join(repositoryRoot,'apps/api');fs.mkdirSync(path.join(directory,'prisma'),{recursive:true});
+    fs.writeFileSync(path.join(directory,'package.json'),JSON.stringify({dependencies:{'@prisma/client':'6'},devDependencies:{prisma:'6'}}));
+    fs.writeFileSync(path.join(directory,'prisma/schema.prisma'),'datasource db { provider = "mysql"\nurl = env("DATABASE_URL") }');
+    await prepareFullSystemPackage({directory,repositoryRoot,env:{DATABASE_URL:'mysql://isolated'},database:true});
+    expect(run.mock.calls[1][0].command).toContain(path.join(repositoryRoot,'node_modules/prisma/build/index.js'));
 });
 it('loads project test environment before startup, preferring .env.test',()=>{
     const directory=fixture();fs.writeFileSync(path.join(directory,'.env'),'STRIPE_SECRET_KEY=first\nPORT=3000');

@@ -14,6 +14,8 @@ import {
   Terminal,
 } from "lucide-react";
 import Button from "../../common/Button.jsx";
+import { useProjectAccess } from "../../../hooks/useProjectAccess";
+import FileConflictDialog from "../FileConflictDialog";
 import {
   getSystemTestFileContent,
   updateSystemTestFileContent,
@@ -24,6 +26,7 @@ import {
 export default function SystemTestEditorModal({
   isOpen,
   onClose,
+  projectId,
   snapshotId,
   filePath,
   scenarioId = null,
@@ -34,6 +37,9 @@ export default function SystemTestEditorModal({
   onRunFinished,
 }) {
   const [content, setContent] = useState("");
+  const access = useProjectAccess(projectId);
+  const [baseVersion, setBaseVersion] = useState(null);
+  const [conflict, setConflict] = useState(null);
   const [originalContent, setOriginalContent] = useState("");
   const [suggestedContent, setSuggestedContent] = useState(null);
   const [showDiff, setShowDiff] = useState(false);
@@ -74,6 +80,7 @@ export default function SystemTestEditorModal({
           const testCode = res.data?.content || "";
           setContent(testCode);
           setOriginalContent(testCode);
+          setBaseVersion(res.data?.version || null);
         }
       } catch (err) {
         if (isMounted) {
@@ -99,6 +106,7 @@ export default function SystemTestEditorModal({
 
   // Handle Save
   const handleSave = async () => {
+    if (!access.can("files.write")) return;
     setSaving(true);
     setError(null);
     setSuccessMessage(null);
@@ -107,12 +115,15 @@ export default function SystemTestEditorModal({
       const res = await updateSystemTestFileContent(
         snapshotId,
         filePath,
-        content
+        content,
+        { expectedVersion: baseVersion }
       );
+      setBaseVersion(res.data?.version || null);
       setOriginalContent(content);
       setSuccessMessage("File saved successfully.");
       if (onSaved) onSaved(res.data);
     } catch (err) {
+      if (err.response?.status === 409 || err.status === 409) setConflict({ path: filePath, draft: content });
       setError(
         err.response?.data?.message ||
           err.message ||
@@ -125,6 +136,7 @@ export default function SystemTestEditorModal({
 
   // Handle AI Optimization (BOOST_COVERAGE or FIX_BREAKPOINT)
   const handleOptimize = async (mode) => {
+    if (!access.can("ai.use")) return;
     setOptimizing(true);
     setError(null);
     setSuccessMessage(null);
@@ -137,8 +149,8 @@ export default function SystemTestEditorModal({
         instruction: customInstruction.trim(),
       });
 
-      const optCode = res.data?.code || res.data?.content || "";
-      const explanation = res.data?.explanation || "Optimization complete.";
+      const optCode = res.data?.optimizedCode || res.data?.code || res.data?.content || "";
+      const explanation = res.data?.explanation || "Proposal generated; execution and coverage improvement have not been verified.";
 
       setSuggestedContent(optCode);
       setAiExplanation(explanation);
@@ -156,6 +168,7 @@ export default function SystemTestEditorModal({
 
   // Accept AI Suggestions
   const handleAcceptAI = () => {
+    if (!access.can("files.write")) return;
     if (suggestedContent) {
       setContent(suggestedContent);
       setSuggestedContent(null);
@@ -173,6 +186,7 @@ export default function SystemTestEditorModal({
 
   // Handle Fast Run Single Test
   const handleRunSingle = async () => {
+    if (!access.can("tests.run")) return;
     setRunningSingle(true);
     setSingleRunResult(null);
     setError(null);
@@ -237,7 +251,7 @@ export default function SystemTestEditorModal({
               size="sm"
               icon={runningSingle ? Loader2 : Play}
               loading={runningSingle}
-              disabled={loading || optimizing || runningSingle}
+              disabled={loading || optimizing || runningSingle || isDirty}
               onClick={handleRunSingle}
               className="text-xs h-8"
             >
@@ -249,7 +263,7 @@ export default function SystemTestEditorModal({
               size="sm"
               icon={saving ? Loader2 : Save}
               loading={saving}
-              disabled={loading || saving || !isDirty}
+              disabled={loading || saving || !isDirty || !access.can("files.write")}
               onClick={handleSave}
               className="text-xs h-8 font-semibold"
             >
@@ -276,18 +290,18 @@ export default function SystemTestEditorModal({
               variant="secondary"
               size="sm"
               icon={Sparkles}
-              disabled={loading || optimizing || runningSingle}
+              disabled={loading || optimizing || runningSingle || isDirty}
               onClick={() => handleOptimize("BOOST_COVERAGE")}
               className="text-xs h-7 px-2.5"
             >
-              AI Boost Coverage
+              AI Suggest Additional Tests
             </Button>
 
             <Button
               variant="secondary"
               size="sm"
               icon={Wrench}
-              disabled={loading || optimizing || runningSingle}
+              disabled={loading || optimizing || runningSingle || isDirty}
               onClick={() => handleOptimize("FIX_BREAKPOINT")}
               className="text-xs h-7 px-2.5"
             >
@@ -328,7 +342,7 @@ export default function SystemTestEditorModal({
               <div>
                 <div className="font-semibold text-[var(--color-primary)] flex items-center gap-1.5 mb-0.5">
                   <Sparkles size={14} />
-                  <span>AI Generated Improvements Ready</span>
+                  <span>AI Proposal ? Not Verified</span>
                 </div>
                 <p className="text-[var(--color-text-secondary)] text-[11px] leading-relaxed m-0">
                   {aiExplanation}
@@ -404,7 +418,7 @@ export default function SystemTestEditorModal({
                   fontSize: 13,
                   fontFamily: "'JetBrains Mono', Consolas, monospace",
                   minimap: { enabled: false },
-                  readOnly: false,
+                  readOnly: !access.can("files.write"),
                   renderSideBySide: true,
                 }}
               />
@@ -416,6 +430,7 @@ export default function SystemTestEditorModal({
                 onChange={(val) => setContent(val || "")}
                 theme={isDarkMode ? "vs-dark" : "light"}
                 options={{
+                  readOnly: !access.can("files.write"),
                   fontSize: 13,
                   fontFamily: "'JetBrains Mono', Consolas, monospace",
                   minimap: { enabled: false },
@@ -429,6 +444,14 @@ export default function SystemTestEditorModal({
           </div>
         </div>
       </div>
+      <FileConflictDialog conflict={conflict} loading={loading} onClose={() => setConflict(null)} onReload={async () => {
+        setLoading(true);
+        try {
+          const response = await getSystemTestFileContent(snapshotId, filePath);
+          setContent(response.data.content); setOriginalContent(response.data.content); setBaseVersion(response.data.version); setConflict(null); setError(null);
+        } catch (err) { setError(err.message); }
+        finally { setLoading(false); }
+      }} />
     </div>
   );
 }

@@ -4,12 +4,16 @@ import { X, GitBranch, MessageSquare, Plus, Pin, Trash2, Loader2 } from "lucide-
 import Button from "../common/Button";
 import { getAiContext, saveAiContext, getAiMemories, addAiMemory, editAiMemory, forgetAiMemory, clearAiMemories, previewAiContext, branchAiConversation } from "../../services/aiContext.service";
 import { getChatSessionsApi } from "../../services/project.service";
+import { useProjectAccess } from "../../hooks/useProjectAccess";
 
 const inputClass = "w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-text)] focus-visible:outline-2 focus-visible:outline-[var(--color-primary)]";
 export default function AIContextDialog({ projectId, snapshotId, sessionId, useMemory, screenContext, onSelect, onNew, onClose, initialTab = "context" }) {
+  const access = useProjectAccess(projectId);
+  const canWrite = access.can("memory.write");
   const dialogRef = useRef(null);
   const alive = useRef(true);
   const running = useRef(false);
+  const contextRead = useRef(0);
   const [tab, setTab] = useState(initialTab);
   const [settings, setSettings] = useState(null);
   const [saved, setSaved] = useState(null);
@@ -30,6 +34,8 @@ export default function AIContextDialog({ projectId, snapshotId, sessionId, useM
   const [clearConfirm, setClearConfirm] = useState(false);
   const [discardConfirm, setDiscardConfirm] = useState(false);
   const dirty = saved && settings && (saved.guidance !== settings.guidance || saved.automaticMemory !== settings.automaticMemory);
+  const settingsDirty = useRef(false);
+  useEffect(() => { settingsDirty.current = !!dirty; }, [dirty]);
   const dismiss = () => { if (busy) return; if (dirty || note.trim()) setDiscardConfirm(true); else onClose(); };
 
   useEffect(() => {
@@ -41,14 +47,38 @@ export default function AIContextDialog({ projectId, snapshotId, sessionId, useM
   }, []);
   useEffect(() => {
     let cancelled = false;
+    const request = ++contextRead.current;
     Promise.all([getAiContext(projectId), getAiMemories(projectId), getChatSessionsApi(projectId), previewAiContext(projectId, { sessionId, snapshotId, useMemory, screenContext })])
       .then(([config, memories, history, context]) => {
-        if (cancelled) return;
+        if (cancelled || request !== contextRead.current) return;
         setSettings(config); setSaved(config); setNotes(memories); setSessions(history.data || []); setPreview(context);
-      }).catch(err => { if (!cancelled) setError(err.message); })
-      .finally(() => { if (!cancelled) setLoading(false); });
+      }).catch(err => { if (!cancelled && request === contextRead.current) setError(err.message); })
+      .finally(() => { if (!cancelled && request === contextRead.current) setLoading(false); });
     return () => { cancelled = true; };
   }, [projectId, sessionId, snapshotId, useMemory, screenContext, reload]);
+
+  useEffect(() => {
+    let subscribed = true;
+    const refreshSharedMemory = async event => {
+      if (event.detail?.projectId !== projectId || event.detail.type !== "memory.changed") return;
+      const request = ++contextRead.current;
+      try {
+        const [config, memories, context] = await Promise.all([
+          getAiContext(projectId), getAiMemories(projectId),
+          previewAiContext(projectId, { sessionId, snapshotId, useMemory, screenContext }),
+        ]);
+        if (!subscribed || !alive.current || request !== contextRead.current) return;
+        setNotes(memories); setPreview(context); setLoading(false);
+        // Keep the settings revision belonging to the draft. A stale save must
+        // conflict instead of silently adopting another member's base revision.
+        if (!settingsDirty.current) { setSettings(config); setSaved(config); }
+      } catch (err) {
+        if (subscribed && alive.current && request === contextRead.current) { setError(err.message); setLoading(false); }
+      }
+    };
+    window.addEventListener("covai:project-event", refreshSharedMemory);
+    return () => { subscribed = false; window.removeEventListener("covai:project-event", refreshSharedMemory); };
+  }, [projectId, sessionId, snapshotId, useMemory, screenContext]);
 
   const run = async action => {
     if (running.current) return;
@@ -81,7 +111,7 @@ export default function AIContextDialog({ projectId, snapshotId, sessionId, useM
       className="m-auto w-[calc(100%-24px)] max-w-[680px] max-h-[calc(100dvh-32px)] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] p-0 shadow-xl backdrop:bg-black/60">
       <div className="p-5 sm:p-6">
         <div className="flex items-start justify-between gap-3">
-          <div><h2 id="ai-context-title" className="text-lg font-semibold">What AI knows</h2><p className="mt-1 text-xs text-[var(--color-text-muted)]">AI follows your current screen automatically. Ask a question — no setup needed.</p></div>
+          <div><h2 id="ai-context-title" className="text-lg font-semibold">What AI knows</h2><p className="mt-1 text-xs text-[var(--color-text-muted)]">Chat history and AI memory are shared with all project members.</p></div>
           <Button variant="ghost" size="sm" onClick={dismiss} aria-label="Close context dialog" disabled={busy}><X size={17} /></Button>
         </div>
         <div role="tablist" aria-label="Context sections" className="flex gap-4 mt-5 border-b border-[var(--color-border)]">
@@ -96,7 +126,7 @@ export default function AIContextDialog({ projectId, snapshotId, sessionId, useM
             <div className="rounded-lg border border-[var(--color-border)] p-4">
               <h3 className="text-sm font-semibold">Start a new chat</h3>
               <p className="mt-1 text-xs leading-relaxed text-[var(--color-text-muted)]">AI still knows your project and current screen. Previous chats stay in your history.</p>
-              <Button size="sm" icon={Plus} className="mt-3" disabled={busy} onClick={() => { if (!canNavigate()) return; onNew(newUsesMemory); onClose(); }}>New chat</Button>
+              <Button size="sm" icon={Plus} className="mt-3" disabled={busy || !access.can("chat.write")} onClick={() => { if (!canNavigate()) return; onNew(newUsesMemory); onClose(); }}>New chat</Button>
             </div>
             <label className="block text-xs font-medium">Find a previous chat<input aria-label="Find a previous chat" value={search} onChange={event => setSearch(event.target.value)} className={`${inputClass} mt-2`} placeholder="Search chat titles or messages" /></label>
             {!sessions.length && <p className="text-sm text-[var(--color-text-muted)]">No previous chats yet. Send your first question to get started.</p>}
@@ -105,7 +135,7 @@ export default function AIContextDialog({ projectId, snapshotId, sessionId, useM
                 <div key={row.id} className={`rounded-lg border p-3 ${row.id === sessionId ? 'border-[var(--color-primary)]' : 'border-[var(--color-border)]'}`}>
                   <div className="flex items-start justify-between gap-2"><h3 className="text-sm font-medium break-words">{row.title}</h3><time className="shrink-0 text-[10px] text-[var(--color-text-muted)]">{new Date(row.updatedAt).toLocaleDateString()}</time></div>
                   <p className="mt-1 text-xs text-[var(--color-text-muted)] line-clamp-2 break-words">{row.messages?.[0]?.content?.slice(0, 200) || 'No messages yet'}</p>
-                  <div className="flex gap-2 mt-3"><Button size="sm" variant="secondary" icon={MessageSquare} disabled={busy} onClick={() => run(() => chooseSession(row.id))}>Continue</Button><Button size="sm" variant="ghost" icon={GitBranch} disabled={busy || !row._count?.messages} onClick={() => inspectBranch(row)}>Create branch</Button></div>
+                  <div className="flex gap-2 mt-3"><Button size="sm" variant="secondary" icon={MessageSquare} disabled={busy} onClick={() => run(() => chooseSession(row.id))}>Continue</Button><Button size="sm" variant="ghost" icon={GitBranch} disabled={busy || !access.can("chat.write") || !row._count?.messages} onClick={() => inspectBranch(row)}>Create branch</Button></div>
                 </div>
               ))}
             </div>
@@ -117,9 +147,9 @@ export default function AIContextDialog({ projectId, snapshotId, sessionId, useM
               <div className="flex gap-2 mt-3"><Button size="sm" disabled={busy} onClick={() => run(async () => { if (!canNavigate()) return; const result = await branchAiConversation(projectId, branch.id, { useMemory: newUsesMemory, snapshotId }); await chooseSession(result.id); })}>Confirm branch</Button><Button size="sm" variant="ghost" disabled={busy} onClick={() => { setBranch(null); setBranchPreview(null); }}>Cancel branch</Button></div>
             </div>}
           </section>}
-          {tab === "memory" && <section role="tabpanel" id="context-panel-memory" aria-labelledby="context-tab-memory" className="pt-5 space-y-5">
+          {tab === "memory" && <section role="tabpanel" id="context-panel-memory" aria-labelledby="context-tab-memory" className="pt-5 space-y-5"><fieldset disabled={!canWrite} className="space-y-5 min-w-0">
             <form onSubmit={event => { event.preventDefault(); run(async () => { const result = await saveAiContext(projectId, { guidance: settings.guidance, automaticMemory: settings.automaticMemory, revision: saved.revision }); if (alive.current) { setSettings(result); setSaved(result); } }); }}>
-              <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={Boolean(settings?.automaticMemory)} disabled={busy || !settings} onChange={event => setSettings({ ...settings, automaticMemory: event.target.checked })} />Remember my preferences across chats</label>
+              <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={Boolean(settings?.automaticMemory)} disabled={busy || !settings} onChange={event => setSettings({ ...settings, automaticMemory: event.target.checked })} />Remember shared project preferences across chats</label>
               <p className="mt-2 text-xs leading-relaxed text-[var(--color-text-muted)]">For example: prefer Jest or keep replies concise. AI saves explicit decisions from chats and recalls them when relevant. This is optional; AI already knows your current tab.</p>
               <label className="block mt-4 text-xs font-medium">Additional instructions (optional)<textarea aria-label="Additional instructions" maxLength={8000} rows={3} value={settings?.guidance || ''} disabled={!settings || busy} onChange={event => setSettings({ ...settings, guidance: event.target.value })} className={`${inputClass} mt-2 resize-y`} placeholder="For example: keep replies concise and use Jest for unit tests. Do not enter passwords or API keys." /></label>
               <div className="flex items-center gap-3 mt-3"><Button type="submit" size="sm" disabled={busy || !dirty}>Save</Button><span className="text-xs text-[var(--color-text-muted)]">{dirty ? 'Unsaved changes' : 'Saved'}</span></div>
@@ -139,17 +169,17 @@ export default function AIContextDialog({ projectId, snapshotId, sessionId, useM
                 <p className="text-sm whitespace-pre-wrap break-words">{row.pinned && <Pin size={12} className="inline mr-1" />}{row.content}</p>
                 {row.status === 'REVIEW' && <p className="mt-2 text-xs text-[var(--color-primary)]">Potential conflict. Review and save before using this memory.</p>}
                 {row.evidence && <button type="button" className="mt-2 text-xs underline text-[var(--color-text-muted)]" disabled={busy} onClick={() => run(() => chooseSession(row.evidence.sessionId))}>From: {row.evidence.title}</button>}
-                <div className="flex gap-2 mt-2"><Button variant="ghost" size="sm" disabled={busy} onClick={() => { setEditing(row); setNote(row.content); setPinned(row.pinned); }}>Edit</Button><Button variant="ghost" size="sm" icon={Trash2} disabled={busy} onClick={() => run(async () => { await forgetAiMemory(projectId, row.id); await refreshNotes(); if (editing?.id === row.id) resetEditor(); })}>Forget</Button></div>
+                <div className="flex gap-2 mt-2"><Button variant="ghost" size="sm" disabled={busy} onClick={() => { setEditing(row); setNote(row.content); setPinned(row.pinned); }}>Edit</Button><Button variant="ghost" size="sm" icon={Trash2} disabled={busy} onClick={() => run(async () => { await forgetAiMemory(projectId, row.id, row.revision); await refreshNotes(); if (editing?.id === row.id) resetEditor(); })}>Forget</Button></div>
               </article>)}</div>
-              {notes.length > 0 && <div className="mt-4"><Button variant="danger" size="sm" disabled={busy} onClick={() => setClearConfirm(true)}>Clear all memory</Button>{clearConfirm && <div className="mt-3 text-xs"><p>Remove all saved notes? Conversation transcripts and project rules will remain.</p><div className="flex gap-2 mt-2"><Button size="sm" variant="danger" disabled={busy} onClick={() => run(async () => { await clearAiMemories(projectId); await refreshNotes(); setClearConfirm(false); resetEditor(); })}>Confirm clear memory</Button><Button size="sm" variant="ghost" disabled={busy} onClick={() => setClearConfirm(false)}>Keep memory</Button></div></div>}</div>}
+              {notes.length > 0 && <div className="mt-4"><Button variant="danger" size="sm" disabled={busy || !access.can("chat.delete")} onClick={() => setClearConfirm(true)}>Clear all memory</Button>{clearConfirm && <div className="mt-3 text-xs"><p>Remove all saved notes? Conversation transcripts and project rules will remain.</p><div className="flex gap-2 mt-2"><Button size="sm" variant="danger" disabled={busy || !access.can("chat.delete")} onClick={() => run(async () => { await clearAiMemories(projectId); await refreshNotes(); setClearConfirm(false); resetEditor(); })}>Confirm clear memory</Button><Button size="sm" variant="ghost" disabled={busy} onClick={() => setClearConfirm(false)}>Keep memory</Button></div></div>}</div>}
             </div>
-          </section>}
+          </fieldset></section>}
           {tab === "context" && <section role="tabpanel" id="context-panel-context" aria-labelledby="context-tab-context" className="pt-5 space-y-4">
             <div className="rounded-lg border border-[var(--color-border)] p-4 space-y-2">
               <h3 className="text-sm font-semibold">Automatically follows your screen</h3>
-              <p className="text-sm">{screenContext?.testType ? `${({ unit: 'Unit', integration: 'Integration', system: 'System' })[screenContext.testType]} Test` : ({ explorer: 'Code', jobs: 'Run history', architecture: 'Architecture', settings: 'Settings' })[screenContext?.activity] || 'Project'}</p>
+              <p className="text-sm">{screenContext?.activity === "projects-portfolio" || screenContext?.testType === "portfolio" ? "Projects Portfolio Overview" : screenContext?.activity === "overview" || screenContext?.testType === "overview" ? "Unified Quality Overview" : ({ unit: "Unit Test", integration: "Integration Test", system: "System Test", portfolio: "Projects Portfolio Overview" })[screenContext?.testType] || ({ "projects-portfolio": "Projects Portfolio Overview", overview: "Unified Quality Overview", explorer: "Code", jobs: "Run history", architecture: "Architecture", settings: "Settings" })[screenContext?.activity] || "Project"}</p>
               <p className="text-xs text-[var(--color-text-muted)]">Switch tabs to update the context for your next question. Your conversation history is kept.</p>
-              {screenContext?.testType && <p className="text-xs">{preview?.testResults ? `Latest run: ${preview.testResults.passedTests}/${preview.testResults.totalTests} tests passed, ${preview.testResults.failedTests} failed.` : 'No saved test results for this screen yet. Run tests so AI has results to analyze.'}</p>}
+              {screenContext?.testType && screenContext?.testType !== "overview" && <p className="text-xs">{preview?.testResults ? `Latest run: ${preview.testResults.passedTests}/${preview.testResults.totalTests} tests passed, ${preview.testResults.failedTests} failed.` : 'No saved test results for this screen yet. Run tests so AI has results to analyze.'}</p>}
               {screenContext?.filePath && <p className="text-xs break-all">Open file: {screenContext.filePath}. Attach the file if you want AI to read its contents.</p>}
             </div>
             <p className="text-xs text-[var(--color-text-muted)]">The information below is sent with your question. Long-term memory is optional; AI knows your current screen even when memory is off.</p>

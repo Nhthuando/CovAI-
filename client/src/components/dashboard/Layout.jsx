@@ -18,7 +18,12 @@ import JobQueue from "./JobQueue";
 import ProjectArchitecturePanel from "./ProjectArchitecturePanel";
 import CFGCalculator from "./CFGCalculator";
 import QualityDashboard from "./QualityDashboard";
+import UnifiedDashboard from "./unified/UnifiedDashboard";
+import { buildWorkspaceUrl } from "../../services/unifiedDashboard/workspaceNavigation";
 import SettingsSidebar from "./settings/SettingsSidebar";
+import ProjectMembersSettings from "./settings/ProjectMembersSettings";
+import { useProjectAccess } from "../../hooks/useProjectAccess";
+import { useProjectEvents } from "../../hooks/useProjectEvents";
 import UserProfile from "./settings/UserProfile";
 import Appearance from "./settings/Appearance";
 import Security from "./settings/Security";
@@ -108,6 +113,10 @@ function LayoutInner() {
   };
 
   const handleSelectActivity = (id) => {
+    if (id === "portfolio") {
+      navigate("/projects");
+      return;
+    }
     if (id === "logout") {
       setShowLogoutConfirm(true);
       return;
@@ -132,10 +141,54 @@ function LayoutInner() {
     if (tab === "logic-analysis") {
       setShowCFG(true);
     }
-    setActiveActivity(tab);
-  }, [location.search]);
+    if (tab === "system") {
+      setActiveActivity("coverage");
+      setCoverageType("system");
+    } else {
+      setActiveActivity(tab);
+      const type = params.get("coverageType") || params.get("type");
+      if (type) setCoverageType(type);
+    }
+    const focusFile = params.get("focusFile");
+    const focusEndpoint = params.get("focusEndpoint");
+    const focusScenario = params.get("focusScenario");
+    if (focusFile) {
+      showToast({
+        type: "info",
+        title: "Navigated to Unit Tests",
+        message: `Focus target: ${focusFile}`,
+      });
+    } else if (focusEndpoint) {
+      showToast({
+        type: "info",
+        title: "Navigated to Integration Tests",
+        message: `Focus target: ${focusEndpoint}`,
+      });
+    } else if (focusScenario) {
+      showToast({
+        type: "info",
+        title: "Navigated to System Tests",
+        message: `Focus target: ${focusScenario}`,
+      });
+    }
+  }, [location.search, showToast]);
 
-  const [activeSetting, setActiveSetting] = useState("profile");
+  const allowedSettings = ["profile", "appearance", "security", "notifications", "billing", "members"];
+  const selectedSetting = searchParams.get("setting");
+  const activeSetting = allowedSettings.includes(selectedSetting) ? selectedSetting : "profile";
+  const membersTab = searchParams.get("membersTab") === "pending" ? "pending" : "members";
+  const setActiveSetting = setting => {
+    const params = new URLSearchParams(location.search);
+    params.set("tab", "settings");
+    params.set("setting", allowedSettings.includes(setting) ? setting : "profile");
+    navigate(`${location.pathname}?${params}`);
+  };
+  const setMembersTabInUrl = tab => {
+    const params = new URLSearchParams(location.search);
+    params.set("tab", "settings"); params.set("setting", "members");
+    params.set("membersTab", tab === "pending" ? "pending" : "members");
+    navigate(`${location.pathname}?${params}`);
+  };
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [isDraggingSidebar, setIsDraggingSidebar] = useState(false);
@@ -145,7 +198,8 @@ function LayoutInner() {
   const [tabs, setTabs] = useState(INITIAL_TABS);
   const [activeTabId, setActiveTabId] = useState(null);
   const [activeFileId, setActiveFileId] = useState(null);
-  const [coverageType, setCoverageType] = useState("unit");
+  const initialCoverageType = searchParams.get("coverageType") || searchParams.get("type") || (searchParams.get("tab") === "system" ? "system" : "unit");
+  const [coverageType, setCoverageType] = useState(initialCoverageType);
   const screenContext = useMemo(() => ({ activity: activeActivity, testType: activeActivity === "coverage" ? coverageType : undefined, filePath: activeActivity === "explorer" ? activeTabId || undefined : undefined }), [activeActivity, coverageType, activeTabId]);
   const [showImport, setShowImport] = useState(false);
   const [showQualityDashboard, setShowQualityDashboard] = useState(false);
@@ -210,19 +264,61 @@ function LayoutInner() {
     }
   };
 
+  const handleAskAiPrompt = useCallback((promptText) => {
+    if (!promptText) return;
+    setAiPanelOpen(true);
+    setPendingAiSuggestion({ promptText, timestamp: Date.now() });
+  }, []);
+
+  useEffect(() => {
+    const onPrefillEvent = (e) => {
+      const text = e.detail?.promptText;
+      if (text) {
+        setAiPanelOpen(true);
+        setPendingAiSuggestion({ promptText: text, timestamp: Date.now() });
+      }
+    };
+    window.addEventListener("covai:prefill-prompt", onPrefillEvent);
+    return () => window.removeEventListener("covai:prefill-prompt", onPrefillEvent);
+  }, []);
+
   const [projects, setProjects] = useState([]);
   const [project, setProject] = useState(null);
+  const projectAccess = useProjectAccess(project?.id);
   const [fileTree, setFileTree] = useState([]);
+  const [treeVersion, setTreeVersion] = useState(null);
   const [isLoadingTree, setIsLoadingTree] = useState(true);
   const [latestRunJob, setLatestRunJob] = useState(null);
   const [isSubmittingAnalysis, setIsSubmittingAnalysis] = useState(false);
   const [editorRefreshTrigger, setEditorRefreshTrigger] = useState(0);
   const [coverageRunTrigger, setCoverageRunTrigger] = useState(0);
+  useEffect(() => {
+    if (![403, 404].includes(projectAccess.error?.status)) return;
+    queryClient.cancelQueries({ predicate: query => query.queryKey.includes(project?.id) });
+    queryClient.removeQueries({ predicate: query => query.queryKey.includes(project?.id) });
+    setFileTree([]);
+    setProject(null);
+    navigate("/projects", { replace: true, state: { projectAccessLost: true } });
+  }, [projectAccess.error, project?.id, navigate]);
+
+  useProjectEvents(project?.id, user?.id, event => {
+    if (event.revoked) { setFileTree([]); setProject(null); navigate("/projects", { replace: true, state: { projectAccessLost: true } }); return; }
+    if (/file|workspace|snapshot/i.test(event.type || "")) setEditorRefreshTrigger(value => value + 1);
+  });
+
+  const handleSelectCoverageType = (type) => {
+    setCoverageType(type);
+    const params = new URLSearchParams(location.search);
+    if (params.get("coverageType") !== type) {
+      params.set("coverageType", type);
+      navigate(`${location.pathname}?${params.toString()}`, { replace: true });
+    }
+  };
 
   const handleTriggerRunAnalysis = () => {
     setShowCFG(false);
     setActiveActivity("coverage");
-    setCoverageType("unit");
+    handleSelectCoverageType("unit");
     setCoverageRunTrigger((prev) => prev + 1);
     const params = new URLSearchParams(location.search);
     if (params.get("tab") !== "coverage") {
@@ -310,7 +406,7 @@ function LayoutInner() {
         const { getProjectsApi, getProjectTreeApi } =
           await import("../../services/project.service");
         const loadedProjects = await queryClient.fetchQuery({
-          queryKey: ["projects"],
+          queryKey: ["projects", user?.id],
           queryFn: async () => {
             const res = await getProjectsApi();
             return res?.projects || [];
@@ -333,15 +429,17 @@ function LayoutInner() {
           for (let attempt = 1; attempt <= retries; attempt++) {
             try {
               const tree = await queryClient.fetchQuery({
-                queryKey: ["projectTree", targetProj.id],
+                queryKey: ["projectTree", user?.id, targetProj.id],
                 queryFn: async () => {
                   const res = await getProjectTreeApi(targetProj.id);
-                  return res?.data || [];
+                  return { tree: res?.data || [], snapshotId: res.snapshotId, workspaceRevision: res.workspaceRevision };
                 },
-                staleTime: 5 * 60 * 1000,
+                staleTime: 10 * 1000,
               });
-              setFileTree(tree || []);
-              if (tree && tree.length > 0) {
+              const sourceTree = Array.isArray(tree) ? tree : tree.tree;
+              setTreeVersion(Array.isArray(tree) ? null : { snapshotId: tree.snapshotId, expectedWorkspaceRevision: tree.workspaceRevision });
+              setFileTree(sourceTree || []);
+              if (sourceTree && sourceTree.length > 0) {
                 const fileExistsInTree = (nodes, path) => {
                   for (const node of nodes) {
                     if (node.id === path) return true;
@@ -352,7 +450,7 @@ function LayoutInner() {
                 };
                 setTabs((prev) => {
                   const remaining = prev.filter((t) =>
-                    fileExistsInTree(tree, t.id),
+                    fileExistsInTree(sourceTree, t.id),
                   );
                   if (remaining.length !== prev.length) {
                     setActiveTabId((currActive) => {
@@ -398,7 +496,7 @@ function LayoutInner() {
         setIsLoadingTree(false);
       }
     },
-    [showToast],
+    [showToast, user?.id],
   );
 
   const handleSidebarResize = useCallback(
@@ -465,6 +563,26 @@ function LayoutInner() {
     loadData(initialProjectId);
   }, [loadData, initialProjectId]);
 
+  useEffect(() => {
+    if (!project?.id) return;
+    let alive = true;
+    let request = 0;
+    const refreshTree = async event => {
+      if (event.detail?.projectId !== project.id || !/workspace|file|snapshot/i.test(event.detail?.type || "")) return;
+      const currentRequest = ++request;
+      try {
+        const response = await getProjectTreeApi(project.id);
+        if (!alive || currentRequest !== request) return;
+        const next = { tree: response.data || [], snapshotId: response.snapshotId, workspaceRevision: response.workspaceRevision };
+        queryClient.setQueryData(["projectTree", user?.id, project.id], next);
+        setFileTree(next.tree);
+        setTreeVersion({ snapshotId: next.snapshotId, expectedWorkspaceRevision: next.workspaceRevision });
+      } catch { /* A revoked project is handled by the access boundary. */ }
+    };
+    window.addEventListener("covai:project-event", refreshTree);
+    return () => { alive = false; window.removeEventListener("covai:project-event", refreshTree); };
+  }, [project?.id, user?.id]);
+
   const handleChangeProject = (projectId) => {
     if (project?.id === projectId) return;
     setFileTree([]);
@@ -478,6 +596,7 @@ function LayoutInner() {
   };
 
   const handleDeleteProject = async (projectId) => {
+    if (project?.id === projectId && !projectAccess.can("project.delete")) return;
     try {
       const { deleteProjectApi } =
         await import("../../services/project.service");
@@ -585,13 +704,15 @@ function LayoutInner() {
   };
 
   const refreshProjectFiles = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["projectTree"] });
+    await projectAccess.refetch();
     await loadData(project?.id, 1, 0);
   };
 
   const handleCreateFile = async (filePath) => {
-    if (!project) return;
+    if (!project || !projectAccess.can("files.write")) return;
     try {
-      await createProjectFileApi(project.id, filePath);
+      await createProjectFileApi(project.id, filePath, "", treeVersion || {});
       await refreshProjectFiles();
       handleOpenFile({
         id: filePath.replace(/\\/g, "/"),
@@ -604,9 +725,9 @@ function LayoutInner() {
   };
 
   const handleCreateFolder = async (folderPath) => {
-    if (!project) return;
+    if (!project || !projectAccess.can("files.write")) return;
     try {
-      await createProjectFolderApi(project.id, folderPath);
+      await createProjectFolderApi(project.id, folderPath, treeVersion || {});
       await refreshProjectFiles();
     } catch (err) {
       showToast({ type: "error", title: "Could not create folder" });
@@ -614,9 +735,9 @@ function LayoutInner() {
   };
 
   const handleRenameEntry = async (filePath, newPath) => {
-    if (!project) return;
+    if (!project || !projectAccess.can("files.write")) return;
     try {
-      await renameProjectEntryApi(project.id, filePath, newPath);
+      await renameProjectEntryApi(project.id, filePath, newPath, treeVersion || {});
       setTabs((prev) =>
         prev.map((tab) =>
           tab.id === filePath
@@ -633,9 +754,9 @@ function LayoutInner() {
   };
 
   const handleDeleteEntry = async (node) => {
-    if (!project) return;
+    if (!project || !projectAccess.can("files.write")) return;
     try {
-      await deleteProjectEntryApi(project.id, node.id);
+      await deleteProjectEntryApi(project.id, node.id, treeVersion || {});
       setTabs((prev) =>
         prev.filter(
           (tab) => tab.id !== node.id && !tab.id.startsWith(`${node.id}/`),
@@ -733,8 +854,17 @@ function LayoutInner() {
           {project?.name && (
             <div className="hidden sm:flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] font-mono min-w-0 overflow-hidden">
               <span className="flex-shrink-0 select-none">/</span>
+              <button
+                type="button"
+                onClick={() => navigate("/projects")}
+                className="text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] font-medium transition-colors cursor-pointer"
+                title="Return to Projects Quality Portfolio"
+              >
+                Projects
+              </button>
+              <span className="flex-shrink-0 select-none">/</span>
               <span
-                className="text-[var(--color-text-secondary)] font-medium truncate max-w-[120px] md:max-w-[180px]"
+                className="text-[var(--color-text)] font-semibold truncate max-w-[120px] md:max-w-[180px]"
                 title={project.name}
               >
                 {project.name}
@@ -862,7 +992,7 @@ function LayoutInner() {
           </motion.div>
         )}
         <AnimatePresence initial={false}>
-          {sidebarOpen && activeActivity !== "architecture" && (
+          {sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && (
             <motion.div
               key="sidebar"
               initial={
@@ -888,7 +1018,8 @@ function LayoutInner() {
                     maxWidth: "85vw",
                     overflow: "hidden",
                     zIndex: 35,
-                    boxShadow: "4px 0 24px rgba(0,0,0,0.4)",
+                    borderRight: "1px solid var(--color-border-strong)",
+                    boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.25)",
                   }
                   : {
                     overflow: "hidden",
@@ -899,6 +1030,7 @@ function LayoutInner() {
             >
               {activeActivity === "settings" ? (
                 <SettingsSidebar
+                  project={project}
                   activeSetting={activeSetting}
                   onSelectSetting={(s) => {
                     setActiveSetting(s);
@@ -909,7 +1041,7 @@ function LayoutInner() {
                 <CoveragePanel
                   sidebarWidth={sidebarWidth}
                   coverageType={coverageType}
-                  setCoverageType={setCoverageType}
+                  setCoverageType={handleSelectCoverageType}
                 />
               ) : activeActivity === "git" ? (
                 <GitPanel projectId={project?.id} onSync={handleGitSync} />
@@ -938,7 +1070,7 @@ function LayoutInner() {
             </motion.div>
           )}
         </AnimatePresence>
-        {!isMobile && sidebarOpen && activeActivity !== "architecture" && (
+        {!isMobile && sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && (
           <PanelResizer
             onMouseDown={handleSidebarResize}
             isDragging={isDraggingSidebar}
@@ -956,6 +1088,7 @@ function LayoutInner() {
           <div className={activeActivity === "settings" ? "w-full h-full overflow-y-auto" : "hidden"}>
             {isMobile && (
               <SettingsSidebar
+                project={project}
                 activeSetting={activeSetting}
                 onSelectSetting={setActiveSetting}
                 variant="tabs"
@@ -966,6 +1099,7 @@ function LayoutInner() {
             {activeSetting === "security" && <Security />}
             {activeSetting === "notifications" && <NotificationsSettings />}
             {activeSetting === "billing" && <Billing />}
+            {activeSetting === "members" && project?.id && <ProjectMembersSettings key={project.id} projectId={project.id} projectName={project.name} access={projectAccess.access} loading={projectAccess.isPending} error={projectAccess.error} onRetry={projectAccess.refetch} tab={membersTab} onTabChange={setMembersTabInUrl} />}
           </div>
 
           <div className={activeActivity === "jobs" ? "w-full h-full overflow-y-auto" : "hidden"}>
@@ -979,11 +1113,36 @@ function LayoutInner() {
             />
           </div>
 
+          <div className={activeActivity === "overview" ? "w-full h-full overflow-y-auto" : "hidden"}>
+            <UnifiedDashboard
+              projectId={project?.id}
+              project={project}
+              projects={projects}
+              onSelectProject={handleChangeProject}
+              snapshotId={
+                searchParams.get("snapshotId") ||
+                project?.latestSnapshotId ||
+                project?.snapshots?.[0]?.id ||
+                (project?.id
+                  ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                  : null) ||
+                testPromptSnapshotId
+              }
+              onNavigateWorkspace={(pillar, focus) => {
+                const targetUrl = buildWorkspaceUrl(location, pillar, focus);
+                navigate(targetUrl);
+              }}
+              onAskAi={handleAskAiPrompt}
+            />
+          </div>
+
           <div className={activeActivity === "coverage" ? "w-full h-full overflow-hidden" : "hidden"}>
             <div className={coverageType === "unit" ? "h-full overflow-y-auto" : "hidden"}>
               <UnitTestDashboard
                 snapshotId={
+                  searchParams.get("snapshotId") ||
                   project?.latestSnapshotId ||
+                  project?.snapshots?.[0]?.id ||
                   (project?.id
                     ? localStorage.getItem(`latestSnapshot_${project.id}`)
                     : null) ||
@@ -999,7 +1158,9 @@ function LayoutInner() {
             <div className={coverageType === "integration" ? "h-full overflow-hidden flex flex-col min-h-0" : "hidden"}>
               <IntegrationTestDashboard
                 snapshotId={
+                  searchParams.get("snapshotId") ||
                   project?.latestSnapshotId ||
+                  project?.snapshots?.[0]?.id ||
                   (project?.id
                     ? localStorage.getItem(`latestSnapshot_${project.id}`)
                     : null) ||
@@ -1017,6 +1178,7 @@ function LayoutInner() {
             <div className={coverageType === "system" ? "h-full overflow-y-auto" : "hidden"}>
               <SystemTestDashboard
                 snapshotId={
+                  project?.snapshots?.[0]?.id ||
                   project?.latestSnapshotId ||
                   (project?.id
                     ? localStorage.getItem(`latestSnapshot_${project.id}`)
@@ -1029,8 +1191,9 @@ function LayoutInner() {
             </div>
           </div>
 
-          <div className={activeActivity !== "settings" && activeActivity !== "jobs" && activeActivity !== "architecture" && activeActivity !== "coverage" ? "w-full h-full" : "hidden"}>
+          <div className={activeActivity !== "settings" && activeActivity !== "jobs" && activeActivity !== "architecture" && activeActivity !== "coverage" && activeActivity !== "overview" ? "w-full h-full" : "hidden"}>
                 <Editor
+                  key={`${user?.id}:${project?.id}:${project?.snapshots?.[0]?.id || project?.latestSnapshotId || ""}`}
                   tabs={tabs}
                   activeTabId={activeTabId}
                   onSelectTab={(tabId) => {
@@ -1043,6 +1206,7 @@ function LayoutInner() {
                   isLoadingTree={isLoadingTree}
                   projectId={project?.id}
                   snapshotId={
+                    project?.snapshots?.[0]?.id ||
                     project?.latestSnapshotId ||
                     (project?.id
                       ? localStorage.getItem(`latestSnapshot_${project.id}`)
@@ -1103,9 +1267,11 @@ function LayoutInner() {
                 }
               >
                 <AIPanel
+                  key={`${user?.id}:${project?.id}`}
                   screenContext={screenContext}
                   projectId={project?.id}
                   snapshotId={
+                    project?.snapshots?.[0]?.id ||
                     project?.latestSnapshotId ||
                     (project?.id
                       ? localStorage.getItem(`latestSnapshot_${project.id}`)
@@ -1209,7 +1375,7 @@ function LayoutInner() {
         <ProjectExportDialog
           key={project.id}
           project={project}
-          initialSnapshotId={project.latestSnapshotId || localStorage.getItem(`latestSnapshot_${project.id}`)}
+          initialSnapshotId={project.snapshots?.[0]?.id || project.latestSnapshotId || localStorage.getItem(`latestSnapshot_${project.id}`)}
           onClose={() => setShowExport(false)}
         />
       )}

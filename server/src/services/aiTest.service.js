@@ -1,3 +1,4 @@
+import { resolveProjectAccess, membershipWhere } from './projectAccess.service.js';
 import prisma from "../config/prisma.js";
 import { ServiceError } from "./project.service.js";
 import { generateText } from "./gemini.service.js";
@@ -8,7 +9,8 @@ import { createAiTestsJob } from "./job.service.js";
 import { extractValidEndpoints } from "./apiEndpointParser.service.js";
 import { addJobToQueue } from "./queue.service.js";
 
-export const queueSupertestGeneration = async ({ projectId, snapshotId, userId, force, targetEndpoints }) => {
+export const queueSupertestGeneration = async ({ projectId, snapshotId, userId, force, targetEndpoints, model }) => {
+  await resolveProjectAccess({ projectId, userId, capability: "ai.use" });
   const db = prisma;
 
   // 1. Verify project ownership
@@ -23,11 +25,7 @@ export const queueSupertestGeneration = async ({ projectId, snapshotId, userId, 
     throw err;
   }
 
-  if (project.ownerId !== userId) {
-    const err = new Error("Forbidden: You do not have access to this project");
-    err.status = 403;
-    throw err;
-  }
+  await resolveProjectAccess({ projectId, userId, capability: "project.read" });
 
   // 2. Resolve snapshot — use the provided one or fall back to the latest
   let resolvedSnapshotId = snapshotId;
@@ -105,12 +103,19 @@ export const queueSupertestGeneration = async ({ projectId, snapshotId, userId, 
 
   // 3. Create job (deduped — reuses active job if exists)
   const job = await createAiTestsJob({
+    model,
     projectId,
     snapshotId: resolvedSnapshotId,
     userId,
     mode: "SUPERTEST",
     targetEndpoints,
   });
+
+  // Invalidate any stale endpoint cache so fresh status/paths are loaded
+  try {
+    const { invalidateEndpointCache } = await import("./integrationWorkspace.service.js");
+    invalidateEndpointCache(resolvedSnapshotId);
+  } catch (e) {}
 
   // 4. Fire-and-forget queue addition (non-blocking)
   if (!job.existing) {
@@ -125,7 +130,7 @@ export const queueSupertestGeneration = async ({ projectId, snapshotId, userId, 
 export const getAiTestById = async ({ projectId, testId, userId }) => {
   // 1. Verify project ownership
   const project = await prisma.project.findFirst({
-    where: { id: projectId, ownerId: userId },
+    where: { id: projectId, ...membershipWhere(userId) },
   });
 
   if (!project) {
@@ -152,7 +157,7 @@ export const listAiTests = async ({
 }) => {
   // 1. Verify project ownership
   const project = await prisma.project.findFirst({
-    where: { id: projectId, ownerId: userId },
+    where: { id: projectId, ...membershipWhere(userId) },
   });
 
   if (!project) {
@@ -194,30 +199,8 @@ export const saveAiTestResult = async (data) => {
     where: { id: aiTestId },
   });
 
-  if (!aiTest) {
-    console.warn(
-      `AiTest with id ${aiTestId} not found. Creating a placeholder.`,
-    );
-
-    const project = await db.project.findFirst();
-    const snapshot = await db.projectSnapshot.findFirst();
-
-    if (project && snapshot) {
-      await db.aiTest.create({
-        data: {
-          id: aiTestId,
-          projectId: project.id,
-          snapshotId: snapshot.id,
-          mode: "SKELETON",
-          content: "Placeholder content for testing",
-        },
-      });
-    } else {
-      throw new Error(
-        `Cannot create AiTest placeholder: No project or snapshot found.`,
-      );
-    }
-  }
+  if (!aiTest) throw new ServiceError("AI Test not found", 404);
+  await resolveProjectAccess({ projectId: aiTest.projectId, userId: data.userId, capability: "tests.run" });
 
   return await db.aiTestResult.upsert({
     where: { aiTestId },
@@ -261,13 +244,7 @@ export const getAiTestsList = async ({
     throw error;
   }
 
-  if (project.ownerId !== userId) {
-    const error = new Error(
-      "Forbidden: You do not have access to this project",
-    );
-    error.status = 403;
-    throw error;
-  }
+  await resolveProjectAccess({ projectId, userId, capability: "project.read" });
 
   // Pagination calculations
   const skip = (Math.max(1, page) - 1) * limit;
@@ -325,6 +302,7 @@ export const getAiTestsList = async ({
  * @returns {Promise<{ id: string, snapshotId: string, status: string, existing: boolean }>}
  */
 export const queueCypressGeneration = async ({ projectId, snapshotId, userId }) => {
+  await resolveProjectAccess({ projectId, userId, capability: "ai.use" });
   const db = prisma;
 
   // 1. Verify project ownership
@@ -339,11 +317,7 @@ export const queueCypressGeneration = async ({ projectId, snapshotId, userId }) 
     throw err;
   }
 
-  if (project.ownerId !== userId) {
-    const err = new Error("Forbidden: You do not have access to this project");
-    err.status = 403;
-    throw err;
-  }
+  await resolveProjectAccess({ projectId, userId, capability: "project.read" });
 
   // 2. Resolve snapshot — use the provided one or fall back to the latest
   let resolvedSnapshotId = snapshotId;

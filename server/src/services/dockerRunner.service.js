@@ -29,8 +29,8 @@ const killProcessTree = (proc) => {
   if (!proc || !proc.pid) return;
   if (process.platform === "win32") {
     try {
-      spawnSync("taskkill", ["/pid", String(proc.pid), "/T", "/F"]);
-      return;
+      const result = spawnSync("taskkill", ["/pid", String(proc.pid), "/T", "/F"], {windowsHide:true});
+      if(result.status === 0) return;
     } catch (_) { }
   }
 
@@ -98,11 +98,13 @@ export const dockerRunner = {
    * @param {string} [params.image] - Optional Docker image; ignored by direct-shell fallback
    * @returns {Promise<{ success: boolean, exitCode: number, stdout: string, stderr: string }>}
    */
-  run: async ({ snapshotPath, command, timeoutMs = DEFAULT_TIMEOUT_MS, jobId = null, image = "node:22", env = {}, forceHost = false }) => {
+  run: async ({ snapshotPath, command, timeoutMs = DEFAULT_TIMEOUT_MS, jobId = null, image = "node:22", env = {}, forceHost = false, signal }) => {
+    if (signal?.aborted) throw new ServiceError('Execution canceled', 409);
     return new Promise((resolve, reject) => {
       let stdout = "";
       let stderr = "";
       let timedOut = false;
+      let canceled = false;
 
       // Docker run command:
       // --rm: Remove container after exit
@@ -194,6 +196,14 @@ export const dockerRunner = {
         child = spawn(command, { shell: true, cwd: effectiveSnapshotPath, env: mergedEnv, stdio: ["pipe", "pipe", "pipe"] });
       }
       try { child.stdin?.end(); } catch { }
+      const abort = () => {
+        canceled = true;
+        timedOut = true;
+        clearTimeout(timer);
+        killProcessTree(child);
+      };
+      signal?.addEventListener('abort', abort, { once: true });
+      if (signal?.aborted) abort();
 
       // Close child stdin immediately so non-interactive tools (like npx) never hang waiting for input
       try {
@@ -282,6 +292,7 @@ export const dockerRunner = {
           flushTimer = null;
         }
         await flushOutput();
+        if(canceled) { reject(new ServiceError('Execution canceled or resource budget exceeded',409)); return; }
         if (timedOut) return;
         killProcessTree(child);
         const mode = DOCKER_AVAILABLE && !forceHost ? "Docker" : "shell";
@@ -292,6 +303,7 @@ export const dockerRunner = {
       });
 
       child.on("close", async (code) => {
+        signal?.removeEventListener('abort', abort);
         clearTimeout(timer);
         if (heartbeatTimer) {
           clearInterval(heartbeatTimer);
@@ -302,6 +314,7 @@ export const dockerRunner = {
           flushTimer = null;
         }
         await flushOutput();
+        if(canceled) { reject(new ServiceError('Execution canceled or resource budget exceeded',409)); return; }
         if (timedOut) return;
 
         if (jobId) {

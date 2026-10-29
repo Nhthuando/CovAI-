@@ -1,4 +1,5 @@
 import rateLimit from "express-rate-limit";
+import { isCollaborationLocalTest } from '../config/collaborationLocal.js';
 
 /**
  * Global rate limiter — applies to all requests.
@@ -21,7 +22,7 @@ export const globalLimiter = rateLimit({
  */
 export const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: isCollaborationLocalTest() ? 1000 : 10,
   standardHeaders: true,
   legacyHeaders: false,
   message: {

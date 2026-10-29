@@ -1,3 +1,4 @@
+import { validateSelectedAiModel } from '../utils/selectedAiModel.js';
 /**
  * @file job.service.js
  * @description Core job lifecycle service — create, progress, state transitions,
@@ -5,9 +6,14 @@
  */
 
 import prisma from "../config/prisma.js";
+import { admitProjectOperation } from "./projectOperation.service.js";
+import { operationSnapshot, currentProjectOperation, withOperationPublishGuard, stagePreparedPublication, deferPreparedCommit } from "./projectOperationWorkspace.service.js";
+import { resolveProjectAccess, withProjectGuard } from "./projectAccess.service.js";
+import { deliverProjectEvent, publishProjectEvent } from "./projectEvent.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { notificationService } from "./notification.service.js";
 import { reuseSnapshotHistory } from "./snapshotReuse.service.js";
+import { abortJob, isJobCanceled } from "./jobCancellation.service.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -30,6 +36,9 @@ const JOB_TYPES = Object.freeze([
   "CODE_HYGIENE",
   "RUN_VITEST_TESTS",
   "SYSTEM_TEST_ANALYSIS",
+  "SYSTEM_TEST_ASSESSMENT",
+  "SYSTEM_TEST_IMPROVEMENT",
+  "SYSTEM_TEST_MUTATION",
   "VITEST_COVERAGE",
   "CYPRESS_SYSTEM_TEST",
   "CYPRESS_SYSTEM_COVERAGE",
@@ -64,6 +73,16 @@ const normalizeJobError = (error) => {
   return new Error(typeof error === "string" ? error : JSON.stringify(error));
 };
 
+const emitSharedJobState = async job => {
+  if (!job?.projectId || !job.userId) return;
+  try {
+    const event = await withProjectGuard({projectId:job.projectId,userId:job.userId,capability:'project.read'}, tx =>
+      publishProjectEvent({tx,projectId:job.projectId,type:'job.updated',actorId:job.userId,resourceId:job.id,
+        payload:{status:job.status,progress:job.progress}}));
+    await deliverProjectEvent(event);
+  } catch { /* Persisted job status remains authoritative if delivery fails. */ }
+};
+
 export const addJobLog = async (jobId, level, message, client = prisma) => {
   return client.jobLog.create({ data: { jobId, level, message } });
 };
@@ -83,6 +102,9 @@ const LONG_RUNNING_JOB_TYPES = [
   "PLAYWRIGHT_SYSTEM_TEST",
   "PLAYWRIGHT_SYSTEM_COVERAGE",
   "SYSTEM_TEST_ANALYSIS",
+  "SYSTEM_TEST_ASSESSMENT",
+  "SYSTEM_TEST_IMPROVEMENT",
+  "SYSTEM_TEST_MUTATION",
   "INSTALL_DEPS",
 ];
 
@@ -242,24 +264,26 @@ const assertNoActiveJob = async (projectId, type, client = prisma, extraFilters 
 
 const createTypedJob =
   (type) =>
-    ({ projectId, snapshotId, userId }) =>
+    ({ projectId, snapshotId, userId, payloadJson, requestId }) =>
       createSnapshotJob({
         projectId,
         snapshotId,
         userId,
         type,
-        payloadJson: { snapshotId },
+        payloadJson: { snapshotId, ...payloadJson },
+        requestId,
       });
 
 export const createInstallDepsJob = createTypedJob("INSTALL_DEPS");
 
-export const createRunTestsJob = ({ projectId, snapshotId, userId, mode = "FULL" }) =>
+export const createRunTestsJob = ({ projectId, snapshotId, userId, mode = "FULL", testType, requestId, chainBuildCfg = false }) =>
   createSnapshotJob({
     projectId,
     snapshotId,
     userId,
     type: "RUN_TESTS",
-    payloadJson: { snapshotId, mode },
+    payloadJson: { snapshotId, mode, ...(testType ? { testType } : {}), ...(chainBuildCfg ? { chainBuildCfg: true } : {}) },
+    requestId,
   });
 
 /** Creates a queued RUN_VITEST_TESTS job for a snapshot. */
@@ -313,80 +337,27 @@ export const createPerformanceAnalysisJob = createTypedJob("PERFORMANCE_ANALYSIS
 export const createAiSuggestJob = createTypedJob("AI_SUGGEST");
 export const createCodeHygieneJob = createTypedJob("CODE_HYGIENE");
 
-export const createAiTestsJob = async ({ projectId, snapshotId, userId, mode = "SKELETON", executionMode = "full", targetEndpoints = null }) => {
+export const createAiTestsJob = async ({ projectId, snapshotId, userId, mode = "SKELETON", executionMode = "full", targetEndpoints = null, model, aiTestId, scenarioId, expectedVersion, requestId }) => {
+  validateSelectedAiModel(model);
   if (["PLAYWRIGHT_E2E","PLAYWRIGHT"].includes(mode) && executionMode !== "full") throw new ServiceError("System Test generation requires full-system execution.",400);
   if (!["frontend", "full"].includes(executionMode)) throw new ServiceError("Invalid executionMode", 400);
-  const existing = await prisma.job.findFirst({
-    where: {
-      projectId,
-      snapshotId,
-      type: "AI_TESTS",
-      status: { in: ["QUEUED", "RUNNING"] },
-      payloadJson: { contains: `"mode":"${mode}"` }
-    }
-  });
-
-  if (existing) {
-    return { ...existing, existing: true };
-  }
-
   return createSnapshotJob({
     projectId,
     snapshotId,
     userId,
     type: "AI_TESTS",
-    payloadJson: { snapshotId, mode, executionMode, targetEndpoints },
+    payloadJson: { snapshotId, mode, executionMode, targetEndpoints, model:model || process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+      ...(aiTestId ? { aiTestId } : {}), ...(scenarioId ? { scenarioId } : {}), ...(expectedVersion ? { expectedVersion } : {}) },
+    ...(requestId ? { requestId } : {}),
   });
 };
 
-export const createAnalysisJob = async ({ projectId, snapshotId, userId }) => {
-  assertStringField(projectId, "projectId");
-  assertStringField(snapshotId, "snapshotId");
-  assertStringField(userId, "userId");
-
-  const snapshot = await prisma.projectSnapshot.findFirst({
-    where: { id: snapshotId, projectId, project: { ownerId: userId } },
-  });
-  if (!snapshot) throw new ServiceError("Project or snapshot not found", 404);
-  if (!snapshot.rootDir)
-    throw new ServiceError("Project snapshot is not ready for analysis", 409);
-
-  const activeWhere = {
-    projectId,
-    snapshotId,
-    type: "ANALYSIS",
-    status: { in: ["QUEUED", "RUNNING"] },
-  };
-  const active = await prisma.job.findFirst({
-    where: activeWhere,
-    orderBy: { createdAt: "desc" },
-  });
-  if (active) return { ...active, reused: true };
-
-  try {
-    const job = await prisma.job.create({
-      data: {
-        projectId,
-        snapshotId,
-        userId,
-        type: "ANALYSIS",
-        status: "QUEUED",
-        progress: 0,
-        payloadJson: JSON.stringify({ snapshotId }),
-      },
-    });
-    await addJobLog(job.id, "INFO", "Architecture analysis job created");
-    return { ...job, reused: false };
-  } catch (error) {
-    if (error?.code === "P2002") {
-      const concurrent = await prisma.job.findFirst({
-        where: activeWhere,
-        orderBy: { createdAt: "desc" },
-      });
-      if (concurrent) return { ...concurrent, reused: true };
-    }
-    throw error;
-  }
+export const createAnalysisJob = async ({ projectId, snapshotId, userId, requestId }) => {
+  assertStringField(projectId,'projectId');
+  assertStringField(snapshotId,'snapshotId');
+  assertStringField(userId,'userId');
+  const admitted = await admitProjectOperation({projectId,snapshotId,userId,type:'ANALYSIS',input:{snapshotId},requestId});
+  return {...admitted.job,reused:admitted.reused,operationId:admitted.operationId};
 };
 
 // ---------------------------------------------------------------------------
@@ -494,6 +465,7 @@ export const createSnapshotJob = async ({
   userId,
   type,
   payloadJson = null,
+  requestId,
 }) => {
   assertStringField(projectId, "projectId");
   assertStringField(snapshotId, "snapshotId");
@@ -506,6 +478,12 @@ export const createSnapshotJob = async ({
       400,
     );
   }
+
+  if (['RUN_TESTS','ANALYSIS','AI_TESTS','AI_SUGGEST','SUPERTEST_COVERAGE','INSTALL_DEPS','RUN_VITEST_TESTS','VITEST_COVERAGE','BUILD_CFG','PERFORMANCE_ANALYSIS','CODE_HYGIENE','QUALITY_ANALYSIS','SECURITY_ANALYSIS','SYSTEM_TEST_ANALYSIS','SYSTEM_TEST_ASSESSMENT','SYSTEM_TEST_IMPROVEMENT','SYSTEM_TEST_MUTATION'].includes(type)) {
+    const admitted = await admitProjectOperation({projectId,snapshotId,userId,type,input:payloadJson || {},requestId});
+    return {...admitted.job,reused:admitted.reused,operationId:admitted.operationId};
+  }
+  await resolveProjectAccess({projectId,userId,capability:type.startsWith('AI_') ? 'ai.use' : 'tests.run'});
 
   const [snapshot, user] = await Promise.all([
     prisma.projectSnapshot.findUnique({
@@ -576,6 +554,7 @@ export const updateJobProgress = async (jobId, progress) => {
   });
 
   await addJobLog(jobId, "INFO", `Progress ${clamped}%`);
+  await emitSharedJobState(job);
   return job;
 };
 
@@ -602,15 +581,36 @@ export const markJobRunning = async (jobId) => {
   return job;
 };
 
-export const markJobSuccess = async (jobId, resultJson) => {
+export const markJobSuccess = async (jobId,resultJson) => {
+  if (currentProjectOperation()?.preparedPublications) {
+    const current = await prisma.job.findUnique({where:{id:jobId}});
+    await stagePreparedPublication(async tx => {
+      const completed = await markJobSuccessInternal(jobId,resultJson,tx,false);
+      deferPreparedCommit(async()=>{
+        await notificationService.createJobFinishedNotification(jobId);
+      });
+    });
+    return {...current,status:'SUCCESS'};
+  }
+  const job = await withOperationPublishGuard(tx => markJobSuccessInternal(jobId,resultJson,tx,false));
+  await emitSharedJobState(job);
+  try { await notificationService.createJobFinishedNotification(jobId); }
+  catch (error) { console.error(`[job.service] Notification failed for job ${jobId}:`,error); }
+  return job;
+};
+
+const markJobSuccessInternal = async (jobId, resultJson, db = prisma, notify = true) => {
   assertStringField(jobId, "jobId");
 
-  const currentJob = await prisma.job.findUnique({
+  const currentJob = await db.job.findUnique({
     where: { id: jobId },
     select: { id: true, status: true, userId: true, projectId: true, startedAt: true },
   });
 
   if (!currentJob) throw new ServiceError("Job not found", 404);
+  if (isJobCanceled(jobId) || currentJob.status === "CANCELED") {
+    throw new ServiceError("Cannot mark a canceled job as succeeded", 400);
+  }
   if (currentJob.status !== "RUNNING")
     throw new ServiceError("Only running jobs can be marked as succeeded", 400);
 
@@ -622,7 +622,7 @@ export const markJobSuccess = async (jobId, resultJson) => {
     : 0;
 
   const [job] = await Promise.all([
-    prisma.job.update({
+    db.job.update({
       where: { id: jobId },
       data: {
         status: "SUCCESS",
@@ -634,17 +634,17 @@ export const markJobSuccess = async (jobId, resultJson) => {
     }),
     // Runners stream their output while a job is running. Keep that diagnostic
     // output intact; only use the result JSON as output when nothing was streamed.
-    prisma.jobOutput.upsert({
+    db.jobOutput.upsert({
       where: { jobId },
       create: { jobId, stdout: resultString },
       update: {},
     }),
   ]);
 
-  await addJobLog(jobId, "INFO", "Job succeeded");
+  await addJobLog(jobId, "INFO", "Job succeeded", db);
 
   try {
-    await notificationService.createJobFinishedNotification(jobId);
+    if (notify) await notificationService.createJobFinishedNotification(jobId);
   } catch (err) {
     console.error(`[job.service] Notification failed for job ${jobId}:`, err);
   }
@@ -727,10 +727,22 @@ export const cancelJob = async (jobId) => {
 
   const currentJob = await prisma.job.findUnique({
     where: { id: jobId },
-    select: { id: true, status: true },
+    select: { id: true, status: true, userId: true, projectId: true },
   });
 
   if (!currentJob) throw new ServiceError("Job not found", 404);
+
+  // Idempotent: repeated cancel requests return the canceled job safely
+  if (currentJob.status === "CANCELED") {
+    abortJob(jobId);
+    return currentJob;
+  }
+
+  // Finished jobs cannot be canceled
+  if (currentJob.status === "SUCCESS") {
+    throw new ServiceError("Cannot cancel a job that has already completed successfully", 400);
+  }
+
   if (!["QUEUED", "RUNNING"].includes(currentJob.status)) {
     throw new ServiceError("Only queued or running jobs can be canceled", 400);
   }
@@ -740,7 +752,9 @@ export const cancelJob = async (jobId) => {
     data: { status: "CANCELED", finishedAt: new Date() },
   });
 
+  await prisma.projectOperation.updateMany({where:{primaryJobId:jobId,status:{in:['ADMITTED','QUEUED','RUNNING','PUBLISHING']}},data:{status:'CANCELED'}});
   await addJobLog(jobId, "INFO", "Job canceled");
+  abortJob(jobId);
   return job;
 };
 
@@ -797,7 +811,7 @@ export const getJobById = async (jobId) => {
   });
 
   if (!job) throw new ServiceError("Job not found", 404);
-  return job;
+  return {...job,snapshot:operationSnapshot(job.snapshot)};
 };
 
 export const getProjectJobs = async (projectId) => {

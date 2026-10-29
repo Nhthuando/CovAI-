@@ -1,4 +1,5 @@
 import { buildCfgForSnapshot } from "./buildCfg.service.js";
+import { currentProjectOperation, deferPreparedCommit } from './projectOperationWorkspace.service.js';
 import {
   markJobRunning,
   markJobSuccess,
@@ -72,14 +73,18 @@ export async function processBuildCfgJob(job) {
     const result = await buildCfgForSnapshot(snapshotId);
     await markJobSuccess(jobId, result);
 
-    const performanceJob = await createPerformanceAnalysisJob({
-      projectId: jobObj.projectId,
-      snapshotId,
-      userId: jobObj.userId,
-    });
-    const { addJobToQueue } = await import("./queue.service.js");
-    await addJobToQueue("PERFORMANCE_ANALYSIS", performanceJob.id);
-    console.log(`[BuildCfgJob ${jobId}] Queued PERFORMANCE_ANALYSIS job ${performanceJob.id}.`);
+    const startPerformance = async () => {
+      const performanceJob = await createPerformanceAnalysisJob({
+        projectId: jobObj.projectId,
+        snapshotId,
+        userId: jobObj.userId,
+      });
+      const { addJobToQueue } = await import("./queue.service.js");
+      await addJobToQueue("PERFORMANCE_ANALYSIS", performanceJob.id);
+      console.log(`[BuildCfgJob ${jobId}] Queued PERFORMANCE_ANALYSIS job ${performanceJob.id}.`);
+    };
+    if (currentProjectOperation()?.preparedPublications) deferPreparedCommit(startPerformance);
+    else await startPerformance();
   } catch (error) {
     console.error(`Error processing job ${jobId}:`, error);
     // Only mark failed if we know it's a valid job

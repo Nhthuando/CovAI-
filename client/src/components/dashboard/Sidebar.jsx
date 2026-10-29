@@ -1,3 +1,4 @@
+import { useProjectAccess } from "../../hooks/useProjectAccess";
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -506,6 +507,7 @@ export default function Sidebar({
   onRenameEntry,
   onDeleteEntry,
 }) {
+  const access = useProjectAccess(project?.id);
   const [projectToDelete, setProjectToDelete] = useState(null);
   const [itemToDelete, setItemToDelete] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -515,6 +517,7 @@ export default function Sidebar({
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const handleStartAction = (act) => {
+    if (!access.can("files.write")) return;
     if (act.type === "delete") {
       setItemToDelete(act.node);
     } else {
@@ -614,7 +617,7 @@ export default function Sidebar({
             whileTap={{ scale: 0.9 }}
             className="p-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer border-0 bg-transparent"
             title="New File at root"
-            aria-label="New File at root"
+            aria-label="New File at root" disabled={!access.can("files.write")}
             onClick={() => handleStartAction({ type: "file", parentPath: "" })}
           >
             <Plus size={14} />
@@ -624,7 +627,7 @@ export default function Sidebar({
             whileTap={{ scale: 0.9 }}
             className="p-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer border-0 bg-transparent"
             title="New Folder at root"
-            aria-label="New Folder at root"
+            aria-label="New Folder at root" disabled={!access.can("files.write")}
             onClick={() =>
               handleStartAction({ type: "folder", parentPath: "" })
             }

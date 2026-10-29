@@ -54,9 +54,12 @@ describe('deleteProject service', () => {
   const userId = 'user-abc';
 
   beforeEach(() => {
-    jest.resetAllMocks();
+    jest.clearAllMocks();
     cleanupStorage.mockResolvedValue();
     mockPrisma.job.findFirst.mockResolvedValue(null);
+    mockPrisma.project.findFirst = jest.fn((...args) => mockPrisma.project.findUnique(...args));
+    mockPrisma.$executeRaw = jest.fn().mockResolvedValue(1);
+    mockPrisma.$transaction.mockImplementation(run => typeof run === 'function' ? run(mockPrisma) : Promise.resolve());
   });
 
   it('throws 404 when project does not exist', async () => {
@@ -112,7 +115,8 @@ describe('deleteProject service', () => {
       where: { id: projectId },
     });
     // Should NOT have needed to invoke the heavy 14-statement transaction
-    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(1);
   });
 
   it('falls back to manual transaction cascade if native delete fails', async () => {
@@ -122,16 +126,15 @@ describe('deleteProject service', () => {
     });
     mockPrisma.projectSnapshot.findMany.mockResolvedValue([]);
     mockPrisma.project.delete.mockRejectedValueOnce(
-      new Error('Foreign key constraint violation'),
+      Object.assign(new Error('Foreign key constraint violation'), { code: 'P2003' }),
     );
-    mockPrisma.$transaction.mockResolvedValue([]);
 
     await deleteProject(projectId, userId);
 
     expect(mockPrisma.project.delete).toHaveBeenCalledWith({
       where: { id: projectId },
     });
-    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(2);
   });
 
   it('keeps metadata after cleanup fails and allows a subsequent deletion retry', async () => {

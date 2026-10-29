@@ -1,5 +1,6 @@
 import { createCodeHygieneJob, getJobById, markJobFailed, markJobRunning, markJobSuccess, updateJobProgress } from './job.service.js';
 import { runPerformancePipelineStage } from './performancePipelineStage.service.js';
+import { currentProjectOperation, deferPreparedCommit } from './projectOperationWorkspace.service.js';
 
 /** Dedicated automatic pipeline job; no caller-facing trigger exists. */
 export const processPerformanceAnalysisJob = async (jobId) => {
@@ -13,13 +14,17 @@ export const processPerformanceAnalysisJob = async (jobId) => {
         await updateJobProgress(jobId, 90);
         await markJobSuccess(jobId, { snapshotId: job.snapshotId, metricId: metric.id, slowFunctionCount: result.slowFunctions.length });
 
-        const hygieneJob = await createCodeHygieneJob({
-            projectId: job.projectId,
-            snapshotId: job.snapshotId,
-            userId: job.userId
-        });
-        const { addJobToQueue } = await import('./queue.service.js');
-        await addJobToQueue('CODE_HYGIENE', hygieneJob.id);
+        const startHygiene = async () => {
+            const hygieneJob = await createCodeHygieneJob({
+                projectId: job.projectId,
+                snapshotId: job.snapshotId,
+                userId: job.userId
+            });
+            const { addJobToQueue } = await import('./queue.service.js');
+            await addJobToQueue('CODE_HYGIENE', hygieneJob.id);
+        };
+        if (currentProjectOperation()?.preparedPublications) deferPreparedCommit(startHygiene);
+        else await startHygiene();
     } catch (error) {
         console.error(`[PerformanceAnalysisJob ${jobId}] Failed:`, error);
         try { await markJobFailed(jobId, error); } catch (markError) {

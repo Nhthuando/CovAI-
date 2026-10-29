@@ -49,7 +49,7 @@ describe('coverage storage regression', () => {
         });
     });
 
-    it('updates ProjectSnapshot using the Prisma field storagePath and returns the storage prefix', async () => {
+    it('returns coverage artifact locations without changing the snapshot source pointer', async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'covai-coverage-'));
         const baseStoragePath = 'projects/proj-1/snapshots/snap-1/coverage';
 
@@ -61,10 +61,7 @@ describe('coverage storage regression', () => {
             const result = await storeCoverageOutputs('snap-1', 'proj-1', tempDir);
 
             expect(result.baseStoragePath).toBe(baseStoragePath);
-            expect(mockPrisma.projectSnapshot.update).toHaveBeenCalledWith({
-                where: { id: 'snap-1' },
-                data: { storagePath: baseStoragePath },
-            });
+            expect(mockPrisma.projectSnapshot.update).not.toHaveBeenCalled();
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }

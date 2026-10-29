@@ -3,10 +3,12 @@ import path from "path";
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { getAiSuggestions } from "./aiSuggestion.service.js";
+import { resolveProjectAccess } from "./projectAccess.service.js";
 
 const IGNORED_DIRECTORIES = new Set(["node_modules", ".git", "coverage", "dist", "build", ".next", ".vite", ".vitest", "storage", "uploads"]);
 
-export async function detectMissingTests(projectId) {
+export async function detectMissingTests(projectId, userId) {
+    await resolveProjectAccess({ projectId, userId, capability: "project.read" });
     const project = await prisma.project.findUnique({
         where: { id: projectId },
     });
@@ -99,7 +101,7 @@ export async function detectMissingTests(projectId) {
     try {
         const aiData = await getAiSuggestions({
             projectId: project.id,
-            userId: project.ownerId
+            userId
         });
         recommendation = aiData.suggestions;
     } catch (e) {

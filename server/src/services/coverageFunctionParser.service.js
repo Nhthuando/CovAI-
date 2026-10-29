@@ -1,3 +1,5 @@
+import { resolveProjectAccess } from './projectAccess.service.js';
+import { operationSnapshot,currentProjectOperation,stagePreparedPublication } from './projectOperationWorkspace.service.js';
 import fs from "fs";
 import path from "path";
 import prisma from "../config/prisma.js";
@@ -37,6 +39,10 @@ const extractFilePath = (entry, key, rootDir = "") => {
         raw = key;
     }
     if (!raw || typeof raw !== "string") return null;
+    if (rootDir && path.isAbsolute(raw)) {
+        const relative = path.relative(rootDir, raw);
+        if (relative && relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative)) raw = relative;
+    }
 
     return canonicalizeFilePath(raw, rootDir);
 };
@@ -200,7 +206,7 @@ export const parseCoverageFunctionsForSnapshot = async ({
         throw new ServiceError("Invalid coverage report", 400);
     }
 
-    const snapshot = await prisma.projectSnapshot.findFirst({
+    let snapshot = await prisma.projectSnapshot.findFirst({
         where: {
             id: snapshotId,
             projectId,
@@ -218,14 +224,8 @@ export const parseCoverageFunctionsForSnapshot = async ({
         throw new ServiceError("Snapshot not found for this project", 404);
     }
 
-    const effectiveUserId = userId || snapshot.project?.ownerId;
-    if (!effectiveUserId) {
-        throw new ServiceError("Cannot determine owner for snapshot", 403);
-    }
-
-    if (userId && snapshot.project && snapshot.project.ownerId !== userId) {
-        throw new ServiceError("You do not have permission to update coverage for this project", 403);
-    }
+    await resolveProjectAccess({ projectId, userId, capability: "tests.run" });
+    snapshot = operationSnapshot(snapshot);
 
     const functionRows = getFunctionCoverageRecords(coverageReport, snapshotId, snapshot.rootDir);
 
@@ -241,7 +241,7 @@ export const parseCoverageFunctionsForSnapshot = async ({
     }
     const uniqueFunctionRows = Array.from(dedupedFuncsMap.values());
 
-    await prisma.$transaction(async (tx) => {
+    const persist = async tx => {
         await tx.coverageFunction.deleteMany({
             where: { snapshotId },
         });
@@ -252,7 +252,9 @@ export const parseCoverageFunctionsForSnapshot = async ({
                 skipDuplicates: true,
             });
         }
-    });
+    };
+    if (currentProjectOperation()?.preparedPublications) await stagePreparedPublication(persist);
+    else await prisma.$transaction(persist);
 
     return {
         totalFunctions: uniqueFunctionRows.length,

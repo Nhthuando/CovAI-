@@ -1,5 +1,6 @@
 export default {
     testEnvironment: 'node',
+    setupFiles: ['<rootDir>/src/tests/helpers/databaseSafetySetup.js'],
     transform: {
         '^.+\\.(js|ts)$': ['babel-jest', {
             configFile: false,
@@ -21,6 +22,9 @@ export default {
         '/node_modules/',
         '/storage/',
         '/uploads/',
+        '/e2e/',
+        '/\\.covai-(?:temp|system-test|collaboration)/',
+        '/fixtures/system-assessment/',
     ],
     moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx'],
 };

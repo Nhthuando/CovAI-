@@ -162,7 +162,7 @@ test('login', async ({ page }) => {
       });
     });
 
-    it("computes synthetic route and component coverage when raw Istanbul artifacts are absent", () => {
+    it("does not infer source coverage when artifacts are absent", () => {
       const scenarios = [
         { title: "Smoke Test: Loads root", suiteName: "App", status: "passed", durationMs: 400, testFile: "tests/e2e/app.spec.js" },
         { title: "Navigation: Navigates to /login", suiteName: "Auth", status: "passed", durationMs: 500, testFile: "tests/e2e/auth.spec.js" },
@@ -184,17 +184,10 @@ test('login', async ({ page }) => {
         harvestedContext,
       });
 
-      expect(coverage.summary.totalRoutes).toBe(5);
-      expect(coverage.summary.coveredRoutes).toBeGreaterThanOrEqual(3);
-      expect(coverage.summary.routeCoveragePct).toBeGreaterThanOrEqual(60);
-      expect(coverage.summary.linesPct).toBeGreaterThan(0);
-      expect(coverage.summary.branchesPct).toBeGreaterThan(0);
-      expect(coverage.summary.statementsPct).toBeGreaterThan(0);
-      expect(coverage.summary.functionsPct).toBeGreaterThan(0);
-
-      // Check scenario contributions
-      expect(coverage.scenarioContributions["Smoke Test: Loads root"].linesPct).toBeGreaterThan(0);
-      expect(coverage.scenarioContributions["Action: Submits checkout form on Cart"].linesPct).toBeGreaterThan(0);
+      expect(coverage.status).toBe('NOT_MEASURED');
+      expect(coverage.summary.linesPct).toBeNull();
+      expect(coverage.summary.branchesPct).toBeNull();
+      expect(coverage.scenarioContributions).toEqual({});
 
       // Check test file breakdown
       expect(coverage.fileBreakdown.length).toBe(3);
@@ -243,7 +236,8 @@ test('login', async ({ page }) => {
       expect(parsed.totalTests).toBe(4);
       expect(parsed.passedTests).toBe(3);
       expect(parsed.failedTests).toBe(1);
-      expect(parsed.stabilityScorePct).toBe(75.0);
+      expect(parsed.passRatePct).toBe(75.0);
+      expect(parsed.stabilityScorePct).toBeNull();
 
       const failedScenario = parsed.scenarios.find((s) => s.status === "failed");
       expect(failedScenario).toBeDefined();

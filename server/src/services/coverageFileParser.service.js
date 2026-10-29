@@ -2,6 +2,9 @@ import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { canonicalizeFilePath } from "../utils/pathSanitizer.js";
 import { isBusinessLogicSourceFile } from "../utils/businessLogicFileDetector.js";
+import path from "node:path";
+import { resolveProjectAccess } from "./projectAccess.service.js";
+import { operationSnapshot, currentProjectOperation, stagePreparedPublication } from "./projectOperationWorkspace.service.js";
 
 const assertStringField = (value, fieldName) => {
   if (!value || typeof value !== "string" || value.trim().length === 0) {
@@ -61,6 +64,10 @@ const extractFilePath = (entry, key, rootDir = "") => {
     raw = key;
   }
   if (!raw || typeof raw !== "string") return null;
+  if (rootDir && path.isAbsolute(raw)) {
+    const relative = path.relative(rootDir, raw);
+    if (relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)) raw = relative;
+  }
 
   return canonicalizeFilePath(raw, rootDir);
 };
@@ -192,7 +199,7 @@ export const parseCoverageFilesForSnapshot = async ({
     throw new ServiceError("Invalid coverage report", 400);
   }
 
-  const snapshot = await prisma.projectSnapshot.findFirst({
+  let snapshot = await prisma.projectSnapshot.findFirst({
     where: {
       id: snapshotId,
       projectId,
@@ -210,17 +217,9 @@ export const parseCoverageFilesForSnapshot = async ({
     throw new ServiceError("Snapshot not found for this project", 404);
   }
 
-  const effectiveUserId = userId || snapshot.project?.ownerId;
-  if (!effectiveUserId) {
-    throw new ServiceError("Cannot determine owner for snapshot", 403);
-  }
+  await resolveProjectAccess({ projectId, userId, capability: "tests.run" });
+    snapshot = operationSnapshot(snapshot);
 
-  if (userId && snapshot.project && snapshot.project.ownerId !== userId) {
-    throw new ServiceError(
-      "You do not have permission to update coverage for this project",
-      403,
-    );
-  }
 
   const coverageRows = getCoverageRecords(coverageReport, snapshot.rootDir);
 
@@ -266,7 +265,7 @@ export const parseCoverageFilesForSnapshot = async ({
     return 0;
   };
 
-  await prisma.$transaction(async (tx) => {
+  const persist = async tx => {
     await tx.coverageFile.deleteMany({
       where: { snapshotId },
     });
@@ -296,7 +295,9 @@ export const parseCoverageFilesForSnapshot = async ({
         },
       });
     }
-  });
+  };
+  if (currentProjectOperation()?.preparedPublications) await stagePreparedPublication(persist);
+  else await prisma.$transaction(persist);
 
   return {
     totalFiles: formattedRows.length,

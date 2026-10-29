@@ -24,7 +24,10 @@ export const parseCoverageFinal = async (coverageDir, snapshotId) => {
 
     for (const [filePath, fileData] of Object.entries(coverageData)) {
         // Normalize path if needed (assuming relative to project root)
-        const normalizedPath = filePath.replace(process.cwd(), "").replace(/\\/g, "/").replace(/^\//, "");
+        const absolutePath = filePath.replace(/\\/g, '/');
+        const workingRoot = process.cwd().replace(/\\/g, '/');
+        const normalizedPath = absolutePath.startsWith(`${workingRoot}/`)
+            ? absolutePath.slice(workingRoot.length + 1) : absolutePath.replace(/^\//, '');
 
         // 1. Parse Function Coverage
         if (fileData.fnMap && fileData.f) {

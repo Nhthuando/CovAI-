@@ -6,6 +6,8 @@ import crypto from "node:crypto";
 import { startFullSystem } from "./fullSystemLifecycle.service.js";
 import { prepareSystemPlaywright } from "./systemTestEvidence.service.js";
 import { ServiceError } from "../utils/serviceError.js";
+import { selectFrontendPackage } from './projectRuntimePlan.service.js';
+import { prepareProjectDependencies } from './projectDependencies.service.js';
 import {
   prepareAutEnvironment,
   runSeedDataIfPresent,
@@ -21,22 +23,9 @@ const RUNNER_IMAGES = Object.freeze({
   cypress: process.env.CYPRESS_DOCKER_IMAGE || "cypress/browsers:node-22.14.0-chrome-131.0.6778.264-1-ff-133.0.3-edge-131.0.2903.86-1",
 });
 
-export const prepareWebServerDependencies = async (rootDir, jobId) => {
+export const prepareWebServerDependencies = async (rootDir, jobId, {repositoryRoot=rootDir,signal}={}) => {
   if (!fs.existsSync(path.join(rootDir, "package.json"))) return;
-  // A node_modules directory may contain only the Playwright junctions we create.
-  // Let npm reconcile the manifest rather than treating that directory as installed.
-  const result = await dockerRunner.run({
-    snapshotPath: rootDir,
-    command: "npm install --include=dev --prefer-offline --legacy-peer-deps --no-audit --no-fund --progress=false",
-    timeoutMs: SYSTEM_TEST_TIMEOUT_MS,
-    jobId,
-    forceHost: true,
-    env: { NODE_ENV: "development", PATH: process.env.PATH || "", NODE_PATH: "" },
-  });
-  if (!result.success) {
-    const detail = (result.stderr || result.stdout || "No installation output").trim().slice(-2000);
-    throw new ServiceError(`System test dependency installation failed (exit ${result.exitCode}): ${detail}`, 422);
-  }
+  return prepareProjectDependencies({directory:rootDir,repositoryRoot,jobId,signal});
 };
 
 export const resolvePlaywrightCommand = (rootDir, command) => {
@@ -68,7 +57,7 @@ export const preparePlaywrightBrowsers = async (rootDir, jobId) => {
   return env;
 };
 
-export const ensurePlaywrightPrerequisites = (rootDir, autPort) => {
+export const ensurePlaywrightPrerequisites = (rootDir, autPort, {dependencyRoot}={}) => {
   // 1. Ensure playwright config exists so page.goto('/') and baseURL work out of the box
   const configCandidates = [
     "playwright.config.js",
@@ -104,7 +93,8 @@ export default defineConfig({
 
   const packagesToLink = ["@playwright/test", "playwright", "playwright-core"];
   for (const pkg of packagesToLink) {
-    const targetInServer = path.join(serverNodeModules, pkg);
+    const preferred=dependencyRoot && path.join(dependencyRoot,'node_modules',pkg);
+    const targetInServer = preferred && fs.existsSync(preferred) ? preferred : path.join(serverNodeModules, pkg);
     const destInRoot = path.join(rootNodeModules, pkg);
 
     if (fs.existsSync(targetInServer) && !fs.existsSync(destInRoot)) {
@@ -172,6 +162,8 @@ module.exports = defineConfig({
 };
 
 export const resolveFrontendAutDirectory = (rootDir) => {
+  const discovered=selectFrontendPackage({rootDir});
+  if(discovered && path.resolve(discovered) !== path.resolve(rootDir))return discovered;
   const candidates = ["client", "frontend", "web"].map((name) => path.join(rootDir, name));
   // Some imported monorepos select the backend package as their snapshot root.
   const parent = path.dirname(rootDir);
@@ -198,21 +190,114 @@ export const resolveFrontendAutDirectory = (rootDir) => {
       // Ignore malformed package metadata while searching other app directories.
     }
   }
-  return rootDir;
+  return selectFrontendPackage({rootDir}) || rootDir;
 };
 
-export const runSystemTests = async ({ jobId, rootDir, execution, onReady, onPreparing, executionMode = "frontend" }) => {
+export const resolveProjectPlaywrightConfig = (rootDir,execution) => {
+  if(execution.configPath){
+    const file=path.resolve(rootDir,execution.configPath),relative=path.relative(path.resolve(rootDir),file);
+    if(relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative))throw new ServiceError('Playwright configuration must remain inside the imported repository',422);
+    return file;
+  }
+  const found=new Set(),names=['playwright.config.ts','playwright.config.js','playwright.config.mjs','playwright.config.cjs','playwright.config.mts','playwright.config.cts'];
+  for(const file of execution.selectedFiles || (execution.testFile ? [execution.testFile] : [])) {
+    let current=path.dirname(path.resolve(rootDir,file));
+    while(true) {
+      const relative=path.relative(path.resolve(rootDir),current);
+      if(relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative))break;
+      const config=names.map(name=>path.join(current,name)).find(name=>fs.existsSync(name));
+      if(config){found.add(config);break;}
+      if(current===path.resolve(rootDir))break;
+      current=path.dirname(current);
+    }
+  }
+  if(found.size>1)throw new ServiceError('Selected tests span different Playwright configurations. Select tests from one application configuration.',422);
+  return [...found][0] || null;
+};
+
+export const streamPlaywrightEvents = async (managed, onEvent, run) => {
+  if (!managed?.eventPath || !onEvent) return run();
+  let offset = 0, pending = '', reading = false;
+  let lastFrameMtime = 0;
+  const frameFile = path.join(managed.directory, 'live-frame.b64');
+  const sourceMap = JSON.parse(fs.readFileSync(path.join(managed.directory, 'source-map.json'), 'utf8'));
+
+  const checkLiveFrame = () => {
+    if (!fs.existsSync(frameFile)) return;
+    try {
+      const stat = fs.statSync(frameFile);
+      if (stat.mtimeMs > lastFrameMtime) {
+        lastFrameMtime = stat.mtimeMs;
+        const b64 = fs.readFileSync(frameFile, 'utf8');
+        if (b64 && b64.length > 50 && b64.length < 1500000) {
+          onEvent({ type: 'LIVE_FRAME', frame: b64 });
+        }
+      }
+    } catch {}
+  };
+
+  const drain = async () => {
+    if (reading || !fs.existsSync(managed.eventPath)) return;
+    reading = true;
+    try {
+      const stat = fs.statSync(managed.eventPath);
+      if (stat.size > 1024 * 1024) throw new ServiceError('Live event stream exceeded 1 MiB', 422);
+      if (stat.size < offset) { offset = 0; pending = ''; }
+      if (stat.size === offset) return;
+      const handle = fs.openSync(managed.eventPath, 'r');
+      const bytes = Buffer.alloc(stat.size - offset);
+      try { fs.readSync(handle, bytes, 0, bytes.length, offset); } finally { fs.closeSync(handle); }
+      offset = stat.size;
+      const lines = (pending + bytes.toString('utf8')).split('\n');
+      pending = lines.pop();
+      for (const line of lines) {
+        if (!line || line.length > 4000) continue;
+        let event;
+        try { event = JSON.parse(line); } catch { continue; }
+        const filePath = sourceMap[path.basename(event.filePath || '')] || null;
+        let screenshotBody;
+        if (event.type === 'SCENARIO_ENDED' && typeof event.screenshotPath === 'string') {
+          try {
+            const absolute = fs.realpathSync(event.screenshotPath), boundary = fs.realpathSync(managed.directory);
+            const relative = path.relative(boundary, absolute);
+            if (relative && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative) && fs.statSync(absolute).size <= 15 * 1024 * 1024) {
+              const bytes = fs.readFileSync(absolute);
+              if (bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) screenshotBody = bytes.toString('base64');
+            }
+          } catch { /* Missing checkpoint must not alter the test result. */ }
+        }
+        const { screenshotPath, ...safeEvent } = event;
+        await onEvent({ ...safeEvent, filePath, screenshotBody });
+      }
+    } finally { reading = false; }
+  };
+  const timer = setInterval(() => {
+    checkLiveFrame();
+    drain().catch(() => {});
+  }, 100);
+  try { return await run(); }
+  finally {
+    clearInterval(timer);
+    while (reading) await new Promise(resolve => setTimeout(resolve, 20));
+    await drain();
+    checkLiveFrame();
+    try { if (fs.existsSync(frameFile)) fs.unlinkSync(frameFile); } catch {}
+  }
+};
+
+export const runSystemTests = async ({ jobId, rootDir, execution, onReady, onPreparing, onEvent, executionMode = "frontend", measurementPreparation, assertionBindings = [], signal, environmentRoot }) => {
   if (executionMode === "full") {
     if (execution.runner === "playwright") {
-      const stack = await startFullSystem({rootDir,jobId,onProgress:onPreparing});
+      const stack = await startFullSystem({rootDir,jobId,onProgress:onPreparing,measurementPreparation,signal,environmentRoot});
       try {
         const runnerRoot=execution.rootDir || rootDir;
-        ensurePlaywrightPrerequisites(runnerRoot,stack.frontendPort);
+        const config=resolveProjectPlaywrightConfig(runnerRoot,execution);
+        ensurePlaywrightPrerequisites(runnerRoot,stack.frontendPort,{dependencyRoot:config ? path.dirname(config) : runnerRoot});
         await onPreparing?.(30, "Preparing Playwright browsers...");
         const browserEnv = await preparePlaywrightBrowsers(runnerRoot, jobId);
-        const managed=prepareSystemPlaywright({rootDir:runnerRoot,execution,executionMode,backendUrl:stack.backendUrl,frontendPort:stack.frontendPort,runKey:crypto.randomUUID(),testFile:execution.testFile});
+        const managed=prepareSystemPlaywright({rootDir:runnerRoot,execution,executionMode,backendUrl:stack.backendUrl,frontendPort:stack.frontendPort,runKey:crypto.randomUUID(),testFile:execution.testFile,configPath:config,managedServer:true,measurementPreparation,assertionBindings,headed:Boolean(execution.headed)});
         await onReady?.();
-        const result=await dockerRunner.run({snapshotPath:runnerRoot,command:resolvePlaywrightCommand(runnerRoot,managed.command),timeoutMs:SYSTEM_TEST_TIMEOUT_MS,jobId,forceHost:true,env:{...browserEnv,PLAYWRIGHT_BASE_URL:`http://127.0.0.1:${stack.frontendPort}`}});
+        const result=await streamPlaywrightEvents(managed,onEvent,()=>dockerRunner.run({snapshotPath:runnerRoot,command:resolvePlaywrightCommand(runnerRoot,managed.command),timeoutMs:SYSTEM_TEST_TIMEOUT_MS,jobId,forceHost:true,signal,env:{...browserEnv,PLAYWRIGHT_BASE_URL:`http://127.0.0.1:${stack.frontendPort}`}}));
         return {...result,reportPath:managed.reportPath,autPort:stack.frontendPort,executionMode};
       } finally {await stack.cleanup();}
     } else if (execution.runner === "cypress") {
@@ -245,14 +330,14 @@ export const runSystemTests = async ({ jobId, rootDir, execution, onReady, onPre
     fs.unlinkSync(execution.reportPath);
   }
 
-  const configFile = execution.configPath ? path.join(rootDir, execution.configPath) : null;
-  const ownsWebServer = execution.runner === "playwright" && configFile && /\bwebServer\s*:/.test(fs.readFileSync(configFile, "utf8"));
+  const configFile = resolveProjectPlaywrightConfig(rootDir,execution);
+  const ownsWebServer = !measurementPreparation && execution.configPath && execution.runner === "playwright" && configFile && /\bwebServer\s*:/.test(fs.readFileSync(configFile, "utf8"));
   const autRoot = resolveFrontendAutDirectory(rootDir);
   const autPort = ownsWebServer ? detectAutPort(autRoot, 4173) : await resolveAvailableAutPort(autRoot, 4173);
 
   if (ownsWebServer) {
     await onPreparing?.(20, "Installing application dependencies for the Playwright web server...");
-    await prepareWebServerDependencies(autRoot, jobId);
+    await prepareWebServerDependencies(autRoot, jobId, {repositoryRoot:rootDir,signal});
   }
 
   // 1. Prepare minimal mock .env if needed
@@ -265,13 +350,13 @@ export const runSystemTests = async ({ jobId, rootDir, execution, onReady, onPre
   let autHandle = null;
   try {
     if (!ownsWebServer) {
-      autHandle = await startAutServer({ snapshotDir: autRoot, port: autPort, jobId, requireHealthy: true });
-      if (!autHandle?.started) throw new ServiceError("Frontend server could not be started for system tests", 422);
+      autHandle = await startAutServer({ snapshotDir: autRoot, repositoryRoot:rootDir, port: autPort, jobId, requireHealthy: true, signal });
+      if (!autHandle?.started) throw new ServiceError('No browser application startup script was found. Use Unit/API tests for a library or API-only project, or include a dev, serve, start or preview script for its web application.', 422);
     }
 
     let browserEnv = {};
     if (execution.runner === "playwright") {
-      ensurePlaywrightPrerequisites(rootDir, autPort);
+      ensurePlaywrightPrerequisites(rootDir, autPort,{dependencyRoot:configFile ? path.dirname(configFile) : autRoot});
       await onPreparing?.(30, "Preparing Playwright browsers...");
       browserEnv = await preparePlaywrightBrowsers(rootDir, jobId);
     } else if (execution.runner === "cypress") {
@@ -309,7 +394,7 @@ export default {...config, testDir: path.resolve(root, config.testDir || '.'), o
 
     let managed = null;
     if (execution.runner === "playwright" && execution.testDirectory) {
-      managed = prepareSystemPlaywright({rootDir,execution,executionMode,frontendPort:autPort,runKey:crypto.randomUUID(),testFile:execution.testFile,configPath:!autHandle?.started ? configFile : undefined});
+      managed = prepareSystemPlaywright({rootDir,execution,executionMode,frontendPort:autPort,runKey:crypto.randomUUID(),testFile:execution.testFile,configPath:configFile,managedServer:Boolean(autHandle?.started),measurementPreparation,assertionBindings,headed:Boolean(execution.headed)});
       command = managed.command;
     }
     if (execution.runner === "playwright" && execution.testFile && !managed) {
@@ -323,10 +408,11 @@ export default {...config, testDir: path.resolve(root, config.testDir || '.'), o
       ? resolvePlaywrightCommand(rootDir, command)
       : resolveCypressCommand(rootDir, command);
 
-    const result = await dockerRunner.run({
+    const result = await streamPlaywrightEvents(managed,onEvent,()=>dockerRunner.run({
       snapshotPath: rootDir,
       command: finalCommand,
       timeoutMs: SYSTEM_TEST_TIMEOUT_MS,
+      signal,
       jobId,
       image: RUNNER_IMAGES[execution.runner],
       forceHost: true,
@@ -336,7 +422,7 @@ export default {...config, testDir: path.resolve(root, config.testDir || '.'), o
         PLAYWRIGHT_BASE_URL: `http://localhost:${autPort}`,
         CYPRESS_BASE_URL: `http://localhost:${autPort}`,
       },
-    });
+    }));
     return { ...result, autPort, ...(managed ? {reportPath:managed.reportPath} : {}), executionMode };
   } finally {
     // 4. Safely terminate AUT server and release port

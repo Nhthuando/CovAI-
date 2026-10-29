@@ -32,15 +32,17 @@ export const Button = forwardRef(function Button(
 
   const variantStyles = {
     primary:
-      "bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-hover)] active:bg-[var(--color-primary-active)] border border-transparent",
+      "bg-[var(--color-primary)] text-[var(--color-primary-foreground)] hover:bg-[var(--color-primary-hover)] active:bg-[var(--color-primary-active)] border border-transparent font-medium",
     secondary:
       "bg-[var(--color-surface-secondary)] text-[var(--color-text)] hover:bg-[var(--color-border)] border border-[var(--color-border)]",
     outline:
       "bg-transparent text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] active:bg-[var(--color-surface)]",
     ghost:
       "bg-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] border border-transparent",
+    success:
+      "bg-[var(--color-success)] text-white hover:opacity-90 active:opacity-80 border border-transparent font-medium",
     danger:
-      "bg-[var(--color-danger)] text-white hover:bg-red-700 active:bg-red-800 border border-transparent",
+      "bg-[var(--color-danger)] text-white hover:opacity-90 active:opacity-80 border border-transparent font-medium",
   };
 
   const classes = `${baseStyles} ${sizeStyles[size] || sizeStyles.md} ${

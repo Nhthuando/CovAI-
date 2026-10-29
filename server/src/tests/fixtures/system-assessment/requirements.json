@@ -1,0 +1,1 @@
+{"criteria":[{"id":"CREATE_VALID","description":"Create an item and preserve it across reload","expectedOutcome":"The list contains verified item before and after reload","references":["tests/strong.spec.js:2"]},{"id":"REJECT_BLANK","description":"Reject a whitespace-only name","expectedOutcome":"The alert displays Name must not be blank","references":["server/src/valid.js:1"]}]}

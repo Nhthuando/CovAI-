@@ -1,24 +1,74 @@
-import React, { useCallback, useEffect, useState, useRef } from "react";
+import { useProjectAccess } from "../../hooks/useProjectAccess";
+import { getIntegrationScenarioApi, mutateIntegrationScenarioApi } from "../../services/integrationScenario.service";
+import React, {
+  useCallback,
+  useEffect,
+  useState,
+  useRef,
+  useMemo,
+} from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   getIntegrationWorkspace,
   runCoverageByType,
+  getIntegrationDetection,
+  installIntegrationDependencies,
+  generateIntegrationTests,
+  regenerateIntegrationScenario,
+  updateIntegrationScenario,
 } from "../../services/coverage.service.js";
+import { fetchIntegrationReport } from "../../services/report.service.js";
 import { runProjectStructureAnalysisApi } from "../../services/project.service.js";
-import { Search, Zap, CheckCircle2, PlayCircle, BarChart3, ChevronRight, Play, ChevronDown, Clock, AlertTriangle } from "lucide-react";
+import { cancelJobApi } from "../../services/job.service.js";
+import {
+  Search,
+  Zap,
+  CheckCircle2,
+  XCircle,
+  PlayCircle,
+  BarChart3,
+  ChevronRight,
+  ChevronDown,
+  Play,
+  Clock,
+  AlertTriangle,
+  RefreshCw,
+  X,
+  GitCompare,
+  Layers,
+  Terminal,
+  FileCode,
+  HardDriveDownload,
+  Printer,
+  Download,
+  SlidersHorizontal,
+  Code2,
+  FileCheck,
+  ShieldCheck,
+  Activity,
+  ExternalLink,
+} from "lucide-react";
 
-import IntegrationTargetsPane from "./integration/IntegrationTargetsPane.jsx";
+import IntegrationFrameworkDetectionBanner from "./integration/IntegrationFrameworkDetectionBanner.jsx";
+import IntegrationRouteMatrixTable from "./integration/IntegrationRouteMatrixTable.jsx";
+import IntegrationReportEmbed from "./integration/IntegrationReportEmbed.jsx";
 import IntegrationScenariosPane from "./integration/IntegrationScenariosPane.jsx";
 import IntegrationLiveProgress from "./integration/IntegrationLiveProgress.jsx";
 import IntegrationHistoryPane from "./integration/IntegrationHistoryPane.jsx";
+import BeforeAfterComparisonView from "./integration/BeforeAfterComparisonView.jsx";
 import MetricProvenancePopover from "./integration/MetricProvenancePopover.jsx";
-import IntegrationEndpointDetail from "./integration/IntegrationEndpointDetail.jsx";
 import IntegrationErrorBoundary from "./integration/IntegrationErrorBoundary.jsx";
+import IntegrationApplyTestsModal from "./integration/IntegrationApplyTestsModal.jsx";
+import IntegrationScenarioEditorModal from "./integration/IntegrationScenarioEditorModal.jsx";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 function getAuthHeaders() {
-  const token = localStorage.getItem("token");
+  const token =
+    localStorage.getItem("token") ||
+    (localStorage.getItem("user")
+      ? JSON.parse(localStorage.getItem("user")).token
+      : null);
   return {
     "Content-Type": "application/json",
     ...(token && { Authorization: `Bearer ${token}` }),
@@ -43,40 +93,62 @@ async function approveIntegrationTestsApi(snapshotId, approvedTestIds) {
   return handleResponse(res);
 }
 
-const buttonStyle = (color, isActive = false) => ({
-  background: isActive ? `${color}33` : `${color}18`,
-  color,
-  border: `1px solid ${color}55`,
-  borderRadius: 6,
-  padding: "6px 12px",
-  fontSize: 13,
-  fontWeight: 600,
-  cursor: "pointer",
-  transition: "all 0.15s ease",
-});
-
-const disabledButtonStyle = {
-  background: "rgba(255,255,255,.05)",
-  color: "rgba(255,255,255,.3)",
-  border: "1px solid rgba(255,255,255,.1)",
-  borderRadius: 6,
-  padding: "6px 12px",
-  fontSize: 13,
-  fontWeight: 600,
-  cursor: "not-allowed",
+const FAILURE_LAYERS_META = {
+  ROUTER_NOT_FOUND: {
+    label: "Router (404)",
+    code: "[ROUTER_NOT_FOUND]",
+    style: "bg-orange-500/10 text-orange-400 border-orange-500/25",
+    desc: "Đường dẫn Route hoặc URL mount point không khớp router Express.",
+  },
+  MIDDLEWARE_REJECTED: {
+    label: "Middleware (401/403)",
+    code: "[MIDDLEWARE_REJECTED]",
+    style: "bg-amber-500/10 text-amber-400 border-amber-500/25",
+    desc: "Bị chặn bởi Authentication, JWT token, CORS hoặc Request Validator.",
+  },
+  CONTROLLER_CRASH: {
+    label: "Controller (500)",
+    code: "[CONTROLLER_CRASH]",
+    style: "bg-rose-500/10 text-rose-400 border-rose-500/25",
+    desc: "Lỗi runtime crash (TypeError, ReferenceError) trong controller handler.",
+  },
+  DATABASE_FAILURE: {
+    label: "Database / ORM",
+    code: "[DATABASE_FAILURE]",
+    style: "bg-purple-500/10 text-purple-400 border-purple-500/25",
+    desc: "Lỗi kết nối database, schema constraint hoặc Prisma query failure.",
+  },
+  ASSERTION_FAILED: {
+    label: "Assertion Mismatch",
+    code: "[ASSERTION_FAILED]",
+    style: "bg-sky-500/10 text-sky-400 border-sky-500/25",
+    desc: "HTTP response status code hoặc JSON body không khớp với giá trị mong đợi.",
+  },
 };
 
-function useLiveJobLogs(jobId, onComplete, onError) {
+const METHOD_STYLES = {
+  GET: "bg-sky-500/10 text-sky-400 border-sky-500/25",
+  POST: "bg-emerald-500/10 text-emerald-400 border-emerald-500/25",
+  PUT: "bg-amber-500/10 text-amber-400 border-amber-500/25",
+  PATCH: "bg-purple-500/10 text-purple-400 border-purple-500/25",
+  DELETE: "bg-rose-500/10 text-rose-400 border-rose-500/25",
+  DEFAULT:
+    "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]",
+};
+
+function useLiveJobLogs(jobId, onComplete, onError, onCanceled) {
   const [logs, setLogs] = useState([]);
   const logsEndRef = useRef(null);
 
   const onCompleteRef = useRef(onComplete);
   const onErrorRef = useRef(onError);
+  const onCanceledRef = useRef(onCanceled);
 
   useEffect(() => {
     onCompleteRef.current = onComplete;
     onErrorRef.current = onError;
-  }, [onComplete, onError]);
+    onCanceledRef.current = onCanceled;
+  }, [onComplete, onError, onCanceled]);
 
   useEffect(() => {
     if (!jobId) {
@@ -89,6 +161,7 @@ function useLiveJobLogs(jobId, onComplete, onError) {
     const eventSource = new EventSource(
       `${BASE_URL}/job/${jobId}/stream?token=${token}`,
     );
+
     eventSource.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data);
@@ -122,7 +195,11 @@ function useLiveJobLogs(jobId, onComplete, onError) {
         } else if (data.status === "CANCELED") {
           isClosed = true;
           eventSource.close();
-          onErrorRef.current(new Error("Job was canceled"));
+          if (onCanceledRef.current) {
+            onCanceledRef.current();
+          } else {
+            onErrorRef.current(new Error("Job was canceled"));
+          }
         }
       } catch (err) {
         console.error("Failed to parse SSE message:", err);
@@ -156,16 +233,16 @@ export default function IntegrationWorkspace({
   onSuggestTestcase,
   onOpenArchitecture,
   initialContext,
-  onContextChange
+  onContextChange,
 }) {
+  const projectAccess = useProjectAccess(projectId);
   const navigate = useNavigate();
   const location = useLocation();
-  const [workspace, setWorkspace] = useState(() => {
-    return (initialContext && initialContext.snapshotId === snapshotId && initialContext.projectId === projectId)
-      ? (initialContext.cachedWorkspace || null)
-      : null;
-  });
-  const [loading, setLoading] = useState(!workspace);
+
+  const [workspace, setWorkspace] = useState(null);
+  const [reportData, setReportData] = useState(null);
+  const [detectionInfo, setDetectionInfo] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
 
@@ -173,192 +250,275 @@ export default function IntegrationWorkspace({
   const [activeJobId, setActiveJobId] = useState(null);
   const [activeJobType, setActiveJobType] = useState(null);
   const [activeJobStatus, setActiveJobStatus] = useState("RUNNING");
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [cancellationNotice, setCancellationNotice] = useState("");
   const [selectedTestIds, setSelectedTestIds] = useState([]);
-
-  // UI View State
-  const [selectedEndpointId, setSelectedEndpointId] = useState(() => {
-    return (initialContext && initialContext.snapshotId === snapshotId) 
-      ? (initialContext.selectedEndpointId ?? null) 
-      : null;
-  });
-  const [activeStage, setActiveStage] = useState(() => {
-    const params = new URLSearchParams(location.search);
-    const s = params.get("stage") || "ANALYZE";
-    return s === "APPROVE" ? "GENERATE" : s;
-  });
   const [pendingAction, setPendingAction] = useState(null);
-  const [selectedTargetEndpoints, setSelectedTargetEndpoints] = useState(new Set());
-  const [expandedScenarios, setExpandedScenarios] = useState({});
 
-  const toggleExpandScenario = (scenarioKey) => {
-    setExpandedScenarios((prev) => ({
+  // Framework Installation & Banner
+  const [isInstallingDeps, setIsInstallingDeps] = useState(false);
+  const [isGeneratingWithBanner, setIsGeneratingWithBanner] = useState(false);
+
+  // Modals & Drawer State
+  const [applyModalOpen, setApplyModalOpen] = useState(false);
+  const [applyModalTestIds, setApplyModalTestIds] = useState([]);
+  const [editorModalOpen, setEditorModalOpen] = useState(false);
+  const [editorModalScenario, setEditorModalScenario] = useState(null);
+  const [editorModalEndpoint, setEditorModalEndpoint] = useState(null);
+  const [isAddScenarioMode, setIsAddScenarioMode] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(null); // 'history' | 'compare' | null
+  const [activeFailureLayerFilter, setActiveFailureLayerFilter] =
+    useState("ALL");
+  const [expandedCallstacks, setExpandedCallstacks] = useState({});
+
+  // Active navigation anchor
+  const [activeAnchor, setActiveAnchor] = useState("kpis");
+
+  const scrollToSection = (id) => {
+    setActiveAnchor(id);
+    const element = document.getElementById(id);
+    if (element) {
+      element.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+
+  const toggleCallstack = (key) => {
+    setExpandedCallstacks((prev) => ({
       ...prev,
-      [scenarioKey]: !prev[scenarioKey]
+      [key]: !prev[key],
     }));
   };
 
-  const handleToggleSelectEndpoint = (endpointKey) => {
-    setSelectedTargetEndpoints((prev) => {
-      const next = new Set(prev);
-      if (next.has(endpointKey)) {
-        next.delete(endpointKey);
-      } else {
-        next.add(endpointKey);
-      }
-      return next;
-    });
-  };
-
-  const handleToggleSelectModule = (moduleEndpoints) => {
-    setSelectedTargetEndpoints((prev) => {
-      const next = new Set(prev);
-      const allSelected = moduleEndpoints.every((ep) => next.has(`${ep.method} ${ep.path}`));
-      if (allSelected) {
-        moduleEndpoints.forEach((ep) => next.delete(`${ep.method} ${ep.path}`));
-      } else {
-        moduleEndpoints.forEach((ep) => next.add(`${ep.method} ${ep.path}`));
-      }
-      return next;
-    });
-  };
-
-  const handleSelectAllEndpoints = (allList) => {
-    setSelectedTargetEndpoints(new Set(allList.map((ep) => `${ep.method} ${ep.path}`)));
-  };
-
-  const handleClearSelectedEndpoints = () => {
-    setSelectedTargetEndpoints(new Set());
-  };
-
-  // 1. Sync context upwards when it changes
-  useEffect(() => {
-    if (onContextChange && snapshotId && projectId) {
-      onContextChange({
-        snapshotId,
-        projectId,
-        activeStage,
-        selectedEndpointId,
-        cachedWorkspace: workspace
-      });
-    }
-  }, [activeStage, selectedEndpointId, snapshotId, projectId, workspace, onContextChange]);
-
-  useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    if (params.get("stage") !== activeStage) {
-      params.set("stage", activeStage);
-      navigate(`${location.pathname}?${params.toString()}`, { replace: true });
-    }
-  }, [activeStage, navigate, location.search, location.pathname]);
-
-
-  // 3. Fallback safely if selected endpoint id is out of bounds
-  useEffect(() => {
-    if (workspace?.endpoints && selectedEndpointId !== null) {
-      const exists = workspace.endpoints.some(e => `${e.method} ${e.path}` === selectedEndpointId);
-      if (!exists) {
-        setSelectedEndpointId(null);
-      }
-    }
-  }, [workspace?.endpoints, selectedEndpointId]);
-
+  // 1. Data Loader: Workspace, Detection, Report
   const load = useCallback(async () => {
-    if (!snapshotId) return;
+    if (!snapshotId) {
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
     if (workspace) {
       setRefreshing(true);
     } else {
       setLoading(true);
     }
+    setError("");
+
     try {
-      const res = await getIntegrationWorkspace(snapshotId);
-      setWorkspace(res.data);
+      const [workspaceRes, detectionRes, reportRes] = await Promise.allSettled([
+        getIntegrationWorkspace(snapshotId),
+        getIntegrationDetection(snapshotId),
+        projectId
+          ? fetchIntegrationReport(projectId)
+          : Promise.resolve({ data: null }),
+      ]);
 
-      if (!activeJobId) {
-        const fetchedJobs = res.data.jobs || {};
-        let runningJobId = null;
-        let runningJobType = null;
+      if (workspaceRes.status === "fulfilled") {
+        setWorkspace(workspaceRes.value.data);
 
-        if (
-          fetchedJobs.analyze?.status === "RUNNING" ||
-          fetchedJobs.analyze?.status === "QUEUED"
-        ) {
-          runningJobId = fetchedJobs.analyze.id;
-          runningJobType = "ANALYZE";
-        } else if (
-          fetchedJobs.generate?.status === "RUNNING" ||
-          fetchedJobs.generate?.status === "QUEUED"
-        ) {
-          runningJobId = fetchedJobs.generate.id;
-          runningJobType = "GENERATE";
-        } else if (
-          fetchedJobs.execute?.status === "RUNNING" ||
-          fetchedJobs.execute?.status === "QUEUED"
-        ) {
-          runningJobId = fetchedJobs.execute.id;
-          runningJobType = "EXECUTE";
+        // Check running background jobs
+        if (!activeJobId) {
+          const fetchedJobs = workspaceRes.value.data.jobs || {};
+          let runningJobId = null;
+          let runningJobType = null;
+
+          if (
+            fetchedJobs.analyze?.status === "RUNNING" ||
+            fetchedJobs.analyze?.status === "QUEUED"
+          ) {
+            runningJobId = fetchedJobs.analyze.id;
+            runningJobType = "ANALYZE";
+          } else if (
+            fetchedJobs.generate?.status === "RUNNING" ||
+            fetchedJobs.generate?.status === "QUEUED"
+          ) {
+            runningJobId = fetchedJobs.generate.id;
+            runningJobType = "GENERATE";
+          } else if (
+            fetchedJobs.execute?.status === "RUNNING" ||
+            fetchedJobs.execute?.status === "QUEUED"
+          ) {
+            runningJobId = fetchedJobs.execute.id;
+            runningJobType = "EXECUTE";
+          }
+
+          if (runningJobId) {
+            setActiveJobId(runningJobId);
+            setActiveJobType(runningJobType);
+            setActiveJobStatus("RUNNING");
+          }
         }
 
-        if (runningJobId) {
-          setActiveJobId(runningJobId);
-          setActiveJobType(runningJobType);
-          setActiveJobStatus("RUNNING");
-          setActiveStage(runningJobType === "EXECUTE" ? "RUN" : runningJobType);
-        } else if (!initialContext || initialContext.snapshotId !== snapshotId) {
-          setActiveStage((prev) => {
-            if (prev === "RUN" || prev === "REPORT") return prev;
-            if (res.data?.aiTests?.length > 0) return "GENERATE";
-            if (fetchedJobs.analyze?.status === "SUCCESS") return "ANALYZE";
-            return prev;
-          });
+        // Initialize selectedTestIds
+        if (workspaceRes.value.data?.aiTests && selectedTestIds.length === 0) {
+          const allIds = (workspaceRes.value.data.aiTests || []).flatMap((t) =>
+            (t?.requests || []).map(
+              (r) => `${t.id}::${r.scenarioId || r.testName}`,
+            ),
+          );
+          setSelectedTestIds(allIds);
         }
-      }
-
-      // Preserve previously selected test ids if they still exist, otherwise reset to all
-      if (res.data?.aiTests && selectedTestIds.length === 0) {
-        const allIds = (res.data.aiTests || []).flatMap((t) =>
-          (t?.requests || []).map((r) => `${t.id}::${r.scenarioId || r.testName}`),
+      } else {
+        throw new Error(
+          workspaceRes.reason?.message || "Failed to load workspace.",
         );
-        setSelectedTestIds(allIds);
       }
-      setError("");
+
+      if (detectionRes.status === "fulfilled") {
+        setDetectionInfo(detectionRes.value.data || detectionRes.value);
+      }
+
+      if (reportRes.status === "fulfilled" && reportRes.value?.data) {
+        setReportData(reportRes.value.data);
+      }
     } catch (err) {
-      setError(err.message || "Failed to load workspace.");
+      setError(err.message || "Failed to load integration test workspace.");
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [snapshotId, activeJobId]);
+  }, [snapshotId, projectId, activeJobId]);
 
   useEffect(() => {
     load();
   }, [load]);
 
+  // Sync upwards context
+  useEffect(() => {
+    if (onContextChange && snapshotId && projectId) {
+      onContextChange({
+        snapshotId,
+        projectId,
+        cachedWorkspace: workspace,
+      });
+    }
+  }, [snapshotId, projectId, workspace, onContextChange]);
+
+  // Job completion handlers
   const handleJobComplete = useCallback(async () => {
     setActiveJobStatus("SUCCESS");
     try {
       await load();
     } catch (err) {
-      console.error("[IntegrationWorkspace] Failed to reload workspace after job:", err);
+      console.error(
+        "[IntegrationWorkspace] Failed to reload workspace after job:",
+        err,
+      );
     } finally {
-      // Graceful transition: small delay so user sees 100% completed state before switching view
       setTimeout(() => {
         setActiveJobId(null);
         setActiveJobType(null);
-        setActiveJobStatus("RUNNING");
-      }, 350);
+        setActiveJobStatus("SUCCESS");
+        setIsCancelling(false);
+        setPendingAction(null);
+      }, 500);
     }
   }, [load]);
 
-  const { logs: activeLogs, logsEndRef } = useLiveJobLogs(
+  const handleJobCanceled = useCallback(async () => {
+    setActiveJobStatus("CANCELED");
+    setCancellationNotice("Tác vụ đã được hủy bỏ thành công.");
+    try {
+      await load();
+    } catch (err) {
+      console.error(
+        "[IntegrationWorkspace] Failed to reload workspace after cancel:",
+        err,
+      );
+    } finally {
+      setTimeout(() => {
+        setActiveJobId(null);
+        setActiveJobType(null);
+        setActiveJobStatus("CANCELED");
+        setIsCancelling(false);
+        setPendingAction(null);
+      }, 500);
+    }
+  }, [load]);
+
+  const handleCancelActiveJob = useCallback(
+    async (targetJobId = null) => {
+      const jId = targetJobId || activeJobId;
+      if (!jId || isCancelling) return;
+      setIsCancelling(true);
+      setError("");
+      try {
+        await cancelJobApi(jId);
+        setActiveJobStatus("CANCELED");
+        setCancellationNotice("Tác vụ đã được hủy bỏ thành công.");
+        await load();
+        setTimeout(() => {
+          setActiveJobId(null);
+          setActiveJobType(null);
+          setActiveJobStatus("RUNNING");
+          setIsCancelling(false);
+          setPendingAction(null);
+        }, 500);
+      } catch (err) {
+        console.error("[IntegrationWorkspace] Failed to cancel job:", err);
+        setError(err.message || "Không thể hủy tác vụ. Vui lòng thử lại.");
+        await load();
+        setIsCancelling(false);
+      }
+    },
+    [activeJobId, isCancelling, load],
+  );
+
+  const { logs: activeLogs } = useLiveJobLogs(
     activeJobId,
     handleJobComplete,
     (err) => {
       setActiveJobStatus("FAILED");
       setError(err.message);
+      setIsCancelling(false);
     },
+    handleJobCanceled,
   );
 
+  // Install missing test libraries
+  const handleInstallDependencies = async () => {
+    if (!projectAccess.can("integrations.write")) return;
+    if (!snapshotId || isInstallingDeps) return;
+    setIsInstallingDeps(true);
+    setError("");
+    try {
+      await installIntegrationDependencies(snapshotId);
+      await load();
+    } catch (err) {
+      setError(err.message || "Cài đặt thư viện kiểm thử thất bại.");
+    } finally {
+      setIsInstallingDeps(false);
+    }
+  };
+
+  // Generate tests via framework detection banner
+  const handleGenerateByBannerFramework = async (targetFramework) => {
+    if (!projectAccess.can("ai.use")) return;
+    if (!snapshotId || isGeneratingWithBanner) return;
+    setIsGeneratingWithBanner(true);
+    setError("");
+    try {
+      const res = await generateIntegrationTests(snapshotId, {
+        framework: targetFramework,
+        force: true,
+      });
+      const jId = res?.data?.jobId || res?.jobId;
+      if (jId) {
+        setActiveJobId(jId);
+        setActiveJobType("GENERATE");
+        setActiveJobStatus("RUNNING");
+      } else {
+        await load();
+      }
+    } catch (err) {
+      setError(err.message || "Không thể sinh kiểm thử tự động.");
+    } finally {
+      setIsGeneratingWithBanner(false);
+    }
+  };
+
+  // Run AST Project Analysis
   const handleRunAnalysis = async () => {
+    if (!projectAccess.can("tests.run")) return;
     if (
       !projectId ||
       !snapshotId ||
@@ -366,7 +526,6 @@ export default function IntegrationWorkspace({
     )
       return;
     setError("");
-    setActiveStage("ANALYZE");
     setPendingAction("ANALYZE");
     try {
       const response = await runProjectStructureAnalysisApi(
@@ -380,1464 +539,1477 @@ export default function IntegrationWorkspace({
         setActiveJobStatus("RUNNING");
       }
     } catch (err) {
-      setError(err.message || "Project analysis failed.");
+      setError(err.message || "Phân tích cấu trúc dự án thất bại.");
     } finally {
       setPendingAction(null);
     }
   };
 
+  // Run AI Test Generator
   const handleGenerateClick = async (explicitTargets = null) => {
+    if (!projectAccess.can("ai.use")) return;
     if (
       !workspace?.generation?.hasAnalysis ||
       (activeJobId && activeJobStatus !== "FAILED")
     )
       return;
     setError("");
-    setActiveStage("GENERATE");
     setPendingAction("GENERATE");
     try {
-      let targets = explicitTargets;
-      if (!targets && selectedTargetEndpoints.size > 0) {
-        targets = Array.from(selectedTargetEndpoints);
-      }
-      const res = await onGenerate(targets);
-      if (res === undefined) return; // User was shown the overwrite confirm modal
-      const jobId = res?.data?.job?.id;
+      const res = await onGenerate(explicitTargets);
+      if (res === undefined) return;
+      const jobId = res?.data?.job?.id || res?.jobId;
       if (jobId) {
         setActiveJobId(jobId);
         setActiveJobType("GENERATE");
         setActiveJobStatus("RUNNING");
-      } else throw new Error("Backend failed to return a generation Job ID.");
-    } catch (err) {
-      setError(err.message || "Generation failed.");
-    } finally {
-      setPendingAction(null);
-    }
-  };
-
-  const handleApprove = async () => {
-    if (
-      !snapshotId ||
-      (activeJobId && activeJobStatus !== "FAILED") ||
-      selectedTestIds.length === 0
-    )
-      return;
-    setError("");
-    setPendingAction("APPROVE");
-    try {
-      await approveIntegrationTestsApi(snapshotId, selectedTestIds);
-      await load();
-    } catch (err) {
-      setError(err.message || "Approval failed.");
-    } finally {
-      setPendingAction(null);
-    }
-  };
-
-  const handleApproveAndRun = async () => {
-    if (
-      !snapshotId ||
-      (activeJobId && activeJobStatus !== "FAILED") ||
-      selectedTestIds.length === 0
-    )
-      return;
-    setError("");
-    setPendingAction("APPROVE_AND_RUN");
-    try {
-      // 1. Approve selected scenarios
-      await approveIntegrationTestsApi(snapshotId, selectedTestIds);
-      // 2. Trigger test execution
-      const response = await runCoverageByType(snapshotId, "integration");
-      if (response?.data?.job?.id) {
-        setActiveJobId(response.data.job.id);
-        setActiveJobType("EXECUTE");
-        setActiveJobStatus("RUNNING");
-        setActiveStage("RUN");
       } else {
-        throw new Error("Backend failed to start test execution job.");
+        await load();
       }
     } catch (err) {
-      setError(err.message || "Failed to approve and run tests.");
+      setError(err.message || "Sinh kịch bản kiểm thử thất bại.");
     } finally {
       setPendingAction(null);
     }
   };
 
+  // Run All Approved Tests
   const handleRunApprovedTests = async () => {
-    if (!snapshotId || (activeJobId && activeJobStatus !== "FAILED")) return;
+    if (!projectAccess.can("tests.run")) return;
+    if (!snapshotId || pendingAction) return;
+    if (
+      activeJobId &&
+      (activeJobStatus === "RUNNING" || activeJobStatus === "QUEUED")
+    ) {
+      setError("Một tác vụ kiểm thử đang được thực thi.");
+      return;
+    }
     setError("");
-    setActiveStage("RUN");
+
+    const allAiTests = workspace?.aiTests || [];
+    const allScenarioIds = allAiTests.flatMap((t) => {
+      let meta = {};
+      try {
+        meta =
+          typeof t.metaJson === "string"
+            ? JSON.parse(t.metaJson)
+            : t.metaJson || {};
+      } catch (e) {}
+      return (meta.requests || []).map(
+        (r) => `${t.id}::${r.scenarioId || r.testName}`,
+      );
+    });
+    const hasProjectTests =
+      (detectionInfo?.testFiles || []).length > 0 ||
+      (detectionInfo?.supertestFiles || []).length > 0;
+
+    if (allScenarioIds.length === 0 && !hasProjectTests) {
+      await handleGenerateClick();
+      return;
+    }
+
     setPendingAction("RUN");
     try {
+      if (allScenarioIds.length > 0) {
+        await approveIntegrationTestsApi(snapshotId, allScenarioIds).catch(
+          () => {},
+        );
+      }
       const response = await runCoverageByType(snapshotId, "integration");
-      if (response.data?.job?.id) {
-        setActiveJobId(response.data.job.id);
-        setActiveJobType("EXECUTE");
-        setActiveJobStatus("RUNNING");
-      }
-    } catch (err) {
-      setError(err.message || "Test execution failed.");
-    } finally {
-      setPendingAction(null);
-    }
-  };
-
-  const handleRunRemainingEndpoints = async (specificEndpoints = null) => {
-    if (!snapshotId || (activeJobId && activeJobStatus !== "FAILED") || pendingAction) return;
-
-    setError("");
-    setPendingAction("RUN_REMAINING");
-
-    try {
-      const remainingList = specificEndpoints || (workspace?.endpoints || []).filter((ep) => ep.executedCount === 0);
-      if (remainingList.length === 0) {
-        throw new Error("No remaining endpoints to run.");
-      }
-
-      // Check if any of these remaining endpoints do not have AI tests generated
-      const ungenerated = remainingList.filter((ep) => (ep.generatedCount || 0) === 0);
-      if (ungenerated.length > 0 && (!workspace?.aiTests || workspace.aiTests.length === 0)) {
-        setActiveStage("GENERATE");
-        await handleGenerateClick(ungenerated.map((ep) => `${ep.method} ${ep.path}`));
-        return;
-      }
-
-      // Helper function to check if request matches an endpoint
-      const isRequestMatchEp = (r, ep) => {
-        if (!r || !ep) return false;
-        if ((r.method || "GET").toUpperCase() !== ep.method.toUpperCase()) return false;
-        const cleanReq = (r.path || "").split("?")[0].replace(/\/+$/, "") || "/";
-        const cleanRoute = (ep.path || ep.route || ep.fullPath || "").replace(/\/+$/, "") || "/";
-        const regexStr = "^" + cleanRoute.replace(/\./g, "\\.").replace(/:[a-zA-Z0-9_]+/g, "[^/]+") + "$";
-        if (new RegExp(regexStr, "i").test(cleanReq)) return true;
-
-        const suite = (r.suiteName || "").toUpperCase();
-        const title = (r.testName || "").toUpperCase();
-        const epMethod = ep.method.toUpperCase();
-        const epPath = cleanRoute.toUpperCase();
-        if (suite.includes(epMethod) || title.includes(epMethod)) {
-          if (epPath.includes(":")) {
-            const prefix = epPath.split("/:")[0];
-            return suite.includes(epPath) || (suite.includes(prefix) && /\b(BY\s+ID|USER\s+ID|WITH\s+ID)\b/i.test(title));
-          } else {
-            return !suite.includes(epPath + "/:") && !/\b(BY\s+ID|USER\s+ID|WITH\s+ID)\b/i.test(title) && suite.includes(epPath);
-          }
-        }
-        return false;
-      };
-
-      // 1. Gather all scenario identifiers for remaining endpoints
-      const remainingScenarioIds = [];
-      (workspace?.aiTests || []).forEach((t) => {
-        (t.requests || []).forEach((r) => {
-          const isTarget = remainingList.some((ep) => isRequestMatchEp(r, ep));
-          if (isTarget) {
-            if (r.scenarioId) remainingScenarioIds.push(`${t.id}::${r.scenarioId}`);
-            if (r.testName) remainingScenarioIds.push(`${t.id}::${r.testName}`);
-          }
-        });
-      });
-
-      if (remainingScenarioIds.length === 0) {
-        throw new Error("No test scenarios found for this endpoint. Please generate scenarios in the Generate & Review step.");
-      }
-
-      // 2. Combine with previously approved scenarios to preserve cumulative test results
-      const combinedScenarioIds = new Set(remainingScenarioIds);
-      (workspace?.aiTests || []).forEach((t) => {
-        if (t.status === "APPROVED") {
-          (t.requests || []).forEach((r) => {
-            if (r.scenarioId) combinedScenarioIds.add(`${t.id}::${r.scenarioId}`);
-            if (r.testName) combinedScenarioIds.add(`${t.id}::${r.testName}`);
-          });
-        }
-      });
-
-      // Also preserve anything currently in selectedTestIds
-      (selectedTestIds || []).forEach((id) => combinedScenarioIds.add(id));
-
-      const finalApprovedIds = Array.from(combinedScenarioIds);
-
-      // 3. Update selectedTestIds state
-      setSelectedTestIds(finalApprovedIds);
-
-      // 4. Call approveIntegrationTestsApi
-      await approveIntegrationTestsApi(snapshotId, finalApprovedIds);
-
-      // 5. Trigger test execution
-      const response = await runCoverageByType(snapshotId, "integration");
-      const jobId = response?.data?.job?.id || response?.job?.id;
-
+      const jobId =
+        response.data?.job?.id || response.data?.jobId || response.jobId;
       if (jobId) {
         setActiveJobId(jobId);
         setActiveJobType("EXECUTE");
         setActiveJobStatus("RUNNING");
-        setActiveStage("RUN");
-      } else {
-        throw new Error("Backend did not return a Job ID when launching test execution.");
       }
     } catch (err) {
-      console.error("[handleRunRemainingEndpoints] Error:", err);
-      setError(err.message || "Failed to execute remaining endpoints.");
+      setError(err.message || "Khởi chạy kiểm thử tích hợp thất bại.");
     } finally {
       setPendingAction(null);
     }
   };
 
-  const parseProgressSteps = (jobType, logs) => {
-    const stages = logs.map((l) => l.parsedMessage?.stage).filter(Boolean);
+  // Run Specific Endpoint
+  const handleRunEndpoint = async (ep) => {
+    if (!projectAccess.can("tests.run")) return;
+    if (!snapshotId || pendingAction || !ep) return;
+    const epScenarios = ep.scenarios || [];
+    const scenarioIds = epScenarios
+      .map((s) => s.id || `${s.testId}::${s.scenarioId || s.testName}`)
+      .filter(Boolean);
+    if (scenarioIds.length === 0) {
+      setError(
+        `Endpoint ${ep.method} ${ep.path} chưa có kịch bản kiểm thử nào.`,
+      );
+      return;
+    }
+    setError("");
+    setPendingAction("RUN_ENDPOINT");
+    try {
+      await approveIntegrationTestsApi(snapshotId, scenarioIds);
+      const response = await runCoverageByType(snapshotId, "integration");
+      const jobId =
+        response.data?.job?.id || response.data?.jobId || response.jobId;
+      if (jobId) {
+        setActiveJobId(jobId);
+        setActiveJobType("EXECUTE");
+        setActiveJobStatus("RUNNING");
+      }
+    } catch (err) {
+      setError(err.message || "Không thể thực thi kiểm thử cho endpoint này.");
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  // Retry Single Scenario
+  const handleRetryScenario = async (ep, sc) => {
+    if (!projectAccess.can("tests.run")) return;
+    if (!snapshotId || pendingAction || !sc) return;
+    const scId = sc.id || `${sc.testId}::${sc.scenarioId || sc.testName}`;
+    if (!scId) return;
+    setError("");
+    setPendingAction("RETRY_SCENARIO");
+    try {
+      await approveIntegrationTestsApi(snapshotId, [scId]);
+      const response = await runCoverageByType(snapshotId, "integration");
+      const jobId =
+        response.data?.job?.id || response.data?.jobId || response.jobId;
+      if (jobId) {
+        setActiveJobId(jobId);
+        setActiveJobType("EXECUTE");
+        setActiveJobStatus("RUNNING");
+      }
+    } catch (err) {
+      setError(err.message || "Không thể chạy lại kịch bản này.");
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  // Resolve runtime results to the versioned editable artifact.
+  const editableScenario = sc => {
+    for (const test of workspace?.aiTests || []) {
+      const request = (test.requests || []).find(r =>
+        r.scenarioId === sc?.scenarioId || r.scenarioId === sc?.id ||
+        test.id + '::' + r.scenarioId === sc?.id ||
+        r.testName === (sc?.testName || sc?.title || sc?.name));
+      if (request) return {aiTestId:test.id,scenarioId:request.scenarioId,expectedVersion:test.version};
+    }
+    throw new Error('Không tìm thấy mã nguồn của kịch bản. Hãy sinh test trước khi chỉnh sửa.');
+  };
+  const handleAIFixScenario = async (ep, sc) => {
+    if (!projectAccess.can('ai.use') || !snapshotId || !sc) return;
+    setError('');
+    try {
+      const result = await mutateIntegrationScenarioApi({snapshotId,...editableScenario(sc),action:'REGENERATE'});
+      const jobId = result?.data?.job?.id || result?.job?.id || result?.data?.jobId || result?.jobId;
+      if (jobId) {setActiveJobId(jobId);setActiveJobType('GENERATE');setActiveJobStatus('RUNNING');}
+      await load();
+    } catch(err) {setError(err.message || 'Không thể sửa kịch bản bằng AI.');}
+  };
+  const handleOpenApplyModal = (targetIds = null) => {
+    if (!projectAccess.can('files.write')) return;
+    setApplyModalTestIds(targetIds?.length ? targetIds : selectedTestIds);
+    setApplyModalOpen(true);
+  };
+  const handleOpenEditScenario = async (sc,ep = null) => {
+    if (!projectAccess.can('files.write')) return;
+    try {
+      const identity = editableScenario(sc);
+      const result = await getIntegrationScenarioApi(snapshotId,identity.aiTestId,identity.scenarioId);
+      setEditorModalScenario({...sc,...identity,expectedVersion:result.version || result.aiTest?.version,code:result.code});
+      setEditorModalEndpoint(ep);setIsAddScenarioMode(false);setEditorModalOpen(true);
+    } catch(err) {setError(err.message);}
+  };
+  const handleOpenAddScenario = ep => {
+    if (!projectAccess.can('files.write')) return;
+    const tests = workspace?.aiTests || [];
+    const test = tests.find(t => t.requests?.some(r=>r.method===ep?.method && r.path===ep?.path)) || tests[0];
+    if (!test) {setError('Hãy sinh một file test trước khi thêm kịch bản.');return;}
+    setEditorModalScenario({aiTestId:test.id,expectedVersion:test.version});
+    setEditorModalEndpoint(ep);setIsAddScenarioMode(true);setEditorModalOpen(true);
+  };
+  const handleSaveScenario = async savedData => {
+    if (!projectAccess.can('files.write') || !snapshotId) return false;
+    setError('');
+    try {
+      await mutateIntegrationScenarioApi({snapshotId,aiTestId:editorModalScenario.aiTestId,
+        scenarioId:editorModalScenario.scenarioId,expectedVersion:editorModalScenario.expectedVersion,
+        action:isAddScenarioMode ? 'ADD' : 'UPDATE',code:typeof savedData === "string" ? savedData : savedData.code,endpoint:editorModalEndpoint});
+      setEditorModalOpen(false);await load();return true;
+    } catch(err) {setError(err.message || 'Lưu kịch bản thất bại.');return false;}
+  };
+
+  // Parse progress steps for active running job
+  const parseProgressSteps = (jobType, logs = []) => {
+    const safeLogs = Array.isArray(logs) ? logs : [];
+    const stages = safeLogs.map((l) => l.parsedMessage?.stage).filter(Boolean);
     const hasStage = (stageName) => stages.includes(stageName);
-    const textLogs = logs
+    const textLogs = safeLogs
       .map((l) =>
-        typeof l.message === "string" ? l.message : JSON.stringify(l.message),
+        typeof l?.message === "string"
+          ? l.message
+          : JSON.stringify(l?.message || l || ""),
       )
       .join("\n");
-    let steps = [];
 
     if (jobType === "ANALYZE") {
-      steps = [
-        { label: "Load project snapshot", done: true },
+      return [
+        { label: "Nạp snapshot dự án", done: true },
         {
-          label: "Analyze source structure",
+          label: "Quét cấu trúc mã nguồn AST",
           done:
             hasStage("LOAD_SOURCE") ||
             textLogs.includes("Scanning") ||
             textLogs.includes("Analyzed"),
         },
         {
-          label: "Detect framework",
+          label: "Nhận diện framework kiểm thử",
           done: hasStage("DETECT_ENDPOINTS") || textLogs.includes("Analyzed"),
         },
         {
-          label: "Discover API endpoints",
-          done:
-            hasStage("DETECT_ENDPOINTS") ||
-            textLogs.includes("Analyzed") ||
-            textLogs.includes("Saving"),
+          label: "Khám phá endpoint API Express/Node",
+          done: hasStage("DETECT_ENDPOINTS") || textLogs.includes("Saving"),
         },
         {
-          label: "Analyze route/controller/service flow",
+          label: "Lập bản đồ phụ thuộc route/controller",
           done: hasStage("MAP_DEPENDENCIES") || textLogs.includes("Saving"),
         },
         {
-          label: "Build AI test context",
-          done:
-            hasStage("MAP_DEPENDENCIES") ||
-            textLogs.includes("Saving") ||
-            textLogs.includes("completed"),
-        },
-        {
-          label: "Complete",
+          label: "Hoàn tất phân tích",
           done: hasStage("COMPLETE") || textLogs.includes("completed"),
         },
       ];
     } else if (jobType === "GENERATE") {
-      steps = [
+      return [
         {
-          label: "Build AI test context",
+          label: "Xây dựng AI context cho API",
           done:
-            hasStage("BUILD_CONTEXT") ||
-            textLogs.includes("Building AI Context") ||
-            textLogs.includes("Calling Gemini"),
+            hasStage("BUILD_CONTEXT") || textLogs.includes("Calling Gemini"),
         },
         {
-          label: "Generate AI tests",
+          label: "Sinh bộ test đa kịch bản với LLM",
           done:
             hasStage("GENERATE_AI_TESTS") ||
             textLogs.includes("Calling Gemini"),
         },
         {
-          label: "Validate test scenarios",
+          label: "Xác thực cú pháp & Jest assertions",
           done:
             hasStage("VALIDATE_SCENARIOS") ||
-            textLogs.includes("Parsing") ||
-            textLogs.includes("validating") ||
             textLogs.includes("Saved") ||
-            textLogs.includes("Generated") ||
-            textLogs.includes("No Supertest"),
+            textLogs.includes("Generated"),
         },
         {
-          label: "Complete",
-          done:
-            hasStage("COMPLETE") ||
-            activeJobStatus === "SUCCESS" ||
-            textLogs.includes("Saved") ||
-            textLogs.includes("Generated") ||
-            textLogs.includes("No Supertest") ||
-            textLogs.toLowerCase().includes("complete") ||
-            textLogs.toLowerCase().includes("finish"),
+          label: "Hoàn tất sinh kiểm thử",
+          done: hasStage("COMPLETE") || activeJobStatus === "SUCCESS",
         },
       ];
-    } else if (jobType === "EXECUTE") {
-      steps = [
-        { label: "Load approved tests", done: true },
-        { label: "Validate snapshot", done: true },
+    } else {
+      return [
+        { label: "Nạp danh sách kịch bản đã duyệt", done: true },
         {
-          label: "Prepare environment",
+          label: "Khởi tạo môi trường cô lập",
           done:
             hasStage("PREPARE_ENV") ||
-            textLogs.toLowerCase().includes("start") ||
+            textLogs.includes("start") ||
             textLogs.includes("TestRun"),
         },
         {
-          label: "Execute tests",
-          done:
-            hasStage("RUN_JEST") ||
-            textLogs.toLowerCase().includes("start") ||
-            textLogs.includes("TestRun"),
+          label: "Thực thi Jest & Supertest runner",
+          done: hasStage("RUN_JEST") || textLogs.includes("TestRun"),
         },
         {
-          label: "Collect results",
-          done:
-            hasStage("PARSE_COVERAGE") ||
-            textLogs.includes("TestRun") ||
-            textLogs.toLowerCase().includes("complete"),
+          label: "Bóc tách độ bao phủ API & Tracing",
+          done: hasStage("PARSE_COVERAGE") || textLogs.includes("complete"),
         },
         {
-          label: "Map tests to endpoints",
-          done:
-            hasStage("MAP_RESULTS") ||
-            textLogs.includes("TestRun") ||
-            textLogs.toLowerCase().includes("complete"),
-        },
-        {
-          label: "Collect coverage",
-          done:
-            hasStage("MAP_RESULTS") ||
-            textLogs.includes("TestRun") ||
-            textLogs.toLowerCase().includes("complete"),
-        },
-        {
-          label: "Build report",
-          done: hasStage("COMPLETE") || textLogs.toLowerCase().includes("complete"),
+          label: "Bóc tách 5 tầng lỗi & Báo cáo",
+          done: hasStage("COMPLETE") || textLogs.includes("complete"),
         },
       ];
     }
-    return steps;
   };
 
-  if (loading && !workspace)
-    return (
-      <div style={{ padding: 40, color: "#e6edf3" }}>Loading workspace...</div>
+  // Calculate failed scenarios list across all endpoints
+  const { endpoints = [], summary, execution, generation } = workspace || {};
+  const isJobActive = Boolean(
+    (activeJobId &&
+      (activeJobStatus === "RUNNING" || activeJobStatus === "QUEUED")) ||
+    isCancelling,
+  );
+
+  const failedScenariosList = useMemo(() => {
+    const list = [];
+    endpoints.forEach((ep) => {
+      (ep.scenarios || []).forEach((sc) => {
+        const isFail =
+          sc.status === "failed" ||
+          sc.rawJestStatus === "failed" ||
+          sc.executionVerdict === "FAIL";
+        if (isFail) {
+          const actualHttp =
+            sc.actualStatus ?? sc.actualStatusFromRuntime ?? null;
+          let layer = sc.failureLayer;
+          if (!layer || !FAILURE_LAYERS_META[layer]) {
+            if (actualHttp === 404) layer = "ROUTER_NOT_FOUND";
+            else if (actualHttp === 401 || actualHttp === 403)
+              layer = "MIDDLEWARE_REJECTED";
+            else if (actualHttp === 500) layer = "CONTROLLER_CRASH";
+            else layer = "ASSERTION_FAILED";
+          }
+          list.push({
+            endpoint: ep,
+            scenario: sc,
+            layer,
+            key: `${ep.method} ${ep.path}::${sc.id || sc.title}`,
+          });
+        }
+      });
+    });
+    return list;
+  }, [endpoints]);
+
+  const filteredFailures = useMemo(() => {
+    if (activeFailureLayerFilter === "ALL") return failedScenariosList;
+    return failedScenariosList.filter(
+      (f) => f.layer === activeFailureLayerFilter,
     );
+  }, [failedScenariosList, activeFailureLayerFilter]);
 
-  const {
-    generation,
-    endpoints = [],
-    aiTests = [],
-    summary,
-    execution,
-  } = workspace || {};
-  const hasAnalysis = generation?.hasAnalysis;
-  const hasGeneratedTests = generation?.hasGeneratedTests;
-  const isApproved = generation?.isApproved;
-  const isJobActive = activeJobId && activeJobStatus !== "FAILED";
-  const remainingEndpoints = endpoints.filter((ep) => ep.executedCount === 0);
+  // Overall statistics
+  const overallStats = useMemo(() => {
+    const totalApis = endpoints.length;
+    let testedApis = 0;
+    let passedApis = 0;
+    let failedApis = 0;
 
-  const selectedEndpoint =
-    selectedEndpointId !== null ? endpoints.find(e => `${e.method} ${e.path}` === selectedEndpointId) : null;
+    // Collect deduplicated scenarios across endpoints to prevent duplicate counts
+    const uniqueScenariosMap = new Map();
+
+    endpoints.forEach((ep) => {
+      const epScenarios = ep.scenarios || [];
+      const hasTests = epScenarios.length > 0 || (ep.generatedCount || 0) > 0;
+      if (hasTests) testedApis++;
+
+      const scFailed = epScenarios.filter(
+        (s) =>
+          s.status === "failed" ||
+          s.rawJestStatus === "failed" ||
+          s.executionVerdict === "FAIL",
+      ).length;
+      const scPassed = epScenarios.filter(
+        (s) =>
+          s.status === "passed" ||
+          s.rawJestStatus === "passed" ||
+          s.executionVerdict === "PASS",
+      ).length;
+
+      const epFailed = epScenarios.length > 0 ? scFailed : ep.failedCount || 0;
+      const epPassed = epScenarios.length > 0 ? scPassed : ep.passedCount || 0;
+
+      if (epFailed > 0) failedApis++;
+      else if (epPassed > 0) passedApis++;
+
+      epScenarios.forEach((sc) => {
+        const key = sc.id || sc.scenarioId || sc.title;
+        if (key && !uniqueScenariosMap.has(key)) {
+          uniqueScenariosMap.set(key, sc);
+        }
+      });
+    });
+
+    const uncoveredApis = Math.max(0, totalApis - testedApis);
+    const apiPassRate =
+      testedApis > 0 ? Math.round((passedApis / testedApis) * 100) : 0;
+    const apiCoverageRate =
+      totalApis > 0 ? Math.round((testedApis / totalApis) * 100) : 0;
+
+    const dedupedScenarios = Array.from(uniqueScenariosMap.values());
+    const dedupPassed = dedupedScenarios.filter(
+      (s) =>
+        s.status === "passed" ||
+        s.rawJestStatus === "passed" ||
+        s.executionVerdict === "PASS",
+    ).length;
+    const dedupFailed = dedupedScenarios.filter(
+      (s) =>
+        s.status === "failed" ||
+        s.rawJestStatus === "failed" ||
+        s.executionVerdict === "FAIL",
+    ).length;
+
+    // Synchronize with authoritative test runner execution object if available
+    const hasExecutionRun = Boolean(
+      execution &&
+      (execution.totalTests > 0 ||
+        execution.passedTests > 0 ||
+        execution.failedTests > 0),
+    );
+    const totalScenariosCount = hasExecutionRun
+      ? execution.totalTests
+      : dedupedScenarios.length > 0
+        ? dedupedScenarios.length
+        : generation?.generatedScenarios || 0;
+
+    const passedScenariosCount = hasExecutionRun
+      ? execution.passedTests
+      : dedupPassed;
+
+    const failedScenariosCount = hasExecutionRun
+      ? execution.failedTests
+      : dedupFailed;
+
+    const totalExecutedScenarios = passedScenariosCount + failedScenariosCount;
+    const scenarioPassRate =
+      totalScenariosCount > 0
+        ? Math.round((passedScenariosCount / totalScenariosCount) * 100)
+        : 0;
+
+    const totalAvailableScenarios =
+      generation?.generatedScenarios || totalScenariosCount;
+    const scenarioCoverageRate =
+      totalAvailableScenarios > 0
+        ? Math.min(
+            100,
+            Math.round(
+              (totalExecutedScenarios / totalAvailableScenarios) * 100,
+            ),
+          )
+        : totalExecutedScenarios > 0
+          ? 100
+          : 0;
+
+    return {
+      totalApis,
+      testedApis,
+      passedApis,
+      failedApis,
+      uncoveredApis,
+      apiPassRate,
+      apiCoverageRate,
+      totalScenariosCount,
+      passedScenariosCount,
+      failedScenariosCount,
+      scenarioPassRate,
+      scenarioCoverageRate,
+    };
+  }, [endpoints, execution, generation]);
+
+  // Loading State
+  if (loading && !workspace) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[400px] p-8 text-[var(--color-text)]">
+        <div className="w-10 h-10 border-3 border-[var(--color-primary)]/20 border-t-[var(--color-primary)] rounded-full animate-spin mb-4" />
+        <h3 className="text-sm font-semibold text-[var(--color-text)] mb-1">
+          Đang nạp Integration Testing Workbench...
+        </h3>
+        <p className="text-xs text-[var(--color-text-secondary)] font-mono">
+          Kết nối Snapshot #{snapshotId?.substring(0, 8)} • Quét ma trận API và
+          kết quả kiểm thử
+        </p>
+      </div>
+    );
+  }
+
+  // Empty Snapshot State
+  if (!snapshotId && !workspace) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[400px] p-8 text-center text-[var(--color-text)]">
+        <AlertTriangle size={36} className="text-[var(--color-warning)] mb-3" />
+        <h3 className="text-base font-bold text-[var(--color-text)] mb-1">
+          Chưa chọn Snapshot dự án
+        </h3>
+        <p className="text-xs text-[var(--color-text-secondary)] max-w-md mb-4 leading-relaxed">
+          Vui lòng chọn một snapshot hợp lệ từ danh sách dự án trước khi sử dụng
+          tính năng Kiểm thử Tích hợp API.
+        </p>
+      </div>
+    );
+  }
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100%",
-        minHeight: 0,
-        overflow: "hidden",
-        background: "var(--color-bg)",
-        color: "var(--color-text)",
-      }}
-    >
-      {/* PIPELINE STAGE HEADER */}
-      <div
-        style={{
-          padding: "0 24px",
-          borderBottom: "1px solid var(--color-border)",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          background: "var(--color-surface)",
-        }}
-      >
-        <div className="flex gap-2 flex-1 items-center py-4">
-          {[
-            { id: "ANALYZE", label: "Analyze", icon: Search },
-            { id: "GENERATE", label: "Generate & Review", icon: Zap },
-            { id: "RUN", label: "Run Tests", icon: PlayCircle },
-            { id: "REPORT", label: "Report", icon: BarChart3 }
-          ].map((stage, idx, arr) => {
-            const isActive = activeStage === stage.id;
-            const isPast = arr.findIndex(s => s.id === activeStage) > idx;
-            const Icon = stage.icon;
-            
-            return (
-              <React.Fragment key={stage.id}>
+    <div className="flex flex-col h-full min-h-0 bg-[var(--color-bg)] text-[var(--color-text)] font-sans select-text overflow-hidden">
+      {/* 1. TOP STICKY COCKPIT HEADER */}
+      <header className="shrink-0 bg-[var(--color-surface)] border-b border-[var(--color-border)] z-20 shadow-xs no-print">
+        {/* Main Header Row */}
+        <div className="px-6 py-3 flex flex-wrap items-center justify-between gap-4">
+          {/* Left: Title & Metadata Badge */}
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-[var(--radius-sm)] bg-[var(--color-primary)]/10 text-[var(--color-primary)] flex items-center justify-center">
+              <Layers size={18} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-sm font-bold text-[var(--color-text)] tracking-tight m-0">
+                  Integration Test Cockpit
+                </h1>
+                <span className="px-2 py-0.5 rounded font-mono text-[10px] font-semibold bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)]">
+                  #{snapshotId?.substring(0, 8) || "active"}
+                </span>
+                {detectionInfo?.targetFramework && (
+                  <span className="px-2 py-0.5 rounded font-mono text-[10px] font-bold bg-sky-500/10 text-sky-400 border border-sky-500/25">
+                    {detectionInfo.targetFramework.toUpperCase()}
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-[var(--color-text-muted)] font-mono m-0 mt-0.5">
+                Kiểm thử tích hợp API endpoint tự động • Trực quan hóa độ bao
+                phủ & Chẩn đoán 5 tầng lỗi
+              </p>
+            </div>
+          </div>
+
+          {/* Right: Primary Command Buttons */}
+          <div className="flex items-center gap-2">
+            {/* Run All Tests */}
+            <button
+              type="button"
+              onClick={handleRunApprovedTests}
+              disabled={!projectAccess.can("tests.run") || isJobActive || pendingAction === "RUN"}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-xs disabled:opacity-50"
+            >
+              <Play size={13} fill="currentColor" />
+              <span>
+                {isJobActive && activeJobType === "EXECUTE"
+                  ? "Đang chạy test..."
+                  : "Chạy tất cả test"}
+              </span>
+            </button>
+
+            {/* AI Test Generation */}
+            <button
+              type="button"
+              onClick={() => handleGenerateClick()}
+              disabled={!projectAccess.can("ai.use") || isJobActive || pendingAction === "GENERATE"}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-semibold transition-colors cursor-pointer shadow-xs disabled:opacity-50"
+              title="Sinh thêm kịch bản API test bằng AI"
+            >
+              <Zap size={13} className="text-[var(--color-primary)]" />
+              <span>Sinh test AI</span>
+            </button>
+
+            {/* Apply to Repo */}
+            <button
+              type="button"
+              onClick={() => handleOpenApplyModal()}
+              disabled={isJobActive}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-semibold transition-colors cursor-pointer shadow-xs"
+              title="Ghi các kịch bản test vào file trong thư mục dự án"
+            >
+              <HardDriveDownload size={13} />
+              <span>Áp dụng vào Repo</span>
+            </button>
+
+            {/* Print / PDF Report */}
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-semibold transition-colors cursor-pointer shadow-xs"
+              title="In hoặc xuất file PDF báo cáo này"
+            >
+              <Printer size={13} />
+              <span>In PDF</span>
+            </button>
+
+            {/* Version History & Diff Drawer Toggle */}
+            <button
+              type="button"
+              onClick={() => setDrawerOpen(drawerOpen ? null : "history")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-sm)] text-xs font-semibold border transition-colors cursor-pointer shadow-xs ${
+                drawerOpen
+                  ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] border-[var(--color-primary)]/30"
+                  : "bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)]"
+              }`}
+              title="Xem lịch sử các lần chạy và so sánh phiên bản Trước/Sau"
+            >
+              <Clock size={13} />
+              <span>Lịch sử & So sánh</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Anchor Quick-Jump Strip */}
+        <div className="px-6 py-1.5 border-t border-[var(--color-border)]/60 bg-[var(--color-surface-secondary)]/30 flex items-center justify-between overflow-x-auto custom-scrollbar">
+          <div className="flex items-center gap-1 text-xs">
+            <span className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider mr-2 shrink-0">
+              Chuyển nhanh:
+            </span>
+
+            {[
+              { id: "section-kpis", label: "Tổng quan & KPIs" },
+              ...(detectionInfo?.isZeroTestProject ||
+              detectionInfo?.needsDependencyInstall
+                ? [
+                    {
+                      id: "section-framework",
+                      label: "Cài đặt & Thư viện",
+                      alert: true,
+                    },
+                  ]
+                : []),
+              {
+                id: "section-execution",
+                label: "Thực thi & Logs",
+                pulsing: isJobActive,
+              },
+              {
+                id: "section-failures",
+                label: "Chẩn đoán lỗi (5 Tầng)",
+                badge: failedScenariosList.length,
+                badgeColor: "bg-rose-500/20 text-[var(--color-danger)]",
+              },
+              {
+                id: "section-matrix",
+                label: "Ma trận API Endpoints",
+                count: endpoints.length,
+              },
+              { id: "section-scenarios", label: "Kịch bản Test & Monaco" },
+              { id: "section-report", label: "Báo cáo Tích hợp & In ấn" },
+            ].map((nav) => {
+              const isActive = activeAnchor === nav.id;
+              return (
                 <button
-                  onClick={() => {
-                    if (stage.id === "REPORT") {
-                      navigate(`/project/${projectId}/reports/integration`);
-                    } else {
-                      setActiveStage(stage.id);
-                    }
-                  }}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-full transition-all duration-200 border text-sm font-semibold ${
-                    isActive 
-                      ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] border-[var(--color-primary)]/30 shadow-[0_0_10px_var(--color-primary-light)]" 
-                      : isPast
-                      ? "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border-[var(--color-border)] hover:bg-[var(--color-border)]"
-                      : "bg-transparent text-[var(--color-text-secondary)] border-transparent hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)]"
+                  key={nav.id}
+                  type="button"
+                  onClick={() => scrollToSection(nav.id)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-[var(--radius-sm)] text-xs font-medium transition-colors cursor-pointer whitespace-nowrap ${
+                    isActive
+                      ? "bg-[var(--color-primary)]/15 text-[var(--color-primary)] font-bold border border-[var(--color-primary)]/30"
+                      : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)]"
                   }`}
                 >
-                  <Icon size={16} className={isActive ? "text-[var(--color-primary)]" : isPast ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"} />
-                  {stage.label}
+                  {nav.pulsing && (
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  )}
+                  <span>{nav.label}</span>
+                  {nav.badge != null && nav.badge > 0 && (
+                    <span
+                      className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${nav.badgeColor}`}
+                    >
+                      {nav.badge}
+                    </span>
+                  )}
+                  {nav.count != null && (
+                    <span className="text-[10px] font-mono text-[var(--color-text-muted)]">
+                      ({nav.count})
+                    </span>
+                  )}
                 </button>
-                {idx < arr.length - 1 && (
-                  <ChevronRight size={16} className="text-[var(--color-border)] mx-1" />
-                )}
-              </React.Fragment>
-            );
-          })}
-        </div>
-        
-        {/* Commands (Action Buttons for Current Stage) */}
-        <div style={{ display: "flex", gap: 8, padding: "12px 0" }}>
-          {activeStage === "ANALYZE" && (
-             <button
-               onClick={handleRunAnalysis}
-               disabled={isJobActive || pendingAction === "ANALYZE"}
-               style={isJobActive || pendingAction === "ANALYZE" ? disabledButtonStyle : buttonStyle("var(--color-text-secondary)", true)}
-             >
-               {pendingAction === "ANALYZE" ? "Analyzing..." : (hasAnalysis ? "Re-analyze Project" : "Analyze Project")}
-             </button>
-          )}
-          {activeStage === "GENERATE" && (
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <button
-                onClick={() => handleGenerateClick()}
-                disabled={!hasAnalysis || isJobActive || pendingAction === "GENERATE"}
-                style={!hasAnalysis || isJobActive || pendingAction === "GENERATE" ? disabledButtonStyle : buttonStyle("var(--color-primary)", false)}
-              >
-                {pendingAction === "GENERATE"
-                  ? "Generating..."
-                  : selectedTargetEndpoints.size > 0
-                    ? `Generate Selected (${selectedTargetEndpoints.size})`
-                    : (hasGeneratedTests ? "Regenerate All Tests" : "Generate Tests")}
-              </button>
-              {selectedTargetEndpoints.size > 0 && (
-                <button
-                  type="button"
-                  onClick={handleClearSelectedEndpoints}
-                  style={buttonStyle("var(--color-surface-secondary)", false)}
-                  title="Clear endpoint selections"
-                >
-                  Clear ({selectedTargetEndpoints.size})
-                </button>
-              )}
-              {hasGeneratedTests && (
-                <button
-                  onClick={handleApproveAndRun}
-                  disabled={isJobActive || selectedTestIds.length === 0 || pendingAction === "APPROVE_AND_RUN"}
-                  style={
-                    isJobActive || selectedTestIds.length === 0 || pendingAction === "APPROVE_AND_RUN"
-                      ? disabledButtonStyle
-                      : buttonStyle("var(--color-success, #22c55e)", true)
-                  }
-                  title="Approve selected scenarios and execute tests immediately"
-                >
-                  {pendingAction === "APPROVE_AND_RUN"
-                    ? "Starting Run..."
-                    : `Approve & Run Selected (${selectedTestIds.length})`}
-                </button>
-              )}
-            </div>
-          )}
-          {activeStage === "RUN" && (
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              {remainingEndpoints.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => handleRunRemainingEndpoints()}
-                  disabled={isJobActive || pendingAction === "RUN_REMAINING"}
-                  style={
-                    isJobActive || pendingAction === "RUN_REMAINING"
-                      ? disabledButtonStyle
-                      : {
-                          ...buttonStyle("#22c55e", true),
-                          background: "var(--color-success, #16a34a)",
-                          color: "#ffffff",
-                          border: "none",
-                        }
-                  }
-                  title="Run remaining unexecuted endpoints in this session without re-configuring"
-                >
-                  <Play size={13} style={{ display: "inline", verticalAlign: "middle", marginRight: 6 }} fill="#ffffff" />
-                  {pendingAction === "RUN_REMAINING" ? "Starting Remaining..." : `Run Remaining Endpoints (${remainingEndpoints.length})`}
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={handleRunApprovedTests}
-                disabled={!isApproved || isJobActive || pendingAction === "RUN" || pendingAction === "RUN_REMAINING"}
-                style={!isApproved || isJobActive || pendingAction === "RUN" || pendingAction === "RUN_REMAINING" ? disabledButtonStyle : buttonStyle("var(--color-info, #3b82f6)", false)}
-              >
-                {pendingAction === "RUN" ? "Starting..." : (execution ? "Run Tests Again" : "Run Tests")}
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
+              );
+            })}
+          </div>
 
-      {error && (
-        <div
-          style={{
-            margin: "16px 24px 0",
-            padding: "12px 16px",
-            background: "rgba(248,113,113,.1)",
-            color: "var(--color-danger)",
-            border: "1px solid var(--color-danger)",
-            borderRadius: 8,
-            fontSize: 13,
-            display: "flex",
-            justifyContent: "space-between",
-          }}
-        >
-          <span>{error}</span>
+          <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] shrink-0 font-mono">
+            {refreshing && (
+              <span className="flex items-center gap-1 text-[var(--color-primary)]">
+                <RefreshCw size={11} className="animate-spin" /> Đang đồng bộ...
+              </span>
+            )}
+          </div>
+        </div>
+      </header>
+
+      {/* Cancellation Notice Banner */}
+      {cancellationNotice && (
+        <div className="px-6 py-2.5 bg-amber-500/10 border-b border-amber-500/20 text-xs text-[var(--color-warning)] flex items-center justify-between no-print">
+          <span>{cancellationNotice}</span>
           <button
-            onClick={() => setError("")}
-            style={{
-              background: "none",
-              border: "none",
-              color: "var(--color-danger)",
-              cursor: "pointer",
-            }}
+            type="button"
+            onClick={() => setCancellationNotice("")}
+            className="cursor-pointer text-inherit"
           >
             ✕
           </button>
         </div>
       )}
 
-      {/* MASTER-DETAIL LAYOUT */}
-      <div style={{ display: "flex", flex: 1, minHeight: 0, overflow: "hidden" }}>
-        {/* LEFT PANE (MASTER): Targets */}
-        <div
-          style={{
-            flexShrink: 0,
-            width: 320,
-            minWidth: 0,
-            minHeight: 0,
-            height: "100%",
-            borderRight: "1px solid var(--color-border)",
-            background: "var(--color-surface)",
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-          }}
-        >
-          {activeStage === "ANALYZE" || activeStage === "GENERATE" || activeStage === "RUN" ? (
-             <IntegrationTargetsPane
-               endpoints={endpoints}
-               selectedEndpointId={selectedEndpointId}
-               onSelectEndpoint={setSelectedEndpointId}
-               hasAnalysis={hasAnalysis}
-               selectedTargetEndpoints={selectedTargetEndpoints}
-               onToggleSelectEndpoint={handleToggleSelectEndpoint}
-               onToggleSelectModule={handleToggleSelectModule}
-               onSelectAllEndpoints={handleSelectAllEndpoints}
-               onClearSelectedEndpoints={handleClearSelectedEndpoints}
-               onGenerateSelected={() => handleGenerateClick()}
-               isGenerating={pendingAction === "GENERATE" || (activeJobId && activeJobType === "GENERATE")}
-             />
-          ) : activeStage === "HISTORY" ? (
-             <div style={{padding: 16, color: "var(--color-text-secondary)"}}>History Mode</div>
-          ) : null}
+      {/* Global Error Banner */}
+      {error && (
+        <div className="px-6 py-2.5 bg-rose-500/10 border-b border-rose-500/20 text-xs text-[var(--color-danger)] flex items-center justify-between no-print">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={14} />
+            <span>{error}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setError("")}
+            className="cursor-pointer text-inherit"
+          >
+            ✕
+          </button>
         </div>
+      )}
 
-        {/* RIGHT PANE (DETAIL): Context */}
-        <div
-          style={{
-            flex: 1,
-            minWidth: 0,
-            minHeight: 0,
-            height: "100%",
-            background: "var(--color-bg)",
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden"
-          }}
-        >
-          <IntegrationErrorBoundary onRetry={load}>
-          {activeJobId && (activeJobType === activeStage || (activeStage === "RUN" && activeJobType === "EXECUTE")) ? (
-             <IntegrationLiveProgress
-               activeJobId={activeJobId}
-               activeJobType={activeJobType}
-               activeJobStatus={activeJobStatus}
-               error={error}
-               activeLogs={activeLogs}
-               parseProgressSteps={parseProgressSteps}
-             />
-          ) : activeStage === "ANALYZE" && selectedEndpointId !== null ? (
-            <IntegrationEndpointDetail
-              endpoint={selectedEndpoint}
-              aiTests={aiTests}
-              hasGeneratedTests={hasGeneratedTests}
-              isApproved={isApproved}
-              selectedTestIds={selectedTestIds}
-              setSelectedTestIds={setSelectedTestIds}
-              snapshotId={snapshotId}
-              projectId={projectId}
-              endpoints={endpoints}
-              onOpenCFG={onOpenCFG}
-              onSuggestTestcase={onSuggestTestcase}
-              onOpenArchitecture={onOpenArchitecture}
-              onScenarioChange={load}
-              onError={setError}
-              onGenerateThisEndpoint={(ep) => handleGenerateClick([`${ep.method} ${ep.path || ep.route}`])}
-              isGenerating={pendingAction === "GENERATE" || (activeJobId && activeJobType === "GENERATE")}
-            />
-          ) : activeStage === "GENERATE" ? (
-            <IntegrationScenariosPane
-              aiTests={aiTests}
-              selectedEndpoint={selectedEndpoint}
-              hasGeneratedTests={hasGeneratedTests}
-              isApproved={isApproved}
-              selectedTestIds={selectedTestIds}
-              setSelectedTestIds={setSelectedTestIds}
-              snapshotId={snapshotId}
-              endpoints={endpoints}
-              onOpenCFG={onOpenCFG}
-              onSuggestTestcase={onSuggestTestcase}
-              onOpenArchitecture={onOpenArchitecture}
-              onScenarioChange={load}
-              onError={setError}
-              onGenerateThisEndpoint={(key) => handleGenerateClick([key])}
-              isGenerating={pendingAction === "GENERATE" || (activeJobId && activeJobType === "GENERATE")}
-              onApproveAndRun={handleApproveAndRun}
-              isApprovingAndRunning={pendingAction === "APPROVE_AND_RUN"}
-            />
-          ) : (
-            <div className="flex flex-col h-full bg-[var(--color-surface)]">
+      {/* 2. MAIN SCROLLABLE DASHBOARD VIEW */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar scroll-smooth px-6 py-6 space-y-8">
+        <IntegrationErrorBoundary onRetry={load}>
+          {/* SECTION 1: Framework Detection & Auto-Setup Banner */}
+          {detectionInfo &&
+            (detectionInfo.isZeroTestProject ||
+              detectionInfo.needsDependencyInstall) && (
+              <section id="section-framework" className="scroll-mt-24">
+                <IntegrationFrameworkDetectionBanner
+                  detectionInfo={detectionInfo}
+                  onGenerateTests={handleGenerateByBannerFramework}
+                  onInstallDependencies={handleInstallDependencies}
+                  isInstalling={isInstallingDeps}
+                  isGenerating={isGeneratingWithBanner}
+                />
+              </section>
+            )}
 
-
-
-              <div style={{ flex: 1, overflow: "hidden" }}>
-                {activeStage === "ANALYZE" && hasAnalysis && !selectedEndpointId ? (
-                   <div style={{padding: 24, color: "var(--color-text-secondary)"}}>Select an endpoint from the left to view analysis details.</div>
-                ) : activeStage === "REPORT" ? (
-                   <div style={{padding: 24, color: "var(--color-text-secondary)"}}>Redirecting to Report...</div>
-                ) : activeStage === "RUN" && (
-                  <div style={{ padding: 24, overflowY: "auto", height: "100%" }}>
-                    {/* SCENARIO GENERATION */}
-                    <div
-                      style={{
-                        padding: 16,
-                        background: "rgba(255,255,255,.02)",
-                        border: "1px solid rgba(255,255,255,.05)",
-                        borderRadius: 8,
-                        marginBottom: 24,
-                      }}
-                    >
-                      <div
-                        style={{
-                          color: "#8b949e",
-                          fontSize: 12,
-                          textTransform: "uppercase",
-                          fontWeight: 600,
-                          marginBottom: 12,
-                          display: "flex",
-                          justifyContent: "space-between"
-                        }}
-                      >
-                        <MetricProvenancePopover provenance={summary?.provenance?.scenarioCount}>
-                          <span>Test Generation</span>
-                        </MetricProvenancePopover>
-                      </div>
-                      
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#8b949e", marginBottom: 8 }}>
-                        <span>Status</span>
-                        <span style={{ 
-                          color: !generation?.hasAnalysis ? "#8b949e" : (!generation?.hasGeneratedTests ? "#fbbf24" : "#22c55e"),
-                          fontWeight: "bold" 
-                        }}>
-                          {!generation?.hasAnalysis ? "NOT GENERATED" : (!generation?.hasGeneratedTests ? "NO SCENARIOS" : "READY")}
-                        </span>
-                      </div>
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#8b949e", marginBottom: 8 }}>
-                        <span>Targeted APIs</span>
-                        <span style={{ color: "#e6edf3", fontWeight: "bold" }}>{generation?.targetedApis || 0}</span>
-                      </div>
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#8b949e" }}>
-                        <span>Generated Scenarios</span>
-                        <span style={{ color: "#e6edf3", fontWeight: "bold" }}>{generation?.generatedScenarios || 0}</span>
-                      </div>
-                    </div>
-
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
-                      <MetricProvenancePopover provenance={summary?.provenance?.execution}>
-                        <h3 style={{ margin: 0, fontSize: 16, color: "#e6edf3" }}>
-                          Execution Summary
-                        </h3>
-                      </MetricProvenancePopover>
-                    </div>
-                    {!execution ? (
-                      <div style={{ color: "#8b949e", fontSize: 13 }}>
-                        No recent executions found.
-                      </div>
-                    ) : (
-                    <div
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 16,
-                      }}
-                    >
-                      {(() => {
-                        const { semanticState, executionJobId, testRunId } = summary || {};
-                        let title = "Unknown Status";
-                        let description = "";
-                        let color = "#8b949e";
-                        
-                        if (pendingAction === "RUN" || pendingAction === "RUN_REMAINING" || (activeJobType === "EXECUTE" && activeJobStatus === "RUNNING" && semanticState === "NOT_EXECUTED")) {
-                          title = "Queued / Starting";
-                          description = "Execution request has been sent and is starting...";
-                          color = "var(--color-primary)";
-                        } else if (semanticState === "RUNNING" || (activeJobType === "EXECUTE" && activeJobStatus === "RUNNING")) {
-                          title = "Running";
-                          description = "Execution is currently in progress.";
-                          color = "var(--color-primary)";
-                        } else if (semanticState === "CANCELED") {
-                          title = "Canceled";
-                          description = "Execution was canceled by the user.";
-                          color = "var(--color-warning)";
-                        } else if (semanticState === "TESTS_FAILED") {
-                          title = "Tests Failed";
-                          description = "Execution completed, but some tests failed.";
-                          color = "#f87171";
-                        } else if (semanticState === "FAILED_BEFORE_TEST_EXECUTION") {
-                          title = "Infrastructure Failure";
-                          description = workspace?.jobs?.execute?.errorMessage || "Test runner did not complete.";
-                          color = "#f87171";
-                        } else if (semanticState === "NO_TESTS_EXECUTED") {
-                          title = "No Tests Executed";
-                          description = "Pipeline completed but no tests were executed.";
-                          color = "var(--color-warning)";
-                        } else if (semanticState === "SKIPPED") {
-                          title = "Skipped";
-                          description = "Tests were skipped.";
-                          color = "var(--color-warning)";
-                        } else if (semanticState === "SUCCESS") {
-                          title = "Success";
-                          description = "All tests passed successfully.";
-                          color = "#22c55e";
-                        } else {
-                          title = semanticState || "No Status";
-                        }
-
-                        return (
-                          <div
-                            style={{
-                              padding: 16,
-                              background: "rgba(255,255,255,.02)",
-                              border: "1px solid rgba(255,255,255,.05)",
-                              borderRadius: 8,
-                            }}
-                          >
-                            <div
-                              style={{
-                                color,
-                                fontSize: 20,
-                                fontWeight: 700,
-                                marginBottom: 4,
-                              }}
-                            >
-                              {title}
-                            </div>
-                            <div style={{ color: "#8b949e", fontSize: 13, marginBottom: 16, lineHeight: 1.4 }}>
-                              {description}
-                            </div>
-                                                        {(() => {
-                              const passed = summary?.passedTests || 0;
-                              const failed = summary?.failedTests || 0;
-                              const skipped = summary?.skippedTests || 0;
-                              const total = summary?.totalTests || 0;
-                              const executed = passed + failed;
-                              const passRate = executed > 0 ? Math.round((passed / executed) * 100) : 0;
-
-                              return (
-                                <div>
-                                  <div
-                                    style={{
-                                      display: "grid",
-                                      gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-                                      gap: 8,
-                                      marginBottom: 12,
-                                    }}
-                                  >
-                                    <div style={{ background: "rgba(34,197,94,0.06)", padding: "10px 12px", borderRadius: 6, border: "1px solid rgba(34,197,94,0.18)" }}>
-                                      <div style={{ fontSize: 11, color: "var(--color-success)", fontWeight: 600 }}>PASSED</div>
-                                      <div style={{ fontSize: 18, fontWeight: 700, color: "#e6edf3", marginTop: 2 }}>{passed}</div>
-                                    </div>
-                                    <div style={{ background: failed > 0 ? "rgba(239,68,68,0.08)" : "rgba(255,255,255,0.02)", padding: "10px 12px", borderRadius: 6, border: failed > 0 ? "1px solid rgba(239,68,68,0.25)" : "1px solid rgba(255,255,255,0.05)" }}>
-                                      <div style={{ fontSize: 11, color: failed > 0 ? "var(--color-danger)" : "#8b949e", fontWeight: 600 }}>FAILED</div>
-                                      <div style={{ fontSize: 18, fontWeight: 700, color: failed > 0 ? "var(--color-danger)" : "#e6edf3", marginTop: 2 }}>{failed}</div>
-                                    </div>
-                                    <div style={{ background: "rgba(245,158,11,0.06)", padding: "10px 12px", borderRadius: 6, border: "1px solid rgba(245,158,11,0.18)" }}>
-                                      <div style={{ fontSize: 11, color: "var(--color-warning)", fontWeight: 600 }}>SKIPPED</div>
-                                      <div style={{ fontSize: 18, fontWeight: 700, color: "#e6edf3", marginTop: 2 }}>{skipped}</div>
-                                    </div>
-                                    <div style={{ background: "rgba(255,255,255,0.02)", padding: "10px 12px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.05)" }}>
-                                      <div style={{ fontSize: 11, color: "var(--color-text-secondary)", fontWeight: 600 }}>PASS RATE (Executed)</div>
-                                      <div style={{ fontSize: 18, fontWeight: 700, color: passRate >= 80 ? "var(--color-success)" : passRate > 0 ? "var(--color-warning)" : "#8b949e", marginTop: 2 }}>
-                                        {passRate}%
-                                      </div>
-                                    </div>
-                                    <div style={{ background: "rgba(56,189,248,0.06)", padding: "10px 12px", borderRadius: 6, border: "1px solid rgba(56,189,248,0.18)" }}>
-                                      <div style={{ fontSize: 11, color: "#38bdf8", fontWeight: 600 }}>AVG LATENCY</div>
-                                      <div style={{ fontSize: 18, fontWeight: 700, color: "#e6edf3", marginTop: 2 }}>
-                                        {summary?.avgEndpointLatencyMs || 0}<span style={{ fontSize: 12, fontWeight: 500, color: "#8b949e" }}>ms</span>
-                                      </div>
-                                    </div>
-                                  </div>
-
-                                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#8b949e", padding: "0 2px" }}>
-                                    <span>Total Scenarios: <strong style={{ color: "#e6edf3" }}>{total}</strong></span>
-                                    <span>Executed: <strong style={{ color: "#e6edf3" }}>{executed}</strong> (Pass: {passed} | Fail: {failed})</span>
-                                    <span>Skipped: <strong style={{ color: "var(--color-warning)" }}>{skipped}</strong></span>
-                                  </div>
-
-                                  {generation?.generatedScenarios && generation.generatedScenarios !== total && (
-                                    <div style={{ 
-                                      marginTop: 10, 
-                                      fontSize: 11, 
-                                      color: "#a5d6ff", 
-                                      background: "rgba(56, 139, 253, 0.08)", 
-                                      padding: "6px 10px", 
-                                      borderRadius: 6, 
-                                      border: "1px solid rgba(56, 139, 253, 0.2)",
-                                      display: "flex",
-                                      alignItems: "center",
-                                      gap: 6
-                                    }}>
-                                      <span>ℹ️</span>
-                                      <span>Latest test run recorded <strong>{total}</strong> scenarios. Source code currently contains <strong>{generation.generatedScenarios}</strong> scenarios (re-run tests to sync all).</span>
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })()}
-
-                            <div style={{ marginTop: 16, borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 12, fontSize: 11, color: "var(--color-text-muted)" }}>
-                              <strong>Evidence Linkage:</strong>
-                              <ul style={{ paddingLeft: 16, margin: "4px 0 0 0" }}>
-                                {executionJobId && <li>Job ID: <code style={{ color: "var(--color-primary)" }}>{executionJobId}</code></li>}
-                                {testRunId && <li>TestRun ID: <code style={{ color: "var(--color-primary)" }}>{testRunId}</code></li>}
-                                {workspace?.jobs?.execute?.createdAt && <li>Started At: {new Date(workspace.jobs.execute.createdAt).toLocaleString()}</li>}
-                                {summary?.durationMs > 0 && <li>Duration: {summary.durationMs}ms</li>}
-                              </ul>
-                            </div>
-                          </div>
-                        );
-                      })()}
-
-                      {/* TARGETED ENDPOINTS VERIFICATION BREAKDOWN */}
-                      <div
-                        style={{
-                          padding: 16,
-                          background: "rgba(255,255,255,.02)",
-                          border: "1px solid rgba(255,255,255,.05)",
-                          borderRadius: 8,
-                        }}
-                      >
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-                          <div>
-                            <h4 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "#e6edf3" }}>
-                              API Endpoint Verification Details
-                            </h4>
-                            <div style={{ fontSize: 11, color: "#8b949e", marginTop: 2 }}>
-                              Shows which endpoints were executed and which were not run in this session
-                            </div>
-                          </div>
-                          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                            <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(34,197,94,0.12)", color: "#22c55e", fontWeight: 600 }}>
-                              {summary?.testedApis || 0} Tested
-                            </span>
-                            <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(139,148,158,0.12)", color: "#8b949e", fontWeight: 600 }}>
-                              {(summary?.discoveredApis || 0) - (summary?.testedApis || 0)} Not Executed
-                            </span>
-                            {remainingEndpoints.length > 0 && (
-                              <button
-                                type="button"
-                                onClick={() => handleRunRemainingEndpoints()}
-                                disabled={isJobActive || pendingAction === "RUN_REMAINING"}
-                                style={{
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: 6,
-                                  background: "var(--color-success, #16a34a)",
-                                  color: "#ffffff",
-                                  border: "none",
-                                  borderRadius: 5,
-                                  padding: "4px 10px",
-                                  fontSize: 11,
-                                  fontWeight: 600,
-                                  cursor: isJobActive || pendingAction === "RUN_REMAINING" ? "not-allowed" : "pointer",
-                                  opacity: isJobActive || pendingAction === "RUN_REMAINING" ? 0.6 : 1,
-                                  boxShadow: "0 2px 6px rgba(16, 185, 129, 0.25)",
-                                }}
-                                title="Automatically approve and run remaining endpoints without re-configuring"
-                              >
-                                <Play size={11} fill="#ffffff" />
-                                <span>{pendingAction === "RUN_REMAINING" ? "Preparing..." : `Run Remaining Endpoints (${remainingEndpoints.length})`}</span>
-                              </button>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* REMAINING ENDPOINTS ACTION BANNER */}
-                        {remainingEndpoints.length > 0 && (
-                          <div
-                            style={{
-                              marginBottom: 14,
-                              padding: "10px 14px",
-                              borderRadius: 6,
-                              background: "rgba(37, 99, 235, 0.08)",
-                              border: "1px solid rgba(59, 130, 246, 0.2)",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "space-between",
-                              gap: 12,
-                            }}
-                          >
-                            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#93c5fd" }}>
-                              <Zap size={16} style={{ color: "#60a5fa", flexShrink: 0 }} />
-                              <span>
-                                Detected <strong>{remainingEndpoints.length}</strong> API endpoints not yet executed in this session.
-                                Click to run remaining endpoints directly without re-configuring.
-                              </span>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => handleRunRemainingEndpoints()}
-                              disabled={isJobActive || pendingAction === "RUN_REMAINING"}
-                              style={{
-                                whiteSpace: "nowrap",
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: 6,
-                                background: "#2563eb",
-                                color: "#ffffff",
-                                border: "none",
-                                borderRadius: 5,
-                                padding: "5px 12px",
-                                fontSize: 12,
-                                fontWeight: 600,
-                                cursor: isJobActive || pendingAction === "RUN_REMAINING" ? "not-allowed" : "pointer",
-                                opacity: isJobActive || pendingAction === "RUN_REMAINING" ? 0.6 : 1,
-                                transition: "all 0.15s ease",
-                              }}
-                            >
-                              <Play size={12} fill="#ffffff" />
-                              <span>Run Remaining {remainingEndpoints.length} Endpoints</span>
-                            </button>
-                          </div>
-                        )}
-
-                        {/* ENDPOINT LIST */}
-                        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                          {endpoints.map((ep) => {
-                            const isTested = ep.executedCount > 0;
-                            const isCovered = ep.status === "Covered";
-                            const isPartial = ep.status === "Partial";
-
-                            let badgeBg = "rgba(139,148,158,0.12)";
-                            let badgeBorder = "rgba(139,148,158,0.25)";
-                            let badgeColor = "#8b949e";
-                            let badgeText = "Not executed in this session";
-
-                            if (isCovered) {
-                              badgeBg = "rgba(34,197,94,0.12)";
-                              badgeBorder = "rgba(34,197,94,0.3)";
-                              badgeColor = "#22c55e";
-                              badgeText = `Tested (Pass ${ep.passedCount}/${ep.executedCount})`;
-                            } else if (isPartial) {
-                              badgeBg = "rgba(245,158,11,0.12)";
-                              badgeBorder = "rgba(245,158,11,0.3)";
-                              badgeColor = "#fbbf24";
-                              badgeText = `Partial (Pass ${ep.passedCount}/${ep.executedCount})`;
-                            } else if (ep.failedCount > 0) {
-                              badgeBg = "rgba(239,68,68,0.12)";
-                              badgeBorder = "rgba(239,68,68,0.3)";
-                              badgeColor = "#f87171";
-                              badgeText = `Failed (${ep.failedCount} errors)`;
-                            }
-
-                            const methodColor = ep.method === "GET" ? "#38bdf8" : ep.method === "POST" ? "#4ade80" : ep.method === "DELETE" ? "#f87171" : "#fbbf24";
-
-                            return (
-                              <div
-                                key={`${ep.method}-${ep.path}`}
-                                style={{
-                                  background: "rgba(255,255,255,0.015)",
-                                  border: isTested ? "1px solid rgba(34,197,94,0.18)" : "1px solid rgba(255,255,255,0.05)",
-                                  borderRadius: 6,
-                                  padding: "10px 14px",
-                                  display: "flex",
-                                  flexDirection: "column",
-                                  gap: 6,
-                                }}
-                              >
-                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                                    <span style={{ 
-                                      fontSize: 11, 
-                                      fontWeight: 700, 
-                                      color: methodColor, 
-                                      background: "rgba(255,255,255,0.05)", 
-                                      padding: "2px 6px", 
-                                      borderRadius: 4,
-                                      fontFamily: "monospace"
-                                    }}>
-                                      {ep.method}
-                                    </span>
-                                    <span style={{ fontSize: 13, fontWeight: 600, color: "#e6edf3", fontFamily: "monospace" }}>
-                                      {ep.path}
-                                    </span>
-                                    {ep.source?.controllerMethod && (
-                                      <span style={{ fontSize: 11, color: "#8b949e" }}>
-                                        → {ep.source.controllerMethod}
-                                      </span>
-                                    )}
-
-                                    {/* LATENCY PER ENDPOINT */}
-                                    {isTested && ep.avgDurationMs > 0 && (
-                                      <span
-                                        style={{
-                                          fontSize: 11,
-                                          fontWeight: 600,
-                                          color: ep.latencyStatus === "FAST" ? "#22c55e" : ep.latencyStatus === "SLOW" ? "#f87171" : "#fbbf24",
-                                          background: ep.latencyStatus === "FAST" ? "rgba(34,197,94,0.1)" : ep.latencyStatus === "SLOW" ? "rgba(239,68,68,0.15)" : "rgba(245,158,11,0.1)",
-                                          border: `1px solid ${ep.latencyStatus === "FAST" ? "rgba(34,197,94,0.25)" : ep.latencyStatus === "SLOW" ? "rgba(239,68,68,0.3)" : "rgba(245,158,11,0.25)"}`,
-                                          padding: "2px 7px",
-                                          borderRadius: 4,
-                                          display: "inline-flex",
-                                          alignItems: "center",
-                                          gap: 4,
-                                        }}
-                                        title={`Average response time: ${ep.avgDurationMs}ms (Min: ${ep.minDurationMs}ms | Max: ${ep.maxDurationMs}ms)`}
-                                      >
-                                        <Clock size={11} />
-                                        <span>{ep.avgDurationMs}ms</span>
-                                        {ep.latencyStatus === "SLOW" && <span style={{ fontSize: 10, fontWeight: 700 }}>(Slow)</span>}
-                                      </span>
-                                    )}
-                                  </div>
-
-                                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                    <span style={{
-                                      fontSize: 11,
-                                      fontWeight: 600,
-                                      color: badgeColor,
-                                      background: badgeBg,
-                                      border: `1px solid ${badgeBorder}`,
-                                      padding: "2px 8px",
-                                      borderRadius: 4,
-                                    }}>
-                                      {badgeText}
-                                    </span>
-
-                                    {!isTested && (
-                                      <button
-                                        type="button"
-                                        onClick={() => handleRunRemainingEndpoints([ep])}
-                                        disabled={isJobActive || pendingAction === "RUN_REMAINING"}
-                                        style={{
-                                          display: "inline-flex",
-                                          alignItems: "center",
-                                          gap: 4,
-                                          background: "rgba(56, 189, 248, 0.12)",
-                                          color: "#38bdf8",
-                                          border: "1px solid rgba(56, 189, 248, 0.3)",
-                                          borderRadius: 4,
-                                          padding: "2px 8px",
-                                          fontSize: 11,
-                                          fontWeight: 600,
-                                          cursor: isJobActive || pendingAction === "RUN_REMAINING" ? "not-allowed" : "pointer",
-                                          opacity: isJobActive || pendingAction === "RUN_REMAINING" ? 0.6 : 1,
-                                          transition: "all 0.15s ease",
-                                        }}
-                                        title="Execute tests for this endpoint only"
-                                      >
-                                        <Play size={10} fill="#38bdf8" />
-                                        <span>Run this endpoint</span>
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-
-                                {/* Scenarios executed details & Failure Diff Viewer */}
-                                {ep.scenarios && ep.scenarios.length > 0 ? (
-                                  <div style={{ 
-                                    marginTop: 4, 
-                                    paddingTop: 6, 
-                                    borderTop: "1px solid rgba(255,255,255,0.04)", 
-                                    display: "flex", 
-                                    flexDirection: "column", 
-                                    gap: 6 
-                                  }}>
-                                    {ep.scenarios.map((sc, scIdx) => {
-                                      const scKey = `${ep.method}-${ep.path}-${sc.title}-${scIdx}`;
-                                      const isFailed = sc.status === "failed";
-                                      const isExpanded = expandedScenarios[scKey] ?? isFailed;
-
-                                      return (
-                                        <div key={scIdx} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                                          <div
-                                            onClick={() => toggleExpandScenario(scKey)}
-                                            style={{
-                                              display: "flex",
-                                              alignItems: "center",
-                                              justifyContent: "space-between",
-                                              fontSize: 11,
-                                              padding: "6px 10px",
-                                              borderRadius: 5,
-                                              background: isFailed ? "rgba(239,68,68,0.08)" : isExpanded ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.01)",
-                                              border: isFailed ? "1px solid rgba(239,68,68,0.25)" : "1px solid rgba(255,255,255,0.03)",
-                                              cursor: "pointer",
-                                              transition: "all 0.15s ease",
-                                            }}
-                                          >
-                                            <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#c9d1d9" }}>
-                                              <span style={{ color: sc.status === "passed" ? "#22c55e" : isFailed ? "#f87171" : "#8b949e", fontWeight: "bold" }}>
-                                                {sc.status === "passed" ? "✓" : isFailed ? "✗" : "○"}
-                                              </span>
-                                              <span style={{ fontWeight: isFailed ? 600 : 400, color: isFailed ? "#fca5a5" : "#e6edf3" }}>
-                                                {sc.title}
-                                              </span>
-                                              {isFailed && (
-                                                <span style={{ fontSize: 10, background: "rgba(239,68,68,0.2)", color: "#f87171", padding: "1px 5px", borderRadius: 3, fontWeight: 700 }}>
-                                                  FAILED
-                                                </span>
-                                              )}
-                                            </div>
-
-                                            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                                              {/* Latency per scenario */}
-                                              {sc.durationMs > 0 && (
-                                                <span style={{ fontSize: 10, color: sc.durationMs > 250 ? "#f87171" : sc.durationMs > 80 ? "#fbbf24" : "#8b949e", fontFamily: "monospace" }}>
-                                                  ⏱️ {sc.durationMs}ms
-                                                </span>
-                                              )}
-
-                                              <span style={{ 
-                                                fontSize: 10, 
-                                                color: sc.status === "passed" ? "#22c55e" : isFailed ? "#f87171" : "#8b949e",
-                                                textTransform: "uppercase",
-                                                fontWeight: 600
-                                              }}>
-                                                {sc.category || sc.status}
-                                              </span>
-
-                                              <span style={{ fontSize: 10, color: isFailed ? "#f87171" : "#58a6ff", display: "inline-flex", alignItems: "center", gap: 3, fontWeight: 500 }}>
-                                                {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                                                <span>{isFailed ? "Failure Details & Diff" : "Payload"}</span>
-                                              </span>
-                                            </div>
-                                          </div>
-
-                                          {/* Expanded Failure Diff & Payload View */}
-                                          {isExpanded && (
-                                            <div
-                                              style={{
-                                                margin: "2px 0 6px 12px",
-                                                padding: 12,
-                                                background: isFailed ? "rgba(239,68,68,0.04)" : "rgba(255,255,255,0.02)",
-                                                border: isFailed ? "1px solid rgba(239,68,68,0.2)" : "1px solid rgba(255,255,255,0.06)",
-                                                borderRadius: 6,
-                                                display: "flex",
-                                                flexDirection: "column",
-                                                gap: 10,
-                                              }}
-                                            >
-                                              {/* 1. FAILURE STEP & BROKEN CODE LINE */}
-                                              {isFailed && sc.failureDetails && (
-                                                <div>
-                                                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, fontSize: 11, fontWeight: 700, color: "#f87171" }}>
-                                                    <AlertTriangle size={14} />
-                                                    <span>Failing code line:</span>
-                                                    {sc.failureDetails.brokenLineText && (
-                                                      <code style={{ background: "rgba(239,68,68,0.15)", padding: "2px 6px", borderRadius: 4, color: "#fca5a5" }}>
-                                                        {sc.failureDetails.brokenLineText}
-                                                      </code>
-                                                    )}
-                                                    {sc.failureDetails.file && sc.failureDetails.line && (
-                                                      <span style={{ color: "#8b949e", fontWeight: 400 }}>
-                                                        ({sc.failureDetails.file}:{sc.failureDetails.line})
-                                                      </span>
-                                                    )}
-                                                  </div>
-
-                                                  {sc.failureDetails.codeSnippet && (
-                                                    <pre
-                                                      style={{
-                                                        margin: 0,
-                                                        padding: "8px 12px",
-                                                        background: "#090d16",
-                                                        border: "1px solid rgba(239,68,68,0.2)",
-                                                        borderRadius: 5,
-                                                        fontSize: 11,
-                                                        fontFamily: "monospace",
-                                                        color: "#fca5a5",
-                                                        overflowX: "auto",
-                                                        whiteSpace: "pre-wrap",
-                                                        lineHeight: 1.5,
-                                                      }}
-                                                    >
-                                                      {sc.failureDetails.codeSnippet}
-                                                    </pre>
-                                                  )}
-                                                </div>
-                                              )}
-
-                                              {/* 2. GRID: PAYLOAD SENT vs RESPONSE RECEIVED / DIFF */}
-                                              <div style={{ display: "grid", gridTemplateColumns: isFailed ? "1fr 1fr" : "1fr", gap: 10 }}>
-                                                {/* Sent Payload */}
-                                                <div style={{ background: "rgba(0,0,0,0.25)", padding: "8px 10px", borderRadius: 5, border: "1px solid rgba(255,255,255,0.04)" }}>
-                                                  <div style={{ fontSize: 11, fontWeight: 600, color: "#38bdf8", marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
-                                                    <span>📤 Sent Payload ({ep.method}):</span>
-                                                    {sc.queryParams && <span style={{ fontSize: 10, color: "#8b949e" }}>Query: {JSON.stringify(sc.queryParams)}</span>}
-                                                  </div>
-                                                  {sc.requestPayload && Object.keys(sc.requestPayload).length > 0 ? (
-                                                    <pre
-                                                      style={{
-                                                        margin: 0,
-                                                        fontSize: 11,
-                                                        fontFamily: "monospace",
-                                                        color: "#e6edf3",
-                                                        background: "#0d1117",
-                                                        padding: 8,
-                                                        borderRadius: 4,
-                                                        overflowX: "auto",
-                                                      }}
-                                                    >
-                                                      {JSON.stringify(sc.requestPayload, null, 2)}
-                                                    </pre>
-                                                  ) : (
-                                                    <div style={{ fontSize: 11, color: "#8b949e", fontStyle: "italic", padding: "4px 0" }}>
-                                                      {ep.method === "GET" ? "GET request has no body (No payload body)." : "Empty body payload: {}"}
-                                                    </div>
-                                                  )}
-                                                </div>
-
-                                                {/* Received Response & Diff (if failed) */}
-                                                {isFailed && sc.failureDetails && (
-                                                  <div style={{ background: "rgba(0,0,0,0.25)", padding: "8px 10px", borderRadius: 5, border: "1px solid rgba(255,255,255,0.04)" }}>
-                                                    <div style={{ fontSize: 11, fontWeight: 600, color: "#fbbf24", marginBottom: 4 }}>
-                                                      📥 Received Response & Diff:
-                                                    </div>
-                                                    <div style={{ fontSize: 11, marginBottom: 4 }}>
-                                                      <span style={{ color: "#8b949e" }}>Expected: </span>
-                                                      <strong style={{ color: "#22c55e" }}>{sc.failureDetails.expected || sc.expectedStatus || "200 OK"}</strong>
-                                                      {"  |  "}
-                                                      <span style={{ color: "#8b949e" }}>Received: </span>
-                                                      <strong style={{ color: "#f87171" }}>{sc.failureDetails.received || "Error"}</strong>
-                                                    </div>
-                                                    {sc.failureDetails.diff && (
-                                                      <pre
-                                                        style={{
-                                                          margin: 0,
-                                                          fontSize: 11,
-                                                          fontFamily: "monospace",
-                                                          color: "#e6edf3",
-                                                          background: "#0d1117",
-                                                          padding: 8,
-                                                          borderRadius: 4,
-                                                          overflowX: "auto",
-                                                        }}
-                                                      >
-                                                        {sc.failureDetails.diff}
-                                                      </pre>
-                                                    )}
-                                                  </div>
-                                                )}
-                                              </div>
-
-                                              {/* Raw failure message fallback if no structured snippet */}
-                                              {isFailed && sc.failureMessages && sc.failureMessages.length > 0 && !sc.failureDetails?.codeSnippet && (
-                                                <div style={{ marginTop: 2 }}>
-                                                  <div style={{ fontSize: 10, color: "#8b949e", marginBottom: 2 }}>Error output from Jest:</div>
-                                                  <pre
-                                                    style={{
-                                                      margin: 0,
-                                                      fontSize: 10,
-                                                      color: "#fca5a5",
-                                                      background: "#090d16",
-                                                      padding: 8,
-                                                      borderRadius: 4,
-                                                      overflowX: "auto",
-                                                      whiteSpace: "pre-wrap",
-                                                    }}
-                                                  >
-                                                    {sc.failureMessages.join("\n")}
-                                                  </pre>
-                                                </div>
-                                              )}
-                                            </div>
-                                          )}
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                ) : (
-                                  <div style={{ fontSize: 11, color: "#8b949e", fontStyle: "italic", paddingTop: 2 }}>
-                                    This endpoint was not selected in the latest test run (0 executed scenarios).
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      {/* API ENDPOINT COVERAGE */}
-                      {(() => {
-                        const prov = summary?.provenance?.apiCoverage;
-                        return (
-                          <div
-                            style={{
-                              padding: 16,
-                              background: "rgba(255,255,255,.02)",
-                              border: "1px solid rgba(255,255,255,.05)",
-                              borderRadius: 8,
-                            }}
-                          >
-                            <div
-                              style={{
-                                color: "#8b949e",
-                                fontSize: 12,
-                                textTransform: "uppercase",
-                                fontWeight: 600,
-                                marginBottom: 12,
-                                display: "flex",
-                                justifyContent: "space-between"
-                              }}
-                            >
-                              <MetricProvenancePopover provenance={prov}>
-                                <span>API Endpoint Coverage</span>
-                              </MetricProvenancePopover>
-                            </div>
-                            <div
-                              style={{
-                                display: "flex",
-                                justifyContent: "space-between",
-                                alignItems: "center",
-                                fontSize: 13,
-                              }}
-                            >
-                              <div style={{ color: "#e6edf3" }}>
-                                <strong>{summary?.testedApis || 0}</strong> / {summary?.discoveredApis || 0} endpoints tested
-                              </div>
-                              <div style={{ color: summary?.testedApis > 0 ? "#22c55e" : "#fbbf24", fontWeight: "bold", fontSize: 16 }}>
-                                {summary?.discoveredApis > 0 ? Math.round(((summary?.testedApis || 0) / summary.discoveredApis) * 100) : 0}%
-                              </div>
-                            </div>
-                            {summary?.testedApis < summary?.discoveredApis && (
-                              <div style={{ marginTop: 8, fontSize: 11, color: "#8b949e" }}>
-                                ℹ️ Successfully verified <strong>{summary?.testedApis || 0}</strong> endpoints. <strong>{(summary?.discoveredApis || 0) - (summary?.testedApis || 0)}</strong> endpoints have not been executed in this session.
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })()}
-                      
-                      {/* COVERAGE SEMANTICS */}
-                      {(() => {
-                        const cov = summary?.codeCoverage;
-                        if (!cov) {
-                          return (
-                            <div
-                              style={{
-                                padding: 16,
-                                background: "rgba(255,255,255,.02)",
-                                border: "1px solid rgba(255,255,255,.05)",
-                                borderRadius: 8,
-                                color: "#8b949e",
-                                fontSize: 13
-                              }}
-                            >
-                              <div style={{ color: "#e6edf3", fontWeight: 600, marginBottom: 4 }}>Coverage Not Collected</div>
-                              Coverage data is unavailable for this execution.
-                            </div>
-                          );
-                        }
-
-                        const renderMetric = (label, value) => {
-                          const num = Number(value);
-                          const isZero = num === 0;
-                          const color = isZero ? "#f87171" : num > 80 ? "#22c55e" : "#fbbf24";
-                          return (
-                            <div>
-                              {label}:{" "}
-                              <strong style={{ color }}>
-                                {num.toFixed(1)}%
-                              </strong>
-                            </div>
-                          );
-                        };
-
-                        return (
-                          <div
-                            style={{
-                              padding: 16,
-                              background: "rgba(255,255,255,.02)",
-                              border: "1px solid rgba(255,255,255,.05)",
-                              borderRadius: 8,
-                            }}
-                          >
-                            <div
-                              style={{
-                                color: "#8b949e",
-                                fontSize: 12,
-                                textTransform: "uppercase",
-                                fontWeight: 600,
-                                marginBottom: 12,
-                                display: "flex",
-                                justifyContent: "space-between"
-                              }}
-                            >
-                              <MetricProvenancePopover provenance={summary?.provenance?.codeCoverage}>
-                                <span>Code Coverage</span>
-                              </MetricProvenancePopover>
-                              <span style={{ fontSize: 10, textTransform: "none", color: "var(--color-text-muted)" }}>Source: TestRun Artifacts</span>
-                            </div>
-                            <div
-                              style={{
-                                display: "grid",
-                                gridTemplateColumns: "1fr 1fr",
-                                gap: 12,
-                                fontSize: 13,
-                              }}
-                            >
-                              {renderMetric("Statements", cov.statement)}
-                              {renderMetric("Branches", cov.branch)}
-                              {renderMetric("Functions", cov.function)}
-                              {renderMetric("Lines", cov.line)}
-                            </div>
-                          </div>
-                        );
-                      })()}
-                    </div>
-                    )}
+          {/* SECTION 2: High-Density Metric Overview Cards */}
+          <section id="section-kpis" className="scroll-mt-24 space-y-3.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+              {/* Card 1: API Pass Rate */}
+              <div className="p-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xs flex flex-col justify-between">
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+                    API Pass Rate
                   </div>
-                )}
-                {activeStage === "HISTORY" && (
-                  <IntegrationHistoryPane snapshotId={snapshotId} />
-                )}
+                  <div className="flex items-baseline gap-2">
+                    <span
+                      className={`text-2xl font-bold font-mono ${overallStats.apiPassRate >= 80 ? "text-[var(--color-success)]" : overallStats.apiPassRate > 0 ? "text-amber-400" : "text-[var(--color-text-muted)]"}`}
+                    >
+                      {overallStats.apiPassRate}%
+                    </span>
+                    <span className="text-xs text-[var(--color-text-muted)] font-mono">
+                      ({overallStats.passedApis}/{overallStats.testedApis}{" "}
+                      tested APIs)
+                    </span>
+                  </div>
+                </div>
+                <div className="text-[10px] text-[var(--color-text-secondary)] mt-2">
+                  Tỉ lệ endpoint API vượt qua 100% kịch bản kiểm thử
+                </div>
+              </div>
+
+              {/* Card 2: API Coverage */}
+              <div className="p-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xs flex flex-col justify-between">
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+                    API Endpoint Coverage
+                  </div>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-2xl font-bold font-mono text-[var(--color-primary)]">
+                      {overallStats.apiCoverageRate}%
+                    </span>
+                    <span className="text-xs text-[var(--color-text-muted)] font-mono">
+                      ({overallStats.testedApis}/{overallStats.totalApis}{" "}
+                      routes)
+                    </span>
+                  </div>
+                </div>
+                <div className="w-full bg-[var(--color-surface-secondary)] h-1.5 rounded-full overflow-hidden mt-2">
+                  <div
+                    className="bg-[var(--color-primary)] h-full transition-all duration-300"
+                    style={{ width: `${overallStats.apiCoverageRate}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* Card 3: Uncovered API Endpoints */}
+              <div className="p-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xs flex flex-col justify-between">
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+                    Uncovered API Endpoints
+                  </div>
+                  <div className="flex items-baseline gap-2">
+                    <span
+                      className={`text-2xl font-bold font-mono ${overallStats.uncoveredApis > 0 ? "text-amber-400" : "text-[var(--color-success)]"}`}
+                    >
+                      {overallStats.uncoveredApis}
+                    </span>
+                    <span className="text-xs text-[var(--color-text-muted)] font-mono">
+                      / {overallStats.totalApis} endpoints
+                    </span>
+                  </div>
+                </div>
+                <div className="text-[10px] text-[var(--color-text-secondary)] mt-2 flex items-center justify-between">
+                  <span>Chưa có kịch bản test</span>
+                  {overallStats.uncoveredApis > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => handleGenerateClick()}
+                      className="text-[var(--color-primary)] hover:underline font-semibold cursor-pointer"
+                    >
+                      + Sinh test AI
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Card 4: Endpoint Status Triage */}
+              <div className="p-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xs flex flex-col justify-between">
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+                    Endpoint Status Triage
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 mt-1 font-mono text-xs">
+                    <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-[var(--color-success)] border border-emerald-500/20 font-bold">
+                      ✓ {overallStats.passedApis} Passed
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-rose-500/10 text-[var(--color-danger)] border border-rose-500/20 font-bold">
+                      ✗ {overallStats.failedApis} Failed
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)] font-semibold">
+                      ○ {overallStats.uncoveredApis} Uncovered
+                    </span>
+                  </div>
+                </div>
+                <div className="text-[10px] text-[var(--color-text-secondary)] mt-2">
+                  Phân loại trạng thái kiểm thử theo từng route
+                </div>
               </div>
             </div>
-          )}
-          </IntegrationErrorBoundary>
-        </div>
+
+            {/* Compact Execution Summary Bar */}
+            <div className="border border-[var(--color-border)] rounded-[var(--radius-md)] bg-[var(--color-surface)] overflow-hidden shadow-xs">
+              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 divide-x divide-y sm:divide-y-0 divide-[var(--color-border)] text-center text-xs">
+                <div className="p-2.5">
+                  <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">
+                    Tổng kịch bản
+                  </div>
+                  <div className="text-base font-bold font-mono text-[var(--color-text)] mt-0.5">
+                    {overallStats.totalScenariosCount}
+                  </div>
+                </div>
+                <div className="p-2.5 bg-emerald-500/5">
+                  <div className="text-[10px] uppercase font-bold text-[var(--color-success)] tracking-wider">
+                    Passed
+                  </div>
+                  <div className="text-base font-bold font-mono text-[var(--color-success)] mt-0.5">
+                    {overallStats.passedScenariosCount}
+                  </div>
+                </div>
+                <div
+                  className={`p-2.5 ${overallStats.failedScenariosCount > 0 ? "bg-rose-500/10" : ""}`}
+                >
+                  <div
+                    className={`text-[10px] uppercase font-bold tracking-wider ${overallStats.failedScenariosCount > 0 ? "text-[var(--color-danger)]" : "text-[var(--color-text-muted)]"}`}
+                  >
+                    Failed
+                  </div>
+                  <div
+                    className={`text-base font-bold font-mono ${overallStats.failedScenariosCount > 0 ? "text-[var(--color-danger)]" : "text-[var(--color-text-muted)]"} mt-0.5`}
+                  >
+                    {overallStats.failedScenariosCount}
+                  </div>
+                </div>
+                <div className="p-2.5">
+                  <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">
+                    Skipped
+                  </div>
+                  <div className="text-base font-bold font-mono text-[var(--color-text-secondary)] mt-0.5">
+                    {execution?.skippedTests || 0}
+                  </div>
+                </div>
+                <div className="p-2.5">
+                  <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">
+                    Pass Rate
+                  </div>
+                  <div
+                    className={`text-base font-bold font-mono ${overallStats.scenarioPassRate >= 80 ? "text-[var(--color-success)]" : overallStats.scenarioPassRate > 0 ? "text-amber-400" : "text-[var(--color-text-muted)]"} mt-0.5`}
+                  >
+                    {overallStats.scenarioPassRate}%
+                  </div>
+                </div>
+                <div className="p-2.5">
+                  <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">
+                    Độ bao phủ
+                  </div>
+                  <div className="text-base font-bold font-mono text-[var(--color-text)] mt-0.5">
+                    {overallStats.scenarioCoverageRate}%
+                  </div>
+                </div>
+                <div className="p-2.5">
+                  <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">
+                    Thời lượng
+                  </div>
+                  <div className="text-base font-bold font-mono text-[var(--color-text)] mt-0.5">
+                    {((execution?.durationMs || 0) / 1000).toFixed(1)}s
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* SECTION 3: Live Execution Pipeline & Terminal Logs */}
+          <section id="section-execution" className="scroll-mt-24">
+            {isJobActive ? (
+              <div className="rounded-[var(--radius-md)] border border-sky-500/30 bg-[var(--color-surface)] shadow-xs overflow-hidden">
+                <div className="px-4 py-3 bg-sky-500/10 border-b border-sky-500/20 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <RefreshCw
+                      size={16}
+                      className="animate-spin text-sky-400"
+                    />
+                    <span className="text-xs font-bold uppercase tracking-wider text-sky-400">
+                      Tác Vụ Đang Thực Thi:{" "}
+                      {activeJobType === "ANALYZE"
+                        ? "Phân tích dự án"
+                        : activeJobType === "GENERATE"
+                          ? "Sinh kiểm thử AI"
+                          : "Chạy bộ kiểm thử"}
+                    </span>
+                    <span className="text-xs font-mono text-[var(--color-text-secondary)]">
+                      Job #{activeJobId?.substring(0, 8)}
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleCancelActiveJob(activeJobId)}
+                    disabled={isCancelling}
+                    className="px-3 py-1 rounded bg-rose-500/10 text-[var(--color-danger)] border border-rose-500/30 hover:bg-rose-500/20 text-xs font-semibold cursor-pointer disabled:opacity-50"
+                  >
+                    {isCancelling ? "Đang hủy..." : "Hủy tác vụ"}
+                  </button>
+                </div>
+
+                {/* Pipeline Steps Tracker */}
+                <div className="p-4 border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)]/30">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {parseProgressSteps(activeJobType, activeLogs).map(
+                      (st, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <span
+                            className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-mono font-medium ${
+                              st.done
+                                ? "bg-emerald-500/10 text-[var(--color-success)] border border-emerald-500/25"
+                                : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border border-[var(--color-border)]"
+                            }`}
+                          >
+                            {st.done ? (
+                              <CheckCircle2 size={13} />
+                            ) : (
+                              <span className="w-2 h-2 rounded-full border border-current animate-pulse" />
+                            )}
+                            <span>{st.label}</span>
+                          </span>
+                          {i <
+                            parseProgressSteps(activeJobType, activeLogs)
+                              .length -
+                              1 && (
+                            <ChevronRight
+                              size={13}
+                              className="text-[var(--color-border)]"
+                            />
+                          )}
+                        </div>
+                      ),
+                    )}
+                  </div>
+                </div>
+
+                {/* Terminal Console Logs */}
+                <div className="p-4 bg-[#090D12] text-slate-300 font-mono text-xs max-h-64 overflow-y-auto custom-scrollbar">
+                  {activeLogs.length === 0 ? (
+                    <div className="text-slate-500 italic">
+                      Đang thiết lập kết nối luồng sự kiện SSE...
+                    </div>
+                  ) : (
+                    activeLogs.map((log, idx) => (
+                      <div
+                        key={idx}
+                        className="leading-relaxed hover:bg-slate-800/40 px-1 rounded flex items-start gap-2"
+                      >
+                        <span className="text-slate-600 select-none text-[10px] w-8 shrink-0">
+                          {idx + 1}
+                        </span>
+                        <span className="text-slate-300 break-all">
+                          {typeof log.message === "string"
+                            ? log.message
+                            : JSON.stringify(log.message)}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="p-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] flex flex-wrap items-center justify-between gap-3 shadow-xs">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-emerald-500/10 text-[var(--color-success)] flex items-center justify-center">
+                    <CheckCircle2 size={18} />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-[var(--color-text)]">
+                      Hệ Thống Sẵn Sàng Thực Thi Kiểm Thử
+                    </div>
+                    <div className="text-[11px] text-[var(--color-text-secondary)] font-mono mt-0.5">
+                      Lần chạy gần nhất:{" "}
+                      {execution?.timestamp
+                        ? new Date(execution.timestamp).toLocaleTimeString()
+                        : overallStats.passedScenariosCount > 0 ||
+                            overallStats.failedScenariosCount > 0
+                          ? "Vừa hoàn tất"
+                          : "Chưa chạy"}{" "}
+                      • {overallStats.totalScenariosCount} tests (
+                      {overallStats.passedScenariosCount} pass,{" "}
+                      {overallStats.failedScenariosCount} fail)
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleRunAnalysis}
+                    className="px-3 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-semibold transition-colors cursor-pointer"
+                  >
+                    Quét lại cấu trúc AST
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRunApprovedTests}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
+                  >
+                    <Play size={12} fill="currentColor" />
+                    <span>Chạy lại kiểm thử ngay</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+
+          {/* SECTION 4: Failure Inspector (Chẩn Đoán 5 Tầng Lỗi) */}
+          <section id="section-failures" className="scroll-mt-24">
+            {failedScenariosList.length > 0 ? (
+              <div className="rounded-[var(--radius-md)] border border-rose-500/30 bg-[var(--color-surface)] shadow-xs overflow-hidden">
+                {/* Failure Header */}
+                <div className="px-4 py-3 bg-rose-500/10 border-b border-rose-500/20 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle
+                      size={18}
+                      className="text-[var(--color-danger)]"
+                    />
+                    <div>
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-danger)] m-0">
+                        Chẩn Đoán 5 Tầng Lỗi ({failedScenariosList.length} Thất
+                        bại)
+                      </h3>
+                      <p className="text-[11px] text-[var(--color-text-secondary)] m-0 mt-0.5">
+                        Phân tầng Router, Middleware, Controller, Database và
+                        Assertion kèm vị trí dòng mã gãy
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Filter by failure layer */}
+                  <div className="flex items-center gap-1 font-mono text-[11px] bg-[var(--color-surface)] p-0.5 rounded border border-[var(--color-border)]">
+                    <button
+                      type="button"
+                      onClick={() => setActiveFailureLayerFilter("ALL")}
+                      className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
+                        activeFailureLayerFilter === "ALL"
+                          ? "bg-[var(--color-primary)] text-[var(--color-primary-foreground)] font-bold"
+                          : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+                      }`}
+                    >
+                      Tất cả ({failedScenariosList.length})
+                    </button>
+                    {Object.entries(FAILURE_LAYERS_META).map(
+                      ([layerKey, meta]) => {
+                        const count = failedScenariosList.filter(
+                          (f) => f.layer === layerKey,
+                        ).length;
+                        if (count === 0) return null;
+                        return (
+                          <button
+                            key={layerKey}
+                            type="button"
+                            onClick={() =>
+                              setActiveFailureLayerFilter(layerKey)
+                            }
+                            className={`px-2 py-0.5 rounded transition-colors cursor-pointer ${
+                              activeFailureLayerFilter === layerKey
+                                ? "bg-[var(--color-primary)] text-[var(--color-primary-foreground)] font-bold"
+                                : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+                            }`}
+                          >
+                            {meta.label} ({count})
+                          </button>
+                        );
+                      },
+                    )}
+                  </div>
+                </div>
+
+                {/* Failure Cards List */}
+                <div className="divide-y divide-[var(--color-border)]">
+                  {filteredFailures.map(
+                    ({ endpoint: ep, scenario: sc, layer, key }) => {
+                      const layerMeta =
+                        FAILURE_LAYERS_META[layer] ||
+                        FAILURE_LAYERS_META.ASSERTION_FAILED;
+                      const methodClass =
+                        METHOD_STYLES[ep.method] || METHOD_STYLES.DEFAULT;
+                      const actualHttp =
+                        sc.actualStatus ??
+                        sc.actualStatusFromRuntime ??
+                        (sc.failureDetails?.received &&
+                        /^\d{3}$/.test(
+                          String(sc.failureDetails.received).trim(),
+                        )
+                          ? Number(sc.failureDetails.received)
+                          : 500);
+                      const expectedHttp =
+                        sc.expectedStatus ??
+                        (sc.failureDetails?.expected &&
+                        /^\d{3}$/.test(
+                          String(sc.failureDetails.expected).trim(),
+                        )
+                          ? Number(sc.failureDetails.expected)
+                          : 200);
+                      const failDetails = sc.failureDetails || {};
+                      const isCallstackOpen = Boolean(expandedCallstacks[key]);
+
+                      return (
+                        <div
+                          key={key}
+                          className="p-4 space-y-3 bg-[var(--color-surface)]"
+                        >
+                          {/* Title Bar */}
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="flex items-center gap-2 flex-wrap min-w-0">
+                              <span
+                                className={`px-2 py-0.5 rounded font-mono text-[10px] font-bold border tracking-tight ${methodClass}`}
+                              >
+                                {ep.method}
+                              </span>
+                              <span className="font-mono text-xs font-semibold text-[var(--color-text)]">
+                                {ep.path}
+                              </span>
+                              <span className="text-[var(--color-text-muted)]">
+                                •
+                              </span>
+                              <span className="text-xs font-medium text-[var(--color-text)] truncate max-w-sm">
+                                {sc.title}
+                              </span>
+                              <span
+                                className={`px-2 py-0.5 rounded font-mono text-[10px] font-bold border ${layerMeta.style}`}
+                              >
+                                {layerMeta.code}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleAIFixScenario(ep, sc)}
+                                className="flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
+                                title="Tự động sửa kịch bản bằng AI"
+                              >
+                                <Zap size={12} />
+                                <span>Sửa bằng AI</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRetryScenario(ep, sc)}
+                                className="flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] text-xs font-semibold transition-colors cursor-pointer"
+                                title="Chạy lại kịch bản này"
+                              >
+                                <Play size={11} fill="currentColor" />
+                                <span>Chạy lại</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditScenario(sc, ep)}
+                                className="flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] text-xs font-semibold transition-colors cursor-pointer"
+                                title="Mở trình soạn thảo Monaco Editor"
+                              >
+                                <Code2 size={12} />
+                                <span>Sửa Monaco</span>
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Expected vs Actual Status Banner */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                            <div className="p-2.5 rounded bg-[var(--color-surface-secondary)]/50 border border-[var(--color-border)]">
+                              <span className="text-[10px] font-semibold text-[var(--color-text-secondary)]">
+                                HTTP Status Mong Đợi (Expected):
+                              </span>
+                              <div className="font-mono font-bold text-xs text-[var(--color-success)] mt-0.5">
+                                HTTP {expectedHttp}
+                              </div>
+                            </div>
+                            <div className="p-2.5 rounded bg-rose-500/5 border border-rose-500/20">
+                              <span className="text-[10px] font-semibold text-[var(--color-danger)]">
+                                HTTP Status Thực Tế (Received):
+                              </span>
+                              <div className="font-mono font-bold text-xs text-[var(--color-danger)] mt-0.5">
+                                HTTP {actualHttp}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Code Frame with line highlight */}
+                          {failDetails.codeFrame && (
+                            <div className="rounded border border-[var(--color-border)] bg-[#0B0F14] text-slate-300 font-mono text-[11px] p-3 overflow-x-auto custom-scrollbar">
+                              <div className="text-[10px] text-slate-500 mb-1">
+                                File:{" "}
+                                {failDetails.file
+                                  ? failDetails.file
+                                      .split(/[\\/]/)
+                                      .slice(-2)
+                                      .join("/")
+                                  : "test"}
+                                :{failDetails.line || 1}
+                              </div>
+                              <pre className="whitespace-pre-wrap text-rose-300 leading-relaxed m-0">
+                                {failDetails.codeFrame}
+                              </pre>
+                            </div>
+                          )}
+
+                          {/* Error Message & Callstack */}
+                          <div className="text-xs">
+                            <button
+                              type="button"
+                              onClick={() => toggleCallstack(key)}
+                              className="text-[11px] font-semibold text-[var(--color-text-secondary)] hover:text-[var(--color-text)] inline-flex items-center gap-1 cursor-pointer"
+                            >
+                              {isCallstackOpen ? (
+                                <ChevronDown size={12} />
+                              ) : (
+                                <ChevronRight size={12} />
+                              )}
+                              <span>
+                                {isCallstackOpen
+                                  ? "Ẩn callstack chi tiết"
+                                  : "Xem callstack lỗi chi tiết"}
+                              </span>
+                            </button>
+
+                            {isCallstackOpen && (
+                              <div className="mt-2 p-3 rounded bg-[var(--color-surface-secondary)]/50 border border-[var(--color-border)] font-mono text-[11px] text-rose-400 whitespace-pre-wrap overflow-x-auto max-h-48 custom-scrollbar">
+                                {(sc.failureMessages || []).join("\n") ||
+                                  failDetails.raw ||
+                                  "Không có thông tin callstack chi tiết."}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    },
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="p-4 rounded-[var(--radius-md)] border border-emerald-500/30 bg-emerald-500/5 flex items-center justify-between gap-3 shadow-xs">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-emerald-500/15 text-[var(--color-success)] flex items-center justify-center">
+                    <CheckCircle2 size={18} />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-[var(--color-success)] uppercase tracking-wider m-0">
+                      Không Có Lỗi Phát Sinh (Zero Failures)
+                    </h4>
+                    <p className="text-[11px] text-[var(--color-text-secondary)] m-0 mt-0.5">
+                      Toàn bộ {overallStats.passedScenariosCount} kịch bản đã
+                      thực thi đều vượt qua bài kiểm tra thành công!
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+
+          {/* SECTION 5: Route Coverage Matrix Table */}
+          <section id="section-matrix" className="scroll-mt-24">
+            <IntegrationRouteMatrixTable
+              endpoints={endpoints}
+              onRunEndpoint={handleRunEndpoint}
+              onGenerateThisEndpoint={(key) => handleGenerateClick([key])}
+              onOpenFile={onOpenFile}
+              onAddScenario={handleOpenAddScenario}
+              onEditScenario={handleOpenEditScenario}
+              onRetryScenario={handleRetryScenario}
+              onAIFixScenario={handleAIFixScenario}
+              isJobActive={isJobActive}
+              pendingAction={pendingAction}
+            />
+          </section>
+
+          {/* SECTION 6: Test Scenarios Management & Monaco Editor */}
+          <section id="section-scenarios" className="scroll-mt-24">
+            <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xs overflow-hidden">
+              <div className="p-4 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-bold uppercase tracking-wider text-[var(--color-text)] m-0">
+                    Bộ Kịch Bản Test (Test Scenarios Suite)
+                  </h3>
+                  <p className="text-xs text-[var(--color-text-secondary)] m-0 mt-0.5">
+                    Quản lý danh sách test case, lọc theo danh mục, chỉnh sửa mã
+                    nguồn Monaco và áp dụng vào dự án
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-4">
+                <IntegrationScenariosPane
+                  readOnly={!projectAccess.can("files.write")}
+                  canGenerate={projectAccess.can("ai.use")}
+                  canApprove={projectAccess.can("evidence.approve")}
+                  aiTests={workspace?.aiTests || []}
+                  selectedEndpoint={null}
+                  onClearSelectedEndpoint={() => {}}
+                  hasGeneratedTests={generation?.hasGeneratedTests}
+                  hasAnalysis={generation?.hasAnalysis}
+                  onRunAnalysis={handleRunAnalysis}
+                  isApproved={Boolean(generation?.isApproved)}
+                  selectedTestIds={selectedTestIds}
+                  setSelectedTestIds={setSelectedTestIds}
+                  snapshotId={snapshotId}
+                  endpoints={endpoints}
+                  onOpenCFG={onOpenCFG}
+                  onSuggestTestcase={onSuggestTestcase}
+                  onOpenArchitecture={onOpenArchitecture}
+                  onScenarioChange={load}
+                  onError={setError}
+                  onGenerateThisEndpoint={(key) => handleGenerateClick([key])}
+                  isGenerating={
+                    pendingAction === "GENERATE" ||
+                    (activeJobId && activeJobType === "GENERATE")
+                  }
+                  onApproveAndRun={async (ids) => {
+                    if (!projectAccess.can("evidence.approve")) return;
+                    setSelectedTestIds(ids);
+                    await approveIntegrationTestsApi(snapshotId, ids);
+                    await handleRunApprovedTests();
+                  }}
+                  isApprovingAndRunning={pendingAction === "RUN"}
+                  onOpenApplyModal={handleOpenApplyModal}
+                  onReGenerateSelected={(targets) =>
+                    handleGenerateClick(targets)
+                  }
+                />
+              </div>
+            </div>
+          </section>
+
+          {/* SECTION 7: Comprehensive Embedded Report & PDF Print */}
+          <section id="section-report" className="scroll-mt-24">
+            <IntegrationReportEmbed
+              projectId={projectId}
+              snapshotId={snapshotId}
+              report={reportData}
+              workspace={workspace}
+              loading={loading}
+              onRefreshReport={load}
+            />
+          </section>
+        </IntegrationErrorBoundary>
       </div>
+
+      {/* 3. SLIDE-OVER DRAWER (Lịch Sử Phiên Bản & So Sánh Trước/Sau) */}
+      {drawerOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-xs transition-opacity animate-in fade-in duration-200 no-print">
+          <div className="w-full max-w-2xl h-full bg-[var(--color-surface)] border-l border-[var(--color-border)] shadow-2xl flex flex-col overflow-hidden">
+            {/* Drawer Header */}
+            <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface)]">
+              <div className="flex items-center gap-2">
+                <Clock size={16} className="text-[var(--color-primary)]" />
+                <h3 className="text-sm font-bold text-[var(--color-text)] m-0">
+                  Lịch Sử Phiên Bản & So Sánh
+                </h3>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {/* Tabs */}
+                <div className="flex items-center gap-1 bg-[var(--color-surface-secondary)] p-0.5 rounded-[var(--radius-sm)] border border-[var(--color-border)] text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setDrawerOpen("history")}
+                    className={`px-3 py-1 rounded transition-colors cursor-pointer ${
+                      drawerOpen === "history"
+                        ? "bg-[var(--color-surface)] text-[var(--color-text)] font-bold shadow-xs border border-[var(--color-border)]"
+                        : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+                    }`}
+                  >
+                    Lịch sử Snapshots
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDrawerOpen("compare")}
+                    className={`px-3 py-1 rounded transition-colors cursor-pointer ${
+                      drawerOpen === "compare"
+                        ? "bg-[var(--color-surface)] text-[var(--color-text)] font-bold shadow-xs border border-[var(--color-border)]"
+                        : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+                    }`}
+                  >
+                    So sánh Before / After
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setDrawerOpen(null)}
+                  className="p-1 rounded text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] cursor-pointer"
+                  title="Đóng (Esc)"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+
+            {/* Drawer Content */}
+            <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+              {drawerOpen === "history" && (
+                <IntegrationHistoryPane
+                  snapshotId={snapshotId}
+                  onOpenComparison={() => setDrawerOpen("compare")}
+                />
+              )}
+              {drawerOpen === "compare" && (
+                <BeforeAfterComparisonView
+                  projectId={projectId}
+                  snapshotId={snapshotId}
+                  initialBaselineId={new URLSearchParams(location.search).get(
+                    "baselineId",
+                  )}
+                  onBackToWorkspace={() => setDrawerOpen("history")}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 4. MODALS */}
+      {/* Apply Tests to Source Code Modal */}
+      <IntegrationApplyTestsModal
+        isOpen={applyModalOpen}
+        onClose={() => setApplyModalOpen(false)}
+        snapshotId={snapshotId}
+        testIds={applyModalTestIds}
+        onTriggerRerun={() => {
+          setApplyModalOpen(false);
+          handleRunApprovedTests();
+        }}
+      />
+
+      {/* Monaco Scenario Editor Modal */}
+      <IntegrationScenarioEditorModal
+        isOpen={editorModalOpen}
+        onClose={() => setEditorModalOpen(false)}
+        onSave={handleSaveScenario}
+        initialCode={editorModalScenario?.code || ""}
+        title={
+          editorModalScenario?.title ||
+          (editorModalEndpoint
+            ? `Thêm kịch bản cho ${editorModalEndpoint.method} ${editorModalEndpoint.path}`
+            : "Soạn thảo kịch bản")
+        }
+        targetEndpoint={editorModalEndpoint}
+        availableEndpoints={endpoints}
+        isAddMode={isAddScenarioMode}
+      />
     </div>
   );
 }

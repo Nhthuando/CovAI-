@@ -1,0 +1,39 @@
+{
+  "gate": "Gate B - Analyze Cancellation",
+  "passed": true,
+  "evidence": {
+    "jobId": "cmv8wrnde0007l87dvqirdb4k",
+    "jobType": "ANALYSIS",
+    "dbStatus": "CANCELED",
+    "apiHttpStatus": 200,
+    "apiResponseBody": {
+      "success": true,
+      "message": "Job was cancelled/paused successfully.",
+      "job": {
+        "id": "cmv8wrnde0007l87dvqirdb4k",
+        "projectId": "covai_acc_proj_final",
+        "snapshotId": "covai_acc_snap_curr",
+        "userId": "cmu5rdabv00008c7d4a4qi4pd",
+        "type": "ANALYSIS",
+        "status": "CANCELED",
+        "progress": 15,
+        "payloadJson": "{\"snapshotId\":\"covai_acc_snap_curr\"}",
+        "resultJson": null,
+        "errorMessage": null,
+        "startedAt": "2026-10-15T02:17:10.426Z",
+        "finishedAt": "2026-10-15T02:17:13.825Z",
+        "createdAt": "2026-10-15T02:17:09.650Z",
+        "computeTimeMs": null
+      }
+    },
+    "initialArtifactId": "cmv8wmim20001p87d05nvzo9g",
+    "postCancelArtifactId": "cmv8wmim20001p87d05nvzo9g",
+    "artifactPreserved": true,
+    "uiReloadRecovered": true,
+    "screenshots": {
+      "running": "D:\\NCKH\\CovAI-\\scratch\\evidence_screenshots\\06_gateB_analyze_running.png",
+      "canceled": "D:\\NCKH\\CovAI-\\scratch\\evidence_screenshots\\07_gateB_analyze_canceled.png",
+      "recovered": "D:\\NCKH\\CovAI-\\scratch\\evidence_screenshots\\07b_gateB_analyze_recovered.png"
+    }
+  }
+}

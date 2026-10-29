@@ -1,4 +1,8 @@
 import prisma from "../config/prisma.js";
+import { membershipWhere, resolveProjectAccess, withProjectGuard } from "./projectAccess.service.js";
+import { publishProjectEvent, deliverProjectEvent } from './projectEvent.service.js';
+import { readVersionedProjectFile,projectEditableWorkspaceRoot } from "./projectFileVersion.service.js";
+import { mutateProjectWorkspace } from "./projectMutation.service.js";
 import { detectJest } from "../utils/jestDetector.js";
 import { detectAndSaveProject } from "./jestDetection.service.js";
 import { detectFrameworks } from "./testDetection.service.js";
@@ -38,10 +42,17 @@ export { cleanupProjectStorageAsync };
 function buildTree(dirPath, rootPath = dirPath) {
   const result = [];
   try {
-    if (!fs.existsSync(dirPath)) return result;
+    if (!dirPath || !fs.existsSync(dirPath)) return result;
     const items = fs.readdirSync(dirPath);
     for (const item of items) {
-      if (item === "node_modules" || item === ".git") continue;
+      if (
+        item === "node_modules" ||
+        item === ".git" ||
+        item === "__MACOSX" ||
+        item === ".DS_Store" ||
+        item.startsWith(".covai-")
+      )
+        continue;
 
       const itemPath = path.join(dirPath, item);
       const stat = fs.lstatSync(itemPath);
@@ -60,15 +71,26 @@ function buildTree(dirPath, rootPath = dirPath) {
         });
       } else {
         let lang = "file";
+        const lowerName = item.toLowerCase();
         const ext = path.extname(item).toLowerCase();
-        if (ext === ".js" || ext === ".jsx") lang = "js";
-        else if (ext === ".ts" || ext === ".tsx") lang = "ts";
-        else if (ext === ".json") lang = "json";
-        else if (ext === ".css") lang = "css";
-        else if (ext === ".md") lang = "md";
-        else if (ext.includes("test") || ext.includes("spec")) lang = "test";
 
-        if (ext === ".jsx" || ext === ".tsx") lang = "react";
+        if (lowerName.includes(".test.") || lowerName.includes(".spec.")) lang = "test";
+        else if (ext === ".jsx" || ext === ".tsx") lang = "react";
+        else if (ext === ".js" || ext === ".mjs" || ext === ".cjs") lang = "js";
+        else if (ext === ".ts") lang = "ts";
+        else if (ext === ".json") lang = "json";
+        else if (ext === ".css" || ext === ".scss" || ext === ".sass" || ext === ".less") lang = "css";
+        else if (ext === ".html" || ext === ".htm") lang = "html";
+        else if (ext === ".md") lang = "md";
+        else if (
+          ext === ".png" ||
+          ext === ".jpg" ||
+          ext === ".jpeg" ||
+          ext === ".svg" ||
+          ext === ".gif" ||
+          ext === ".ico"
+        )
+          lang = "image";
 
         result.push({
           id: relativePath,
@@ -157,7 +179,7 @@ export const createProject = async ({ input, currentUserId }) => {
 
 export const listProjects = async (userId) => {
   return prisma.project.findMany({
-    where: { ownerId: userId },
+    where: membershipWhere(userId),
     orderBy: { createdAt: "desc" },
     select: {
       id: true,
@@ -184,7 +206,8 @@ export const listProjects = async (userId) => {
   });
 };
 
-export const getProjectById = async (projectId) => {
+export const getProjectById = async (projectId, userId) => {
+  await resolveProjectAccess({projectId,userId,capability:"project.read"});
   const project = await prisma.project.findUnique({
     where: { id: projectId },
     include: {
@@ -335,7 +358,7 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
       }
 
       const resolvedRootDir = resolveProjectRoot(sourcePath);
-      const validation = await validateNodeProject(resolvedRootDir);
+      const validation = await validateNodeProject(resolvedRootDir, { autoCreate: true });
 
       await prisma.projectSnapshot.update({
         where: { id: snapshot.id },
@@ -453,7 +476,7 @@ function copyDirRecursive(
 
   const entries = fs.readdirSync(src, { withFileTypes: true });
   for (const entry of entries) {
-    if (ignoreDirs.includes(entry.name)) continue;
+    if (ignoreDirs.includes(entry.name) || entry.name === '.covai-collaboration') continue;
 
     const srcPath = path.join(src, entry.name);
     const destPath = path.join(dest, entry.name);
@@ -475,28 +498,8 @@ function copyDirRecursive(
   return { fileCount, sizeBytes };
 }
 
-function cleanWorkingDir(dir, preserve = [".git", "node_modules"]) {
-  if (!fs.existsSync(dir)) return;
-  const entries = fs.readdirSync(dir);
-  for (const entry of entries) {
-    if (preserve.includes(entry)) continue;
-    const entryPath = path.join(dir, entry);
-    try {
-      fs.rmSync(entryPath, { recursive: true, force: true });
-    } catch (err) {
-      console.warn(
-        `[cleanWorkingDir] Failed to remove ${entryPath}:`,
-        err.message,
-      );
-    }
-  }
-}
-
 export const listProjectSnapshots = async ({ projectId, userId }) => {
-  const project = await prisma.project.findFirst({
-    where: { id: projectId, ownerId: userId },
-    select: { id: true },
-  });
+  const { project } = await resolveProjectAccess({projectId,userId,capability:"project.read"});
   if (!project) throw new ServiceError("Project not found", 404);
   const snapshots = await prisma.projectSnapshot.findMany({
     where: { projectId },
@@ -540,15 +543,22 @@ export const listProjectSnapshots = async ({ projectId, userId }) => {
   });
 };
 
+const rebaseSnapshotConfigPath = (value, originalRoot, targetRoot) => {
+  if (!value || !path.isAbsolute(value)) return value;
+  const relative = path.relative(originalRoot, value);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new ServiceError('Snapshot configuration must stay inside its project workspace', 422);
+  }
+  return path.join(targetRoot, relative);
+};
+
 export const createProjectCheckpoint = async ({
   projectId,
   userId,
   label,
   message,
 }) => {
-  const project = await prisma.project.findFirst({
-    where: { id: projectId, ownerId: userId },
-  });
+  const { project } = await resolveProjectAccess({ projectId, userId, capability: 'integrations.write' });
   if (!project)
     throw new ServiceError("Project not found or unauthorized", 404);
 
@@ -576,7 +586,7 @@ export const createProjectCheckpoint = async ({
   );
   fs.mkdirSync(baseStorage, { recursive: true });
 
-  const workspaceRoot = snapshotWorkspaceRoot(activeSnapshot);
+  const workspaceRoot = projectEditableWorkspaceRoot(activeSnapshot);
   const analysisRelative = path.relative(workspaceRoot, activeSnapshot.rootDir);
   const checkpointAnalysisRoot = path.join(baseStorage, analysisRelative);
   const { fileCount, sizeBytes } = copyDirRecursive(workspaceRoot, baseStorage);
@@ -598,7 +608,7 @@ export const createProjectCheckpoint = async ({
 
   let detection = {
     hasJest: activeSnapshot.hasJest,
-    configPath: activeSnapshot.jestConfigPath,
+    configPath: rebaseSnapshotConfigPath(activeSnapshot.jestConfigPath, workspaceRoot, baseStorage),
     jestCommand: activeSnapshot.jestCommand,
   };
   try {
@@ -607,7 +617,9 @@ export const createProjectCheckpoint = async ({
 
   const checksum = `cp_${Date.now()}_${randomUUID().slice(0, 8)}`;
 
-  const newSnapshot = await prisma.projectSnapshot.create({
+  const committed = await withProjectGuard({ projectId, userId, capability: 'integrations.write' }, async (tx, access) => {
+    if (access.project.workspaceRevision !== project.workspaceRevision) throw new ServiceError('Workspace changed while preparing checkpoint; try again', 409, 'SNAPSHOT_CHANGED');
+    const newSnapshot = await tx.projectSnapshot.create({
     data: {
       projectId,
       source: activeSnapshot.source,
@@ -620,17 +632,28 @@ export const createProjectCheckpoint = async ({
       jestCommand: detection.jestCommand,
       hasVitest: activeSnapshot.hasVitest,
       vitestCommand: activeSnapshot.vitestCommand,
-      vitestConfigPath: activeSnapshot.vitestConfigPath,
+      vitestConfigPath: rebaseSnapshotConfigPath(activeSnapshot.vitestConfigPath, workspaceRoot, baseStorage),
       hasPlaywright: activeSnapshot.hasPlaywright,
       playwrightBrowsers: activeSnapshot.playwrightBrowsers,
       playwrightCommand: activeSnapshot.playwrightCommand,
-      playwrightConfigPath: activeSnapshot.playwrightConfigPath,
-      playwrightTestDir: activeSnapshot.playwrightTestDir,
+      playwrightConfigPath: rebaseSnapshotConfigPath(activeSnapshot.playwrightConfigPath, workspaceRoot, baseStorage),
+      playwrightTestDir: rebaseSnapshotConfigPath(activeSnapshot.playwrightTestDir, workspaceRoot, baseStorage),
+      hasCypress: activeSnapshot.hasCypress,
+      cypressCommand: activeSnapshot.cypressCommand,
+      cypressConfigPath: rebaseSnapshotConfigPath(activeSnapshot.cypressConfigPath, workspaceRoot, baseStorage),
+      cypressTestDir: rebaseSnapshotConfigPath(activeSnapshot.cypressTestDir, workspaceRoot, baseStorage),
+      cypressVersion: activeSnapshot.cypressVersion,
       testingFrameworksJson: activeSnapshot.testingFrameworksJson,
       frameworkRecommendationJson: activeSnapshot.frameworkRecommendationJson,
       selectedTestingFramework: activeSnapshot.selectedTestingFramework,
     },
+    });
+    const updated = await tx.project.update({ where: { id: projectId }, data: { workspaceRevision: { increment: 1 } } });
+    const event = await publishProjectEvent({ tx, projectId, actorId: userId, type: 'workspace.changed', resourceId: newSnapshot.id, revision: updated.workspaceRevision });
+    return { newSnapshot, event };
   });
+  const { newSnapshot } = committed;
+  await deliverProjectEvent(committed.event).catch(() => {});
 
   return {
     ...snapshotResponse(newSnapshot),
@@ -647,9 +670,7 @@ export const restoreProjectCheckpoint = async ({
   snapshotId,
   userId,
 }) => {
-  const project = await prisma.project.findFirst({
-    where: { id: projectId, ownerId: userId },
-  });
+  const { project } = await resolveProjectAccess({ projectId, userId, capability: 'snapshot.restore' });
   if (!project)
     throw new ServiceError("Project not found or unauthorized", 404);
 
@@ -675,8 +696,7 @@ export const restoreProjectCheckpoint = async ({
     throw new ServiceError("Current project working directory not found", 400);
   }
 
-  const workingDir = snapshotWorkspaceRoot(activeSnapshot);
-  const targetWorkspace = snapshotWorkspaceRoot(targetSnapshot);
+  const targetWorkspace = projectEditableWorkspaceRoot(targetSnapshot);
   const targetAnalysisRelative = path.relative(targetWorkspace, targetSnapshot.rootDir);
 
   // Stage the target before changing the working tree, including when restoring
@@ -685,8 +705,8 @@ export const restoreProjectCheckpoint = async ({
   const restoreStorage = path.resolve("storage/projects", projectId, "snapshots", restoreCheckpointId);
   fs.mkdirSync(restoreStorage, { recursive: true });
   const { fileCount, sizeBytes } = copyDirRecursive(targetWorkspace, restoreStorage, [".git", "node_modules"]);
-  cleanWorkingDir(workingDir, [".git", "node_modules"]);
-  copyDirRecursive(restoreStorage, workingDir, [".git", "node_modules"]);
+  // A restore publishes a new active snapshot. Never erase a workspace that
+  // another member or worker may still be reading from the historical snapshot.
 
   let targetLabel = targetSnapshot.id.slice(0, 8);
   const targetMetaPath = path.join(
@@ -719,7 +739,9 @@ export const restoreProjectCheckpoint = async ({
 
   const checksum = `cp_${Date.now()}_${randomUUID().slice(0, 8)}`;
 
-  const newSnapshot = await prisma.projectSnapshot.create({
+  const committed = await withProjectGuard({ projectId, userId, capability: 'snapshot.restore' }, async (tx, access) => {
+    if (access.project.workspaceRevision !== project.workspaceRevision) throw new ServiceError('Workspace changed while preparing restore; try again', 409, 'SNAPSHOT_CHANGED');
+    const newSnapshot = await tx.projectSnapshot.create({
     data: {
       projectId,
       source: targetSnapshot.source,
@@ -728,21 +750,32 @@ export const restoreProjectCheckpoint = async ({
       storagePath: restoreStorage,
       rootDir: path.join(restoreStorage, targetAnalysisRelative),
       hasJest: targetSnapshot.hasJest,
-      jestConfigPath: targetSnapshot.jestConfigPath,
+      jestConfigPath: rebaseSnapshotConfigPath(targetSnapshot.jestConfigPath, targetWorkspace, restoreStorage),
       jestCommand: targetSnapshot.jestCommand,
       hasVitest: targetSnapshot.hasVitest,
       vitestCommand: targetSnapshot.vitestCommand,
-      vitestConfigPath: targetSnapshot.vitestConfigPath,
+      vitestConfigPath: rebaseSnapshotConfigPath(targetSnapshot.vitestConfigPath, targetWorkspace, restoreStorage),
       hasPlaywright: targetSnapshot.hasPlaywright,
       playwrightBrowsers: targetSnapshot.playwrightBrowsers,
       playwrightCommand: targetSnapshot.playwrightCommand,
-      playwrightConfigPath: targetSnapshot.playwrightConfigPath,
-      playwrightTestDir: targetSnapshot.playwrightTestDir,
+      playwrightConfigPath: rebaseSnapshotConfigPath(targetSnapshot.playwrightConfigPath, targetWorkspace, restoreStorage),
+      playwrightTestDir: rebaseSnapshotConfigPath(targetSnapshot.playwrightTestDir, targetWorkspace, restoreStorage),
+      hasCypress: targetSnapshot.hasCypress,
+      cypressCommand: targetSnapshot.cypressCommand,
+      cypressConfigPath: rebaseSnapshotConfigPath(targetSnapshot.cypressConfigPath, targetWorkspace, restoreStorage),
+      cypressTestDir: rebaseSnapshotConfigPath(targetSnapshot.cypressTestDir, targetWorkspace, restoreStorage),
+      cypressVersion: targetSnapshot.cypressVersion,
       testingFrameworksJson: targetSnapshot.testingFrameworksJson,
       frameworkRecommendationJson: targetSnapshot.frameworkRecommendationJson,
       selectedTestingFramework: targetSnapshot.selectedTestingFramework,
     },
+    });
+    const updated = await tx.project.update({ where: { id: projectId }, data: { workspaceRevision: { increment: 1 } } });
+    const event = await publishProjectEvent({ tx, projectId, actorId: userId, type: 'workspace.changed', resourceId: newSnapshot.id, revision: updated.workspaceRevision });
+    return { newSnapshot, event };
   });
+  const { newSnapshot } = committed;
+  await deliverProjectEvent(committed.event).catch(() => {});
 
   return {
     success: true,
@@ -835,6 +868,7 @@ export const createCoverageAnalysisJob = async ({
   userId,
   mode = "FULL",
   testType,
+  requestId,
 }) => {
   if (!projectId || typeof projectId !== "string") {
     throw new ServiceError("projectId is required", 400);
@@ -848,40 +882,9 @@ export const createCoverageAnalysisJob = async ({
     throw new ServiceError("userId is required", 400);
   }
 
-  const project = await prisma.project.findFirst({
-    where: {
-      id: projectId,
-      ownerId: userId,
-    },
-  });
-  if (!project) {
-    throw new ServiceError(
-      "Project not found or you don't have permission",
-      404,
-    );
-  }
-
-  const snapshot = await prisma.projectSnapshot.findFirst({
-    where: {
-      id: snapshotId,
-      projectId,
-    },
-  });
-
-  if (!snapshot) {
-    throw new ServiceError("Snapshot not found", 404);
-  }
-
-  const existingRun = await prisma.job.findFirst({
-    where: {
-      projectId,
-      snapshotId,
-      type: "RUN_TESTS",
-      status: { in: ["QUEUED", "RUNNING"] },
-    },
-    orderBy: { createdAt: "desc" },
-  });
-  if (existingRun) return { ...existingRun, reused: true };
+  await resolveProjectAccess({projectId,userId,capability:'tests.run'});
+  const snapshot = await prisma.projectSnapshot.findFirst({where:{id:snapshotId,projectId}});
+  if (!snapshot) throw new ServiceError('Snapshot not found',404);
 
   const runTestsJob = await createRunTestsJob({
     projectId,
@@ -889,20 +892,111 @@ export const createCoverageAnalysisJob = async ({
     userId,
     mode,
     testType,
+    chainBuildCfg: true,
+    ...(requestId ? { requestId } : {}),
   });
 
-  const { createSnapshotJob } = await import("./job.service.js");
-  await createSnapshotJob({
-    projectId,
-    snapshotId,
-    userId,
-    type: "BUILD_CFG",
-  });
-
-  return { ...runTestsJob, reused: false };
+  // The dependent job is admitted only after RUN_TESTS publishes. Admitting it
+  // here would let queue recovery start it before coverage is committed.
+  return runTestsJob;
 };
 
+/**
+ * Asynchronously clean up Firebase storage and local disk files in the background.
+ * Uses non-blocking fs.promises.rm and parallel Firebase file deletions
+ * so that it doesn't block the HTTP request or freeze the Node.js event loop.
+ */
+export const cleanupProjectStorageAsync = (projectId, snapshots = []) => {
+  if (typeof projectId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(projectId)) return;
+  setImmediate(async () => {
+    // 1. Firebase storage cleanup (parallelized)
+    try {
+      const bucket = getBucket();
+      if (bucket) {
+        const deletePromises = [];
+        for (const snap of snapshots) {
+          if (typeof snap?.storagePath === 'string' && snap.storagePath.startsWith(`projects/${projectId}/`)) {
+            deletePromises.push(
+              bucket
+                .file(snap.storagePath)
+                .delete()
+                .catch((fbErr) => {
+                  if (fbErr?.code !== 404) {
+                    console.warn(
+                      `[DeleteProject] Failed to delete Firebase file ${snap.storagePath}:`,
+                      fbErr?.message,
+                    );
+                  }
+                }),
+            );
+          }
+        }
+        await Promise.all(deletePromises);
+
+        try {
+          const [files] = await bucket.getFiles({
+            prefix: `projects/${projectId}/`,
+          });
+          if (files && files.length > 0) {
+            await Promise.all(files.map((file) => file.delete().catch(() => {})));
+          }
+        } catch (prefixErr) {
+          console.warn(
+            `[DeleteProject] Failed to cleanup Firebase prefix for ${projectId}:`,
+            prefixErr?.message,
+          );
+        }
+      }
+    } catch (fbCleanupErr) {
+      console.error(
+        "[DeleteProject] Firebase cleanup error:",
+        fbCleanupErr?.message || fbCleanupErr,
+      );
+    }
+
+    // 2. Physical local disk cleanup (asynchronous & non-blocking via fs.promises.rm)
+    try {
+      for (const snap of snapshots) {
+        if (snap?.rootDir) {
+          const managedRoots = [path.resolve('storage/projects', projectId),
+            ...(typeof snap.id === 'string' && /^[A-Za-z0-9_-]+$/.test(snap.id) ? [path.resolve('uploads/snapshots', snap.id)] : [])];
+          const candidate = path.resolve(snap.rootDir);
+          const managed = managedRoots.find(base => candidate === base || candidate.startsWith(base + path.sep));
+          if (!managed) continue;
+          let real;
+          try { real = await fs.promises.realpath(candidate); } catch { continue; }
+          if (real !== managed && !real.startsWith(managed + path.sep)) continue;
+          await fs.promises
+            .rm(snap.rootDir, {
+              recursive: true,
+              force: true,
+              maxRetries: 3,
+              retryDelay: 100,
+            })
+            .catch(() => {});
+        }
+      }
+      const projectStoragePath = path.resolve("storage/projects", projectId);
+      await fs.promises
+        .rm(projectStoragePath, {
+          recursive: true,
+          force: true,
+          maxRetries: 3,
+          retryDelay: 100,
+        })
+        .catch(() => {});
+    } catch (cleanupError) {
+      console.error(
+        "[DeleteProject] Error deleting physical files of project:",
+        cleanupError?.message || cleanupError,
+      );
+    }
+  });
+};
+
+
 export const deleteProject = async (projectId, userId) => {
+  if (typeof projectId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(projectId)) throw new ServiceError('Invalid project ID', 400);
   const project = await prisma.project.findUnique({ where: { id: projectId } });
   if (!project) {
     throw new ServiceError("Project not found", 404);
@@ -930,225 +1024,60 @@ export const deleteProject = async (projectId, userId) => {
   // Primary attempt: Native PostgreSQL ON DELETE CASCADE via prisma.project.delete.
   // Takes only 1 single SQL query (~10-50ms) instead of 14 separate slow queries.
   try {
-    await prisma.project.delete({ where: { id: projectId } });
+    await withProjectGuard({ projectId, userId, capability: 'project.delete' }, tx => tx.project.delete({ where: { id: projectId } }));
   } catch (error) {
+    if (error.code !== 'P2003') throw error;
     console.warn(
       `[DeleteProject] Direct cascade delete failed for project ${projectId}, falling back to manual cascade transaction:`,
       error?.message,
     );
-    await prisma.$transaction(
-      [
-        prisma.coverageSummary.deleteMany({ where: { snapshot: { projectId } } }),
-        prisma.coverageFile.deleteMany({ where: { snapshot: { projectId } } }),
-        prisma.coverageFunction.deleteMany({
+    await withProjectGuard({ projectId, userId, capability: 'project.delete' }, async tx => {
+        await tx.coverageSummary.deleteMany({ where: { snapshot: { projectId } } });
+        await tx.coverageFile.deleteMany({ where: { snapshot: { projectId } } });
+        await tx.coverageFunction.deleteMany({
           where: { snapshot: { projectId } },
-        }),
-        prisma.cyclomatic.deleteMany({ where: { snapshot: { projectId } } }),
-        prisma.cfg.deleteMany({ where: { snapshot: { projectId } } }),
-        prisma.aiContextCache.deleteMany({ where: { snapshot: { projectId } } }),
-        prisma.aiSuggestion.deleteMany({ where: { projectId } }),
-        prisma.aiTest.deleteMany({ where: { projectId } }),
-        prisma.jobLog.deleteMany({ where: { job: { projectId } } }),
-        prisma.jobOutput.deleteMany({ where: { job: { projectId } } }),
-        prisma.job.deleteMany({ where: { projectId } }),
-        prisma.notification.deleteMany({ where: { projectId } }),
-        prisma.projectSnapshot.deleteMany({ where: { projectId } }),
-        prisma.project.delete({ where: { id: projectId } }),
-      ],
-      { timeout: 30000 },
-    );
+        });
+        await tx.cyclomatic.deleteMany({ where: { snapshot: { projectId } } });
+        await tx.cfg.deleteMany({ where: { snapshot: { projectId } } });
+        await tx.aiContextCache.deleteMany({ where: { snapshot: { projectId } } });
+        await tx.aiSuggestion.deleteMany({ where: { projectId } });
+        await tx.aiTest.deleteMany({ where: { projectId } });
+        await tx.jobLog.deleteMany({ where: { job: { projectId } } });
+        await tx.jobOutput.deleteMany({ where: { job: { projectId } } });
+        await tx.job.deleteMany({ where: { projectId } });
+        await tx.notification.deleteMany({ where: { projectId } });
+        await tx.projectSnapshot.deleteMany({ where: { projectId } });
+        await tx.project.delete({ where: { id: projectId } });
+    });
   }
 };
 
-export const getProjectTree = async (projectId, userId) => {
-  const project = await prisma.project.findFirst({
-    where: { id: projectId, ownerId: userId },
+export const getProjectTree = async (projectId, userId, options = {}) => {
+  return withProjectGuard({projectId,userId,capability:'project.read'}, async (tx,access) => {
+    const snapshot = await tx.projectSnapshot.findFirst({where:{projectId,...(options.snapshotId ? {id:options.snapshotId} : {})},orderBy:options.snapshotId ? undefined : {createdAt:'desc'}});
+    if (!snapshot?.rootDir) throw new ServiceError("Project snapshot not ready", 202);
+    const workspaceRoot = projectEditableWorkspaceRoot(snapshot);
+    const {recoverProjectMutationMarkers} = await import('./projectMutationRecovery.service.js');
+    await recoverProjectMutationMarkers({tx,project:access.project,snapshot,root:workspaceRoot});
+    const tree = buildTree(workspaceRoot);
+    return options.withMetadata ? {tree,snapshotId:snapshot.id,workspaceRevision:access.project.workspaceRevision} : tree;
   });
-  if (!project)
-    throw new ServiceError(
-      "Project not found or you don't have permission",
-      404,
-    );
-
-  const snapshot = await prisma.projectSnapshot.findFirst({
-    where: { projectId },
-    orderBy: { createdAt: "desc" },
-  });
-
-  if (!snapshot || !snapshot.rootDir) {
-    throw new ServiceError("Project snapshot not ready", 202);
-  }
-
-  const tree = buildTree(snapshotWorkspaceRoot(snapshot));
-  return tree;
 };
 
-export const getFileContent = async (projectId, userId, filePath) => {
-  const project = await prisma.project.findFirst({
-    where: { id: projectId, ownerId: userId },
-  });
-  if (!project) throw new ServiceError("Project not found", 404);
+export const getFileContent = (projectId, userId, filePath, options = {}) =>
+  readVersionedProjectFile({projectId,userId,path:filePath,snapshotId:typeof options === "string" ? options : options?.snapshotId});
 
-  const snapshot = await prisma.projectSnapshot.findFirst({
-    where: { projectId },
-    orderBy: { createdAt: "desc" },
-  });
+export const updateFileContent = (projectId, userId, filePath, content, options = {}) =>
+  mutateProjectWorkspace({projectId,userId,path:filePath,content,kind:'WRITE_FILE',...options});
 
-  if (!snapshot || !snapshot.rootDir) {
-    throw new ServiceError("Project snapshot not ready", 404);
-  }
+export const createProjectFile = (projectId, userId, filePath, content = '', options = {}) =>
+  mutateProjectWorkspace({projectId,userId,path:filePath,content,kind:'CREATE_FILE',...options});
 
-  const resolvedFile = resolveSnapshotFile(snapshot, filePath);
+export const createProjectFolder = (projectId, userId, filePath, options = {}) =>
+  mutateProjectWorkspace({projectId,userId,path:filePath,kind:'CREATE_FOLDER',...options});
 
-  if (!fs.existsSync(resolvedFile)) {
-    throw new ServiceError("File not found", 404);
-  }
+export const renameProjectEntry = (projectId, userId, filePath, _content, newPath, options = {}) =>
+  mutateProjectWorkspace({projectId,userId,path:filePath,newPath,kind:'RENAME_ENTRY',...options});
 
-  const stat = fs.statSync(resolvedFile);
-  if (stat.isDirectory()) {
-    throw new ServiceError("Path is a directory, not a file", 400);
-  }
-
-  if (stat.size > 1024 * 1024) {
-    throw new ServiceError("File too large to display", 413);
-  }
-
-  const content = fs.readFileSync(resolvedFile, "utf-8");
-  return { content, size: stat.size };
-};
-
-export const updateFileContent = async (
-  projectId,
-  userId,
-  filePath,
-  content,
-) => {
-  const project = await prisma.project.findFirst({
-    where: { id: projectId, ownerId: userId },
-  });
-  if (!project) throw new ServiceError("Project not found", 404);
-
-  const snapshot = await prisma.projectSnapshot.findFirst({
-    where: { projectId },
-    orderBy: { createdAt: "desc" },
-  });
-  if (!snapshot || !snapshot.rootDir) {
-    throw new ServiceError("Project snapshot not ready", 404);
-  }
-
-  if (Buffer.byteLength(content, "utf8") > 1024 * 1024) {
-    throw new ServiceError("File content is too large to save", 413);
-  }
-
-  const resolvedRoot = snapshotWorkspaceRoot(snapshot);
-  const resolvedFile = resolveSnapshotFile(snapshot, filePath);
-  const relativePath = path.relative(resolvedRoot, resolvedFile);
-
-  if (!fs.existsSync(resolvedFile)) {
-    throw new ServiceError("File not found", 404);
-  }
-
-  const stat = fs.statSync(resolvedFile);
-  if (stat.isDirectory()) {
-    throw new ServiceError("Path is a directory, not a file", 400);
-  }
-
-  await fs.promises.writeFile(resolvedFile, content, "utf8");
-  return {
-    path: relativePath.replace(/\\/g, "/"),
-    size: Buffer.byteLength(content, "utf8"),
-  };
-};
-
-const getSnapshotRoot = async (projectId, userId) => {
-  const project = await prisma.project.findFirst({
-    where: { id: projectId, ownerId: userId },
-  });
-  if (!project) throw new ServiceError("Project not found", 404);
-  const snapshot = await prisma.projectSnapshot.findFirst({
-    where: { projectId },
-    orderBy: { createdAt: "desc" },
-  });
-  if (!snapshot?.rootDir)
-    throw new ServiceError("Project snapshot not ready", 404);
-  return snapshotWorkspaceRoot(snapshot);
-};
-
-const resolveProjectPath = (rootDir, filePath) => {
-  if (typeof filePath !== "string" || !filePath.trim())
-    throw new ServiceError("Path is required", 400);
-  const resolvedPath = path.resolve(rootDir, filePath.trim());
-  const relativePath = path.relative(rootDir, resolvedPath);
-  if (
-    !relativePath ||
-    relativePath.startsWith("..") ||
-    path.isAbsolute(relativePath)
-  ) {
-    throw new ServiceError("Invalid file path", 400);
-  }
-  return { resolvedPath, relativePath };
-};
-
-export const createProjectFile = async (
-  projectId,
-  userId,
-  filePath,
-  content = "",
-) => {
-  if (typeof content !== "string")
-    throw new ServiceError("File content must be text", 400);
-  if (Buffer.byteLength(content, "utf8") > 1024 * 1024)
-    throw new ServiceError("File content is too large", 413);
-  const rootDir = await getSnapshotRoot(projectId, userId);
-  const { resolvedPath, relativePath } = resolveProjectPath(rootDir, filePath);
-  if (fs.existsSync(resolvedPath))
-    throw new ServiceError("A file or folder already exists at this path", 409);
-  await fs.promises.mkdir(path.dirname(resolvedPath), { recursive: true });
-  await fs.promises.writeFile(resolvedPath, content, "utf8");
-  return { path: relativePath.replace(/\\/g, "/"), type: "file" };
-};
-
-export const createProjectFolder = async (projectId, userId, folderPath) => {
-  const rootDir = await getSnapshotRoot(projectId, userId);
-  const { resolvedPath, relativePath } = resolveProjectPath(
-    rootDir,
-    folderPath,
-  );
-  if (fs.existsSync(resolvedPath))
-    throw new ServiceError("A file or folder already exists at this path", 409);
-  await fs.promises.mkdir(resolvedPath, { recursive: true });
-  return { path: relativePath.replace(/\\/g, "/"), type: "folder" };
-};
-
-export const renameProjectEntry = async (
-  projectId,
-  userId,
-  filePath,
-  _content,
-  newPath,
-) => {
-  const rootDir = await getSnapshotRoot(projectId, userId);
-  const source = resolveProjectPath(rootDir, filePath);
-  const destination = resolveProjectPath(rootDir, newPath);
-  if (!fs.existsSync(source.resolvedPath))
-    throw new ServiceError("File or folder not found", 404);
-  if (fs.existsSync(destination.resolvedPath))
-    throw new ServiceError(
-      "A file or folder already exists at the new path",
-      409,
-    );
-  await fs.promises.mkdir(path.dirname(destination.resolvedPath), {
-    recursive: true,
-  });
-  await fs.promises.rename(source.resolvedPath, destination.resolvedPath);
-  return { path: destination.relativePath.replace(/\\/g, "/") };
-};
-
-export const deleteProjectEntry = async (projectId, userId, filePath) => {
-  const rootDir = await getSnapshotRoot(projectId, userId);
-  const { resolvedPath, relativePath } = resolveProjectPath(rootDir, filePath);
-  if (!fs.existsSync(resolvedPath))
-    throw new ServiceError("File or folder not found", 404);
-  await fs.promises.rm(resolvedPath, { recursive: true, force: true });
-  return { path: relativePath.replace(/\\/g, "/") };
-};
+export const deleteProjectEntry = (projectId, userId, filePath, options = {}) =>
+  mutateProjectWorkspace({projectId,userId,path:filePath,kind:'DELETE_ENTRY',...options});
