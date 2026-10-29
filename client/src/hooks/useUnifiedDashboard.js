@@ -90,12 +90,16 @@ export function useUnifiedDashboard({
   snapshots = [],
   dataMode = "live",
 }) {
-  const effectiveSnapshotId = snapshotId || "cmvs3749";
+  const effectiveSnapshotId =
+    snapshotId || (dataMode === "demo" ? "cmvs3749" : null);
 
   const query = useQuery({
     queryKey: ["unifiedDashboard", effectiveSnapshotId, projectId || null],
     queryFn: () => fetchAllTestingLayers({ snapshotId: effectiveSnapshotId, projectId }),
-    enabled: Boolean(effectiveSnapshotId) && dataMode === "live",
+    enabled:
+      Boolean(effectiveSnapshotId) &&
+      (dataMode === "demo" || effectiveSnapshotId !== "cmvs3749") &&
+      dataMode === "live",
     placeholderData: keepPreviousData,
     staleTime: 5 * 60 * 1000, // 5 minutes cache freshness
     gcTime: 30 * 60 * 1000,    // 30 minutes in memory

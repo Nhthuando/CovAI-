@@ -35,14 +35,19 @@ export function UnifiedDashboard({
 
   // Track active snapshot selection (allows switching snapshots interactively)
   const [activeSnapshotId, setActiveSnapshotId] = useState(
-    () => snapshotId || "cmvs3749"
+    () => snapshotId || project?.latestSnapshotId || project?.snapshots?.[0]?.id || (dataMode === "demo" ? "cmvs3749" : null)
   );
 
   useEffect(() => {
-    if (snapshotId) {
-      setActiveSnapshotId(snapshotId);
+    const nextId =
+      snapshotId ||
+      project?.latestSnapshotId ||
+      project?.snapshots?.[0]?.id ||
+      (dataMode === "demo" ? "cmvs3749" : null);
+    if (nextId && nextId !== activeSnapshotId) {
+      setActiveSnapshotId(nextId);
     }
-  }, [snapshotId]);
+  }, [snapshotId, project?.latestSnapshotId, project?.snapshots, dataMode, activeSnapshotId]);
 
   // Cross-filtering state (triggered from Zone 3 Pyramid or Pillar Failure Breakdowns)
   const [activeCrossFilter, setActiveCrossFilter] = useState(null);
@@ -117,7 +122,10 @@ export function UnifiedDashboard({
     }
   }, []);
 
-  if (isLoading && !vm) {
+  const isDashboardLoading =
+    (!vm && isLoading) || (!vm && dataMode === "live" && !activeSnapshotId);
+
+  if (isDashboardLoading) {
     return (
       <div className="unified-dashboard bg-[var(--ud-bg)] text-[var(--ud-text)] w-full min-h-full p-4 sm:p-6">
         <div className="max-w-[1440px] mx-auto">

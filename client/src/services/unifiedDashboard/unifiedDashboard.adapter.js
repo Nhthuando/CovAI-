@@ -545,7 +545,9 @@ export function adaptUnifiedDashboard({
       : MOCK_SNAPSHOT_PRESETS;
 
   const activeSnapshotId =
-    context.snapshotId || effectiveSnapshots[0]?.id || "cmvs3749";
+    context.snapshotId ||
+    effectiveSnapshots[0]?.id ||
+    (dataMode === "demo" ? "cmvs3749" : null);
 
   // ── MODE A: DEMO SHOWCASE (100% Mathematically Unified Across All 5 Zones) ──
   if (dataMode === "demo") {

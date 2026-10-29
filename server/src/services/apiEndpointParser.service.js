@@ -706,8 +706,8 @@ export const parseEndpointsFromFiles = (sourceCode) => {
                             }
                         }
 
-                        const sourceLineStart = path.node.loc?.start?.line || null;
-                        const sourceLineEnd = path.node.loc?.end?.line || sourceLineStart;
+                        const sourceLineStart = astPath.node?.loc?.start?.line ?? null;
+                        const sourceLineEnd = astPath.node?.loc?.end?.line ?? sourceLineStart;
                         const rLines = routeFile.content.split('\n');
                         const routeSnippet = sourceLineStart ? rLines.slice(sourceLineStart - 1, sourceLineEnd || sourceLineStart).join('\n') : "";
 

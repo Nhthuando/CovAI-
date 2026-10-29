@@ -2465,6 +2465,7 @@ export const getBeforeAfterComparison = async (req, res) => {
         const {
             baselineSnapshotId,
             currentSnapshotId,
+            snapshotId,
             baselineRunId,
             currentRunId,
             baselineJobId,
@@ -2476,7 +2477,7 @@ export const getBeforeAfterComparison = async (req, res) => {
         const comparison = await getBeforeAfterComparisonService({
             projectId,
             baselineSnapshotId,
-            currentSnapshotId,
+            currentSnapshotId: currentSnapshotId || snapshotId,
             baselineRunId,
             currentRunId,
             baselineJobId,
