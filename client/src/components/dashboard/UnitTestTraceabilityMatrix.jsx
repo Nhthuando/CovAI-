@@ -96,6 +96,27 @@ export const isAnonymousName = (name) => {
   );
 };
 
+export const isCallbackOrAnonymousName = (name) => {
+  if (!name) return true;
+  if (isAnonymousName(name)) return true;
+  const lower = String(name).trim().toLowerCase();
+  return [
+    "map",
+    "filter",
+    "reduce",
+    "foreach",
+    "find",
+    "findindex",
+    "some",
+    "every",
+    "flatmap",
+    "sort",
+    "then",
+    "catch",
+    "finally",
+  ].includes(lower);
+};
+
 /**
  * UnitTestTraceabilityMatrix
  * 
@@ -638,11 +659,19 @@ export default function UnitTestTraceabilityMatrix({
       if (res?.data) {
         const clean = cleanDisplayPath(filePath);
         const norm = filePath.replace(/\\/g, "/");
+        const resPath = res.data.filePath;
+        const resClean = resPath ? cleanDisplayPath(resPath) : null;
+        const resNorm = resPath ? resPath.replace(/\\/g, "/") : null;
+        const subPkgStripped = clean ? clean.replace(/^(?:server|client|backend|frontend)\//, "") : null;
         setFileCoverageCache((prev) => ({
           ...prev,
           [filePath]: res.data,
           [norm]: res.data,
           ...(clean ? { [clean]: res.data } : {}),
+          ...(subPkgStripped ? { [subPkgStripped]: res.data } : {}),
+          ...(resPath ? { [resPath]: res.data } : {}),
+          ...(resNorm ? { [resNorm]: res.data } : {}),
+          ...(resClean ? { [resClean]: res.data } : {}),
         }));
       }
     } catch (err) {
@@ -656,22 +685,14 @@ export default function UnitTestTraceabilityMatrix({
     }
   };
 
-  // Auto-fetch file coverage for expanded files AND files with coverage gaps (< 100%)
+  // Auto-fetch file coverage for any expanded files
   useEffect(() => {
-    (groupedByFile || []).forEach((group) => {
-      const fPath = group?.filePath;
-      if (!fPath) return;
-      const meta = group?.sourceMeta;
-      const bPct = meta?.branchesPct ?? 100;
-      const lPct = meta?.linesPct ?? 100;
-      const sPct = meta?.stmtsPct ?? 100;
-      const isExpanded = expandedFiles.has(fPath);
-      const hasGap = Number(bPct) < 100 || Number(lPct) < 100 || Number(sPct) < 100;
-      if ((isExpanded || hasGap) && !fileCoverageCache[fPath] && !loadingFiles.has(fPath)) {
+    expandedFiles.forEach((fPath) => {
+      if (fPath && !fileCoverageCache[fPath] && !loadingFiles.has(fPath)) {
         fetchFileCoverage(fPath);
       }
     });
-  }, [expandedFiles, groupedByFile]);
+  }, [expandedFiles, snapshotId]);
 
   // Aggregate all assertions across test suites
   const allAssertions = useMemo(() => {
@@ -828,10 +849,10 @@ export default function UnitTestTraceabilityMatrix({
         ERROR_HANDLING: matchedTests.filter((t) => t.category === "ERROR_HANDLING"),
       };
 
-      const hasHappyPath = testsByCategory.HAPPY_PATH.length > 0 || isExecuted;
-      const hasBoundary = testsByCategory.BOUNDARY_VALUES.length > 0 || (isSrcFullyCovered && isExecuted);
-      const hasBranch = testsByCategory.BRANCH_TOGGLING.length > 0 || ((isSrcFullyCovered || (srcMeta?.branchesPct ?? 0) >= 100) && isExecuted);
-      const hasError = testsByCategory.ERROR_HANDLING.length > 0 || (isSrcFullyCovered && isExecuted);
+      const hasHappyPath = (testsByCategory?.HAPPY_PATH?.length || 0) > 0 || isExecuted;
+      const hasBoundary = (testsByCategory?.BOUNDARY_VALUES?.length || 0) > 0 || (isSrcFullyCovered && isExecuted);
+      const hasBranch = (testsByCategory?.BRANCH_TOGGLING?.length || 0) > 0 || ((isSrcFullyCovered || (srcMeta?.branchesPct ?? 0) >= 100) && isExecuted);
+      const hasError = (testsByCategory?.ERROR_HANDLING?.length || 0) > 0 || (isSrcFullyCovered && isExecuted);
       const coveredCategoriesCount = [hasHappyPath, hasBoundary, hasBranch, hasError].filter(Boolean).length;
 
       // Calculate missing categories for guidance
@@ -842,14 +863,14 @@ export default function UnitTestTraceabilityMatrix({
       if (!hasError) missingCategories.push("D. Error Handling");
 
       const complexity = Number(fn.complexity || 1);
-      const meetsBasisPaths = matchedTests.length >= complexity;
-      const missingBasisPaths = Math.max(0, complexity - matchedTests.length);
+      const meetsBasisPaths = (matchedTests?.length || 0) >= complexity;
+      const missingBasisPaths = Math.max(0, complexity - (matchedTests?.length || 0));
 
       return {
         ...fn,
         cleanName: fnName,
         tests: matchedTests,
-        testCount: matchedTests.length,
+        testCount: matchedTests?.length || 0,
         testsByCategory,
         coveredCategoriesCount,
         hasHappyPath,
@@ -877,11 +898,11 @@ export default function UnitTestTraceabilityMatrix({
       ERROR_HANDLING: 0,
       total: 0,
     };
-    const targetList = allAssertions.length > 0
+    const targetList = (allAssertions?.length || 0) > 0
       ? allAssertions
       : (functionTraceability || []).flatMap((fn) => fn.tests || []);
 
-    counts.total = targetList.length;
+    counts.total = targetList?.length || 0;
     for (const a of targetList) {
       if (counts[a.category] !== undefined) {
         counts[a.category]++;
@@ -973,15 +994,33 @@ export default function UnitTestTraceabilityMatrix({
     return Array.from(map.values());
   }, [functionTraceability, sourceFiles]);
 
+  // Auto-preload file coverage for files with coverage gaps (< 100%) after groupedByFile is initialized
+  useEffect(() => {
+    (groupedByFile || []).forEach((group) => {
+      const fPath = group?.filePath;
+      if (!fPath) return;
+      const meta = group?.sourceMeta;
+      const bPct = meta?.branchesPct ?? 100;
+      const lPct = meta?.linesPct ?? 100;
+      const sPct = meta?.stmtsPct ?? 100;
+      const hasGap = Number(bPct) < 100 || Number(lPct) < 100 || Number(sPct) < 100;
+      if (hasGap && !fileCoverageCache[fPath] && !loadingFiles.has(fPath)) {
+        fetchFileCoverage(fPath);
+      }
+    });
+  }, [groupedByFile, snapshotId]);
+
   // Filtered files & functions based on search and category filter
   const filteredFiles = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
+    const q = (searchQuery || "").trim().toLowerCase();
 
-    return groupedByFile
+    return (groupedByFile || [])
       .map((group) => {
-        const matchesFile = !q || group.filePath.toLowerCase().includes(q);
+        if (!group) return null;
+        const matchesFile = !q || (group.filePath || "").toLowerCase().includes(q);
 
-        const filteredFns = group.functions.filter((fn) => {
+        const filteredFns = (group.functions || []).filter((fn) => {
+          if (!fn) return false;
           // Category filter
           if (selectedCategory !== "ALL") {
             if (selectedCategory === "HIGH_CC") {
@@ -989,7 +1028,7 @@ export default function UnitTestTraceabilityMatrix({
             } else if (selectedCategory === "UNCOVERED") {
               if (fn.isFullyCovered) return false;
             } else {
-              const hasCat = fn.tests.some((t) => t.category === selectedCategory);
+              const hasCat = (fn.tests || []).some((t) => t.category === selectedCategory);
               if (!hasCat) return false;
             }
           }
@@ -998,12 +1037,12 @@ export default function UnitTestTraceabilityMatrix({
           if (!q) return true;
           if (matchesFile) return true;
           return (
-            fn.cleanName.toLowerCase().includes(q) ||
-            fn.tests.some((t) => t.title.toLowerCase().includes(q))
+            (fn.cleanName || "").toLowerCase().includes(q) ||
+            (fn.tests || []).some((t) => (t.title || "").toLowerCase().includes(q))
           );
         });
 
-        if (filteredFns.length === 0 && !matchesFile) return null;
+        if ((filteredFns?.length || 0) === 0 && !matchesFile) return null;
 
         return {
           ...group,
@@ -1122,6 +1161,7 @@ export default function UnitTestTraceabilityMatrix({
     }
     const hasNoBranches = branchesInRange.length === 0;
     const isFileBranchGap = fileBranchesPct !== null && Number(fileBranchesPct) < 100;
+    const isComplexityBranchGap = (fn.complexity || 1) > 1 && isFileBranchGap;
     const branchesPct = (isFileZeroFuncs || fnHit === 0) && !hasNoBranches
       ? 0
       : hasNoBranches
@@ -1132,7 +1172,6 @@ export default function UnitTestTraceabilityMatrix({
 
     // 3. Functions Calculation
     const funcsTotal = 1;
-    // Strict ground truth: Function is covered ONLY if it was physically executed (fnHit > 0) AND file does not have 0% functions
     const funcsCovered = (isFileZeroFuncs || fnHit === 0) ? 0 : (fnHit > 0 ? 1 : 0);
     const funcsPct = funcsCovered > 0 ? 100 : 0;
 
@@ -1164,6 +1203,7 @@ export default function UnitTestTraceabilityMatrix({
 
     const uncoveredLines = linesInRange.filter((l) => (l.hits || 0) === 0 || l.status === "uncovered" || l.status === "failed");
     const uncoveredBranches = branchesInRange.filter((b) => b.status === "uncovered" || b.status === "partially_covered" || (Array.isArray(b.counts) && b.counts.some((c) => (c || 0) === 0)));
+
     const isFullyCovered =
       !isFileZeroFuncs &&
       fnHit > 0 &&
@@ -1171,9 +1211,9 @@ export default function UnitTestTraceabilityMatrix({
       (branchesPct >= 100 || (hasNoBranches && !isFileBranchGap)) &&
       funcsPct >= 100 &&
       linesPct >= 100 &&
-      uncoveredLines.length === 0 &&
-      uncoveredBranches.length === 0 &&
-      (!fileCov ? !isFileBranchGap : true);
+      (uncoveredLines?.length || 0) === 0 &&
+      (uncoveredBranches?.length || 0) === 0 &&
+      (!fileCov ? (!isFileBranchGap || !isComplexityBranchGap) : true);
 
     return {
       startLine,
@@ -1230,7 +1270,7 @@ export default function UnitTestTraceabilityMatrix({
               Business Logic ↔ Test Case Traceability Matrix
             </span>
             <span style={{ fontSize: 11, color: isLight ? "#64748b" : "#8b949e", fontWeight: 500 }}>
-              ({filteredFiles.length} source files · {(functionTraceability?.length || 0)} business functions)
+              ({filteredFiles?.length || 0} source files · {(functionTraceability?.length || 0)} business functions)
             </span>
           </div>
 
@@ -1460,7 +1500,7 @@ export default function UnitTestTraceabilityMatrix({
         </div>
 
         {/* Traceability List */}
-        {filteredFiles.length === 0 ? (
+        {(filteredFiles?.length || 0) === 0 ? (
           <div style={{ padding: 40, textAlign: "center", color: isLight ? "#64748b" : "#8b949e" }}>
             <FileCode size={28} style={{ margin: "0 auto 10px", opacity: 0.5 }} />
             <div style={{ fontSize: 13, fontWeight: 600 }}>No matching business functions found</div>
@@ -1476,9 +1516,12 @@ export default function UnitTestTraceabilityMatrix({
               const isCallbacksExpanded = expandedCallbacksByFile.has(group.filePath);
               const meta = group.sourceMeta;
               const cleanPath = cleanDisplayPath(group.filePath);
+              const subPkgStripped = cleanPath ? cleanPath.replace(/^(?:server|client|backend|frontend)\//, "") : "";
               const fileCov = fileCoverageCache[group.filePath] ||
                 fileCoverageCache[group.filePath?.replace(/\\/g, "/")] ||
                 fileCoverageCache[cleanPath] ||
+                (subPkgStripped ? fileCoverageCache[subPkgStripped] : null) ||
+                Object.entries(fileCoverageCache).find(([k]) => cleanDisplayPath(k) === cleanPath)?.[1] ||
                 null;
 
               // File-level suggestion state
@@ -1508,8 +1551,8 @@ export default function UnitTestTraceabilityMatrix({
               const getColor = (pct) => pct >= 100 ? "#10b981" : pct > 0 ? "#f59e0b" : "#ef4444";
 
               // Separate genuine business functions from internal anonymous callbacks
-              const businessFunctions = group.functions.filter((fn) => !isAnonymousName(fn.cleanName));
-              const callbackFunctions = group.functions.filter((fn) => isAnonymousName(fn.cleanName));
+              const businessFunctions = (group?.functions || []).filter((fn) => !isCallbackOrAnonymousName(fn.cleanName));
+              const callbackFunctions = (group?.functions || []).filter((fn) => isCallbackOrAnonymousName(fn.cleanName));
               const primaryFunctions = (businessFunctions?.length || 0) > 0 ? businessFunctions : callbackFunctions;
               const secondaryCallbacks = (businessFunctions?.length || 0) > 0 ? callbackFunctions : [];
               const fileBaseName = cleanPath.split("/").pop()?.replace(/\.[^.]+$/, "") || "Module";
@@ -1550,11 +1593,11 @@ export default function UnitTestTraceabilityMatrix({
                         {cleanPath}
                       </span>
                       <span style={{ fontSize: 11, color: isLight ? "#64748b" : "#8b949e" }}>
-                        {businessFunctions.length > 0
-                          ? `(${businessFunctions.length} business function${businessFunctions.length > 1 ? "s" : ""}${secondaryCallbacks.length > 0 ? ` · ${secondaryCallbacks.length} callback${secondaryCallbacks.length > 1 ? "s" : ""}` : ""})`
-                          : callbackFunctions.length > 0
-                            ? `(${callbackFunctions.length} executable callback${callbackFunctions.length > 1 ? "s" : ""})`
-                            : "(0 functions)"}
+                        {(businessFunctions?.length || 0) > 0
+                        ? `(${businessFunctions.length} business function${businessFunctions.length > 1 ? "s" : ""}${(secondaryCallbacks?.length || 0) > 0 ? ` · ${secondaryCallbacks.length} callback${secondaryCallbacks.length > 1 ? "s" : ""}` : ""})`
+                        : (callbackFunctions?.length || 0) > 0
+                          ? `(${callbackFunctions.length} executable callback${callbackFunctions.length > 1 ? "s" : ""})`
+                          : "(0 functions)"}
                       </span>
                     </div>
 
@@ -2246,7 +2289,7 @@ export default function UnitTestTraceabilityMatrix({
                                           )}
                                       </div>
 
-                                      {(!fn.tests || fn.tests.length === 0) ? (
+                                      {(!fn.tests || (fn.tests?.length || 0) === 0) ? (
                                         <div style={{ fontSize: 11, color: isLight ? "#b45309" : "#fbbf24", background: isLight ? "#fffbeb" : "rgba(245, 158, 11, 0.08)", padding: "6px 10px", borderRadius: 4 }}>
                                           No dedicated test assertion specifically named <code>{fn.cleanName}</code> found in suite results.
                                           {proofData.fnHit > 0
@@ -2389,7 +2432,7 @@ export default function UnitTestTraceabilityMatrix({
                                           {proofData.uncoveredBranches?.length > 0 ? ` (${proofData.uncoveredBranches.length} uncovered branches)` : ""}
                                           {!proofData.uncoveredLines?.length && !proofData.uncoveredBranches?.length && proofData.linesPct < 100 ? `${proofData.linesTotalCount - proofData.linesCoveredCount} uncovered lines` : ""}
                                           {!proofData.uncoveredLines?.length && !proofData.uncoveredBranches?.length && proofData.branchesPct < 100 ? `${proofData.branchPathsTotal - proofData.branchPathsCovered} uncovered branch paths` : ""}
-                                          {!proofData.uncoveredLines?.length && !proofData.uncoveredBranches?.length && proofData.linesPct >= 100 && proofData.branchesPct >= 100 && fn.tests.length === 0 ? "No unit tests exercising this function yet." : ""}
+                                          {!proofData.uncoveredLines?.length && !proofData.uncoveredBranches?.length && proofData.linesPct >= 100 && proofData.branchesPct >= 100 && (fn.tests?.length || 0) === 0 ? "No unit tests exercising this function yet." : ""}
                                         </span>
                                       </div>
 
@@ -2675,15 +2718,15 @@ export default function UnitTestTraceabilityMatrix({
                                             fontWeight: 650,
                                             padding: "2px 7px",
                                             borderRadius: 4,
-                                            background: (!fn.tests || fn.tests.length === 0) && (fn.hit || 0) === 0
+                                            background: (!fn.tests || (fn.tests?.length || 0) === 0) && (fn.hit || 0) === 0
                                               ? (isLight ? "#fff1f2" : "rgba(239, 68, 68, 0.15)")
                                               : (isLight ? "#ecfdf5" : "rgba(16, 185, 129, 0.15)"),
-                                            color: (!fn.tests || fn.tests.length === 0) && (fn.hit || 0) === 0
+                                            color: (!fn.tests || (fn.tests?.length || 0) === 0) && (fn.hit || 0) === 0
                                               ? (isLight ? "#dc2626" : "#f87171")
                                               : (isLight ? "#059669" : "#4ade80"),
                                           }}
                                         >
-                                          {(!fn.tests || fn.tests.length === 0) && (fn.hit || 0) === 0 ? "Uncovered" : `${fn.hit || fn.tests?.length || 1} hits`}
+                                          {(!fn.tests || (fn.tests?.length || 0) === 0) && (fn.hit || 0) === 0 ? "Uncovered" : `${fn.hit || fn.tests?.length || 1} hits`}
                                         </span>
                                       </div>
                                     </div>
@@ -2798,7 +2841,7 @@ export default function UnitTestTraceabilityMatrix({
                 const stmtsCovered = fileCov?.summary?.stmtsCovered ?? (fileCov?.statements?.filter((s) => s.hits > 0).length || 1);
                 const stmtsPct = meta?.stmtsPct || (stmtsTotal > 0 ? Number(((stmtsCovered / stmtsTotal) * 100).toFixed(1)) : 100);
 
-                const branchesTotal = fileCov?.summary?.branchesTotal ?? (fileCov?.branches?.length ? fileCov.branches.length * 2 : 0);
+                const branchesTotal = fileCov?.summary?.branchesTotal ?? (fileCov?.branches?.length ? (fileCov.branches.length * 2) : 0);
                 const branchesCovered = fileCov?.summary?.branchesCovered ?? (fileCov?.branches?.reduce((acc, b) => {
                   const counts = Array.isArray(b.counts) && b.counts.length > 0
                     ? b.counts
