@@ -1149,6 +1149,7 @@ function LayoutInner() {
                   testPromptSnapshotId
                 }
                 projectId={project?.id}
+                treeVersion={treeVersion}
                 onOpenFile={handleOpenFileByPath}
                 onSuggestTestcase={handleSuggestTestcase}
                 onOpenCFG={handleOpenCFG}

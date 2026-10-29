@@ -532,6 +532,7 @@ export default function CoverageTypeDashboard({
   type,
   snapshotId,
   projectId,
+  treeVersion = null,
   onOpenFile,
   onGenerate,
   generating,
@@ -546,6 +547,13 @@ export default function CoverageTypeDashboard({
   const [systemSummary, setSystemSummary] = useState(null);
   const executionMode = "full";
   const [runningStatus, setRunningStatus] = useState("");
+
+  const getExpectedWorkspaceRevision = () => {
+    if (typeof treeVersion !== "undefined" && treeVersion?.expectedWorkspaceRevision != null) {
+      return Number(treeVersion.expectedWorkspaceRevision) || 0;
+    }
+    return 0;
+  };
 
   // React Query cached dashboard data - instant render on tab switch without loading lag
   const {
@@ -1011,7 +1019,7 @@ export default function CoverageTypeDashboard({
             ...suggestion,
             proposalBase: suggestion.proposalBase || {
               snapshotId,
-              workspaceRevision: treeVersion?.expectedWorkspaceRevision ?? 0,
+              workspaceRevision: getExpectedWorkspaceRevision(),
             },
           },
           projectId,
@@ -1172,7 +1180,7 @@ export default function CoverageTypeDashboard({
             ...s,
             proposalBase: s.proposalBase || {
               snapshotId,
-              workspaceRevision: treeVersion?.expectedWorkspaceRevision ?? 0,
+              workspaceRevision: getExpectedWorkspaceRevision(),
             },
           })),
           projectId,
@@ -1501,7 +1509,7 @@ export default function CoverageTypeDashboard({
     let completedCount = 0;
     let anyPassedGlobal = false;
     let lastResultData = null;
-    let runningWorkspaceRevision = treeVersion?.expectedWorkspaceRevision ?? 0;
+    let runningWorkspaceRevision = getExpectedWorkspaceRevision();
 
     try {
       for (let i = 0; i < totalFiles; i++) {
@@ -2203,7 +2211,7 @@ export default function CoverageTypeDashboard({
             framework: framework || activeFramework || "vitest",
             proposalBase: {
               snapshotId,
-              workspaceRevision: treeVersion?.expectedWorkspaceRevision ?? 0,
+              workspaceRevision: getExpectedWorkspaceRevision(),
             },
           },
         });
