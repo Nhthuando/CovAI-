@@ -349,19 +349,36 @@ export const getCoverageSummary = async (req, res) => {
                 statements: 0,
             };
 
-        // Read rawTotals from coverage-summary.json if exists
+        // Read rawTotals from namespaced coverage-summary.json based on typeFilter
         let rawTotals = null;
         const resolvedRootDir = resolveSnapshotRootDir(snapshot.rootDir);
         if (resolvedRootDir) {
-            const candidateSummaryFiles = [
-                path.join(resolvedRootDir, "coverage", "coverage-summary.json"),
-                path.join(resolvedRootDir, "server", "coverage", "coverage-summary.json"),
-                path.join(resolvedRootDir, "client", "coverage", "coverage-summary.json"),
-                path.join(resolvedRootDir, "backend", "coverage", "coverage-summary.json"),
-                path.join(resolvedRootDir, "coverage-summary.json"),
-                path.join(resolvedRootDir, "coverage", "jest-coverage-summary.json"),
-                path.join(resolvedRootDir, "coverage", "vitest-coverage-summary.json"),
-            ];
+            let candidateSummaryFiles = [];
+            if (typeFilter === "integration") {
+                candidateSummaryFiles = [
+                    path.join(resolvedRootDir, "coverage", "integration", "coverage-summary.json"),
+                    path.join(resolvedRootDir, "coverage", "supertest-coverage-summary.json"),
+                    path.join(resolvedRootDir, "coverage", "coverage-summary.json"),
+                ];
+            } else if (typeFilter === "system") {
+                candidateSummaryFiles = [
+                    path.join(resolvedRootDir, "coverage", "system", "coverage-summary.json"),
+                    path.join(resolvedRootDir, "coverage", "playwright-coverage-summary.json"),
+                    path.join(resolvedRootDir, "coverage", "cypress-coverage-summary.json"),
+                ];
+            } else {
+                // Unit test coverage (default)
+                candidateSummaryFiles = [
+                    path.join(resolvedRootDir, "coverage", "unit", "coverage-summary.json"),
+                    path.join(resolvedRootDir, "coverage", "coverage-summary.json"),
+                    path.join(resolvedRootDir, "server", "coverage", "coverage-summary.json"),
+                    path.join(resolvedRootDir, "client", "coverage", "coverage-summary.json"),
+                    path.join(resolvedRootDir, "backend", "coverage", "coverage-summary.json"),
+                    path.join(resolvedRootDir, "coverage-summary.json"),
+                    path.join(resolvedRootDir, "coverage", "jest-coverage-summary.json"),
+                    path.join(resolvedRootDir, "coverage", "vitest-coverage-summary.json"),
+                ];
+            }
 
             // Scan immediate subdirectories for monorepo packages (e.g. server, app, pkg)
             try {
@@ -616,20 +633,12 @@ export const getCoverageSummary = async (req, res) => {
                         branchesPct: true,
                         funcsPct: true,
                         stmtsPct: true,
-                        linesTotal: true,
-                        linesCovered: true,
-                        branchesTotal: true,
-                        branchesCovered: true,
-                        funcsTotal: true,
-                        funcsCovered: true,
-                        stmtsTotal: true,
-                        stmtsCovered: true,
                     }
                 });
 
                 if (dbFiles && dbFiles.length > 0) {
                     const configExclusions = resolvedRootDir ? extractProjectCoverageExclusions(resolvedRootDir) : [];
-                    let sTot = 0, sCov = 0, bTot = 0, bCov = 0, fTot = 0, fCov = 0, lTot = 0, lCov = 0;
+                    let sTot = 0, sCovExact = 0, bTot = 0, bCovExact = 0, fTot = 0, fCovExact = 0, lTot = 0, lCovExact = 0;
                     let matchedFileCount = 0;
 
                     for (const f of dbFiles) {
@@ -638,27 +647,46 @@ export const getCoverageSummary = async (req, res) => {
                         if (typeFilter === "integration" && !isApiFilePath(can)) continue;
 
                         matchedFileCount++;
-                        sTot += f.stmtsTotal || 0;
-                        sCov += f.stmtsCovered || 0;
-                        bTot += f.branchesTotal || 0;
-                        bCov += f.branchesCovered || 0;
-                        fTot += f.funcsTotal || 0;
-                        fCov += f.funcsCovered || 0;
-                        lTot += f.linesTotal || 0;
-                        lCov += f.linesCovered || 0;
+                        let totalLines = 100;
+                        let funcsCount = 5;
+                        let branchesCount = 5;
+
+                        if (resolvedRootDir) {
+                            const absPath = path.isAbsolute(f.filePath) ? f.filePath : path.join(resolvedRootDir, f.filePath);
+                            if (fs.existsSync(absPath)) {
+                                try {
+                                    const fileContent = fs.readFileSync(absPath, "utf8");
+                                    const codeLines = fileContent.split("\n");
+                                    totalLines = Math.max(1, codeLines.length);
+                                    const funcs = extractFunctions(fileContent) || [];
+                                    funcsCount = Math.max(1, funcs.length);
+                                    const branchList = extractBranches(fileContent) || [];
+                                    branchesCount = Math.max(1, branchList.reduce((s, b) => s + (b.locations?.length || 1), 0));
+                                } catch (_) {}
+                            }
+                        }
+
+                        sTot += totalLines;
+                        sCovExact += totalLines * ((f.stmtsPct || 0) / 100);
+                        lTot += totalLines;
+                        lCovExact += totalLines * ((f.linesPct || 0) / 100);
+                        fTot += funcsCount;
+                        fCovExact += funcsCount * ((f.funcsPct || 0) / 100);
+                        bTot += branchesCount;
+                        bCovExact += branchesCount * ((f.branchesPct || 0) / 100);
                     }
 
                     if (matchedFileCount > 0 && (sTot > 0 || lTot > 0)) {
-                        const sPct = sTot > 0 ? Number(((sCov / sTot) * 100).toFixed(1)) : 0;
-                        const bPct = bTot > 0 ? Number(((bCov / bTot) * 100).toFixed(1)) : (lCov > 0 ? 100 : 0);
-                        const fPct = fTot > 0 ? Number(((fCov / fTot) * 100).toFixed(1)) : 0;
-                        const lPct = lTot > 0 ? Number(((lCov / lTot) * 100).toFixed(1)) : 0;
+                        const sPct = sTot > 0 ? Number(((sCovExact / sTot) * 100).toFixed(1)) : 0;
+                        const bPct = bTot > 0 ? Number(((bCovExact / bTot) * 100).toFixed(1)) : (lCovExact > 0 ? 100 : 0);
+                        const fPct = fTot > 0 ? Number(((fCovExact / fTot) * 100).toFixed(1)) : 0;
+                        const lPct = lTot > 0 ? Number(((lCovExact / lTot) * 100).toFixed(1)) : 0;
 
                         rawTotals = {
-                            statements: { total: sTot, covered: sCov, pct: sPct },
-                            branches: { total: bTot, covered: bCov, pct: bPct },
-                            functions: { total: fTot, covered: fCov, pct: fPct },
-                            lines: { total: lTot, covered: lCov, pct: lPct },
+                            statements: { total: sTot, covered: Math.round(sCovExact), pct: sPct },
+                            branches: { total: bTot, covered: Math.round(bCovExact), pct: bPct },
+                            functions: { total: fTot, covered: Math.round(fCovExact), pct: fPct },
+                            lines: { total: lTot, covered: Math.round(lCovExact), pct: lPct },
                         };
                         coverage = {
                             statements: sPct,
@@ -675,24 +703,71 @@ export const getCoverageSummary = async (req, res) => {
 
         if (!rawTotals) {
             try {
-                const dbSummary = await prisma.coverageSummary.findUnique({
+                const dbSummary = summary || await prisma.coverageSummary.findUnique({
                     where: { snapshotId: snapshot.id }
                 });
-                if (dbSummary && (dbSummary.stmtsTotal > 0 || dbSummary.linesTotal > 0)) {
+                if (dbSummary && (dbSummary.stmtsPct != null || dbSummary.linesPct != null)) {
+                    const sPct = dbSummary.stmtsPct ?? 0;
+                    const bPct = dbSummary.branchesPct ?? 0;
+                    const fPct = dbSummary.funcsPct ?? 0;
+                    const lPct = dbSummary.linesPct ?? 0;
                     rawTotals = {
-                        statements: { total: dbSummary.stmtsTotal || 0, covered: dbSummary.stmtsCovered || 0, pct: dbSummary.statementsPct || 0 },
-                        branches: { total: dbSummary.branchesTotal || 0, covered: dbSummary.branchesCovered || 0, pct: dbSummary.branchesPct || 0 },
-                        functions: { total: dbSummary.funcsTotal || 0, covered: dbSummary.funcsCovered || 0, pct: dbSummary.functionsPct || 0 },
-                        lines: { total: dbSummary.linesTotal || 0, covered: dbSummary.linesCovered || 0, pct: dbSummary.linesPct || 0 },
+                        statements: { total: 0, covered: 0, pct: sPct },
+                        branches: { total: 0, covered: 0, pct: bPct },
+                        functions: { total: 0, covered: 0, pct: fPct },
+                        lines: { total: 0, covered: 0, pct: lPct },
                     };
                     coverage = {
-                        statements: dbSummary.statementsPct || 0,
-                        branches: dbSummary.branchesPct || 0,
-                        functions: dbSummary.functionsPct || 0,
-                        lines: dbSummary.linesPct || 0,
+                        statements: sPct,
+                        branches: bPct,
+                        functions: fPct,
+                        lines: lPct,
                     };
                 }
             } catch (_) {}
+        }
+
+        // If integration test and no explicit summary file found, compute baseline 0% totals across all API route files
+        if (typeFilter === "integration" && !rawTotals && resolvedRootDir) {
+            try {
+                const logicFiles = findLogicSourceFiles(resolvedRootDir);
+                let stmtsTotal = 0;
+                let linesTotal = 0;
+                let funcsTotal = 0;
+                let branchesTotal = 0;
+
+                for (const lf of logicFiles) {
+                    const can = canonicalizeFilePath(lf.relativePath, resolvedRootDir) || lf.relativePath;
+                    if (!isApiFilePath(can)) continue;
+
+                    let content = "";
+                    try { content = fs.readFileSync(lf.absolutePath, "utf8"); } catch { }
+                    const codeLines = content.split("\n");
+                    const totalLines = Math.max(1, codeLines.length);
+                    linesTotal += totalLines;
+                    stmtsTotal += totalLines;
+
+                    let funcs = [];
+                    try { funcs = extractFunctions(content) || []; } catch { funcs = []; }
+                    funcsTotal += funcs.length;
+
+                    let branchList = [];
+                    try { branchList = extractBranches(content) || []; } catch { branchList = []; }
+                    branchesTotal += branchList.reduce((s, b) => s + (b.locations?.length || 1), 0);
+                }
+
+                if (linesTotal > 0 || stmtsTotal > 0) {
+                    rawTotals = {
+                        statements: { total: stmtsTotal, covered: 0, pct: 0 },
+                        branches: { total: branchesTotal, covered: 0, pct: 0 },
+                        functions: { total: funcsTotal, covered: 0, pct: 0 },
+                        lines: { total: linesTotal, covered: 0, pct: 0 },
+                    };
+                    coverage = { statements: 0, branches: 0, functions: 0, lines: 0 };
+                }
+            } catch (integrationBaselineErr) {
+                console.warn("[CoverageSummary] Integration baseline fallback error:", integrationBaselineErr.message);
+            }
         }
 
         // If unit test and no explicit summary file found, compute baseline 0% totals across all business logic files
@@ -793,7 +868,8 @@ export const getCoverageSummary = async (req, res) => {
 
         const isJobFailed = latestJob?.status === "FAILED";
         const hasModuleResolutionError = latestJob?.errorMessage?.includes("Cannot find module") ||
-            latestTestRun?.scenarios?.some(s => s.failureMessages?.some(m => m.includes("Cannot find module")));
+            latestJob?.errorMessage?.includes("Cannot find package") ||
+            latestTestRun?.scenarios?.some(s => s.failureMessages?.some(m => m.includes("Cannot find module") || m.includes("Cannot find package")));
         const isFatalFailure = isJobFailed || hasModuleResolutionError;
 
         const scenarioWithErr = latestTestRun?.scenarios?.find(s => s.failureMessages?.length > 0);
@@ -1600,17 +1676,24 @@ export const getCoverageTestSuites = async (req, res) => {
 
         const findJsonFiles = (base, filename) => {
             const results = [
+                path.join(base, "coverage", requestedType, filename),
                 path.join(base, "coverage", filename),
                 path.join(base, filename),
+                path.join(base, "backend", "coverage", requestedType, filename),
                 path.join(base, "backend", "coverage", filename),
                 path.join(base, "backend", filename),
             ];
             try {
-                const covDir = path.join(base, "coverage");
-                if (fs.existsSync(covDir)) {
-                    for (const f of fs.readdirSync(covDir)) {
-                        if (f.endsWith(".json") && f.includes(filename.replace(".json", ""))) {
-                            results.push(path.join(covDir, f));
+                const covDirs = [
+                    path.join(base, "coverage", requestedType),
+                    path.join(base, "coverage"),
+                ];
+                for (const covDir of covDirs) {
+                    if (fs.existsSync(covDir)) {
+                        for (const f of fs.readdirSync(covDir)) {
+                            if (f.endsWith(".json") && f.includes(filename.replace(".json", ""))) {
+                                results.push(path.join(covDir, f));
+                            }
                         }
                     }
                 }
@@ -2345,7 +2428,7 @@ export const installMissingDependencyController = async (req, res) => {
         if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
 
         const { snapshotId } = req.params;
-        const { packageName, isDev = false, rerunTests = true } = req.body || {};
+        const { packageName, isDev = false, rerunTests = true, importedFrom = null } = req.body || {};
 
         if (!packageName || typeof packageName !== "string") {
             return res.status(400).json({ success: false, message: "packageName is required." });
@@ -2363,7 +2446,8 @@ export const installMissingDependencyController = async (req, res) => {
         const installResult = await installPackageInWorkspace({
             rootDir: snapshot.rootDir,
             packageName: packageName.trim(),
-            isDev: Boolean(isDev)
+            isDev: Boolean(isDev),
+            importedFrom: importedFrom || null
         });
 
         if (!installResult.success) {
@@ -3641,7 +3725,7 @@ export const applySuggestion = async (req, res) => {
         if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
 
         const { snapshotId } = req.params;
-        let { projectId, suggestion, suggestions, skipBackgroundJob } = req.body || {};
+        let { projectId, suggestion, suggestions, skipBackgroundJob, triggerFullAnalysis } = req.body || {};
 
         if (!suggestion && (!suggestions || suggestions.length === 0)) {
             return res.status(400).json({ success: false, message: "suggestion or suggestions array is required." });
@@ -3661,9 +3745,10 @@ export const applySuggestion = async (req, res) => {
             suggestions
         });
 
-        // Auto-trigger full project unit test analysis in the background (unless skipped for batch apply)
+        // Only trigger a full project RUN_TESTS background job if explicitly requested or if incremental coverage was not already persisted
         let backgroundJob = null;
-        if (!skipBackgroundJob && result && result.success && actualSnapshotId && actualProjectId) {
+        const hasAuthoritativeCoverage = Boolean(result && result.success && result.newCoverage && result.perFileResults);
+        if (!skipBackgroundJob && (triggerFullAnalysis === true || !hasAuthoritativeCoverage) && result && result.success && actualSnapshotId && actualProjectId) {
             try {
                 const activeUnitJob = await prisma.job.findFirst({
                     where: {

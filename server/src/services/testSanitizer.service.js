@@ -1,9 +1,12 @@
+import { deduplicateAstDeclarations } from './testHelperRegistry.service.js';
 import fs from "fs";
 import path from "path";
 import { normalizePath } from "./fileCoverage.service.js";
 import { parseJavaScriptCode } from "./babelParser.service.js";
 import { isVitestTestCode, normalizeTestFrameworkCode } from "./testFrameworkNormalization.service.js";
 import { parse } from "@babel/parser";
+import { healInvalidDynamicGetters, autoRepairTestSyntaxWithAst, validateTestCodeAst } from "../validators/aiTestCode.validator.js";
+export { healInvalidDynamicGetters, autoRepairTestSyntaxWithAst, validateTestCodeAst };
 import traversePkg from "@babel/traverse";
 const traverse = traversePkg?.default || traversePkg;
 
@@ -1208,6 +1211,8 @@ export const ensureJestMockVirtualOption = (code, targetModuleName) => {
 export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath = "", options = {}) => {
     if (!content) return "";
     let cleaned = content;
+    // 0.05. Heal invalid dynamic getter declarations and mock getters
+    cleaned = healInvalidDynamicGetters(cleaned);
 
     // 0.0. Self-heal corrupted jest.mock calls caused by regex non-greedy truncation:
     // e.g. jest.mock('bull', (, { virtual: true }); => { -> jest.mock('bull', () => {
@@ -1401,7 +1406,7 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     cleaned = cleaned.replace(/^[ \t]*let\s+target\s*=\s*default\s*;?[ \t]*\r?$/gm, "let target = (typeof defaultExport !== 'undefined' ? defaultExport : undefined);");
     cleaned = cleaned.replace(/\btypeof\s+default\b/g, "typeof (typeof defaultExport !== 'undefined' ? defaultExport : undefined)");
     cleaned = cleaned.replace(/\bnew\s+default\s*\(/g, "new (typeof defaultExport !== 'undefined' ? defaultExport : Object)(");
-    cleaned = cleaned.replace(/\bdefault\s*\(/g, "(typeof defaultExport === 'function' ? defaultExport : (() => {}))(");
+    cleaned = cleaned.replace(/(?<!\b(?:get|set|export|case|import)\s*|[\.\$])\bdefault\s*\(/g, "(typeof defaultExport === 'function' ? defaultExport : (() => {}))(");
     cleaned = cleaned.replace(/\bexpect\s*\(\s*default\s*\)/g, "expect(typeof defaultExport !== 'undefined' ? defaultExport : undefined)");
 
     // 1. Remove non-code placeholder AI blocks (e.g. describe('AI Suggested Unit Tests', () => { N/A - See fullUpdatedContent });)
@@ -1636,6 +1641,9 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
         }
         return '';
     });
+
+    // 1.3b. Remove orphan standalone arrow lines (e.g. `=> mockCreateUniversalStub());`)
+    cleaned = cleaned.replace(/^[ \t]*=>[^\n]*\r?\n?/gm, "");
 
     // Remove orphan closing brackets like "}));" or "});" that have no matching open brackets
     cleaned = cleaned.replace(/^[ \t]*(?:\}\s*\)\s*\);|\)\s*\);|\}\s*\);)[ \t]*\r?\n?/gm, (match, offset, str) => {
@@ -1878,6 +1886,10 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
         }
     }
     cleaned = linesAfterDedup.join("\n");
+    try {
+        const dedupRes = deduplicateAstDeclarations(cleaned, { filePath });
+        if (dedupRes.changed && dedupRes.code) cleaned = dedupRes.code;
+    } catch (_) {}
 
     // 5. Deduplicate test/it blocks with identical titles using balanced brace matching
     const testBlockRegex = /\b(test|it)\s*\(\s*(['"`])([^'"`]+)\2/g;
@@ -2426,8 +2438,12 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
     // Heal universal mocks for downstream local dependencies
     if (cleaned.includes("mockCreateUniversalStub")) {
         cleaned = cleaned.replace(
+            /if\s*\(\s*prop\s*===\s*['"]then['"]\s*\|\|\s*(?:prop\s*===\s*['"]catch['"]\s*\|\|\s*)?typeof\s+prop\s*===\s*['"]symbol['"]\s*\)\s*return\s+undefined\s*;/g,
+            "if (prop === Symbol.iterator) return function* () { yield* []; };\n      if (prop === Symbol.asyncIterator) return async function* () { yield* []; };\n      if (prop === Symbol.toPrimitive) return (hint) => (hint === 'number' ? 0 : '');\n      if (prop === 'then' || prop === 'catch' || typeof prop === 'symbol') return undefined;"
+        );
+        cleaned = cleaned.replace(
             /const mockCreateUniversalStub = \(\) => \{[\s\S]*?return target\[prop\];[\s\S]*?\};\r?\n/g,
-            `const mockCreateUniversalStub = () => {\n  const fnMaker = typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({})));\n  const stubFn = () => fnMaker(() => Promise.resolve({ id: 1, name: 'Sample Item', title: 'Sample Title', status: 'ACTIVE', score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90, filename: 'sample.pdf', analysis: { score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }, toJSON() { return { id: 1, score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }; } }));\n  const baseTarget = {\n    models: mockCreateModelRegistry(),\n    AppError: class extends Error { statusCode; details; constructor(sc, m, d) { super(m); this.statusCode = sc; this.details = d; } },\n    asyncHandler: (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next),\n    errorMiddleware: fnMaker((err, req, res, next) => res.status(err.statusCode || 500).json({ message: err.message }))\n  };\n  return new Proxy(baseTarget, {\n    get: (target, prop) => {\n      if (prop === 'then' || typeof prop === 'symbol') return undefined;\n      if (!(prop in target)) {\n        if (prop === 'default') {\n          target[prop] = target;\n        } else if (prop === 'findAndCountAll') {\n          target[prop] = fnMaker(() => Promise.resolve({ count: 1, rows: [{ id: 1, title: 'Sample', score: 50, ambiguity: 50, clarity: 50, completeness: 50, consistency: 50, toJSON() { return { id: 1, score: 50, ambiguity: 50, clarity: 50, completeness: 50, consistency: 50 }; } }] }));\n        } else {\n          target[prop] = stubFn();\n        }\n      }\n      return target[prop];\n    }\n  });\n};\n`
+            `const mockCreateUniversalStub = () => {\n  const fnMaker = typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({})));\n  const stubFn = () => fnMaker(() => Promise.resolve({ id: 1, name: 'Sample Item', title: 'Sample Title', status: 'ACTIVE', score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90, filename: 'sample.pdf', analysis: { score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }, toJSON() { return { id: 1, score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }; } }));\n  const baseTarget = {\n    models: mockCreateModelRegistry(),\n    AppError: class extends Error { statusCode; details; constructor(sc, m, d) { super(m); this.statusCode = sc; this.details = d; } },\n    asyncHandler: (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next),\n    errorMiddleware: fnMaker((err, req, res, next) => res.status(err.statusCode || 500).json({ message: err.message }))\n  };\n  return new Proxy(baseTarget, {\n    get: (target, prop) => {\n      if (prop === Symbol.iterator) return function* () { yield* []; };\n      if (prop === Symbol.asyncIterator) return async function* () { yield* []; };\n      if (prop === Symbol.toPrimitive) return (hint) => (hint === 'number' ? 0 : '');\n      if (prop === 'then' || typeof prop === 'symbol') return undefined;\n      if (!(prop in target)) {\n        if (prop === 'default') {\n          target[prop] = target;\n        } else if (prop === 'findAndCountAll') {\n          target[prop] = fnMaker(() => Promise.resolve({ count: 1, rows: [{ id: 1, title: 'Sample', score: 50, ambiguity: 50, clarity: 50, completeness: 50, consistency: 50, toJSON() { return { id: 1, score: 50, ambiguity: 50, clarity: 50, completeness: 50, consistency: 50 }; } }] }));\n        } else {\n          target[prop] = stubFn();\n        }\n      }\n      return target[prop];\n    }\n  });\n};\n`
         );
         cleaned = cleaned.replace(
             /jest\.mock\((['"][^'"]+['"]),\s*\(\)\s*=>\s*\(\{\s*models:\s*mockCreateModelRegistry\(\),\s*\.\.\.mockCreateUniversalStub\(\)\s*\}\),\s*\{\s*virtual:\s*true\s*\}\);/g,
@@ -2973,29 +2989,35 @@ jest.mock('@prisma/client', () => ({
   default: { PrismaClient: jest.fn(() => (typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance())) }
 }));
 jest.mock('../lib/prisma.js', () => ({
-  get prisma() { return typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance(); },
-  get default() { return typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance(); }
-}), { virtual: true });
+  __esModule: true,
+  prisma: typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance(),
+  default: typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance()
+}));
 jest.mock('../../lib/prisma.js', () => ({
-  get prisma() { return typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance(); },
-  get default() { return typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance(); }
-}), { virtual: true });
+  __esModule: true,
+  prisma: typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance(),
+  default: typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance()
+}));
 jest.mock('../src/lib/prisma.js', () => ({
-  get prisma() { return typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance(); },
-  get default() { return typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance(); }
-}), { virtual: true });
+  __esModule: true,
+  prisma: typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance(),
+  default: typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance()
+}));
 jest.mock('../config/prisma.js', () => ({
-  get prisma() { return typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance(); },
-  get default() { return typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance(); }
-}), { virtual: true });
+  __esModule: true,
+  prisma: typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance(),
+  default: typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance()
+}));
 jest.mock('../../config/prisma.js', () => ({
-  get prisma() { return typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance(); },
-  get default() { return typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance(); }
-}), { virtual: true });
+  __esModule: true,
+  prisma: typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance(),
+  default: typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance()
+}));
 jest.mock('../src/config/prisma.js', () => ({
-  get prisma() { return typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance(); },
-  get default() { return typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance(); }
-}), { virtual: true });
+  __esModule: true,
+  prisma: typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance(),
+  default: typeof mockSharedPrisma !== 'undefined' ? mockSharedPrisma : mockCreatePrismaInstance()
+}));
 `;
         cleaned = prismaMockCode + cleaned;
     }
@@ -3074,6 +3096,12 @@ jest.mock('../src/config/prisma.js', () => ({
     // 23. Compress excessive blank lines (3 or more newlines to at most 2)
     cleaned = cleaned.replace(/\n[ \t]*\n([ \t]*\n)+/g, "\n\n");
 
+    // 24. Controlled AST Syntax Auto-Repair
+    const astRepaired = autoRepairTestSyntaxWithAst(cleaned, { filePath });
+    if (astRepaired.repaired && astRepaired.code) {
+        cleaned = astRepaired.code;
+    }
+
     return normalizeTestFrameworkCode(cleaned, { ...options, filePath });
 };
 
@@ -3082,46 +3110,77 @@ jest.mock('../src/config/prisma.js', () => ({
  * and applies syntax deduplication, import depth healing, and removes non-code placeholder comments
  * or invalid TypeScript syntax to prevent Babel parser aborts during runner discovery.
  */
-export const sanitizeAllProjectTestFiles = (rootDir) => {
+const sanitizedTestFileCache = new Map();
+const MAX_SANITIZED_CACHE_SIZE = 2000;
+
+export const sanitizeAllProjectTestFiles = (rootDir, specificFiles = null) => {
     if (!rootDir || !fs.existsSync(rootDir)) return;
     if (isDirectStorageDirectory(rootDir)) return; // NEVER touch direct storage
     const testFiles = [];
-    const scanDir = (dir, depth = 0) => {
-        if (!fs.existsSync(dir) || depth > 10) return;
-        try {
-            const entries = fs.readdirSync(dir, { withFileTypes: true });
-            for (const entry of entries) {
-                if (
-                    entry.name === "node_modules" ||
-                    entry.name === ".git" ||
-                    entry.name === "coverage" ||
-                    entry.name === "dist" ||
-                    entry.name === "build" ||
-                    entry.name === ".next" ||
-                    entry.name === ".cache" ||
-                    entry.name === "storage" ||
-                    entry.name === ".understand-anything"
-                ) continue;
-                const fullPath = path.join(dir, entry.name);
-                if (entry.isDirectory()) {
-                    scanDir(fullPath, depth + 1);
-                } else if (/\.(?:test|spec)\.[cm]?[jt]sx?$/i.test(entry.name)) {
-                    testFiles.push(fullPath);
-                }
+    if (Array.isArray(specificFiles) && specificFiles.length > 0) {
+        for (const sf of specificFiles) {
+            if (!sf || typeof sf !== "string") continue;
+            const fullPath = path.isAbsolute(sf) ? sf : path.join(rootDir, sf);
+            if (fs.existsSync(fullPath) && /\.(?:test|spec)\.[cm]?[jt]sx?$/i.test(path.basename(fullPath))) {
+                testFiles.push(fullPath);
             }
-        } catch { }
-    };
+        }
+    } else {
+        const scanDir = (dir, depth = 0) => {
+            if (!fs.existsSync(dir) || depth > 10) return;
+            try {
+                const entries = fs.readdirSync(dir, { withFileTypes: true });
+                for (const entry of entries) {
+                    if (
+                        entry.name === "node_modules" ||
+                        entry.name === ".git" ||
+                        entry.name === "coverage" ||
+                        entry.name === "dist" ||
+                        entry.name === "build" ||
+                        entry.name === ".next" ||
+                        entry.name === ".cache" ||
+                        entry.name === "storage" ||
+                        entry.name === ".understand-anything"
+                    ) continue;
+                    const fullPath = path.join(dir, entry.name);
+                    if (entry.isDirectory()) {
+                        scanDir(fullPath, depth + 1);
+                    } else if (/\.(?:test|spec)\.[cm]?[jt]sx?$/i.test(entry.name)) {
+                        testFiles.push(fullPath);
+                    }
+                }
+            } catch { }
+        };
 
-    scanDir(rootDir, 0);
+        scanDir(rootDir, 0);
+    }
 
     for (const tf of testFiles) {
         try {
+            const stat = fs.statSync(tf);
+            const resolvedTf = path.resolve(tf);
+            const cacheSig = `${stat.mtimeMs}:${stat.size}`;
+            if (sanitizedTestFileCache.get(resolvedTf) === cacheSig) {
+                continue;
+            }
             const original = fs.readFileSync(tf, "utf8");
             const relFromRoot = normalizePath(path.relative(rootDir, tf));
             let cleaned = cleanAndDeduplicateTestContent(original, "", tf);
             cleaned = healImportPathsInTestCode(cleaned, relFromRoot, rootDir);
             if (cleaned !== original) {
                 fs.writeFileSync(tf, cleaned, "utf8");
+                const afterStat = fs.statSync(tf);
+                if (sanitizedTestFileCache.size >= MAX_SANITIZED_CACHE_SIZE) {
+                    const firstKey = sanitizedTestFileCache.keys().next().value;
+                    if (firstKey) sanitizedTestFileCache.delete(firstKey);
+                }
+                sanitizedTestFileCache.set(resolvedTf, `${afterStat.mtimeMs}:${afterStat.size}`);
+            } else {
+                if (sanitizedTestFileCache.size >= MAX_SANITIZED_CACHE_SIZE) {
+                    const firstKey = sanitizedTestFileCache.keys().next().value;
+                    if (firstKey) sanitizedTestFileCache.delete(firstKey);
+                }
+                sanitizedTestFileCache.set(resolvedTf, cacheSig);
             }
         } catch { }
     }

@@ -1134,6 +1134,43 @@ describe('Config Module', () => {
             const parsed = parseJavaScriptCode(fixed);
             expect(parsed.success).toBe(true);
         });
+
+        test("heals mockCreateUniversalStub to support Symbol.iterator and prevent is not iterable errors", () => {
+            const rawCode = `
+const mockCreateUniversalStub = () => {
+  const handler = {
+    get: (target, prop) => {
+      if (prop === 'then' || prop === 'catch' || typeof prop === 'symbol') return undefined;
+      return () => ({});
+    }
+  };
+  return new Proxy({}, handler);
+};
+describe("Iterable Test Suite", () => {
+  test("spreads stub safely", () => {
+    const stub = mockCreateUniversalStub();
+    expect(stub).toBeDefined();
+  });
+});`;
+            const sanitized = cleanAndDeduplicateTestContent(rawCode);
+            expect(sanitized).toContain("Symbol.iterator");
+            expect(sanitized).toContain("Symbol.asyncIterator");
+            const parsed = parseJavaScriptCode(sanitized);
+            expect(parsed.success).toBe(true);
+        });
+
+        test("removes orphaned standalone arrow callback lines left behind by deleted mocks", () => {
+            const codeWithOrphan = `
+vi.mock('../../src/types', () => mockCreateUniversalStub());
+=> mockCreateUniversalStub());
+describe("Test", () => {
+  test("ok", () => { expect(1).toBe(1); });
+});`;
+            const sanitized = cleanAndDeduplicateTestContent(codeWithOrphan);
+            expect(sanitized).not.toMatch(/^[ \t]*=>/m);
+            const parsed = parseJavaScriptCode(sanitized);
+            expect(parsed.success).toBe(true);
+        });
     });
 });
 

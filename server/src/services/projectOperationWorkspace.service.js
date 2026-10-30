@@ -46,6 +46,7 @@ export const operationSnapshot = snapshot => {
     const context = contexts.getStore();
     if (!context || context.snapshotId !== snapshot?.id) return snapshot;
     return {...snapshot,rootDir:path.join(context.rootDir,context.analysisRelative),storagePath:context.rootDir,
+        originalRootDir:path.join(context.originalRootDir,context.analysisRelative),originalStoragePath:context.originalRootDir,
         jestConfigPath:snapshot.jestConfigPath && path.isAbsolute(snapshot.jestConfigPath)
             ? path.join(context.rootDir,path.relative(context.originalRootDir,snapshot.jestConfigPath)) : snapshot.jestConfigPath};
 };

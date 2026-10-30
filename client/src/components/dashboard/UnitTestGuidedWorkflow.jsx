@@ -69,9 +69,6 @@ export default function UnitTestGuidedWorkflow({
   activeTab = "guided",
   onChangeTab,
   isLight = false,
-  missingDependency = null,
-  onInstallDependency = null,
-  isInstallingDependency = false,
 }) {
   // Determine current active workflow step index (1-based)
   const linesPct = Number(summary?.coverage?.lines || summary?.linesPct || 0);
@@ -79,14 +76,7 @@ export default function UnitTestGuidedWorkflow({
   const functionsPct = Number(summary?.coverage?.functions || summary?.funcsPct || 0);
   const statementsPct = Number(summary?.coverage?.statements || summary?.stmtsPct || 0);
 
-  const resolvedMissingDependency = missingDependency || summary?.missingDependency || (
-    summary?.latestRunError && /Cannot find module ['"]([^'"]+)['"]/i.test(summary.latestRunError)
-      ? {
-          packageName: summary.latestRunError.match(/Cannot find module ['"]([^'"]+)['"]/i)[1],
-          importedFrom: summary?.latestRunError?.match(/from ['"]([^'"]+)['"]/i)?.[1] || null
-        }
-      : null
-  );
+
 
   // Accurate baseline execution detection:
   // rawTotals?.lines?.total > 0 alone NEVER indicates that tests have run (total is merely AST line count).
@@ -99,13 +89,14 @@ export default function UnitTestGuidedWorkflow({
     Number(rawTotals?.statements?.covered || 0) > 0
   );
 
+  const isStatusCompleted = summary?.latestRunStatus && !["RUNNING", "PENDING", "running", "pending"].includes(summary.latestRunStatus);
   const hasBaselineRun = Boolean(
     summary && (
       hasCoveredItems ||
-      hasExecuted ||
-      Number(testTotals?.total || 0) > 0 ||
+      (hasExecuted && !running) ||
+      (Number(testTotals?.total || 0) > 0 && !running) ||
       isLatestRunFailed ||
-      summary?.latestRunStatus ||
+      isStatusCompleted ||
       summary?.hasRun
     )
   );
@@ -181,10 +172,10 @@ export default function UnitTestGuidedWorkflow({
       shortTitle: "Baseline",
       desc: "Execute Jest & Vitest to measure initial code coverage metrics",
       icon: Activity,
-      isDone: hasBaselineRun && !isLatestRunFailed,
+      isDone: hasBaselineRun && !isLatestRunFailed && !running,
       isActive: currentStage === 1,
       isViewing: currentViewStep === 1,
-      badge: hasBaselineRun ? "✓ Completed" : "Action Required"
+      badge: running ? "⚡ In Progress" : (hasBaselineRun && !isLatestRunFailed) ? "✓ Completed" : isLatestRunFailed ? "❌ Failed" : "Action Required"
     },
     {
       num: 2,
@@ -573,6 +564,7 @@ export default function UnitTestGuidedWorkflow({
                 Scanning AST branch gaps and generating hermetic test suites...
               </span>
             </div>
+
           ) : currentViewStep === 3 ? (
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <CheckCircle2 size={16} style={{ color: "#16a34a" }} />
@@ -586,20 +578,6 @@ export default function UnitTestGuidedWorkflow({
                   {pendingSuggestionsCount > 0
                     ? `across ${pendingFilesCount} files. Click Apply All to safely merge into project:`
                     : "into project test suites. Review merged diffs or run verification below:"}
-                </span>
-              </div>
-            </div>
-          ) : resolvedMissingDependency ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <Package size={16} style={{ color: "#ef4444", flexShrink: 0 }} />
-              <div>
-                <span style={{ fontSize: 13, fontWeight: 700, color: isLight ? "#b91c1c" : "#f87171" }}>
-                  Missing Dependency: '{resolvedMissingDependency.packageName}'
-                </span>
-                <span style={{ fontSize: 11.5, color: isLight ? "#7f1d1d" : "#fca5a5", marginLeft: 6 }}>
-                  {resolvedMissingDependency.importedFrom
-                    ? `(imported from ${resolvedMissingDependency.importedFrom}). Click to install:`
-                    : "is not installed in workspace. Click to install:"}
                 </span>
               </div>
             </div>
@@ -624,43 +602,7 @@ export default function UnitTestGuidedWorkflow({
 
         {/* Unified Primary CTA Button */}
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          {resolvedMissingDependency ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <button
-                onClick={() => onInstallDependency && onInstallDependency(resolvedMissingDependency.packageName)}
-                disabled={isInstallingDependency}
-                style={{
-                  background: "#dc2626",
-                  border: "1px solid #b91c1c",
-                  color: "#ffffff",
-                  borderRadius: 7,
-                  padding: "9px 18px",
-                  fontSize: 13,
-                  fontWeight: 700,
-                  cursor: isInstallingDependency ? "wait" : "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 7,
-                  boxShadow: "0 2px 8px rgba(220, 38, 38, 0.35)",
-                  transition: "all 0.15s ease",
-                }}
-                className="hover:opacity-90"
-                title={`Install ${resolvedMissingDependency.packageName} via npm and automatically rerun tests`}
-              >
-                {isInstallingDependency ? (
-                  <>
-                    <Loader2 size={14} className="animate-spin" />
-                    <span>Installing ${resolvedMissingDependency.packageName}...</span>
-                  </>
-                ) : (
-                  <>
-                    <Download size={14} />
-                    <span>Install '${resolvedMissingDependency.packageName}' & Re-run Tests</span>
-                  </>
-                )}
-              </button>
-            </div>
-          ) : currentViewStep === 3 ? (
+          {currentViewStep === 3 ? (
             /* Action Group for Stage 3: Review Diff + Apply All */
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
 

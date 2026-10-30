@@ -14,6 +14,36 @@ const assertStringField = (value, fieldName) => {
   }
 };
 
+const isExcludedEntry = (normPath = "") => {
+  return (
+    normPath.includes("node_modules/") ||
+    normPath.includes(".git/") ||
+    normPath.includes("__MACOSX/") ||
+    normPath.endsWith(".DS_Store") ||
+    normPath.startsWith("coverage/") ||
+    normPath.includes("/coverage/") ||
+    normPath.startsWith(".nyc_output/") ||
+    normPath.includes("/.nyc_output/")
+  );
+};
+
+export const purgeStaleCoverageDirectories = (targetDir) => {
+  if (!targetDir || !fs.existsSync(targetDir)) return;
+  try {
+    const entries = fs.readdirSync(targetDir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(targetDir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === "coverage" || entry.name === ".nyc_output") {
+          try { fs.rmSync(fullPath, { recursive: true, force: true }); } catch (_) {}
+        } else if (entry.name !== "node_modules" && entry.name !== ".git") {
+          purgeStaleCoverageDirectories(fullPath);
+        }
+      }
+    }
+  } catch (_) {}
+};
+
 export const extractZipSnapshot = async (
   snapshotId,
   storagePath,
@@ -73,12 +103,7 @@ export const extractZipSnapshot = async (
         const extracted = extractor.extract({ files: () => true });
         const allEntries = Array.from(extracted.files).filter((f) => {
           const normName = (f.fileHeader.name || "").replace(/\\/g, "/");
-          return (
-            !normName.includes("node_modules/") &&
-            !normName.includes(".git/") &&
-            !normName.includes("__MACOSX/") &&
-            !normName.endsWith(".DS_Store")
-          );
+          return !isExcludedEntry(normName);
         });
 
         // 1. Create directories (ensuring empty directories exist)
@@ -124,12 +149,7 @@ export const extractZipSnapshot = async (
       // 1. Create directories first (ensuring empty directories are preserved)
       const dirs = directory.files.filter((f) => {
         const normPath = (f.path || "").replace(/\\/g, "/");
-        return (
-          (f.type === "Directory" || normPath.endsWith("/")) &&
-          !normPath.includes("node_modules/") &&
-          !normPath.includes(".git/") &&
-          !normPath.includes("__MACOSX/")
-        );
+        return (f.type === "Directory" || normPath.endsWith("/")) && !isExcludedEntry(normPath);
       });
       for (const d of dirs) {
         const cleanPath = (d.path || "").replace(/\\/g, "/").replace(/^\/+/, "");
@@ -141,14 +161,7 @@ export const extractZipSnapshot = async (
       // 2. Extract regular files
       const files = directory.files.filter((f) => {
         const normPath = (f.path || "").replace(/\\/g, "/");
-        return (
-          f.type !== "Directory" &&
-          !normPath.endsWith("/") &&
-          !normPath.includes("node_modules/") &&
-          !normPath.includes(".git/") &&
-          !normPath.includes("__MACOSX/") &&
-          !normPath.endsWith(".DS_Store")
-        );
+        return f.type !== "Directory" && !normPath.endsWith("/") && !isExcludedEntry(normPath);
       });
 
       const batchSize = 50;
@@ -168,6 +181,7 @@ export const extractZipSnapshot = async (
       }
     }
 
+    purgeStaleCoverageDirectories(outputDir);
     return outputDir;
   } catch (error) {
     if (dirCreatedByUs && fs.existsSync(outputDir)) {

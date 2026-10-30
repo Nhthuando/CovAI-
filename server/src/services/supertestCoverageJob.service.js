@@ -246,7 +246,7 @@ export const processSupertestCoverageJob = async (jobId) => {
             const reason = errorSnippet ? `: ${errorSnippet.slice(-300)}` : "";
             throw new ServiceError(`Supertest completed without producing the required coverage JSON files${reason}`, 422);
         }
-        const summaryResult = await withOperationPublishGuard(() => parseCoverageSummary(coverageDir, snapshotId));
+        const summaryResult = await withOperationPublishGuard(() => parseCoverageSummary(coverageDir, snapshotId, { skipSummaryUpsert: true }));
 
         // Parse test results
         const supertestResults = parseJestResults(coverageDir, { aiTests, rootDir });

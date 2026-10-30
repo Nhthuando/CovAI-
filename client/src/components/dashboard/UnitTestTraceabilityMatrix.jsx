@@ -38,6 +38,44 @@ import { cleanDisplayPath, isTestFile } from "./CoverageTypeDashboard.jsx";
 import { getFileCoverage } from "../../services/coverage.service.js";
 
 /**
+ * Extracts a missing third-party npm library name and optional importedFrom path
+ * from a Jest/Vitest/Node test runner error string.
+ */
+export const extractMissingPackageFromError = (errStr = "") => {
+  if (!errStr || typeof errStr !== "string") return null;
+  const patterns = [
+    /Cannot find package ['"]([^'"]+)['"]\s+imported from\s+['"]([^'"]+)['"]/i,
+    /Error\s*(?:\[[^\]]+\])?:\s*Cannot find package ['"]([^'"]+)['"]/i,
+    /Cannot find package ['"]([^'"]+)['"]/i,
+    /Cannot find module ['"]([^'"]+)['"]\s+from\s+['"]([^'"]+)['"]/i,
+    /Failed to resolve import ['"]([^'"]+)['"]\s+from\s+['"]([^'"]+)['"]/i,
+    /Module not found:\s*Can't resolve ['"]([^'"]+)['"]\s+in\s+['"]([^'"]+)['"]/i,
+    /Cannot find module ['"]([^'"]+)['"]/i,
+  ];
+  for (const regex of patterns) {
+    const match = errStr.match(regex);
+    if (match) {
+      const rawSpecifier = (match[1] || "").trim();
+      const importedFrom = (match[2] || "").trim() || null;
+      if (!rawSpecifier || rawSpecifier.startsWith(".") || rawSpecifier.startsWith("/") || rawSpecifier.startsWith("\\")) {
+        return null;
+      }
+      let packageName = rawSpecifier;
+      if (rawSpecifier.startsWith("@")) {
+        const parts = rawSpecifier.split("/");
+        if (parts.length >= 2) packageName = `${parts[0]}/${parts[1]}`;
+      } else {
+        packageName = rawSpecifier.split("/")[0];
+      }
+      packageName = packageName.replace(/@[\^~]?[0-9].*$/, "").trim();
+      if (!packageName) return null;
+      return { packageName, rawSpecifier, importedFrom };
+    }
+  }
+  return null;
+};
+
+/**
  * Helper to classify test category if not provided by backend
  */
 const classifyFallback = (title = "", ancestorTitles = []) => {
@@ -623,6 +661,8 @@ export default function UnitTestTraceabilityMatrix({
   functionsList = [],
   summary = null,
   rawTotals = null,
+  running = false,
+  runProgress = 0,
   onOpenFile,
   onOpenCFG = null,
   onSuggestTestcase,
@@ -633,6 +673,8 @@ export default function UnitTestTraceabilityMatrix({
   onApplySuggestion,
   onApplyAllFileSuggestions,
   onReviewDiff,
+  onInstallDependency = null,
+  installingDependencyName = null,
   isLight = false,
 }) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -649,6 +691,20 @@ export default function UnitTestTraceabilityMatrix({
   // Cache for on-demand detailed file coverage (contains statementMap, branchMap, fnMap, lines, etc.)
   const [fileCoverageCache, setFileCoverageCache] = useState({});
   const [loadingFiles, setLoadingFiles] = useState(new Set());
+  const prevRunningRef = useRef(running);
+
+  // Invalidate file coverage cache when job completes so newly generated metrics update immediately
+  useEffect(() => {
+    if (prevRunningRef.current && !running) {
+      setFileCoverageCache({});
+    }
+    prevRunningRef.current = running;
+  }, [running]);
+
+  // Invalidate file coverage cache when snapshotId changes
+  useEffect(() => {
+    setFileCoverageCache({});
+  }, [snapshotId]);
 
   // Fetch detailed file coverage from backend on demand
   const fetchFileCoverage = async (filePath) => {
@@ -996,6 +1052,7 @@ export default function UnitTestTraceabilityMatrix({
 
   // Auto-preload file coverage for files with coverage gaps (< 100%) after groupedByFile is initialized
   useEffect(() => {
+    if (running) return; // Do not fetch coverage while analysis is actively in-flight
     (groupedByFile || []).forEach((group) => {
       const fPath = group?.filePath;
       if (!fPath) return;
@@ -1008,7 +1065,7 @@ export default function UnitTestTraceabilityMatrix({
         fetchFileCoverage(fPath);
       }
     });
-  }, [groupedByFile, snapshotId]);
+  }, [groupedByFile, snapshotId, running]);
 
   // Filtered files & functions based on search and category filter
   const filteredFiles = useMemo(() => {
@@ -1094,10 +1151,10 @@ export default function UnitTestTraceabilityMatrix({
     const rawHit = matchedFnFromCov ? matchedFnFromCov.hits : (fn.hit !== undefined && fn.hit !== null ? fn.hit : (fn.execCount !== undefined ? fn.execCount : null));
     const fnHit = Number(rawHit ?? 0);
 
-    const fileFuncsPct = fileCov?.summary?.funcsPct ?? meta?.funcsPct ?? meta?.functionsPct ?? null;
-    const fileStmtsPct = fileCov?.summary?.stmtsPct ?? meta?.stmtsPct ?? meta?.statementsPct ?? null;
-    const fileBranchesPct = fileCov?.summary?.branchesPct ?? meta?.branchesPct ?? null;
-    const fileLinesPct = fileCov?.summary?.linesPct ?? meta?.linesPct ?? null;
+    const fileFuncsPct = meta?.funcsPct ?? meta?.functionsPct ?? fileCov?.summary?.funcsPct ?? null;
+    const fileStmtsPct = meta?.stmtsPct ?? meta?.statementsPct ?? fileCov?.summary?.stmtsPct ?? null;
+    const fileBranchesPct = meta?.branchesPct ?? fileCov?.summary?.branchesPct ?? null;
+    const fileLinesPct = meta?.linesPct ?? fileCov?.summary?.linesPct ?? null;
 
     const isFileZeroFuncs = fileFuncsPct !== null && Number(fileFuncsPct) === 0;
 
@@ -1535,10 +1592,10 @@ export default function UnitTestTraceabilityMatrix({
               const hasPassed = fileSugs.some((s) => s.status === "PASSED" || s.status === "APPLIED");
               const hasFailed = fileSugs.some((s) => s.status === "FAILED");
 
-              const sPct = fileCov?.summary?.stmtsPct ?? meta?.stmtsPct ?? meta?.statementsPct ?? null;
-              const bPct = fileCov?.summary?.branchesPct ?? meta?.branchesPct ?? null;
-              const fPct = fileCov?.summary?.funcsPct ?? meta?.funcsPct ?? meta?.functionsPct ?? null;
-              const lPct = fileCov?.summary?.linesPct ?? meta?.linesPct ?? null;
+              const sPct = meta?.stmtsPct ?? meta?.statementsPct ?? fileCov?.summary?.stmtsPct ?? null;
+              const bPct = meta?.branchesPct ?? fileCov?.summary?.branchesPct ?? null;
+              const fPct = meta?.funcsPct ?? meta?.functionsPct ?? fileCov?.summary?.funcsPct ?? null;
+              const lPct = meta?.linesPct ?? fileCov?.summary?.linesPct ?? null;
               const displayStmts = Number(sPct ?? 0);
               const displayBranches = Number(bPct ?? 0);
               const displayFuncs = Number(fPct ?? 0);
@@ -1603,20 +1660,27 @@ export default function UnitTestTraceabilityMatrix({
 
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                       {/* File Coverage Badges */}
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, fontFamily: "var(--font-mono)" }}>
-                        <span style={{ color: getColor(displayStmts) }}>
-                          Stmts: {displayStmts}%
-                        </span>
-                        <span style={{ color: getColor(displayBranches) }}>
-                          Branches: {displayBranches}%
-                        </span>
-                        <span style={{ color: ((group?.functions?.length || 0) === 0) ? (isLight ? "#64748b" : "#94a3b8") : getColor(displayFuncs) }}>
-                          Funcs: {(group?.functions?.length || 0) === 0 ? "N/A (0 fns)" : `${displayFuncs}%`}
-                        </span>
-                        <span style={{ color: getColor(displayLines) }}>
-                          Lines: {displayLines}%
-                        </span>
-                      </div>
+                      {running ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: isLight ? "#4f46e5" : "#818cf8" }}>
+                          <Loader2 size={12} className="animate-spin" />
+                          <span style={{ fontWeight: 600 }}>Analyzing...</span>
+                        </div>
+                      ) : (
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, fontFamily: "var(--font-mono)" }}>
+                          <span style={{ color: getColor(displayStmts) }}>
+                            Stmts: {displayStmts}%
+                          </span>
+                          <span style={{ color: getColor(displayBranches) }}>
+                            Branches: {displayBranches}%
+                          </span>
+                          <span style={{ color: ((group?.functions?.length || 0) === 0) ? (isLight ? "#64748b" : "#94a3b8") : getColor(displayFuncs) }}>
+                            Funcs: {(group?.functions?.length || 0) === 0 ? "N/A (0 fns)" : `${displayFuncs}%`}
+                          </span>
+                          <span style={{ color: getColor(displayLines) }}>
+                            Lines: {displayLines}%
+                          </span>
+                        </div>
+                      )}
 
                       {/* File Action Center: Suggest tests / Diff / Apply / Status */}
                       {isSuggesting ? (
@@ -1729,45 +1793,93 @@ export default function UnitTestTraceabilityMatrix({
                           <span>{isFileFullyCovered ? "100% Covered" : "Merged"}</span>
                         </span>
                       ) : hasFailed ? (
-                        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                          <span
-                            style={{
-                              fontSize: 11,
-                              fontWeight: 700,
-                              color: "#dc2626",
-                              padding: "2px 7px",
-                              borderRadius: 4,
-                              background: isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.12)",
-                              border: isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.3)",
-                            }}
-                          >
-                            Failed
-                          </span>
-                          {onSuggestTestcase && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onSuggestTestcase(group.filePath);
-                              }}
-                              style={{
-                                padding: "3px 8px",
-                                borderRadius: 5,
-                                background: isLight ? "#fee2e2" : "rgba(239, 68, 68, 0.2)",
-                                border: isLight ? "1px solid #fca5a5" : "1px solid rgba(239, 68, 68, 0.4)",
-                                color: isLight ? "#b91c1c" : "#fca5a5",
-                                fontSize: 11,
-                                fontWeight: 700,
-                                cursor: "pointer",
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 3,
-                              }}
-                            >
-                              <FileCode2 size={11} />
-                              <span>Re-generate</span>
-                            </button>
-                          )}
-                        </div>
+                        (() => {
+                          const failedSugWithErr = fileSugs.find((s) => s.missingDependency?.packageName || s.testRunError);
+                          const detectedMissingPkg =
+                            failedSugWithErr?.missingDependency ||
+                            extractMissingPackageFromError(failedSugWithErr?.testRunError || "");
+                          return (
+                            <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                              <span
+                                style={{
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  color: "#dc2626",
+                                  padding: "2px 7px",
+                                  borderRadius: 4,
+                                  background: isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.12)",
+                                  border: isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.3)",
+                                }}
+                              >
+                                {detectedMissingPkg?.packageName ? `Missing '${detectedMissingPkg.packageName}'` : "Failed"}
+                              </span>
+                              {detectedMissingPkg?.packageName && onInstallDependency && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onInstallDependency(
+                                      detectedMissingPkg.packageName,
+                                      false,
+                                      detectedMissingPkg.importedFrom || group.filePath,
+                                      onApplyAllFileSuggestions ? () => onApplyAllFileSuggestions(group.filePath, fileSugs) : null
+                                    );
+                                  }}
+                                  disabled={installingDependencyName === detectedMissingPkg.packageName}
+                                  style={{
+                                    padding: "3px 8px",
+                                    borderRadius: 5,
+                                    background: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)",
+                                    border: "none",
+                                    color: "#ffffff",
+                                    fontSize: 11,
+                                    fontWeight: 700,
+                                    cursor: installingDependencyName === detectedMissingPkg.packageName ? "not-allowed" : "pointer",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 4,
+                                  }}
+                                  title={`Install missing library '${detectedMissingPkg.packageName}' and retry test suite`}
+                                >
+                                  {installingDependencyName === detectedMissingPkg.packageName ? (
+                                    <>
+                                      <Loader2 size={11} className="animate-spin" />
+                                      <span>Installing {detectedMissingPkg.packageName}...</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Zap size={11} />
+                                      <span>Install &apos;{detectedMissingPkg.packageName}&apos; &amp; Retry</span>
+                                    </>
+                                  )}
+                                </button>
+                              )}
+                              {onSuggestTestcase && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onSuggestTestcase(group.filePath);
+                                  }}
+                                  style={{
+                                    padding: "3px 8px",
+                                    borderRadius: 5,
+                                    background: isLight ? "#fee2e2" : "rgba(239, 68, 68, 0.2)",
+                                    border: isLight ? "1px solid #fca5a5" : "1px solid rgba(239, 68, 68, 0.4)",
+                                    color: isLight ? "#b91c1c" : "#fca5a5",
+                                    fontSize: 11,
+                                    fontWeight: 700,
+                                    cursor: "pointer",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 3,
+                                  }}
+                                >
+                                  <FileCode2 size={11} />
+                                  <span>Re-generate</span>
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })()
                       ) : onSuggestTestcase && !isFileFullyCovered ? (
                         <button
                           onClick={(e) => {
@@ -2540,46 +2652,94 @@ export default function UnitTestTraceabilityMatrix({
                                     </div>
 
                                     {/* Test Execution Failure Diagnostic Notice */}
-                                    {hasFailed && (
-                                      <div
-                                        style={{
-                                          padding: "8px 12px",
-                                          borderRadius: 6,
-                                          background: isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.12)",
-                                          border: isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.35)",
-                                          color: isLight ? "#991b1b" : "#fca5a5",
-                                          fontSize: 11,
-                                          display: "flex",
-                                          alignItems: "center",
-                                          justifyContent: "space-between",
-                                          gap: 8,
-                                        }}
-                                      >
-                                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                          <AlertCircle size={13} style={{ color: "#ef4444", flexShrink: 0 }} />
-                                          <span style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
-                                            <b>Test Runner Error:</b> {fileSugs.find((s) => s.testRunError)?.testRunError || "Tests executed with failures. Click Review Diff to inspect or click Retry."}
-                                          </span>
+                                    {hasFailed && (() => {
+                                      const errSug = fileSugs.find((s) => s.testRunError || s.missingDependency?.packageName);
+                                      const errText = errSug?.testRunError || "Tests executed with failures. Click Review Diff to inspect or click Retry.";
+                                      const missingPkg = errSug?.missingDependency || extractMissingPackageFromError(errText);
+                                      return (
+                                        <div
+                                          style={{
+                                            padding: "8px 12px",
+                                            borderRadius: 6,
+                                            background: isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.12)",
+                                            border: isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.35)",
+                                            color: isLight ? "#991b1b" : "#fca5a5",
+                                            fontSize: 11,
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "space-between",
+                                            gap: 8,
+                                            flexWrap: "wrap",
+                                          }}
+                                        >
+                                          <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1, minWidth: 220 }}>
+                                            <AlertCircle size={13} style={{ color: "#ef4444", flexShrink: 0 }} />
+                                            <span style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                                              <b>Test Runner Error:</b> {errText}
+                                            </span>
+                                          </div>
+                                          <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                                            {missingPkg?.packageName && onInstallDependency && (
+                                              <button
+                                                onClick={() =>
+                                                  onInstallDependency(
+                                                    missingPkg.packageName,
+                                                    false,
+                                                    missingPkg.importedFrom || fn.filePath,
+                                                    onApplyAllFileSuggestions ? () => onApplyAllFileSuggestions(fn.filePath, fileSugs) : null
+                                                  )
+                                                }
+                                                disabled={installingDependencyName === missingPkg.packageName}
+                                                style={{
+                                                  padding: "4px 10px",
+                                                  borderRadius: 5,
+                                                  background: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)",
+                                                  color: "#ffffff",
+                                                  border: "none",
+                                                  cursor: installingDependencyName === missingPkg.packageName ? "not-allowed" : "pointer",
+                                                  fontSize: 11,
+                                                  fontWeight: 700,
+                                                  display: "flex",
+                                                  alignItems: "center",
+                                                  gap: 4,
+                                                  boxShadow: "0 1px 4px rgba(245, 158, 11, 0.3)",
+                                                }}
+                                                title={`Install missing npm package '${missingPkg.packageName}' and automatically re-run tests`}
+                                              >
+                                                {installingDependencyName === missingPkg.packageName ? (
+                                                  <>
+                                                    <Loader2 size={11} className="animate-spin" />
+                                                    <span>Installing &apos;{missingPkg.packageName}&apos;...</span>
+                                                  </>
+                                                ) : (
+                                                  <>
+                                                    <Zap size={11} />
+                                                    <span>Install &apos;{missingPkg.packageName}&apos; &amp; Retry</span>
+                                                  </>
+                                                )}
+                                              </button>
+                                            )}
+                                            {onApplyAllFileSuggestions && (
+                                              <button
+                                                onClick={() => onApplyAllFileSuggestions(fn.filePath, fileSugs)}
+                                                style={{
+                                                  padding: "4px 10px",
+                                                  borderRadius: 5,
+                                                  background: "#ef4444",
+                                                  color: "#ffffff",
+                                                  border: "none",
+                                                  cursor: "pointer",
+                                                  fontSize: 10.5,
+                                                  fontWeight: 700,
+                                                }}
+                                              >
+                                                Retry
+                                              </button>
+                                            )}
+                                          </div>
                                         </div>
-                                        {onApplyAllFileSuggestions && (
-                                          <button
-                                            onClick={() => onApplyAllFileSuggestions(fn.filePath, fileSugs)}
-                                            style={{
-                                              padding: "2px 8px",
-                                              borderRadius: 4,
-                                              background: "#ef4444",
-                                              color: "#ffffff",
-                                              border: "none",
-                                              cursor: "pointer",
-                                              fontSize: 10.5,
-                                              fontWeight: 700,
-                                            }}
-                                          >
-                                            Retry
-                                          </button>
-                                        )}
-                                      </div>
-                                    )}
+                                      );
+                                    })()}
                                   </div>
                                 ) : (
                                   <div

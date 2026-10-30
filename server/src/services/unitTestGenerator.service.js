@@ -12,6 +12,7 @@ import {
     sanitizeSourceFilePath
 } from "./unitTestSuggestion.service.js";
 import { cleanAndDeduplicateTestContent, STATEMENT_SEPARATION_EXCLUSIONS, safeDecoupleInlineStatements, healBrokenCommentSplits, balanceTestFileBracesAndParens } from "./testSanitizer.service.js";
+import { deduplicateAstDeclarations } from "./testHelperRegistry.service.js";
 
 /**
  * GIAI ĐOẠN 3: AI TEST GENERATION (SINH TEST THÔNG MINH QUA LLM)
@@ -146,6 +147,12 @@ ${decisionTableMarkdown}
    - Every assertion must verify real outputs, state changes, or mock call arguments.
 6. CRITICAL: NEVER RETURN PLACEHOLDER COMMENTS LIKE '// No additional snippets needed' OR 'N/A':
    - "suggestedTestCode" MUST contain executable test(...) or it(...) blocks importing and testing ${cleanSource}.
+        if (typeof deduplicateAstDeclarations === 'function') {
+            try {
+                const dedupRes = deduplicateAstDeclarations(currentCode, { filePath });
+                if (dedupRes.changed && dedupRes.code) currentCode = dedupRes.code;
+            } catch (_) {}
+        }
    - If no existing test file exists, "suggestedTestCode" MUST contain the complete test file code.
 7. ISOLATION MOCK CONTRACTS (PURE RAM EXECUTION):
 ${mockInstructionsStr}
@@ -280,6 +287,12 @@ export const autoHealAstSyntax = (codeString, { framework = "jest", filePath = "
             try {
                 currentCode = cleanAndDeduplicateTestContent(currentCode, "", filePath, { framework });
             } catch (_) {}
+        if (typeof deduplicateAstDeclarations === 'function') {
+            try {
+                const dedupRes = deduplicateAstDeclarations(currentCode, { filePath });
+                if (dedupRes.changed && dedupRes.code) currentCode = dedupRes.code;
+            } catch (_) {}
+        }
         }
 
         const parsed = parseJavaScriptCode(currentCode);

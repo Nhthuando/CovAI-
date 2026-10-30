@@ -8,7 +8,9 @@
     "dev:docker": "prisma generate && nodemon index.js",
     "db:push": "prisma db push",
     "start": "prisma generate && node index.js",
-    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js"
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:evaluation": "node --test src/tests/aiEvaluation.integration.test.mjs src/tests/aiEvaluation.contract.test.mjs",
+    "test:evaluation:ui": "node --test src/tests/aiEvaluation.browser.test.mjs"
   },
   "keywords": [],
   "author": "",
@@ -61,6 +63,8 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.4.1",
+    "@electric-sql/pglite-socket": "0.1.1",
     "@babel/preset-env": "^7.29.7",
     "@babel/preset-typescript": "^7.29.7",
     "@types/express": "^5.0.6",

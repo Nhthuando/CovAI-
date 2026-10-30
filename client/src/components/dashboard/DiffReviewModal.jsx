@@ -40,6 +40,31 @@ export default function DiffReviewModal({
 }) {
   const [activeIdx, setActiveIdx] = useState(initialFileIndex);
   const [sideBySide, setSideBySide] = useState(true);
+  const diffEditorRef = React.useRef(null);
+
+  const handleDiffMount = (editor) => {
+    diffEditorRef.current = editor;
+  };
+
+  // Safe cleanup for Monaco DiffEditor to prevent "TextModel got disposed before DiffEditorWidget model got reset"
+  React.useEffect(() => {
+    return () => {
+      if (diffEditorRef.current) {
+        try {
+          const model = diffEditorRef.current.getModel?.();
+          diffEditorRef.current.setModel?.({ original: null, modified: null });
+          if (model) {
+            if (model.original && !model.original.isDisposed()) {
+              model.original.dispose();
+            }
+            if (model.modified && !model.modified.isDisposed()) {
+              model.modified.dispose();
+            }
+          }
+        } catch (_) {}
+      }
+    };
+  }, []);
 
   // Sync initialFileIndex when it changes
   React.useEffect(() => {
@@ -406,6 +431,9 @@ export default function DiffReviewModal({
               height="100%"
               original={originalCode}
               modified={modifiedCode}
+              keepCurrentOriginalModel={true}
+              keepCurrentModifiedModel={true}
+              onMount={handleDiffMount}
               language="javascript"
               theme="vs-dark"
               loading={

@@ -1068,9 +1068,34 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
         return "";
     };
 
+    const isAlienCoverage = (data, p) => {
+        if (!data || typeof data !== "object") return true;
+        const keys = Object.keys(data);
+        if (keys.length === 0) return true;
+        if (p === path.join(rootDir, "coverage", "unit", "coverage-final.json") ||
+            p === path.join(rootDir, "coverage", "integration", "coverage-final.json") ||
+            p === path.join(rootDir, "coverage", "coverage-final.json")) {
+            return false;
+        }
+        const normRoot = rootDir.replace(/\\/g, "/");
+        const rootBase = path.basename(rootDir);
+        const hasMatchingPath = keys.some(k => {
+            const normK = k.replace(/\\/g, "/");
+            return normK.startsWith(normRoot) || normK.includes(rootBase);
+        });
+        if (!hasMatchingPath && keys.some(k => /^[a-zA-Z]:[\\/]/.test(k))) {
+            return true;
+        }
+        return false;
+    };
+
     const targetSubpackage = targetFilePath.replace(/[\\/]+/g, "/").split("/")[0];
     const candidateCoveragePaths = [
+        path.join(rootDir, "coverage", "unit", "coverage-final.json"),
+        path.join(rootDir, "coverage", "integration", "coverage-final.json"),
+        path.join(rootDir, "coverage", "system", "coverage-final.json"),
         path.join(rootDir, "coverage", "coverage-final.json"),
+        path.join(rootDir, targetSubpackage, "coverage", "unit", "coverage-final.json"),
         path.join(rootDir, targetSubpackage, "coverage", "coverage-final.json"),
         path.join(rootDir, targetSubpackage, "coverage-final.json"),
         path.join(rootDir, path.dirname(targetFilePath), "coverage", "coverage-final.json"),
@@ -1084,7 +1109,12 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
     for (const p of candidateCoveragePaths) {
         if (fs.existsSync(p)) {
             try {
-                coverageData = JSON.parse(fs.readFileSync(p, "utf8"));
+                const parsed = JSON.parse(fs.readFileSync(p, "utf8"));
+                if (isAlienCoverage(parsed, p)) {
+                    console.warn(`[fileCoverage] Ignoring alien/stale coverage artifact from external machine: ${p}`);
+                    continue;
+                }
+                coverageData = parsed;
                 break;
             } catch (err) {
                 console.warn(`[fileCoverage] Failed parsing ${p}:`, err.message);
@@ -1202,7 +1232,11 @@ export const getFileCoverageDetails = async (snapshotId, targetFilePath, userId)
     // Read official summary from coverage-summary.json or prisma.coverageFile
     let officialSummary = null;
     const summaryCandidatePaths = [
+        path.join(rootDir, "coverage", "unit", "coverage-summary.json"),
+        path.join(rootDir, "coverage", "integration", "coverage-summary.json"),
+        path.join(rootDir, "coverage", "system", "coverage-summary.json"),
         path.join(rootDir, "coverage", "coverage-summary.json"),
+        path.join(rootDir, targetSubpackage, "coverage", "unit", "coverage-summary.json"),
         path.join(rootDir, targetSubpackage, "coverage", "coverage-summary.json"),
         path.join(rootDir, targetSubpackage, "coverage-summary.json"),
         path.join(rootDir, "server", "coverage", "coverage-summary.json"),

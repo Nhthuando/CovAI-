@@ -17,6 +17,19 @@ export const NODE_BUILTINS = new Set([
 ]);
 
 /**
+ * Common monorepo subpackage folder candidates.
+ */
+const MONOREPO_SUBPACKAGE_CANDIDATES = [
+  "backend",
+  "server",
+  "api",
+  "app",
+  "client",
+  "frontend",
+  "web",
+];
+
+/**
  * Strict regex for valid npm package names (prevent command injection).
  * Accepts regular packages (e.g. "mathjs", "lodash") and scoped packages (e.g. "@prisma/client", "@types/node").
  */
@@ -46,12 +59,20 @@ export const extractMissingDependency = (rawOutput = "") => {
   if (!rawOutput || typeof rawOutput !== "string") return null;
 
   const patterns = [
+    // Node.js ESM loader: Cannot find package 'mathjs' imported from '/app/.../evaluator.ts'
+    /Cannot find package ['"]([^'"]+)['"]\s+imported from\s+['"]([^'"]+)['"]/i,
+    // Node.js ESM loader: Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'mathjs'
+    /Error\s*(?:\[[^\]]+\])?:\s*Cannot find package ['"]([^'"]+)['"]/i,
+    // Plain Node ESM: Cannot find package 'mathjs'
+    /Cannot find package ['"]([^'"]+)['"]/i,
     // Jest resolver: Cannot find module 'mathjs' from 'src/utils/evaluator.ts'
     /Cannot find module ['"]([^'"]+)['"]\s+from\s+['"]([^'"]+)['"]/i,
     // Vitest / Vite resolver: Failed to resolve import "mathjs" from "src/utils/evaluator.ts"
     /Failed to resolve import ['"]([^'"]+)['"]\s+from\s+['"]([^'"]+)['"]/i,
     // Node.js loader: Error: Cannot find module 'mathjs'
     /Error:\s*Cannot find module ['"]([^'"]+)['"]/i,
+    // Plain Jest/Node message: Cannot find module 'mathjs'
+    /Cannot find module ['"]([^'"]+)['"]/i,
     // Webpack / bundler resolver: Module not found: Can't resolve 'mathjs' in '...'
     /Module not found:\s*Can't resolve ['"]([^'"]+)['"]\s+in\s+['"]([^'"]+)['"]/i,
   ];
@@ -113,29 +134,214 @@ export const extractMissingDependency = (rawOutput = "") => {
 };
 
 /**
- * Finds the closest directory containing package.json relative to importedFrom or rootDir.
+ * Lists all candidate package directories in a project (root + monorepo subpackages).
+ *
+ * @param {string} resolvedRoot
+ * @returns {string[]}
+ */
+export const listWorkspacePackageDirs = (resolvedRoot) => {
+  if (!resolvedRoot || !fs.existsSync(resolvedRoot)) return [];
+  const dirs = [];
+  if (fs.existsSync(path.join(resolvedRoot, "package.json"))) {
+    dirs.push(resolvedRoot);
+  }
+
+  for (const sub of MONOREPO_SUBPACKAGE_CANDIDATES) {
+    const subDir = path.join(resolvedRoot, sub);
+    if (fs.existsSync(path.join(subDir, "package.json"))) {
+      dirs.push(subDir);
+    }
+  }
+
+  for (const group of ["packages", "apps"]) {
+    const groupDir = path.join(resolvedRoot, group);
+    if (fs.existsSync(groupDir)) {
+      try {
+        const entries = fs.readdirSync(groupDir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory()) {
+            const pkgDir = path.join(groupDir, entry.name);
+            if (fs.existsSync(path.join(pkgDir, "package.json"))) {
+              dirs.push(pkgDir);
+            }
+          }
+        }
+      } catch { }
+    }
+  }
+
+  return dirs;
+};
+
+/**
+ * Checks whether a package.json file declares any dependencies or devDependencies.
+ *
+ * @param {string} pkgJsonPath
+ * @returns {boolean}
+ */
+const hasDeclaredDependencies = (pkgJsonPath) => {
+  try {
+    if (!fs.existsSync(pkgJsonPath)) return false;
+    const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8"));
+    const depCount =
+      Object.keys(pkg.dependencies || {}).length +
+      Object.keys(pkg.devDependencies || {}).length +
+      Object.keys(pkg.peerDependencies || {}).length;
+    return depCount > 0;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Checks whether a package.json file declares a specific packageName.
+ *
+ * @param {string} pkgJsonPath
+ * @param {string} packageName
+ * @returns {boolean}
+ */
+const declaresPackage = (pkgJsonPath, packageName) => {
+  if (!packageName) return false;
+  try {
+    if (!fs.existsSync(pkgJsonPath)) return false;
+    const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8"));
+    return Boolean(
+      pkg.dependencies?.[packageName] ||
+      pkg.devDependencies?.[packageName] ||
+      pkg.peerDependencies?.[packageName]
+    );
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Finds the closest directory containing package.json relative to importedFrom or rootDir,
+ * including monorepo subpackage resolution when importedFrom is relative to a subpackage
+ * (e.g. `src/utils/evaluator.ts` inside `<rootDir>/backend/src/utils/evaluator.ts`).
  *
  * @param {string} rootDir
- * @param {string|null} importedFrom
+ * @param {string|null} [importedFrom=null]
+ * @param {string|null} [packageName=null]
  * @returns {string}
  */
-export const findTargetPackageDir = (rootDir, importedFrom = null) => {
+export const findTargetPackageDir = (rootDir, importedFrom = null, packageName = null) => {
   const resolvedRoot = resolveProjectRoot(rootDir);
-  if (!importedFrom) return resolvedRoot;
+  if (!resolvedRoot) return rootDir;
 
-  let currentDir = path.isAbsolute(importedFrom)
-    ? path.dirname(importedFrom)
-    : path.dirname(path.join(resolvedRoot, importedFrom));
+  const subpackageDirs = listWorkspacePackageDirs(resolvedRoot).filter(
+    (dir) => dir !== resolvedRoot
+  );
 
-  // Walk up from file directory to root directory
-  while (currentDir && currentDir.startsWith(resolvedRoot) && currentDir !== path.dirname(resolvedRoot)) {
-    const pkgPath = path.join(currentDir, "package.json");
-    if (fs.existsSync(pkgPath)) {
-      return currentDir;
+  if (importedFrom) {
+    // Strip container / temporary execution directory prefixes
+    let cleanRel = String(importedFrom)
+      .replace(/^.*?[\\/]\.covai-temp[\\/]collaboration-operations[\\/][^\\/]+[\\/]/i, "")
+      .replace(/^.*?[\\/]storage[\\/]projects[\\/][^\\/]+[\\/]/i, "")
+      .replace(/^.*?[\\/](?:app|workspace)[\\/]/i, "")
+      .replace(/^[\\/]+/, "");
+
+    const directCandidate = (path.isAbsolute(importedFrom) && fs.existsSync(importedFrom))
+      ? importedFrom
+      : path.join(resolvedRoot, cleanRel);
+
+    let resolvedSourceFile = null;
+    if (fs.existsSync(directCandidate)) {
+      resolvedSourceFile = directCandidate;
+    } else {
+      // Search monorepo subpackages for `<subDir>/<cleanRel>`
+      for (const subDir of subpackageDirs) {
+        const subCandidate = path.join(subDir, cleanRel);
+        if (fs.existsSync(subCandidate)) {
+          resolvedSourceFile = subCandidate;
+          break;
+        }
+        const subBase = path.basename(subDir);
+        if (cleanRel.startsWith(subBase + "/") || cleanRel.startsWith(subBase + "\\")) {
+          const strippedRel = cleanRel.substring(subBase.length + 1);
+          const candidate2 = path.join(subDir, strippedRel);
+          if (fs.existsSync(candidate2)) {
+            resolvedSourceFile = candidate2;
+            break;
+          }
+        }
+      }
     }
-    const parentDir = path.dirname(currentDir);
-    if (parentDir === currentDir) break;
-    currentDir = parentDir;
+
+    if (resolvedSourceFile) {
+      let currentDir = path.dirname(resolvedSourceFile);
+      while (
+        currentDir &&
+        currentDir.startsWith(resolvedRoot) &&
+        currentDir !== path.dirname(resolvedRoot)
+      ) {
+        const pkgPath = path.join(currentDir, "package.json");
+        if (fs.existsSync(pkgPath)) {
+          return currentDir;
+        }
+        const parentDir = path.dirname(currentDir);
+        if (parentDir === currentDir) break;
+        currentDir = parentDir;
+      }
+    }
+  }
+
+  // If packageName is provided and declared in one of the subpackages, return that subpackage
+  if (packageName) {
+    if (declaresPackage(path.join(resolvedRoot, "package.json"), packageName)) {
+      return resolvedRoot;
+    }
+    for (const subDir of subpackageDirs) {
+      if (declaresPackage(path.join(subDir, "package.json"), packageName)) {
+        return subDir;
+      }
+    }
+  }
+
+  // If importedFrom didn't exist directly (e.g. a virtual test path) and root package.json has 0 dependencies
+  // while a backend/server subpackage has dependencies, prefer the subpackage.
+  const rootPkgJson = path.join(resolvedRoot, "package.json");
+  if (!hasDeclaredDependencies(rootPkgJson) && subpackageDirs.length > 0) {
+    const subWithDeps = subpackageDirs.find((dir) =>
+      hasDeclaredDependencies(path.join(dir, "package.json"))
+    );
+    if (subWithDeps) {
+      return subWithDeps;
+    }
+  }
+
+  // Fallback walk-up if importedFrom was provided even if file doesn't exist yet
+  if (importedFrom) {
+    const cleanRel = String(importedFrom)
+      .replace(/^.*?[\\/]\.covai-temp[\\/]collaboration-operations[\\/][^\\/]+[\\/]/i, "")
+      .replace(/^.*?[\\/]storage[\\/]projects[\\/][^\\/]+[\\/]/i, "")
+      .replace(/^.*?[\\/](?:app|workspace)[\\/]/i, "")
+      .replace(/^[\\/]+/, "");
+
+    for (const subDir of subpackageDirs) {
+      const subBase = path.basename(subDir);
+      if (cleanRel.startsWith(subBase + "/") || cleanRel.startsWith(subBase + "\\")) {
+        return subDir;
+      }
+    }
+
+    let currentDir = (path.isAbsolute(importedFrom) && fs.existsSync(importedFrom))
+      ? path.dirname(importedFrom)
+      : path.dirname(path.join(resolvedRoot, cleanRel));
+
+    while (
+      currentDir &&
+      currentDir.startsWith(resolvedRoot) &&
+      currentDir !== path.dirname(resolvedRoot)
+    ) {
+      const pkgPath = path.join(currentDir, "package.json");
+      if (fs.existsSync(pkgPath)) {
+        return currentDir;
+      }
+      const parentDir = path.dirname(currentDir);
+      if (parentDir === currentDir) break;
+      currentDir = parentDir;
+    }
   }
 
   return resolvedRoot;
@@ -147,11 +353,11 @@ export const findTargetPackageDir = (rootDir, importedFrom = null) => {
  * @param {Object} params
  * @param {string} params.rootDir
  * @param {string} params.packageName
- * @param {string|null} params.importedFrom
+ * @param {string|null} [params.importedFrom=null]
  * @returns {{ inPackageJson: boolean, inNodeModules: boolean, targetDir: string, suggestedCommand: string }}
  */
 export const inspectWorkspaceDependency = ({ rootDir, packageName, importedFrom = null }) => {
-  const targetDir = findTargetPackageDir(rootDir, importedFrom);
+  const targetDir = findTargetPackageDir(rootDir, importedFrom, packageName);
   const pkgPath = path.join(targetDir, "package.json");
 
   let inPackageJson = false;
@@ -184,6 +390,68 @@ export const inspectWorkspaceDependency = ({ rootDir, packageName, importedFrom 
 };
 
 /**
+ * Links existing `node_modules` directories from `originalRootDir` (and its monorepo subpackages)
+ * into `preparedRootDir` using OS directory junctions (Windows) or symlinks (Linux/macOS) so
+ * isolated operation workspaces can resolve already-installed dependencies without copying GBs.
+ *
+ * @param {string} originalRootDir
+ * @param {string} preparedRootDir
+ * @returns {string[]} Array of created symlink/junction paths so caller can clean them up before publish
+ */
+export const ensureWorkspaceNodeModulesLinked = (originalRootDir, preparedRootDir) => {
+  const createdLinks = [];
+  if (!originalRootDir || !preparedRootDir) return createdLinks;
+
+  const resolvedOrig = resolveProjectRoot(originalRootDir);
+  const resolvedPrep = resolveProjectRoot(preparedRootDir);
+  if (!resolvedOrig || !resolvedPrep || path.resolve(resolvedOrig) === path.resolve(resolvedPrep)) {
+    return createdLinks;
+  }
+
+  const pkgDirs = listWorkspacePackageDirs(resolvedOrig);
+  for (const origPkgDir of pkgDirs) {
+    const relDir = path.relative(resolvedOrig, origPkgDir);
+    const prepPkgDir = relDir ? path.join(resolvedPrep, relDir) : resolvedPrep;
+    const origNm = path.join(origPkgDir, "node_modules");
+    const prepNm = path.join(prepPkgDir, "node_modules");
+
+    if (fs.existsSync(origNm) && fs.existsSync(prepPkgDir) && !fs.existsSync(prepNm)) {
+      try {
+        fs.symlinkSync(
+          origNm,
+          prepNm,
+          process.platform === "win32" ? "junction" : "dir"
+        );
+        createdLinks.push(prepNm);
+      } catch (err) {
+        console.warn(`[ensureWorkspaceNodeModulesLinked] Could not link ${origNm} -> ${prepNm}:`, err.message);
+      }
+    }
+  }
+
+  return createdLinks;
+};
+
+/**
+ * Removes temporary `node_modules` symlinks/junctions created by `ensureWorkspaceNodeModulesLinked`.
+ *
+ * @param {string[]} linkPaths
+ */
+export const cleanupWorkspaceNodeModulesLinks = (linkPaths = []) => {
+  if (!Array.isArray(linkPaths)) return;
+  for (const linkPath of linkPaths) {
+    try {
+      if (linkPath && fs.existsSync(linkPath)) {
+        const stat = fs.lstatSync(linkPath);
+        if (stat.isSymbolicLink()) {
+          fs.unlinkSync(linkPath);
+        }
+      }
+    } catch { }
+  }
+};
+
+/**
  * Installs a missing dependency into the workspace using dockerRunner (with shell fallback).
  * Updates package.json safely if npm did not persist changes.
  *
@@ -211,7 +479,7 @@ export const installPackageInWorkspace = async ({
     throw new ServiceError(`Invalid project root directory: ${rootDir}`, 404);
   }
 
-  const targetDir = findTargetPackageDir(effectiveRootDir, importedFrom);
+  const targetDir = findTargetPackageDir(effectiveRootDir, importedFrom, packageName);
   const saveFlag = isDev ? "--save-dev" : "--save";
   const command = `npm install ${saveFlag} ${packageName} --prefer-offline --legacy-peer-deps --no-audit --no-fund --progress=false`;
 
@@ -246,4 +514,3 @@ export const installPackageInWorkspace = async ({
     exitCode: execResult.exitCode,
   };
 };
-

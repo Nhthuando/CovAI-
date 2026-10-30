@@ -39,9 +39,34 @@ export const classifyTestFile = (content, filePath = "", detectedUnitFrameworks 
     const lowerContent = (content || "").toLowerCase();
     const lowerPath = (filePath || "").toLowerCase();
 
-    if (lowerPath.includes("supertest") || lowerContent.includes("supertest") || lowerContent.includes("request(app)")) return "supertest";
-    if (lowerPath.includes("playwright") || lowerContent.includes("@playwright/test") || lowerContent.includes("page.goto")) return "playwright";
+    // Integration tests (supertest, api routes)
+    if (
+        lowerPath.includes("supertest") ||
+        lowerContent.includes("supertest") ||
+        lowerContent.includes("request(app)") ||
+        lowerContent.includes("request(server)") ||
+        lowerPath.includes("/integration/") ||
+        lowerPath.includes("\\integration\\") ||
+        lowerPath.includes("/routes/") ||
+        lowerPath.includes("\\routes\\") ||
+        lowerPath.includes("/api/") ||
+        lowerPath.includes("\\api\\") ||
+        /\b(integration|api)\.(test|spec)\.[cm]?[jt]s$/i.test(lowerPath)
+    ) return "supertest";
+
+    // System / E2E tests (Playwright, Cypress)
     if (lowerPath.includes("cypress") || lowerContent.includes("cypress")) return "cypress";
+
+    if (
+        lowerPath.includes("playwright") ||
+        lowerContent.includes("@playwright/test") ||
+        lowerContent.includes("page.goto") ||
+        lowerPath.includes("/e2e/") ||
+        lowerPath.includes("\\e2e\\") ||
+        lowerPath.includes("/system/") ||
+        lowerPath.includes("\\system\\") ||
+        /\b(e2e|system)\.(test|spec)\.[cm]?[jt]s$/i.test(lowerPath)
+    ) return "playwright";
 
     // Vitest detection
     const isVitest = lowerPath.includes(".vitest.") ||

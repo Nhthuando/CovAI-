@@ -18,6 +18,7 @@ import JobQueue from "./JobQueue";
 import ProjectArchitecturePanel from "./ProjectArchitecturePanel";
 import CFGCalculator from "./CFGCalculator";
 import QualityDashboard from "./QualityDashboard";
+import TrustworthinessWorkspace from './trustworthiness/TrustworthinessWorkspace';
 import UnifiedDashboard from "./unified/UnifiedDashboard";
 import { buildWorkspaceUrl } from "../../services/unifiedDashboard/workspaceNavigation";
 import SettingsSidebar from "./settings/SettingsSidebar";
@@ -992,7 +993,7 @@ function LayoutInner() {
           </motion.div>
         )}
         <AnimatePresence initial={false}>
-          {sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && (
+          {sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && activeActivity !== "trustworthiness" && (
             <motion.div
               key="sidebar"
               initial={
@@ -1070,7 +1071,7 @@ function LayoutInner() {
             </motion.div>
           )}
         </AnimatePresence>
-        {!isMobile && sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && (
+        {!isMobile && sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && activeActivity !== "trustworthiness" && (
           <PanelResizer
             onMouseDown={handleSidebarResize}
             isDragging={isDraggingSidebar}
@@ -1105,6 +1106,8 @@ function LayoutInner() {
           <div className={activeActivity === "jobs" ? "w-full h-full overflow-y-auto" : "hidden"}>
             <JobQueue projectId={project?.id} onSync={handleGitSync} />
           </div>
+
+          {activeActivity === 'trustworthiness' && <div className="w-full h-full overflow-y-auto"><TrustworthinessWorkspace key={project?.id} projectId={project?.id} /></div>}
 
           <div className={activeActivity === "architecture" ? "w-full h-full overflow-y-auto" : "hidden"}>
             <ProjectArchitecturePanel
@@ -1192,7 +1195,7 @@ function LayoutInner() {
             </div>
           </div>
 
-          <div className={activeActivity !== "settings" && activeActivity !== "jobs" && activeActivity !== "architecture" && activeActivity !== "coverage" && activeActivity !== "overview" ? "w-full h-full" : "hidden"}>
+          <div className={activeActivity !== "settings" && activeActivity !== "jobs" && activeActivity !== "architecture" && activeActivity !== "coverage" && activeActivity !== "overview" && activeActivity !== "trustworthiness" ? "w-full h-full" : "hidden"}>
                 <Editor
                   key={`${user?.id}:${project?.id}:${project?.snapshots?.[0]?.id || project?.latestSnapshotId || ""}`}
                   tabs={tabs}

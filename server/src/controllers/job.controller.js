@@ -55,13 +55,13 @@ export const listProjectJobs = async (req, res) => {
     if (!projectId)
       return res.status(400).json({ message: "Missing projectId!" });
 
-    await resolveProjectAccess({projectId,userId,capability:'project.read'});
+    const projectAccess = await resolveProjectAccess({projectId,userId,capability:'project.read'});
 
     await throttledCleanup(userId);
 
     const jobs = await withDbRetry(() =>
       prisma.job.findMany({
-        where: { projectId: projectId },
+        where: { projectId: projectId, ...(projectAccess.role !== 'OWNER' ? { type: { notIn: ['AI_EVALUATION', 'AI_EVALUATION_PREPARE'] } } : {}) },
         orderBy: { createdAt: "desc" },
       })
     );
@@ -131,7 +131,8 @@ export const getJobDetail = async (req, res) => {
     );
 
     if (!job) return res.status(404).json({ message: "Job does not exist!" });
-    await resolveProjectAccess({projectId:job.projectId,userId,capability:'project.read'});
+    const jobAccess = await resolveProjectAccess({projectId:job.projectId,userId,capability:'project.read'});
+    if (['AI_EVALUATION', 'AI_EVALUATION_PREPARE'].includes(job.type) && jobAccess.role !== 'OWNER') throw new ServiceError('Only the project owner can access evaluation jobs', 403, 'OWNER_REQUIRED');
 
     return res.status(200).json({
       message: "Job details retrieved successfully",

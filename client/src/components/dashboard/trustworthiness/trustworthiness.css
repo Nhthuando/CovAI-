@@ -1,0 +1,33 @@
+.evaluation-workspace { padding: 24px; max-width: 1100px; margin: 0 auto; color: var(--color-text); font-size: 14px; }
+.evaluation-workspace h1 { font-size: 24px; font-weight: 600; margin-bottom: 6px; }
+.evaluation-workspace h2 { font-size: 17px; font-weight: 600; margin-bottom: 12px; }
+.evaluation-workspace p { margin: 8px 0; overflow-wrap: anywhere; }
+.evaluation-workspace header > p, .evaluation-muted, .evaluation-workspace small { color: var(--color-text-secondary); }
+.evaluation-tabs { display: flex; gap: 8px; flex-wrap: wrap; border-bottom: 1px solid var(--color-border); padding: 16px 0; margin-bottom: 20px; }
+.evaluation-stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.evaluation-panel { padding: 16px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
+.evaluation-row, .evaluation-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.evaluation-row { justify-content: space-between; padding: 8px 0; }
+.evaluation-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+.evaluation-field { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; flex: 1; min-width: 0; }
+.evaluation-field > span:first-child { font-size: 12px; font-weight: 600; }
+.evaluation-workspace input:not([type=checkbox]), .evaluation-workspace textarea, .evaluation-workspace select { width: 100%; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-bg); color: var(--color-text); }
+.evaluation-workspace textarea { resize: vertical; }
+.evaluation-workspace :focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.evaluation-workspace fieldset { border: 0; padding: 0; min-width: 0; }
+.evaluation-workspace fieldset:disabled { opacity: .8; }
+.evaluation-check { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
+.evaluation-workspace summary { cursor: pointer; padding: 6px 0; font-weight: 500; }
+.evaluation-workspace pre { font-size: 12px; padding: 12px; background: var(--color-surface-secondary); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow: auto; }
+.evaluation-status { font-size: 12px; font-weight: 500; color: var(--color-text-secondary); }
+.evaluation-status-PASSED { color: var(--color-success); }
+.evaluation-status-FAILED, .evaluation-status-ERROR, .evaluation-error { color: var(--color-danger); }
+.evaluation-status-INCOMPLETE, .evaluation-status-INSUFFICIENT_EVIDENCE, .evaluation-status-INDETERMINATE { color: var(--color-warning); }
+.evaluation-table { overflow-x: auto; }
+.evaluation-table table { width: 100%; border-collapse: collapse; text-align: left; }
+.evaluation-table th, .evaluation-table td { padding: 10px; border-bottom: 1px solid var(--color-border); }
+.evaluation-table th { font-size: 12px; color: var(--color-text-secondary); }
+.evaluation-link { color: var(--color-primary); cursor: pointer; text-align: left; }
+.evaluation-criterion { border-top: 1px solid var(--color-border); padding: 12px 0; }
+.evaluation-answer { white-space: pre-wrap; border-left: 2px solid var(--color-border); padding-left: 12px; }
+@media (max-width: 640px) { .evaluation-workspace { padding: 16px; } .evaluation-grid { grid-template-columns: 1fr; } }

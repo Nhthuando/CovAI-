@@ -9,6 +9,7 @@ import {
   Layers,
   Network,
   Terminal,
+  ShieldCheck,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -17,6 +18,7 @@ const TOP_ITEMS = [
   { id: "explorer", icon: Files, label: "Explorer" },
   { id: "git", icon: GitGraph, label: "Git Control" },
   { id: "coverage", icon: BarChart3, label: "Coverage" },
+  { id: "trustworthiness", icon: ShieldCheck, label: "Đánh giá chatbot" },
   { id: "jobs", icon: Layers, label: "Snapshots & Jobs" },
   { id: "architecture", icon: Network, label: "Architecture" },
   { id: "logic-analysis", icon: GitBranch, label: "Logic Analysis" },

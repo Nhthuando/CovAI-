@@ -8,12 +8,19 @@ import {
     findLogicSourceFiles,
     generateBaselineCoverage,
     mergeCoverageSummaries,
+    mergeCoverageFinal,
+    isSyntheticCoverageEntry,
+    computeSummaryFromFileCoverage,
+    syncCoverageArtifactsToOrigin,
     buildJestModuleNameMapper,
     readProjectJestConfig,
     isEsmProjectForRepo,
     resolveTestEnvironment,
     resolveJestBin,
-    jestParallelFlags
+    jestParallelFlags,
+    getOptimalWorkerFlags,
+    syncCoverageDirectories,
+    clearLogicFilesCache
 } from "../services/runTestsJob.service.js";
 import { isApiFilePath } from "../utils/apiFileDetector.js";
 
@@ -199,7 +206,7 @@ describe("findUnitFiles", () => {
             fs.writeFileSync(path.join(clientDir, "ui.test.js"), "test('ui', () => {})");
             fs.writeFileSync(path.join(testsDir, "setup.js"), "// setup");
             fs.writeFileSync(path.join(testsDir, "component.jsx"), "export default () => <div/>");
-            fs.writeFileSync(path.join(testsDir, "api.test.js"), "test('api', () => {})");
+            fs.writeFileSync(path.join(testsDir, "unit.test.js"), "test('unit', () => {})");
 
             const { jestFiles, vitestFiles } = findUnitFiles(tempDir);
             expect(jestFiles.length + vitestFiles.length).toBe(1);
@@ -333,4 +340,289 @@ describe("resolveTestEnvironment", () => {
         expect(resolveTestEnvironment("/nonexistent", "/nonexistent", "custom-env")).toBe("custom-env");
     });
 });
+
+describe("Exact AST-Aware Coverage Merger & Artifact Synchronization", () => {
+    it("replaces synthetic 0% line-count baseline (80 lines) with real Istanbul AST coverage (25/25 statements -> 100%)", () => {
+        // Build an 80-line synthetic baseline entry (0% coverage)
+        const syntheticStatementMap = {};
+        const syntheticS = {};
+        for (let i = 0; i < 80; i++) {
+            syntheticStatementMap[String(i)] = {
+                start: { line: i + 1, column: 0 },
+                end: { line: i + 1, column: 20 }
+            };
+            syntheticS[String(i)] = 0;
+        }
+        const baselineFinal = {
+            "src/services/order.service.js": {
+                path: "src/services/order.service.js",
+                _syntheticBaseline: true,
+                statementMap: syntheticStatementMap,
+                fnMap: {},
+                branchMap: {},
+                s: syntheticS,
+                f: {},
+                b: {}
+            }
+        };
+        const baselineSummary = {
+            "src/services/order.service.js": {
+                _syntheticBaseline: true,
+                lines: { total: 80, covered: 0, skipped: 0, pct: 0 },
+                statements: { total: 80, covered: 0, skipped: 0, pct: 0 },
+                functions: { total: 0, covered: 0, skipped: 0, pct: 0 },
+                branches: { total: 0, covered: 0, skipped: 0, pct: 0 }
+            }
+        };
+
+        // Real Istanbul AST instrumentation has 25 executable statements, 4 functions, 2 branches (4 arms), all covered
+        const realStatementMap = {};
+        const realS = {};
+        for (let i = 0; i < 25; i++) {
+            realStatementMap[String(i)] = {
+                start: { line: i * 2 + 1, column: 2 },
+                end: { line: i * 2 + 1, column: 30 }
+            };
+            realS[String(i)] = 3;
+        }
+        const rawFinal = {
+            "src/services/order.service.js": {
+                path: "src/services/order.service.js",
+                statementMap: realStatementMap,
+                fnMap: {
+                    "0": { name: "createOrder", decl: { start: { line: 1 } } },
+                    "1": { name: "validateOrder", decl: { start: { line: 15 } } },
+                    "2": { name: "calculateTotal", decl: { start: { line: 30 } } },
+                    "3": { name: "cancelOrder", decl: { start: { line: 45 } } }
+                },
+                branchMap: {
+                    "0": { type: "if", line: 10 },
+                    "1": { type: "cond-expr", line: 22 }
+                },
+                s: realS,
+                f: { "0": 2, "1": 2, "2": 1, "3": 1 },
+                b: { "0": [1, 1], "1": [2, 1] }
+            }
+        };
+        const rawSum = {
+            "src/services/order.service.js": computeSummaryFromFileCoverage(rawFinal["src/services/order.service.js"])
+        };
+
+        expect(isSyntheticCoverageEntry(baselineFinal["src/services/order.service.js"])).toBe(true);
+        expect(isSyntheticCoverageEntry(rawFinal["src/services/order.service.js"])).toBe(false);
+
+        const mergedFinal = mergeCoverageFinal(baselineFinal, rawFinal);
+        const mergedSum = mergeCoverageSummaries(baselineSummary, rawSum, { mergedFinal });
+
+        // Synthetic 80-statement map must be completely replaced by real 25-statement AST map
+        expect(Object.keys(mergedFinal["src/services/order.service.js"].s).length).toBe(25);
+        expect(mergedSum["src/services/order.service.js"].statements).toEqual({
+            total: 25,
+            covered: 25,
+            skipped: 0,
+            pct: 100
+        });
+        expect(mergedSum["src/services/order.service.js"].lines).toEqual({
+            total: 25,
+            covered: 25,
+            skipped: 0,
+            pct: 100
+        });
+        expect(mergedSum["src/services/order.service.js"].functions).toEqual({
+            total: 4,
+            covered: 4,
+            skipped: 0,
+            pct: 100
+        });
+        expect(mergedSum["src/services/order.service.js"].branches).toEqual({
+            total: 4,
+            covered: 4,
+            skipped: 0,
+            pct: 100
+        });
+        expect(mergedSum.total.statements.pct).toBe(100);
+        expect(mergedSum.total.lines.pct).toBe(100);
+        expect(mergedSum.total.functions.pct).toBe(100);
+        expect(mergedSum.total.branches.pct).toBe(100);
+    });
+
+    it("replaces DB percentage fallback (total: 100) with real Istanbul AST coverage without diluting percentage", () => {
+        const dbFallbackSummary = {
+            "src/utils/math.js": {
+                _syntheticBaseline: true,
+                lines: { total: 100, covered: 50, skipped: 0, pct: 50 },
+                statements: { total: 100, covered: 50, skipped: 0, pct: 50 },
+                functions: { total: 100, covered: 50, skipped: 0, pct: 50 },
+                branches: { total: 100, covered: 50, skipped: 0, pct: 50 }
+            }
+        };
+        const rawSum = {
+            "src/utils/math.js": {
+                lines: { total: 12, covered: 12, skipped: 0, pct: 100 },
+                statements: { total: 12, covered: 12, skipped: 0, pct: 100 },
+                functions: { total: 3, covered: 3, skipped: 0, pct: 100 },
+                branches: { total: 4, covered: 4, skipped: 0, pct: 100 }
+            }
+        };
+
+        const mergedSum = mergeCoverageSummaries(dbFallbackSummary, rawSum);
+        expect(mergedSum["src/utils/math.js"].statements.total).toBe(12);
+        expect(mergedSum["src/utils/math.js"].statements.covered).toBe(12);
+        expect(mergedSum["src/utils/math.js"].statements.pct).toBe(100);
+        expect(mergedSum.total.statements.pct).toBe(100);
+    });
+
+    it("computes exact union across two partial test runs covering complementary branches", () => {
+        const statementMap = {
+            "0": { start: { line: 1, column: 0 }, end: { line: 1, column: 20 } },
+            "1": { start: { line: 2, column: 2 }, end: { line: 2, column: 15 } },
+            "2": { start: { line: 4, column: 2 }, end: { line: 4, column: 15 } }
+        };
+        const fnMap = { "0": { name: "toggle", decl: { start: { line: 1 } } } };
+        const branchMap = { "0": { type: "if", line: 1 } };
+
+        const run1Final = {
+            "src/utils/toggle.js": {
+                path: "src/utils/toggle.js",
+                statementMap,
+                fnMap,
+                branchMap,
+                s: { "0": 1, "1": 1, "2": 0 },
+                f: { "0": 1 },
+                b: { "0": [1, 0] }
+            }
+        };
+        const run2Final = {
+            "src/utils/toggle.js": {
+                path: "src/utils/toggle.js",
+                statementMap,
+                fnMap,
+                branchMap,
+                s: { "0": 1, "1": 0, "2": 1 },
+                f: { "0": 1 },
+                b: { "0": [0, 1] }
+            }
+        };
+
+        const mergedFinal = mergeCoverageFinal(run1Final, run2Final);
+        const mergedSum = mergeCoverageSummaries(
+            { "src/utils/toggle.js": computeSummaryFromFileCoverage(run1Final["src/utils/toggle.js"]) },
+            { "src/utils/toggle.js": computeSummaryFromFileCoverage(run2Final["src/utils/toggle.js"]) },
+            { mergedFinal }
+        );
+
+        expect(mergedSum["src/utils/toggle.js"].statements.pct).toBe(100);
+        expect(mergedSum["src/utils/toggle.js"].branches.pct).toBe(100);
+        expect(mergedSum["src/utils/toggle.js"].functions.pct).toBe(100);
+        expect(mergedSum["src/utils/toggle.js"].lines.pct).toBe(100);
+    });
+
+    it("syncs coverage artifacts from temporary operation workspace back to origin rootDir", () => {
+        const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "covai-work-sync-"));
+        const origDir = fs.mkdtempSync(path.join(os.tmpdir(), "covai-orig-sync-"));
+        try {
+            const workCov = path.join(workDir, "coverage");
+            fs.mkdirSync(workCov, { recursive: true });
+            fs.writeFileSync(path.join(workCov, "coverage-summary.json"), JSON.stringify({ total: { lines: { pct: 100 } } }));
+            fs.writeFileSync(path.join(workCov, "coverage-final.json"), JSON.stringify({ "src/a.js": { s: { "0": 1 } } }));
+
+            const synced = syncCoverageArtifactsToOrigin(workDir, origDir);
+            expect(synced).toBe(true);
+            expect(fs.existsSync(path.join(origDir, "coverage", "coverage-summary.json"))).toBe(true);
+            expect(fs.existsSync(path.join(origDir, "coverage", "coverage-final.json"))).toBe(true);
+            expect(fs.existsSync(path.join(origDir, "coverage", "unit", "coverage-summary.json"))).toBe(true);
+            expect(fs.existsSync(path.join(origDir, "coverage", "unit", "coverage-final.json"))).toBe(true);
+        } finally {
+            fs.rmSync(workDir, { recursive: true, force: true });
+            fs.rmSync(origDir, { recursive: true, force: true });
+        }
+    });
+
+    it("syncs coverage artifacts bidirectionally between coverage and coverage/unit via syncCoverageDirectories", () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "covai-dual-sync-"));
+        try {
+            const rootCov = path.join(tempDir, "coverage");
+            const unitCov = path.join(tempDir, "coverage", "unit");
+            fs.mkdirSync(unitCov, { recursive: true });
+
+            fs.writeFileSync(path.join(unitCov, "coverage-summary.json"), JSON.stringify({ total: { lines: { pct: 85 } } }));
+            fs.writeFileSync(path.join(unitCov, "jest-results.json"), JSON.stringify({ numPassedTests: 5 }));
+
+            const synced = syncCoverageDirectories(rootCov, unitCov);
+            expect(synced).toBe(true);
+            expect(fs.existsSync(path.join(rootCov, "coverage-summary.json"))).toBe(true);
+            expect(fs.existsSync(path.join(rootCov, "jest-results.json"))).toBe(true);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("getOptimalWorkerFlags", () => {
+    it("returns --runInBand for suites with <= 3 test files", () => {
+        expect(getOptimalWorkerFlags(1)).toBe("--runInBand");
+        expect(getOptimalWorkerFlags(2)).toBe("--runInBand");
+        expect(getOptimalWorkerFlags(3)).toBe("--runInBand");
+    });
+
+    it("returns --maxWorkers=2 for suites with > 3 test files to prevent container thrashing", () => {
+        expect(getOptimalWorkerFlags(4)).toBe("--maxWorkers=2");
+        expect(getOptimalWorkerFlags(25)).toBe("--maxWorkers=2");
+    });
+
+    it("respects existing runner concurrency flags in custom command", () => {
+        expect(getOptimalWorkerFlags(10, "jest --runInBand")).toBe("");
+        expect(getOptimalWorkerFlags(10, "jest --maxWorkers=4")).toBe("");
+        expect(getOptimalWorkerFlags(1, "jest --maxWorkers=1")).toBe("");
+    });
+});
+
+describe("findUnitFiles helper filtering & findLogicSourceFiles caching", () => {
+    it("skips non-test helper scripts in tests/ lacking test block invocations", () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "covai-helper-filter-"));
+        try {
+            const testsDir = path.join(tempDir, "tests");
+            fs.mkdirSync(testsDir, { recursive: true });
+
+            // Helper script inside tests/ with no describe/it/test invocation
+            fs.writeFileSync(path.join(testsDir, "dbUtils.js"), "const connect = () => { if (process.env.DB) { return true; } }; module.exports = { connect };");
+            // Genuine test file
+            fs.writeFileSync(path.join(testsDir, "user.service.test.js"), "describe('userService', () => { it('works', () => {}); });");
+
+            const { jestFiles, skippedFiles } = findUnitFiles(tempDir);
+            expect(jestFiles.length).toBe(1);
+            expect(jestFiles[0]).toContain("user.service.test.js");
+            expect(skippedFiles).toContain("tests/dbUtils.js");
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it("caches findLogicSourceFiles results in memory to eliminate duplicate directory traversals", () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "covai-logic-cache-"));
+        try {
+            clearLogicFilesCache();
+            const srcDir = path.join(tempDir, "src");
+            fs.mkdirSync(srcDir, { recursive: true });
+            fs.writeFileSync(path.join(srcDir, "calculator.js"), "export const add = (a, b) => a + b;");
+
+            const firstPass = findLogicSourceFiles(tempDir);
+            expect(firstPass.length).toBe(1);
+
+            // Add new file without bypassing cache -> cached result is returned
+            fs.writeFileSync(path.join(srcDir, "multiplier.js"), "export const mul = (a, b) => a * b;");
+            const secondPass = findLogicSourceFiles(tempDir);
+            expect(secondPass.length).toBe(1);
+
+            // With bypassCache -> detects new file
+            const thirdPass = findLogicSourceFiles(tempDir, { bypassCache: true });
+            expect(thirdPass.length).toBe(2);
+        } finally {
+            clearLogicFilesCache();
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+});
+
+
 

@@ -226,6 +226,42 @@ describe('coverage controller empty-state behavior', () => {
         }));
     });
 
+    test('returns aggregated coverage from DB coverageFile records when disk JSON is missing (DB fallback aggregation)', async () => {
+        prismaMock.projectSnapshot.findUnique.mockResolvedValue({
+            id: 'snap-1',
+            projectId: 'proj-1',
+            source: 'GITHUB',
+            commitSha: 'abc123',
+            rootDir: 'storage/projects/test-proj',
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+            project: { ownerId: 'user-1', name: 'Demo Project' },
+        });
+        prismaMock.coverageSummary.findUnique.mockResolvedValue(null);
+        prismaMock.coverageFile.findMany.mockResolvedValue([
+            { filePath: 'src/controllers/auth.controller.js', linesPct: 80, branchesPct: 75, funcsPct: 100, stmtsPct: 80 },
+            { filePath: 'src/routes/api.routes.js', linesPct: 90, branchesPct: 85, funcsPct: 90, stmtsPct: 90 },
+        ]);
+
+        const req = { user: { id: 'user-1' }, params: { snapshotId: 'snap-1' }, query: { type: 'integration' } };
+        const res = {
+            status: jest.fn().mockReturnThis(),
+            json: jest.fn(),
+        };
+
+        await getCoverageSummary(req, res);
+
+        expect(res.status).toHaveBeenCalledWith(200);
+        expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+            success: true,
+            data: expect.objectContaining({
+                coverage: expect.objectContaining({
+                    lines: 85,
+                    statements: 85,
+                }),
+            }),
+        }));
+    });
+
     test('returns 200 with empty file list when no coverage file rows exist yet', async () => {
         prismaMock.projectSnapshot.findUnique.mockResolvedValue({
             id: 'snap-1',

@@ -1515,6 +1515,8 @@ export default function BeforeAfterComparisonView({
                           <DiffEditor
                             original={fileDiffData?.oldContent || ""}
                             modified={fileDiffData?.newContent || ""}
+                            keepCurrentOriginalModel={true}
+                            keepCurrentModifiedModel={true}
                             language={selectedFile.endsWith(".json") ? "json" : "javascript"}
                             theme={isDarkMode ? "vs-dark" : "light"}
                             options={{

@@ -111,7 +111,7 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
     };
     const jestBinary = "npx --no-install jest";
 
-    const coverageDir = path.join(resolvedRoot, "coverage");
+    const coverageDir = path.join(resolvedRoot, "coverage", "integration");
     if (!fs.existsSync(coverageDir)) {
         fs.mkdirSync(coverageDir, { recursive: true });
     }
@@ -142,7 +142,8 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
         console.warn("[SupertestRunner] Could not create database setup file:", setupErr.message);
     }
 
-    let jestCmd = `${jestBinary} --runInBand --testEnvironment=node --coverage --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=${quoteForShell(relativeResultsPath)} --forceExit --testTimeout=30000${setupArgs}`;
+    const relCovDir = path.relative(resolvedRoot, coverageDir).replace(/\\/g, "/") || "coverage/integration";
+    let jestCmd = `${jestBinary} --runInBand --testEnvironment=node --coverage --coverageDirectory="${relCovDir}" --coverageReporters=json-summary --coverageReporters=json --coverageReporters=lcov --json --outputFile=${quoteForShell(relativeResultsPath)} --forceExit --testTimeout=30000${setupArgs}`;
     jestCmd += ` --runTestsByPath ${testArgs}`;
 
     if (jestConfigPath) {
@@ -204,7 +205,7 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
         stdout: result.stdout ?? "",
         stderr: result.stderr ?? "",
         executionTimeMs: Date.now() - startedAt,
-        coverageDir: path.join(resolvedRoot, "coverage"),
+        coverageDir,
     };
 };
 

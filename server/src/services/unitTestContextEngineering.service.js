@@ -421,7 +421,10 @@ export const buildIndirectTestingStrategy = ({
 export const buildIsolationMockContracts = ({
     sourceCode = "",
     existingTestCode = "",
-    framework = "jest"
+    framework = "jest",
+    sourceFile = null,
+    targetTestFile = null,
+    rootDir = null
 }) => {
     const isVitest = framework === "vitest";
     const detectedDependencies = [];
@@ -477,16 +480,16 @@ export const buildIsolationMockContracts = ({
             `  });\n` +
             `  return _clientProxy;\n` +
             `};\n` +
-            `const mockPrisma = _createPrismaProxyMock();\n` +
+            `var mockPrisma = globalThis.__mockPrisma = _createPrismaProxyMock();\n` +
             (isVitest
-                ? `vi.mock('@prisma/client', () => ({ PrismaClient: vi.fn(() => mockPrisma), default: { PrismaClient: vi.fn(() => mockPrisma) } }));\n\n`
-                : `jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => mockPrisma), default: { PrismaClient: jest.fn(() => mockPrisma) } }));\n` +
-                  `jest.mock('../lib/prisma.js', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });\n` +
-                  `jest.mock('../../lib/prisma.js', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });\n` +
-                  `jest.mock('../src/lib/prisma.js', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });\n` +
-                  `jest.mock('../config/prisma.js', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });\n` +
-                  `jest.mock('../../config/prisma.js', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });\n` +
-                  `jest.mock('../src/config/prisma.js', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });\n\n`);
+                ? `vi.mock('@prisma/client', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { PrismaClient: vi.fn(() => p), default: { PrismaClient: vi.fn(() => p) } }; });\n\n`
+                : `jest.mock('@prisma/client', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { PrismaClient: jest.fn(() => p), default: { PrismaClient: jest.fn(() => p) } }; });\n` +
+                  `jest.mock('../lib/prisma.js', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; });\n` +
+                  `jest.mock('../../lib/prisma.js', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; });\n` +
+                  `jest.mock('../src/lib/prisma.js', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; });\n` +
+                  `jest.mock('../config/prisma.js', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; });\n` +
+                  `jest.mock('../../config/prisma.js', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; });\n` +
+                  `jest.mock('../src/config/prisma.js', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; });\n\n`);
     }
 
     // 3. Detect Axios / HTTP Client
@@ -608,45 +611,108 @@ jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, de
 
     // 8. Detect Downstream Local Services & Models (Pure RAM Isolation)
     const localRequires = [...new Set([...sourceCode.matchAll(/(?:require\s*\(\s*['"](\.[^'"]+)['"]\s*\)|from\s+['"](\.[^'"]+)['"])/g)].map(m => m[1] || m[2]))]
-        .filter(reqPath => !/(?:\/types\/|\.d\.ts$|definition)/i.test(reqPath));
+        .filter(reqPath => !/(?:\/types\/|\.d\.ts$|definition)/i.test(reqPath))
+        .filter(reqPath => !/(?:utils?\/|helpers?\/|validators?\/|formatters?\/|math|evaluator|presets?\/|constants?\/|locales?\/|fixtures?\/|types?\/|schemas?\/|data\/|tier\d+)/i.test(reqPath));
     let localServicesMockCode = "";
     if (localRequires.length > 0) {
         detectedDependencies.push("downstream-local-services");
-        localServicesMockCode = `// 8. Universal RAM Mocks for Downstream Local Dependencies\n` +
-            `const mockCreateUniversalStub = () => {\n` +
-            `  const stubFn = () => (${isVitest ? "vi.fn" : "jest.fn"}(() => Promise.resolve({ id: 1, name: 'Sample Item', title: 'Sample Title', status: 'ACTIVE', score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90, filename: 'sample.pdf', analysis: { score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }, toJSON() { return { id: 1, score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }; } })));\n` +
-            `  const baseTarget = {\n` +
-            `    models: mockCreateModelRegistry(),\n` +
-            `    AppError: class extends Error { statusCode; details; constructor(sc, m, d) { super(m); this.statusCode = sc; this.details = d; } },\n` +
-            `    asyncHandler: (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next),\n` +
-            `    errorMiddleware: ${isVitest ? "vi.fn" : "jest.fn"}((err, req, res, next) => res.status(err.statusCode || 500).json({ message: err.message }))\n` +
-            `  };\n` +
-            `  return new Proxy(baseTarget, {\n` +
-            `    get: (target, prop) => {\n` +
-            `      if (prop === 'then' || typeof prop === 'symbol') return undefined;\n` +
-            `      if (!(prop in target)) {\n` +
-            `        if (prop === 'default') {\n` +
-            `          target[prop] = target;\n` +
-            `        } else if (prop === 'findAndCountAll') {\n` +
-            `          target[prop] = ${isVitest ? "vi.fn" : "jest.fn"}(() => Promise.resolve({ count: 1, rows: [{ id: 1, title: 'Sample', score: 50, ambiguity: 50, clarity: 50, completeness: 50, consistency: 50, toJSON() { return { id: 1, score: 50, ambiguity: 50, clarity: 50, completeness: 50, consistency: 50 }; } }] }));\n` +
-            `        } else {\n` +
-            `          target[prop] = stubFn();\n` +
-            `        }\n` +
-            `      }\n` +
-            `      return target[prop];\n` +
-            `    }\n` +
-            `  });\n` +
-            `};\n` +
-            `const mockCreateModelRegistry = () => new Proxy({}, { get: (t, p) => (p === 'then' ? undefined : (t[p] || (t[p] = mockCreateUniversalStub()))) });\n`;
-        
-        for (const reqPath of localRequires) {
-            if (isVitest) {
-                localServicesMockCode += `vi.mock('${reqPath}', () => mockCreateUniversalStub());\n`;
-            } else {
-                localServicesMockCode += `jest.mock('${reqPath}', () => mockCreateUniversalStub(), { virtual: true });\n`;
+        if (isVitest) {
+            localServicesMockCode = `// 8. Universal RAM Mocks for Downstream Local Dependencies\n` +
+                `const { mockCreateUniversalStub, setStubRejectMode } = vi.hoisted(() => {\n` +
+                `  let shouldReject = false;\n` +
+                `  const fnMaker = typeof vi !== 'undefined' ? vi.fn : (() => ({}));\n` +
+                `  const stubFn = () => fnMaker(() => {\n` +
+                `    if (shouldReject) return Promise.reject(new Error('Mocked downstream failure'));\n` +
+                `    return Promise.resolve({ id: 1, name: 'Sample Item', title: 'Sample Title', status: 'ACTIVE', score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90, filename: 'sample.pdf', analysis: { score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }, toJSON() { return { id: 1, score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }; } });\n` +
+                `  });\n` +
+                `  const handler = {\n` +
+                `    get: (target, prop) => {\n` +
+                `      if (prop === Symbol.iterator) return function* () { yield* []; };\n` +
+                `      if (prop === Symbol.asyncIterator) return async function* () { yield* []; };\n` +
+                `      if (prop === Symbol.toPrimitive) return (hint) => (hint === 'number' ? 0 : '');\n` +
+                `      if (prop === 'then' || prop === 'catch' || typeof prop === 'symbol') return undefined;\n` +
+                `      if (prop === '__esModule') return true;\n` +
+                `      return new Proxy(stubFn(), handler);\n` +
+                `    },\n` +
+                `    has: (target, prop) => {\n` +
+                `      if (prop === 'then' || prop === 'catch') return false;\n` +
+                `      return true;\n` +
+                `    }\n` +
+                `  };\n` +
+                `  return {\n` +
+                `    mockCreateUniversalStub: () => new Proxy({}, handler),\n` +
+                `    setStubRejectMode: (mode) => { shouldReject = Boolean(mode); }\n` +
+                `  };\n` +
+                `});\n`;
+            for (const reqPath of localRequires) {
+                const mockPaths = [reqPath];
+                if (sourceFile && targetTestFile) {
+                    try {
+                        const srcDir = path.dirname(sourceFile.replace(/\\/g, "/"));
+                        const testDir = path.dirname(targetTestFile.replace(/\\/g, "/"));
+                        const resolvedTarget = path.normalize(path.join(srcDir, reqPath)).replace(/\\/g, "/");
+                        let testRelPath = path.relative(testDir, resolvedTarget).replace(/\\/g, "/");
+                        if (!testRelPath.startsWith(".")) testRelPath = "./" + testRelPath;
+                        if (!mockPaths.includes(testRelPath)) mockPaths.push(testRelPath);
+                    } catch (_) {}
+                }
+                for (const p of mockPaths) {
+                    localServicesMockCode += `vi.mock('${p}', () => mockCreateUniversalStub());\n`;
+                }
             }
+            localServicesMockCode += "\n";
+        } else {
+            localServicesMockCode = `// 8. Universal RAM Mocks for Downstream Local Dependencies\n` +
+                `var _mockShouldReject = false;\n` +
+                `var setStubRejectMode = globalThis.__setStubRejectMode = (mode) => { _mockShouldReject = Boolean(mode); };\n` +
+                `var _createStubMaker = () => {\n` +
+                `  const fnMaker = typeof jest !== 'undefined' ? jest.fn : (() => ({}));\n` +
+                `  const stubFn = () => fnMaker(() => {\n` +
+                `    if (_mockShouldReject) return Promise.reject(new Error('Mocked downstream failure'));\n` +
+                `    return Promise.resolve({ id: 1, name: 'Sample Item', title: 'Sample Title', status: 'ACTIVE', score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90, filename: 'sample.pdf', analysis: { score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }, toJSON() { return { id: 1, score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }; } });\n` +
+                `  });\n` +
+                `  const baseTarget = {\n` +
+                `    models: new Proxy({}, { get: (t, p) => (p === 'then' ? undefined : (t[p] || (t[p] = stubFn()))) }),\n` +
+                `    AppError: class extends Error { statusCode; details; constructor(sc, m, d) { super(m); this.statusCode = sc; this.details = d; } },\n` +
+                `    asyncHandler: (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next),\n` +
+                `    errorMiddleware: fnMaker((err, req, res, next) => res.status(err.statusCode || 500).json({ message: err.message }))\n` +
+                `  };\n` +
+                `  const handler = {\n` +
+                `    get: (target, prop) => {\n` +
+                `      if (prop === Symbol.iterator) return function* () { yield* []; };\n` +
+                `      if (prop === Symbol.asyncIterator) return async function* () { yield* []; };\n` +
+                `      if (prop === Symbol.toPrimitive) return (hint) => (hint === 'number' ? 0 : '');\n` +
+                `      if (prop === 'then' || prop === 'catch' || typeof prop === 'symbol') return undefined;\n` +
+                `      if (prop === '__esModule') return true;\n` +
+                `      if (!(prop in target)) {\n` +
+                `        if (prop === 'default') target[prop] = target;\n` +
+                `        else target[prop] = stubFn();\n` +
+                `      }\n` +
+                `      return target[prop];\n` +
+                `    },\n` +
+                `    has: (target, prop) => (prop !== 'then' && prop !== 'catch')\n` +
+                `  };\n` +
+                `  return new Proxy(baseTarget, handler);\n` +
+                `};\n` +
+                `var mockCreateUniversalStub = globalThis.__mockCreateUniversalStub = globalThis.__mockCreateUniversalStub || (() => _createStubMaker());\n`;
+            for (const reqPath of localRequires) {
+                const mockPaths = [reqPath];
+                if (sourceFile && targetTestFile) {
+                    try {
+                        const srcDir = path.dirname(sourceFile.replace(/\\/g, "/"));
+                        const testDir = path.dirname(targetTestFile.replace(/\\/g, "/"));
+                        const resolvedTarget = path.normalize(path.join(srcDir, reqPath)).replace(/\\/g, "/");
+                        let testRelPath = path.relative(testDir, resolvedTarget).replace(/\\/g, "/");
+                        if (!testRelPath.startsWith(".")) testRelPath = "./" + testRelPath;
+                        if (!mockPaths.includes(testRelPath)) mockPaths.push(testRelPath);
+                    } catch (_) {}
+                }
+                for (const p of mockPaths) {
+                    localServicesMockCode += `jest.mock('${p}', () => (globalThis.__mockCreateUniversalStub || mockCreateUniversalStub)(), { virtual: true });\n`;
+                }
+            }
+            localServicesMockCode += "\n";
         }
-        localServicesMockCode += "\n";
     }
 
     const trimmedPreamble = `${envMockCode}${prismaMockCode}${axiosMockCode}${bullMockCode}${configMockCode}${thirdPartyMockCode}${localServicesMockCode}${controllerMockCode}${timersMockCode}`.trim();

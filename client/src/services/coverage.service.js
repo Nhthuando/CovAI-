@@ -143,11 +143,11 @@ export async function getSystemTestEvidence(snapshotId, scenarioId, signal) {
     return response.blob();
 }
 
-export async function installMissingDependency(snapshotId, packageName, isDev = false, rerunTests = true) {
+export async function installMissingDependency(snapshotId, packageName, isDev = false, rerunTests = true, importedFrom = null) {
     const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/install-dependency`, {
         method: "POST",
         headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ packageName, isDev, rerunTests }),
+        body: JSON.stringify({ packageName, isDev, rerunTests, ...(importedFrom ? { importedFrom } : {}) }),
     });
     return handleResponse(res);
 }

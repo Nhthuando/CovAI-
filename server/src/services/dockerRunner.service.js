@@ -259,7 +259,7 @@ export const dockerRunner = {
           flushTimer = setTimeout(async () => {
             flushTimer = null;
             await flushOutput();
-          }, 800);
+          }, 2000);
         }
       };
 

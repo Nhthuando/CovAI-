@@ -410,16 +410,59 @@ describe('user tests', () => {
             expect(contentAfter).not.toContain("const path = path;");
             expect(contentAfter).toContain("const path = require('path');");
         });
+
+        test("heals TDZ Cannot access mockPrisma before initialization without ReferenceError prefix", () => {
+            const testDir = path.join(tempDir, "tests");
+            fs.mkdirSync(testDir, { recursive: true });
+            const testFile = path.join(testDir, "service.test.js");
+            fs.writeFileSync(
+                testFile,
+                "const mockPrisma = { user: { findMany: jest.fn() } };\njest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => mockPrisma) }));\ndescribe('test', () => { test('ok', () => {}); });"
+            );
+
+            const rawOutput = "Test Runner Error: Cannot access 'mockPrisma' before initialization\n    at Object.PrismaClient (tests/service.test.js:2:50)";
+            const healed = autoHealTestFailures(tempDir, ["tests/service.test.js"], null, rawOutput);
+            expect(healed).toBe(true);
+
+            const contentAfter = fs.readFileSync(testFile, "utf8");
+            expect(contentAfter).toContain("var mockPrisma = globalThis['mockPrisma']");
+            expect(contentAfter).toContain("globalThis['mockPrisma']");
+        });
+
+        test("heals TypeError: <var> is not iterable by removing faulty preset mocks and patching Symbol.iterator", () => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "covai-heal-iterable-"));
+            const testDir = path.join(tempDir, "tests/presets");
+            fs.mkdirSync(testDir, { recursive: true });
+            const testFile = path.join(testDir, "index.test.js");
+            fs.writeFileSync(
+                testFile,
+                "const mockCreateUniversalStub = () => {\n" +
+                "  const handler = { get: (t, p) => (p === 'then' || typeof p === 'symbol' ? undefined : () => ({})) };\n" +
+                "  return new Proxy({}, handler);\n" +
+                "};\n" +
+                "vi.mock('../../src/presets/tier2-ads', () => mockCreateUniversalStub());\n" +
+                "describe('presets', () => { test('spreads', () => { const res = [...tier2AdsPresets]; }); });"
+            );
+
+            const rawOutput = "FAIL tests/presets/index.test.js\nTypeError: tier2AdsPresets is not iterable\n ❯ src/presets/index.js:664:6";
+            const healed = autoHealTestFailures(tempDir, ["tests/presets/index.test.js"], null, rawOutput);
+            expect(healed).toBe(true);
+
+            const contentAfter = fs.readFileSync(testFile, "utf8");
+            expect(contentAfter).not.toContain("vi.mock('../../src/presets/tier2-ads'");
+            expect(contentAfter).toContain("Symbol.iterator");
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
     });
 
     describe("autoRefineCoverageGaps", () => {
-        test("early exits if all files already meet >=90% on Statements, Branches, Functions, Lines", async () => {
+        test("early exits if all files already meet 100% on Statements, Branches, Functions, Lines", async () => {
             const fakeSum = {
                 "src/service.js": {
-                    statements: { pct: 95 },
-                    branches: { pct: 92 },
+                    statements: { pct: 100 },
+                    branches: { pct: 100 },
                     functions: { pct: 100 },
-                    lines: { pct: 94 }
+                    lines: { pct: 100 }
                 }
             };
             const result = await autoRefineCoverageGaps({
@@ -434,6 +477,95 @@ describe('user tests', () => {
             });
 
             expect(result.currentSum).toEqual(fakeSum);
+            expect(result.refined).toBe(false);
+        });
+
+        test("writes refined coverage into sealedRunDir and stops early when pass produces zero coverage gain", async () => {
+            const srcDir = path.join(tempDir, "src");
+            const testsDir = path.join(tempDir, "tests");
+            const covDir = path.join(tempDir, "coverage");
+            const sealedRunDir = path.join(covDir, "runs", "run-test-1");
+            fs.mkdirSync(srcDir, { recursive: true });
+            fs.mkdirSync(testsDir, { recursive: true });
+            fs.mkdirSync(sealedRunDir, { recursive: true });
+
+            fs.writeFileSync(
+                path.join(srcDir, "calc.js"),
+                "export const calc = (a, b) => (a > 0 ? a + b : b);\n",
+                "utf8"
+            );
+            fs.writeFileSync(
+                path.join(testsDir, "calc.test.js"),
+                "import { calc } from '../src/calc.js';\ndescribe('calc', () => {\n  test('base', () => { expect(calc(1, 2)).toBe(3); });\n});\n",
+                "utf8"
+            );
+
+            const initialSum = {
+                "src/calc.js": {
+                    statements: { total: 2, covered: 1, skipped: 0, pct: 50 },
+                    branches: { total: 2, covered: 1, skipped: 0, pct: 50 },
+                    functions: { total: 1, covered: 1, skipped: 0, pct: 100 },
+                    lines: { total: 2, covered: 1, skipped: 0, pct: 50 }
+                }
+            };
+            const initialFinal = {
+                "src/calc.js": {
+                    path: "src/calc.js",
+                    statementMap: {
+                        "0": { start: { line: 1, column: 0 }, end: { line: 1, column: 20 } },
+                        "1": { start: { line: 1, column: 21 }, end: { line: 1, column: 45 } }
+                    },
+                    fnMap: { "0": { name: "calc", decl: { start: { line: 1 } } } },
+                    branchMap: { "0": { type: "cond-expr", line: 1 } },
+                    s: { "0": 1, "1": 0 },
+                    f: { "0": 1 },
+                    b: { "0": [1, 0] }
+                }
+            };
+
+            let runnerCalls = 0;
+            const result = await autoRefineCoverageGaps({
+                rootDir: tempDir,
+                sourceFilesInspected: ["src/calc.js"],
+                modifiedFiles: new Set(["tests/calc.test.js"]),
+                snapshot: { id: "snap-1" },
+                isVitest: false,
+                coverageDir: covDir,
+                sealedRunDir,
+                rawSum: initialSum,
+                rawFinal: initialFinal,
+                runCoverageFn: async ({ sealedRunDir: targetDir }) => {
+                    runnerCalls++;
+                    // Pass 1 produces no gain -> should trigger early convergence break instead of running passes 2 and 3
+                    fs.writeFileSync(path.join(targetDir, "coverage-summary.json"), JSON.stringify(initialSum), "utf8");
+                    fs.writeFileSync(path.join(targetDir, "coverage-final.json"), JSON.stringify(initialFinal), "utf8");
+                }
+            });
+
+            expect(runnerCalls).toBe(1);
+            expect(result.passesRun).toBe(1);
+            expect(fs.existsSync(path.join(sealedRunDir, "coverage-summary.json"))).toBe(true);
+            expect(fs.existsSync(path.join(sealedRunDir, "coverage-final.json"))).toBe(true);
+        });
+    });
+
+    describe("Targeted sanitizeAllProjectTestFiles", () => {
+        test("sanitizes only specificFiles when provided, leaving unrelated test files untouched", () => {
+            const testsDir = path.join(tempDir, "tests", "models");
+            fs.mkdirSync(testsDir, { recursive: true });
+            const targetFile = path.join(testsDir, "target.test.js");
+            const unrelatedFile = path.join(testsDir, "unrelated.test.js");
+
+            const rawCorrupted = `const { doc } = require('../src/models/doc');\ndescribe('AI Suggested Unit Tests', () => {\n  N/A - This is a new test file.\n});\ndescribe('Doc', () => { test('works', () => expect(true).toBe(true)); });\n`;
+            fs.writeFileSync(targetFile, rawCorrupted, "utf8");
+            fs.writeFileSync(unrelatedFile, rawCorrupted, "utf8");
+
+            sanitizeAllProjectTestFiles(tempDir, ["tests/models/target.test.js"]);
+
+            const targetUpdated = fs.readFileSync(targetFile, "utf8");
+            const unrelatedAfter = fs.readFileSync(unrelatedFile, "utf8");
+            expect(targetUpdated).not.toContain("N/A - This is a new test file.");
+            expect(unrelatedAfter).toBe(rawCorrupted);
         });
     });
 

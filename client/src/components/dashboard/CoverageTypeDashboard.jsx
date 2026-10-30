@@ -68,7 +68,8 @@ import JobQueue from "./JobQueue.jsx";
 import { CoverageDashboardSkeleton } from "../common/Skeleton.jsx";
 import { useRunningProcess } from "../../contexts/RunningProcessContext.jsx";
 import UnitTestGuidedWorkflow from "./UnitTestGuidedWorkflow.jsx";
-import UnitTestTraceabilityMatrix from "./UnitTestTraceabilityMatrix.jsx";
+import UnitTestPackageInstaller from "./UnitTestPackageInstaller.jsx";
+import UnitTestTraceabilityMatrix, { extractMissingPackageFromError } from "./UnitTestTraceabilityMatrix.jsx";
 import DiffReviewModal from "./DiffReviewModal.jsx";
 import InPlaceCoverageFileModal from "./InPlaceCoverageFileModal.jsx";
 import SuggestTestcaseModal from "./SuggestTestcaseModal.jsx";
@@ -1048,6 +1049,7 @@ export default function CoverageTypeDashboard({
                   ...s,
                   status: matchedItem.status || (isPassed ? "PASSED" : "FAILED"),
                   testRunError: matchedItem.error || (itemPassed ? null : (resultData?.errorDetail || resultData?.message || null)),
+                  missingDependency: matchedItem.missingDependency || resultData?.missingDependency || resultData?.moduleResolutionError?.missingDependency || null,
                 };
               }
               if (s.suggestionId === sugId || s.id === sugId) {
@@ -1055,6 +1057,7 @@ export default function CoverageTypeDashboard({
                   ...s,
                   status: isPassed ? "PASSED" : "FAILED",
                   testRunError: isPassed ? null : (resultData?.testRunError || resultData?.errorDetail || resultData?.message || null),
+                  missingDependency: isPassed ? null : (resultData?.missingDependency || resultData?.moduleResolutionError?.missingDependency || null),
                 };
               }
               return s;
@@ -1209,6 +1212,7 @@ export default function CoverageTypeDashboard({
                   ...s,
                   status: matchedItem.status || (isPassed ? "PASSED" : "FAILED"),
                   testRunError: matchedItem.error || (itemPassed ? null : (resultData?.errorDetail || resultData?.message || null)),
+                  missingDependency: matchedItem.missingDependency || resultData?.missingDependency || resultData?.moduleResolutionError?.missingDependency || null,
                 };
               }
               if (sugIds.includes(s.suggestionId || s.id)) {
@@ -1216,6 +1220,7 @@ export default function CoverageTypeDashboard({
                   ...s,
                   status: isPassed ? "PASSED" : "FAILED",
                   testRunError: isPassed ? null : (resultData?.testRunError || resultData?.errorDetail || resultData?.message || null),
+                  missingDependency: isPassed ? null : (resultData?.missingDependency || resultData?.moduleResolutionError?.missingDependency || null),
                 };
               }
               return s;
@@ -1512,7 +1517,146 @@ export default function CoverageTypeDashboard({
     let runningWorkspaceRevision = getExpectedWorkspaceRevision();
 
     try {
+      const allCleanedSuggestions = [];
       for (let i = 0; i < totalFiles; i++) {
+        const fPath = filesWithPendingSuggestions[i];
+        const cleanTarget = cleanDisplayPath(fPath);
+        const fileSugs = allPendingSuggestions.filter((s) => {
+          const sPath = s.sourceFile || s.filePath;
+          return sPath === fPath || cleanDisplayPath(sPath) === cleanTarget;
+        });
+        for (const s of fileSugs) {
+          allCleanedSuggestions.push({
+            ...s,
+            suggestionId: s.suggestionId || s.id,
+            sourceFile: s.sourceFile || fPath,
+            testFile: s.testFile || s.targetTestFile,
+            generatedCode: s.generatedCode || s.suggestedTestCode,
+            suggestedTestCode: s.suggestedTestCode || s.generatedCode,
+            fullUpdatedContent: s.fullUpdatedContent,
+            framework: s.framework,
+            targetLines: s.targetLines,
+            targetBranches: s.targetBranches,
+            proposalBase: {
+              snapshotId,
+              workspaceRevision: runningWorkspaceRevision,
+            },
+          });
+        }
+      }
+
+      let batchApplied = false;
+      if (allCleanedSuggestions.length > 0) {
+        const batchStep = `[1/${totalFiles}] Batch applying ${allCleanedSuggestions.length} suggestions across ${totalFiles} files...`;
+        setBulkApplyStep(batchStep);
+        updateBulkApplyStep({
+          step: batchStep,
+          completedCount: 1,
+          totalCount: totalFiles,
+          stats: `${totalFiles}/${totalFiles}`,
+          progressPct: 50,
+          currentFile: filesWithPendingSuggestions[0],
+        });
+
+        try {
+          let batchRes;
+          try {
+            batchRes = await applyUnitTestSuggestion(snapshotId, {
+              suggestions: allCleanedSuggestions,
+              projectId,
+              skipBackgroundJob: true,
+            });
+          } catch (firstBatchErr) {
+            if (firstBatchErr?.status === 409 || firstBatchErr?.message?.includes("Source changed") || firstBatchErr?.message?.includes("Workspace changed")) {
+              batchRes = await applyUnitTestSuggestion(snapshotId, {
+                suggestions: allCleanedSuggestions,
+                projectId,
+                skipBackgroundJob: true,
+              });
+            } else {
+              throw firstBatchErr;
+            }
+          }
+
+          const resultData = batchRes?.data || batchRes;
+          lastResultData = resultData;
+          if (resultData?.workspaceRevision != null) {
+            runningWorkspaceRevision = resultData.workspaceRevision;
+          }
+          const testStatus = resultData?.testStatus || resultData?.status;
+          const isBatchPassed = testStatus === "PASSED" || resultData?.success === true;
+          if (isBatchPassed) anyPassedGlobal = true;
+
+          setInlineSuggestions((prev) => {
+            const next = { ...prev };
+            for (const fPath of filesWithPendingSuggestions) {
+              const list = next[fPath] || [];
+              next[fPath] = list.map((s) => {
+                const sid = s.suggestionId || s.id;
+                if (allSugIds.includes(sid)) {
+                  const matchedApplied = (resultData?.appliedSuggestions || []).find(
+                    (a) => (a.suggestionId || a.id) === sid
+                  );
+                  const itemPassed = matchedApplied
+                    ? matchedApplied.status === "PASSED"
+                    : isBatchPassed;
+                  if (itemPassed) anyPassedGlobal = true;
+                  return {
+                    ...s,
+                    status: itemPassed ? "PASSED" : "FAILED",
+                    testRunError: !itemPassed
+                      ? (matchedApplied?.error || resultData?.testRunError || resultData?.errorDetail || resultData?.message || null)
+                      : null,
+                    missingDependency: !itemPassed
+                      ? (matchedApplied?.missingDependency || resultData?.missingDependency || resultData?.moduleResolutionError?.missingDependency || null)
+                      : null,
+                  };
+                }
+                return s;
+              });
+            }
+            return next;
+          });
+
+          setApplyResultsByFile((prev) => {
+            const next = { ...prev };
+            for (const fPath of filesWithPendingSuggestions) {
+              const cleanTarget = cleanDisplayPath(fPath);
+              const fileResult = resultData?.perFileResults?.[fPath] || resultData?.perFileResults?.[cleanTarget];
+              const currentFile = selectedFiles.find((f) => f.filePath === fPath || cleanDisplayPath(f.filePath) === cleanTarget);
+              const currentFileCov = currentFile ? {
+                statements: currentFile.stmtsPct || 0,
+                branches: currentFile.branchesPct || 0,
+                functions: currentFile.funcsPct || 0,
+                lines: currentFile.linesPct || 0,
+              } : null;
+
+              const oldCov = fileResult?.oldCoverage || currentFileCov || resultData?.previousCoverage;
+              const newCov = fileResult?.newCoverage || currentFileCov || resultData?.newCoverage;
+              if (oldCov && newCov) {
+                next[fPath] = {
+                  ...resultData,
+                  oldCoverage: oldCov,
+                  newCoverage: newCov,
+                  isPassed: isBatchPassed,
+                };
+              }
+            }
+            return next;
+          });
+
+          if (resultData?.perFileResults) {
+            updateCoverageFilesData(snapshotId, type, projectId, resultData.perFileResults);
+          }
+
+          completedCount = totalFiles;
+          batchApplied = true;
+        } catch (batchErr) {
+          console.warn("[handleApplyAllGlobal] Batch apply encountered error, falling back to per-file apply:", batchErr);
+        }
+      }
+
+      for (let i = 0; !batchApplied && i < totalFiles; i++) {
         const fPath = filesWithPendingSuggestions[i];
         const cleanTarget = cleanDisplayPath(fPath);
         const fileSugs = allPendingSuggestions.filter((s) => {
@@ -1604,6 +1748,9 @@ export default function CoverageTypeDashboard({
                   testRunError: !itemPassed
                     ? (matchedApplied?.error || resultData?.testRunError || resultData?.errorDetail || resultData?.message || null)
                     : null,
+                  missingDependency: !itemPassed
+                    ? (matchedApplied?.missingDependency || resultData?.missingDependency || resultData?.moduleResolutionError?.missingDependency || null)
+                    : null,
                 };
               }
               return s;
@@ -1611,7 +1758,7 @@ export default function CoverageTypeDashboard({
             return next;
           });
 
-          const fileResult = resultData?.perFileResults?.[fPath];
+          const fileResult = resultData?.perFileResults?.[fPath] || resultData?.perFileResults?.[cleanTarget];
           const currentFile = selectedFiles.find((f) => f.filePath === fPath);
           const currentFileCov = currentFile ? {
             statements: currentFile.stmtsPct || 0,
@@ -1669,8 +1816,9 @@ export default function CoverageTypeDashboard({
       invalidateCoverageQueries(snapshotId);
       await refetchCoverage();
 
-      // Trigger authoritative full project unit test analysis once ALL files have been safely merged to disk
-      if (anyPassedGlobal) {
+      // Only trigger full project re-run if incremental coverage was not already returned by applyUnitTestSuggestion
+      const hasIncrementalCoverage = Boolean(lastResultData?.newCoverage && lastResultData?.perFileResults);
+      if (anyPassedGlobal && !hasIncrementalCoverage) {
         await run({ restart: true });
       }
 
@@ -1796,17 +1944,51 @@ export default function CoverageTypeDashboard({
   }, [snapshotId, type, loadSystemSummary, refetchCoverage]);
   const [installingDependencyName, setInstallingDependencyName] = useState(null);
 
-  const handleInstallDependency = async (packageName, isDev = false) => {
+  const activeMissingDependency = useMemo(() => {
+    if (summary?.missingDependency?.packageName) {
+      return summary.missingDependency;
+    }
+    const fromRunErr = extractMissingPackageFromError(summary?.latestRunError || coverageData?.latestRunError || "");
+    if (fromRunErr) return fromRunErr;
+    for (const [fPath, sugs] of Object.entries(inlineSuggestions || {})) {
+      for (const s of (sugs || [])) {
+        if (s.status === "FAILED") {
+          if (s.missingDependency?.packageName) {
+            return { ...s.missingDependency, sourceFile: fPath };
+          }
+          const parsed = extractMissingPackageFromError(s.testRunError || "");
+          if (parsed) {
+            return { ...parsed, sourceFile: fPath };
+          }
+        }
+      }
+    }
+    return null;
+  }, [summary, coverageData, inlineSuggestions]);
+
+  const handleInstallDependency = async (packageName, isDev = false, importedFrom = null, onAfterInstall = null) => {
     if (!snapshotId || !packageName || installingDependencyName) return;
     setInstallingDependencyName(packageName);
+    setError("");
     try {
-      const res = await installMissingDependency(snapshotId, packageName, isDev, true);
+      const shouldRerunFull = !onAfterInstall;
+      const res = await installMissingDependency(
+        snapshotId,
+        packageName,
+        isDev,
+        shouldRerunFull,
+        importedFrom || activeMissingDependency?.importedFrom || activeMissingDependency?.sourceFile || null
+      );
       if (res?.success) {
         invalidateCoverageQueries(snapshotId);
         await refetchCoverage();
+        if (typeof onAfterInstall === "function") {
+          await onAfterInstall();
+        }
       } else {
         setError(res?.message || `Failed to install ${packageName}`);
       }
+      return res;
     } catch (err) {
       console.error("[handleInstallDependency] Error:", err);
       setError(err.message || `Error installing ${packageName}`);
@@ -2591,41 +2773,49 @@ export default function CoverageTypeDashboard({
 
       {/* ── Guided Sequential Workflow Stepper (Unit Test Mode) ── */}
       {type === "unit" && (
-        <UnitTestGuidedWorkflow
-          snapshotId={snapshotId}
-          running={running}
-          runProgress={runProgress}
-          runningStatus={runningStatus}
-          runStep={runStep}
-          activeJobId={activeJobIdRef.current}
-          onRun={run}
-          onBulkSuggest={handleBulkSuggestTest}
-          onOpenSuggestModal={(opts) => handleOpenSuggestModal(opts?.filePath, opts?.functionName, opts?.isBulk ?? true)}
-          isBulkSuggesting={isBulkSuggesting}
-          pendingSuggestionsCount={allPendingSuggestions.length}
-          pendingFilesCount={filesWithPendingSuggestions.length}
-          onApplyAll={handleApplyAllGlobal}
-          isBulkApplying={isBulkApplying}
-          bulkApplyStep={bulkApplyStep}
-          summary={summary}
-          rawTotals={rawTotals}
-          executions={executions}
-          testTotals={totals}
-          hasExecuted={relevantRuns.length > 0 || totals.total > 0}
-          isLatestRunFailed={isLatestRunFailed}
-          hasPartialFailures={hasPartialFailures}
-          onRefresh={load}
-          isRefreshing={isCoverageQueryFetching}
-          onOpenJobQueue={() => setShowJobQueueModal(true)}
-          onOpenReviewModal={() => openReviewForFile(null)}
-          hasReviewableDiffs={reviewFiles.length > 0}
-          activeTab={activeMetricView}
-          onChangeTab={(tabId) => setActiveMetricView(tabId)}
-          isLight={isLight}
-          missingDependency={summary?.missingDependency}
-          onInstallDependency={handleInstallDependency}
-          isInstallingDependency={Boolean(installingDependencyName)}
-        />
+        <>
+          <UnitTestGuidedWorkflow
+            snapshotId={snapshotId}
+            running={running}
+            runProgress={runProgress}
+            runningStatus={runningStatus}
+            runStep={runStep}
+            activeJobId={activeJobIdRef.current}
+            onRun={run}
+            onBulkSuggest={handleBulkSuggestTest}
+            onOpenSuggestModal={(opts) => handleOpenSuggestModal(opts?.filePath, opts?.functionName, opts?.isBulk ?? true)}
+            isBulkSuggesting={isBulkSuggesting}
+            pendingSuggestionsCount={allPendingSuggestions.length}
+            pendingFilesCount={filesWithPendingSuggestions.length}
+            onApplyAll={handleApplyAllGlobal}
+            isBulkApplying={isBulkApplying}
+            bulkApplyStep={bulkApplyStep}
+            summary={summary}
+            rawTotals={rawTotals}
+            executions={executions}
+            testTotals={totals}
+            hasExecuted={relevantRuns.some(r => ["COMPLETED", "PASSED", "SUCCESS", "FAILED"].includes(r?.status)) || (totals.total > 0 && !running)}
+            isLatestRunFailed={isLatestRunFailed}
+            hasPartialFailures={hasPartialFailures}
+            onRefresh={load}
+            isRefreshing={isCoverageQueryFetching}
+            onOpenJobQueue={() => setShowJobQueueModal(true)}
+            onOpenReviewModal={() => openReviewForFile(null)}
+            hasReviewableDiffs={reviewFiles.length > 0}
+            activeTab={activeMetricView}
+            onChangeTab={(tabId) => setActiveMetricView(tabId)}
+            isLight={isLight}
+          />
+
+          <UnitTestPackageInstaller
+            snapshotId={snapshotId}
+            missingDependency={activeMissingDependency}
+            onInstallDependency={handleInstallDependency}
+            isInstalling={Boolean(installingDependencyName)}
+            onRerunTests={run}
+            isLight={isLight}
+          />
+        </>
       )}
 
 
@@ -3483,6 +3673,8 @@ export default function CoverageTypeDashboard({
               <UnitTestTraceabilityMatrix
                 snapshotId={snapshotId}
                 projectId={projectId}
+                running={running}
+                runProgress={runProgress}
                 sourceFiles={selectedFiles}
                 testSuites={unitTestSuites}
                 functionsList={functionsList}
@@ -3505,6 +3697,8 @@ export default function CoverageTypeDashboard({
                 onApplySuggestion={handleApplySuggestionInline}
                 onApplyAllFileSuggestions={handleApplyAllInline}
                 onReviewDiff={openReviewForFile}
+                onInstallDependency={handleInstallDependency}
+                installingDependencyName={installingDependencyName}
                 isLight={isLight}
               />
             </div>

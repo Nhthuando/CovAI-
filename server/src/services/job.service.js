@@ -21,6 +21,8 @@ import { abortJob, isJobCanceled } from "./jobCancellation.service.js";
 
 /** Keep in sync with the JobType enum in schema.prisma */
 const JOB_TYPES = Object.freeze([
+  "AI_EVALUATION",
+  "AI_EVALUATION_PREPARE",
   "INGEST",
   "INSTALL_DEPS",
   "RUN_TESTS",
@@ -119,6 +121,7 @@ export const cleanupStaleJobsForProject = async (projectId, client = prisma) => 
 
   const now = Date.now();
   for (const job of activeJobs) {
+    if (['AI_EVALUATION', 'AI_EVALUATION_PREPARE'].includes(job.type)) continue; // Evaluation uses persisted leases and its own reconciliation.
     const startTime = job.startedAt || job.createdAt;
     const elapsedMs = startTime ? now - new Date(startTime).getTime() : 0;
     const isLongRunning = LONG_RUNNING_JOB_TYPES.includes(job.type);
@@ -186,6 +189,7 @@ export const cleanupAllStaleJobs = async (userId = null, client = prisma) => {
 
   const now = Date.now();
   for (const job of activeJobs) {
+    if (['AI_EVALUATION', 'AI_EVALUATION_PREPARE'].includes(job.type)) continue;
     const startTime = job.startedAt || job.createdAt;
     const elapsedMs = startTime ? now - new Date(startTime).getTime() : 0;
     const isLongRunning = LONG_RUNNING_JOB_TYPES.includes(job.type);
@@ -727,10 +731,14 @@ export const cancelJob = async (jobId) => {
 
   const currentJob = await prisma.job.findUnique({
     where: { id: jobId },
-    select: { id: true, status: true, userId: true, projectId: true },
+    select: { id: true, status: true, userId: true, projectId: true, type: true },
   });
 
   if (!currentJob) throw new ServiceError("Job not found", 404);
+  if (currentJob.type === 'AI_EVALUATION') {
+    await (await import('./aiEvaluation/runner.service.js')).cancelEvaluationJob(jobId);
+    return prisma.job.findUnique({ where: { id: jobId } });
+  }
 
   // Idempotent: repeated cancel requests return the canceled job safely
   if (currentJob.status === "CANCELED") {
