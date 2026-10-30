@@ -4088,6 +4088,125 @@ export default function AIPanel({
                   <ChevronRight size={13} style={{ color: "var(--color-text-muted)" }} />
                 </motion.button>
               </div>
+            ) : screenContext?.activity === "overview" || screenContext?.testType === "overview" ? (
+              <div className="flex flex-col gap-2">
+                {/* Unified Overview Prompt 1: Diagnose release blockers */}
+                <motion.button
+                  whileHover={{ scale: 1.01, x: 2 }}
+                  whileTap={{ scale: 0.99 }}
+                  onClick={() => {
+                    const s = screenContext?.unifiedSummary;
+                    const contextDetails = s
+                      ? `\nCurrent Metrics:\n- Quality Gate: ${s.qualityGateStatus || "UNVERIFIED"}\n- Health Score: ${s.healthScore ?? "N/A"} (${s.healthGrade || "-"})\n- Executed Tests: ${s.totalExecutedTests || 0} (${s.passedTests || 0} passed, ${s.failedTests || 0} failed)\n- Coverage: Overall ${s.overallCoveragePct ?? 0}% (Unit Lines: ${s.unitLinesPct ?? 0}%, API Endpoints: ${s.apiCoveragePct ?? 0}%, E2E Flows: ${s.systemFlowPct ?? 0}%)\n- Uncovered APIs: ${s.uncoveredApis || 0}`
+                      : "";
+                    handleSend(
+                      `Analyze our Unified Quality Overview and diagnose all current release blockers and cross-layer failures across Unit, Integration API, and System E2E suites.${contextDetails}`
+                    );
+                  }}
+                  className="flex items-center gap-2.5 p-2.5 rounded-xl text-left cursor-pointer transition-all bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-bg)] hover:border-[var(--color-primary)]"
+                >
+                  <div
+                    style={{
+                      width: 26,
+                      height: 26,
+                      borderRadius: 6,
+                      background: "rgba(248, 81, 73, 0.15)",
+                      border: "1px solid rgba(248, 81, 73, 0.3)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Shield size={13} style={{ color: "var(--ud-fail)" }} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text)" }}>
+                      Diagnose release blockers & failures
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      Cross-layer root cause analysis across Unit, API, and E2E
+                    </div>
+                  </div>
+                  <ChevronRight size={13} style={{ color: "var(--color-text-muted)" }} />
+                </motion.button>
+
+                {/* Unified Overview Prompt 2: Close API & Branch Coverage Gaps */}
+                <motion.button
+                  whileHover={{ scale: 1.01, x: 2 }}
+                  whileTap={{ scale: 0.99 }}
+                  onClick={() => {
+                    const s = screenContext?.unifiedSummary;
+                    handleSend(
+                      `We currently have ${s?.uncoveredApis ?? 0} uncovered API endpoint(s) (API coverage: ${s?.apiCoveragePct ?? 0}%) and Unit Line coverage at ${s?.unitLinesPct ?? 0}%. Recommend a prioritized test generation plan to pass our Quality Gate thresholds.`
+                    );
+                  }}
+                  className="flex items-center gap-2.5 p-2.5 rounded-xl text-left cursor-pointer transition-all bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-bg)] hover:border-[var(--color-primary)]"
+                >
+                  <div
+                    style={{
+                      width: 26,
+                      height: 26,
+                      borderRadius: 6,
+                      background: "rgba(210, 153, 34, 0.15)",
+                      border: "1px solid rgba(210, 153, 34, 0.3)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Zap size={13} style={{ color: "var(--ud-warn)" }} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text)" }}>
+                      Close API & branch coverage gaps
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      Target uncovered routes and low-branch-coverage files
+                    </div>
+                  </div>
+                  <ChevronRight size={13} style={{ color: "var(--color-text-muted)" }} />
+                </motion.button>
+
+                {/* Unified Overview Prompt 3: Optimize Testing Pyramid */}
+                <motion.button
+                  whileHover={{ scale: 1.01, x: 2 }}
+                  whileTap={{ scale: 0.99 }}
+                  onClick={() => {
+                    const s = screenContext?.unifiedSummary;
+                    handleSend(
+                      `Evaluate our current Testing Pyramid distribution (${s?.pyramidShape || "current state"}) and suggest which Unit, Supertest API, or Playwright E2E suites we should add or refactor next.`
+                    );
+                  }}
+                  className="flex items-center gap-2.5 p-2.5 rounded-xl text-left cursor-pointer transition-all bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-bg)] hover:border-[var(--color-primary)]"
+                >
+                  <div
+                    style={{
+                      width: 26,
+                      height: 26,
+                      borderRadius: 6,
+                      background: "rgba(163, 113, 247, 0.15)",
+                      border: "1px solid rgba(163, 113, 247, 0.3)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Sparkles size={13} style={{ color: "var(--ud-integration)" }} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text)" }}>
+                      Optimize Testing Pyramid balance
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      Strengthen Unit foundation and API/E2E layer ratios
+                    </div>
+                  </div>
+                  <ChevronRight size={13} style={{ color: "var(--color-text-muted)" }} />
+                </motion.button>
+              </div>
             ) : (
             <div className="flex flex-col gap-2">
               {/* 1. Find edge cases */}

@@ -35,14 +35,21 @@ import {
 
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
 
-export default function SystemTestDashboard({ projectId, snapshotId, onOpenFile }) {
+export default function SystemTestDashboard({ projectId, snapshotId, focusScenario = null, onOpenFile }) {
   const projectAccess = useProjectAccess(projectId);
   // Current view: "dashboard" | "report"
   const [currentView, setCurrentView] = useState("dashboard");
   const [resultView, setResultView] = useState("scenarios");
 
   // Sub-tabs: "coverage" | "scenarios" | "live" | "results"
-  const [activeSubTab, setActiveSubTab] = useState("coverage");
+  const [activeSubTab, setActiveSubTab] = useState(focusScenario ? "scenarios" : "coverage");
+
+  useEffect(() => {
+    if (focusScenario) {
+      setActiveSubTab("scenarios");
+      setResultView("scenarios");
+    }
+  }, [focusScenario]);
 
   // Selected framework: "playwright" | "cypress"
   const [activeFramework, setActiveFramework] = useState("playwright");

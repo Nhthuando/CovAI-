@@ -18,16 +18,20 @@ import { PillarBadge } from "../primitives/PillarBadge.jsx";
 import { StatusPill } from "../primitives/StatusPill.jsx";
 import { Button } from "../../../common/Button.jsx";
 import { fmtDuration, fmtPct, fmtRelativeTime } from "../../../../services/unifiedDashboard/format.js";
+import { getUnifiedTestRunInspection } from "../../../../services/coverage.service.js";
 import { useToast } from "../../ToastContext.jsx";
 
 export function SlideOverInspectorDrawer({
   item = null,
+  snapshotId = null,
   onClose,
   onNavigateWorkspace,
   onAskAi,
 }) {
   const { addToast } = useToast();
   const [copied, setCopied] = useState(false);
+  const [fetchedRunDetails, setFetchedRunDetails] = useState(null);
+  const [loadingRunDetails, setLoadingRunDetails] = useState(false);
 
   useEffect(() => {
     if (!item) return;
@@ -38,40 +42,70 @@ export function SlideOverInspectorDrawer({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [item, onClose]);
 
+  useEffect(() => {
+    setFetchedRunDetails(null);
+    if (!item) return;
+    const isRunItem = item.inspectorType === "run" || Boolean(item.startedAt && item.type);
+    const runId = item.runId || item.id;
+    const targetSnapId = item.snapshotId || snapshotId;
+
+    if (isRunItem && runId && targetSnapId && !String(runId).startsWith("run-")) {
+      let cancelled = false;
+      setLoadingRunDetails(true);
+      getUnifiedTestRunInspection(targetSnapId, runId)
+        .then((res) => {
+          if (!cancelled && res?.data) {
+            setFetchedRunDetails(res.data);
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (!cancelled) setLoadingRunDetails(false);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+  }, [item, snapshotId]);
+
   if (!item) return null;
 
+  const effectiveItem = fetchedRunDetails ? { ...item, ...fetchedRunDetails } : item;
+
   // Normalize whether `item` is an Action Item, Matrix Module, or Recent Execution Run
-  const isRun = item.inspectorType === "run" || Boolean(item.startedAt && item.type);
-  const pillar = isRun ? item.type : item.pillar || item.diagnostics?.suspectLayer || "unit";
+  const isRun = effectiveItem.inspectorType === "run" || Boolean(effectiveItem.startedAt && effectiveItem.type);
+  const pillar = isRun
+    ? effectiveItem.type
+    : effectiveItem.pillar || effectiveItem.diagnostics?.suspectLayer || "unit";
   const status = isRun
-    ? item.status
-    : item.priority === "HIGH"
+    ? effectiveItem.status
+    : effectiveItem.priority === "CRITICAL" || effectiveItem.priority === "HIGH"
     ? "fail"
-    : item.priority === "MEDIUM"
+    : effectiveItem.priority === "MEDIUM"
     ? "warn"
     : "pass";
 
   const title = isRun
-    ? `Execution Run ${item.id}`
-    : item.title || item.moduleName || "Diagnostic Inspector";
+    ? `Execution Run ${String(effectiveItem.id || "").slice(0, 10)}`
+    : effectiveItem.title || effectiveItem.moduleName || "Diagnostic Inspector";
 
   const subtitle = isRun
-    ? `Commit ${item.commitSha || "HEAD"} • Executed ${fmtRelativeTime(item.startedAt)}`
-    : `Target: ${item.targetName || item.diagnostics?.filePath || "Module"}`;
+    ? `Commit ${effectiveItem.commitSha || "HEAD"} • Executed ${fmtRelativeTime(effectiveItem.startedAt)}`
+    : `Target: ${effectiveItem.targetName || effectiveItem.diagnostics?.filePath || "Module"}`;
 
-  const diag = item.diagnostics || {};
+  const diag = effectiveItem.diagnostics || {};
   const failureLayerLabel = isRun
-    ? item.failureLayer || "Execution Layer"
+    ? effectiveItem.failureLayer || "Execution Layer"
     : `${(diag.suspectLayer || pillar).toUpperCase()} • ${diag.failureCategory || "Defect"}`;
 
   const stackTrace =
-    (isRun ? item.stackTrace : diag.stackTrace) ||
+    (isRun ? effectiveItem.stackTrace : diag.stackTrace) ||
     `// No failure stack trace captured for ${title}`;
 
-  const testCases = (isRun ? item.testCases : diag.testCases) || [];
+  const testCases = (isRun ? effectiveItem.testCases : diag.testCases) || [];
 
   const aiPrompt =
-    (isRun ? item.aiPrompt : diag.aiPrompt) ||
+    (isRun ? effectiveItem.aiPrompt : diag.aiPrompt) ||
     `Please diagnose "${title}" in the ${pillar.toUpperCase()} testing layer:\n${stackTrace}\nSuggest the root cause and code fix.`;
 
   const handleCopyStack = () => {
@@ -163,10 +197,10 @@ export function SlideOverInspectorDrawer({
                     <span>Pass / Fail</span>
                   </span>
                   <span className="font-mono text-xs font-semibold mt-1 block">
-                    <span className="text-[var(--ud-pass)]">{item.passed} passed</span>
+                    <span className="text-[var(--ud-pass)]">{effectiveItem.passed} passed</span>
                     <span className="text-[var(--ud-text-muted)]"> / </span>
-                    <span className={item.failed > 0 ? "text-[var(--ud-fail)]" : "text-[var(--ud-text-muted)]"}>
-                      {item.failed} failed
+                    <span className={effectiveItem.failed > 0 ? "text-[var(--ud-fail)]" : "text-[var(--ud-text-muted)]"}>
+                      {effectiveItem.failed} failed
                     </span>
                   </span>
                 </div>
@@ -176,7 +210,7 @@ export function SlideOverInspectorDrawer({
                     <span>Coverage & Time</span>
                   </span>
                   <span className="font-mono text-xs font-semibold text-[var(--ud-text)] mt-1 block">
-                    {fmtPct(item.coveragePct)} • {fmtDuration(item.durationMs)}
+                    {fmtPct(effectiveItem.coverageLinesPct ?? effectiveItem.coveragePct)} • {fmtDuration(effectiveItem.durationMs)}
                   </span>
                 </div>
               </>
@@ -206,14 +240,14 @@ export function SlideOverInspectorDrawer({
           </div>
 
           {/* Description / Root Cause Box */}
-          {(item.description || diag.summary) && (
+          {(effectiveItem.description || diag.summary) && (
             <div className="p-3 rounded-[var(--radius-md)] border border-[var(--ud-border)] bg-[var(--ud-surface-2)]/40 space-y-1">
               <div className="text-xs font-semibold text-[var(--ud-text)]">
                 {diag.summary || "Root Cause Assessment"}
               </div>
-              {item.description && (
+              {effectiveItem.description && (
                 <p className="text-xs text-[var(--ud-text-muted)] leading-relaxed">
-                  {item.description}
+                  {effectiveItem.description}
                 </p>
               )}
               {diag.failedStep && (
@@ -252,6 +286,11 @@ export function SlideOverInspectorDrawer({
               <span className="text-xs font-semibold uppercase tracking-wider text-[var(--ud-text-muted)]">
                 Executed Test Cases & Step Timings ({testCases.length})
               </span>
+              {loadingRunDetails && (
+                <span className="text-[11px] font-mono text-[var(--ud-text-muted)]">
+                  Loading full run scenarios...
+                </span>
+              )}
             </div>
 
             {testCases.length > 0 ? (

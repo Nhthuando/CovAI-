@@ -38,10 +38,16 @@ import {
     updateIntegrationScenarioController,
     applyIntegrationTestsController,
     installIntegrationDependenciesController,
+    getUnifiedQualityDashboardController,
+    getUnifiedTestRunInspectionController,
 } from "../controllers/coverage.controller.js";
 
 const router = express.Router();
 router.use(authMiddleware, enforceProjectEndpointPolicy('coverage'));
+
+// Unified Quality Overview Dashboard (Single-Project Multi-Layer Aggregation)
+router.get("/:snapshotId/unified-dashboard", authMiddleware, getUnifiedQualityDashboardController);
+router.get("/:snapshotId/unified-dashboard/runs/:runId", authMiddleware, getUnifiedTestRunInspectionController);
 
 // GET /api/coverage/:snapshotId/summary — fetch coverage summary result
 router.get("/:snapshotId/summary", authMiddleware, getCoverageSummary);

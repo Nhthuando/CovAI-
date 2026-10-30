@@ -3302,3 +3302,74 @@ export const optimizeSystemTestController = async (req, res) => {
         return res.status(error.statusCode || 500).json({ success: false, message: error.message || "Failed to optimize test file." });
     }
 };
+
+import {
+    buildUnifiedQualityDashboard,
+    getUnifiedTestRunInspection,
+} from "../services/unifiedQualityDashboard.service.js";
+
+/**
+ * GET /api/coverage/:snapshotId/unified-dashboard
+ * Returns the aggregated single-project Unified Quality Overview payload across Unit, Integration, and System layers.
+ */
+export const getUnifiedQualityDashboardController = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
+
+        const { snapshotId } = req.params;
+        if (!snapshotId || typeof snapshotId !== "string" || !snapshotId.trim()) {
+            return res.status(400).json({ success: false, message: "snapshotId is required." });
+        }
+
+        const data = await buildUnifiedQualityDashboard({
+            snapshotId: snapshotId.trim(),
+            userId,
+        });
+
+        return res.status(200).json({
+            success: true,
+            data,
+        });
+    } catch (error) {
+        console.error("[getUnifiedQualityDashboardController] Error:", error);
+        return res.status(error.statusCode || 500).json({
+            success: false,
+            message: error.message || "Failed to build unified quality dashboard.",
+        });
+    }
+};
+
+/**
+ * GET /api/coverage/:snapshotId/unified-dashboard/runs/:runId
+ * Returns full inspection details for a specific TestRun for the SlideOverInspectorDrawer.
+ */
+export const getUnifiedTestRunInspectionController = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
+
+        const { snapshotId, runId } = req.params;
+        if (!snapshotId || !runId) {
+            return res.status(400).json({ success: false, message: "snapshotId and runId are required." });
+        }
+
+        const data = await getUnifiedTestRunInspection({
+            snapshotId: snapshotId.trim(),
+            runId: runId.trim(),
+            userId,
+        });
+
+        return res.status(200).json({
+            success: true,
+            data,
+        });
+    } catch (error) {
+        console.error("[getUnifiedTestRunInspectionController] Error:", error);
+        return res.status(error.statusCode || 500).json({
+            success: false,
+            message: error.message || "Failed to load test run inspection details.",
+        });
+    }
+};
+

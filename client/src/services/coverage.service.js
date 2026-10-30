@@ -324,3 +324,21 @@ export async function applyIntegrationTests(snapshotId, { testIds = [], targetFi
     });
     return handleResponse(res);
 }
+
+export async function getUnifiedQualityDashboard(snapshotId) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/unified-dashboard`, {
+        headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
+}
+
+export async function getUnifiedTestRunInspection(snapshotId, runId) {
+    const res = await fetch(
+        `${BASE_URL}/coverage/${snapshotId}/unified-dashboard/runs/${encodeURIComponent(runId)}`,
+        {
+            headers: getAuthHeaders(),
+        }
+    );
+    return handleResponse(res);
+}
+

@@ -3,7 +3,6 @@ import {
   ChevronLeft,
   ChevronRight,
   ArrowUpRight,
-  FlaskConical,
 } from "lucide-react";
 import { PillarBadge } from "../primitives/PillarBadge.jsx";
 import { StatusPill } from "../primitives/StatusPill.jsx";
@@ -19,14 +18,12 @@ export function UnifiedRecentRunsTable({
   historyData,
   onNavigateWorkspace,
   onInspectItem,
-  onSwitchToDemo,
 }) {
   const [pillarFilter, setPillarFilter] = useState("all");
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 5;
 
   const runs = useMemo(() => historyData?.runs || [], [historyData?.runs]);
-  const source = historyData?.source || "live";
 
   // Filter runs
   const filteredRuns = useMemo(() => {
@@ -44,11 +41,24 @@ export function UnifiedRecentRunsTable({
   const handleViewRun = (run) => {
     if (onInspectItem) {
       onInspectItem({
+        inspectorType: "run",
         id: run.id,
-        title: `Test Run ${run.id} — ${run.type.toUpperCase()} Suite`,
+        runId: run.runId || run.id,
+        shortId: run.shortId || run.id,
+        title: `Test Run ${run.shortId || run.id} — ${run.type.toUpperCase()} Suite`,
         pillar: run.type,
+        type: run.type,
+        framework: run.framework,
         status: run.status,
-        targetName: run.id,
+        passed: run.passed,
+        failed: run.failed,
+        flaky: run.flaky,
+        skipped: run.skipped,
+        total: run.total,
+        coveragePct: run.coveragePct,
+        startedAt: run.startedAt,
+        commitSha: run.commitSha,
+        targetName: run.shortId || run.id,
         summary:
           run.summary ||
           `Executed ${run.total} tests (${run.passed} passed, ${run.failed} failed) with ${fmtPct(
@@ -71,10 +81,10 @@ export function UnifiedRecentRunsTable({
               step: run.failed > 0 ? "Failed assertion step" : "Completed",
             },
           ],
-        focusParams: {},
+        focusParams: run.focusParams || {},
         aiPrompt:
           run.aiPrompt ||
-          `Analyze test execution run ${run.id} (${run.type} suite): ${run.passed}/${run.total} passed, ${run.failed} failed, coverage ${fmtPct(
+          `Analyze test execution run ${run.shortId || run.id} (${run.type} suite): ${run.passed}/${run.total} passed, ${run.failed} failed, coverage ${fmtPct(
             run.coveragePct
           )}. Help me inspect and resolve any failures or coverage gaps.`,
       });
@@ -90,7 +100,6 @@ export function UnifiedRecentRunsTable({
       id="ud-zone-history"
       title="Recent Test Executions"
       description="Unified multi-suite run log — click View to inspect run steps & stack traces"
-      source={source}
       contentClassName="p-0 flex flex-col justify-between"
       className="h-full"
       actions={
@@ -137,8 +146,10 @@ export function UnifiedRecentRunsTable({
                   className="hover:bg-[var(--ud-surface-2)] transition-colors group cursor-pointer"
                 >
                   {/* Run ID */}
-                  <td className="py-2.5 px-3 font-semibold text-[var(--ud-text)]">
-                    {run.id}
+                  <td className="py-2.5 px-3 font-semibold text-[var(--ud-text)]" title={run.id}>
+                    <span className="px-1.5 py-0.5 rounded bg-[var(--ud-surface-2)] border border-[var(--ud-border)] text-[11px] font-mono">
+                      {run.shortId || `#${(run.id || "").slice(-6)}`}
+                    </span>
                   </td>
 
                   {/* Suite Type */}
@@ -208,24 +219,14 @@ export function UnifiedRecentRunsTable({
                   <div className="max-w-xs mx-auto space-y-2">
                     <p className="text-xs font-semibold text-[var(--ud-text)]">
                       {runs.length === 0
-                        ? "No Test Executions Recorded in Live State"
+                        ? "No Test Executions Recorded Yet"
                         : "No test executions match this filter"}
                     </p>
                     <p className="text-[11px] text-[var(--ud-text-muted)]">
                       {runs.length === 0
-                        ? "Run a test suite or switch to Demo Showcase mode to inspect execution logs and step timings."
+                        ? "Execute Unit, Integration, or System E2E suites to inspect execution logs, scenarios, and step timings."
                         : "Select 'All' to view runs across all testing suites."}
                     </p>
-                    {runs.length === 0 && onSwitchToDemo && (
-                      <button
-                        type="button"
-                        onClick={onSwitchToDemo}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-sm)] border border-[var(--ud-warn)]/40 bg-[var(--ud-warn)]/15 text-xs font-mono font-semibold text-[var(--ud-warn)] hover:bg-[var(--ud-warn)]/25 cursor-pointer mt-1"
-                      >
-                        <FlaskConical size={13} />
-                        <span>Enable Demo Showcase</span>
-                      </button>
-                    )}
                   </div>
                 </td>
               </tr>
