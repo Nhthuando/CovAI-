@@ -1171,6 +1171,36 @@ describe("Test", () => {
             const parsed = parseJavaScriptCode(sanitized);
             expect(parsed.success).toBe(true);
         });
+
+        test("healControllerFixturesWithAst does not inject redundant beforeEach into nested describe blocks", () => {
+            const nestedDescribeCode = `describe("auth.controller", () => {
+  let req, res, next;
+  beforeEach(() => {
+    req = { user: { id: 'u1', role: 'ADMIN' } };
+    res = { cookie: vi.fn(), status: vi.fn().mockReturnThis() };
+  });
+  describe("login", () => {
+    it("logs in", async () => {
+      req.body = { email: "test" };
+    });
+  });
+});`;
+            const fixed = healControllerFixturesWithAst(nestedDescribeCode, "tests/controllers/auth.controller.test.js");
+            expect((fixed.match(/beforeEach/g) || []).length).toBe(1);
+            expect(fixed).toContain("req = { user: { id: 'u1', role: 'ADMIN' } }");
+        });
+
+        test("cleanAndDeduplicateTestContent does not mutate expect(res.status).toHaveBeenCalledWith(400) to expect(next).toHaveBeenCalled()", () => {
+            const codeWith400 = `describe("auth.controller", () => {
+  it("fails on invalid input", async () => {
+    await authController.register(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+});`;
+            const sanitized = cleanAndDeduplicateTestContent(codeWith400, "", "auth.controller.test.js");
+            expect(sanitized).toContain("expect(res.status).toHaveBeenCalledWith(400)");
+            expect(sanitized).not.toContain("expect(next).toHaveBeenCalled()");
+        });
     });
 });
 

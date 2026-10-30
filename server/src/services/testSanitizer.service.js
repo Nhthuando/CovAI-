@@ -626,6 +626,28 @@ export const healControllerFixturesWithAst = (code, filePath = "") => {
         return code;
     }
 
+    // Check if req is already assigned in any beforeEach hook in the file
+    let fileHasReqInBeforeEach = false;
+    try {
+        traverse(astObj, {
+            CallExpression(cPath) {
+                if (cPath.node.callee && cPath.node.callee.name === "beforeEach") {
+                    cPath.traverse({
+                        AssignmentExpression(aPath) {
+                            if (aPath.node.left && aPath.node.left.name === "req") {
+                                fileHasReqInBeforeEach = true;
+                            }
+                        }
+                    });
+                }
+            }
+        });
+    } catch (_) { }
+
+    if (fileHasReqInBeforeEach) {
+        return code;
+    }
+
     let modified = code;
     const insertions = [];
 
@@ -633,6 +655,9 @@ export const healControllerFixturesWithAst = (code, filePath = "") => {
         traverse(astObj, {
             CallExpression(path) {
                 if (path.node.callee && path.node.callee.name === "describe") {
+                    const hasParentDescribe = Boolean(path.findParent(p => p.isCallExpression() && p.node.callee && p.node.callee.name === "describe"));
+                    if (hasParentDescribe) return;
+
                     const describeFn = path.node.arguments[1];
                     if (!describeFn || !describeFn.body || describeFn.body.type !== "BlockStatement") return;
 
@@ -662,13 +687,18 @@ export const healControllerFixturesWithAst = (code, filePath = "") => {
 
                     if (hasReqUsage && !hasReqAssignInBeforeEach) {
                         const fixture = `
-    req = { body: {}, params: {}, query: {}, headers: {}, file: null, files: [], user: { id: 1, role: 'admin' } };
+    req = { body: {}, params: {}, query: {}, headers: {}, file: null, files: [], cookies: {}, user: { id: 1, role: 'admin' } };
     res = {
-      status: (typeof jest !== 'undefined' ? jest.fn : (typeof vi !== 'undefined' ? vi.fn : (() => ({}))))().mockReturnThis(),
-      json: (typeof jest !== 'undefined' ? jest.fn : (typeof vi !== 'undefined' ? vi.fn : (() => ({}))))().mockReturnThis(),
-      send: (typeof jest !== 'undefined' ? jest.fn : (typeof vi !== 'undefined' ? vi.fn : (() => ({}))))().mockReturnThis(),
-      setHeader: (typeof jest !== 'undefined' ? jest.fn : (typeof vi !== 'undefined' ? vi.fn : (() => ({}))))().mockReturnThis(),
-      end: (typeof jest !== 'undefined' ? jest.fn : (typeof vi !== 'undefined' ? vi.fn : (() => ({}))))().mockReturnThis(),
+      status: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),
+      json: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),
+      send: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),
+      cookie: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),
+      clearCookie: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),
+      redirect: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),
+      setHeader: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),
+      sendStatus: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),
+      write: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),
+      end: (typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({}))))().mockReturnThis(),
     };
     next = (typeof jest !== 'undefined' ? jest.fn : (typeof vi !== 'undefined' ? vi.fn : (() => ({}))))();`;
 
@@ -2813,7 +2843,7 @@ const { models } = { models: _mMod };`;
     }
 
     // 16. Heal Express controller test calls with correct exported method names and `next` callback
-    if (cleaned.includes("requirement.controller") || cleaned.includes("controller.")) {
+    if (cleaned.includes("requirement.controller") && !cleaned.includes("auth.controller") && !cleaned.includes("category.controller")) {
         cleaned = cleaned.replace(/\bcontroller\.uploadRequirementDocument\b/g, "controller.uploadDocument");
         cleaned = cleaned.replace(/\bcontroller\.updateRequirement\b/g, "controller.updateRequirementController");
         cleaned = cleaned.replace(/\bcontroller\.analyzeRequirement\b/g, "controller.reEvaluateRequirementController");
@@ -2832,10 +2862,7 @@ const { models } = { models: _mMod };`;
             `$1\n  let req, res, next;\n  beforeEach(() => {\n    req = { body: {}, query: {}, params: {}, file: null };\n    res = {\n      json: jest.fn().mockReturnThis(),\n      status: jest.fn().mockReturnThis(),\n      send: jest.fn().mockReturnThis(),\n      setHeader: jest.fn().mockReturnThis()\n    };\n    next = jest.fn();\n    jest.clearAllMocks();\n  });`
         );
 
-        cleaned = cleaned.replace(
-            /expect\(res\.status\)\.toHaveBeenCalledWith\(400\);?/g,
-            "expect(next).toHaveBeenCalled();"
-        );
+
 
         cleaned = cleaned.replace(
             /await expect\((controller\.[a-zA-Z0-9_$]+\(req, res, next\))\)\.rejects\.toThrow\(\);?/g,
