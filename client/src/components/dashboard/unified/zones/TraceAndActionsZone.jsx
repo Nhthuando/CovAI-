@@ -8,7 +8,6 @@ export function TraceAndActionsZone({
   onAskAi,
   activeCrossFilter = null,
   onClearCrossFilter,
-  onSwitchToDemo,
   className = "",
 }) {
   const matrix = vm?.matrix || {};
@@ -25,7 +24,6 @@ export function TraceAndActionsZone({
           onAskAi={onAskAi}
           activeCrossFilter={activeCrossFilter}
           onClearCrossFilter={onClearCrossFilter}
-          onSwitchToDemo={onSwitchToDemo}
         />
       </div>
 

@@ -127,9 +127,17 @@ function LayoutInner() {
       return;
     }
     setShowCFG(false);
-    setActiveActivity(id);
+    if (id === "system") {
+      setActiveActivity("coverage");
+      setCoverageType("system");
+    } else {
+      setActiveActivity(id);
+    }
     const params = new URLSearchParams(location.search);
     params.set("tab", id);
+    params.delete("focusFile");
+    params.delete("focusEndpoint");
+    params.delete("focusScenario");
     navigate(`${location.pathname}?${params.toString()}`);
   };
 
@@ -160,6 +168,7 @@ function LayoutInner() {
         message: `Focus target: ${focusFile}`,
       });
     } else if (focusEndpoint) {
+      setIntegrationInitialContext((prev) => ({ ...prev, focusEndpoint }));
       showToast({
         type: "info",
         title: "Navigated to Integration Tests",
@@ -201,7 +210,16 @@ function LayoutInner() {
   const [activeFileId, setActiveFileId] = useState(null);
   const initialCoverageType = searchParams.get("coverageType") || searchParams.get("type") || (searchParams.get("tab") === "system" ? "system" : "unit");
   const [coverageType, setCoverageType] = useState(initialCoverageType);
-  const screenContext = useMemo(() => ({ activity: activeActivity, testType: activeActivity === "coverage" ? coverageType : undefined, filePath: activeActivity === "explorer" ? activeTabId || undefined : undefined }), [activeActivity, coverageType, activeTabId]);
+  const [unifiedSummary, setUnifiedSummary] = useState(null);
+  const screenContext = useMemo(
+    () => ({
+      activity: activeActivity,
+      testType: activeActivity === "coverage" ? coverageType : activeActivity === "overview" ? "overview" : undefined,
+      filePath: activeActivity === "explorer" ? activeTabId || undefined : undefined,
+      unifiedSummary: activeActivity === "overview" ? unifiedSummary : undefined,
+    }),
+    [activeActivity, coverageType, activeTabId, unifiedSummary]
+  );
   const [showImport, setShowImport] = useState(false);
   const [showQualityDashboard, setShowQualityDashboard] = useState(false);
   const [cfgInitialContext, setCfgInitialContext] = useState(null);
@@ -1136,6 +1154,7 @@ function LayoutInner() {
                 navigate(targetUrl);
               }}
               onAskAi={handleAskAiPrompt}
+              onSummaryChange={setUnifiedSummary}
             />
           </div>
 
@@ -1153,6 +1172,7 @@ function LayoutInner() {
                 }
                 projectId={project?.id}
                 treeVersion={treeVersion}
+                focusFile={searchParams.get("focusFile")}
                 onOpenFile={handleOpenFileByPath}
                 onSuggestTestcase={handleSuggestTestcase}
                 onOpenCFG={handleOpenCFG}
@@ -1182,6 +1202,7 @@ function LayoutInner() {
             <div className={coverageType === "system" ? "h-full overflow-y-auto" : "hidden"}>
               <SystemTestDashboard
                 snapshotId={
+                  searchParams.get("snapshotId") ||
                   project?.snapshots?.[0]?.id ||
                   project?.latestSnapshotId ||
                   (project?.id
@@ -1190,6 +1211,7 @@ function LayoutInner() {
                   testPromptSnapshotId
                 }
                 projectId={project?.id}
+                focusScenario={searchParams.get("focusScenario")}
                 onOpenFile={handleOpenFileByPath}
               />
             </div>

@@ -4,7 +4,6 @@ import { DeltaIndicator } from "../primitives/DeltaIndicator.jsx";
 import { StackedBar } from "../primitives/StackedBar.jsx";
 import { MeterBar } from "../primitives/MeterBar.jsx";
 import { PillarBadge } from "../primitives/PillarBadge.jsx";
-import { DemoDataBadge } from "../primitives/DemoDataBadge.jsx";
 import { fmtPct, fmtCount, fmtDuration } from "../../../../services/unifiedDashboard/format.js";
 
 export function ExecutiveKpiRow({ vm, loading = false, className = "" }) {
@@ -52,7 +51,9 @@ export function ExecutiveKpiRow({ vm, loading = false, className = "" }) {
             <span>Health Standard</span>
             <span className="font-mono text-xs font-semibold text-[var(--ud-text)]">
               {health.score === null || health.score === undefined
-                ? "No Runs Yet"
+                ? "No Baseline / No Runs Yet"
+                : (vm?.qualityGate?.status === "WARNING" || vm?.qualityGate?.status === "FAILED" || (execution.failed || 0) > 0) && health.score >= 80
+                ? "At Risk (Gate Warning)"
                 : health.score >= 80
                 ? "Healthy"
                 : health.score >= 60
@@ -151,7 +152,6 @@ export function ExecutiveKpiRow({ vm, loading = false, className = "" }) {
         id="ud-kpi-ai"
         className="col-span-12 sm:col-span-6 xl:col-span-3"
         label="AI Tests & Coverage Gaps"
-        badge={ai.source === "demo" ? <DemoDataBadge /> : null}
         value={fmtCount(ai.aiGenerated || 0)}
         unit="generated"
         icon={Sparkles}

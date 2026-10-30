@@ -123,7 +123,7 @@ export function TestPyramidVisualizer({
       : shape === "hourglass"
       ? "Hourglass Distribution"
       : shape === "insufficient"
-      ? "No Tests Executed — Run suites or enable Demo Mode"
+      ? "No Tests Executed — Run suites to establish baseline"
       : "Unbalanced Pyramid");
 
   const resolvedTone =

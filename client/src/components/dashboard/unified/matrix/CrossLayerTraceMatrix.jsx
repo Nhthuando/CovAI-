@@ -9,7 +9,6 @@ import {
   ArrowRight,
   Filter,
   X,
-  FlaskConical,
 } from "lucide-react";
 import { PillarBadge } from "../primitives/PillarBadge.jsx";
 import { StatusPill } from "../primitives/StatusPill.jsx";
@@ -30,7 +29,7 @@ function matchesCrossFilter(row, cf) {
     const rowCats = (row.failureCategories || []).map((c) => c.toLowerCase());
     if (rowCats.some((rc) => rc.includes(cat) || cat.includes(rc))) return true;
 
-    const stuck = (row.layerDetails?.integration?.stuckLayer || "").toLowerCase();
+    const stuck = (row.layerDetails?.integration?.stuckLayer || row.layerDetails?.integration?.failureLayer || "").toLowerCase();
     const sysKind = (row.layerDetails?.system?.failureKind || "").toLowerCase();
     const diag = (row.rootCause?.diagnosis || "").toLowerCase();
     if (
@@ -60,14 +59,12 @@ export function CrossLayerTraceMatrix({
   onAskAi,
   activeCrossFilter = null,
   onClearCrossFilter,
-  onSwitchToDemo,
 }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterState, setFilterState] = useState("all"); // 'all' | 'failure' | 'low_coverage'
-  const [expandedRows, setExpandedRows] = useState(() => new Set(["mod-checkout"]));
+  const [expandedRows, setExpandedRows] = useState(() => new Set());
 
   const rows = useMemo(() => matrixData?.rows || [], [matrixData?.rows]);
-  const source = matrixData?.source || "live";
 
   // Toggle row expansion
   const toggleExpand = (rowId) => {
@@ -182,7 +179,6 @@ export function CrossLayerTraceMatrix({
       id="ud-zone-matrix"
       title="Cross-Layer Traceability Matrix"
       description="Click any module row to expand its 3-tier Unit → Integration → System diagnostic flow"
-      source={source}
       contentClassName="p-0"
       className="h-full"
       actions={
@@ -714,16 +710,16 @@ export function CrossLayerTraceMatrix({
                   <div className="max-w-sm mx-auto space-y-2.5">
                     <p className="text-xs font-semibold text-[var(--ud-text)]">
                       {rows.length === 0
-                        ? "No Cross-Layer Modules Recorded in Live State"
+                        ? "No Cross-Layer Domain Modules Discovered Yet"
                         : "No modules match the active filter criteria"}
                     </p>
                     <p className="text-[11px] text-[var(--ud-text-muted)] font-sans leading-relaxed">
                       {rows.length === 0
-                        ? "Run your test suites or switch to Demo Showcase mode to explore full 3-tier cross-layer traceability and root-cause diagnostics."
+                        ? "Execute Unit, Integration, or System test suites to populate 3-tier cross-layer traceability and automated root-cause diagnostics."
                         : "Try clearing the search query or removing the active cross-filter."}
                     </p>
-                    <div className="flex items-center justify-center gap-2 pt-1">
-                      {activeCrossFilter && onClearCrossFilter && (
+                    {activeCrossFilter && onClearCrossFilter && (
+                      <div className="flex items-center justify-center gap-2 pt-1">
                         <button
                           type="button"
                           onClick={onClearCrossFilter}
@@ -732,18 +728,8 @@ export function CrossLayerTraceMatrix({
                           <X size={12} />
                           <span>Clear Cross-Filter</span>
                         </button>
-                      )}
-                      {rows.length === 0 && onSwitchToDemo && (
-                        <button
-                          type="button"
-                          onClick={onSwitchToDemo}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-sm)] border border-[var(--ud-warn)]/40 bg-[var(--ud-warn)]/15 text-xs font-mono font-semibold text-[var(--ud-warn)] hover:bg-[var(--ud-warn)]/25 cursor-pointer"
-                        >
-                          <FlaskConical size={13} />
-                          <span>Enable Demo Showcase</span>
-                        </button>
-                      )}
-                    </div>
+                      </div>
+                    )}
                   </div>
                 </td>
               </tr>
