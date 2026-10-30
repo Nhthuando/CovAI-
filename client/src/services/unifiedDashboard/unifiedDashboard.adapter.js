@@ -12,6 +12,13 @@ import {
   getPassRate,
 } from "./unifiedDashboard.selectors.js";
 
+function toFixedPct(val, fallback = 0) {
+  if (val === null || val === undefined || val === "") return fallback;
+  const num = Number(val);
+  if (Number.isNaN(num)) return fallback;
+  return Number(num.toFixed(1));
+}
+
 /**
  * Adapt Raw Unit Test Data into PillarVM (Live Mode)
  */
@@ -58,20 +65,20 @@ export function adaptUnit(raw) {
   const passRate = getPassRate(passedTests, failedTests) ?? 0;
   const avgDurationMs = totalTests > 0 ? Math.round(durationMs / totalTests) : 0;
 
-  // Coverage percentages
+  // Coverage percentages (safely handled via toFixedPct)
   const cov = summary?.coverage || {};
   const coverageMetrics = {
-    lines: Number((cov.lines ?? 0).toFixed ? cov.lines.toFixed(1) : cov.lines ?? 0),
-    branches: Number((cov.branches ?? 0).toFixed ? cov.branches.toFixed(1) : cov.branches ?? 0),
-    functions: Number((cov.functions ?? 0).toFixed ? cov.functions.toFixed(1) : cov.functions ?? 0),
-    statements: Number((cov.statements ?? 0).toFixed ? cov.statements.toFixed(1) : cov.statements ?? 0),
+    lines: toFixedPct(cov.lines ?? cov.line),
+    branches: toFixedPct(cov.branches ?? cov.branch),
+    functions: toFixedPct(cov.functions ?? cov.function),
+    statements: toFixedPct(cov.statements ?? cov.statement),
   };
 
   // Find lowest branch coverage files
   const validFiles = Array.isArray(files)
     ? files.filter(
         (f) =>
-          f.filePath &&
+          f?.filePath &&
           !f.filePath.includes("node_modules") &&
           !f.filePath.includes(".test.") &&
           !f.filePath.includes(".spec.")
@@ -81,9 +88,9 @@ export function adaptUnit(raw) {
   const sortedFiles = [...validFiles].sort((a, b) => (a.branchesPct ?? 0) - (b.branchesPct ?? 0));
   const lowCoverageItems = sortedFiles.slice(0, 5).map((f) => ({
     filePath: f.filePath,
-    name: f.filePath.split(/[/\\]/).pop(),
-    branchesPct: Number((f.branchesPct ?? 0).toFixed(1)),
-    linesPct: Number((f.linesPct ?? 0).toFixed(1)),
+    name: (f.filePath || "").split(/[/\\]/).pop(),
+    branchesPct: toFixedPct(f.branchesPct),
+    linesPct: toFixedPct(f.linesPct),
     line: 1,
   }));
 
@@ -176,37 +183,17 @@ export function adaptIntegration(workspaceData, coverageSummary = null) {
   const epMetrics = wsSummary.endpointCoverageMetrics || {};
   const apiEndpointPct =
     epMetrics.endpointCoveragePct !== undefined
-      ? Number(
-          epMetrics.endpointCoveragePct.toFixed
-            ? epMetrics.endpointCoveragePct.toFixed(1)
-            : epMetrics.endpointCoveragePct
-        )
+      ? toFixedPct(epMetrics.endpointCoveragePct)
       : totalApis > 0
-      ? Number(((passedTests / totalApis) * 100).toFixed(1))
+      ? toFixedPct((passedTests / totalApis) * 100)
       : 0;
 
   const codeCov = wsSummary.codeCoverage || coverageSummary?.coverage || {};
   const coverageMetrics = {
-    lines: Number(
-      (codeCov.line ?? codeCov.lines ?? 0).toFixed
-        ? (codeCov.line ?? codeCov.lines ?? 0).toFixed(1)
-        : codeCov.line ?? codeCov.lines ?? 0
-    ),
-    branches: Number(
-      (codeCov.branch ?? codeCov.branches ?? 0).toFixed
-        ? (codeCov.branch ?? codeCov.branches ?? 0).toFixed(1)
-        : codeCov.branch ?? codeCov.branches ?? 0
-    ),
-    functions: Number(
-      (codeCov.function ?? codeCov.functions ?? 0).toFixed
-        ? (codeCov.function ?? codeCov.functions ?? 0).toFixed(1)
-        : codeCov.function ?? codeCov.functions ?? 0
-    ),
-    statements: Number(
-      (codeCov.statement ?? codeCov.statements ?? 0).toFixed
-        ? (codeCov.statement ?? codeCov.statements ?? 0).toFixed(1)
-        : codeCov.statement ?? codeCov.statements ?? 0
-    ),
+    lines: toFixedPct(codeCov.line ?? codeCov.lines),
+    branches: toFixedPct(codeCov.branch ?? codeCov.branches),
+    functions: toFixedPct(codeCov.function ?? codeCov.functions),
+    statements: toFixedPct(codeCov.statement ?? codeCov.statements),
     apiEndpoint: apiEndpointPct,
     uncoveredApis,
     totalApis,
@@ -235,8 +222,8 @@ export function adaptIntegration(workspaceData, coverageSummary = null) {
     .map((e) => ({
       filePath: e.path,
       name: `${e.method || "GET"} ${e.path}`,
-      branchesPct: Number((e.mappedCodeCoverage?.branch ?? 0).toFixed(1)),
-      linesPct: Number((e.mappedCodeCoverage?.line ?? 0).toFixed(1)),
+      branchesPct: toFixedPct(e.mappedCodeCoverage?.branch),
+      linesPct: toFixedPct(e.mappedCodeCoverage?.line),
       line: 1,
     }));
 
@@ -307,9 +294,9 @@ export function adaptSystem(systemSummary, scenariosList = []) {
   const frontendCounters = s.coverageSummary?.frontend?.counters || {};
   const flowCoveragePct =
     frontendCounters.lines?.pct !== undefined
-      ? Number(frontendCounters.lines.pct.toFixed(1))
+      ? toFixedPct(frontendCounters.lines.pct)
       : totalTests > 0
-      ? passRate
+      ? toFixedPct(passRate)
       : 0;
 
   // Failure categories: strictly 0 when failedTests === 0 in Live Mode
