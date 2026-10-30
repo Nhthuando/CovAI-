@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useUnifiedDashboard } from "../../../hooks/useUnifiedDashboard.js";
 import { useRunAllSuites } from "../../../hooks/useRunAllSuites.js";
@@ -12,37 +12,37 @@ import { PyramidAndPillarsZone } from "./zones/PyramidAndPillarsZone.jsx";
 import { TraceAndActionsZone } from "./zones/TraceAndActionsZone.jsx";
 import { TrendsAndHistoryZone } from "./zones/TrendsAndHistoryZone.jsx";
 import { SlideOverInspectorDrawer } from "./inspector/SlideOverInspectorDrawer.jsx";
-import { AlertTriangle, RefreshCw, FlaskConical, Play, Info } from "lucide-react";
+import { AlertTriangle, RefreshCw } from "lucide-react";
+
+const EMPTY_PROJECTS = [];
+const EMPTY_SNAPSHOTS = [];
 
 export function UnifiedDashboard({
   projectId,
   project,
-  projects = [],
+  projects = EMPTY_PROJECTS,
   onSelectProject = null,
   snapshotId,
   onNavigateWorkspace = null,
   onAskAi = null,
+  onSummaryChange = null,
   className = "",
 }) {
   const location = useLocation();
   const navigate = useNavigate();
 
-  // Initialize dataMode from URL query parameter (?mode=demo or ?mode=live)
-  const [dataMode, setDataMode] = useState(() => {
-    const params = new URLSearchParams(location.search);
-    return params.get("mode") === "demo" ? "demo" : "live";
-  });
-
   // Track active snapshot selection (allows switching snapshots interactively)
   const [activeSnapshotId, setActiveSnapshotId] = useState(
-    () => snapshotId || "cmvs3749"
+    () => snapshotId || project?.snapshots?.[0]?.id || ""
   );
 
   useEffect(() => {
     if (snapshotId) {
       setActiveSnapshotId(snapshotId);
+    } else if (project?.snapshots?.[0]?.id) {
+      setActiveSnapshotId(project.snapshots[0].id);
     }
-  }, [snapshotId]);
+  }, [snapshotId, project?.snapshots]);
 
   // Cross-filtering state (triggered from Zone 3 Pyramid or Pillar Failure Breakdowns)
   const [activeCrossFilter, setActiveCrossFilter] = useState(null);
@@ -51,16 +51,78 @@ export function UnifiedDashboard({
   const [inspectedItem, setInspectedItem] = useState(null);
 
   const projectName = project?.name || "CovAI Project";
-  const snapshots = project?.snapshots || [];
+  const snapshots = project?.snapshots || EMPTY_SNAPSHOTS;
 
-  // 1. Fetch & Adapt Multi-Tier Data
+  // 1. Fetch & Adapt Real Multi-Tier Data
   const { vm, isLoading, isError, error, refetch } = useUnifiedDashboard({
     snapshotId: activeSnapshotId,
     projectId,
     projectName,
     snapshots,
-    dataMode,
   });
+
+  // Publish live unified quality summary to parent / COV AI Agent context (guarded against duplicate emissions)
+  const lastSummaryJsonRef = useRef("");
+  useEffect(() => {
+    if (!vm) return;
+    const summaryPayload = {
+      projectId: vm.context?.projectId,
+      projectName: vm.context?.projectName,
+      snapshotId: vm.context?.snapshotId,
+      healthScore: vm.health?.score ?? null,
+      healthGrade: vm.health?.grade ?? "--",
+      qualityGateStatus: vm.qualityGate?.status ?? "UNVERIFIED",
+      qualityGateLabel: vm.qualityGate?.label ?? "UNVERIFIED",
+      totalExecutedTests: vm.execution?.total ?? 0,
+      passedTests: vm.execution?.passed ?? 0,
+      failedTests: vm.execution?.failed ?? 0,
+      uncoveredApis: vm.execution?.uncoveredApis ?? 0,
+      overallCoveragePct: vm.coverage?.overall ?? null,
+      coverageOverallPct: vm.coverage?.overall ?? null,
+      unitLinesPct: vm.coverage?.codePct ?? null,
+      unitBranchesPct: vm.coverage?.branchPct ?? null,
+      apiCoveragePct: vm.coverage?.apiPct ?? null,
+      systemFlowPct: vm.coverage?.flowPct ?? null,
+      flowCoveragePct: vm.coverage?.flowPct ?? null,
+      pyramidShape: vm.pyramid?.badgeTitle ?? null,
+      lowBranchCoverageFiles: (vm.pillars?.unit?.lowCoverageItems || []).slice(0, 4),
+      failingModules: (vm.matrix?.rows || [])
+        .filter(
+          (r) =>
+            r.unit?.status === "fail" ||
+            r.integration?.status === "fail" ||
+            r.system?.status === "fail"
+        )
+        .map((r) => ({
+          moduleName: r.moduleName,
+          suspectLayer: r.rootCause?.suspectLayer,
+          summary: r.rootCause?.summary,
+          diagnosis: r.rootCause?.diagnosis,
+          endpoint: r.integration?.endpoint,
+          unitFile: r.unit?.path,
+        })),
+      topActions: (vm.actions?.items || []).slice(0, 5).map((a) => ({
+        priority: a.priority,
+        pillar: a.pillar,
+        title: a.title,
+        targetName: a.targetName,
+        description: a.description,
+      })),
+    };
+
+    const serialized = JSON.stringify(summaryPayload);
+    if (serialized === lastSummaryJsonRef.current) return;
+    lastSummaryJsonRef.current = serialized;
+
+    if (onSummaryChange) {
+      onSummaryChange(summaryPayload);
+    }
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("covai:unified-summary-updated", { detail: summaryPayload })
+      );
+    }
+  }, [vm, onSummaryChange]);
 
   // 2. Multi-Suite Sequential Run
   const runAllState = useRunAllSuites({
@@ -69,23 +131,12 @@ export function UnifiedDashboard({
     onCompleted: () => refetch(),
   });
 
-  // 3. Data Mode Switch Handler
-  const handleChangeDataMode = useCallback(
-    (nextMode) => {
-      const normalized = nextMode === "demo" ? "demo" : "live";
-      setDataMode(normalized);
-      setActiveCrossFilter(null);
-      const params = new URLSearchParams(location.search);
-      params.set("mode", normalized);
-      navigate(`${location.pathname}?${params.toString()}`, { replace: true });
-    },
-    [location, navigate]
-  );
-
-  // 4. Snapshot Selection Handler
+  // 3. Snapshot Selection Handler
   const handleSelectSnapshot = useCallback(
     (newSnapshotId) => {
+      if (!newSnapshotId) return;
       setActiveSnapshotId(newSnapshotId);
+      setActiveCrossFilter(null);
       const params = new URLSearchParams(location.search);
       params.set("snapshotId", newSnapshotId);
       navigate(`${location.pathname}?${params.toString()}`, { replace: true });
@@ -93,7 +144,7 @@ export function UnifiedDashboard({
     [location, navigate]
   );
 
-  // 5. Workspace Navigation Handler with deep-link focus
+  // 4. Workspace Navigation Handler with deep-link focus
   const handleNavigate = useCallback(
     (pillar, focusParams = {}) => {
       if (onNavigateWorkspace) {
@@ -106,7 +157,7 @@ export function UnifiedDashboard({
     [onNavigateWorkspace, location, navigate]
   );
 
-  // 6. Cross-Filter Handler (scrolls smoothly to Zone 4 when activated)
+  // 5. Cross-Filter Handler (scrolls smoothly to Zone 4 when activated)
   const handleSelectCrossFilter = useCallback((filterPayload) => {
     setActiveCrossFilter(filterPayload);
     if (filterPayload && typeof document !== "undefined") {
@@ -155,9 +206,6 @@ export function UnifiedDashboard({
     );
   }
 
-  const isLiveNoTests =
-    dataMode === "live" && (vm?.execution?.total || 0) === 0;
-
   return (
     <div
       className={`unified-dashboard bg-[var(--ud-bg)] text-[var(--ud-text)] w-full min-h-full font-sans transition-colors duration-150 ${className}`}
@@ -169,54 +217,11 @@ export function UnifiedDashboard({
             vm={vm}
             projects={projects}
             onSelectProject={onSelectProject}
-            dataMode={dataMode}
-            onChangeDataMode={handleChangeDataMode}
             onSelectSnapshot={handleSelectSnapshot}
             runAllState={runAllState}
             onNavigateWorkspace={handleNavigate}
           />
         </ZoneErrorBoundary>
-
-        {/* Live Empty State Callout Banner when 0 tests have been executed */}
-        {isLiveNoTests && (
-          <div className="rounded-[var(--radius-md)] border border-[var(--ud-border)] bg-[var(--ud-surface)] px-4 py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 ud-no-print">
-            <div className="flex items-start sm:items-center gap-2.5 text-xs">
-              <Info
-                size={16}
-                className="text-[var(--ud-unit)] shrink-0 mt-0.5 sm:mt-0"
-              />
-              <div>
-                <span className="font-semibold text-[var(--ud-text)]">
-                  Live State Active — 0 Executed Tests Recorded
-                </span>
-                <span className="text-[var(--ud-text-muted)] ml-1.5">
-                  {vm?.execution?.uncoveredApis > 0
-                    ? `(${vm.execution.uncoveredApis} uncovered API endpoints discovered; 0 failure counts across all breakdown layers).`
-                    : "Run your project test suites or switch to Demo Showcase to explore a 100% mathematically unified dataset."}
-                </span>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => runAllState?.runAll?.()}
-                disabled={runAllState?.isRunning}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-sm)] border border-[var(--ud-border)] bg-[var(--ud-surface-2)] text-xs font-mono font-medium text-[var(--ud-text)] hover:border-[var(--ud-text-muted)] transition-colors cursor-pointer"
-              >
-                <Play size={12} className="text-[var(--ud-pass)]" />
-                <span>Run All Suites</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleChangeDataMode("demo")}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-sm)] border border-[var(--ud-warn)]/40 bg-[var(--ud-warn)]/15 text-xs font-mono font-semibold text-[var(--ud-warn)] hover:bg-[var(--ud-warn)]/25 transition-colors cursor-pointer"
-              >
-                <FlaskConical size={13} />
-                <span>Switch to Demo Showcase</span>
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* ZONE 2: Executive KPI Cards (4 x 3 cols) */}
         <ZoneErrorBoundary zoneTitle="Executive KPIs" onRetry={refetch}>
@@ -242,7 +247,6 @@ export function UnifiedDashboard({
             onAskAi={onAskAi}
             activeCrossFilter={activeCrossFilter}
             onClearCrossFilter={() => setActiveCrossFilter(null)}
-            onSwitchToDemo={() => handleChangeDataMode("demo")}
           />
         </ZoneErrorBoundary>
 
@@ -252,7 +256,6 @@ export function UnifiedDashboard({
             vm={vm}
             onNavigateWorkspace={handleNavigate}
             onInspectItem={setInspectedItem}
-            onSwitchToDemo={() => handleChangeDataMode("demo")}
           />
         </ZoneErrorBoundary>
       </div>
@@ -260,6 +263,7 @@ export function UnifiedDashboard({
       {/* Slide-Over Diagnostic & Run Inspector Drawer */}
       <SlideOverInspectorDrawer
         item={inspectedItem}
+        snapshotId={activeSnapshotId}
         onClose={() => setInspectedItem(null)}
         onNavigateWorkspace={handleNavigate}
         onAskAi={onAskAi}

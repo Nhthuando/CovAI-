@@ -56,6 +56,14 @@ export function QualityGateBadge({
       text: "text-[var(--ud-fail)]",
       dot: "bg-[var(--ud-fail)]",
     },
+    UNVERIFIED: {
+      defaultLabel: "UNVERIFIED",
+      icon: ShieldAlert,
+      border: "border-[var(--ud-border-strong)]",
+      bg: "bg-[var(--ud-surface-2)]",
+      text: "text-[var(--ud-text-muted)]",
+      dot: "bg-[var(--ud-text-muted)]",
+    },
   };
 
   const current = configs[status] || configs.WARNING;

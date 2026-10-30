@@ -1,10 +1,8 @@
 import { RefreshCw, AlertTriangle, Inbox } from "lucide-react";
-import { DemoDataBadge } from "./DemoDataBadge.jsx";
 
 export function ZonePanel({
   title,
   description = null,
-  source = "live", // live | demo | unavailable
   state = "ready", // ready | loading | empty | error
   emptyMessage = "No data available for this section.",
   errorMessage = "Failed to load data.",
@@ -27,7 +25,6 @@ export function ZonePanel({
             <h3 className="text-sm font-semibold tracking-tight text-[var(--ud-text)] truncate">
               {title}
             </h3>
-            {source === "demo" && <DemoDataBadge />}
             {description && (
               <span className="text-xs text-[var(--ud-text-muted)] hidden sm:inline">
                 • {description}

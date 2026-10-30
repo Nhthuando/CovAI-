@@ -473,6 +473,7 @@ export default function CoverageTypeDashboard({
   onSuggestTestcase,
   onOpenCFG,
   runTrigger,
+  focusFile = null,
 }) {
   const projectAccess = useProjectAccess(projectId);
   const canRun = projectAccess.can("tests.run");
@@ -728,6 +729,17 @@ export default function CoverageTypeDashboard({
   const [applyingSuggestionIds, setApplyingSuggestionIds] = useState(new Set());
   const [applyResultsByFile, setApplyResultsByFile] = useState({});
   const [applyProgressSteps, setApplyProgressSteps] = useState({});
+
+  useEffect(() => {
+    if (!focusFile) return;
+    setActiveMetricView("branches");
+    setSelectedSourceFile(focusFile);
+    setExpandedFiles((prev) => {
+      const next = new Set(prev);
+      next.add(focusFile);
+      return next;
+    });
+  }, [focusFile]);
 
   // Restore cached suggestions if snapshotId changes
   const lastRestoredSnapshotRef = useRef(snapshotId);
