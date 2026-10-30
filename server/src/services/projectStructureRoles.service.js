@@ -1,5 +1,5 @@
 const ROLE_RULES = [
-  ["test", /(^|\/)(__tests__|tests?|e2e|cypress)\/|\.(test|spec)\.[^.]+$/i],
+  ["test", /(^|\/)(__tests__|tests?|specs?|e2e|cypress|playwright|fixtures|mocks|test[-_]data|test[-_]utils)\/|(?:^|[._-])(?:tests?|specs?)(?:[._-]|$)|^tests?[A-Z]|[a-z0-9](?:Tests?|Specs?)\.[^.]+$/i],
   [
     "config",
     /(^|\/)(config|configs)\/|(\.config|\.rc)\.[^.]+$|(^|\/)(eslint|vite|tailwind|playwright|jest|vitest|webpack|rollup|babel|postcss|prettier|next|nuxt|tsconfig|jsconfig)(\.config)?\.[^.]+$/i,

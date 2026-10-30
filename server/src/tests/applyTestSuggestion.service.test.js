@@ -9,8 +9,16 @@ import {
     sanitizeAllProjectTestFiles,
     generateDeltaTestCode,
     autoHealTestFailures,
-    autoRefineCoverageGaps
+    autoRefineCoverageGaps,
+    computeSourceFilesHash,
+    verifySourceFilesUnchanged,
+    cleanTestRunnerError,
+    getTestRunnerFailure,
+    resolveContainerOrHostTestPath,
+    applyUnitTestSuggestion
 } from "../services/applyTestSuggestion.service.js";
+import { runJestCoverage } from "../services/runTestsJob.service.js";
+import { dockerRunner } from "../services/dockerRunner.service.js";
 
 describe("applyTestSuggestion.service", () => {
     let tempDir;
@@ -346,7 +354,7 @@ export const formatReceipt = (data) => data ? 'RECEIPT' : null;
     });
 
     describe("autoHealTestFailures", () => {
-        test("unskips skipped tests to restore coverage and relaxes assertions", () => {
+        test("does not rewrite failing mock assertions or existing skips from observed output", () => {
             const testDir = path.join(tempDir, "tests");
             fs.mkdirSync(testDir, { recursive: true });
             const testFile = path.join(testDir, "user.test.js");
@@ -382,25 +390,79 @@ describe('user tests', () => {
             };
 
             const healed = autoHealTestFailures(tempDir, ["tests/user.test.js"], fakeTestResults, "");
+            expect(healed).toBe(false);
+
+            const contentAfter = fs.readFileSync(testFile, "utf8");
+            expect(contentAfter).toBe(testContent);
+        });
+
+        test("heals TDZ ReferenceError Cannot access path before initialization", () => {
+            const testDir = path.join(tempDir, "tests");
+            fs.mkdirSync(testDir, { recursive: true });
+            const testFile = path.join(testDir, "worker.test.js");
+            fs.writeFileSync(testFile, "const path = path;\ndescribe('worker', () => { test('ok', () => { expect(1).toBe(1); }); });");
+
+            const rawOutput = "ReferenceError: Cannot access 'path' before initialization\n    at Object.path (tests/worker.test.js:1:14)";
+            const healed = autoHealTestFailures(tempDir, ["tests/worker.test.js"], null, rawOutput);
             expect(healed).toBe(true);
 
             const contentAfter = fs.readFileSync(testFile, "utf8");
-            expect(contentAfter).not.toContain("test.skip(");
-            expect(contentAfter).not.toContain("xit(");
-            expect(contentAfter).toContain("test('skipped test 1'");
-            expect(contentAfter).toContain("it('skipped test 2'");
-            expect(contentAfter).toContain("expect(myMock).toBeDefined()");
+            expect(contentAfter).not.toContain("const path = path;");
+            expect(contentAfter).toContain("const path = require('path');");
+        });
+
+        test("heals TDZ Cannot access mockPrisma before initialization without ReferenceError prefix", () => {
+            const testDir = path.join(tempDir, "tests");
+            fs.mkdirSync(testDir, { recursive: true });
+            const testFile = path.join(testDir, "service.test.js");
+            fs.writeFileSync(
+                testFile,
+                "const mockPrisma = { user: { findMany: jest.fn() } };\njest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => mockPrisma) }));\ndescribe('test', () => { test('ok', () => {}); });"
+            );
+
+            const rawOutput = "Test Runner Error: Cannot access 'mockPrisma' before initialization\n    at Object.PrismaClient (tests/service.test.js:2:50)";
+            const healed = autoHealTestFailures(tempDir, ["tests/service.test.js"], null, rawOutput);
+            expect(healed).toBe(true);
+
+            const contentAfter = fs.readFileSync(testFile, "utf8");
+            expect(contentAfter).toContain("var mockPrisma = globalThis['mockPrisma']");
+            expect(contentAfter).toContain("globalThis['mockPrisma']");
+        });
+
+        test("heals TypeError: <var> is not iterable by removing faulty preset mocks and patching Symbol.iterator", () => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "covai-heal-iterable-"));
+            const testDir = path.join(tempDir, "tests/presets");
+            fs.mkdirSync(testDir, { recursive: true });
+            const testFile = path.join(testDir, "index.test.js");
+            fs.writeFileSync(
+                testFile,
+                "const mockCreateUniversalStub = () => {\n" +
+                "  const handler = { get: (t, p) => (p === 'then' || typeof p === 'symbol' ? undefined : () => ({})) };\n" +
+                "  return new Proxy({}, handler);\n" +
+                "};\n" +
+                "vi.mock('../../src/presets/tier2-ads', () => mockCreateUniversalStub());\n" +
+                "describe('presets', () => { test('spreads', () => { const res = [...tier2AdsPresets]; }); });"
+            );
+
+            const rawOutput = "FAIL tests/presets/index.test.js\nTypeError: tier2AdsPresets is not iterable\n ❯ src/presets/index.js:664:6";
+            const healed = autoHealTestFailures(tempDir, ["tests/presets/index.test.js"], null, rawOutput);
+            expect(healed).toBe(true);
+
+            const contentAfter = fs.readFileSync(testFile, "utf8");
+            expect(contentAfter).not.toContain("vi.mock('../../src/presets/tier2-ads'");
+            expect(contentAfter).toContain("Symbol.iterator");
+            fs.rmSync(tempDir, { recursive: true, force: true });
         });
     });
 
     describe("autoRefineCoverageGaps", () => {
-        test("early exits if all files already meet >=90% on Statements, Branches, Functions, Lines", async () => {
+        test("early exits if all files already meet 100% on Statements, Branches, Functions, Lines", async () => {
             const fakeSum = {
                 "src/service.js": {
-                    statements: { pct: 95 },
-                    branches: { pct: 92 },
+                    statements: { pct: 100 },
+                    branches: { pct: 100 },
                     functions: { pct: 100 },
-                    lines: { pct: 94 }
+                    lines: { pct: 100 }
                 }
             };
             const result = await autoRefineCoverageGaps({
@@ -415,6 +477,342 @@ describe('user tests', () => {
             });
 
             expect(result.currentSum).toEqual(fakeSum);
+            expect(result.refined).toBe(false);
+        });
+
+        test("writes refined coverage into sealedRunDir and stops early when pass produces zero coverage gain", async () => {
+            const srcDir = path.join(tempDir, "src");
+            const testsDir = path.join(tempDir, "tests");
+            const covDir = path.join(tempDir, "coverage");
+            const sealedRunDir = path.join(covDir, "runs", "run-test-1");
+            fs.mkdirSync(srcDir, { recursive: true });
+            fs.mkdirSync(testsDir, { recursive: true });
+            fs.mkdirSync(sealedRunDir, { recursive: true });
+
+            fs.writeFileSync(
+                path.join(srcDir, "calc.js"),
+                "export const calc = (a, b) => (a > 0 ? a + b : b);\n",
+                "utf8"
+            );
+            fs.writeFileSync(
+                path.join(testsDir, "calc.test.js"),
+                "import { calc } from '../src/calc.js';\ndescribe('calc', () => {\n  test('base', () => { expect(calc(1, 2)).toBe(3); });\n});\n",
+                "utf8"
+            );
+
+            const initialSum = {
+                "src/calc.js": {
+                    statements: { total: 2, covered: 1, skipped: 0, pct: 50 },
+                    branches: { total: 2, covered: 1, skipped: 0, pct: 50 },
+                    functions: { total: 1, covered: 1, skipped: 0, pct: 100 },
+                    lines: { total: 2, covered: 1, skipped: 0, pct: 50 }
+                }
+            };
+            const initialFinal = {
+                "src/calc.js": {
+                    path: "src/calc.js",
+                    statementMap: {
+                        "0": { start: { line: 1, column: 0 }, end: { line: 1, column: 20 } },
+                        "1": { start: { line: 1, column: 21 }, end: { line: 1, column: 45 } }
+                    },
+                    fnMap: { "0": { name: "calc", decl: { start: { line: 1 } } } },
+                    branchMap: { "0": { type: "cond-expr", line: 1 } },
+                    s: { "0": 1, "1": 0 },
+                    f: { "0": 1 },
+                    b: { "0": [1, 0] }
+                }
+            };
+
+            let runnerCalls = 0;
+            const result = await autoRefineCoverageGaps({
+                rootDir: tempDir,
+                sourceFilesInspected: ["src/calc.js"],
+                modifiedFiles: new Set(["tests/calc.test.js"]),
+                snapshot: { id: "snap-1" },
+                isVitest: false,
+                coverageDir: covDir,
+                sealedRunDir,
+                rawSum: initialSum,
+                rawFinal: initialFinal,
+                runCoverageFn: async ({ sealedRunDir: targetDir }) => {
+                    runnerCalls++;
+                    // Pass 1 produces no gain -> should trigger early convergence break instead of running passes 2 and 3
+                    fs.writeFileSync(path.join(targetDir, "coverage-summary.json"), JSON.stringify(initialSum), "utf8");
+                    fs.writeFileSync(path.join(targetDir, "coverage-final.json"), JSON.stringify(initialFinal), "utf8");
+                }
+            });
+
+            expect(runnerCalls).toBe(1);
+            expect(result.passesRun).toBe(1);
+            expect(fs.existsSync(path.join(sealedRunDir, "coverage-summary.json"))).toBe(true);
+            expect(fs.existsSync(path.join(sealedRunDir, "coverage-final.json"))).toBe(true);
+        });
+    });
+
+    describe("Targeted sanitizeAllProjectTestFiles", () => {
+        test("sanitizes only specificFiles when provided, leaving unrelated test files untouched", () => {
+            const testsDir = path.join(tempDir, "tests", "models");
+            fs.mkdirSync(testsDir, { recursive: true });
+            const targetFile = path.join(testsDir, "target.test.js");
+            const unrelatedFile = path.join(testsDir, "unrelated.test.js");
+
+            const rawCorrupted = `const { doc } = require('../src/models/doc');\ndescribe('AI Suggested Unit Tests', () => {\n  N/A - This is a new test file.\n});\ndescribe('Doc', () => { test('works', () => expect(true).toBe(true)); });\n`;
+            fs.writeFileSync(targetFile, rawCorrupted, "utf8");
+            fs.writeFileSync(unrelatedFile, rawCorrupted, "utf8");
+
+            sanitizeAllProjectTestFiles(tempDir, ["tests/models/target.test.js"]);
+
+            const targetUpdated = fs.readFileSync(targetFile, "utf8");
+            const unrelatedAfter = fs.readFileSync(unrelatedFile, "utf8");
+            expect(targetUpdated).not.toContain("N/A - This is a new test file.");
+            expect(unrelatedAfter).toBe(rawCorrupted);
+        });
+    });
+
+    describe("P0 Safety & Immutability Invariants", () => {
+        test("source file hashes remain 100% unchanged before and after applying test suggestions", () => {
+            const srcDir = path.join(tempDir, "src", "services");
+            fs.mkdirSync(srcDir, { recursive: true });
+            const sourceFile = path.join(srcDir, "billing.service.js");
+            const sourceCode = "export function calculateTotal(qty, price) { return qty * price; }";
+            fs.writeFileSync(sourceFile, sourceCode, "utf8");
+
+            const hashesBefore = computeSourceFilesHash(tempDir);
+            expect(Object.keys(hashesBefore).length).toBeGreaterThan(0);
+
+            const suggestion = {
+                sourceFile: "src/services/billing.service.js",
+                testFile: "tests/billing.test.js",
+                framework: "jest",
+                generatedCode: "describe('billing', () => { test('calc', () => { expect(calculateTotal(2, 5)).toBe(10); }); });"
+            };
+
+            const result = applyCodeToTestFile(tempDir, suggestion);
+            expect(result.changed).toBe(true);
+
+            const immutabilityCheck = verifySourceFilesUnchanged(tempDir, hashesBefore);
+            expect(immutabilityCheck.intact).toBe(true);
+            expect(immutabilityCheck.changedFiles).toHaveLength(0);
+
+            // Double-check source content
+            const contentAfter = fs.readFileSync(sourceFile, "utf8");
+            expect(contentAfter).toBe(sourceCode);
+        });
+
+        test("path traversal attempts with '..' segments are strictly rejected", () => {
+            const suggestion = {
+                sourceFile: "src/calc.js",
+                testFile: "../outside.test.js",
+                generatedCode: "describe('outside', () => { test('fail', () => {}); });"
+            };
+
+            expect(() => {
+                applyCodeToTestFile(tempDir, suggestion);
+            }).toThrow(/Path traversal forbidden/);
+        });
+
+        test("writing directly into source files (src/) is strictly rejected with 403", () => {
+            const suggestion = {
+                sourceFile: "src/calc.js",
+                testFile: "src/calc.js",
+                generatedCode: "describe('calc', () => { test('fail', () => {}); });"
+            };
+
+            expect(() => {
+                applyCodeToTestFile(tempDir, suggestion);
+            }).toThrow(/Strict Storage Guard/);
+        });
+
+        test("writing into configuration or environment files is strictly rejected", () => {
+            for (const badFile of ["package.json", ".env", ".env.local", "tsconfig.json"]) {
+                expect(() => {
+                    applyCodeToTestFile(tempDir, {
+                        testFile: badFile,
+                        generatedCode: "describe('bad', () => {});"
+                    });
+                }).toThrow(/Strict Storage Guard/);
+            }
+        });
+
+        test("stale diff detection throws 409 Conflict when baseContent mismatches on-disk content", () => {
+            const testDir = path.join(tempDir, "tests");
+            fs.mkdirSync(testDir, { recursive: true });
+            const testFile = path.join(testDir, "auth.test.js");
+            fs.writeFileSync(testFile, "// Original version 1 on disk", "utf8");
+
+            const suggestion = {
+                testFile: "tests/auth.test.js",
+                baseContent: "// Outdated version 0 in memory",
+                generatedCode: "describe('auth', () => { test('ok', () => {}); });"
+            };
+
+            expect(() => {
+                applyCodeToTestFile(tempDir, suggestion);
+            }).toThrow(/Stale diff detected/);
+        });
+
+        test("preserves existing skipped tests (.skip / xit) without unskipping them", () => {
+            const testDir = path.join(tempDir, "tests");
+            fs.mkdirSync(testDir, { recursive: true });
+            const testFile = path.join(testDir, "legacy.test.js");
+            const legacyContent = `describe('legacy suite', () => {
+  test.skip('skipped legacy test 1', () => { expect(1).toBe(1); });
+  xit('skipped legacy test 2', () => { expect(2).toBe(2); });
+});\n`;
+            fs.writeFileSync(testFile, legacyContent, "utf8");
+
+            const suggestion = {
+                testFile: "tests/legacy.test.js",
+                generatedCode: "describe('new coverage', () => { test('active test', () => { expect(3).toBe(3); }); });"
+            };
+
+            const result = applyCodeToTestFile(tempDir, suggestion);
+            expect(result.changed).toBe(true);
+
+            const contentAfter = fs.readFileSync(testFile, "utf8");
+            expect(contentAfter).toContain("test.skip('skipped legacy test 1'");
+            expect(contentAfter).toContain("xit('skipped legacy test 2'");
+            expect(contentAfter).toContain("test('active test'");
+        });
+    });
+
+    describe("cleanTestRunnerError", () => {
+        test.each([
+            "/app/uploads/snapshots/cmvqxxx1v0002s1lbnazxkujj/caculator/coverage/vitest-results.json",
+            "/app/storage/projects/cmvr09nzq00006hlbmtt2std6/github/1793124901204/repo/backend/coverage/runs/run-id/vitest-results.json"
+        ])("does not restore an informational report location as an error: %s", reportPath => {
+            const output = `  \u001b[32mJSON report written to ${reportPath}\u001b[39m\r\n`;
+            expect(cleanTestRunnerError(output)).toBe("");
+            expect(getTestRunnerFailure(null, output, 1)).toContain("exit code 1");
+            expect(getTestRunnerFailure(null, output, 1)).not.toContain("JSON report written");
+        });
+
+        test("extracts assertion failures from JSON reporter output", () => {
+            const results = { testResults: [{ assertionResults: [{
+                status: "failed", failureMessages: ["AssertionError: expected 2 to be 3"]
+            }] }] };
+            expect(getTestRunnerFailure(results, "JSON report written to /app/coverage/vitest-results.json", 1))
+                .toBe("AssertionError: expected 2 to be 3");
+        });
+
+        test("preserves the detailed object diff instead of the abbreviated JSON message", () => {
+            const results = { testResults: [{ assertionResults: [{ status: "failed",
+                failureMessages: ["AssertionError: expected { result: '', …(1) } to deeply equal { result: '', …(1) }"]
+            }] }] };
+            const output = `FAIL tests/evaluator.test.ts > rejects non-numbers
+AssertionError: expected { result: '', …(1) } to deeply equal { result: '', …(1) }
+- Expected
++ Received
+  {
+-   "error": "non-number result",
++   "error": "invalid characters",
+    "result": "",
+  }
+JSON report written to /app/coverage/results.json`;
+            const error = getTestRunnerFailure(results, output, 1);
+            expect(error).toContain('"error": "non-number result"');
+            expect(error).toContain('"error": "invalid characters"');
+            expect(error).not.toContain("JSON report written");
+        });
+
+        test("extracts collection errors and unhandled errors without assertions", () => {
+            expect(getTestRunnerFailure({ testResults: [{ message: "SyntaxError: Unexpected token" }] }, "", 1))
+                .toBe("SyntaxError: Unexpected token");
+            expect(getTestRunnerFailure({ errors: [{ message: "Error: Worker exited" }] }, "", 1))
+                .toBe("Error: Worker exited");
+        });
+
+        test("strips ANSI color escapes and Vite CJS deprecation warning to uncover real transform error", () => {
+            const raw = `\u001b[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.\u001b[39m\nJSON report written to /app/storage/projects/xyz/coverage/vitest-results.json\nTransform failed with 1 error:\n/app/storage/projects/xyz/tests/presets/index.vitest.test.ts:5296:31: ERROR: Unexpected "default"`;
+            const cleaned = cleanTestRunnerError(raw);
+            expect(cleaned).not.toContain("The CJS build of Vite");
+            expect(cleaned).not.toContain("\u001b[33m");
+            expect(cleaned).not.toContain("JSON report written to");
+            expect(cleaned).toContain("Transform failed with 1 error:");
+            expect(cleaned).toContain('ERROR: Unexpected "default"');
+        });
+
+        test("handles empty or non-string inputs safely", () => {
+            expect(cleanTestRunnerError(null)).toBe("");
+            expect(cleanTestRunnerError("")).toBe("");
+        });
+    });
+
+    describe("runJestCoverage covDir resolution", () => {
+        test("resolves covDir without ReferenceError and returns coverageDir", async () => {
+            const testDir = path.join(tempDir, "tests");
+            fs.mkdirSync(testDir, { recursive: true });
+            fs.writeFileSync(path.join(tempDir, "package.json"), JSON.stringify({ name: "dummy-pkg" }), "utf8");
+            
+            const spy = jest.spyOn(dockerRunner, "run").mockImplementation(async () => {
+                const cov = path.join(tempDir, "coverage");
+                fs.mkdirSync(cov, { recursive: true });
+                fs.writeFileSync(path.join(cov, "coverage-summary.json"), JSON.stringify({ total: {} }));
+                fs.writeFileSync(path.join(cov, "coverage-final.json"), JSON.stringify({}));
+                fs.writeFileSync(path.join(cov, "jest-results.json"), JSON.stringify({ success: true, numTotalTests: 1, numPassedTests: 1 }));
+                return { success: true, exitCode: 0, stdout: "", stderr: "" };
+            });
+
+            try {
+                const res = await runJestCoverage("job-covdir-test", tempDir, null, ["tests/a.test.js"], null);
+                expect(res).toBeDefined();
+                expect(res.exitCode).toBe(0);
+                expect(res.coverageDir).toBeDefined();
+                expect(res.coverageDir).toContain("coverage");
+            } finally {
+                spy.mockRestore();
+            }
+        }, 15000);
+    });
+
+    describe("resolveContainerOrHostTestPath & toHaveLength auto-healing", () => {
+        test("resolveContainerOrHostTestPath resolves snapshot container paths without duplicate nested segments", () => {
+            const rootDir = "d:/NCKH/CovAI-/server/uploads/snapshots/snap123/calc/backend";
+            const containerPath = "/app/uploads/snapshots/snap123/calc/backend/tests/utils/evaluator.test.ts";
+            const resolved = resolveContainerOrHostTestPath(containerPath, rootDir);
+            expect(resolved).toBeDefined();
+            expect(resolved.replace(/\\/g, "/")).not.toContain("backend/backend");
+        });
+
+        test("autoHealTestFailures preserves a failing length expectation", () => {
+            const testDir = path.join(tempDir, "tests");
+            fs.mkdirSync(testDir, { recursive: true });
+            const testPath = path.join(testDir, "calc.test.js");
+            const testContent = `
+describe('calc', () => {
+    test('history custom limit', async () => {
+        const history = [1, 2];
+        expect(history).toHaveLength(10);
+    });
+});
+`;
+            fs.writeFileSync(testPath, testContent, "utf8");
+
+            const rawOutput = `
+FAIL tests/calc.test.js
+  ● calc › history custom limit
+
+    expect(received).toHaveLength(expected)
+
+    Expected length: 10
+    Received length: 2
+
+      at Object.toHaveLength (tests/calc.test.js:5:25)
+`;
+            const modified = autoHealTestFailures(tempDir, ["tests/calc.test.js"], null, rawOutput);
+            expect(modified).toBe(false);
+
+            const healed = fs.readFileSync(testPath, "utf8");
+            expect(healed).toBe(testContent);
+        });
+    });
+
+    describe("applyUnitTestSuggestion Self-Healing Contract", () => {
+        test("throws 400 when no suggestion or suggestions provided", async () => {
+            await expect(applyUnitTestSuggestion({ snapshotId: "s1" })).rejects.toMatchObject({
+                statusCode: 400,
+                code: "INVALID_SUGGESTION"
+            });
         });
     });
 });

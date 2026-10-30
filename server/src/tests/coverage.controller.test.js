@@ -61,6 +61,7 @@ const mockCreateSystemTestAnalysisJob = jest.fn().mockResolvedValue({ id: 'syste
 const mockEnsureMinimalPackageJson = jest.fn();
 jest.unstable_mockModule('../utils/projectRootResolver.js', () => ({
     resolveProjectRoot: root => root,
+    resolveSnapshotRootDir: root => root,
     hasSourceCodeFiles: () => true,
     ensureMinimalPackageJson: mockEnsureMinimalPackageJson,
 }));
@@ -128,6 +129,7 @@ const {
     getSystemTestSummary,
     getTestExecution,
     runCoverageByType,
+    classifyTestCategory,
 } = await import('../controllers/coverage.controller.js');
 
 describe('coverage controller empty-state behavior', () => {
@@ -219,6 +221,42 @@ describe('coverage controller empty-state behavior', () => {
                     branches: 0,
                     functions: 0,
                     statements: 0,
+                }),
+            }),
+        }));
+    });
+
+    test('returns aggregated coverage from DB coverageFile records when disk JSON is missing (DB fallback aggregation)', async () => {
+        prismaMock.projectSnapshot.findUnique.mockResolvedValue({
+            id: 'snap-1',
+            projectId: 'proj-1',
+            source: 'GITHUB',
+            commitSha: 'abc123',
+            rootDir: 'storage/projects/test-proj',
+            createdAt: new Date('2024-01-01T00:00:00.000Z'),
+            project: { ownerId: 'user-1', name: 'Demo Project' },
+        });
+        prismaMock.coverageSummary.findUnique.mockResolvedValue(null);
+        prismaMock.coverageFile.findMany.mockResolvedValue([
+            { filePath: 'src/controllers/auth.controller.js', linesPct: 80, branchesPct: 75, funcsPct: 100, stmtsPct: 80 },
+            { filePath: 'src/routes/api.routes.js', linesPct: 90, branchesPct: 85, funcsPct: 90, stmtsPct: 90 },
+        ]);
+
+        const req = { user: { id: 'user-1' }, params: { snapshotId: 'snap-1' }, query: { type: 'integration' } };
+        const res = {
+            status: jest.fn().mockReturnThis(),
+            json: jest.fn(),
+        };
+
+        await getCoverageSummary(req, res);
+
+        expect(res.status).toHaveBeenCalledWith(200);
+        expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+            success: true,
+            data: expect.objectContaining({
+                coverage: expect.objectContaining({
+                    lines: 85,
+                    statements: 85,
                 }),
             }),
         }));
@@ -386,6 +424,37 @@ describe('coverage controller empty-state behavior', () => {
                 testSuites: expect.any(Array)
             })
         }));
+    });
+
+    test('classifyTestCategory correctly categorizes all 4 test categories (A, B, C, D)', () => {
+        // Category A: Happy Path
+        const happy = classifyTestCategory({ title: 'should calculate total price successfully for valid items' });
+        expect(happy.category).toBe('HAPPY_PATH');
+        expect(happy.categoryName).toBe('A. Happy Path');
+
+        // Category B: Boundary Values
+        const boundary1 = classifyTestCategory({ title: 'should handle empty array of items []' });
+        expect(boundary1.category).toBe('BOUNDARY_VALUES');
+        expect(boundary1.categoryName).toBe('B. Boundary Values');
+
+        const boundary2 = classifyTestCategory({ title: 'should return 0 when quantity is zero' });
+        expect(boundary2.category).toBe('BOUNDARY_VALUES');
+
+        // Category C: Branch Toggling
+        const branch1 = classifyTestCategory({ title: 'should toggle branch when discount is false' });
+        expect(branch1.category).toBe('BRANCH_TOGGLING');
+        expect(branch1.categoryName).toBe('C. Branch Toggling');
+
+        const branch2 = classifyTestCategory({ title: 'should use fallback when options are nullish ?? default' });
+        expect(branch2.category).toBe('BRANCH_TOGGLING');
+
+        // Category D: Error & Exception Handling
+        const err1 = classifyTestCategory({ title: 'should throw error when payload is invalid' });
+        expect(err1.category).toBe('ERROR_HANDLING');
+        expect(err1.categoryName).toBe('D. Error & Exception Handling');
+
+        const err2 = classifyTestCategory({ title: 'should reject promise on 500 server exception' });
+        expect(err2.category).toBe('ERROR_HANDLING');
     });
 
     describe('getSystemTestSummary', () => {

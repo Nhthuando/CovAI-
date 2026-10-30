@@ -36,9 +36,35 @@ export default function DiffReviewModal({
   onApplyAll,
   onRunAnalysis,
   isApplying = false,
+  applyingStep = "",
 }) {
   const [activeIdx, setActiveIdx] = useState(initialFileIndex);
   const [sideBySide, setSideBySide] = useState(true);
+  const diffEditorRef = React.useRef(null);
+
+  const handleDiffMount = (editor) => {
+    diffEditorRef.current = editor;
+  };
+
+  // Safe cleanup for Monaco DiffEditor to prevent "TextModel got disposed before DiffEditorWidget model got reset"
+  React.useEffect(() => {
+    return () => {
+      if (diffEditorRef.current) {
+        try {
+          const model = diffEditorRef.current.getModel?.();
+          diffEditorRef.current.setModel?.({ original: null, modified: null });
+          if (model) {
+            if (model.original && !model.original.isDisposed()) {
+              model.original.dispose();
+            }
+            if (model.modified && !model.modified.isDisposed()) {
+              model.modified.dispose();
+            }
+          }
+        } catch (_) {}
+      }
+    };
+  }, []);
 
   // Sync initialFileIndex when it changes
   React.useEffect(() => {
@@ -56,6 +82,37 @@ export default function DiffReviewModal({
       setActiveFw(activeFile.framework);
     }
   }, [activeFile]);
+
+  // Local async loading state for individual and all-files apply
+  const [isApplyingCurrent, setIsApplyingCurrent] = useState(false);
+  const [isApplyingAllInternal, setIsApplyingAllInternal] = useState(false);
+  const isApplyingAllCombined = Boolean(isApplying || isApplyingAllInternal);
+  const isAnyApplying = Boolean(isApplyingCurrent || isApplyingAllCombined);
+  const unappliedCount = files.filter((f) => !f.applied).length;
+
+  const handleApplyCurrentFile = async () => {
+    if (isAnyApplying) return;
+    setIsApplyingCurrent(true);
+    try {
+      await onApplyFile?.(activeFile, currentSuggestion);
+    } catch (err) {
+      console.error("Apply file error:", err);
+    } finally {
+      setIsApplyingCurrent(false);
+    }
+  };
+
+  const handleApplyAllClick = async () => {
+    if (isAnyApplying) return;
+    setIsApplyingAllInternal(true);
+    try {
+      await onApplyAll?.();
+    } catch (err) {
+      console.error("Apply all error:", err);
+    } finally {
+      setIsApplyingAllInternal(false);
+    }
+  };
 
   // Current suggestion data based on active framework
   const currentSuggestion = useMemo(() => {
@@ -194,18 +251,36 @@ export default function DiffReviewModal({
               {!isApplied ? (
                 <button
                   type="button"
-                  disabled={isApplying}
-                  onClick={() => onApplyFile?.(activeFile, currentSuggestion)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--color-primary)] text-[var(--color-primary-foreground)] hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-50"
+                  disabled={isAnyApplying}
+                  onClick={handleApplyCurrentFile}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-all ${
+                    isAnyApplying ? "opacity-60 cursor-wait" : "cursor-pointer hover:opacity-90"
+                  }`}
+                  style={{
+                    background: "var(--color-primary, #6d5dfb)",
+                  }}
+                  title={isApplyingCurrent ? "Applying test changes and running verification..." : "Apply this file"}
                 >
-                  {isApplying ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
-                  <span>Apply this file</span>
+                  {isApplyingCurrent ? (
+                    <Loader2 size={13} className="animate-spin text-white" />
+                  ) : (
+                    <Check size={13} />
+                  )}
+                  <span>{isApplyingCurrent ? "Applying file..." : "Apply this file"}</span>
                 </button>
               ) : (
                 <button
                   type="button"
+                  disabled={isAnyApplying}
                   onClick={() => onUndoFile?.(activeFile, currentSuggestion)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--color-danger)]/15 text-[var(--color-danger)] border border-[var(--color-danger)]/35 hover:bg-[var(--color-danger)]/25 transition-colors cursor-pointer"
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                    isAnyApplying ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:opacity-90"
+                  }`}
+                  style={{
+                    background: "rgba(239, 68, 68, 0.15)",
+                    color: "#f87171",
+                    border: "1px solid rgba(239, 68, 68, 0.35)",
+                  }}
                   title="Undo added test cases"
                 >
                   <RotateCcw size={13} />
@@ -217,18 +292,30 @@ export default function DiffReviewModal({
               {anyUnapplied && files.length > 1 && (
                 <button
                   type="button"
-                  disabled={isApplying}
-                  onClick={() => onApplyAll?.()}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer"
+                  disabled={isAnyApplying}
+                  onClick={handleApplyAllClick}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                    isAnyApplying ? "opacity-60 cursor-wait" : "cursor-pointer hover:opacity-90"
+                  }`}
                   style={{
-                    background: "rgba(34, 197, 94, 0.18)",
+                    background: isApplyingAllCombined
+                      ? "rgba(34, 197, 94, 0.3)"
+                      : "rgba(34, 197, 94, 0.18)",
                     color: "#86efac",
                     border: "1px solid rgba(34, 197, 94, 0.4)",
                   }}
                   title="Apply all test files"
                 >
-                  <Sparkles size={13} />
-                  <span>Apply all {files.length} files</span>
+                  {isApplyingAllCombined ? (
+                    <Loader2 size={13} className="animate-spin text-green-300" />
+                  ) : (
+                    <Sparkles size={13} />
+                  )}
+                  <span>
+                    {isApplyingAllCombined
+                      ? (applyingStep || `Applying all ${unappliedCount > 0 ? unappliedCount : files.length} files...`)
+                      : `Apply all ${unappliedCount > 0 ? unappliedCount : files.length} files`}
+                  </span>
                 </button>
               )}
 
@@ -302,9 +389,11 @@ export default function DiffReviewModal({
                     >
                       +{file.linesAdded || 0}
                     </span>
-                    {file.applied && (
+                    {isApplyingCurrent && isSelected ? (
+                      <Loader2 size={12} className="animate-spin text-purple-400" />
+                    ) : file.applied ? (
                       <Check size={12} className="text-green-400" />
-                    )}
+                    ) : null}
                   </button>
                 );
               })}
@@ -342,6 +431,9 @@ export default function DiffReviewModal({
               height="100%"
               original={originalCode}
               modified={modifiedCode}
+              keepCurrentOriginalModel={true}
+              keepCurrentModifiedModel={true}
+              onMount={handleDiffMount}
               language="javascript"
               theme="vs-dark"
               loading={

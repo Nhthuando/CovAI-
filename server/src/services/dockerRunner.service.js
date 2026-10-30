@@ -5,8 +5,25 @@ import treeKill from "tree-kill";
 import { ServiceError } from "../utils/serviceError.js";
 import { addJobLog } from "./job.service.js";
 import { appendJobOutput } from "./jobOutput.service.js";
+import { resolveSnapshotRootDir } from "../utils/projectRootResolver.js";
 
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes default
+
+let hasPsBinary = null;
+export const isPsAvailable = () => {
+  if (process.platform === "win32") return false;
+  if (hasPsBinary !== null) return hasPsBinary;
+  try {
+    const res = spawnSync("ps", ["-o", "pid", "--no-headers", "-p", String(process.pid)], {
+      timeout: 1000,
+      stdio: "ignore",
+    });
+    hasPsBinary = Boolean(res && res.status === 0 && !res.error);
+  } catch {
+    hasPsBinary = false;
+  }
+  return hasPsBinary;
+};
 
 const killProcessTree = (proc) => {
   if (!proc || !proc.pid) return;
@@ -16,6 +33,20 @@ const killProcessTree = (proc) => {
       if(result.status === 0) return;
     } catch (_) { }
   }
+
+  // If ps is not installed on Linux (e.g. node:20-slim Docker container),
+  // tree-kill spawns 'ps' without error listeners, causing unhandled 'error' event crash.
+  if (!isPsAvailable()) {
+    try {
+      process.kill(-proc.pid, "SIGKILL");
+      return;
+    } catch (_) { }
+    try {
+      proc.kill("SIGKILL");
+      return;
+    } catch (_) { }
+  }
+
   try {
     treeKill(proc.pid, "SIGKILL", (err) => {
       if (err) {
@@ -90,24 +121,27 @@ export const dockerRunner = {
       let child;
       let timer;
 
-      const nodeModulesBin = path.join(snapshotPath, "node_modules", ".bin");
+      const effectiveSnapshotPath = resolveSnapshotRootDir(snapshotPath) || snapshotPath;
+      const nodeModulesBin = path.join(effectiveSnapshotPath, "node_modules", ".bin");
       const appModulesBin = "/app/node_modules/.bin";
       const currentPath = process.env.PATH || "";
-      const customPath = `${nodeModulesBin}:${appModulesBin}:${currentPath}`;
+      const delimiter = path.delimiter;
+      const customPath = [nodeModulesBin, appModulesBin, currentPath].filter(Boolean).join(delimiter);
 
       const mergedEnv = {
         ...process.env,
         CI: "true",
+        VITE_CJS_IGNORE_WARNING: "true",
         PATH: customPath,
         NODE_OPTIONS: "--experimental-vm-modules",
-        NODE_PATH: `/app/node_modules:${path.join(snapshotPath, "node_modules")}:${process.env.NODE_PATH || ""}`,
+        NODE_PATH: ["/app/node_modules", path.join(effectiveSnapshotPath, "node_modules"), process.env.NODE_PATH || ""].filter(Boolean).join(delimiter),
         ...env,
       };
 
       // Auto-load repo-level environment variables (.env.test, .env.example, .env) into mergedEnv
       const repoEnvFiles = [".env.test", ".env.example", ".env"];
       for (const envFile of repoEnvFiles) {
-        const envFilePath = path.join(snapshotPath, envFile);
+        const envFilePath = path.join(effectiveSnapshotPath, envFile);
         if (fs.existsSync(envFilePath)) {
           try {
             const content = fs.readFileSync(envFilePath, "utf8");
@@ -136,7 +170,7 @@ export const dockerRunner = {
         envArgs.push("-e", `PLAYWRIGHT_BASE_URL=${baseUrl}`);
 
         for (const [k, v] of Object.entries(mergedEnv)) {
-          if (["NODE_OPTIONS", "CI", "NODE_ENV"].includes(k) || k in env) {
+          if (["NODE_OPTIONS", "CI", "NODE_ENV", "VITE_CJS_IGNORE_WARNING"].includes(k) || k in env) {
             envArgs.push("-e", `${k}=${v}`);
           }
         }
@@ -149,7 +183,7 @@ export const dockerRunner = {
           "--pids-limit=100",
           ...envArgs,
           "-v",
-          `${snapshotPath}:/workspace`,
+          `${effectiveSnapshotPath}:/workspace`,
           "-w",
           "/workspace",
           image,
@@ -159,7 +193,7 @@ export const dockerRunner = {
         ];
         child = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
       } else {
-        child = spawn(command, { shell: true, cwd: snapshotPath, env: mergedEnv, stdio: ["pipe", "pipe", "pipe"] });
+        child = spawn(command, { shell: true, cwd: effectiveSnapshotPath, env: mergedEnv, stdio: ["pipe", "pipe", "pipe"] });
       }
       try { child.stdin?.end(); } catch { }
       const abort = () => {
@@ -176,8 +210,21 @@ export const dockerRunner = {
         if (child.stdin) child.stdin.end();
       } catch (_) { }
 
+      let heartbeatTimer = null;
+      if (jobId) {
+        const execStartTime = Date.now();
+        heartbeatTimer = setInterval(async () => {
+          const elapsedSec = Math.round((Date.now() - execStartTime) / 1000);
+          await addJobLog(jobId, "INFO", `[DockerRunner] Execution in progress (elapsed ${elapsedSec}s)...`).catch(() => { });
+        }, 60000);
+      }
+
       timer = setTimeout(async () => {
         timedOut = true;
+        if (heartbeatTimer) {
+          clearInterval(heartbeatTimer);
+          heartbeatTimer = null;
+        }
         killProcessTree(child);
         if (jobId) {
           await addJobLog(jobId, "ERROR", `[DockerRunner] Execution timed out (${timeoutMs}ms)`).catch(() => { });
@@ -212,7 +259,7 @@ export const dockerRunner = {
           flushTimer = setTimeout(async () => {
             flushTimer = null;
             await flushOutput();
-          }, 800);
+          }, 2000);
         }
       };
 
@@ -236,6 +283,10 @@ export const dockerRunner = {
 
       child.on("error", async (err) => {
         clearTimeout(timer);
+        if (heartbeatTimer) {
+          clearInterval(heartbeatTimer);
+          heartbeatTimer = null;
+        }
         if (flushTimer) {
           clearTimeout(flushTimer);
           flushTimer = null;
@@ -254,6 +305,10 @@ export const dockerRunner = {
       child.on("close", async (code) => {
         signal?.removeEventListener('abort', abort);
         clearTimeout(timer);
+        if (heartbeatTimer) {
+          clearInterval(heartbeatTimer);
+          heartbeatTimer = null;
+        }
         if (flushTimer) {
           clearTimeout(flushTimer);
           flushTimer = null;

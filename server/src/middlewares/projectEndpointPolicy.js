@@ -32,7 +32,12 @@ export const projectEndpointRule = (family, method, path, input = {}) => {
             else if (/ai-|\/ai\//.test(path)) capability = "ai.use";
         }
     } else if (family === "coverage") {
-        snapshotId = parts[0];
+        if (parts[0] === "project") {
+            projectId = parts[1];
+            snapshotId = undefined;
+        } else {
+            snapshotId = parts[0];
+        }
         if (!read && /\/install-dependencies$/.test(path)) capability = "integrations.write";
         else if (!read && /\/apply-tests$/.test(path)) capability = "files.write";
         else if (!read && /\/(approve|confirm|confirm-expected|review)(?:\/|$)/.test(path)) capability = "evidence.approve";

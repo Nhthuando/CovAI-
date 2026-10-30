@@ -12,7 +12,14 @@ import fs from "fs";
 import path from "path";
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
-import { createInstallDepsJob, createRunTestsJob, createSupertestCoverageJob, createVitestCoverageJob, createSystemTestAnalysisJob } from "../services/job.service.js";
+import {
+    createInstallDepsJob,
+    createRunTestsJob,
+    createSupertestCoverageJob,
+    createVitestCoverageJob,
+    createSystemTestAnalysisJob
+} from "../services/job.service.js";
+const STALE_JOB_TIMEOUT_MS = 25 * 60 * 1000;
 import { jobQueue, addJobToQueue, addSupertestCoveragePipeline } from "../services/queue.service.js";
 import { processCoverageJob } from "../services/coverageRunner.service.js";
 import { detectSupertest } from "../services/supertestDetection.service.js";
@@ -33,8 +40,9 @@ import { getFileCoverageDetails } from "../services/fileCoverage.service.js";
 import { suggestUnitTestcases } from "../services/unitTestSuggestion.service.js";
 import { applyUnitTestSuggestion } from "../services/applyTestSuggestion.service.js";
 import { classifyTestFile } from "../utils/testingFrameworkDetector.js";
+import { findLogicSourceFiles, extractBranches } from "../services/runTestsJob.service.js";
+import { extractFunctions } from "../services/cyclomaticFunctionExtractor.service.js";
 import { resolveProjectRoot, hasSourceCodeFiles } from "../utils/projectRootResolver.js";
-import { findLogicSourceFiles } from "../services/runTestsJob.service.js";
 import {
     updateScenarioService,
     addScenarioService,
@@ -42,7 +50,8 @@ import {
     toggleScenarioService,
     regenerateScenarioService
 } from "../services/scenarioManager.service.js";
-import { cleanStoragePath, cleanStorageText } from "../utils/pathSanitizer.js";
+import { cleanStoragePath, cleanStorageText, canonicalizeFilePath } from "../utils/pathSanitizer.js";
+import { isBusinessLogicSourceFile, extractProjectCoverageExclusions } from "../utils/businessLogicFileDetector.js";
 import { generateColdStartSystemTests } from "../services/verifiedSystemGeneration.service.js";
 import { detectSystemTestFrameworksForSnapshot } from "../services/systemTestFrameworkDetection.service.js";
 import { optimizeSystemTest } from "../services/systemTestBooster.service.js";
@@ -63,12 +72,10 @@ export const resolveSnapshotRootDir = (rootDir) => {
     if (!rootDir) return null;
     let candidate = rootDir;
     if (!fs.existsSync(rootDir)) {
-        // Handle Docker /app path on Windows host
         if (rootDir.startsWith("/app/")) {
             const hostCandidate = path.resolve(process.cwd(), rootDir.replace(/^\/app\//, ""));
             if (fs.existsSync(hostCandidate)) candidate = hostCandidate;
         } else {
-            // Handle Windows path inside Docker container
             const storageIdx = rootDir.indexOf("storage");
             if (storageIdx !== -1) {
                 const subPath = rootDir.slice(storageIdx).replace(/\\/g, "/");
@@ -81,14 +88,43 @@ export const resolveSnapshotRootDir = (rootDir) => {
             }
         }
     }
-    const resolved = resolveProjectRoot(candidate);
+    const resolved = typeof resolveProjectRoot === "function" ? resolveProjectRoot(candidate) : candidate;
     return resolved || candidate;
 };
 
-const findOwnedSnapshot = (snapshotId, userId) => prisma.projectSnapshot.findFirst({
-    where: { id: snapshotId, project: membershipWhere(userId) },
-    select: { id: true, projectId: true, rootDir: true },
-});
+const findOwnedSnapshot = async (snapshotId, userId) => {
+    if (!snapshotId) return null;
+    let snapshot = null;
+    const projectFilter = userId ? (typeof membershipWhere === "function" ? membershipWhere(userId) : { ownerId: userId }) : {};
+    if (typeof prisma?.projectSnapshot?.findUnique === "function") {
+        try {
+            const uniqueSnap = await prisma.projectSnapshot.findUnique({
+                where: { id: snapshotId },
+                include: { project: true },
+            });
+            if (uniqueSnap) {
+                if (!userId || !uniqueSnap.project || uniqueSnap.project.ownerId === userId) {
+                    snapshot = uniqueSnap;
+                }
+            }
+        } catch { }
+    }
+    if (!snapshot && typeof prisma?.projectSnapshot?.findFirst === "function") {
+        snapshot = await prisma.projectSnapshot.findFirst({
+            where: { id: snapshotId, ...(userId ? { project: projectFilter } : {}) },
+            select: { id: true, projectId: true, rootDir: true, project: true },
+        });
+    }
+    if (!snapshot && typeof prisma?.projectSnapshot?.findFirst === "function") {
+        // Fallback: check if snapshotId is actually a projectId
+        snapshot = await prisma.projectSnapshot.findFirst({
+            where: { projectId: snapshotId, ...(userId ? { project: projectFilter } : {}) },
+            orderBy: { createdAt: "desc" },
+            select: { id: true, projectId: true, rootDir: true, project: true },
+        });
+    }
+    return snapshot;
+};
 
 const testSuitesCache = new Map();
 const frameworksCache = new Map();
@@ -128,12 +164,15 @@ export const getCoverageFrameworks = async (req, res) => {
 export const runCoverageByType = async (req, res) => {
     try {
         const { snapshotId, coverageType } = req.params;
-        invalidateCoverageCache(snapshotId);
         const requestedFramework = req.body?.framework || req.query?.framework || null;
+        const isRestart = Boolean(req.body?.restart || req.query?.restart);
         const userId = req.user?.id;
         const snapshot = await findOwnedSnapshot(snapshotId, userId);
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
         if (!snapshot.rootDir) return res.status(409).json({ success: false, message: "Snapshot is not ready for analysis." });
+
+        invalidateCoverageCache(snapshot.id);
+        if (snapshotId !== snapshot.id) invalidateCoverageCache(snapshotId);
 
         const resolvedRootDir = resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir;
 
@@ -153,7 +192,7 @@ export const runCoverageByType = async (req, res) => {
             const activeUnitJob = await prisma.job.findFirst({
                 where: {
                     projectId: snapshot.projectId,
-                    snapshotId,
+                    snapshotId: snapshot.id,
                     type: "RUN_TESTS",
                     status: { in: ["QUEUED", "RUNNING"] }
                 }
@@ -162,15 +201,15 @@ export const runCoverageByType = async (req, res) => {
             if (activeUnitJob) {
                 const startTime = activeUnitJob.startedAt || activeUnitJob.createdAt;
                 const elapsedMs = startTime ? Date.now() - new Date(startTime).getTime() : 0;
-                // If it is stuck in QUEUED for > 2m (orphaned by crash/restart) or running > 15m timeout, cancel and recreate
+                // If user requested restart, or stuck in QUEUED > 2m, or running > 15m timeout, cancel and recreate
                 const isOrphanedQueued = activeUnitJob.status === "QUEUED" && elapsedMs > 2 * 60 * 1000;
                 const isStaleRunning = activeUnitJob.status === "RUNNING" && elapsedMs > (STALE_JOB_TIMEOUT_MS || 15 * 60 * 1000);
 
-                if (isOrphanedQueued || isStaleRunning) {
-                    await cancelJob(activeUnitJob.id).catch(() => { });
+                if (isRestart || isOrphanedQueued || isStaleRunning) {
+                    await prisma.job.update({ where: { id: activeUnitJob.id }, data: { status: "CANCELED", finishedAt: new Date() } }).catch(() => { });
                     job = await createRunTestsJob({
                         projectId: snapshot.projectId,
-                        snapshotId,
+                        snapshotId: snapshot.id,
                         userId,
                         mode: "FULL"
                     });
@@ -185,7 +224,7 @@ export const runCoverageByType = async (req, res) => {
             } else {
                 job = await createRunTestsJob({
                     projectId: snapshot.projectId,
-                    snapshotId,
+                    snapshotId: snapshot.id,
                     userId,
                     mode: "FULL"
                 });
@@ -310,15 +349,62 @@ export const getCoverageSummary = async (req, res) => {
                 statements: 0,
             };
 
-        // Read rawTotals from coverage-summary.json if exists
+        // Read rawTotals from namespaced coverage-summary.json based on typeFilter
         let rawTotals = null;
         const resolvedRootDir = resolveSnapshotRootDir(snapshot.rootDir);
         if (resolvedRootDir) {
-            const summaryFile = path.join(resolvedRootDir, "coverage", "coverage-summary.json");
-            if (fs.existsSync(summaryFile)) {
-                try {
-                    const raw = JSON.parse(fs.readFileSync(summaryFile, "utf8"));
-                    if (raw) {
+            let candidateSummaryFiles = [];
+            if (typeFilter === "integration") {
+                candidateSummaryFiles = [
+                    path.join(resolvedRootDir, "coverage", "integration", "coverage-summary.json"),
+                    path.join(resolvedRootDir, "coverage", "supertest-coverage-summary.json"),
+                    path.join(resolvedRootDir, "coverage", "coverage-summary.json"),
+                ];
+            } else if (typeFilter === "system") {
+                candidateSummaryFiles = [
+                    path.join(resolvedRootDir, "coverage", "system", "coverage-summary.json"),
+                    path.join(resolvedRootDir, "coverage", "playwright-coverage-summary.json"),
+                    path.join(resolvedRootDir, "coverage", "cypress-coverage-summary.json"),
+                ];
+            } else {
+                // Unit test coverage (default)
+                candidateSummaryFiles = [
+                    path.join(resolvedRootDir, "coverage", "unit", "coverage-summary.json"),
+                    path.join(resolvedRootDir, "coverage", "coverage-summary.json"),
+                    path.join(resolvedRootDir, "server", "coverage", "coverage-summary.json"),
+                    path.join(resolvedRootDir, "client", "coverage", "coverage-summary.json"),
+                    path.join(resolvedRootDir, "backend", "coverage", "coverage-summary.json"),
+                    path.join(resolvedRootDir, "coverage-summary.json"),
+                    path.join(resolvedRootDir, "coverage", "jest-coverage-summary.json"),
+                    path.join(resolvedRootDir, "coverage", "vitest-coverage-summary.json"),
+                ];
+            }
+
+            // Scan immediate subdirectories for monorepo packages (e.g. server, app, pkg)
+            try {
+                const subEntries = fs.readdirSync(resolvedRootDir, { withFileTypes: true });
+                for (const entry of subEntries) {
+                    if (entry.isDirectory() && !["node_modules", ".git", "dist", ".gemini", "storage"].includes(entry.name)) {
+                        candidateSummaryFiles.push(path.join(resolvedRootDir, entry.name, "coverage", "coverage-summary.json"));
+                        candidateSummaryFiles.push(path.join(resolvedRootDir, entry.name, "coverage-summary.json"));
+                    }
+                }
+            } catch (_) {}
+
+            let raw = null;
+            for (const summaryFile of candidateSummaryFiles) {
+                if (fs.existsSync(summaryFile)) {
+                    try {
+                        const parsed = JSON.parse(fs.readFileSync(summaryFile, "utf8"));
+                        if (parsed && typeof parsed === "object") {
+                            raw = parsed;
+                            break;
+                        }
+                    } catch (_) {}
+                }
+            }
+
+            if (raw) {
                         if (typeFilter === "unit") {
                             // Extract path-matched threshold exceptions from Jest's coverageThreshold (if any)
                             const thresholdExceptions = new Set();
@@ -335,21 +421,51 @@ export const getCoverageSummary = async (req, res) => {
                                 }
                             } catch { }
 
-                            // Filter out route/server entry files, frontend, test files, and coverage reports
-                            const unitFileEntries = Object.entries(raw).filter(([filePath]) => {
-                                if (filePath === "total") return false;
-                                const norm = filePath.replace(/\\/g, "/").toLowerCase();
-                                const isExcludedDir = /(^|\/)(coverage|dist|build|out|\.next|\.nuxt)\//i.test(norm) ||
-                                    /(^|\/)(tests?|__tests__|specs?|e2e|cypress|step-definitions?|fixtures?|mocks?|__mocks__|test-data|test_data)(\/|$)/i.test(norm);
-                                const isFrontend = /(^|\/)(client|frontend|pages|components|ui|web)\//i.test(norm) || /\.[jt]sx$/i.test(norm);
-                                const isTest = isExcludedDir || /\.(test|spec|testcase|steps?)\./i.test(norm);
-                                const isRouteOrEntry = /(^|\/)(routes?|endpoints?)(\/|\.|$)/i.test(norm) ||
-                                    /\.(route|routes)\.[cm]?[jt]sx?$/i.test(norm) ||
-                                    /(^|\/)(app|server)\.[cm]?[jt]sx?$/i.test(norm) ||
-                                    /^(src\/)?(index|main)\.[cm]?[jt]sx?$/i.test(norm.replace(/^\.?\//, ""));
+                            // Filter out non-business logic files (examples, configs, types, hooks, i18n, routes, frontend)
+                            const configExclusions = extractProjectCoverageExclusions(resolvedRootDir);
+                            const canonicalMap = new Map();
+                            for (const [filePath, data] of Object.entries(raw)) {
+                                if (filePath === "total" || !data) continue;
+                                const can = canonicalizeFilePath(filePath, resolvedRootDir) || filePath;
+                                const norm = can.replace(/\\/g, "/").toLowerCase();
                                 const isThresholdException = Array.from(thresholdExceptions).some(exc => norm.endsWith(exc));
-                                return !isFrontend && !isTest && !isRouteOrEntry && !isThresholdException;
-                            });
+                                if (isBusinessLogicSourceFile(can, configExclusions) && !isThresholdException) {
+                                    if (!canonicalMap.has(can) || (canonicalMap.get(can).statements?.total || 0) < (data.statements?.total || 0)) {
+                                        canonicalMap.set(can, data);
+                                    }
+                                }
+                            }
+
+                            // Ensure ALL project business logic files are accounted for in unit coverage totals
+                            const logicFiles = findLogicSourceFiles(resolvedRootDir);
+                            for (const lf of logicFiles) {
+                                const can = canonicalizeFilePath(lf.relativePath, resolvedRootDir) || lf.relativePath;
+                                const norm = can.replace(/\\/g, "/").toLowerCase();
+                                const isThresholdException = Array.from(thresholdExceptions).some(exc => norm.endsWith(exc));
+                                if (isThresholdException || !isBusinessLogicSourceFile(can, configExclusions)) continue;
+
+                                if (!canonicalMap.has(can)) {
+                                    let content = "";
+                                    try { content = fs.readFileSync(lf.absolutePath, "utf8"); } catch { }
+                                    const codeLines = content.split("\n");
+                                    const totalLines = Math.max(1, codeLines.length);
+                                    let funcs = [];
+                                    try { funcs = extractFunctions(content) || []; } catch { funcs = []; }
+                                    let branchList = [];
+                                    try {
+                                        branchList = extractBranches(content) || [];
+                                    } catch { branchList = []; }
+
+                                    canonicalMap.set(can, {
+                                        lines: { total: totalLines, covered: 0, skipped: 0, pct: 0 },
+                                        statements: { total: totalLines, covered: 0, skipped: 0, pct: 0 },
+                                        functions: { total: funcs.length, covered: 0, skipped: 0, pct: 0 },
+                                        branches: { total: branchList.reduce((s, b) => s + (b.locations?.length || 1), 0), covered: 0, skipped: 0, pct: 0 }
+                                    });
+                                }
+                            }
+
+                            const unitFileEntries = Array.from(canonicalMap.entries());
 
                             if (unitFileEntries.length > 0) {
                                 let stmtsCovered = 0, stmtsTotal = 0;
@@ -504,7 +620,195 @@ export const getCoverageSummary = async (req, res) => {
                             };
                         }
                     }
-                } catch (_) { }
+        }
+
+        // Database fallback: if no JSON file on disk, check if coverage was stored in DB
+        if (!rawTotals) {
+            try {
+                const dbFiles = await prisma.coverageFile.findMany({
+                    where: { snapshotId: snapshot.id },
+                    select: {
+                        filePath: true,
+                        linesPct: true,
+                        branchesPct: true,
+                        funcsPct: true,
+                        stmtsPct: true,
+                    }
+                });
+
+                if (dbFiles && dbFiles.length > 0) {
+                    const configExclusions = resolvedRootDir ? extractProjectCoverageExclusions(resolvedRootDir) : [];
+                    let sTot = 0, sCovExact = 0, bTot = 0, bCovExact = 0, fTot = 0, fCovExact = 0, lTot = 0, lCovExact = 0;
+                    let matchedFileCount = 0;
+
+                    for (const f of dbFiles) {
+                        const can = resolvedRootDir ? (canonicalizeFilePath(f.filePath, resolvedRootDir) || f.filePath) : f.filePath;
+                        if (typeFilter === "unit" && !isBusinessLogicSourceFile(can, configExclusions)) continue;
+                        if (typeFilter === "integration" && !isApiFilePath(can)) continue;
+
+                        matchedFileCount++;
+                        let totalLines = 100;
+                        let funcsCount = 5;
+                        let branchesCount = 5;
+
+                        if (resolvedRootDir) {
+                            const absPath = path.isAbsolute(f.filePath) ? f.filePath : path.join(resolvedRootDir, f.filePath);
+                            if (fs.existsSync(absPath)) {
+                                try {
+                                    const fileContent = fs.readFileSync(absPath, "utf8");
+                                    const codeLines = fileContent.split("\n");
+                                    totalLines = Math.max(1, codeLines.length);
+                                    const funcs = extractFunctions(fileContent) || [];
+                                    funcsCount = Math.max(1, funcs.length);
+                                    const branchList = extractBranches(fileContent) || [];
+                                    branchesCount = Math.max(1, branchList.reduce((s, b) => s + (b.locations?.length || 1), 0));
+                                } catch (_) {}
+                            }
+                        }
+
+                        sTot += totalLines;
+                        sCovExact += totalLines * ((f.stmtsPct || 0) / 100);
+                        lTot += totalLines;
+                        lCovExact += totalLines * ((f.linesPct || 0) / 100);
+                        fTot += funcsCount;
+                        fCovExact += funcsCount * ((f.funcsPct || 0) / 100);
+                        bTot += branchesCount;
+                        bCovExact += branchesCount * ((f.branchesPct || 0) / 100);
+                    }
+
+                    if (matchedFileCount > 0 && (sTot > 0 || lTot > 0)) {
+                        const sPct = sTot > 0 ? Number(((sCovExact / sTot) * 100).toFixed(1)) : 0;
+                        const bPct = bTot > 0 ? Number(((bCovExact / bTot) * 100).toFixed(1)) : (lCovExact > 0 ? 100 : 0);
+                        const fPct = fTot > 0 ? Number(((fCovExact / fTot) * 100).toFixed(1)) : 0;
+                        const lPct = lTot > 0 ? Number(((lCovExact / lTot) * 100).toFixed(1)) : 0;
+
+                        rawTotals = {
+                            statements: { total: sTot, covered: Math.round(sCovExact), pct: sPct },
+                            branches: { total: bTot, covered: Math.round(bCovExact), pct: bPct },
+                            functions: { total: fTot, covered: Math.round(fCovExact), pct: fPct },
+                            lines: { total: lTot, covered: Math.round(lCovExact), pct: lPct },
+                        };
+                        coverage = {
+                            statements: sPct,
+                            branches: bPct,
+                            functions: fPct,
+                            lines: lPct,
+                        };
+                    }
+                }
+            } catch (dbAggErr) {
+                console.warn("[CoverageSummary] DB fallback aggregation error:", dbAggErr.message);
+            }
+        }
+
+        if (!rawTotals) {
+            try {
+                const dbSummary = summary || await prisma.coverageSummary.findUnique({
+                    where: { snapshotId: snapshot.id }
+                });
+                if (dbSummary && (dbSummary.stmtsPct != null || dbSummary.linesPct != null)) {
+                    const sPct = dbSummary.stmtsPct ?? 0;
+                    const bPct = dbSummary.branchesPct ?? 0;
+                    const fPct = dbSummary.funcsPct ?? 0;
+                    const lPct = dbSummary.linesPct ?? 0;
+                    rawTotals = {
+                        statements: { total: 0, covered: 0, pct: sPct },
+                        branches: { total: 0, covered: 0, pct: bPct },
+                        functions: { total: 0, covered: 0, pct: fPct },
+                        lines: { total: 0, covered: 0, pct: lPct },
+                    };
+                    coverage = {
+                        statements: sPct,
+                        branches: bPct,
+                        functions: fPct,
+                        lines: lPct,
+                    };
+                }
+            } catch (_) {}
+        }
+
+        // If integration test and no explicit summary file found, compute baseline 0% totals across all API route files
+        if (typeFilter === "integration" && !rawTotals && resolvedRootDir) {
+            try {
+                const logicFiles = findLogicSourceFiles(resolvedRootDir);
+                let stmtsTotal = 0;
+                let linesTotal = 0;
+                let funcsTotal = 0;
+                let branchesTotal = 0;
+
+                for (const lf of logicFiles) {
+                    const can = canonicalizeFilePath(lf.relativePath, resolvedRootDir) || lf.relativePath;
+                    if (!isApiFilePath(can)) continue;
+
+                    let content = "";
+                    try { content = fs.readFileSync(lf.absolutePath, "utf8"); } catch { }
+                    const codeLines = content.split("\n");
+                    const totalLines = Math.max(1, codeLines.length);
+                    linesTotal += totalLines;
+                    stmtsTotal += totalLines;
+
+                    let funcs = [];
+                    try { funcs = extractFunctions(content) || []; } catch { funcs = []; }
+                    funcsTotal += funcs.length;
+
+                    let branchList = [];
+                    try { branchList = extractBranches(content) || []; } catch { branchList = []; }
+                    branchesTotal += branchList.reduce((s, b) => s + (b.locations?.length || 1), 0);
+                }
+
+                if (linesTotal > 0 || stmtsTotal > 0) {
+                    rawTotals = {
+                        statements: { total: stmtsTotal, covered: 0, pct: 0 },
+                        branches: { total: branchesTotal, covered: 0, pct: 0 },
+                        functions: { total: funcsTotal, covered: 0, pct: 0 },
+                        lines: { total: linesTotal, covered: 0, pct: 0 },
+                    };
+                    coverage = { statements: 0, branches: 0, functions: 0, lines: 0 };
+                }
+            } catch (integrationBaselineErr) {
+                console.warn("[CoverageSummary] Integration baseline fallback error:", integrationBaselineErr.message);
+            }
+        }
+
+        // If unit test and no explicit summary file found, compute baseline 0% totals across all business logic files
+        if (typeFilter === "unit" && !rawTotals && resolvedRootDir) {
+            try {
+                const configExclusions = extractProjectCoverageExclusions(resolvedRootDir);
+                const logicFiles = findLogicSourceFiles(resolvedRootDir);
+                let stmtsTotal = 0;
+                let linesTotal = 0;
+                let funcsTotal = 0;
+                let branchesTotal = 0;
+
+                for (const lf of logicFiles) {
+                    const can = canonicalizeFilePath(lf.relativePath, resolvedRootDir) || lf.relativePath;
+                    if (!isBusinessLogicSourceFile(can, configExclusions)) continue;
+
+                    let content = "";
+                    try { content = fs.readFileSync(lf.absolutePath, "utf8"); } catch { }
+                    const codeLines = content.split("\n");
+                    const totalLines = Math.max(1, codeLines.length);
+                    linesTotal += totalLines;
+                    stmtsTotal += totalLines;
+
+                    let funcs = [];
+                    try { funcs = extractFunctions(content) || []; } catch { funcs = []; }
+                    funcsTotal += funcs.length;
+
+                    let branchList = [];
+                    try { branchList = extractBranches(content) || []; } catch { branchList = []; }
+                    branchesTotal += branchList.reduce((s, b) => s + (b.locations?.length || 1), 0);
+                }
+
+                rawTotals = {
+                    statements: { total: stmtsTotal, covered: 0, pct: 0 },
+                    branches: { total: branchesTotal, covered: 0, pct: 0 },
+                    functions: { total: funcsTotal, covered: 0, pct: 0 },
+                    lines: { total: linesTotal, covered: 0, pct: 0 },
+                };
+                coverage = { statements: 0, branches: 0, functions: 0, lines: 0 };
+            } catch (baselineErr) {
+                console.warn("[CoverageSummary] Baseline fallback error:", baselineErr.message);
             }
         }
 
@@ -564,7 +868,8 @@ export const getCoverageSummary = async (req, res) => {
 
         const isJobFailed = latestJob?.status === "FAILED";
         const hasModuleResolutionError = latestJob?.errorMessage?.includes("Cannot find module") ||
-            latestTestRun?.scenarios?.some(s => s.failureMessages?.some(m => m.includes("Cannot find module")));
+            latestJob?.errorMessage?.includes("Cannot find package") ||
+            latestTestRun?.scenarios?.some(s => s.failureMessages?.some(m => m.includes("Cannot find module") || m.includes("Cannot find package")));
         const isFatalFailure = isJobFailed || hasModuleResolutionError;
 
         const scenarioWithErr = latestTestRun?.scenarios?.find(s => s.failureMessages?.length > 0);
@@ -592,6 +897,42 @@ export const getCoverageSummary = async (req, res) => {
             }))
         } : null;
 
+        let missingDependency = null;
+        const allMessages = [
+            ...(latestTestRun?.scenarios?.flatMap(s => s.failureMessages || []) || []),
+            latestJob?.errorMessage || "",
+            latestRunError || ""
+        ];
+        for (const msg of allMessages) {
+            if (msg && msg.includes("[MISSING_DEPENDENCY]:")) {
+                try {
+                    const rawJson = msg.split("[MISSING_DEPENDENCY]:")[1].trim();
+                    missingDependency = JSON.parse(rawJson);
+                    break;
+                } catch { }
+            }
+        }
+        if (!missingDependency) {
+            const { extractMissingDependency, inspectWorkspaceDependency } = await import("../services/dependencyResolution.service.js").catch(() => ({}));
+            if (extractMissingDependency) {
+                for (const msg of allMessages) {
+                    const dep = extractMissingDependency(msg);
+                    if (dep) {
+                        const inspection = inspectWorkspaceDependency ? inspectWorkspaceDependency({
+                            rootDir: snapshot.rootDir,
+                            packageName: dep.packageName,
+                            importedFrom: dep.importedFrom || failedSuite
+                        }) : {};
+                        missingDependency = {
+                            ...dep,
+                            ...inspection
+                        };
+                        break;
+                    }
+                }
+            }
+        }
+
         // Return formatted response with explicit distinction between current run and last successful coverage
         return res.status(200).json({
             success: true,
@@ -608,6 +949,7 @@ export const getCoverageSummary = async (req, res) => {
                 isPreviousResult: isFatalFailure,
                 latestRunStatus,
                 latestRunError,
+                missingDependency,
                 failedSuite,
                 hasTestFailures,
                 testExecution: sanitizedTestExecution,
@@ -809,7 +1151,7 @@ export const getCoverageFiles = async (req, res) => {
 
         // Pagination
         const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-        const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+        const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit, 10) || 50));
         const skip = (page - 1) * limit;
 
         // ── SCRUM-156: Verify permissions ────────────────────────────────────
@@ -859,6 +1201,25 @@ export const getCoverageFiles = async (req, res) => {
                     { NOT: { filePath: { contains: "step-definitions" } } },
                     { NOT: { filePath: { contains: "client/" } } },
                     { NOT: { filePath: { contains: "frontend/" } } },
+                    { NOT: { filePath: { contains: "examples/" } } },
+                    { NOT: { filePath: { contains: "examples\\" } } },
+                    { NOT: { filePath: { contains: "demo/" } } },
+                    { NOT: { filePath: { contains: "demo\\" } } },
+                    { NOT: { filePath: { contains: "sample/" } } },
+                    { NOT: { filePath: { contains: "sample\\" } } },
+                    { NOT: { filePath: { contains: ".config." } } },
+                    { NOT: { filePath: { endsWith: "types.ts" } } },
+                    { NOT: { filePath: { endsWith: "types.js" } } },
+                    { NOT: { filePath: { contains: "/types/" } } },
+                    { NOT: { filePath: { contains: "\\types\\" } } },
+                    { NOT: { filePath: { contains: "/hooks/" } } },
+                    { NOT: { filePath: { contains: "\\hooks\\" } } },
+                    { NOT: { filePath: { contains: "/i18n/" } } },
+                    { NOT: { filePath: { contains: "\\i18n\\" } } },
+                    { NOT: { filePath: { contains: "/context/" } } },
+                    { NOT: { filePath: { contains: "\\context\\" } } },
+                    { NOT: { filePath: { contains: "/components/" } } },
+                    { NOT: { filePath: { contains: "\\components\\" } } },
                     { NOT: { filePath: { endsWith: ".jsx" } } },
                     { NOT: { filePath: { endsWith: ".tsx" } } },
                     { NOT: { filePath: { contains: "routes/" } } },
@@ -867,6 +1228,8 @@ export const getCoverageFiles = async (req, res) => {
                     { NOT: { filePath: { endsWith: "app.ts" } } },
                     { NOT: { filePath: { endsWith: "server.js" } } },
                     { NOT: { filePath: { endsWith: "server.ts" } } },
+                    { NOT: { filePath: { contains: "presets/tier" } } },
+                    { NOT: { filePath: { contains: "presets\\tier" } } },
                 ] : [])
             ]
         };
@@ -875,8 +1238,8 @@ export const getCoverageFiles = async (req, res) => {
             prisma.coverageFile.findMany({
                 where,
                 orderBy: { [sortBy]: order },
-                skip,
-                take: limit,
+                skip: typeFilter === "unit" ? 0 : skip,
+                take: typeFilter === "unit" ? 2000 : limit,
                 select: {
                     id: true,
                     filePath: true,
@@ -890,42 +1253,59 @@ export const getCoverageFiles = async (req, res) => {
         ]);
 
         if (typeFilter === "unit") {
-            const beforeCount = files.length;
-            files = files.filter(f => {
-                const norm = (f.filePath || "").replace(/\\/g, "/").toLowerCase();
-                if (norm.includes("/coverage/") || norm.includes("/node_modules/") || norm.includes("/.git/")) return false;
-                if (norm.includes("/specs/") || norm.includes("/tests/") || norm.includes("/__tests__/") || norm.includes("step-definitions") || /\.(test|spec|steps)\.[a-z0-9]+$/i.test(norm)) return false;
-                const isRouteOrEntry = /(^|\/)(routes?|endpoints?)(\/|\.|$)/i.test(norm) ||
-                    /\.(route|routes)\.[cm]?[jt]sx?$/i.test(norm) ||
-                    /(^|\/)(app|server)\.[cm]?[jt]sx?$/i.test(norm);
-                return !isRouteOrEntry;
+            const snapshotWithRoot = await prisma.projectSnapshot.findUnique({
+                where: { id: snapshotId },
+                select: { rootDir: true }
             });
-            if (files.length !== beforeCount) {
-                total = Math.max(files.length, total - (beforeCount - files.length));
+            const effectiveRoot = snapshotWithRoot?.rootDir
+                ? (resolveSnapshotRootDir(snapshotWithRoot.rootDir) || snapshotWithRoot.rootDir)
+                : "";
+            const configExclusions = extractProjectCoverageExclusions(effectiveRoot);
+
+            // Deduplicate, filter by genuine business logic, and canonicalize DB files
+            const seen = new Map();
+            for (const f of files) {
+                const can = canonicalizeFilePath(f.filePath, effectiveRoot) || f.filePath;
+                if (!isBusinessLogicSourceFile(can, configExclusions)) continue;
+
+                if (!seen.has(can) || (seen.get(can).linesPct === 0 && (f.linesPct || 0) > 0)) {
+                    seen.set(can, { ...f, filePath: can });
+                }
             }
 
-            // Fallback: If 0 coverage files recorded yet in DB, detect logic source files from snapshot rootDir
-            if (files.length === 0 && snapshotId) {
-                const snapshotWithRoot = await prisma.projectSnapshot.findUnique({
-                    where: { id: snapshotId },
-                    select: { rootDir: true }
-                });
-                if (snapshotWithRoot?.rootDir) {
-                    const effectiveRoot = resolveSnapshotRootDir(snapshotWithRoot.rootDir) || snapshotWithRoot.rootDir;
-                    const logicFiles = findLogicSourceFiles(effectiveRoot);
-                    if (logicFiles.length > 0) {
-                        total = logicFiles.length;
-                        files = logicFiles.slice(skip, skip + limit).map((lf, idx) => ({
-                            id: `logic_${skip + idx}`,
-                            filePath: lf.relativePath,
+            // Fill in any missing logic source files from effectiveRoot
+            if (effectiveRoot) {
+                const logicFiles = findLogicSourceFiles(effectiveRoot);
+                for (let idx = 0; idx < logicFiles.length; idx++) {
+                    const lf = logicFiles[idx];
+                    const can = canonicalizeFilePath(lf.relativePath, effectiveRoot);
+                    if (!isBusinessLogicSourceFile(can, configExclusions)) continue;
+                    if (!seen.has(can)) {
+                        seen.set(can, {
+                            id: `logic_${idx}_${path.basename(can)}`,
+                            filePath: can,
                             linesPct: 0,
                             branchesPct: 0,
                             funcsPct: 0,
                             stmtsPct: 0,
-                        }));
+                        });
                     }
                 }
             }
+
+            files = Array.from(seen.values());
+            files.sort((a, b) => {
+                let valA = a[sortBy];
+                let valB = b[sortBy];
+                if (typeof valA === "string") {
+                    return order === "desc" ? valB.localeCompare(valA) : valA.localeCompare(valB);
+                }
+                valA = Number(valA || 0);
+                valB = Number(valB || 0);
+                return order === "desc" ? valB - valA : valA - valB;
+            });
+            total = files.length;
+            files = files.slice(skip, skip + limit);
         }
 
         // Return an empty dataset instead of a 404 so the UI can render a valid
@@ -1124,6 +1504,68 @@ export const extractTargetFunction = (a, fileName, knownFunctions = []) => {
 };
 
 /**
+ * Classifies an assertion into one of the 4 test categories:
+ * - Category A: HAPPY_PATH (Happy Path / Standard flow)
+ * - Category B: BOUNDARY_VALUES (Boundary values: 0, -1, empty, max limits)
+ * - Category C: BRANCH_TOGGLING (Condition branches, fallback, falsy/truthy)
+ * - Category D: ERROR_HANDLING (Exceptions, throw, reject, error handling)
+ */
+export const classifyTestCategory = (a, title = "", ancestorTitles = []) => {
+    const fullText = [
+        title || a?.title || a?.fullName || "",
+        ...(Array.isArray(ancestorTitles) ? ancestorTitles : (a?.ancestorTitles || []))
+    ].join(" ").toLowerCase();
+
+    // 1. Category D: Error & Exception Handling
+    if (
+        /\b(error|throw|throws|exception|reject|rejects|catch|fail|failed|failure|invalid|malformed|unauthorized|forbidden|not\s*found|crash|abort)\b/i.test(fullText) ||
+        /\b(500|400|401|403|404|422)\b/.test(fullText)
+    ) {
+        return {
+            category: "ERROR_HANDLING",
+            categoryName: "D. Error & Exception Handling",
+            categoryBadge: "Error Handling",
+            categoryColor: "#ef4444"
+        };
+    }
+
+    // 2. Category B: Boundary Value Analysis
+    if (
+        /\b(bound|boundary|extreme|limits?|edge\s*cases?|empty|zero|\b0\b|-1|negative|null|undefined|nan|max|min|overflow|underflow|whitespace|blank)\b/i.test(fullText) ||
+        /\[\s*\]|\{\s*\}|""|''/.test(fullText)
+    ) {
+        return {
+            category: "BOUNDARY_VALUES",
+            categoryName: "B. Boundary Values",
+            categoryBadge: "Boundary Value",
+            categoryColor: "#f59e0b"
+        };
+    }
+
+    // 3. Category C: Branch Toggling
+    if (
+        /\b(branch|branches|toggle|condition|conditional|if|else|switch|case|when|fallback|default|optional|ternary|without|falsy|truthy|neither|either|boolean|flag)\b/i.test(fullText) ||
+        /\b(or|and|\?\?|\|\||\?\.)\b/.test(fullText)
+    ) {
+        return {
+            category: "BRANCH_TOGGLING",
+            categoryName: "C. Branch Toggling",
+            categoryBadge: "Branch Toggling",
+            categoryColor: "#0284c7"
+        };
+    }
+
+    // 4. Category A: Happy Path (Default standard successful flow)
+    return {
+        category: "HAPPY_PATH",
+        categoryName: "A. Happy Path",
+        categoryBadge: "Happy Path",
+        categoryColor: "#10b981"
+    };
+};
+
+
+/**
  * Extract a repo-relative path from a test suite name.
  * Handles both Docker paths (/app/storage/.../repo/foo.test.js)
  * and Windows paths (D:\...\storage\...\repo\foo.test.js).
@@ -1234,17 +1676,24 @@ export const getCoverageTestSuites = async (req, res) => {
 
         const findJsonFiles = (base, filename) => {
             const results = [
+                path.join(base, "coverage", requestedType, filename),
                 path.join(base, "coverage", filename),
                 path.join(base, filename),
+                path.join(base, "backend", "coverage", requestedType, filename),
                 path.join(base, "backend", "coverage", filename),
                 path.join(base, "backend", filename),
             ];
             try {
-                const covDir = path.join(base, "coverage");
-                if (fs.existsSync(covDir)) {
-                    for (const f of fs.readdirSync(covDir)) {
-                        if (f.endsWith(".json") && f.includes(filename.replace(".json", ""))) {
-                            results.push(path.join(covDir, f));
+                const covDirs = [
+                    path.join(base, "coverage", requestedType),
+                    path.join(base, "coverage"),
+                ];
+                for (const covDir of covDirs) {
+                    if (fs.existsSync(covDir)) {
+                        for (const f of fs.readdirSync(covDir)) {
+                            if (f.endsWith(".json") && f.includes(filename.replace(".json", ""))) {
+                                results.push(path.join(covDir, f));
+                            }
                         }
                     }
                 }
@@ -1324,8 +1773,12 @@ export const getCoverageTestSuites = async (req, res) => {
 
         // 3. Classify and assemble test suites
         const suites = [];
+        const seenSuites = new Set();
         for (const fullPath of testFiles) {
             const relPath = norm(path.relative(snapshotRootDir, fullPath));
+            const cleanPath = cleanStoragePath(relPath) || relPath;
+            if (seenSuites.has(cleanPath)) continue;
+            seenSuites.add(cleanPath);
             const baseName = path.basename(fullPath);
             const lowerPath = relPath.toLowerCase();
 
@@ -1379,12 +1832,18 @@ export const getCoverageTestSuites = async (req, res) => {
                         try {
                             targetFunction = extractTargetFunction(a, baseName, fileKnownFunctions);
                         } catch (_) { }
+                        const catInfo = classifyTestCategory(a, a?.title || a?.fullName, a?.ancestorTitles);
                         return {
                             title: a?.title || a?.fullName || "Test case",
                             status: a?.status || "passed",
                             duration: typeof a?.duration === "number" ? a.duration : 0,
                             targetFunction: targetFunction || null,
-                            ancestorTitles: Array.isArray(a?.ancestorTitles) ? a.ancestorTitles : []
+                            ancestorTitles: Array.isArray(a?.ancestorTitles) ? a.ancestorTitles : [],
+                            category: catInfo.category,
+                            categoryName: catInfo.categoryName,
+                            categoryBadge: catInfo.categoryBadge,
+                            categoryColor: catInfo.categoryColor,
+                            line: a?.location?.line || a?.line || a?.startLine || null
                         };
                     })
                 : [];
@@ -1405,7 +1864,7 @@ export const getCoverageTestSuites = async (req, res) => {
                 : (passedTests + failedTests || (suiteResult ? 1 : 0));
 
             // pending = file found but no test run result yet; failed/passed = from results
-            let status = suiteResult ? (suiteResult.status === "failed" || failedTests > 0 ? "failed" : "passed") : "pending";
+            let status = suiteResult ? (suiteResult.status === "failed" || failedTests > 0 ? "failed" : (suiteResult.status === "pending" || suiteResult.status === "skipped" ? "pending" : "passed")) : "pending";
 
             const rawDuration = suiteResult?.endTime && suiteResult?.startTime
                 ? (suiteResult.endTime - suiteResult.startTime)
@@ -1429,6 +1888,23 @@ export const getCoverageTestSuites = async (req, res) => {
                 }
             }
 
+            // Determine explicit diagnostic reason if suite is pending/skipped
+            let pendingReason = null;
+            if (status === "pending") {
+                const hasAnyTest = /\b(test|it|describe|scenario|suite|autoBindSteps|defineFeature|defineStep|loadFeature|loadFeatures|given|when|then|Given|When|Then|StepDefinitions|beforeEach|afterEach)\b/i.test(content);
+                if (!hasAnyTest) {
+                    pendingReason = "File contains no executable test or step-definition blocks (empty stub file).";
+                } else if (suiteResult) {
+                    if (suiteResult.numPendingTests > 0 && (suiteResult.numPassingTests || 0) + (suiteResult.numFailingTests || 0) === 0) {
+                        pendingReason = "All test cases in this suite were skipped (e.g. test.skip, describe.skip, or xit).";
+                    } else if (suiteResult.status === "pending" || suiteResult.status === "skipped") {
+                        pendingReason = "Test suite was explicitly skipped or bypassed during execution.";
+                    }
+                } else {
+                    pendingReason = "Test suite was not executed by the test runner (not targeted by testMatch or excluded in configuration).";
+                }
+            }
+
             suites.push({
                 filePath: cleanStoragePath(relPath) || relPath,
                 fileName: baseName,
@@ -1440,7 +1916,8 @@ export const getCoverageTestSuites = async (req, res) => {
                 failedTests,
                 durationMs,
                 assertions,
-                message: cleanStorageText(message),
+                pendingReason,
+                message: cleanStorageText(message || pendingReason),
             });
         }
 
@@ -1496,7 +1973,7 @@ export const getCoverageFunctions = async (req, res) => {
         const order = ALLOWED_SORT_ORDERS.includes(rawOrder) ? rawOrder : "asc";
 
         const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-        const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+        const limit = Math.min(2000, Math.max(1, parseInt(req.query.limit, 10) || 50));
         const skip = (page - 1) * limit;
 
         // ── SCRUM-161: Verify permissions ─────────────────────────────────────
@@ -1508,6 +1985,7 @@ export const getCoverageFunctions = async (req, res) => {
                 source: true,
                 commitSha: true,
                 createdAt: true,
+                rootDir: true,
                 project: {
                     select: { ownerId: true, name: true },
                 },
@@ -1533,6 +2011,17 @@ export const getCoverageFunctions = async (req, res) => {
                     { NOT: { filePath: { contains: "coverage/" } } },
                     { NOT: { filePath: { contains: "client/" } } },
                     { NOT: { filePath: { contains: "frontend/" } } },
+                    { NOT: { filePath: { contains: "examples/" } } },
+                    { NOT: { filePath: { contains: "demo/" } } },
+                    { NOT: { filePath: { contains: "sample/" } } },
+                    { NOT: { filePath: { contains: ".config." } } },
+                    { NOT: { filePath: { endsWith: "types.ts" } } },
+                    { NOT: { filePath: { endsWith: "types.js" } } },
+                    { NOT: { filePath: { contains: "/types/" } } },
+                    { NOT: { filePath: { contains: "/hooks/" } } },
+                    { NOT: { filePath: { contains: "/i18n/" } } },
+                    { NOT: { filePath: { contains: "/context/" } } },
+                    { NOT: { filePath: { contains: "/components/" } } },
                     { NOT: { filePath: { contains: "tests/" } } },
                     { NOT: { filePath: { contains: "specs/" } } },
                     { NOT: { filePath: { contains: "fixtures/" } } },
@@ -1545,16 +2034,21 @@ export const getCoverageFunctions = async (req, res) => {
                     { NOT: { filePath: { endsWith: "app.ts" } } },
                     { NOT: { filePath: { endsWith: "server.js" } } },
                     { NOT: { filePath: { endsWith: "server.ts" } } },
+                    { NOT: { filePath: { contains: "presets/tier" } } },
+                    { NOT: { filePath: { contains: "presets\\tier" } } },
                 ]
             }),
         };
 
-        let [functions, total] = await Promise.all([
+        const queryLimit = typeFilter === "unit" ? 2000 : limit;
+        const querySkip = typeFilter === "unit" ? 0 : skip;
+
+        let [functions, total, cycRecords, cfgRecords] = await Promise.all([
             prisma.coverageFunction.findMany({
                 where,
                 orderBy: { [sortBy]: order },
-                skip,
-                take: limit,
+                skip: querySkip,
+                take: queryLimit,
                 select: {
                     id: true,
                     filePath: true,
@@ -1565,20 +2059,91 @@ export const getCoverageFunctions = async (req, res) => {
                 },
             }),
             prisma.coverageFunction.count({ where }),
+            prisma.cyclomatic?.findMany
+                ? prisma.cyclomatic.findMany({
+                    where: { snapshotId },
+                    select: { id: true, cfgId: true, filePath: true, functionName: true, value: true },
+                }).catch(() => [])
+                : Promise.resolve([]),
+            prisma.cfg?.findMany
+                ? prisma.cfg.findMany({
+                    where: { snapshotId },
+                    select: { id: true, filePath: true, functionName: true, startLine: true },
+                }).catch(() => [])
+                : Promise.resolve([]),
         ]);
 
         if (typeFilter === "unit") {
-            const beforeCount = functions.length;
-            functions = functions.filter(f => {
-                const norm = (f.filePath || "").replace(/\\/g, "/").toLowerCase();
-                const isRouteOrEntry = /(^|\/)(routes?|endpoints?)(\/|\.|$)/i.test(norm) ||
-                    /\.(route|routes)\.[cm]?[jt]sx?$/i.test(norm) ||
-                    /(^|\/)(app|server)\.[cm]?[jt]sx?$/i.test(norm);
-                return !isRouteOrEntry;
-            });
-            if (functions.length !== beforeCount) {
-                total = Math.max(functions.length, total - (beforeCount - functions.length));
+            const effectiveRoot = snapshot?.rootDir ? (resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir) : "";
+            const configExclusions = extractProjectCoverageExclusions(effectiveRoot);
+
+            const existingFileFuncs = new Set();
+            const validDbFunctions = [];
+            for (const f of functions) {
+                const can = canonicalizeFilePath(f.filePath, effectiveRoot) || f.filePath;
+                if (!isBusinessLogicSourceFile(can, configExclusions)) continue;
+                existingFileFuncs.add(can);
+                validDbFunctions.push({ ...f, filePath: can });
             }
+
+            const addedFunctions = [];
+            if (effectiveRoot) {
+                const logicFiles = findLogicSourceFiles(effectiveRoot);
+                for (let i = 0; i < logicFiles.length; i++) {
+                    const lf = logicFiles[i];
+                    const can = canonicalizeFilePath(lf.relativePath, effectiveRoot);
+                    if (!isBusinessLogicSourceFile(can, configExclusions)) continue;
+                    if (filePathFilter && !can.toLowerCase().includes(filePathFilter.toLowerCase())) continue;
+
+                    // If file has no functions in DB, extract via AST
+                    if (!existingFileFuncs.has(can)) {
+                        let content = "";
+                        try { content = fs.readFileSync(lf.absolutePath, "utf8"); } catch { }
+                        let extracted = [];
+                        try { extracted = extractFunctions(content) || []; } catch { }
+
+                        for (let j = 0; j < extracted.length; j++) {
+                            const ef = extracted[j];
+                            addedFunctions.push({
+                                id: `ast_${i}_${j}_${path.basename(can)}`,
+                                filePath: can,
+                                functionName: ef.functionName || ef.name || `anonymous_${ef.startLine || j}`,
+                                startLine: ef.startLine || 1,
+                                endLine: ef.endLine || 1,
+                                hit: 0,
+                            });
+                        }
+                    }
+                }
+            }
+
+            functions = [...validDbFunctions, ...addedFunctions];
+            functions.sort((a, b) => {
+                let valA = a[sortBy];
+                let valB = b[sortBy];
+                if (typeof valA === "string") {
+                    return order === "desc" ? valB.localeCompare(valA) : valA.localeCompare(valB);
+                }
+                valA = Number(valA || 0);
+                valB = Number(valB || 0);
+                return order === "desc" ? valB - valA : valA - valB;
+            });
+            total = functions.length;
+            functions = functions.slice(skip, skip + limit);
+        }
+
+        const normPath = (p = "") => p.replace(/\\/g, "/").replace(/^(backend|server|app)\//i, "");
+        const cycByFile = new Map();
+        for (const c of (cycRecords || [])) {
+            const fp = normPath(c.filePath);
+            if (!cycByFile.has(fp)) cycByFile.set(fp, []);
+            cycByFile.get(fp).push(c);
+        }
+        const cfgByFile = new Map();
+        for (const g of (cfgRecords || [])) {
+            const fp = normPath(g.filePath);
+            if (!cfgByFile.has(fp)) cfgByFile.set(fp, []);
+            cfgByFile.get(fp).push(g);
         }
 
         // Return an empty dataset instead of a 404 so the UI can render a valid
@@ -1600,10 +2165,57 @@ export const getCoverageFunctions = async (req, res) => {
                     total,
                     totalPages: Math.ceil(total / limit),
                 },
-                functions: functions.map(f => ({
-                    ...f,
-                    filePath: cleanStoragePath(f.filePath) || f.filePath
-                })),
+                functions: functions.map(f => {
+                    const effectiveRoot = snapshot.rootDir ? (resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir) : "";
+                    const canonicalPath = canonicalizeFilePath(f.filePath, effectiveRoot) || cleanStoragePath(f.filePath) || f.filePath;
+                    const fNorm = normPath(f.filePath);
+                    const fileCycs = cycByFile.get(fNorm) || [];
+                    const fileCfgs = cfgByFile.get(fNorm) || [];
+
+                    // Match cyclomatic complexity by exact name or line proximity
+                    let matchedCyc = fileCycs.find(c => c.functionName.toLowerCase() === f.functionName.toLowerCase());
+                    if (!matchedCyc && f.startLine) {
+                        matchedCyc = fileCycs.find(c => {
+                            const m = c.functionName.match(/@L(\d+)/i);
+                            if (m) {
+                                const l = parseInt(m[1], 10);
+                                return Math.abs(l - f.startLine) <= 3;
+                            }
+                            return false;
+                        });
+                    }
+
+                    // Match CFG by id from cyc or direct match
+                    let matchedCfg = null;
+                    if (matchedCyc?.cfgId) {
+                        matchedCfg = fileCfgs.find(g => g.id === matchedCyc.cfgId);
+                    }
+                    if (!matchedCfg) {
+                        matchedCfg = fileCfgs.find(g => g.functionName.toLowerCase() === f.functionName.toLowerCase());
+                        if (!matchedCfg && f.startLine) {
+                            matchedCfg = fileCfgs.find(g => {
+                                const m = g.functionName.match(/@L(\d+)/i);
+                                if (m) {
+                                    const l = parseInt(m[1], 10);
+                                    return Math.abs(l - f.startLine) <= 3;
+                                }
+                                return g.startLine && Math.abs(g.startLine - f.startLine) <= 3;
+                            });
+                        }
+                    }
+
+                    const complexity = matchedCyc?.value ? Math.max(1, matchedCyc.value) : 1;
+                    const complexityStatus = complexity > 10 ? "HIGH" : complexity > 5 ? "MEDIUM" : "LOW";
+
+                    return {
+                        ...f,
+                        filePath: canonicalPath,
+                        complexity,
+                        complexityStatus,
+                        cfgId: matchedCfg?.id || matchedCyc?.cfgId || null,
+                        hasCfg: Boolean(matchedCfg?.id || matchedCyc?.cfgId),
+                    };
+                }),
             },
         });
 
@@ -1810,6 +2422,71 @@ export const installIntegrationDependenciesController = async (req, res) => {
     }
 };
 
+export const installMissingDependencyController = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
+
+        const { snapshotId } = req.params;
+        const { packageName, isDev = false, rerunTests = true, importedFrom = null } = req.body || {};
+
+        if (!packageName || typeof packageName !== "string") {
+            return res.status(400).json({ success: false, message: "packageName is required." });
+        }
+
+        const snapshot = await findOwnedSnapshot(snapshotId, userId);
+        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
+        if (!snapshot.rootDir) return res.status(409).json({ success: false, message: "Snapshot directory is not available." });
+
+        const { installPackageInWorkspace, isValidNpmPackageName } = await import("../services/dependencyResolution.service.js");
+        if (!isValidNpmPackageName(packageName)) {
+            return res.status(400).json({ success: false, message: `Invalid or unsafe package name: '${packageName}'` });
+        }
+
+        const installResult = await installPackageInWorkspace({
+            rootDir: snapshot.rootDir,
+            packageName: packageName.trim(),
+            isDev: Boolean(isDev),
+            importedFrom: importedFrom || null
+        });
+
+        if (!installResult.success) {
+            return res.status(500).json({
+                success: false,
+                message: `Failed to install '${packageName}': ${installResult.stderr || installResult.stdout || "npm install failed"}`,
+                installResult
+            });
+        }
+
+        let newJob = null;
+        if (rerunTests) {
+            const { createRunTestsJob } = await import("../services/job.service.js");
+            const { addJobToQueue } = await import("../services/queue.service.js");
+
+            newJob = await createRunTestsJob({
+                projectId: snapshot.projectId,
+                snapshotId: snapshot.id,
+                userId,
+                mode: "FULL"
+            });
+            await addJobToQueue("RUN_TESTS", newJob.id);
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: `Installed package '${packageName}' successfully.${rerunTests ? " Test re-execution initiated." : ""}`,
+            installResult,
+            newJobId: newJob?.id || null
+        });
+    } catch (error) {
+        console.error("[installMissingDependencyController] Error:", error);
+        return res.status(error.statusCode || 500).json({
+            success: false,
+            message: error.message || "Failed to install dependency."
+        });
+    }
+};
+
 export const getIntegrationWorkspace = async (req, res) => {
     try {
         const userId = req.user?.id;
@@ -1818,23 +2495,46 @@ export const getIntegrationWorkspace = async (req, res) => {
         const { snapshotId } = req.params;
         if (!snapshotId) return res.status(400).json({ success: false, message: "snapshotId is required." });
 
-        const snapshot = await prisma.projectSnapshot.findUnique({
+        let targetSnapshotId = snapshotId;
+        let snapshot = await prisma.projectSnapshot.findUnique({
             where: { id: snapshotId },
-            select: { projectId: true, project: { select: { ownerId: true } } }
+select: { id: true, projectId: true, project: { select: { ownerId: true } } }
         });
 
-        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
-        await resolveProjectAccess({ projectId: snapshot.projectId, userId, capability: "project.read" });
+        if (!snapshot) {
+            // Fallback: Check if the provided ID is actually a projectId
+            const latestSnapshot = await prisma.projectSnapshot.findFirst({
+                where: { projectId: snapshotId },
+                orderBy: { createdAt: "desc" },
+                select: { id: true, projectId: true, project: { select: { ownerId: true } } }
+            });
+            if (latestSnapshot) {
+                snapshot = latestSnapshot;
+                targetSnapshotId = latestSnapshot.id;
+            }
+        }
 
-        const workspaceData = await buildIntegrationWorkspace(snapshotId);
+        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
+        if (typeof resolveProjectAccess === "function") {
+            await resolveProjectAccess({ projectId: snapshot.projectId, userId, capability: "project.read" });
+        } else if (snapshot.project?.ownerId && snapshot.project.ownerId !== userId) {
+            return res.status(403).json({ success: false, message: "Forbidden." });
+        }
+
+        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
+        if (snapshot.project?.ownerId && snapshot.project.ownerId !== userId) {
+            return res.status(403).json({ success: false, message: "Forbidden." });
+        }
+
+        const workspaceData = await buildIntegrationWorkspace(targetSnapshotId);
 
         return res.status(200).json({ success: true, data: workspaceData });
     } catch (error) {
         console.error("[getIntegrationWorkspace] Server error:", error);
-        if (error.statusCode) {
-            return res.status(error.statusCode).json({ success: false, message: error.message });
-        }
-        return res.status(error.statusCode || 500).json({ success: false, message: "Server error while fetching integration workspace." });
+return res.status(error.statusCode || 500).json({
+            success: false,
+            message: error.message || "Server error while fetching integration workspace."
+        });
     }
 };
 
@@ -1936,15 +2636,19 @@ export const suggestUnitTestcase = async (req, res) => {
 
         if (!filePath) return res.status(400).json({ success: false, message: "filePath is required in body." });
 
-        if (!projectId) {
-            const snapshot = await prisma.projectSnapshot.findUnique({
-                where: { id: snapshotId },
-                select: { projectId: true }
-            });
-            if (snapshot) projectId = snapshot.projectId;
-        }
+        const snapshot = await findOwnedSnapshot(snapshotId, userId);
+        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
 
-        const result = await suggestUnitTestcases({ projectId, snapshotId, filePath, userId, framework });
+        const actualSnapshotId = snapshot.id;
+        const actualProjectId = projectId || snapshot.projectId;
+
+        const result = await suggestUnitTestcases({
+            projectId: actualProjectId,
+            snapshotId: actualSnapshotId,
+            filePath,
+            userId,
+            framework
+        });
         return res.status(200).json({ success: true, data: result });
     } catch (error) {
         console.error("[suggestUnitTestcase] Error:", error);
@@ -2064,6 +2768,7 @@ export const getBeforeAfterComparison = async (req, res) => {
         const {
             baselineSnapshotId,
             currentSnapshotId,
+            snapshotId,
             baselineRunId,
             currentRunId,
             baselineJobId,
@@ -2075,7 +2780,7 @@ export const getBeforeAfterComparison = async (req, res) => {
         const comparison = await getBeforeAfterComparisonService({
             projectId,
             baselineSnapshotId,
-            currentSnapshotId,
+            currentSnapshotId: currentSnapshotId || snapshotId,
             baselineRunId,
             currentRunId,
             baselineJobId,
@@ -3020,29 +3725,58 @@ export const applySuggestion = async (req, res) => {
         if (!userId) return res.status(401).json({ success: false, message: "Unauthorized." });
 
         const { snapshotId } = req.params;
-        let { projectId, suggestion, suggestions } = req.body || {};
+        let { projectId, suggestion, suggestions, skipBackgroundJob, triggerFullAnalysis } = req.body || {};
 
         if (!suggestion && (!suggestions || suggestions.length === 0)) {
             return res.status(400).json({ success: false, message: "suggestion or suggestions array is required." });
         }
 
-        if (!projectId) {
-            const snapshot = await prisma.projectSnapshot.findUnique({
-                where: { id: snapshotId },
-                select: { projectId: true }
-            });
-            if (snapshot) projectId = snapshot.projectId;
-        }
+        const snapshot = await findOwnedSnapshot(snapshotId, userId);
+        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found or unauthorized." });
+
+        const actualSnapshotId = snapshot.id;
+        const actualProjectId = projectId || snapshot.projectId;
 
         const result = await applyUnitTestSuggestion({
-            snapshotId,
-            projectId,
+            snapshotId: actualSnapshotId,
+            projectId: actualProjectId,
             userId,
             suggestion,
             suggestions
         });
 
-        return res.status(200).json({ success: true, data: result });
+        // Only trigger a full project RUN_TESTS background job if explicitly requested or if incremental coverage was not already persisted
+        let backgroundJob = null;
+        const hasAuthoritativeCoverage = Boolean(result && result.success && result.newCoverage && result.perFileResults);
+        if (!skipBackgroundJob && (triggerFullAnalysis === true || !hasAuthoritativeCoverage) && result && result.success && actualSnapshotId && actualProjectId) {
+            try {
+                const activeUnitJob = await prisma.job.findFirst({
+                    where: {
+                        projectId: actualProjectId,
+                        snapshotId: actualSnapshotId,
+                        type: "RUN_TESTS",
+                        status: { in: ["QUEUED", "RUNNING"] }
+                    }
+                });
+                if (!activeUnitJob) {
+                    const runJob = await createRunTestsJob({
+                        projectId: actualProjectId,
+                        snapshotId: actualSnapshotId,
+                        userId,
+                        mode: "FULL"
+                    });
+                    await addJobToQueue("RUN_TESTS", runJob.id);
+                    backgroundJob = { id: runJob.id, type: "RUN_TESTS", status: "QUEUED" };
+                    console.log(`[applySuggestion] Auto-triggered background unit test analysis job ${runJob.id} for snapshot ${actualSnapshotId}`);
+                } else {
+                    backgroundJob = { id: activeUnitJob.id, type: "RUN_TESTS", status: activeUnitJob.status };
+                }
+            } catch (jobErr) {
+                console.warn("[applySuggestion] Warning auto-triggering background RUN_TESTS job:", jobErr.message);
+            }
+        }
+
+        return res.status(200).json({ success: true, data: { ...result, backgroundJob } });
     } catch (error) {
         console.error("[applySuggestion] Error:", error);
         return res.status(error.statusCode || 500).json({

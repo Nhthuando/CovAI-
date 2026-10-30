@@ -46,6 +46,7 @@ export const operationSnapshot = snapshot => {
     const context = contexts.getStore();
     if (!context || context.snapshotId !== snapshot?.id) return snapshot;
     return {...snapshot,rootDir:path.join(context.rootDir,context.analysisRelative),storagePath:context.rootDir,
+        originalRootDir:path.join(context.originalRootDir,context.analysisRelative),originalStoragePath:context.originalRootDir,
         jestConfigPath:snapshot.jestConfigPath && path.isAbsolute(snapshot.jestConfigPath)
             ? path.join(context.rootDir,path.relative(context.originalRootDir,snapshot.jestConfigPath)) : snapshot.jestConfigPath};
 };
@@ -56,7 +57,13 @@ export const assertProjectOperationActive = async (context = contexts.getStore()
     const operation = await db.projectOperation.findUnique({where:{id:context.operationId}});
     const job = context.jobId ? await db.job.findUnique({where:{id:context.jobId}}) : null;
     if (!operation || !ACTIVE_PROJECT_OPERATIONS.includes(operation.status) || job?.status === 'CANCELED') throw projectFileError('OPERATION_CANCELED','Operation was canceled');
-    if (project.workspaceRevision !== context.workspaceRevision) throw projectFileError('OPERATION_STALE','Source changed while this operation was running');
+    if (project.workspaceRevision !== context.workspaceRevision) {
+        if (operation?.type === 'APPLY_UNIT_SUGGESTION') {
+            context.workspaceRevision = project.workspaceRevision;
+        } else {
+            throw projectFileError('OPERATION_STALE','Source changed while this operation was running');
+        }
+    }
 };
 
 export const withOperationPublishGuard = async run => {
@@ -77,7 +84,7 @@ export const withOperationWorkspace = async (operationId,run,{includeGitMetadata
     if (!/^[A-Za-z0-9_-]+$/.test(operationId)) throw projectFileError('INVALID_OPERATION','Invalid operation identity',400);
     const rootDir = path.join(workspaceParent,operationId);
     let context;
-    await withProjectGuard({projectId:operation.projectId,userId:operation.actorId,capability:operation.capability},async (tx,access) => {
+    await withProjectGuard({projectId:operation.projectId,userId:operation.actorId,capability:operation.capability,maxWait:60000,timeout:120000},async (tx,access) => {
         const current = await tx.projectOperation.findUnique({where:{id:operationId}});
         if (!['QUEUED','ADMITTED'].includes(current?.status)) return;
         if (access.project.workspaceRevision !== current.capturedWorkspaceRevision) {
@@ -110,7 +117,7 @@ export const withOperationWorkspace = async (operationId,run,{includeGitMetadata
             if (deferResults) beginPreparedPublications();
             const value = await run({...context,assertActive:()=>assertProjectOperationActive(context)});
             if (deferResults) {
-                await withProjectGuard({projectId:context.projectId,userId:context.userId,capability:context.capability},async tx=>{
+                await withProjectGuard({projectId:context.projectId,userId:context.userId,capability:context.capability,maxWait:30000,timeout:60000},async tx=>{
                     await assertProjectOperationActive(context,tx);
                     const before = await tx.job.findUnique({where:{id:context.jobId}});
                     await flushPreparedPublications(tx,{failureOnly:before?.status === 'FAILED'});

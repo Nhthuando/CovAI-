@@ -8,8 +8,9 @@ services:
       - "5000:5000"
     volumes:
       - ./server:/app
+      - ./shared:/shared
       - /app/node_modules
-      - /app/node_modules/.prisma  
+      - /app/node_modules/.prisma
     command: sh -c "git config --global --add safe.directory '*' ; npm run dev"
     environment:
       - REDIS_URL=redis://redis:6379
@@ -32,6 +33,7 @@ services:
       - "5173:5173"
     volumes:
       - ./client:/app
+      - ./shared:/shared
       - /app/node_modules
     command: sh -c "npm run dev -- --host"
     depends_on:

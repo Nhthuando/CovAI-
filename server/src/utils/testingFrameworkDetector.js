@@ -21,7 +21,7 @@ const FRAMEWORKS = [
 
 const DEPENDENCY_SECTIONS = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"];
 const IGNORED_DIRECTORIES = new Set(["node_modules", ".git", "coverage", "dist", "build", ".next", ".vite", ".vitest"]);
-const TEST_FILE_PATTERN = /(?:^|\.)(?:test|spec)\.[cm]?[jt]sx?$/i;
+const TEST_FILE_PATTERN = /(?:^|\.)(?:test|spec)\.[cm]?[jt]sx?$|^(?:tests?|specs?)[-_.]|[-_.](?:tests?|specs?)\.[cm]?[jt]sx?$|^tests?[A-Z]|[a-z0-9](?:Tests?|Specs?)\.[cm]?[jt]sx?$/i;
 
 const readPackageJson = (packagePath, errors) => {
     if (!fs.existsSync(packagePath)) return null;
@@ -39,9 +39,34 @@ export const classifyTestFile = (content, filePath = "", detectedUnitFrameworks 
     const lowerContent = (content || "").toLowerCase();
     const lowerPath = (filePath || "").toLowerCase();
 
-    if (lowerPath.includes("supertest") || lowerContent.includes("supertest") || lowerContent.includes("request(app)")) return "supertest";
-    if (lowerPath.includes("playwright") || lowerContent.includes("@playwright/test") || lowerContent.includes("page.goto")) return "playwright";
+    // Integration tests (supertest, api routes)
+    if (
+        lowerPath.includes("supertest") ||
+        lowerContent.includes("supertest") ||
+        lowerContent.includes("request(app)") ||
+        lowerContent.includes("request(server)") ||
+        lowerPath.includes("/integration/") ||
+        lowerPath.includes("\\integration\\") ||
+        lowerPath.includes("/routes/") ||
+        lowerPath.includes("\\routes\\") ||
+        lowerPath.includes("/api/") ||
+        lowerPath.includes("\\api\\") ||
+        /\b(integration|api)\.(test|spec)\.[cm]?[jt]s$/i.test(lowerPath)
+    ) return "supertest";
+
+    // System / E2E tests (Playwright, Cypress)
     if (lowerPath.includes("cypress") || lowerContent.includes("cypress")) return "cypress";
+
+    if (
+        lowerPath.includes("playwright") ||
+        lowerContent.includes("@playwright/test") ||
+        lowerContent.includes("page.goto") ||
+        lowerPath.includes("/e2e/") ||
+        lowerPath.includes("\\e2e\\") ||
+        lowerPath.includes("/system/") ||
+        lowerPath.includes("\\system\\") ||
+        /\b(e2e|system)\.(test|spec)\.[cm]?[jt]s$/i.test(lowerPath)
+    ) return "playwright";
 
     // Vitest detection
     const isVitest = lowerPath.includes(".vitest.") ||

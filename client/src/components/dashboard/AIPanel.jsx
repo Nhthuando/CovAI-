@@ -1,5 +1,3 @@
-import { getSelectedAIModel, setSelectedAIModel } from '../../services/aiModel.service.js';
-import { AI_MODELS } from '../../../../shared/aiModels.js';
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -58,9 +56,8 @@ import { useToast } from "./ToastContext";
 import DiffReviewModal from "./DiffReviewModal";
 import AIContextDialog from "./AIContextDialog";
 import { getAiContext } from "../../services/aiContext.service";
-import { useProjectAccess } from "../../hooks/useProjectAccess";
-import { useAuth } from "../../hooks/useAuth";
-import { collaborationRequest, projectPath } from "../../services/collaborationHttp";
+import { invalidateCoverageQueries } from "../../hooks/useCoverageQuery";
+import { isTestFile } from "./CoverageTypeDashboard";
 
 /* ── Clean and Normalize Path Utilities ─────────────────── */
 export function cleanFilePath(pathStr = "") {
@@ -622,7 +619,10 @@ function IdeChangesWidget({
               type="button"
               disabled={anyApplying}
               onClick={onApplyAll}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-[var(--color-primary)] text-[var(--color-primary-foreground)] hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-50"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold text-white transition-all cursor-pointer"
+              style={{
+                background: "var(--color-primary, #6d5dfb)",
+              }}
               title="Apply all suggested test files"
             >
               {anyApplying ? (
@@ -784,16 +784,19 @@ function IdeChangesWidget({
             borderTop: "1px solid rgba(124, 58, 237, 0.2)",
           }}
         >
-          <div className="text-[11px] text-[var(--color-text-secondary)] font-medium">
+          <div className="text-[11px] text-purple-300 font-medium">
             💡 Test files have been written to the project. Re-run analysis to verify coverage increase:
           </div>
           <button
             type="button"
             onClick={onRunAnalysis}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--color-primary)] text-[var(--color-primary-foreground)] hover:opacity-90 transition-opacity ml-auto cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-all ml-auto cursor-pointer"
+            style={{
+              background: "var(--color-primary, #6d5dfb)",
+            }}
             title="Re-run Analysis Unit"
           >
-            <Play size={11} className="fill-current" />
+            <Play size={11} className="fill-white" />
             <span>Run Analysis Unit ↵</span>
           </button>
         </div>
@@ -1060,7 +1063,7 @@ function ChatMessage({
             fontSize: 12,
           }}
         >
-          {isUser ? (msg.senderName || (msg.isOwn !== false ? "You" : "Project member")) : "COV"}
+          {isUser ? "You" : "COV"}
         </span>
 
         {!isUser && (
@@ -1400,7 +1403,40 @@ function TypingIndicator() {
 }
 
 /* ── AI Model Options ────────────────────────────────────── */
-
+const AI_MODELS = [
+  {
+    id: "gemini-1.5-pro",
+    name: "Gemini 1.5 Pro",
+    provider: "Google",
+    badge: "Default",
+    badgeColor: "#a78bfa",
+    desc: "Complex logic & test generation",
+  },
+  {
+    id: "gemini-1.5-flash",
+    name: "Gemini 1.5 Flash",
+    provider: "Google",
+    badge: "Fast",
+    badgeColor: "#38bdf8",
+    desc: "Ultra-low latency reasoning",
+  },
+  {
+    id: "claude-3-5-sonnet",
+    name: "Claude 3.5 Sonnet",
+    provider: "Anthropic",
+    badge: "Pro",
+    badgeColor: "#f472b6",
+    desc: "Advanced refactoring & test design",
+  },
+  {
+    id: "gpt-4o",
+    name: "GPT-4o",
+    provider: "OpenAI",
+    badge: "Smart",
+    badgeColor: "#4ade80",
+    desc: "High precision code synthesis",
+  },
+];
 
 /* ── Modern Prompt Input (Compact & Dynamic Auto-Resize) ─── */
 function ChatInput({
@@ -1410,9 +1446,6 @@ function ChatInput({
   setSelectedModel,
   fileTree = [],
   projectId,
-  prefillPrompt = null,
-  readOnly = false,
-  snapshotId,
 }) {
   const [input, setInput] = useState("");
   const [focused, setFocused] = useState(false);
@@ -1429,36 +1462,6 @@ function ChatInput({
   const atMenuRef = useRef(null);
   const fileInputRef = useRef(null);
   const selectedMentionItemRef = useRef(null);
-
-  useEffect(() => {
-    if (prefillPrompt?.text) {
-      setInput(prefillPrompt.text);
-      setTimeout(() => {
-        if (textareaRef.current) {
-          textareaRef.current.focus();
-          const len = prefillPrompt.text.length;
-          textareaRef.current.setSelectionRange(len, len);
-        }
-      }, 60);
-    }
-  }, [prefillPrompt]);
-
-  useEffect(() => {
-    const handleCustomPrefill = (e) => {
-      const text = e.detail?.promptText;
-      if (text) {
-        setInput(text);
-        setTimeout(() => {
-          if (textareaRef.current) {
-            textareaRef.current.focus();
-            textareaRef.current.setSelectionRange(text.length, text.length);
-          }
-        }, 60);
-      }
-    };
-    window.addEventListener("covai:prefill-prompt", handleCustomPrefill);
-    return () => window.removeEventListener("covai:prefill-prompt", handleCustomPrefill);
-  }, []);
 
   const allProjectFiles = useMemo(() => {
     return flattenFiles(fileTree);
@@ -1663,7 +1666,7 @@ function ChatInput({
       setAttachments((prev) => [...prev, newAtt]);
 
       if (projectId) {
-        getFileContentApi(projectId, file.path, { snapshotId })
+        getFileContentApi(projectId, file.path)
           .then((res) => {
             if (res?.content !== undefined) {
               setAttachments((prev) =>
@@ -1717,21 +1720,18 @@ function ChatInput({
     }
   };
 
-  const handleSend = async () => {
-    if ((!input.trim() && attachments.length === 0) || isTyping || readOnly) return;
-    const sentInput = input;
-    const sentAttachments = attachments;
-    const succeeded = await onSend(input.trim(), attachments);
-    if (!succeeded) return;
-    setInput(current => current === sentInput ? "" : current);
-    setAttachments(current => current === sentAttachments ? [] : current);
+  const handleSend = () => {
+    if ((!input.trim() && attachments.length === 0) || isTyping) return;
+    onSend(input.trim(), attachments);
+    setInput("");
+    setAttachments([]);
     setAtMentionOpen(false);
     if (textareaRef.current) {
       textareaRef.current.style.height = "24px";
     }
   };
 
-  const canSend = (input.trim() || attachments.length > 0) && !isTyping && !readOnly;
+  const canSend = (input.trim() || attachments.length > 0) && !isTyping;
 
   return (
     <div
@@ -1896,7 +1896,7 @@ function ChatInput({
                   fontFamily: "var(--font-mono)",
                 }}
               >
-                Gemini Models
+                COV Multi-LLM
               </span>
             </div>
 
@@ -1908,7 +1908,6 @@ function ChatInput({
                     key={model.id}
                     onClick={() => {
                       setSelectedModel(model);
-                      setSelectedAIModel(model.id);
                       setModelMenuOpen(false);
                     }}
                     className="flex items-start gap-2.5 p-2 rounded-lg text-left transition-colors cursor-pointer"
@@ -2049,8 +2048,6 @@ function ChatInput({
         )}
 
         <textarea
-          aria-label="Ask COV"
-          disabled={readOnly}
           ref={textareaRef}
           value={input}
           onChange={handleInputChange}
@@ -2132,7 +2129,7 @@ function ChatInput({
                 style={{ fontWeight: 500 }}
                 className="truncate max-w-[120px]"
               >
-                {selectedModel?.name || "Gemini 3.5 Flash Lite"}
+                {selectedModel?.name || "Gemini 1.5 Pro"}
               </span>
               <ChevronDown
                 size={12}
@@ -2174,14 +2171,6 @@ function ChatInput({
   );
 }
 
-const isTestFile = (filePath) => {
-  if (!filePath) return false;
-  const normalized = filePath.replace(/\\/g, "/").toLowerCase();
-  return (
-    /(^|\/)(tests?|__tests__|spec|cypress|e2e)\//i.test(normalized) ||
-    /\.(test|spec)\.[a-z0-9]+$/i.test(normalized)
-  );
-};
 
 /* ── AI Agent Panel — Main Export ────────────────────────── */
 export default function AIPanel({
@@ -2194,9 +2183,6 @@ export default function AIPanel({
   onOpenFile,
   onRunAnalysis,
 }) {
-  const projectAccess = useProjectAccess(projectId);
-  const { userId: currentUserId } = useAuth();
-  const chatRequestRef = useRef(null);
   const [internalTree, setInternalTree] = useState(fileTree || []);
 
   useEffect(() => {
@@ -2220,13 +2206,12 @@ export default function AIPanel({
 
   const [messages, setMessages] = useState(INITIAL_MESSAGES);
   const [isTyping, setIsTyping] = useState(false);
-  const [selectedModel, setSelectedModel] = useState(() => AI_MODELS.find(model => model.id === getSelectedAIModel()) || AI_MODELS[0]);
+  const [selectedModel, setSelectedModel] = useState(AI_MODELS[0]);
   const [generateExpanded, setGenerateExpanded] = useState(false);
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
   const [reviewFiles, setReviewFiles] = useState([]);
   const [reviewIndex, setReviewIndex] = useState(0);
   const [hasAnalysis, setHasAnalysis] = useState(false);
-  const [prefillPrompt, setPrefillPrompt] = useState(null);
   const bottomRef = useRef(null);
   const messageIdRef = useRef(10);
   const getNextId = () => ++messageIdRef.current;
@@ -2242,11 +2227,14 @@ export default function AIPanel({
     if (!snapshotId) return;
     getIntegrationWorkspace(snapshotId)
       .then((res) => {
-        setHasAnalysis(!!res?.data?.generation?.hasAnalysis);
+        setHasAnalysis(Boolean(res?.data?.generation?.hasAnalysis));
       })
-      .catch((err) =>
-        console.error("Failed to check hasAnalysis for AIPanel:", err),
-      );
+      .catch((err) => {
+        setHasAnalysis(false);
+        if (err?.status !== 404) {
+          console.warn("[AIPanel] Integration workspace unavailable:", err.message);
+        }
+      });
   }, [snapshotId]);
 
   const [sessions, setSessions] = useState([]);
@@ -2298,7 +2286,6 @@ export default function AIPanel({
       const session = res.data.session;
       const formatted = (res.data.messages || []).map(m => ({
         id: m.id, role: m.role, content: m.content, model: m.model,
-        senderUserId: m.senderUserId, senderName: m.senderUser?.name || m.sender?.name || m.senderUser?.email, isOwn: m.senderUserId === currentUserId,
         attachments: (m.attachments || []).map((att, index) => ({ ...att, id: att.id || `${m.id}_${index}`, previewUrl: att.type === "image" ? att.data : undefined })),
         timestamp: new Date(m.createdAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
       }));
@@ -2311,54 +2298,20 @@ export default function AIPanel({
       if (request === contextRequestRef.current) showToast({ type: "error", title: "Load failed", message: err.message });
       if (throwOnError) throw err;
     } finally { if (request === contextRequestRef.current) setIsLoadingSession(false); }
-  }, [projectId, storageKey, showToast, currentUserId]);
+  }, [projectId, storageKey, showToast]);
 
   useEffect(() => {
-    if (!projectId || !projectAccess.role) return;
-    let alive = true;
-    let refreshing = false;
-    const refreshShared = async event => {
-      if (event?.detail && event.detail.projectId !== projectId) return;
-      if (event?.detail && !/chat|memory/i.test(event.detail.type || "")) return;
-      if (refreshing || sendRef.current || isRestoring || isLoadingSession) return;
-      refreshing = true;
-      try {
-        const response = await getChatSessionsApi(projectId);
-        if (!alive) return;
-        if (Array.isArray(response.data)) setSessions(response.data);
-        const eventSession = event?.detail?.payload?.sessionId || (event?.detail?.type === "chat.message" ? event.detail.resourceId : null);
-        const sessionId = activeSessionId || eventSession || response.data?.find(row => row._count?.messages > 0)?.id;
-        if (sessionId) {
-          const history = await getChatSessionMessagesApi(projectId, sessionId);
-          if (!alive || sendRef.current) return;
-          const formatted = (history.data?.messages || []).map(message => ({
-            ...message, senderName: message.senderUser?.name || message.senderUser?.email,
-            isOwn: message.senderUserId === currentUserId,
-            timestamp: new Date(message.createdAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
-          }));
-          if (formatted.length) {
-            setMessages(previous => previous.at(-1)?.id === formatted.at(-1)?.id ? previous : formatted);
-            if (!activeSessionId) { setActiveSessionId(sessionId); setActiveSessionMeta(history.data.session); }
-          }
-        }
-      } catch { /* Expiry/revocation is handled by the access boundary. */ }
-      finally { refreshing = false; }
-    };
-    const interval = setInterval(refreshShared, 5000);
-    window.addEventListener("covai:project-event", refreshShared);
-    return () => { alive = false; clearInterval(interval); window.removeEventListener("covai:project-event", refreshShared); };
-  }, [projectId, projectAccess.role, activeSessionId, currentUserId, isRestoring, isLoadingSession]);
-
-  useEffect(() => {
-    if (!projectId) return;
     let cancelled = false;
     const requestState = contextRequestRef;
     Promise.resolve().then(async () => {
       if (cancelled) return;
       setIsRestoring(true); setMessages(INITIAL_MESSAGES); setActiveSessionId(null); setActiveSessionMeta(null); setContextInfo(null);
-      if (!projectId) { setIsRestoring(false); return; }
       fetchSessions();
-      getAiContext(projectId).then(config => { if (!cancelled) setMemoryAvailable(config.automaticMemory); }).catch(() => { if (!cancelled) setMemoryAvailable(false); });
+      if (projectId && projectId !== "undefined") {
+        getAiContext(projectId).then(config => { if (!cancelled) setMemoryAvailable(config?.automaticMemory ?? false); }).catch(() => { if (!cancelled) setMemoryAvailable(false); });
+      } else if (!cancelled) {
+        setMemoryAvailable(false);
+      }
       let stored = null;
       try { stored = storageKey ? JSON.parse(localStorage.getItem(storageKey)) : null; } catch { /* Invalid local pointer cannot grant access. */ }
       if (stored?.id) {
@@ -2371,7 +2324,6 @@ export default function AIPanel({
   }, [projectId, storageKey, fetchSessions, handleSelectSession]);
 
   const handleNewChat = (memory = useProjectMemory) => {
-    if (!projectAccess.can("chat.write")) return;
     if (isTyping || isRestoring || isLoadingSession) return;
     contextRequestRef.current++;
     setUseProjectMemory(typeof memory === "boolean" ? memory : useProjectMemory);
@@ -2389,13 +2341,11 @@ export default function AIPanel({
 
   const handleStartRenameSession = (session, e) => {
     e.stopPropagation();
-    if (!projectAccess.can("chat.write")) return;
     setEditingSessionId(session.id);
     setEditingTitle(session.title || "");
   };
 
   const handleSaveRenameSession = async (sessionId) => {
-    if (!projectAccess.can("chat.write")) return;
     const trimmed = editingTitle.trim();
     if (!trimmed) {
       setEditingSessionId(null);
@@ -2427,7 +2377,6 @@ export default function AIPanel({
 
   const handleDeleteSession = async (sessionId, e) => {
     e.stopPropagation();
-    if (!projectAccess.can("chat.delete")) return;
     try {
       const res = await deleteChatSessionApi(projectId, sessionId);
       if (res?.success) {
@@ -2479,7 +2428,6 @@ export default function AIPanel({
   }, [messages, isTyping]);
 
   const handleSuggestForFile = async (filePath) => {
-    if (!projectAccess.can("ai.use")) return;
     if (!projectId) {
       showToast({
         type: "warning",
@@ -2545,7 +2493,6 @@ export default function AIPanel({
             }))
           : [
               {
-                ...data,
                 sourceFile: data.sourceFile,
                 targetTestFile: data.targetTestFile,
                 isExisting: data.isExisting,
@@ -2625,7 +2572,7 @@ export default function AIPanel({
   };
 
   const handleApplyIdeFile = async (file, specificSuggestion = null) => {
-    if (!projectAccess.can("files.write") || !projectId || !file) return;
+    if (!projectId || !file) return;
     const target = specificSuggestion || file;
     const targetPath = target.targetTestFile || file.targetTestFile;
 
@@ -2644,18 +2591,18 @@ export default function AIPanel({
       const contentToWrite =
         target.fullUpdatedContent || target.suggestedTestCode;
 
-      const options = { snapshotId: target.snapshotId || file.snapshotId, expectedVersion: target.baseVersion || file.baseVersion, expectedWorkspaceRevision: target.workspaceRevision ?? file.workspaceRevision };
-      const mutation = file.isExisting
-        ? await updateFileContentApi(projectId, targetPath, contentToWrite, options)
-        : await createProjectFileApi(projectId, targetPath, contentToWrite, options);
-      const appliedVersion = mutation.data?.version;
+      if (file.isExisting) {
+        await updateFileContentApi(projectId, targetPath, contentToWrite);
+      } else {
+        await createProjectFileApi(projectId, targetPath, contentToWrite);
+      }
 
       setMessages((prev) =>
         prev.map((m) => {
           if (!m.ideChanges) return m;
           const updated = m.ideChanges.files.map((f) =>
             f.targetTestFile === file.targetTestFile
-              ? { ...f, applied: true, appliedVersion, isApplying: false }
+              ? { ...f, applied: true, isApplying: false }
               : f
           );
           return { ...m, ideChanges: { ...m.ideChanges, files: updated } };
@@ -2665,9 +2612,13 @@ export default function AIPanel({
       // Update modal state if open
       setReviewFiles((prev) =>
         prev.map((f) =>
-          f.targetTestFile === file.targetTestFile ? { ...f, applied: true, appliedVersion } : f
+          f.targetTestFile === file.targetTestFile ? { ...f, applied: true } : f
         )
       );
+
+      if (snapshotId) {
+        invalidateCoverageQueries(snapshotId);
+      }
 
       showToast({
         type: "success",
@@ -2695,7 +2646,7 @@ export default function AIPanel({
   };
 
   const handleUndoIdeFile = async (file) => {
-    if (!projectAccess.can("files.write") || !projectId || !file) return;
+    if (!projectId || !file) return;
     const targetPath = file.targetTestFile;
     const orig = file.originalContent ?? "";
 
@@ -2710,15 +2661,14 @@ export default function AIPanel({
     );
 
     try {
-      const mutation = await updateFileContentApi(projectId, targetPath, orig, { snapshotId: file.snapshotId, expectedVersion: file.appliedVersion });
-      const baseVersion = mutation.data?.version;
+      await updateFileContentApi(projectId, targetPath, orig);
 
       setMessages((prev) =>
         prev.map((m) => {
           if (!m.ideChanges) return m;
           const updated = m.ideChanges.files.map((f) =>
             f.targetTestFile === targetPath
-              ? { ...f, applied: false, baseVersion, isUndoing: false }
+              ? { ...f, applied: false, isUndoing: false }
               : f
           );
           return { ...m, ideChanges: { ...m.ideChanges, files: updated } };
@@ -2727,7 +2677,7 @@ export default function AIPanel({
 
       setReviewFiles((prev) =>
         prev.map((f) =>
-          f.targetTestFile === targetPath ? { ...f, applied: false, baseVersion } : f
+          f.targetTestFile === targetPath ? { ...f, applied: false } : f
         )
       );
 
@@ -2763,10 +2713,12 @@ export default function AIPanel({
         await handleApplyIdeFile(f);
       }
     }
+    if (snapshotId) {
+      invalidateCoverageQueries(snapshotId);
+    }
   };
 
   const handleSuggestBulk = async (arg1, arg2) => {
-    if (!projectAccess.can("ai.use")) return;
     if (!projectId) {
       showToast({
         type: "warning",
@@ -2814,7 +2766,7 @@ export default function AIPanel({
     const userMsg = {
       id: getNextId(),
       role: "user",
-      content: `✨ Analyze overall project coverage and suggest testcases (${totalCount} source files · ${testCountDisplay} test files)`,
+      content: "✨ Suggest unit test cases for uncovered logic and branches",
       timestamp: new Date().toLocaleTimeString("vi-VN", {
         hour: "2-digit",
         minute: "2-digit",
@@ -2827,7 +2779,7 @@ export default function AIPanel({
       id: loadingId,
       role: "assistant",
       isLoading: true,
-      content: `⚡ **Analyzing comprehensive coverage...**\n\nThe system is cross-referencing **Source File Coverage** against **${testCountDisplay} Jest & Vitest test files** to detect missing branches and generate testcase code...`,
+      content: `⚡ **Analyzing project coverage and generating test cases...**\n\nDetecting uncovered branches and synthesizing test cases...`,
       timestamp: new Date().toLocaleTimeString("vi-VN", {
         hour: "2-digit",
         minute: "2-digit",
@@ -2869,9 +2821,9 @@ export default function AIPanel({
             m.id === loadingId
               ? {
                 ...m,
-                content: `⚡ **Analyzing comprehensive coverage... (${completedCount}/${totalTargets} files completed)**\n\n` +
+                content: `⚡ **Generating test cases... (${completedCount}/${totalTargets} files completed)**\n\n` +
                   (recentFile ? `↳ Just processed: \`${cleanFilePath(recentFile)}\`\n` : "") +
-                  `The system is running concurrently to detect missing conditional branches and synthesize testcases...`,
+                  `Synthesizing test cases for uncovered branches...`,
                 ideChanges: fileChanges.length > 0 ? {
                   totalFiles: fileChanges.length,
                   totalAdded: fileChanges.reduce((sum, f) => sum + (f.linesAdded || 0), 0),
@@ -2933,7 +2885,6 @@ export default function AIPanel({
                 (primary.suggestedTestCode || "").split("\n").length;
 
               fileChanges.push({
-                snapshotId: primary.snapshotId, baseVersion: primary.baseVersion, workspaceRevision: primary.workspaceRevision,
                 id: `fc-${item.filePath || item.sourceFile}`,
                 sourceFile: cleanSource,
                 targetTestFile: cleanTargetTest,
@@ -2994,37 +2945,16 @@ export default function AIPanel({
       const totalDeleted = 0;
 
       // 1. Overview Markdown content
-      let overviewContent = `### 📊 Coverage Analysis Report (${totalCount} source files · ${testCountDisplay} Jest & Vitest test files)\n\n`;
-
-      if (passed100.length > 0) {
-        overviewContent += `#### ✅ Source files reaching 100% comprehensive coverage (${passed100.length}/${totalCount} files) — No further suggestions needed:\n`;
-        overviewContent += passed100
-          .map((s, idx) => {
-            const testList = s.matchingTests?.length
-              ? s.matchingTests
-                .map(
-                  (t) =>
-                    `\`${cleanFilePath(t.filePath)}\` (${(t.framework || "test").toUpperCase()})`,
-                )
-                .join(", ")
-              : s.primaryTestFile
-                ? `\`${cleanFilePath(s.primaryTestFile)}\``
-                : "Test suite present";
-            return `${idx + 1}. \`${cleanFilePath(s.filePath)}\` (Lines: ${s.linesPct ?? 100}% · Branches: ${s.branchesPct ?? 100}% · Funcs: ${s.funcsPct ?? 100}% · Stmts: ${s.stmtsPct ?? 100}%)\n   ↳ Linked test file: ${testList} *(Reached 100% coverage - No suggestions needed)*`;
-          })
-          .join("\n");
-        overviewContent += "\n\n";
-      }
+      let overviewContent = "";
 
       if (fileChanges.length > 0) {
-        overviewContent += `#### ⚡ Proposed Test Code Updates (${fileChanges.length} test files):\n`;
-        overviewContent += `Complete testcases covering missing branches have been generated. You can click **Review** to inspect detailed code diffs before applying, or click **Apply all** to update all test files in the project.`;
+        overviewContent = `### ⚡ Suggested Test Cases (${fileChanges.length} test files)\n\n` +
+          `Generated complete testcases covering missing branches. Click **Review** to inspect detailed code diffs before applying, or click **Apply all** to update all test files in the project.`;
       } else {
-        overviewContent +=
-          `🎉 **Excellent! All ${totalCount} source files and ${testCountDisplay} Jest & Vitest test files have reached 100% coverage!**\n\n` +
-          `- All test cases executed successfully (0 assertion errors).\n` +
-          `- Source code has reached 100% coverage (Statements, Branches, Lines, Functions).\n\n` +
-          `💬 *Note: All files have reached 100% coverage so no further testcase suggestions are needed.*`;
+        overviewContent =
+          `🎉 **All source files have reached comprehensive coverage!**\n\n` +
+          `- All conditional branches and functions are covered.\n` +
+          `- No additional testcase suggestions are needed.`;
       }
 
       const finalAssistantMsg = {
@@ -3073,22 +3003,21 @@ export default function AIPanel({
     }
   };
 
-  // Watch for external suggest trigger (e.g. from Coverage table, Unified Overview, or Editor)
+  // Watch for external suggest trigger (e.g. from Coverage table or Editor)
   useEffect(() => {
     if (!pendingAiSuggestion) return;
-    const { filePath, isBulk, promptText } = pendingAiSuggestion;
+    const { filePath, isBulk } = pendingAiSuggestion;
     onClearPendingSuggestion?.();
-    if (promptText) {
-      setPrefillPrompt({ text: promptText, timestamp: Date.now() });
-    } else if (isBulk) {
-      handleSuggestBulk(pendingAiSuggestion);
+    if (isBulk) {
+      // Bulk test generation is handled exclusively by UnitTestGuidedWorkflow and UnitTestTraceabilityMatrix
+      return;
     } else if (filePath) {
       handleSuggestForFile(filePath);
     }
   }, [pendingAiSuggestion]);
 
   const handleApplySuggestion = async (msgId, suggestion) => {
-    if (!projectAccess.can("files.write") || !projectId || !suggestion) return;
+    if (!projectId || !suggestion) return;
 
     setMessages((prev) =>
       prev.map((m) => {
@@ -3108,36 +3037,42 @@ export default function AIPanel({
     );
 
     try {
-      const previousContent = suggestion.existingContent ?? suggestion.originalContent ?? "";
+      let previousContent = "";
+      if (suggestion.isExisting) {
+        try {
+          const prevRes = await getFileContentApi(
+            projectId,
+            suggestion.targetTestFile,
+          );
+          previousContent = prevRes?.data?.content || "";
+        } catch {
+          previousContent = "";
+        }
+      }
 
       const contentToWrite =
         suggestion.fullUpdatedContent || suggestion.suggestedTestCode;
 
-      let mutation;
-      const options = { snapshotId: suggestion.snapshotId, expectedVersion: suggestion.baseVersion, expectedWorkspaceRevision: suggestion.workspaceRevision };
       if (suggestion.isExisting) {
-        mutation = await updateFileContentApi(
+        await updateFileContentApi(
           projectId,
           suggestion.targetTestFile,
           contentToWrite,
-          options,
         );
       } else {
-        mutation = await createProjectFileApi(
+        await createProjectFileApi(
           projectId,
           suggestion.targetTestFile,
           contentToWrite,
-          options,
         );
       }
 
-      const appliedVersion = mutation.data?.version;
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id !== msgId) return m;
           const updatedList = (m.testSuggestions || []).map((s) =>
             s.framework === suggestion.framework
-              ? { ...s, applied: true, appliedVersion, previousContent, isApplying: false }
+              ? { ...s, applied: true, previousContent, isApplying: false }
               : s,
           );
           return {
@@ -3149,13 +3084,16 @@ export default function AIPanel({
                     ...m.testSuggestion,
                     applied: true,
                     previousContent,
-                    appliedVersion,
                     isApplying: false,
                   }
                 : m.testSuggestion,
           };
         }),
       );
+
+      if (snapshotId) {
+        invalidateCoverageQueries(snapshotId);
+      }
 
       showToast({
         type: "success",
@@ -3200,7 +3138,7 @@ export default function AIPanel({
   };
 
   const handleUndoSuggestion = async (msgId, suggestion) => {
-    if (!projectAccess.can("files.write") || !projectId || !suggestion) return;
+    if (!projectId || !suggestion) return;
 
     setMessages((prev) =>
       prev.map((m) => {
@@ -3221,20 +3159,18 @@ export default function AIPanel({
 
     try {
       const prevContent = suggestion.previousContent ?? "";
-      const mutation = await updateFileContentApi(
+      await updateFileContentApi(
         projectId,
         suggestion.targetTestFile,
         prevContent,
-        { snapshotId: suggestion.snapshotId, expectedVersion: suggestion.appliedVersion },
       );
-      const baseVersion = mutation.data?.version;
 
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id !== msgId) return m;
           const updatedList = (m.testSuggestions || []).map((s) =>
             s.framework === suggestion.framework
-              ? { ...s, applied: false, baseVersion, isUndoing: false }
+              ? { ...s, applied: false, isUndoing: false }
               : s,
           );
           return {
@@ -3242,7 +3178,7 @@ export default function AIPanel({
             testSuggestions: updatedList,
             testSuggestion:
               m.testSuggestion?.framework === suggestion.framework
-                ? { ...m.testSuggestion, applied: false, baseVersion, isUndoing: false }
+                ? { ...m.testSuggestion, applied: false, isUndoing: false }
                 : m.testSuggestion,
           };
         }),
@@ -3282,14 +3218,14 @@ export default function AIPanel({
   };
 
   const handleSend = async (text, attachments = []) => {
-    if (!projectAccess.can("chat.write") || sendRef.current || isRestoring || isLoadingSession || isTyping) return false;
+    if (sendRef.current || isRestoring || isLoadingSession || isTyping) return;
     if (!projectId) {
       showToast({
         type: "warning",
         title: "No Project",
         message: "Please select or create a project before using AI.",
       });
-      return false;
+      return;
     }
 
     const userMsg = {
@@ -3304,9 +3240,6 @@ export default function AIPanel({
     };
 
     const currentHistory = []; // The server reconstructs authoritative history from the session.
-    const identity = JSON.stringify({ projectId, sessionId: activeSessionId, text, attachments, model: selectedModel.id });
-    if (chatRequestRef.current?.identity !== identity) chatRequestRef.current = { identity, id: crypto.randomUUID() };
-    const clientRequestId = chatRequestRef.current.id;
     sendRef.current = true;
     const requestScope = contextRequestRef.current;
     setMessages((m) => [...m, userMsg]);
@@ -3320,15 +3253,9 @@ export default function AIPanel({
         selectedModel.id,
         attachments || [],
         activeSessionId,
-        { snapshotId, useMemory: useProjectMemory, screenContext, clientRequestId },
+        { snapshotId, useMemory: useProjectMemory, screenContext },
       );
       if (requestScope !== contextRequestRef.current) return;
-
-      if (res?.data?.processing) {
-        if (res.data.sessionId) setActiveSessionId(res.data.sessionId);
-        showToast({ type: "info", title: "AI is still processing", message: "Your request is already running. The shared conversation will refresh when it completes." });
-        return false;
-      }
 
       if (res?.data?.sessionId) {
         setActiveSessionId(res.data.sessionId);
@@ -3349,19 +3276,11 @@ export default function AIPanel({
           content: res.data.reply,
         },
       ]);
-      chatRequestRef.current = null;
-      return true;
     } catch (err) {
       if (requestScope !== contextRequestRef.current) return;
-      if (!err.status && activeSessionId) {
-        try {
-          const status = await collaborationRequest(`${projectPath(projectId)}/chat/requests/${clientRequestId}`);
-          if (status.status === "SUCCEEDED") { await handleSelectSession(status.sessionId || activeSessionId); chatRequestRef.current = null; return true; }
-        } catch { /* The original request ID is retained for an explicit retry. */ }
-      }
-      setMessages(current => current.filter(message => message.id !== userMsg.id));
+      console.error(err);
       const isQuotaError =
-        err.code?.includes("QUOTA_EXCEEDED") || (err.message && err.message.includes("QUOTA_EXCEEDED"));
+        err.message && err.message.includes("QUOTA_EXCEEDED");
 
       if (isQuotaError) {
         setMessages((m) => [
@@ -3373,7 +3292,8 @@ export default function AIPanel({
               hour: "2-digit",
               minute: "2-digit",
             }),
-            content: err.message,
+            content:
+              "🛑 **Daily Limit Reached**\n\nYou have used all free chat requests for today. Please check back tomorrow or upgrade your plan in **Settings > Billing**.",
           },
         ]);
       } else {
@@ -3396,7 +3316,6 @@ export default function AIPanel({
           },
         ]);
       }
-      return false;
     } finally {
       sendRef.current = false;
       setIsTyping(false);
@@ -3550,7 +3469,7 @@ export default function AIPanel({
       {/* ── Chat History Drawer (ChatGPT style) ──────────── */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 border-b border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)]">
         <span>{isRestoring ? "Restoring conversation..." : activeSessionMeta?.sourceSessionId ? "Branched conversation" : activeSessionId ? "Saved conversation" : "New conversation"}</span>
-        <span>Current screen: {screenContext?.activity === "projects-portfolio" || screenContext?.testType === "portfolio" ? "Projects Portfolio Overview" : screenContext?.activity === "overview" || screenContext?.testType === "overview" ? "Unified Quality Overview" : ({ unit: "Unit Test", integration: "Integration Test", system: "System Test", portfolio: "Projects Portfolio Overview" })[screenContext?.testType] || ({ "projects-portfolio": "Projects Portfolio Overview", overview: "Unified Quality Overview", explorer: "Code", jobs: "Run history", architecture: "Architecture", settings: "Settings" })[screenContext?.activity] || "Project"}</span>
+        <span>Current screen: {screenContext?.testType ? `${({ unit: 'Unit', integration: 'Integration', system: 'System' })[screenContext.testType]} Test` : ({ explorer: 'Code', jobs: 'Run history', architecture: 'Architecture', settings: 'Settings' })[screenContext?.activity] || 'Project'}</span>
         <label className="flex items-center gap-1" title={memoryAvailable ? 'Use saved preferences in this chat' : 'Optional: enable memory in What AI knows. AI follows your screen even when memory is off.'}><input type="checkbox" aria-label="Use memory in this chat" checked={memoryAvailable && useProjectMemory} disabled={!memoryAvailable || isTyping || isRestoring || isLoadingSession} onChange={event => { setUseProjectMemory(event.target.checked); if (storageKey) localStorage.setItem(storageKey, JSON.stringify({ id: activeSessionId, useMemory: event.target.checked })); }} />Use memory</label>
         <button type="button" className="underline cursor-pointer" disabled={isTyping || isRestoring} onClick={() => setContextDialog("context")}>View context</button>
         {contextInfo?.warnings?.map(warning => <span key={warning} className="w-full">{warning}</span>)}
@@ -4613,15 +4532,12 @@ export default function AIPanel({
 
       {/* ── Modern Prompt Input ──────────────────────────── */}
       <ChatInput
-        readOnly={!projectAccess.can("chat.write")}
         onSend={handleSend}
         isTyping={isTyping || isRestoring || isLoadingSession}
         selectedModel={selectedModel}
         setSelectedModel={setSelectedModel}
         fileTree={internalTree}
         projectId={projectId}
-        prefillPrompt={prefillPrompt}
-        snapshotId={snapshotId}
       />
 
       {/* ── Monaco Code Review Diff Modal ────────────────── */}
@@ -4629,7 +4545,13 @@ export default function AIPanel({
         projectId={projectId} snapshotId={snapshotId} sessionId={activeSessionId} useMemory={useProjectMemory}
         screenContext={screenContext}
         initialTab={contextDialog} onNew={handleNewChat} onSelect={id => handleSelectSession(id, true)}
-        onClose={() => { setContextDialog(null); fetchSessions(); getAiContext(projectId).then(config => setMemoryAvailable(config.automaticMemory)).catch(() => {}); }}
+        onClose={() => {
+          setContextDialog(null);
+          fetchSessions();
+          if (projectId && projectId !== "undefined") {
+            getAiContext(projectId).then(config => setMemoryAvailable(config?.automaticMemory ?? false)).catch(() => {});
+          }
+        }}
       />}
       <DiffReviewModal
         isOpen={reviewModalOpen}

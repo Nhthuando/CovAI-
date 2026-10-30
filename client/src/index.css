@@ -443,6 +443,19 @@ select:-webkit-autofill:focus {
   }
 }
 
+/* ── Monaco Editor Test Scenario Active Line Decoration ── */
+.monaco-test-highlight-line {
+  background: rgba(99, 102, 241, 0.08) !important;
+  border-left: 3px solid #818cf8 !important;
+}
+
+.monaco-test-glyph-marker {
+  background: #818cf8 !important;
+  width: 3px !important;
+  border-radius: 1px;
+  margin-left: 3px;
+}
+
 /* Dark primary buttons need dark foreground for readable system-test actions. */
 [data-theme="dark"] .system-test-primary-action { color: #0b0f14; }
 

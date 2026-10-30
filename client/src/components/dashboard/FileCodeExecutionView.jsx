@@ -13,7 +13,7 @@ import {
   Loader2,
   Code2,
   AlertTriangle,
-  FlaskConical,
+  FileCheck,
   Columns,
   Maximize2,
   ExternalLink,
@@ -22,8 +22,6 @@ import {
 } from "lucide-react";
 import MonacoEditor from "@monaco-editor/react";
 import { updateFileContentApi } from "../../services/project.service.js";
-import { useVersionedProjectFile } from "../../hooks/useVersionedProjectFile";
-import { useProjectAccess } from "../../hooks/useProjectAccess";
 import { cleanDisplayPath } from "./CoverageTypeDashboard.jsx";
 import TestFileViewerPanel from "./TestFileViewerPanel.jsx";
 
@@ -65,6 +63,10 @@ export default function FileCodeExecutionView({
   onOpenFile,
   onSuggestTestcase,
   onFileSaved,
+  initialTargetLine = null,
+  functionName = null,
+  targetEndLine = null,
+  testInfo = null,
   suggestions = [],
   isLoadingSuggestions = false,
   applyingSuggestionIds = new Set(),
@@ -76,9 +78,7 @@ export default function FileCodeExecutionView({
   progressStep,
   isLight = false,
 }) {
-  const versionedSource = useVersionedProjectFile(projectId, snapshotId, filePath);
-  const sourceAccess = useProjectAccess(projectId);
-  const initialSourceCode = versionedSource.data?.content ?? fileCoverage?.sourceCode ?? "";
+  const initialSourceCode = fileCoverage?.sourceCode || "";
   const linesMap = fileCoverage?.lines || {};
   const statements = fileCoverage?.statements || [];
   const summary = fileCoverage?.summary || {};
@@ -95,13 +95,22 @@ export default function FileCodeExecutionView({
   useEffect(() => {
     if (linkedTestFiles.length > 0) {
       setSelectedTestFilePath((prev) => {
+        if (testInfo?.testFilePath) {
+          const cleanTarget = testInfo.testFilePath.replace(/\\/g, "/").toLowerCase();
+          const targetBase = cleanTarget.split("/").pop();
+          const match = linkedTestFiles.find((f) => {
+            const cleanF = (f.filePath || "").replace(/\\/g, "/").toLowerCase();
+            return cleanF === cleanTarget || cleanF.endsWith(cleanTarget) || cleanTarget.endsWith(cleanF) || cleanF.endsWith("/" + targetBase);
+          });
+          if (match) return match.filePath;
+        }
         if (prev && linkedTestFiles.some((f) => f.filePath === prev)) return prev;
         return linkedTestFiles[0].filePath;
       });
     } else {
       setSelectedTestFilePath(null);
     }
-  }, [linkedTestFiles]);
+  }, [linkedTestFiles, testInfo]);
 
   const activeTestFile = useMemo(() => {
     if (selectedTestFilePath) {
@@ -121,7 +130,6 @@ export default function FileCodeExecutionView({
   const [viewMode, setViewMode] = useState("coverage");
   const [editorContent, setEditorContent] = useState(initialSourceCode);
   const [isDirty, setIsDirty] = useState(false);
-  const [baseVersion, setBaseVersion] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState(null); // null | "success" | "error"
   const [errorMessage, setErrorMessage] = useState("");
@@ -134,9 +142,8 @@ export default function FileCodeExecutionView({
   useEffect(() => {
     if (!isDirty) {
       setEditorContent(initialSourceCode);
-      setBaseVersion(versionedSource.data?.version || null);
     }
-  }, [initialSourceCode, isDirty, versionedSource.data?.version]);
+  }, [initialSourceCode, isDirty]);
 
   const sourceCodeToRender = isDirty && viewMode === "coverage" ? editorContent : initialSourceCode;
 
@@ -267,7 +274,6 @@ export default function FileCodeExecutionView({
 
   // Synchronized save handler: saves BOTH source file and test file
   const handleSaveBoth = useCallback(async () => {
-    if (!sourceAccess.can("files.write")) return;
     if (!projectId) {
       setErrorMessage("Missing project ID to save.");
       setSaveStatus("error");
@@ -278,23 +284,27 @@ export default function FileCodeExecutionView({
     setSaveStatus(null);
     setErrorMessage("");
 
-    let sourceSaved = false;
     try {
-      let nextWorkspaceRevision;
-      // Save in order so a new test file can use this save's committed revision.
-      if (filePath && isDirty) {
-        const result = await updateFileContentApi(projectId, filePath, editorContent, { snapshotId, expectedVersion: baseVersion });
-        setBaseVersion(result.data?.version || null);
-        nextWorkspaceRevision = result.data?.workspaceRevision;
-        sourceSaved = true;
-        await versionedSource.refetch();
-        setIsDirty(false);
+      const savePromises = [];
+
+      // 1. Save source file
+      if (filePath) {
+        savePromises.push(
+          updateFileContentApi(projectId, filePath, editorContent)
+            .then(() => ({ type: "source", path: filePath }))
+        );
       }
 
+      // 2. Save test file if registered
       if (testSaverRef.current) {
-        await testSaverRef.current({ expectedWorkspaceRevision: nextWorkspaceRevision });
+        savePromises.push(
+          testSaverRef.current()
+            .then((savedPath) => ({ type: "test", path: savedPath }))
+        );
       }
 
+      await Promise.all(savePromises);
+      setIsDirty(false);
       setIsTestDirty(false);
       setSaveStatus("success");
       setTimeout(() => setSaveStatus(null), 3000);
@@ -306,12 +316,11 @@ export default function FileCodeExecutionView({
     } catch (err) {
       console.error("[FileCodeExecutionView] Failed to save code:", err);
       setSaveStatus("error");
-      const detail = err?.response?.data?.message || err?.message || "Failed to save files.";
-      setErrorMessage(sourceSaved ? `Source file saved. The test file was not saved; its draft is preserved. ${detail}` : detail);
+      setErrorMessage(err?.response?.data?.message || err?.message || "Failed to save files.");
     } finally {
       setIsSaving(false);
     }
-  }, [projectId, snapshotId, filePath, editorContent, onFileSaved, isDirty, versionedSource, sourceAccess, baseVersion]);
+  }, [projectId, filePath, editorContent, onFileSaved]);
 
   const handleSaveBothRef = useRef(handleSaveBoth);
   handleSaveBothRef.current = handleSaveBoth;
@@ -329,7 +338,44 @@ export default function FileCodeExecutionView({
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       handleSaveBothRef.current?.();
     });
+    if (initialTargetLine && Number(initialTargetLine) > 0) {
+      setTimeout(() => {
+        try {
+          editor.revealLineInCenter(Number(initialTargetLine));
+          editor.setPosition({ lineNumber: Number(initialTargetLine), column: 1 });
+          const safeEnd = targetEndLine && Number(targetEndLine) >= Number(initialTargetLine)
+            ? Number(targetEndLine)
+            : Number(initialTargetLine);
+          editor.deltaDecorations([], [
+            {
+              range: new monaco.Range(Number(initialTargetLine), 1, safeEnd, 1),
+              options: {
+                isWholeLine: true,
+                className: "monaco-test-highlight-line",
+                linesDecorationsClassName: "monaco-test-glyph-marker",
+                overviewRuler: {
+                  color: "#6366f1",
+                  position: monaco.editor.OverviewRulerLane.Full,
+                },
+              },
+            },
+          ]);
+        } catch (_) {}
+      }, 150);
+    }
   };
+
+  // Scroll to initialTargetLine in coverage view
+  useEffect(() => {
+    if (initialTargetLine && Number(initialTargetLine) > 0 && viewMode === "coverage") {
+      setTimeout(() => {
+        const el = document.getElementById(`cov-line-${initialTargetLine}`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }, 250);
+    }
+  }, [initialTargetLine, targetEndLine, viewMode]);
 
   // Global window listener: Ctrl+S saves both files regardless of which element has focus
   useEffect(() => {
@@ -632,7 +678,7 @@ export default function FileCodeExecutionView({
               {isDirty && (
                 <button
                   onClick={handleDiscard}
-                  disabled={isSaving || !sourceAccess.can("files.write")}
+                  disabled={isSaving}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -655,7 +701,7 @@ export default function FileCodeExecutionView({
 
               <button
                 onClick={handleSaveBoth}
-                disabled={isSaving || !projectId || !sourceAccess.can("files.write")}
+                disabled={isSaving || !projectId}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -663,12 +709,12 @@ export default function FileCodeExecutionView({
                   padding: "4px 10px",
                   borderRadius: 5,
                   background: saveStatus === "success"
-                    ? "var(--color-success)"
+                    ? (isLight ? "#16a34a" : "rgba(34, 197, 94, 0.2)")
                     : (isDirty || isTestDirty)
-                      ? "var(--color-primary)"
-                      : "var(--color-surface-secondary)",
-                  border: (isDirty || isTestDirty) || saveStatus === "success" ? "1px solid transparent" : "1px solid var(--color-border)",
-                  color: (isDirty || isTestDirty) || saveStatus === "success" ? "var(--color-primary-foreground)" : "var(--color-text-muted)",
+                      ? (isLight ? "#2563eb" : "var(--color-primary, #6d5dfb)")
+                      : (isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.05)"),
+                  border: (isDirty || isTestDirty) ? "none" : (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)"),
+                  color: (isDirty || isTestDirty) || saveStatus === "success" ? "#ffffff" : (isLight ? "#94a3b8" : "#64748b"),
                   fontSize: 11,
                   fontWeight: 600,
                   cursor: isSaving || !projectId ? "not-allowed" : "pointer",
@@ -762,7 +808,6 @@ export default function FileCodeExecutionView({
               beforeMount={handleEditorWillMount}
               onMount={handleEditorDidMount}
               options={{
-                readOnly: isSaving || !sourceAccess.can("files.write"),
                 fontSize: 12,
                 fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace",
                 lineHeight: 22,
@@ -806,7 +851,15 @@ export default function FileCodeExecutionView({
                 let rowBg = "transparent";
                 let borderLeft = "3px solid transparent";
 
-                if (isFailed) {
+                const isFunctionTargetLine = initialTargetLine && Number(initialTargetLine) > 0 &&
+                  lineNum >= Number(initialTargetLine) &&
+                  lineNum <= Number(targetEndLine || initialTargetLine);
+                const isFunctionStartLine = initialTargetLine && Number(initialTargetLine) === lineNum;
+
+                if (isFunctionTargetLine) {
+                  rowBg = isLight ? "rgba(99, 102, 241, 0.05)" : "rgba(99, 102, 241, 0.07)";
+                  borderLeft = isLight ? "3px solid #818cf8" : "3px solid #6366f1";
+                } else if (isFailed) {
                   rowBg = isLight ? "rgba(239, 68, 68, 0.12)" : "rgba(239, 68, 68, 0.12)";
                   borderLeft = "3px solid #ef4444";
                 } else if (isMissed) {
@@ -820,6 +873,7 @@ export default function FileCodeExecutionView({
                 return (
                   <div
                     key={lineNum}
+                    id={`cov-line-${lineNum}`}
                     style={{
                       display: "flex",
                       alignItems: "center",
@@ -830,27 +884,31 @@ export default function FileCodeExecutionView({
                     }}
                     className={isLight ? "hover:bg-slate-100" : "hover:bg-white/[0.04]"}
                     title={
-                      error
-                        ? `Error: ${error}`
-                        : reason
-                          ? reason
-                          : isCovered
-                            ? `Executed ${hits} times`
-                            : ""
+                      isFunctionTargetLine
+                        ? `Target Function: ${functionName || "Function"} (L${initialTargetLine}-${targetEndLine || initialTargetLine}) · Executed ${hits} times`
+                        : error
+                          ? `Error: ${error}`
+                          : reason
+                            ? reason
+                            : isCovered
+                              ? `Executed ${hits} times`
+                              : ""
                     }
                   >
                     {/* Line number */}
                     <span
                       style={{
                         width: 30,
-                        color: isMissed || isFailed
-                          ? (isLight ? "#dc2626" : "#f87171")
-                          : isCovered
-                            ? (isLight ? "#475569" : "#8b949e")
-                            : (isLight ? "#94a3b8" : "#484f58"),
+                        color: isFunctionTargetLine
+                          ? (isLight ? "#4f46e5" : "#a5b4fc")
+                          : isMissed || isFailed
+                            ? (isLight ? "#dc2626" : "#f87171")
+                            : isCovered
+                              ? (isLight ? "#475569" : "#8b949e")
+                              : (isLight ? "#94a3b8" : "#484f58"),
                         textAlign: "right",
                         userSelect: "none",
-                        fontWeight: isCovered || isMissed ? 600 : 400,
+                        fontWeight: isFunctionTargetLine ? 650 : isCovered || isMissed ? 600 : 400,
                         marginRight: 10,
                       }}
                     >
@@ -860,13 +918,37 @@ export default function FileCodeExecutionView({
                     {/* Separator */}
                     <span
                       style={{
-                        color: isLight ? "#cbd5e1" : "rgba(255, 255, 255, 0.12)",
+                        color: isFunctionTargetLine ? (isLight ? "#818cf8" : "#6366f1") : (isLight ? "#cbd5e1" : "rgba(255, 255, 255, 0.12)"),
                         userSelect: "none",
                         marginRight: 12,
+                        fontWeight: isFunctionTargetLine ? 650 : 400,
                       }}
                     >
                       │
                     </span>
+
+                    {/* Function Start Badge */}
+                    {isFunctionStartLine && (
+                      <span
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          fontSize: 10,
+                          fontFamily: "var(--font-mono)",
+                          fontWeight: 600,
+                          padding: "1px 6px",
+                          borderRadius: 3,
+                          background: isLight ? "rgba(99, 102, 241, 0.08)" : "rgba(99, 102, 241, 0.12)",
+                          color: isLight ? "#4338ca" : "#a5b4fc",
+                          border: isLight ? "1px solid rgba(99, 102, 241, 0.22)" : "1px solid rgba(99, 102, 241, 0.28)",
+                          marginRight: 8,
+                          flexShrink: 0,
+                        }}
+                        title={`Function: ${functionName || "Function"}`}
+                      >
+                        {functionName ? `${functionName}()` : `L${initialTargetLine}`}
+                      </span>
+                    )}
 
                     {/* Code text */}
                     <span
@@ -1006,6 +1088,9 @@ export default function FileCodeExecutionView({
       onRegisterTestSaver={handleRegisterTestSaver}
       onTestDirtyChange={handleTestDirtyChange}
       onSaveBoth={handleSaveBoth}
+      targetTestTitle={testInfo?.testTitle}
+      targetTestLine={testInfo?.testLine}
+      targetFunction={functionName}
     />
   );
 
@@ -1053,7 +1138,7 @@ export default function FileCodeExecutionView({
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               {linkedTestFiles.length > 1 ? (
                 <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <FlaskConical size={12} color={isLight ? "#15803d" : "#4ade80"} />
+                  <FileCode size={12} color={isLight ? "#15803d" : "#4ade80"} />
                   <select
                     value={activeTestFile?.filePath || ""}
                     onChange={(e) => setSelectedTestFilePath(e.target.value)}
@@ -1093,7 +1178,7 @@ export default function FileCodeExecutionView({
                   }}
                   title={`Associated Test File: ${activeTestFile?.filePath} (${activeTestFile?.relationType || "Direct"})`}
                 >
-                  <FlaskConical size={12} />
+                  <FileCheck size={12} />
                   <span>Test: {testFileName}</span>
                 </div>
               )}
@@ -1141,15 +1226,17 @@ export default function FileCodeExecutionView({
               borderRadius: 5,
               fontSize: 11,
               fontWeight: layoutMode === "split" ? 700 : 500,
+              border: "none",
               background: layoutMode === "split"
-                ? "var(--color-surface-raised)"
+                ? (isLight ? "#ffffff" : "var(--color-primary, #6d5dfb)")
                 : "transparent",
               color: layoutMode === "split"
-                ? "var(--color-text)"
-                : "var(--color-text-secondary)",
-              border: layoutMode === "split" ? "1px solid var(--color-border)" : "1px solid transparent",
+                ? (isLight ? "#4338ca" : "#ffffff")
+                : (isLight ? "#64748b" : "#8b949e"),
               cursor: "pointer",
-              boxShadow: layoutMode === "split" ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+              boxShadow: layoutMode === "split"
+                ? (isLight ? "0 1px 2px rgba(0,0,0,0.06)" : "none")
+                : "none",
               transition: "all 0.15s ease",
             }}
             title="Split View: Side-by-side Source Code and Test File"
@@ -1208,7 +1295,7 @@ export default function FileCodeExecutionView({
             }}
             title="Show test file only"
           >
-            <FlaskConical size={12} />
+            <FileCheck size={12} />
             <span>Test File</span>
           </button>
         </div>
@@ -1222,7 +1309,7 @@ export default function FileCodeExecutionView({
               }
               onSuggestTestcase && onSuggestTestcase(filePath);
             }}
-            disabled={isLoadingSuggestions || !sourceAccess.can("ai.use")}
+            disabled={isLoadingSuggestions}
             style={{
               display: "flex",
               alignItems: "center",
@@ -1231,13 +1318,13 @@ export default function FileCodeExecutionView({
               borderRadius: 6,
               fontSize: 11,
               fontWeight: 700,
-              background: "var(--color-primary)",
-              color: "var(--color-primary-foreground)",
-              border: "1px solid var(--color-primary)",
+              background: "var(--color-primary, #6d5dfb)",
+              color: "#ffffff",
+              border: "none",
               cursor: isLoadingSuggestions ? "wait" : "pointer",
-              transition: "opacity 0.15s ease",
+              transition: "all 0.15s ease",
             }}
-            className="hover:opacity-90 disabled:opacity-50"
+            className="hover:opacity-95"
             title="Suggest missing unit tests for this file"
           >
             {isLoadingSuggestions ? (

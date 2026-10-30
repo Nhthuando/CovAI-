@@ -85,8 +85,8 @@ export async function fetchAllTestingLayers({ snapshotId, projectId }) {
       // 4. Baseline Before/After Comparison (for deltas & trends)
       projectId
         ? getBeforeAfterComparison(projectId, { snapshotId })
-            .then((res) => res?.data || null)
-            .catch(() => null)
+          .then((res) => res?.data || null)
+          .catch(() => null)
         : Promise.resolve(null),
     ]);
 

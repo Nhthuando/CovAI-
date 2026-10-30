@@ -34,8 +34,10 @@ import {
 import { validateArchiveLanguage } from "../utils/languageDetector.js";
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 import { snapshotWorkspaceRoot, resolveSnapshotFile } from "../utils/snapshotWorkspace.js";
+import { cleanupProjectStorageAsync } from "./projectStorageCleanup.service.js";
 
 export { ServiceError };
+export { cleanupProjectStorageAsync };
 
 function buildTree(dirPath, rootPath = dirPath) {
   const result = [];
@@ -899,98 +901,7 @@ export const createCoverageAnalysisJob = async ({
   return runTestsJob;
 };
 
-/**
- * Asynchronously clean up Firebase storage and local disk files in the background.
- * Uses non-blocking fs.promises.rm and parallel Firebase file deletions
- * so that it doesn't block the HTTP request or freeze the Node.js event loop.
- */
-export const cleanupProjectStorageAsync = (projectId, snapshots = []) => {
-  if (typeof projectId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(projectId)) return;
-  setImmediate(async () => {
-    // 1. Firebase storage cleanup (parallelized)
-    try {
-      const bucket = getBucket();
-      if (bucket) {
-        const deletePromises = [];
-        for (const snap of snapshots) {
-          if (typeof snap?.storagePath === 'string' && snap.storagePath.startsWith(`projects/${projectId}/`)) {
-            deletePromises.push(
-              bucket
-                .file(snap.storagePath)
-                .delete()
-                .catch((fbErr) => {
-                  if (fbErr?.code !== 404) {
-                    console.warn(
-                      `[DeleteProject] Failed to delete Firebase file ${snap.storagePath}:`,
-                      fbErr?.message,
-                    );
-                  }
-                }),
-            );
-          }
-        }
-        await Promise.all(deletePromises);
 
-        try {
-          const [files] = await bucket.getFiles({
-            prefix: `projects/${projectId}/`,
-          });
-          if (files && files.length > 0) {
-            await Promise.all(files.map((file) => file.delete().catch(() => {})));
-          }
-        } catch (prefixErr) {
-          console.warn(
-            `[DeleteProject] Failed to cleanup Firebase prefix for ${projectId}:`,
-            prefixErr?.message,
-          );
-        }
-      }
-    } catch (fbCleanupErr) {
-      console.error(
-        "[DeleteProject] Firebase cleanup error:",
-        fbCleanupErr?.message || fbCleanupErr,
-      );
-    }
-
-    // 2. Physical local disk cleanup (asynchronous & non-blocking via fs.promises.rm)
-    try {
-      for (const snap of snapshots) {
-        if (snap?.rootDir) {
-          const managedRoots = [path.resolve('storage/projects', projectId),
-            ...(typeof snap.id === 'string' && /^[A-Za-z0-9_-]+$/.test(snap.id) ? [path.resolve('uploads/snapshots', snap.id)] : [])];
-          const candidate = path.resolve(snap.rootDir);
-          const managed = managedRoots.find(base => candidate === base || candidate.startsWith(base + path.sep));
-          if (!managed) continue;
-          let real;
-          try { real = await fs.promises.realpath(candidate); } catch { continue; }
-          if (real !== managed && !real.startsWith(managed + path.sep)) continue;
-          await fs.promises
-            .rm(snap.rootDir, {
-              recursive: true,
-              force: true,
-              maxRetries: 3,
-              retryDelay: 100,
-            })
-            .catch(() => {});
-        }
-      }
-      const projectStoragePath = path.resolve("storage/projects", projectId);
-      await fs.promises
-        .rm(projectStoragePath, {
-          recursive: true,
-          force: true,
-          maxRetries: 3,
-          retryDelay: 100,
-        })
-        .catch(() => {});
-    } catch (cleanupError) {
-      console.error(
-        "[DeleteProject] Error deleting physical files of project:",
-        cleanupError?.message || cleanupError,
-      );
-    }
-  });
-};
 
 export const deleteProject = async (projectId, userId) => {
   if (typeof projectId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(projectId)) throw new ServiceError('Invalid project ID', 400);
@@ -1002,11 +913,20 @@ export const deleteProject = async (projectId, userId) => {
     throw new ServiceError("You are not allowed to delete this project", 403);
   }
 
-  // Pre-fetch snapshots before project deletion so we can clean up files in background
+  const activeJob = await prisma.job.findFirst({
+    where: { projectId, status: { in: ["QUEUED", "RUNNING"] } },
+    select: { id: true },
+  });
+  if (activeJob) {
+    throw new ServiceError("This project is still processing. Wait for its jobs to finish before deleting it.", 409);
+  }
+
+  // Keep ownership and snapshot IDs available until all storage is removed.
   const snapshots = await prisma.projectSnapshot.findMany({
     where: { projectId },
     select: { id: true, rootDir: true, storagePath: true },
   });
+  await cleanupProjectStorageAsync(projectId, snapshots);
 
   // Fast DB deletion:
   // Primary attempt: Native PostgreSQL ON DELETE CASCADE via prisma.project.delete.
@@ -1038,22 +958,19 @@ export const deleteProject = async (projectId, userId) => {
         await tx.project.delete({ where: { id: projectId } });
     });
   }
-
-  // Dispatch background cleanup for cloud storage and disk files.
-  // Returns immediately without blocking the client response!
-  cleanupProjectStorageAsync(projectId, snapshots);
 };
 
 export const getProjectTree = async (projectId, userId, options = {}) => {
-  return withProjectGuard({projectId,userId,capability:'project.read'}, async (tx,access) => {
+  const meta = await withProjectGuard({projectId,userId,capability:'project.read',maxWait:30000,timeout:60000}, async (tx,access) => {
     const snapshot = await tx.projectSnapshot.findFirst({where:{projectId,...(options.snapshotId ? {id:options.snapshotId} : {})},orderBy:options.snapshotId ? undefined : {createdAt:'desc'}});
     if (!snapshot?.rootDir) throw new ServiceError("Project snapshot not ready", 202);
     const workspaceRoot = projectEditableWorkspaceRoot(snapshot);
     const {recoverProjectMutationMarkers} = await import('./projectMutationRecovery.service.js');
     await recoverProjectMutationMarkers({tx,project:access.project,snapshot,root:workspaceRoot});
-    const tree = buildTree(workspaceRoot);
-    return options.withMetadata ? {tree,snapshotId:snapshot.id,workspaceRevision:access.project.workspaceRevision} : tree;
+    return { snapshotId: snapshot.id, workspaceRevision: access.project.workspaceRevision, workspaceRoot };
   });
+  const tree = buildTree(meta.workspaceRoot);
+  return options.withMetadata ? {tree,snapshotId:meta.snapshotId,workspaceRevision:meta.workspaceRevision} : tree;
 };
 
 export const getFileContent = (projectId, userId, filePath, options = {}) =>

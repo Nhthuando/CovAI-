@@ -9,6 +9,8 @@ export const normalizeRelativePath = (p = "") => {
     return p.replace(/\\/g, "/").replace(/^\.?\//, "").trim();
 };
 
+import { isBusinessLogicSourceFile } from "../utils/businessLogicFileDetector.js";
+
 /**
  * 1.1 PHÂN LOẠI VÀ NHẬN DIỆN FILE NGHIỆP VỤ MỤC TIÊU
  *
@@ -18,81 +20,21 @@ export const normalizeRelativePath = (p = "") => {
  * - Controllers: src/controllers/**
  * - Utils & Helpers: src/utils/**, src/helpers/**, src/lib/**
  * - Models & Middlewares: src/models/**, src/middlewares/**
+ * - Core logic & Preset Services: src/core/**, src/presets/index.ts (modules with business functions)
  *
  * Strictly excludes:
  * - Test files (*.test.*, *.spec.*, *.testcase.*, *.steps.*, tests/**, __tests__/**)
  * - Mocks & fixtures (__mocks__/**, mocks/**, fixtures/**, stubs/**)
- * - Configs (jest.config.*, vite.config.*, tsconfig*.json, package.json)
+ * - Examples & Demos (examples/**, demo/**, samples/**)
+ * - Configs (jest.config.*, vite.config.*, tsup.config.*, tsconfig*.json, package.json)
+ * - TypeScript type definitions (*.d.ts, types.ts, *.types.ts, types/**)
+ * - Static preset data catalogs & dictionaries (presets/tier*.ts, presets/data/**)
  * - Dependencies & builds (node_modules/**, coverage/**, dist/**, build/**, .git/**)
- * - Frontend UI (client/**, frontend/**, components/**, *.jsx, *.tsx, *.vue, *.svelte)
+ * - Frontend UI & hooks & i18n (client/**, frontend/**, components/**, hooks/**, i18n/**, *.jsx, *.tsx)
  * - Routes and server entry points (routes/**, endpoints/**, app.js, server.js, index.js, main.js)
  */
-export const isBusinessLogicFile = (filePath = "") => {
-    if (!filePath || typeof filePath !== "string") return false;
-    const norm = normalizeRelativePath(filePath).toLowerCase();
-
-    // 1. Must be JavaScript or TypeScript
-    if (!/\.[cm]?[jt]s$/i.test(norm)) return false;
-
-    // 2. Reject TypeScript declaration files
-    if (/\.d\.ts$/i.test(norm)) return false;
-
-    // 3. Reject tests
-    if (
-        /\.(test|spec|testcase|steps)\.[cm]?[jt]s$/i.test(norm) ||
-        /(^|\/)(tests?|__tests__|specs?|unit|step_definitions)\//i.test(norm)
-    ) {
-        return false;
-    }
-
-    // 4. Reject mocks and fixtures
-    if (
-        /(^|\/)(mocks?|__mocks__|fixtures?|stubs?)\//i.test(norm) ||
-        /\.(mock|fixture|stub)\.[cm]?[jt]s$/i.test(norm)
-    ) {
-        return false;
-    }
-
-    // 5. Reject setup / teardown / helper files for test runners
-    const baseName = path.basename(norm);
-    if (/^(setup|global-?setup|setup-?tests|teardown|fixtures?)\.[a-z0-9]+$/i.test(baseName)) {
-        return false;
-    }
-
-    // 6. Reject configs
-    if (/^(jest|vitest|babel|webpack|vite|rollup|eslint|prettier|tailwind|postcss)\.config\.[a-z0-9]+$/i.test(baseName)) {
-        return false;
-    }
-
-    // 7. Reject dependencies and build outputs
-    if (/(^|\/)(node_modules|coverage|dist|build|\.git|\.next|\.turbo|out)\//i.test(norm)) {
-        return false;
-    }
-
-    // 8. Reject frontend UI code
-    if (/(^|\/)(client|frontend|components|views|pages)\//i.test(norm)) {
-        return false;
-    }
-
-    // 9. Reject route and server entry files (reserved for integration/system testing)
-    const isTopLevelEntry = /^(src\/|app\/|server\/|backend\/)?(index|main)\.[cm]?[jt]sx?$/i.test(norm.replace(/^\.?\//, ""));
-    const isRouteOrEntry = /(^|\/)(routes?|endpoints?)(\/|\.|$)/i.test(norm) ||
-        /\.(route|routes)\.[cm]?[jt]sx?$/i.test(norm) ||
-        /(^|\/)(app|server)\.[cm]?[jt]sx?$/i.test(norm) ||
-        isTopLevelEntry;
-    if (isRouteOrEntry) {
-        return false;
-    }
-
-    // 10. Check if it matches genuine business logic patterns
-    const isBusinessLayer =
-        /(^|\/)(services?|handlers?|controllers?|utils?|helpers?|models?|middlewares?|lib|domain|core|use-?cases?)(\/|\.|$)/i.test(norm) ||
-        /\.(service|handler|controller|util|helper|model|middleware)\.[cm]?[jt]s$/i.test(norm);
-
-    // If within src/, app/, or backend/, treat non-route JS/TS files as logic
-    const isInSrcOrApp = /^(src|app|backend|server)\//i.test(norm);
-
-    return isBusinessLayer || isInSrcOrApp;
+export const isBusinessLogicFile = (filePath = "", configExclusions = []) => {
+    return isBusinessLogicSourceFile(filePath, configExclusions);
 };
 
 /**
@@ -129,7 +71,7 @@ export const classifyBusinessLogicFiles = (rootDir) => {
             const lowerRel = relPath.toLowerCase();
 
             if (entry.isDirectory()) {
-                if (!/^(node_modules|coverage|dist|build|\.git|client|frontend)$/i.test(entry.name)) {
+                if (!/^(node_modules|coverage|dist|build|\.git|client|frontend|tests?|__tests__|specs?|e2e|cypress|playwright|fixtures|mocks|test[-_]data|test[-_]utils)$/i.test(entry.name)) {
                     walk(fullPath);
                 }
             } else if (entry.isFile()) {
@@ -164,9 +106,26 @@ export const analyzeSourceAst = (sourceCode = "") => {
     const internalFunctions = [];
     const decisionPoints = [];
     const exceptionPoints = [];
+    const declaredClasses = new Map();
+    const declaredObjects = new Map();
+    const declaredInstances = new Map();
+    const mongooseModels = [];
 
     if (!sourceCode || typeof sourceCode !== "string") {
-        return { exportedSymbols, internalFunctions, decisionPoints, exceptionPoints };
+        return {
+            exportedSymbols,
+            internalFunctions,
+            decisionPoints,
+            exceptionPoints,
+            cyclomaticComplexity: 1,
+            basisPathsCount: 1,
+            classes: [],
+            classMethods: [],
+            declaredObjects: [],
+            mongooseModels: [],
+            unexportedFunctions: [],
+            exportedSymbolNames: []
+        };
     }
 
     const lines = sourceCode.split(/\r?\n/);
@@ -195,6 +154,33 @@ export const analyzeSourceAst = (sourceCode = "") => {
             }).filter(Boolean);
         };
 
+        const extractClassMethods = (classNode) => {
+            const methods = [];
+            let constructorParams = [];
+            if (classNode?.body?.body) {
+                for (const m of classNode.body.body) {
+                    if (m.type === "ClassMethod") {
+                        const mName = m.key?.name;
+                        if (mName) {
+                            if (m.kind === "constructor") {
+                                constructorParams = extractParamNames(m.params);
+                            } else {
+                                methods.push({
+                                    name: mName,
+                                    isStatic: Boolean(m.static),
+                                    isAsync: Boolean(m.async),
+                                    kind: m.kind,
+                                    params: extractParamNames(m.params),
+                                    line: m.loc?.start?.line || 1
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            return { methods, constructorParams };
+        };
+
         const walk = (node, parent) => {
             if (!node || typeof node !== "object") return;
 
@@ -210,16 +196,83 @@ export const analyzeSourceAst = (sourceCode = "") => {
                 scopeStack.push(pushedScope);
             }
 
+            // --- Track Class Declarations & Expressions ---
+            if (node.type === "ClassDeclaration" && node.id?.name) {
+                const { methods, constructorParams } = extractClassMethods(node);
+                declaredClasses.set(node.id.name, {
+                    name: node.id.name,
+                    methods,
+                    constructorParams,
+                    line: node.loc?.start?.line || 1
+                });
+            } else if (node.type === "VariableDeclarator" && node.id?.name && node.init?.type === "ClassExpression") {
+                const { methods, constructorParams } = extractClassMethods(node.init);
+                declaredClasses.set(node.id.name, {
+                    name: node.id.name,
+                    methods,
+                    constructorParams,
+                    line: node.loc?.start?.line || 1
+                });
+            }
+
+            // --- Track Instantiations: const x = new ClassName() ---
+            if (node.type === "VariableDeclarator" && node.id?.name && node.init?.type === "NewExpression") {
+                const className = node.init.callee?.name;
+                if (className) {
+                    declaredInstances.set(node.id.name, { className, varName: node.id.name });
+                }
+            }
+
+            // --- Track Object Literals with functions: const x = { async foo() {} } ---
+            if (node.type === "VariableDeclarator" && node.id?.name && node.init?.type === "ObjectExpression") {
+                const objName = node.id.name;
+                const objMethods = [];
+                for (const prop of node.init.properties || []) {
+                    const pName = prop.key?.name || prop.key?.value;
+                    if (pName) {
+                        if (prop.type === "ObjectMethod") {
+                            objMethods.push({
+                                name: pName,
+                                isAsync: Boolean(prop.async),
+                                params: extractParamNames(prop.params),
+                                line: prop.loc?.start?.line || 1
+                            });
+                        } else if (prop.value?.type === "ArrowFunctionExpression" || prop.value?.type === "FunctionExpression") {
+                            objMethods.push({
+                                name: pName,
+                                isAsync: Boolean(prop.value.async),
+                                params: extractParamNames(prop.value.params),
+                                line: prop.loc?.start?.line || 1
+                            });
+                        }
+                    }
+                }
+                if (objMethods.length > 0) {
+                    declaredObjects.set(objName, { name: objName, methods: objMethods, line: node.loc?.start?.line || 1 });
+                }
+            }
+
             // --- 1. ESM EXPORTS ---
             if (node.type === "ExportNamedDeclaration") {
                 if (node.declaration) {
                     if (node.declaration.id?.name) {
+                        const isClass = node.declaration.type === "ClassDeclaration";
+                        const classInfo = isClass ? extractClassMethods(node.declaration) : null;
+                        if (isClass) {
+                            declaredClasses.set(node.declaration.id.name, {
+                                name: node.declaration.id.name,
+                                methods: classInfo.methods,
+                                constructorParams: classInfo.constructorParams,
+                                line: node.loc?.start?.line || 1
+                            });
+                        }
                         exportedMap.set(node.declaration.id.name, {
                             name: node.declaration.id.name,
-                            type: node.declaration.type === "ClassDeclaration" ? "class" : "function",
+                            type: isClass ? "class" : "function",
                             line: node.loc?.start?.line || 1,
                             isDefault: false,
-                            params: extractParamNames(node.declaration.params),
+                            params: isClass ? classInfo.constructorParams : extractParamNames(node.declaration.params),
+                            methods: isClass ? classInfo.methods : [],
                             calls: []
                         });
                     }
@@ -227,9 +280,30 @@ export const analyzeSourceAst = (sourceCode = "") => {
                         for (const d of node.declaration.declarations) {
                             if (d.id?.name) {
                                 const isFn = d.init?.type === "ArrowFunctionExpression" || d.init?.type === "FunctionExpression";
+                                const isNew = d.init?.type === "NewExpression";
+                                const className = isNew ? d.init.callee?.name : null;
+                                const isObj = d.init?.type === "ObjectExpression";
+                                
+                                let objMethods = [];
+                                if (isObj) {
+                                    for (const p of d.init.properties || []) {
+                                        const pName = p.key?.name || p.key?.value;
+                                        if (pName && (p.type === "ObjectMethod" || p.value?.type === "ArrowFunctionExpression" || p.value?.type === "FunctionExpression")) {
+                                            objMethods.push({
+                                                name: pName,
+                                                isAsync: Boolean(p.async || p.value?.async),
+                                                params: extractParamNames(p.params || p.value?.params),
+                                                line: p.loc?.start?.line || 1
+                                            });
+                                        }
+                                    }
+                                }
+
                                 exportedMap.set(d.id.name, {
                                     name: d.id.name,
-                                    type: isFn ? "function" : "constant",
+                                    type: isFn ? "function" : (isNew ? "class-instance" : (isObj ? "object" : "constant")),
+                                    className,
+                                    methods: objMethods,
                                     line: d.loc?.start?.line || node.loc?.start?.line || 1,
                                     isDefault: false,
                                     params: isFn ? extractParamNames(d.init?.params) : [],
@@ -256,10 +330,30 @@ export const analyzeSourceAst = (sourceCode = "") => {
                 }
             } else if (node.type === "ExportDefaultDeclaration") {
                 const name = node.declaration?.id?.name || "default";
+                const isClass = node.declaration?.type === "ClassDeclaration";
                 const isFn = node.declaration?.type === "FunctionDeclaration" || node.declaration?.type === "ArrowFunctionExpression";
+                const isNew = node.declaration?.type === "NewExpression";
+                const className = isNew ? node.declaration.callee?.name : (node.declaration?.name || null);
+                
+                let defaultMethods = [];
+                if (isClass) {
+                    const classInfo = extractClassMethods(node.declaration);
+                    defaultMethods = classInfo.methods;
+                    if (node.declaration.id?.name) {
+                        declaredClasses.set(node.declaration.id.name, {
+                            name: node.declaration.id.name,
+                            methods: defaultMethods,
+                            constructorParams: classInfo.constructorParams,
+                            line: node.loc?.start?.line || 1
+                        });
+                    }
+                }
+
                 exportedMap.set(name, {
                     name,
-                    type: node.declaration?.type === "ClassDeclaration" ? "class" : (isFn ? "function" : "default-export"),
+                    type: isClass ? "class" : (isFn ? "function" : (isNew ? "class-instance" : "default-export")),
+                    className,
+                    methods: defaultMethods,
                     line: node.loc?.start?.line || 1,
                     isDefault: true,
                     params: isFn ? extractParamNames(node.declaration.params) : [],
@@ -278,36 +372,53 @@ export const analyzeSourceAst = (sourceCode = "") => {
                         for (const prop of node.right.properties || []) {
                             const pName = prop.key?.name || prop.key?.value;
                             if (pName) {
+                                const isMethod = prop.type === "ObjectMethod" || prop.value?.type === "ArrowFunctionExpression" || prop.value?.type === "FunctionExpression";
                                 exportedMap.set(pName, {
                                     name: pName,
-                                    type: "function",
+                                    type: isMethod ? "function" : "constant",
                                     line: prop.loc?.start?.line || node.loc?.start?.line || 1,
                                     isDefault: false,
-                                    params: [],
+                                    params: isMethod ? extractParamNames(prop.params || prop.value?.params) : [],
                                     calls: []
                                 });
                             }
                         }
-                    } else if (node.right?.id?.name || node.right?.name) {
-                        const idName = node.right.id?.name || node.right.name;
-                        exportedMap.set(idName, {
-                            name: idName,
-                            type: "function",
+                    } else if (node.right?.type === "NewExpression") {
+                        const className = node.right.callee?.name;
+                        exportedMap.set("default", {
+                            name: "default",
+                            type: "class-instance",
+                            className,
                             line: node.loc?.start?.line || 1,
                             isDefault: true,
                             params: [],
+                            methods: [],
+                            calls: []
+                        });
+                    } else if (node.right?.id?.name || node.right?.name) {
+                        const idName = node.right.id?.name || node.right.name;
+                        const isClass = declaredClasses.has(idName);
+                        exportedMap.set(idName, {
+                            name: idName,
+                            type: isClass ? "class" : "function",
+                            className: isClass ? idName : null,
+                            line: node.loc?.start?.line || 1,
+                            isDefault: true,
+                            params: [],
+                            methods: isClass ? declaredClasses.get(idName).methods : [],
                             calls: []
                         });
                     }
                 } else if (leftCode.startsWith("exports.")) {
                     const propName = leftCode.replace(/^exports\./, "").trim();
                     if (propName) {
+                        const isMethod = node.right?.type === "ArrowFunctionExpression" || node.right?.type === "FunctionExpression";
                         exportedMap.set(propName, {
                             name: propName,
-                            type: "function",
+                            type: isMethod ? "function" : "constant",
                             line: node.loc?.start?.line || 1,
                             isDefault: false,
-                            params: [],
+                            params: isMethod ? extractParamNames(node.right.params) : [],
                             calls: []
                         });
                     }
@@ -468,6 +579,31 @@ export const analyzeSourceAst = (sourceCode = "") => {
         for (const [name, meta] of exportedMap.entries()) {
             internalMap.delete(name);
             meta.calls = Array.from(new Set(callEdges.filter(c => c.caller === name).map(c => c.callee)));
+
+            // Connect methods from declaredClasses or declaredObjects if not already attached
+            if (!meta.methods || meta.methods.length === 0) {
+                if (meta.className && declaredClasses.has(meta.className)) {
+                    meta.methods = declaredClasses.get(meta.className).methods;
+                } else if (declaredClasses.has(name)) {
+                    meta.methods = declaredClasses.get(name).methods;
+                } else if (declaredObjects.has(name)) {
+                    meta.methods = declaredObjects.get(name).methods;
+                } else if (declaredInstances.has(name)) {
+                    const inst = declaredInstances.get(name);
+                    if (inst?.className && declaredClasses.has(inst.className)) {
+                        meta.methods = declaredClasses.get(inst.className).methods;
+                        meta.className = inst.className;
+                    }
+                } else if ((name === "default" || meta.isDefault) && declaredClasses.size === 1) {
+                    const singleClass = Array.from(declaredClasses.values())[0];
+                    meta.methods = singleClass.methods;
+                    meta.className = singleClass.name;
+                } else if ((name === "default" || meta.isDefault) && declaredObjects.size === 1) {
+                    const singleObj = Array.from(declaredObjects.values())[0];
+                    meta.methods = singleObj.methods;
+                }
+            }
+
             exportedSymbols.push(meta);
         }
         for (const [fnName, meta] of internalMap.entries()) {
@@ -484,7 +620,7 @@ export const analyzeSourceAst = (sourceCode = "") => {
         const expMatches = [...sourceCode.matchAll(/export\s+(?:async\s+)?(?:default\s+)?(?:function|const|let|var|class)\s+([a-zA-Z0-9_$]+)/g)];
         for (const m of expMatches) {
             if (m[1] && !exportedSymbols.some(s => s.name === m[1])) {
-                exportedSymbols.push({ name: m[1], type: "function", isDefault: false, line: 1, params: [], calls: [] });
+                exportedSymbols.push({ name: m[1], type: "function", isDefault: false, line: 1, params: [], calls: [], methods: [] });
             }
         }
         const namedExpMatches = [...sourceCode.matchAll(/export\s+\{([^}]+)\}/g)];
@@ -492,7 +628,7 @@ export const analyzeSourceAst = (sourceCode = "") => {
             for (const s of m[1].split(",")) {
                 const clean = s.trim().split(/\s+as\s+/)[0].trim();
                 if (clean && !exportedSymbols.some(item => item.name === clean)) {
-                    exportedSymbols.push({ name: clean, type: "named-export", isDefault: false, line: 1, params: [], calls: [] });
+                    exportedSymbols.push({ name: clean, type: "named-export", isDefault: false, line: 1, params: [], calls: [], methods: [] });
                 }
             }
         }
@@ -501,7 +637,7 @@ export const analyzeSourceAst = (sourceCode = "") => {
             for (const s of cjsObjMatch[1].split(",")) {
                 const clean = s.trim().split(":")[0].trim();
                 if (clean && /^[a-zA-Z0-9_$]+$/.test(clean) && !exportedSymbols.some(item => item.name === clean)) {
-                    exportedSymbols.push({ name: clean, type: "function", isDefault: false, line: 1, params: [], calls: [] });
+                    exportedSymbols.push({ name: clean, type: "function", isDefault: false, line: 1, params: [], calls: [], methods: [] });
                 }
             }
         }
@@ -525,11 +661,25 @@ export const analyzeSourceAst = (sourceCode = "") => {
         }
     }
 
+    // Detect Mongoose/Sequelize models
+    const modelMatches = [...sourceCode.matchAll(/mongoose\.model\s*\(\s*['"]([a-zA-Z0-9_$]+)['"]/g)];
+    const detectedModels = modelMatches.map(m => ({ name: m[1] }));
+
+    const classMethods = Array.from(declaredClasses.values()).flatMap(c =>
+        (c.methods || []).map(m => ({ ...m, className: c.name }))
+    );
+
     return {
         exportedSymbols,
         internalFunctions,
         decisionPoints,
         exceptionPoints,
+        cyclomaticComplexity: 1 + (decisionPoints || []).length,
+        basisPathsCount: 1 + (decisionPoints || []).length,
+        classes: Array.from(declaredClasses.values()),
+        classMethods,
+        declaredObjects: Array.from(declaredObjects.values()),
+        mongooseModels: detectedModels,
         unexportedFunctions: internalFunctions.map(f => f.name),
         exportedSymbolNames: exportedSymbols.map(s => s.name)
     };

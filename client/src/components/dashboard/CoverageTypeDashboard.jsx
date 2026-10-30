@@ -1,4 +1,3 @@
-import { useProjectAccess } from "../../hooks/useProjectAccess";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import SystemTestEvidence from './SystemTestEvidence.jsx';
 import { io } from "socket.io-client";
@@ -13,7 +12,6 @@ import {
   AlertCircle,
   Code2,
   ExternalLink,
-  FlaskConical,
   Clock,
   ChevronDown,
   ChevronRight,
@@ -28,6 +26,11 @@ import {
   Activity,
   ListOrdered,
   Terminal,
+  FileCode2,
+  RefreshCw,
+  Target,
+  Play,
+  FileCheck,
 } from "lucide-react";
 import { useTheme } from "../../contexts/ThemeContext";
 import {
@@ -39,6 +42,7 @@ import {
   getTestExecution,
   runCoverageByType,
   getFileCoverage,
+  installMissingDependency,
   suggestUnitTestcase,
   applyUnitTestSuggestion,
   getSystemCoverageSummary,
@@ -56,18 +60,24 @@ import FunctionExecutionFlow from "./FunctionExecutionFlow.jsx";
 import FileCodeExecutionView from "./FileCodeExecutionView.jsx";
 import FileBranchCFGView from "./FileBranchCFGView.jsx";
 import FileFunctionCallGraphView from "./FileFunctionCallGraphView.jsx";
+import UnitTestExecutionProcess from "./UnitTestExecutionProcess.jsx";
 import UnitTestExecutionVisualizer from "./UnitTestExecutionVisualizer.jsx";
 import CFGCalculator from "./CFGCalculator.jsx";
-import WaveProgressBar from "./WaveProgressBar.jsx";
 import InlineTestSuggestions from "./InlineTestSuggestions.jsx";
 import JobQueue from "./JobQueue.jsx";
 import { CoverageDashboardSkeleton } from "../common/Skeleton.jsx";
 import { useRunningProcess } from "../../contexts/RunningProcessContext.jsx";
+import UnitTestGuidedWorkflow from "./UnitTestGuidedWorkflow.jsx";
+import UnitTestPackageInstaller from "./UnitTestPackageInstaller.jsx";
+import UnitTestTraceabilityMatrix, { extractMissingPackageFromError } from "./UnitTestTraceabilityMatrix.jsx";
+import DiffReviewModal from "./DiffReviewModal.jsx";
+import InPlaceCoverageFileModal from "./InPlaceCoverageFileModal.jsx";
+import SuggestTestcaseModal from "./SuggestTestcaseModal.jsx";
 
 const CONFIG = {
   unit: {
     title: "Unit Test Coverage",
-    subtitle: "Independent testing of functions, condition branches, and statements.",
+    subtitle: "",
     supported: "Jest · Vitest",
     accent: "#a78bfa",
     focus: ["Statements", "Branches", "Functions", "Lines"],
@@ -134,13 +144,27 @@ const apiFile = (file) =>
   /(^|\/)(api|routes?|controllers?|services?|endpoints?)(\/|\.|$)/i.test(
     file.filePath,
   );
-const isTestFile = (filePath) => {
+export const isTestFile = (filePath) => {
   if (!filePath) return false;
   const normalized = filePath.replace(/\\/g, "/").toLowerCase();
-  return (
-    /(^|\/)(tests?|__tests__|spec|cypress|e2e)\//i.test(normalized) ||
-    /\.(test|spec)\.[a-z0-9]+$/i.test(normalized)
-  );
+  const rawBase = filePath.split(/[/\\]/).pop();
+
+  // 1. Test directory pattern
+  if (
+    /(^|\/)(?:tests?|__tests__|specs?|__specs__|e2e|cypress|playwright|step-definitions?|step_definitions|fixtures?|mocks?|__mocks__|test[-_]data|test[-_]utils?|testing|test[-_]helpers?|(?:[a-z0-9_-]+[-_])?tests?)(?:\/|$)/i.test(normalized)
+  ) return true;
+
+  // 2. Token-separated test file name (e.g. test-api.ts, api-test.ts, test.ts, auth.test.js, test_runner.js)
+  if (/(?:^|[._-])(?:tests?|specs?|testcase|steps?)(?:[._-]|$)/i.test(rawBase)) {
+    return true;
+  }
+
+  // 3. CamelCase / PascalCase test file names (e.g. testApi.ts, apiTest.ts, calculationServiceTest.ts)
+  if (/^tests?[A-Z]/.test(rawBase) || /[a-z0-9](?:Tests?|Specs?)\.[a-z0-9]+$/.test(rawBase)) {
+    return true;
+  }
+
+  return false;
 };
 const isFrontendFile = (filePath) => {
   if (!filePath) return false;
@@ -169,12 +193,54 @@ export const cleanDisplayPath = (fullPath = "") => {
   const storageMatch = normalized.match(/(?:^|\/)storage\/projects\/[^/]+(?:\/[^/]+)*?\/(.+)$/i);
   if (storageMatch) return storageMatch[1].replace(/^\/+/, "");
 
-  const uploadMatch = normalized.match(/(?:^|\/)uploads\/snapshots\/[^/]+(?:\/[^/]+)*?\/(.+)$/i);
+  const uploadProjMatch = normalized.match(/(?:^|\/)uploads\/snapshots\/[^/]+\/[^/]+\/(.+)$/i);
+  if (uploadProjMatch) return uploadProjMatch[1].replace(/^\/+/, "");
+
+  const uploadMatch = normalized.match(/(?:^|\/)uploads\/snapshots\/[^/]+\/(.+)$/i);
   if (uploadMatch) return uploadMatch[1].replace(/^\/+/, "");
 
+  // Strip leading project name prefix if it wraps standard package directories (e.g. "Online-Food-Ordering-System/server/...")
+  const projPrefixMatch = normalized.match(/^[^/]+(?:\/)(server|client|src|tests?|__tests__|packages|apps|lib|dist)\/(.+)$/i);
+  if (projPrefixMatch) {
+    return `${projPrefixMatch[1]}/${projPrefixMatch[2]}`;
+  }
+
   normalized = normalized.replace(/^[a-zA-Z]:\//, "");
-  normalized = normalized.replace(/^\/app\/storage\/?/i, "");
+  normalized = normalized.replace(/^\/app\/(?:storage|uploads)\/?/i, "");
   return normalized.replace(/^\/+/, "");
+};
+
+const isBusinessLogicClientFile = (filePath) => {
+  if (!filePath) return false;
+  const cleanP = cleanDisplayPath(filePath);
+  if (!cleanP) return false;
+  const normalized = cleanP.toLowerCase();
+  const rawBase = cleanP.split("/").pop();
+  const base = rawBase.toLowerCase();
+
+  // 1. Must be .js, .ts, .mjs, .cjs
+  if (!/\.[cm]?[jt]s$/i.test(normalized)) return false;
+
+  if (isTestFile(normalized)) return false;
+  if (/(^|\/)(node_modules|coverage|dist|build|out|\.next|\.nuxt|\.turbo|\.git|\.cache|\.covai-temp|\.covai_journal)\//i.test(normalized)) return false;
+  if (/(?:^|\/)storage\/projects\//i.test(normalized) || /(?:^|\/)server\/storage\//i.test(normalized)) return false;
+  if (/(^|\/)(examples?|demos?|samples?)\//i.test(normalized)) return false;
+  if (normalized.includes(".config.") || base.includes("config")) return false;
+  if (/\.d\.ts$/i.test(normalized) || /(^|\/)(types?|interfaces?)\.[cm]?[jt]s$/i.test(normalized) || /\.types\.[cm]?[jt]s$/i.test(normalized) || /(^|\/)types\//i.test(normalized)) return false;
+  if (
+    /(^|\/)presets\/tier[0-9]+[a-z0-9_-]*\.[cm]?[jt]s$/i.test(normalized) ||
+    /(^|\/)presets\/(data|catalogs?|fixtures?|definitions?)\//i.test(normalized)
+  ) return false;
+  if (/(^|\/)(client|frontend|components|views|pages|hooks|context|contexts|i18n|locales?|translations?)\//i.test(normalized)) return false;
+  if (/\.[jt]sx$/i.test(normalized) || /^use[A-Z]/.test(rawBase)) return false;
+  if (
+    /(^|\/)(routes?|endpoints?)(\/|\.|$)/i.test(normalized) ||
+    /\.(route|routes)\.[cm]?[jt]sx?$/i.test(normalized) ||
+    /(^|\/)(app|server)\.[cm]?[jt]sx?$/i.test(normalized) ||
+    /^(?:[a-z0-9_-]+\/)?(?:src\/)?(index|main)\.[cm]?[jt]sx?$/i.test(normalized.replace(/^\.?\//, ""))
+  ) return false;
+
+  return true;
 };
 
 export const sanitizeErrorText = (text = "") => {
@@ -220,14 +286,14 @@ export const resolveFunctionName = (fn, flowFunctions = []) => {
 const cardStyle = {
   background: "rgba(255,255,255,.025)",
   border: "1px solid rgba(255,255,255,.075)",
-  borderRadius: 12,
+  borderRadius: 8,
   padding: 17,
 };
 const buttonStyle = (color) => ({
   background: `${color}18`,
   color,
   border: `1px solid ${color}55`,
-  borderRadius: 8,
+  borderRadius: 6,
   padding: "8px 14px",
   fontWeight: 650,
   cursor: "pointer",
@@ -444,8 +510,8 @@ async function waitForJob(jobId, onProgress) {
     if (["FAILED", "CANCELED"].includes(job?.status)) {
       throw new Error(
         job?.errorMessage ||
-          job?.error ||
-          `${job.status}: coverage analysis failed.`,
+        job?.error ||
+        `${job.status}: coverage analysis failed.`,
       );
     }
 
@@ -467,6 +533,7 @@ export default function CoverageTypeDashboard({
   type,
   snapshotId,
   projectId,
+  treeVersion = null,
   onOpenFile,
   onGenerate,
   generating,
@@ -475,10 +542,6 @@ export default function CoverageTypeDashboard({
   runTrigger,
   focusFile = null,
 }) {
-  const projectAccess = useProjectAccess(projectId);
-  const canRun = projectAccess.can("tests.run");
-  const canUseAi = projectAccess.can("ai.use");
-  const canWrite = projectAccess.can("files.write");
   const config = CONFIG[type];
   const { resolvedTheme } = useTheme();
   const isLight = resolvedTheme === "light";
@@ -486,6 +549,13 @@ export default function CoverageTypeDashboard({
   const [systemSummary, setSystemSummary] = useState(null);
   const executionMode = "full";
   const [runningStatus, setRunningStatus] = useState("");
+
+  const getExpectedWorkspaceRevision = () => {
+    if (typeof treeVersion !== "undefined" && treeVersion?.expectedWorkspaceRevision != null) {
+      return Number(treeVersion.expectedWorkspaceRevision) || 0;
+    }
+    return 0;
+  };
 
   // React Query cached dashboard data - instant render on tab switch without loading lag
   const {
@@ -497,24 +567,24 @@ export default function CoverageTypeDashboard({
 
   const summary = type === "system" && systemSummary
     ? {
-        coverage: {
-          statements: 0,
-          branches: 0,
-          functions: 0,
-          lines: systemSummary.featureCoverage || 0,
-        },
-        rawTotals: null,
-        ...systemSummary,
-      }
+      coverage: {
+        statements: 0,
+        branches: 0,
+        functions: 0,
+        lines: systemSummary.featureCoverage || 0,
+      },
+      rawTotals: null,
+      ...systemSummary,
+    }
     : (coverageData?.summary || null);
   const files = (type === "system" && systemSummary?.files?.length)
     ? systemSummary.files
     : (coverageData?.files || []);
   const executions = (type === "system" && systemSummary?.latestRun)
     ? {
-        playwright: systemSummary.latestRun.type === "PLAYWRIGHT" ? systemSummary.latestRun : null,
-        cypress: systemSummary.latestRun.type === "CYPRESS" ? systemSummary.latestRun : null,
-      }
+      playwright: systemSummary.latestRun.type === "PLAYWRIGHT" ? systemSummary.latestRun : null,
+      cypress: systemSummary.latestRun.type === "CYPRESS" ? systemSummary.latestRun : null,
+    }
     : (coverageData?.executions || {});
   const frameworks = coverageData?.frameworks || null;
   const functionsList = coverageData?.functionsList || [];
@@ -553,6 +623,23 @@ export default function CoverageTypeDashboard({
   const [showAiDetails, setShowAiDetails] = useState(false);
   const isGenerating = generating || internalGenerating;
   const activeJobIdRef = useRef(null);
+
+  // Suggest TestCase Modal configuration
+  const [suggestModalConfig, setSuggestModalConfig] = useState({
+    isOpen: false,
+    filePath: null,
+    functionName: null,
+    isBulk: false,
+  });
+
+  const handleOpenSuggestModal = useCallback((filePath = null, functionName = null, isBulk = false) => {
+    setSuggestModalConfig({
+      isOpen: true,
+      filePath,
+      functionName,
+      isBulk: Boolean(isBulk),
+    });
+  }, []);
 
   // Socket.IO realtime progress listener
   useEffect(() => {
@@ -651,7 +738,6 @@ export default function CoverageTypeDashboard({
   }, []);
 
   const handleGenerateAiSystemTest = async () => {
-    if (!projectAccess.can("ai.use")) return;
     if (onGenerate && !projectId) {
       return onGenerate("system");
     }
@@ -681,12 +767,11 @@ export default function CoverageTypeDashboard({
   const [isSavingAiTest, setIsSavingAiTest] = useState(false);
 
   const handleSaveAiSystemTest = async () => {
-    if (!projectAccess.can("files.write")) return;
     if (!snapshotId || isSavingAiTest) return;
     setIsSavingAiTest(true);
     setGenerateError("");
     try {
-      await saveAiSystemTest(snapshotId, { expectedVersion: systemSummary?.latestAiTest?.baseVersion, expectedWorkspaceRevision: systemSummary?.latestAiTest?.workspaceRevision, requestId: crypto.randomUUID() });
+      await saveAiSystemTest(snapshotId);
       const updatedSys = await load();
       if (updatedSys?.latestAiTest?.status === "VERIFIED") {
         await run();
@@ -700,9 +785,9 @@ export default function CoverageTypeDashboard({
 
   const [showJobQueueModal, setShowJobQueueModal] = useState(false);
 
-  // Mode view for Unit test: "testcases" (default for unit) | "visualization" | "all" | "statements" | "branches" | "functions"
+  // Mode view for Unit test: "traceability" (default for unit) | "testcases" | "visualization" | "all" | "statements" | "branches" | "functions"
   const [activeMetricView, setActiveMetricView] = useState(
-    type === "unit" ? "testcases" : "all",
+    type === "unit" ? "traceability" : "all",
   );
 
   // View mode for Unit Testcases: "table" | "visualization"
@@ -715,6 +800,23 @@ export default function CoverageTypeDashboard({
   const [loadingFlow, setLoadingFlow] = useState(false);
   const [showCfgModal, setShowCfgModal] = useState(false);
   const [cfgModalContext, setCfgModalContext] = useState(null);
+
+  // In-place file viewer state to view source and test files directly inside Unit Test without redirecting
+  const [inPlaceOpenFileTarget, setInPlaceOpenFileTarget] = useState(null);
+
+  const handleOpenFileInPlace = useCallback(
+    (filePath, targetLine = null, functionName = null, endLine = null, testInfo = null) => {
+      if (!filePath) return;
+      setInPlaceOpenFileTarget({
+        filePath,
+        targetLine: targetLine ? Number(targetLine) : null,
+        functionName: functionName || null,
+        endLine: endLine ? Number(endLine) : null,
+        testInfo: testInfo || null,
+      });
+    },
+    [],
+  );
 
   // Multi-accordion state: Set of expanded filePaths (supports opening File A, File B, File C simultaneously)
   const [expandedFiles, setExpandedFiles] = useState(new Set());
@@ -845,7 +947,7 @@ export default function CoverageTypeDashboard({
 
   // Trigger inline suggestion generation directly below the source file
   const handleSuggestTestcaseInline = useCallback(
-    async (filePath, autoExpand = true) => {
+    async (filePath, autoExpand = true, frameworkOverride = null) => {
       if (!snapshotId || !filePath) return;
       if (autoExpand) {
         // Auto-expand this file so the suggestion displays immediately inline
@@ -855,8 +957,9 @@ export default function CoverageTypeDashboard({
       }
 
       setLoadingSuggestions((prev) => ({ ...prev, [filePath]: true }));
+      setInlineSuggestions((prev) => ({ ...prev, [filePath]: [] }));
       try {
-        const res = await suggestUnitTestcase(snapshotId, filePath, projectId, activeFramework);
+        const res = await suggestUnitTestcase(snapshotId, filePath, projectId, frameworkOverride || activeFramework);
         const data = res?.data || res;
         const sugs = Array.isArray(data?.suggestions)
           ? data.suggestions
@@ -897,7 +1000,6 @@ export default function CoverageTypeDashboard({
   // Apply single suggestion inline, execute runner, update real coverage
   const handleApplySuggestionInline = useCallback(
     async (filePath, suggestion) => {
-      if (!canWrite) return;
       if (!snapshotId || !suggestion) return;
       const sugId = suggestion.suggestionId || suggestion.id;
       setApplyingSuggestionIds((prev) => new Set(prev).add(sugId));
@@ -926,7 +1028,13 @@ export default function CoverageTypeDashboard({
         }));
 
         const res = await applyUnitTestSuggestion(snapshotId, {
-          suggestion,
+          suggestion: {
+            ...suggestion,
+            proposalBase: suggestion.proposalBase || {
+              snapshotId,
+              workspaceRevision: getExpectedWorkspaceRevision(),
+            },
+          },
           projectId,
         });
 
@@ -953,6 +1061,7 @@ export default function CoverageTypeDashboard({
                   ...s,
                   status: matchedItem.status || (isPassed ? "PASSED" : "FAILED"),
                   testRunError: matchedItem.error || (itemPassed ? null : (resultData?.errorDetail || resultData?.message || null)),
+                  missingDependency: matchedItem.missingDependency || resultData?.missingDependency || resultData?.moduleResolutionError?.missingDependency || null,
                 };
               }
               if (s.suggestionId === sugId || s.id === sugId) {
@@ -960,6 +1069,7 @@ export default function CoverageTypeDashboard({
                   ...s,
                   status: isPassed ? "PASSED" : "FAILED",
                   testRunError: isPassed ? null : (resultData?.testRunError || resultData?.errorDetail || resultData?.message || null),
+                  missingDependency: isPassed ? null : (resultData?.missingDependency || resultData?.moduleResolutionError?.missingDependency || null),
                 };
               }
               return s;
@@ -999,6 +1109,22 @@ export default function CoverageTypeDashboard({
         invalidateCoverageQueries(snapshotId);
         await refetchCoverage();
 
+        // If backend returned a background analysis job, track it and auto-sync when it completes
+        if (resultData?.backgroundJob?.id) {
+          const bgJobId = resultData.backgroundJob.id;
+          startAnalysis({ snapshotId, projectId, type: "unit", jobId: bgJobId });
+          (async () => {
+            try {
+              await waitForJob(bgJobId, (prog) => {
+                updateAnalysisProgress({ progress: prog, message: "Refreshing full project coverage analysis..." });
+              });
+              completeAnalysis("✓ Full project unit test analysis completed! All metrics updated.");
+              invalidateCoverageQueries(snapshotId);
+              await refetchCoverage();
+            } catch (_) { }
+          })();
+        }
+
         // Refresh file coverage in-place so FileCodeExecutionView immediately updates with fresh hits & lines
         await ensureFileCoverage(filePath, true);
       } catch (err) {
@@ -1033,7 +1159,6 @@ export default function CoverageTypeDashboard({
   // Apply all suggestions inline safely without overwriting
   const handleApplyAllInline = useCallback(
     async (filePath, suggestions) => {
-      if (!canWrite) return;
       if (!snapshotId || !suggestions?.length) return;
       const sugIds = suggestions.map((s) => s.suggestionId || s.id);
       setApplyingSuggestionIds((prev) => {
@@ -1066,7 +1191,13 @@ export default function CoverageTypeDashboard({
         }));
 
         const res = await applyUnitTestSuggestion(snapshotId, {
-          suggestions,
+          suggestions: suggestions.map((s) => ({
+            ...s,
+            proposalBase: s.proposalBase || {
+              snapshotId,
+              workspaceRevision: getExpectedWorkspaceRevision(),
+            },
+          })),
           projectId,
         });
 
@@ -1093,6 +1224,7 @@ export default function CoverageTypeDashboard({
                   ...s,
                   status: matchedItem.status || (isPassed ? "PASSED" : "FAILED"),
                   testRunError: matchedItem.error || (itemPassed ? null : (resultData?.errorDetail || resultData?.message || null)),
+                  missingDependency: matchedItem.missingDependency || resultData?.missingDependency || resultData?.moduleResolutionError?.missingDependency || null,
                 };
               }
               if (sugIds.includes(s.suggestionId || s.id)) {
@@ -1100,6 +1232,7 @@ export default function CoverageTypeDashboard({
                   ...s,
                   status: isPassed ? "PASSED" : "FAILED",
                   testRunError: isPassed ? null : (resultData?.testRunError || resultData?.errorDetail || resultData?.message || null),
+                  missingDependency: isPassed ? null : (resultData?.missingDependency || resultData?.moduleResolutionError?.missingDependency || null),
                 };
               }
               return s;
@@ -1137,6 +1270,22 @@ export default function CoverageTypeDashboard({
 
         invalidateCoverageQueries(snapshotId);
         await refetchCoverage();
+
+        // If backend returned a background analysis job, track it and auto-sync when it completes
+        if (resultData?.backgroundJob?.id) {
+          const bgJobId = resultData.backgroundJob.id;
+          startAnalysis({ snapshotId, projectId, type: "unit", jobId: bgJobId });
+          (async () => {
+            try {
+              await waitForJob(bgJobId, (prog) => {
+                updateAnalysisProgress({ progress: prog, message: "Refreshing full project coverage analysis..." });
+              });
+              completeAnalysis("✓ Full project unit test analysis completed! All metrics updated.");
+              invalidateCoverageQueries(snapshotId);
+              await refetchCoverage();
+            } catch (_) { }
+          })();
+        }
 
         // Refresh file coverage in-place so FileCodeExecutionView immediately updates with fresh hits & lines
         await ensureFileCoverage(filePath, true);
@@ -1243,7 +1392,14 @@ export default function CoverageTypeDashboard({
     const list = [];
     Object.entries(inlineSuggestions).forEach(([fPath, sugs]) => {
       (sugs || []).forEach((s) => {
-        if (s.status !== "REJECTED" && s.status !== "PASSED" && s.status !== "APPLIED") {
+        if (
+          s.status !== "REJECTED" &&
+          s.status !== "PASSED" &&
+          s.status !== "APPLIED" &&
+          s.status !== "FULLY_COVERED" &&
+          !s.isFullyCovered &&
+          Boolean(s.suggestedTestCode || s.generatedCode || s.fullUpdatedContent)
+        ) {
           list.push({ ...s, sourceFile: s.sourceFile || fPath });
         }
       });
@@ -1253,16 +1409,89 @@ export default function CoverageTypeDashboard({
 
   const filesWithPendingSuggestions = useMemo(() => {
     const set = new Set();
-    allPendingSuggestions.forEach((s) => set.add(s.sourceFile || s.filePath));
+    allPendingSuggestions.forEach((s) => {
+      const src = s.sourceFile || s.filePath;
+      if (src) set.add(src);
+    });
     return Array.from(set);
   }, [allPendingSuggestions]);
+
+  // All suggestions with diff content (both pending and applied/passed) for persistent diff review
+  const allReviewSuggestions = useMemo(() => {
+    if (type !== "unit") return [];
+    const list = [];
+    Object.entries(inlineSuggestions).forEach(([fPath, sugs]) => {
+      (sugs || []).forEach((s) => {
+        if (
+          s.status !== "REJECTED" &&
+          Boolean(s.suggestedTestCode || s.generatedCode || s.fullUpdatedContent)
+        ) {
+          list.push({ ...s, sourceFile: s.sourceFile || fPath });
+        }
+      });
+    });
+    return list;
+  }, [inlineSuggestions, type]);
+
+  // Diff Review Modal state & data mapping for Unit Test Workflow (Step 3)
+  const [reviewModalOpen, setReviewModalOpen] = useState(false);
+  const [reviewInitialFileIndex, setReviewInitialFileIndex] = useState(0);
+
+  const reviewFiles = useMemo(() => {
+    if (type !== "unit") return [];
+    const fileMap = new Map();
+
+    // Prioritize pending suggestions if available, otherwise preserve applied suggestions for diff review
+    const targetList = allReviewSuggestions.length > 0 ? allReviewSuggestions : allPendingSuggestions;
+
+    targetList.forEach((sug) => {
+      const fPath = sug.sourceFile || sug.filePath;
+      if (!fPath) return;
+      const testFile = sug.testFile || sug.targetTestFile || fPath.replace(/\.[cm]?[jt]sx?$/, ".test.js");
+      const isApplied = sug.status === "PASSED" || sug.status === "APPLIED" || sug.applied === true;
+      if (!fileMap.has(fPath)) {
+        fileMap.set(fPath, {
+          fileName: cleanDisplayPath(testFile || fPath),
+          filePath: fPath,
+          testFilePath: testFile,
+          originalContent: sug.originalCode || "",
+          fullUpdatedContent: sug.fullUpdatedContent || sug.suggestedTestCode || sug.generatedCode || "",
+          suggestedTestCode: sug.suggestedTestCode || sug.generatedCode || "",
+          framework: sug.framework || "jest",
+          applied: isApplied,
+          suggestions: [sug],
+        });
+      } else {
+        const existing = fileMap.get(fPath);
+        existing.suggestions.push(sug);
+        if (isApplied) existing.applied = true;
+        if (sug.fullUpdatedContent) {
+          existing.fullUpdatedContent = sug.fullUpdatedContent;
+        } else if (sug.suggestedTestCode && !existing.fullUpdatedContent.includes(sug.suggestedTestCode)) {
+          existing.fullUpdatedContent += `\n\n${sug.suggestedTestCode}`;
+        }
+      }
+    });
+
+    return Array.from(fileMap.values());
+  }, [allPendingSuggestions, allReviewSuggestions, type]);
+
+  const openReviewForFile = useCallback((fPath) => {
+    if (!fPath) {
+      setReviewInitialFileIndex(0);
+      setReviewModalOpen(true);
+      return;
+    }
+    const idx = reviewFiles.findIndex((rf) => rf.filePath === fPath || rf.testFilePath === fPath);
+    setReviewInitialFileIndex(idx >= 0 ? idx : 0);
+    setReviewModalOpen(true);
+  }, [reviewFiles]);
 
   const [isBulkApplying, setIsBulkApplying] = useState(false);
   const [bulkApplyStep, setBulkApplyStep] = useState("");
 
   // Apply all suggestions across all files with real-time step progress (1/N, 2/N...)
   const handleApplyAllGlobal = useCallback(async () => {
-    if (!projectAccess.can("files.write")) return;
     if (!snapshotId || allPendingSuggestions.length === 0 || isBulkApplying) return;
 
     setIsBulkApplying(true);
@@ -1297,11 +1526,155 @@ export default function CoverageTypeDashboard({
     let completedCount = 0;
     let anyPassedGlobal = false;
     let lastResultData = null;
+    let runningWorkspaceRevision = getExpectedWorkspaceRevision();
 
     try {
+      const allCleanedSuggestions = [];
       for (let i = 0; i < totalFiles; i++) {
         const fPath = filesWithPendingSuggestions[i];
-        const fileSugs = allPendingSuggestions.filter((s) => (s.sourceFile || s.filePath) === fPath);
+        const cleanTarget = cleanDisplayPath(fPath);
+        const fileSugs = allPendingSuggestions.filter((s) => {
+          const sPath = s.sourceFile || s.filePath;
+          return sPath === fPath || cleanDisplayPath(sPath) === cleanTarget;
+        });
+        for (const s of fileSugs) {
+          allCleanedSuggestions.push({
+            ...s,
+            suggestionId: s.suggestionId || s.id,
+            sourceFile: s.sourceFile || fPath,
+            testFile: s.testFile || s.targetTestFile,
+            generatedCode: s.generatedCode || s.suggestedTestCode,
+            suggestedTestCode: s.suggestedTestCode || s.generatedCode,
+            fullUpdatedContent: s.fullUpdatedContent,
+            framework: s.framework,
+            targetLines: s.targetLines,
+            targetBranches: s.targetBranches,
+            proposalBase: {
+              snapshotId,
+              workspaceRevision: runningWorkspaceRevision,
+            },
+          });
+        }
+      }
+
+      let batchApplied = false;
+      if (allCleanedSuggestions.length > 0) {
+        const batchStep = `[1/${totalFiles}] Batch applying ${allCleanedSuggestions.length} suggestions across ${totalFiles} files...`;
+        setBulkApplyStep(batchStep);
+        updateBulkApplyStep({
+          step: batchStep,
+          completedCount: 1,
+          totalCount: totalFiles,
+          stats: `${totalFiles}/${totalFiles}`,
+          progressPct: 50,
+          currentFile: filesWithPendingSuggestions[0],
+        });
+
+        try {
+          let batchRes;
+          try {
+            batchRes = await applyUnitTestSuggestion(snapshotId, {
+              suggestions: allCleanedSuggestions,
+              projectId,
+              skipBackgroundJob: true,
+            });
+          } catch (firstBatchErr) {
+            if (firstBatchErr?.status === 409 || firstBatchErr?.message?.includes("Source changed") || firstBatchErr?.message?.includes("Workspace changed")) {
+              batchRes = await applyUnitTestSuggestion(snapshotId, {
+                suggestions: allCleanedSuggestions,
+                projectId,
+                skipBackgroundJob: true,
+              });
+            } else {
+              throw firstBatchErr;
+            }
+          }
+
+          const resultData = batchRes?.data || batchRes;
+          lastResultData = resultData;
+          if (resultData?.workspaceRevision != null) {
+            runningWorkspaceRevision = resultData.workspaceRevision;
+          }
+          const testStatus = resultData?.testStatus || resultData?.status;
+          const isBatchPassed = testStatus === "PASSED" || resultData?.success === true;
+          if (isBatchPassed) anyPassedGlobal = true;
+
+          setInlineSuggestions((prev) => {
+            const next = { ...prev };
+            for (const fPath of filesWithPendingSuggestions) {
+              const list = next[fPath] || [];
+              next[fPath] = list.map((s) => {
+                const sid = s.suggestionId || s.id;
+                if (allSugIds.includes(sid)) {
+                  const matchedApplied = (resultData?.appliedSuggestions || []).find(
+                    (a) => (a.suggestionId || a.id) === sid
+                  );
+                  const itemPassed = matchedApplied
+                    ? matchedApplied.status === "PASSED"
+                    : isBatchPassed;
+                  if (itemPassed) anyPassedGlobal = true;
+                  return {
+                    ...s,
+                    status: itemPassed ? "PASSED" : "FAILED",
+                    testRunError: !itemPassed
+                      ? (matchedApplied?.error || resultData?.testRunError || resultData?.errorDetail || resultData?.message || null)
+                      : null,
+                    missingDependency: !itemPassed
+                      ? (matchedApplied?.missingDependency || resultData?.missingDependency || resultData?.moduleResolutionError?.missingDependency || null)
+                      : null,
+                  };
+                }
+                return s;
+              });
+            }
+            return next;
+          });
+
+          setApplyResultsByFile((prev) => {
+            const next = { ...prev };
+            for (const fPath of filesWithPendingSuggestions) {
+              const cleanTarget = cleanDisplayPath(fPath);
+              const fileResult = resultData?.perFileResults?.[fPath] || resultData?.perFileResults?.[cleanTarget];
+              const currentFile = selectedFiles.find((f) => f.filePath === fPath || cleanDisplayPath(f.filePath) === cleanTarget);
+              const currentFileCov = currentFile ? {
+                statements: currentFile.stmtsPct || 0,
+                branches: currentFile.branchesPct || 0,
+                functions: currentFile.funcsPct || 0,
+                lines: currentFile.linesPct || 0,
+              } : null;
+
+              const oldCov = fileResult?.oldCoverage || currentFileCov || resultData?.previousCoverage;
+              const newCov = fileResult?.newCoverage || currentFileCov || resultData?.newCoverage;
+              if (oldCov && newCov) {
+                next[fPath] = {
+                  ...resultData,
+                  oldCoverage: oldCov,
+                  newCoverage: newCov,
+                  isPassed: isBatchPassed,
+                };
+              }
+            }
+            return next;
+          });
+
+          if (resultData?.perFileResults) {
+            updateCoverageFilesData(snapshotId, type, projectId, resultData.perFileResults);
+          }
+
+          completedCount = totalFiles;
+          batchApplied = true;
+        } catch (batchErr) {
+          console.warn("[handleApplyAllGlobal] Batch apply encountered error, falling back to per-file apply:", batchErr);
+        }
+      }
+
+      for (let i = 0; !batchApplied && i < totalFiles; i++) {
+        const fPath = filesWithPendingSuggestions[i];
+        const cleanTarget = cleanDisplayPath(fPath);
+        const fileSugs = allPendingSuggestions.filter((s) => {
+          const sPath = s.sourceFile || s.filePath;
+          return sPath === fPath || cleanDisplayPath(sPath) === cleanTarget;
+        });
         if (!fileSugs || fileSugs.length === 0) continue;
 
         completedCount++;
@@ -1321,6 +1694,7 @@ export default function CoverageTypeDashboard({
         });
 
         const cleanedSuggestions = fileSugs.map((s) => ({
+          ...s,
           suggestionId: s.suggestionId || s.id,
           sourceFile: s.sourceFile || fPath,
           testFile: s.testFile || s.targetTestFile,
@@ -1330,18 +1704,40 @@ export default function CoverageTypeDashboard({
           framework: s.framework,
           targetLines: s.targetLines,
           targetBranches: s.targetBranches,
+          proposalBase: {
+            snapshotId,
+            workspaceRevision: runningWorkspaceRevision,
+          },
         }));
 
         const thisFileSugIds = fileSugs.map((s) => s.suggestionId || s.id);
 
         try {
-          const res = await applyUnitTestSuggestion(snapshotId, {
-            suggestions: cleanedSuggestions,
-            projectId,
-          });
+          let res;
+          try {
+            res = await applyUnitTestSuggestion(snapshotId, {
+              suggestions: cleanedSuggestions,
+              projectId,
+              skipBackgroundJob: true,
+            });
+          } catch (firstErr) {
+            if (firstErr?.status === 409 || firstErr?.message?.includes("Source changed") || firstErr?.message?.includes("Workspace changed")) {
+              console.warn("[handleApplyAllGlobal] Retrying file apply with refreshed revision for", fPath);
+              res = await applyUnitTestSuggestion(snapshotId, {
+                suggestions: cleanedSuggestions,
+                projectId,
+                skipBackgroundJob: true,
+              });
+            } else {
+              throw firstErr;
+            }
+          }
 
           const resultData = res?.data || res;
           lastResultData = resultData;
+          if (resultData?.workspaceRevision != null) {
+            runningWorkspaceRevision = resultData.workspaceRevision;
+          }
           const testStatus = resultData?.testStatus || resultData?.status;
           const isPassed = testStatus === "PASSED" || resultData?.success === true;
           if (isPassed) anyPassedGlobal = true;
@@ -1364,6 +1760,9 @@ export default function CoverageTypeDashboard({
                   testRunError: !itemPassed
                     ? (matchedApplied?.error || resultData?.testRunError || resultData?.errorDetail || resultData?.message || null)
                     : null,
+                  missingDependency: !itemPassed
+                    ? (matchedApplied?.missingDependency || resultData?.missingDependency || resultData?.moduleResolutionError?.missingDependency || null)
+                    : null,
                 };
               }
               return s;
@@ -1371,7 +1770,7 @@ export default function CoverageTypeDashboard({
             return next;
           });
 
-          const fileResult = resultData?.perFileResults?.[fPath];
+          const fileResult = resultData?.perFileResults?.[fPath] || resultData?.perFileResults?.[cleanTarget];
           const currentFile = selectedFiles.find((f) => f.filePath === fPath);
           const currentFileCov = currentFile ? {
             statements: currentFile.stmtsPct || 0,
@@ -1428,6 +1827,12 @@ export default function CoverageTypeDashboard({
       completeBulkApply(lastResultData);
       invalidateCoverageQueries(snapshotId);
       await refetchCoverage();
+
+      // Only trigger full project re-run if incremental coverage was not already returned by applyUnitTestSuggestion
+      const hasIncrementalCoverage = Boolean(lastResultData?.newCoverage && lastResultData?.perFileResults);
+      if (anyPassedGlobal && !hasIncrementalCoverage) {
+        await run({ restart: true });
+      }
 
       await Promise.all(filesWithPendingSuggestions.map((fPath) => ensureFileCoverage(fPath, true)));
     } catch (err) {
@@ -1549,9 +1954,64 @@ export default function CoverageTypeDashboard({
       return res?.data;
     }
   }, [snapshotId, type, loadSystemSummary, refetchCoverage]);
-  const run = async () => {
-    if (!projectAccess.can("tests.run")) return;
-    if (!snapshotId || (running && activeJobIdRef.current)) return;
+  const [installingDependencyName, setInstallingDependencyName] = useState(null);
+
+  const activeMissingDependency = useMemo(() => {
+    if (summary?.missingDependency?.packageName) {
+      return summary.missingDependency;
+    }
+    const fromRunErr = extractMissingPackageFromError(summary?.latestRunError || coverageData?.latestRunError || "");
+    if (fromRunErr) return fromRunErr;
+    for (const [fPath, sugs] of Object.entries(inlineSuggestions || {})) {
+      for (const s of (sugs || [])) {
+        if (s.status === "FAILED") {
+          if (s.missingDependency?.packageName) {
+            return { ...s.missingDependency, sourceFile: fPath };
+          }
+          const parsed = extractMissingPackageFromError(s.testRunError || "");
+          if (parsed) {
+            return { ...parsed, sourceFile: fPath };
+          }
+        }
+      }
+    }
+    return null;
+  }, [summary, coverageData, inlineSuggestions]);
+
+  const handleInstallDependency = async (packageName, isDev = false, importedFrom = null, onAfterInstall = null) => {
+    if (!snapshotId || !packageName || installingDependencyName) return;
+    setInstallingDependencyName(packageName);
+    setError("");
+    try {
+      const shouldRerunFull = !onAfterInstall;
+      const res = await installMissingDependency(
+        snapshotId,
+        packageName,
+        isDev,
+        shouldRerunFull,
+        importedFrom || activeMissingDependency?.importedFrom || activeMissingDependency?.sourceFile || null
+      );
+      if (res?.success) {
+        invalidateCoverageQueries(snapshotId);
+        await refetchCoverage();
+        if (typeof onAfterInstall === "function") {
+          await onAfterInstall();
+        }
+      } else {
+        setError(res?.message || `Failed to install ${packageName}`);
+      }
+      return res;
+    } catch (err) {
+      console.error("[handleInstallDependency] Error:", err);
+      setError(err.message || `Error installing ${packageName}`);
+    } finally {
+      setInstallingDependencyName(null);
+    }
+  };
+
+  const run = async (options = {}) => {
+    if (!snapshotId) return;
+    activeJobIdRef.current = null;
     setRunning(true);
     setRunProgress(8);
     const initialStep = type === "system"
@@ -1566,7 +2026,7 @@ export default function CoverageTypeDashboard({
     try {
       let response;
       try {
-        response = await runCoverageByType(snapshotId, type, undefined, type === "system" ? executionMode : undefined);
+        response = await runCoverageByType(snapshotId, type, undefined, type === "system" ? executionMode : undefined, options);
       } catch (err) {
         if (err.message && (err.message.includes("already queued") || err.message.includes("running") || err.message.includes("409"))) {
           const projJobs = await getProjectJobsApi(projectId).catch(() => ({ jobs: [] }));
@@ -1628,6 +2088,7 @@ export default function CoverageTypeDashboard({
       setRunProgress(100);
       setRunStep(type === "system" ? "System test completed successfully!" : "Analysis completed successfully!");
       completeAnalysis(true);
+      setApplyResultsByFile({});
       invalidateCoverageQueries(snapshotId);
       await refetchCoverage();
       if (type === "system") {
@@ -1696,15 +2157,7 @@ export default function CoverageTypeDashboard({
   const selectedFiles = useMemo(() => {
     let nonTestFiles = files.filter((f) => !isTestFile(f.filePath));
     if (type === "unit") {
-      nonTestFiles = nonTestFiles.filter((f) => {
-        if (isFrontendFile(f.filePath)) return false;
-        const norm = (f.filePath || "").replace(/\\/g, "/").toLowerCase();
-        const isRouteOrEntry = /(^|\/)(routes?|endpoints?)(\/|\.|$)/i.test(norm) ||
-          /\.(route|routes)\.[cm]?[jt]sx?$/i.test(norm) ||
-          /(^|\/)(app|server)\.[cm]?[jt]sx?$/i.test(norm) ||
-          /^(src\/)?(index|main)\.[cm]?[jt]sx?$/i.test(norm.replace(/^\.?\//, ""));
-        return !isRouteOrEntry;
-      });
+      nonTestFiles = nonTestFiles.filter((f) => isBusinessLogicClientFile(f.filePath));
     }
     return type === "integration" ? nonTestFiles.filter(apiFile) : nonTestFiles;
   }, [files, type]);
@@ -1824,8 +2277,7 @@ export default function CoverageTypeDashboard({
   const [isBulkSuggesting, setIsBulkSuggesting] = useState(false);
   const [bulkSuggestMessage, setBulkSuggestMessage] = useState("");
 
-  const handleBulkSuggestTest = async () => {
-    if (!projectAccess.can("ai.use")) return;
+  const handleBulkSuggestTest = async (frameworkOverride = null) => {
     let sourceFiles = selectedFiles;
     if ((!sourceFiles || sourceFiles.length === 0) && snapshotId) {
       try {
@@ -1867,12 +2319,6 @@ export default function CoverageTypeDashboard({
         initialMessage: startMsg,
       });
 
-      // Also notify external suggest handler if available (e.g. AIPanel in Layout)
-      if (onSuggestTestcase) {
-        try {
-          onSuggestTestcase(null, { isBulk: true, snapshotId, projectId });
-        } catch (_) {}
-      }
 
       // Expand only the first file to give an immediate preview without lagging the DOM with 200 editors
       if (needImprovementFiles.length > 0) {
@@ -1888,7 +2334,7 @@ export default function CoverageTypeDashboard({
           await Promise.all(
             batch.map(async (fileObj) => {
               // Pass autoExpand = false during bulk run so DOM doesn't mount 200 code editors simultaneously
-              const resSugs = await handleSuggestTestcaseInline(fileObj.filePath, false);
+              const resSugs = await handleSuggestTestcaseInline(fileObj.filePath, false, frameworkOverride);
               completed += 1;
               const pctDone = Math.round((completed / needImprovementFiles.length) * 100);
               const msg = `Generating test suggestions: ${completed}/${needImprovementFiles.length} files (${pctDone}%)...`;
@@ -1928,6 +2374,64 @@ export default function CoverageTypeDashboard({
     });
   };
 
+  const handleConfirmAiSuggest = useCallback(
+    async ({ framework, filePath }) => {
+      if (framework) {
+        setActiveFramework(framework);
+      }
+      if (suggestModalConfig.isBulk || !filePath) {
+        await handleBulkSuggestTest(framework);
+      } else {
+        await handleSuggestTestcaseInline(filePath, true, framework);
+      }
+    },
+    [suggestModalConfig.isBulk, handleBulkSuggestTest, handleSuggestTestcaseInline],
+  );
+
+  const handleConfirmManualApply = useCallback(
+    async ({ framework, filePath, generatedCode }) => {
+      if (!snapshotId || !filePath || !generatedCode) return;
+      setIsBulkApplying(true);
+      setBulkApplyStep("Applying manual unit test case...");
+      try {
+        const cleanPath = cleanDisplayPath(filePath);
+        const targetTestFile = `tests/${cleanPath.replace(/^src\//, "").replace(/\.[^.]+$/, "")}.test.js`;
+        const res = await applyUnitTestSuggestion(snapshotId, {
+          projectId,
+          suggestion: {
+            sourceFile: filePath,
+            testFile: targetTestFile,
+            generatedCode,
+            framework: framework || activeFramework || "vitest",
+            proposalBase: {
+              snapshotId,
+              workspaceRevision: getExpectedWorkspaceRevision(),
+            },
+          },
+        });
+        if (res?.success) {
+          invalidateCoverageQueries(snapshotId);
+          await load();
+        }
+      } catch (err) {
+        console.error("Failed to apply manual unit test:", err);
+      } finally {
+        setIsBulkApplying(false);
+        setBulkApplyStep("");
+      }
+    },
+    [snapshotId, projectId, activeFramework, load],
+  );
+
+  const functionsForTargetFile = useMemo(() => {
+    if (!suggestModalConfig.filePath || !functionsList) return [];
+    const cleanTarget = cleanDisplayPath(suggestModalConfig.filePath);
+    return functionsList.filter((fn) => {
+      const fPath = fn.filePath || "";
+      return fPath === suggestModalConfig.filePath || cleanDisplayPath(fPath) === cleanTarget;
+    });
+  }, [suggestModalConfig.filePath, functionsList]);
+
   const relevantRuns = useMemo(
     () =>
       (type === "unit"
@@ -1950,7 +2454,7 @@ export default function CoverageTypeDashboard({
 
   const avg = selectedFiles.length
     ? selectedFiles.reduce((sum, file) => sum + (file.linesPct || 0), 0) /
-      selectedFiles.length
+    selectedFiles.length
     : 0;
 
   const hasSystemTests = useMemo(() => {
@@ -2009,7 +2513,7 @@ export default function CoverageTypeDashboard({
                 ? "N/A (Black-box E2E)"
                 : "N/A",
           ]
-        : [totals.total, totals.passed, totals.failed, pct(linePct || cov.lines)];
+          : [totals.total, totals.passed, totals.failed, pct(linePct || cov.lines)];
 
   return (
     <div
@@ -2035,32 +2539,9 @@ export default function CoverageTypeDashboard({
         <div style={{ flex: '1 1 300px', minWidth: 0 }}>
           {type === "unit" ? (
             <>
-              <div
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 5,
-                  padding: "3px 8px",
-                  borderRadius: 5,
-                  background: isLight ? "#eef2ff" : "rgba(99, 102, 241, 0.15)",
-                  border: isLight ? "1px solid #e0e7ff" : "1px solid rgba(99, 102, 241, 0.35)",
-                  color: isLight ? "#4f46e5" : "#a5b4fc",
-                  fontSize: 11,
-                  fontWeight: 700,
-                  letterSpacing: "0.4px",
-                  marginBottom: 6,
-                  textTransform: "uppercase",
-                }}
-              >
-                <FlaskConical size={12} />
-                <span>Unit Testing Suite</span>
-              </div>
               <h1 style={{ margin: 0, fontSize: 28, fontWeight: 800, color: isLight ? "#0f172a" : "#f8fafc", letterSpacing: "-0.02em" }}>
                 {config.title}
               </h1>
-              <p style={{ color: isLight ? "#475569" : "#94a3b8", fontSize: 13.5, margin: "6px 0 0" }}>
-                {config.subtitle}
-              </p>
               <div style={{ color: isLight ? "#64748b" : "#94a3b8", fontSize: 12, marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <span>Engines:</span>
                 <span style={{ padding: "2px 7px", borderRadius: 4, background: isLight ? "#fff1f2" : "rgba(244, 63, 94, 0.15)", border: isLight ? "1px solid #fecdd3" : "1px solid rgba(244, 63, 94, 0.35)", color: isLight ? "#be123c" : "#fb7185", fontWeight: 700, fontSize: 11 }}>Jest</span>
@@ -2115,18 +2596,18 @@ export default function CoverageTypeDashboard({
             </>
           )}
         </div>
-        <div style={{ display: "flex", gap: 9, alignItems: "center",flexWrap:'wrap',flex:'0 1 auto',minWidth:0,maxWidth:'100%' }}>
-          {type === "system" && <span style={{color:'#8b949e',fontSize:12,padding:'7px 10px',border:'1px solid #30363d',borderRadius:6}}>Full system · Real API & database</span>}
-          {projectId && (
+        <div style={{ display: "flex", gap: 9, alignItems: "center", flexWrap: 'wrap', flex: '0 1 auto', minWidth: 0, maxWidth: '100%' }}>
+          {type === "system" && <span style={{ color: '#8b949e', fontSize: 12, padding: '7px 10px', border: '1px solid #30363d', borderRadius: 6 }}>Full system · Real API & database</span>}
+          {projectId && type !== "unit" && (
             <button
               onClick={() => setShowJobQueueModal(true)}
               style={{
                 ...buttonStyle(running || isGenerating ? "#38bdf8" : "#8b949e"),
                 background: running || isGenerating
-                  ? "rgba(14, 165, 233, 0.15)"
-                  : "var(--color-surface-secondary)",
-                border: running || isGenerating ? "1px solid var(--color-primary)" : "1px solid var(--color-border)",
-                color: running || isGenerating ? "var(--color-primary)" : "var(--color-text)",
+                  ? (isLight ? "#e0f2fe" : "rgba(56, 189, 248, 0.15)")
+                  : "rgba(255, 255, 255, 0.05)",
+                border: running || isGenerating ? "1px solid rgba(56,189,248,0.5)" : "1px solid rgba(255, 255, 255, 0.12)",
+                color: running || isGenerating ? "#38bdf8" : "#c9d1d9",
                 display: "flex",
                 alignItems: "center",
                 gap: 6,
@@ -2143,7 +2624,7 @@ export default function CoverageTypeDashboard({
                     width: 7,
                     height: 7,
                     borderRadius: "50%",
-                    backgroundColor: "var(--color-primary)",
+                    backgroundColor: "#38bdf8",
                   }}
                 />
               )}
@@ -2153,12 +2634,13 @@ export default function CoverageTypeDashboard({
             <>
               <button
                 onClick={handleGenerateAiSystemTest}
-                disabled={!canUseAi || loading || running || isGenerating}
+                disabled={loading || running || isGenerating}
                 style={{
                   ...buttonStyle("#67e8f9"),
-                  background: "rgba(14, 165, 233, 0.1)",
-                  border: "1px solid rgba(14, 165, 233, 0.35)",
-                  color: "var(--color-primary)",
+                  background: isLight ? "#f0f9ff" : "rgba(56, 189, 248, 0.15)",
+                  border: isLight ? "1px solid #7dd3fc" : "1px solid rgba(103,232,249,0.45)",
+                  color: isLight ? "#0284c7" : "#67e8f9",
+                  borderRadius: 6,
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
@@ -2173,15 +2655,23 @@ export default function CoverageTypeDashboard({
                 disabled={isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current)) || isGenerating}
                 style={{
                   ...buttonStyle(isLight ? "#64748b" : "#8b949e"),
+                  background: isLight ? "#ffffff" : "var(--color-surface, #11161d)",
+                  border: isLight ? "1px solid #cbd5e1" : "1px solid var(--color-border, #29313d)",
+                  color: isLight ? "#475569" : "var(--color-text-secondary, #cbd5e1)",
+                  borderRadius: 6,
                   opacity: (isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current)) || isGenerating) ? 0.6 : 1,
                   cursor: (isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current)) || isGenerating) ? "wait" : "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
                 }}
               >
-                {isCoverageQueryFetching ? "Refreshing..." : "Refresh"}
+                <RefreshCw size={13} className={isCoverageQueryFetching ? "animate-spin" : ""} />
+                <span>{isCoverageQueryFetching ? "Refreshing..." : "Refresh"}</span>
               </button>
               <button
                 onClick={run}
-                disabled={!canRun || !snapshotId || (running && Boolean(activeJobIdRef.current)) || isGenerating}
+                disabled={!snapshotId || (running && Boolean(activeJobIdRef.current)) || isGenerating}
                 style={{
                   background: (running && Boolean(activeJobIdRef.current))
                     ? (isLight ? "#fce7f3" : "rgba(236, 72, 153, 0.2)")
@@ -2192,12 +2682,10 @@ export default function CoverageTypeDashboard({
                   color: (running && Boolean(activeJobIdRef.current))
                     ? (isLight ? "#9d174d" : "#fbcfe8")
                     : "#ffffff",
-                  boxShadow: (running && Boolean(activeJobIdRef.current))
-                    ? "none"
-                    : (isLight ? "0 2px 6px rgba(219, 39, 119, 0.25)" : "0 2px 10px rgba(236, 72, 153, 0.35)"),
-                  borderRadius: 8,
+                  boxShadow: "none",
+                  borderRadius: 6,
                   padding: "8px 16px",
-                  fontWeight: 700,
+                  fontWeight: 650,
                   fontSize: 12.5,
                   cursor: (running && Boolean(activeJobIdRef.current)) ? "wait" : "pointer",
                   display: "flex",
@@ -2211,73 +2699,29 @@ export default function CoverageTypeDashboard({
               </button>
             </>
           ) : type === "unit" ? (
-            <>
-              <button
-                onClick={handleBulkSuggestTest}
-                disabled={!canUseAi || (running && Boolean(activeJobIdRef.current)) || isBulkSuggesting}
-                style={{
-                  background: isLight ? "#f5f3ff" : "rgba(168, 85, 247, 0.15)",
-                  border: isLight ? "1px solid #ddd6fe" : "1px solid rgba(168, 85, 247, 0.4)",
-                  color: isLight ? "#7c3aed" : "#c084fc",
-                  borderRadius: 8,
-                  padding: "8px 14px",
-                  fontWeight: 700,
-                  fontSize: 12.5,
-                  cursor: (isBulkSuggesting || (running && activeJobIdRef.current)) ? "wait" : "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  transition: "all 0.15s ease",
-                  opacity: ((running && Boolean(activeJobIdRef.current)) || isBulkSuggesting) ? 0.6 : 1,
-                }}
-                className="hover:opacity-90"
-                title="Generate inline test suggestions for all files with missing branch/function coverage"
-              >
-                <Sparkles size={14} className={isBulkSuggesting ? "animate-spin" : ""} />
-                <span>{isBulkSuggesting ? "Suggesting..." : "Suggest Test Cases (All Files)"}</span>
-              </button>
-              <button
-                onClick={load}
-                disabled={isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current))}
-                style={{
-                  ...buttonStyle(isLight ? "#64748b" : "#8b949e"),
-                  opacity: (isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current))) ? 0.6 : 1,
-                  cursor: (isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current))) ? "wait" : "pointer",
-                }}
-              >
-                {isCoverageQueryFetching ? "Refreshing..." : "Refresh"}
-              </button>
-              <button
-                onClick={run}
-                disabled={!canRun || !snapshotId || (running && Boolean(activeJobIdRef.current))}
-                style={{
-                  background: (running && Boolean(activeJobIdRef.current))
-                    ? (isLight ? "#e0e7ff" : "rgba(99, 102, 241, 0.2)")
-                    : (isLight ? "#4f46e5" : "#6366f1"),
-                  border: (running && Boolean(activeJobIdRef.current))
-                    ? (isLight ? "1px solid #c7d2fe" : "1px solid rgba(99, 102, 241, 0.4)")
-                    : (isLight ? "1px solid #4338ca" : "1px solid #4f46e5"),
-                  color: (running && Boolean(activeJobIdRef.current))
-                    ? (isLight ? "#4338ca" : "#c7d2fe")
-                    : "#ffffff",
-                  boxShadow: (running && Boolean(activeJobIdRef.current))
-                    ? "none"
-                    : (isLight ? "0 2px 6px rgba(79, 70, 229, 0.25)" : "0 2px 10px rgba(99, 102, 241, 0.35)"),
-                  borderRadius: 8,
-                  padding: "8px 16px",
-                  fontWeight: 700,
-                  fontSize: 12.5,
-                  cursor: (running && Boolean(activeJobIdRef.current)) ? "wait" : "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  transition: "all 0.15s ease",
-                }}
-                title="Run Unit Test Analysis (Jest / Vitest)"
-              >
-                {(running && Boolean(activeJobIdRef.current)) ? `Running (${Math.max(5, Math.min(100, Math.round(runProgress)))}%)...` : "Run Analysis Unit"}
-              </button>
-            </>
+            <button
+              onClick={load}
+              disabled={isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current))}
+              style={{
+                background: isLight ? "#ffffff" : "var(--color-surface, #11161d)",
+                border: isLight ? "1px solid #cbd5e1" : "1px solid var(--color-border, #29313d)",
+                color: isLight ? "#475569" : "var(--color-text-secondary, #cbd5e1)",
+                borderRadius: 6,
+                padding: "8px 14px",
+                fontWeight: 650,
+                fontSize: 12.5,
+                opacity: (isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current))) ? 0.6 : 1,
+                cursor: (isCoverageQueryFetching || (running && Boolean(activeJobIdRef.current))) ? "wait" : "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                transition: "all 0.15s ease",
+              }}
+              title="Refresh Coverage Analysis"
+            >
+              <RefreshCw size={13} className={isCoverageQueryFetching ? "animate-spin" : ""} />
+              <span>{isCoverageQueryFetching ? "Refreshing..." : "Refresh"}</span>
+            </button>
           ) : (
             <>
               {onGenerate && (
@@ -2306,7 +2750,7 @@ export default function CoverageTypeDashboard({
               </button>
               <button
                 onClick={run}
-                disabled={!canRun || !snapshotId || (running && Boolean(activeJobIdRef.current))}
+                disabled={!snapshotId || (running && Boolean(activeJobIdRef.current))}
                 style={{
                   background: (running && Boolean(activeJobIdRef.current))
                     ? (isLight ? "#e0f2fe" : "rgba(14, 165, 233, 0.2)")
@@ -2339,85 +2783,69 @@ export default function CoverageTypeDashboard({
         </div>
       </div>
 
-      {type === "unit" && (bulkSuggestMessage || allPendingSuggestions.length > 0) && (
-        <div
-          style={{
-            padding: "12px 18px",
-            marginBottom: 16,
-            borderRadius: 8,
-            background: isLight
-              ? (allPendingSuggestions.length > 0 ? "#f0fdf4" : "#f5f3ff")
-              : (allPendingSuggestions.length > 0 ? "rgba(34, 197, 94, 0.12)" : "rgba(168, 85, 247, 0.12)"),
-            border: isLight
-              ? (allPendingSuggestions.length > 0 ? "1px solid #bbf7d0" : "1px solid #ddd6fe")
-              : (allPendingSuggestions.length > 0 ? "1px solid rgba(34, 197, 94, 0.4)" : "1px solid rgba(168, 85, 247, 0.35)"),
-            color: isLight
-              ? (allPendingSuggestions.length > 0 ? "#15803d" : "#6d28d9")
-              : (allPendingSuggestions.length > 0 ? "#86efac" : "#d8b4fe"),
-            fontSize: 13,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            flexWrap: "wrap",
-            gap: 12,
-            boxShadow: isLight ? "0 1px 2px rgba(0,0,0,0.02)" : "0 1px 4px rgba(0,0,0,0.2)",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <Sparkles size={16} className={allPendingSuggestions.length > 0 ? "text-green-400" : "text-purple-400"} />
-            <span style={{ fontWeight: 500 }}>
-              {bulkSuggestMessage || `${allPendingSuggestions.length} generated test suggestions ready across ${filesWithPendingSuggestions.length} files. Click any line in code to edit directly.`}
-            </span>
-          </div>
+      {/* ── Guided Sequential Workflow Stepper (Unit Test Mode) ── */}
+      {type === "unit" && (
+        <>
+          <UnitTestGuidedWorkflow
+            snapshotId={snapshotId}
+            running={running}
+            runProgress={runProgress}
+            runningStatus={runningStatus}
+            runStep={runStep}
+            activeJobId={activeJobIdRef.current}
+            onRun={run}
+            onBulkSuggest={handleBulkSuggestTest}
+            onOpenSuggestModal={(opts) => handleOpenSuggestModal(opts?.filePath, opts?.functionName, opts?.isBulk ?? true)}
+            isBulkSuggesting={isBulkSuggesting}
+            pendingSuggestionsCount={allPendingSuggestions.length}
+            pendingFilesCount={filesWithPendingSuggestions.length}
+            onApplyAll={handleApplyAllGlobal}
+            isBulkApplying={isBulkApplying}
+            bulkApplyStep={bulkApplyStep}
+            summary={summary}
+            rawTotals={rawTotals}
+            executions={executions}
+            testTotals={totals}
+            hasExecuted={relevantRuns.some(r => ["COMPLETED", "PASSED", "SUCCESS", "FAILED"].includes(r?.status)) || (totals.total > 0 && !running)}
+            isLatestRunFailed={isLatestRunFailed}
+            hasPartialFailures={hasPartialFailures}
+            onRefresh={load}
+            isRefreshing={isCoverageQueryFetching}
+            onOpenJobQueue={() => setShowJobQueueModal(true)}
+            onOpenReviewModal={() => openReviewForFile(null)}
+            hasReviewableDiffs={reviewFiles.length > 0}
+            activeTab={activeMetricView}
+            onChangeTab={(tabId) => setActiveMetricView(tabId)}
+            isLight={isLight}
+          />
 
-          {allPendingSuggestions.length > 0 && (
-            <button
-              onClick={handleApplyAllGlobal}
-              disabled={!canWrite || isBulkApplying || running}
-              style={{
-                padding: "6px 14px",
-                background: "var(--color-success)",
-                border: "1px solid var(--color-success)",
-                borderRadius: 6,
-                color: "#ffffff",
-                fontSize: 12,
-                fontWeight: 700,
-                cursor: isBulkApplying ? "wait" : "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-              }}
-              className="hover:opacity-90"
-            >
-              {isBulkApplying ? (
-                <>
-                  <Loader2 size={13} className="animate-spin" />
-                  <span>{bulkApplyStep || "Applying all..."}</span>
-                </>
-              ) : (
-                <>
-                  <Zap size={13} />
-                  <span>Apply All Generated Tests ({allPendingSuggestions.length})</span>
-                </>
-              )}
-            </button>
-          )}
-        </div>
+          <UnitTestPackageInstaller
+            snapshotId={snapshotId}
+            missingDependency={activeMissingDependency}
+            onInstallDependency={handleInstallDependency}
+            isInstalling={Boolean(installingDependencyName)}
+            onRerunTests={run}
+            isLight={isLight}
+          />
+        </>
       )}
 
+
       {/* Live Job Progress Banner */}
-      {(running || isGenerating) && (
+      {type !== "unit" && (running || isGenerating) && (
         <div
           style={{
             marginBottom: 20,
             padding: "12px 18px",
-            background: "var(--color-surface-raised)",
-            border: "1px solid var(--color-border)",
-            borderRadius: 10,
+            background: isLight
+              ? "var(--color-surface, #f8fafc)"
+              : "var(--color-surface, #11161d)",
+            border: isLight ? "1px solid #e2e8f0" : "1px solid var(--color-border, #29313d)",
+            borderRadius: 8,
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            boxShadow: "var(--shadow-sm)",
+            boxShadow: isLight ? "0 2px 8px rgba(0,0,0,0.06)" : "0 4px 14px rgba(0, 0, 0, 0.35)",
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -2470,15 +2898,7 @@ export default function CoverageTypeDashboard({
         </div>
       )}
 
-      {running && (
-        <WaveProgressBar
-          progress={runProgress}
-          step={runStep}
-          framework={activeFramework || (type === "unit" ? "Jest & Vitest" : config.title)}
-          color={config.accent}
-        />
-      )}
-      {generateError && (
+            {generateError && (
         <div
           style={{
             padding: "12px 15px",
@@ -2641,8 +3061,8 @@ export default function CoverageTypeDashboard({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(165px, 1fr))",
-              gap: 13,
+              gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+              gap: 12,
             }}
           >
             {config.focus.map((label, i) => {
@@ -2655,45 +3075,45 @@ export default function CoverageTypeDashboard({
               const MetricIcon = i === 0 ? FileCode : i === 1 ? GitBranch : i === 2 ? Cpu : Layers;
 
               if (type === "unit") {
+                const accentLineColor = i === 0 ? "#6366f1" : i === 1 ? "#10b981" : i === 2 ? "#0284c7" : "#059669";
                 return (
                   <div
                     key={label}
                     style={{
-                      background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.03)",
-                      border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
-                      borderRadius: 10,
-                      padding: "16px 18px",
+                      background: isLight ? "#ffffff" : "var(--color-surface, #11161d)",
+                      border: isLight ? "1px solid #e2e8f0" : "1px solid var(--color-border, #29313d)",
+                      borderRadius: 8,
+                      padding: "14px 16px",
                       boxShadow: isLight
-                        ? "0 1px 3px 0 rgba(15, 23, 42, 0.04), 0 1px 2px -1px rgba(15, 23, 42, 0.02)"
-                        : "0 1px 3px rgba(0, 0, 0, 0.2)",
+                        ? "0 1px 2px 0 rgba(15, 23, 42, 0.04)"
+                        : "none",
                       display: "flex",
                       flexDirection: "column",
                       justifyContent: "space-between",
+                      minHeight: 118,
                     }}
                   >
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <div
                         style={{
-                          color: isLight ? "#64748b" : "#94a3b8",
-                          fontSize: 11,
+                          color: isLight ? "#334155" : "var(--color-text, #f8fafc)",
+                          fontSize: 13,
                           fontWeight: 700,
-                          textTransform: "uppercase",
-                          letterSpacing: "0.5px",
                           display: "flex",
                           alignItems: "center",
                           gap: 6,
                         }}
                       >
-                        <MetricIcon size={13} style={{ color: i === 0 ? (isLight ? "#6366f1" : "#818cf8") : i === 1 ? (isLight ? "#d97706" : "#fbbf24") : i === 2 ? (isLight ? "#0284c7" : "#38bdf8") : (isLight ? "#059669" : "#34d399") }} />
+                        <MetricIcon size={14} style={{ color: accentLineColor }} />
                         <span>{label}</span>
                       </div>
 
                       {!isLatestRunFailed && (
                         <span
                           style={{
-                            fontSize: 10,
+                            fontSize: 10.5,
                             fontWeight: 700,
-                            padding: "1px 6px",
+                            padding: "2px 7px",
                             borderRadius: 4,
                             background: metricVal >= 80
                               ? (isLight ? "#ecfdf5" : "rgba(16, 185, 129, 0.15)")
@@ -2704,7 +3124,7 @@ export default function CoverageTypeDashboard({
                               ? (isLight ? "#059669" : "#34d399")
                               : metricVal >= 60
                                 ? (isLight ? "#d97706" : "#fbbf24")
-                                : (isLight ? "#e11d48" : "#f87171"),
+                                : (isLight ? "#dc2626" : "#f87171"),
                             border: metricVal >= 80
                               ? (isLight ? "1px solid #a7f3d0" : "1px solid rgba(16, 185, 129, 0.35)")
                               : metricVal >= 60
@@ -2717,44 +3137,50 @@ export default function CoverageTypeDashboard({
                       )}
                     </div>
 
-                    <div
-                      style={{
-                        color: isLatestRunFailed ? (isLight ? "#dc2626" : "#f87171") : (isLight ? "#0f172a" : "#f8fafc"),
-                        fontSize: isLatestRunFailed ? 18 : 28,
-                        fontWeight: 800,
-                        marginTop: 8,
-                        fontFamily: "var(--font-mono, monospace)",
-                        letterSpacing: "-0.02em",
-                      }}
-                    >
-                      {isLatestRunFailed ? "Unavailable" : pct(metricVal)}
-                    </div>
+                    <div style={{ marginTop: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 6 }}>
+                        <div
+                          style={{
+                            color: isLatestRunFailed ? (isLight ? "#dc2626" : "#f87171") : (isLight ? "#0f172a" : "var(--color-text, #f8fafc)"),
+                            fontSize: isLatestRunFailed ? 18 : 24,
+                            fontWeight: 800,
+                            fontFamily: "var(--font-mono, monospace)",
+                            letterSpacing: "-0.02em",
+                            lineHeight: "1.1",
+                          }}
+                        >
+                          {isLatestRunFailed ? "Unavailable" : pct(metricVal)}
+                        </div>
 
-                    {/* Fraction & Mini progress bar */}
-                    <div style={{ marginTop: 8 }}>
-                      <div
-                        style={{
-                          fontSize: 11.5,
-                          color: isLight ? "#64748b" : "#94a3b8",
-                          fontFamily: "var(--font-mono, monospace)",
-                          marginBottom: 4,
-                        }}
-                      >
-                        {rawInfo?.total != null && rawInfo.total > 0 ? (
-                          <span>{rawInfo.covered || 0} / {rawInfo.total} {label.toLowerCase()}</span>
-                        ) : rawInfo?.total === 0 ? (
-                          <span>0 / 0 {label.toLowerCase()}</span>
-                        ) : (
-                          <span>Calculated {label.toLowerCase()}</span>
-                        )}
+                        {/* Fraction: covered / total formatted with comma, prevent awkward line wrap */}
+                        <div
+                          style={{
+                            fontSize: 11.5,
+                            color: isLight ? "#64748b" : "var(--color-text-secondary, #cbd5e1)",
+                            fontFamily: "var(--font-mono, monospace)",
+                            fontWeight: 500,
+                            textAlign: "right",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {rawInfo?.total != null && rawInfo.total > 0 ? (
+                            <span>{Number(rawInfo.covered || 0).toLocaleString()} / {Number(rawInfo.total).toLocaleString()}</span>
+                          ) : rawInfo?.total === 0 ? (
+                            <span>0 / 0</span>
+                          ) : (
+                            <span>—</span>
+                          )}
+                        </div>
                       </div>
 
+                      {/* Clean 4px full-width progress bar replacing arbitrary 64px line */}
                       <div
                         style={{
                           width: "100%",
                           height: 4,
-                          background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.08)",
                           borderRadius: 2,
+                          background: isLight ? "#e2e8f0" : "rgba(255, 255, 255, 0.08)",
+                          marginTop: 10,
                           overflow: "hidden",
                         }}
                       >
@@ -2762,19 +3188,13 @@ export default function CoverageTypeDashboard({
                           style={{
                             width: `${Math.min(100, Math.max(0, metricVal))}%`,
                             height: "100%",
-                            background: color,
+                            background: accentLineColor,
                             borderRadius: 2,
                             transition: "width 0.4s ease",
                           }}
                         />
                       </div>
                     </div>
-
-                    {isLatestRunFailed && lastSuccessfulCov && (
-                      <div style={{ fontSize: 11, color: isLight ? "#64748b" : "#94a3b8", marginTop: 6 }}>
-                        Last successful: <b style={{ color: isLight ? "#334155" : "#cbd5e1" }}>{pct(lastSuccessfulValues[i])}</b> (cached)
-                      </div>
-                    )}
                   </div>
                 );
               }
@@ -2862,233 +3282,41 @@ export default function CoverageTypeDashboard({
             })}
           </div>
 
-          {/* Interactive Feature Cards (Statement, Branch, Function Coverage) */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-              gap: 13,
-              marginTop: 18,
-            }}
-          >
-            {type === "unit"
-              ? [
-                  {
-                    key: "statements",
-                    title: "Statement coverage",
-                    description: "How many statements were executed during testing.",
-                    pctValue: statPct || cov.statements,
-                    raw: rawTotals?.statements,
-                    icon: FileCode,
-                    accentColor: isLight ? "#6366f1" : "#a78bfa",
-                  },
-                  {
-                    key: "branches",
-                    title: "Branch coverage",
-                    description:
-                      "How many if/else/switch branches were traversed.",
-                    pctValue: branchPct || cov.branches,
-                    raw: rawTotals?.branches,
-                    icon: GitBranch,
-                    accentColor: isLight ? "#d97706" : "#fbbf24",
-                  },
-                  {
-                    key: "functions",
-                    title: "Function coverage",
-                    description: "How many functions or methods were called.",
-                    pctValue: funcPct || cov.functions,
-                    raw: rawTotals?.functions,
-                    icon: Cpu,
-                    accentColor: isLight ? "#0284c7" : "#38bdf8",
-                  },
-                ].map((item) => {
-                  const isActive = activeMetricView === item.key;
-                  const Icon = item.icon;
-                  const pctNum = Number(item.pctValue || 0);
-
-                  return (
-                    <div
-                      key={item.key}
-                      onClick={() => {
-                        const next = isActive ? "testcases" : item.key;
-                        setActiveMetricView(next);
-                      }}
-                      style={{
-                        background: isActive
-                          ? (isLight
-                              ? (item.key === "statements" ? "#faf5ff" : item.key === "branches" ? "#fffbeb" : "#f0f9ff")
-                              : `${item.accentColor}18`)
-                          : (isLight ? "#ffffff" : "rgba(255, 255, 255, 0.025)"),
-                        border: isActive
-                          ? `2px solid ${item.accentColor}`
-                          : (isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)"),
-                        borderRadius: 12,
-                        padding: 18,
-                        cursor: "pointer",
-                        boxShadow: isActive
-                          ? (isLight ? `0 4px 14px ${item.accentColor}20` : `0 0 16px ${item.accentColor}25`)
-                          : (isLight ? "0 1px 3px rgba(15, 23, 42, 0.03)" : "none"),
-                        transition: "all 0.2s ease",
-                      }}
-                      className={isActive ? "" : (isLight ? "hover:border-slate-300 hover:shadow-md transition-all" : "hover:border-white/20 transition-all")}
-                      title={`Click to filter by ${item.title}`}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          marginBottom: 8,
-                        }}
-                      >
-                        <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 8,
-                            color: isLight ? "#0f172a" : "#f8fafc",
-                            fontWeight: 750,
-                            fontSize: 14.5,
-                          }}
-                        >
-                          <div
-                            style={{
-                              width: 28,
-                              height: 28,
-                              borderRadius: 6,
-                              background: `${item.accentColor}18`,
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              color: item.accentColor,
-                              flexShrink: 0,
-                            }}
-                          >
-                            <Icon size={16} />
-                          </div>
-                          <span>{item.title}</span>
-                        </div>
-
-                        <span
-                          style={{
-                            fontSize: 11,
-                            fontWeight: 700,
-                            padding: "2px 8px",
-                            borderRadius: 12,
-                            background: isActive
-                              ? item.accentColor
-                              : (isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.06)"),
-                            color: isActive
-                              ? "#ffffff"
-                              : (isLight ? "#475569" : "#94a3b8"),
-                          }}
-                        >
-                          {isActive ? "Active View" : "Details →"}
-                        </span>
-                      </div>
-
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "baseline",
-                          gap: 8,
-                          marginTop: 6,
-                        }}
-                      >
-                        <span
-                          style={{
-                            fontSize: 26,
-                            fontWeight: 800,
-                            color: isLight ? "#0f172a" : "#f8fafc",
-                            fontFamily: "var(--font-mono, monospace)",
-                            letterSpacing: "-0.02em",
-                          }}
-                        >
-                          {pct(pctNum)}
-                        </span>
-                        {item.raw?.total != null && item.raw.total > 0 ? (
-                          <span
-                            style={{
-                              fontSize: 12,
-                              color: isLight ? "#64748b" : "#94a3b8",
-                              fontFamily: "var(--font-mono, monospace)",
-                            }}
-                          >
-                            ({item.raw.covered || 0} / {item.raw.total} covered)
-                          </span>
-                        ) : item.raw?.total === 0 ? (
-                          <span
-                            style={{
-                              fontSize: 12,
-                              color: isLight ? "#64748b" : "#94a3b8",
-                              fontFamily: "var(--font-mono, monospace)",
-                            }}
-                          >
-                            (0 / 0 covered)
-                          </span>
-                        ) : null}
-                      </div>
-
-                      {/* Progress Bar */}
-                      <div
-                        style={{
-                          width: "100%",
-                          height: 5,
-                          background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.08)",
-                          border: isLight ? "1px solid #e2e8f0" : "none",
-                          borderRadius: 3,
-                          marginTop: 10,
-                          overflow: "hidden",
-                        }}
-                      >
-                        <div
-                          style={{
-                            width: `${Math.min(100, Math.max(0, pctNum))}%`,
-                            height: "100%",
-                            background: item.accentColor,
-                            borderRadius: 3,
-                            transition: "width 0.4s ease",
-                          }}
-                        />
-                      </div>
-
-                      <div
-                        style={{
-                          color: isLight ? "#475569" : "#94a3b8",
-                          fontSize: 12,
-                          lineHeight: 1.5,
-                          marginTop: 9,
-                        }}
-                      >
-                        {item.description}
-                      </div>
-                    </div>
-                  );
-                })
-              : config.explanation.map(([title, text]) => (
-                  <div key={title} style={cardStyle}>
-                    <div
-                      style={{
-                        color: config.accent,
-                        fontWeight: 650,
-                        fontSize: 14,
-                      }}
-                    >
-                      {title}
-                    </div>
-                    <div
-                      style={{
-                        color: "#8b949e",
-                        fontSize: 12,
-                        lineHeight: 1.55,
-                        marginTop: 7,
-                      }}
-                    >
-                      {text}
-                    </div>
+          {/* Feature explanations for non-unit test types */}
+          {type !== "unit" && (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+                gap: 13,
+                marginTop: 18,
+              }}
+            >
+              {config.explanation.map(([title, text]) => (
+                <div key={title} style={cardStyle}>
+                  <div
+                    style={{
+                      color: config.accent,
+                      fontWeight: 650,
+                      fontSize: 14,
+                    }}
+                  >
+                    {title}
                   </div>
-                ))}
-          </div>
+                  <div
+                    style={{
+                      color: "#8b949e",
+                      fontSize: 12,
+                      lineHeight: 1.55,
+                      marginTop: 7,
+                    }}
+                  >
+                    {text}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Mode Navigation Tabs (Unit Test Coverage) */}
           {type === "unit" && (
@@ -3100,58 +3328,73 @@ export default function CoverageTypeDashboard({
                 marginTop: 20,
                 overflowX: "auto",
                 padding: "4px 6px",
-                background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.03)",
-                borderRadius: 10,
-                border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
+                background: isLight ? "#f8fafc" : "var(--color-surface, #11161d)",
+                borderRadius: 8,
+                border: isLight ? "1px solid #e2e8f0" : "1px solid var(--color-border, #29313d)",
               }}
             >
               {[
-                {
-                  id: "testcases",
-                  label: "File Testcase (Jest / Vitest)",
-                  count: unitTestSuites.length,
-                  icon: FlaskConical,
-                  accent: isLight ? "#7c3aed" : "#c084fc",
-                },
                 ...(type === "unit"
                   ? [
-                      {
-                        id: "visualization",
-                        label: "Test Execution Visualization",
-                        count: `${totals.passed}/${totals.total || unitTestSuites.length}`,
-                        icon: Activity,
-                        accent: isLight ? "#059669" : "#34d399",
-                      },
-                    ]
-                  : []),
-                {
-                  id: "all",
-                  label: "Source file coverage",
-                  count: selectedFiles.length,
-                  icon: ListChecks,
-                  accent: isLight ? "#2563eb" : "#60a5fa",
-                },
-                {
-                  id: "statements",
-                  label: "Statement coverage",
-                  count: pct(statPct),
-                  icon: FileCode,
-                  accent: isLight ? "#6366f1" : "#a78bfa",
-                },
-                {
-                  id: "branches",
-                  label: "Branch coverage",
-                  count: pct(branchPct),
-                  icon: GitBranch,
-                  accent: isLight ? "#d97706" : "#fbbf24",
-                },
-                {
-                  id: "functions",
-                  label: "Function coverage",
-                  count: pct(funcPct),
-                  icon: Cpu,
-                  accent: isLight ? "#0284c7" : "#38bdf8",
-                },
+                    {
+                      id: "traceability",
+                      label: "Logic & Test Traceability",
+                      count: `${functionsList.length} fns`,
+                      icon: Target,
+                      accent: isLight ? "#4f46e5" : "#a5b4fc",
+                    },
+                    {
+                      id: "testcases",
+                      label: "Test Suites & Specs",
+                      count: `${unitTestSuites.length} files`,
+                      icon: FileCheck,
+                      accent: isLight ? "#6d5dfb" : "#8b7cfd",
+                    },
+                    {
+                      id: "visualization",
+                      label: "Execution Terminal & Logs",
+                      count: "Logs & Pipeline",
+                      icon: Terminal,
+                      accent: isLight ? "#0f172a" : "#38bdf8",
+                    },
+                  ]
+                  : [
+                    {
+                      id: "testcases",
+                      label: "Test Files",
+                      count: unitTestSuites.length,
+                      icon: null,
+                      accent: isLight ? "#6d5dfb" : "#8b7cfd",
+                    },
+                    {
+                      id: "all",
+                      label: "Source file coverage",
+                      count: selectedFiles.length,
+                      icon: ListChecks,
+                      accent: isLight ? "#2563eb" : "#60a5fa",
+                    },
+                    {
+                      id: "statements",
+                      label: "Statement coverage",
+                      count: pct(statPct),
+                      icon: FileCode,
+                      accent: isLight ? "#6366f1" : "#a78bfa",
+                    },
+                    {
+                      id: "branches",
+                      label: "Branch coverage",
+                      count: pct(branchPct),
+                      icon: GitBranch,
+                      accent: isLight ? "#d97706" : "#fbbf24",
+                    },
+                    {
+                      id: "functions",
+                      label: "Function coverage",
+                      count: pct(funcPct),
+                      icon: Cpu,
+                      accent: isLight ? "#0284c7" : "#38bdf8",
+                    },
+                  ]),
               ].map((tab) => {
                 const isCurrent = activeMetricView === tab.id;
                 const TabIcon = tab.icon;
@@ -3165,9 +3408,9 @@ export default function CoverageTypeDashboard({
                       alignItems: "center",
                       gap: 6,
                       padding: "6px 14px",
-                      borderRadius: 8,
+                      borderRadius: 6,
                       fontSize: 12,
-                      fontWeight: isCurrent ? 700 : 500,
+                      fontWeight: isCurrent ? 650 : 500,
                       cursor: "pointer",
                       background: isCurrent
                         ? (isLight ? "#ffffff" : "rgba(255, 255, 255, 0.08)")
@@ -3179,7 +3422,7 @@ export default function CoverageTypeDashboard({
                         ? (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.12)")
                         : "1px solid transparent",
                       boxShadow: isCurrent
-                        ? (isLight ? "0 1px 3px rgba(15, 23, 42, 0.06)" : "0 1px 3px rgba(0, 0, 0, 0.2)")
+                        ? (isLight ? "0 1px 2px rgba(15, 23, 42, 0.06)" : "none")
                         : "none",
                       transition: "all 0.15s ease",
                       whiteSpace: "nowrap",
@@ -3197,7 +3440,7 @@ export default function CoverageTypeDashboard({
                         fontSize: 11,
                         fontWeight: 700,
                         padding: "1px 6px",
-                        borderRadius: 9999,
+                        borderRadius: 4,
                         background: isCurrent
                           ? (isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.1)")
                           : (isLight ? "#e2e8f0" : "rgba(255, 255, 255, 0.05)"),
@@ -3212,37 +3455,11 @@ export default function CoverageTypeDashboard({
                   </button>
                 );
               })}
-
-              {activeMetricView !== "testcases" && activeMetricView !== "visualization" && (
-                <button
-                  onClick={() => setActiveMetricView("testcases")}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 5,
-                    padding: "5px 10px",
-                    borderRadius: 6,
-                    fontSize: 11,
-                    fontWeight: 650,
-                    color: isLight ? "#6d28d9" : "#c084fc",
-                    background: isLight ? "#ede9fe" : "rgba(124, 58, 237, 0.15)",
-                    border: isLight ? "1px solid #c4b5fd" : "1px solid rgba(192, 132, 252, 0.3)",
-                    cursor: "pointer",
-                    marginLeft: "auto",
-                    whiteSpace: "nowrap",
-                    transition: "all 0.15s ease",
-                  }}
-                  title="Back to test case files list"
-                >
-                  <FlaskConical size={12} />
-                  <span>View testcase files</span>
-                </button>
-              )}
             </div>
           )}
 
           {/* Active View Explanatory Banner */}
-          {type === "unit" && activeMetricView !== "testcases" && (
+          {activeMetricView !== "testcases" && activeMetricView !== "traceability" && (
             <div
               style={{
                 marginTop: 10,
@@ -3336,23 +3553,22 @@ export default function CoverageTypeDashboard({
               >
                 {activeMetricView === "visualization" ? (
                   <>
-                    <Activity
+                    <Terminal
                       size={15}
-                      style={{ flexShrink: 0, color: isLight ? "#059669" : "#34d399" }}
+                      style={{ flexShrink: 0, color: isLight ? "#0f172a" : "#38bdf8" }}
                     />
                     <span>
-                      <b>Test Execution Visualization Unit:</b> Real-time interactive execution
-                      timeline, test suite waterfall, assertion status tree, and bottleneck diagnostics.
+                      <b>Execution Terminal & Logs:</b> Real-time terminal runner output, BullMQ pipeline stages, and V8 coverage synchronization.
                     </span>
                   </>
                 ) : activeMetricView === "testcases" ? (
                   <>
-                    <FlaskConical
+                    <FileCheck
                       size={15}
-                      style={{ flexShrink: 0, color: isLight ? "#7c3aed" : "#c084fc" }}
+                      style={{ flexShrink: 0, color: isLight ? "#6d5dfb" : "#8b7cfd" }}
                     />
                     <span>
-                      <b>Unit Test Files:</b> Test suite files executed by <b>Jest</b> and <b>Vitest</b>. Playwright, Cypress, and Supertest files are automatically excluded from the Unit Test scope.
+                      <b>Test Suites & Specs:</b> Test suite files executed by <b>Jest</b> and <b>Vitest</b> with assertion results and execution durations.
                     </span>
                   </>
                 ) : activeMetricView === "statements" ? (
@@ -3394,72 +3610,6 @@ export default function CoverageTypeDashboard({
                   </>
                 )}
               </div>
-
-              {/* View Mode Switcher for Unit Testcases */}
-              {type === "unit" && activeMetricView === "testcases" && (
-                <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                  <button
-                    onClick={() => setTestCaseViewMode("table")}
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 650,
-                      padding: "4px 10px",
-                      borderRadius: 6,
-                      cursor: "pointer",
-                      background:
-                        testCaseViewMode === "table"
-                          ? (isLight ? "#7c3aed" : "var(--color-primary)")
-                          : (isLight ? "#ffffff" : "var(--color-surface)"),
-                      color:
-                        testCaseViewMode === "table"
-                          ? "#ffffff"
-                          : (isLight ? "#475569" : "var(--color-text-secondary)"),
-                      border:
-                        testCaseViewMode === "table"
-                          ? (isLight ? "1px solid #7c3aed" : "1px solid var(--color-primary)")
-                          : (isLight ? "1px solid #cbd5e1" : "1px solid var(--color-border)"),
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 4,
-                      transition: "all 0.15s ease",
-                      boxShadow: isLight && testCaseViewMode === "table" ? "0 1px 2px rgba(124, 58, 237, 0.2)" : "none",
-                    }}
-                  >
-                    <FlaskConical size={12} />
-                    <span>📋 File Table</span>
-                  </button>
-                  <button
-                    onClick={() => setTestCaseViewMode("visualization")}
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 650,
-                      padding: "4px 10px",
-                      borderRadius: 6,
-                      cursor: "pointer",
-                      background:
-                        testCaseViewMode === "visualization"
-                          ? (isLight ? "#7c3aed" : "var(--color-primary)")
-                          : (isLight ? "#ffffff" : "var(--color-surface)"),
-                      color:
-                        testCaseViewMode === "visualization"
-                          ? "#ffffff"
-                          : (isLight ? "#475569" : "var(--color-text-secondary)"),
-                      border:
-                        testCaseViewMode === "visualization"
-                          ? (isLight ? "1px solid #7c3aed" : "1px solid var(--color-primary)")
-                          : (isLight ? "1px solid #cbd5e1" : "1px solid var(--color-border)"),
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 4,
-                      transition: "all 0.15s ease",
-                      boxShadow: isLight && testCaseViewMode === "visualization" ? "0 1px 2px rgba(124, 58, 237, 0.2)" : "none",
-                    }}
-                  >
-                    <Activity size={12} />
-                    <span>⚡ Execution Visualization</span>
-                  </button>
-                </div>
-              )}
 
               {/* View Mode Switcher for Function */}
               {activeMetricView === "functions" && (
@@ -3530,23 +3680,60 @@ export default function CoverageTypeDashboard({
           )}
 
           {/* ── TABLE VIEW SWITCHER ─────────────────────────────────── */}
-          {type === "unit" && (activeMetricView === "visualization" || (activeMetricView === "testcases" && testCaseViewMode === "visualization")) ? (
+          {type === "unit" && activeMetricView === "traceability" ? (
             <div style={{ marginTop: 14 }}>
-              <UnitTestExecutionVisualizer
+              <UnitTestTraceabilityMatrix
+                snapshotId={snapshotId}
+                projectId={projectId}
+                running={running}
+                runProgress={runProgress}
+                sourceFiles={selectedFiles}
+                testSuites={unitTestSuites}
+                functionsList={functionsList}
+                summary={summary}
+                rawTotals={rawTotals}
+                onOpenFile={handleOpenFileInPlace}
+                onOpenCFG={(filePath, funcName, line) => {
+                  if (onOpenCFG) {
+                    onOpenCFG(filePath, funcName, line);
+                  } else {
+                    setCfgModalContext({ file: filePath, func: funcName, line });
+                    setShowCfgModal(true);
+                  }
+                }}
+                onSuggestTestcase={(filePath, fnName) => handleOpenSuggestModal(filePath, fnName, false)}
+                inlineSuggestions={inlineSuggestions}
+                loadingSuggestions={loadingSuggestions}
+                applyingSuggestionIds={applyingSuggestionIds}
+                applyResultsByFile={applyResultsByFile}
+                onApplySuggestion={handleApplySuggestionInline}
+                onApplyAllFileSuggestions={handleApplyAllInline}
+                onReviewDiff={openReviewForFile}
+                onInstallDependency={handleInstallDependency}
+                installingDependencyName={installingDependencyName}
+                isLight={isLight}
+              />
+            </div>
+          ) : type === "unit" && activeMetricView === "visualization" ? (
+            <div style={{ marginTop: 14 }}>
+              <UnitTestExecutionProcess
                 testSuites={unitTestSuites}
                 executions={executions}
                 sourceFiles={selectedFiles}
+                snapshotId={snapshotId}
+                projectId={projectId}
                 isLight={isLight}
-                onOpenFile={onOpenFile}
-                onSelectSourceFile={(filePath) => {
-                  setSelectedSourceFile(filePath);
-                  setActiveMetricView("all");
-                  ensureFileCoverage(filePath);
-                }}
+                onOpenFile={handleOpenFileInPlace}
                 onRunTests={run}
                 running={running}
                 runProgress={runProgress}
                 runStep={runStep}
+                runningStatus={runningStatus}
+                rawTotals={rawTotals}
+                summary={summary}
+                missingDependency={summary?.missingDependency}
+                onInstallDependency={handleInstallDependency}
+                isInstallingDependency={Boolean(installingDependencyName)}
               />
             </div>
           ) : type === "unit" && activeMetricView === "testcases" ? (
@@ -3575,8 +3762,7 @@ export default function CoverageTypeDashboard({
                   gap: 12,
                 }}
               >
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <FlaskConical size={16} style={{ color: isLight ? "#7c3aed" : "#c084fc" }} />
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span style={{ color: isLight ? "#0f172a" : undefined }}>File Testcase (Jest & Vitest)</span>
                   <span
                     style={{ fontSize: 11, color: isLight ? "#64748b" : "#8b949e", fontWeight: 400 }}
@@ -3594,18 +3780,18 @@ export default function CoverageTypeDashboard({
                       gap: 5,
                       padding: "4px 9px",
                       borderRadius: 6,
-                      background: isLight ? "#ede9fe" : "rgba(124, 58, 237, 0.2)",
-                      color: isLight ? "#6d28d9" : "#c084fc",
-                      border: isLight ? "1px solid #c4b5fd" : "1px solid rgba(192, 132, 252, 0.35)",
+                      background: isLight ? "#eef2ff" : "rgba(99, 102, 241, 0.15)",
+                      color: isLight ? "#4f46e5" : "#a5b4fc",
+                      border: isLight ? "1px solid #c7d2fe" : "1px solid rgba(99, 102, 241, 0.35)",
                       fontSize: 11,
                       fontWeight: 650,
                       cursor: "pointer",
                       transition: "all 0.15s ease",
                     }}
-                    title="Switch to Test Execution Visualization Unit"
+                    title="Switch to Unit Test Execution Process"
                   >
-                    <Activity size={12} />
-                    <span>Visualize Execution</span>
+                    <Terminal size={12} />
+                    <span>Execution Process</span>
                   </button>
 
                   {/* Search input */}
@@ -3656,452 +3842,476 @@ export default function CoverageTypeDashboard({
               ) : (
                 <div>
                   <div style={{ overflowX: "auto" }}>
-                  {/* Table Header */}
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns:
-                        "40px minmax(180px, 1.3fr) 85px 100px 80px 95px 105px",
-                      gap: 10,
-                      minWidth: 720,
-                      padding: "10px 18px",
-                      background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)",
-                      borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.05)",
-                      fontSize: 11,
-                      fontWeight: 650,
-                      color: isLight ? "#475569" : "#8b949e",
-                      textTransform: "uppercase",
-                      letterSpacing: "0.04em",
-                    }}
-                  >
-                    <span style={{ textAlign: "center" }}>#</span>
-                    <span>File Testcase</span>
-                    <span style={{ textAlign: "center" }}>Framework</span>
-                    <span style={{ textAlign: "right" }}>Test Cases</span>
-                    <span style={{ textAlign: "right" }}>Duration</span>
-                    <span style={{ textAlign: "center" }}>Status</span>
-                    <span style={{ textAlign: "center" }}>Actions</span>
-                  </div>
+                    {/* Table Header */}
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns:
+                          "48px minmax(280px, 3.5fr) 100px 100px 85px 105px 105px",
+                        gap: 10,
+                        minWidth: 840,
+                        padding: "10px 18px",
+                        background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)",
+                        borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.05)",
+                        fontSize: 11,
+                        fontWeight: 650,
+                        color: isLight ? "#475569" : "#8b949e",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.04em",
+                      }}
+                    >
+                      <span style={{ textAlign: "center" }}>#</span>
+                      <span>File Testcase</span>
+                      <span style={{ textAlign: "center" }}>Framework</span>
+                      <span style={{ textAlign: "right" }}>Test Cases</span>
+                      <span style={{ textAlign: "right" }}>Duration</span>
+                      <span style={{ textAlign: "center" }}>Status</span>
+                      <span style={{ textAlign: "center" }}>Actions</span>
+                    </div>
 
-                  {/* Rows */}
-                  {paginatedTestSuites.map((suite, idx) => {
-                    const isPassed =
-                      suite.status === "passed" && suite.failedTests === 0;
-                    const isExpanded = expandedSuite === suite.filePath;
+                    {/* Rows */}
+                    {paginatedTestSuites.map((suite, idx) => {
+                      const isPassed =
+                        suite.status === "passed" && suite.failedTests === 0;
+                      const isExpanded = expandedSuite === suite.filePath;
 
-                    return (
-                      <div key={suite.filePath}>
-                        <div
-                          style={{
-                            display: "grid",
-                            gridTemplateColumns:
-                              "40px minmax(180px, 1.3fr) 85px 100px 80px 95px 105px",
-                            gap: 10,
-                            minWidth: 720,
-                            padding: "12px 18px",
-                            alignItems: "center",
-                            borderBottom: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255,255,255,.04)",
-                            transition: "background 0.15s ease",
-                            background: isExpanded
-                              ? (isLight ? "#faf5ff" : "rgba(192, 132, 252, 0.04)")
-                              : "transparent",
-                          }}
-                          className={isLight ? "hover:bg-slate-50/80" : "hover:bg-white/[0.02]"}
-                        >
-                          {/* File Index */}
-                          <div style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
-                            <span
-                              style={{
-                                fontSize: 11,
-                                fontWeight: 700,
-                                fontFamily: "var(--font-mono, monospace)",
-                                color: isLight ? "#64748b" : "#94a3b8",
-                                background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.05)",
-                                border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
-                                borderRadius: 6,
-                                padding: "2px 6px",
-                                minWidth: 26,
-                                textAlign: "center",
-                              }}
-                            >
-                              {(testSuitePage - 1) * TEST_SUITES_PER_PAGE + idx + 1}
-                            </span>
-                          </div>
-
-                          {/* File path */}
+                      return (
+                        <div key={suite.id || `${suite.filePath || 'suite'}-${idx}`}>
                           <div
-                            onClick={() => onOpenFile?.(suite.filePath)}
                             style={{
-                              cursor: "pointer",
-                              display: "flex",
+                              display: "grid",
+                              gridTemplateColumns:
+                                "48px minmax(280px, 3.5fr) 100px 100px 85px 105px 105px",
+                              gap: 10,
+                              minWidth: 840,
+                              padding: "12px 18px",
                               alignItems: "center",
-                              gap: 8,
-                              overflow: "hidden",
+                              borderBottom: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255,255,255,.04)",
+                              transition: "background 0.15s ease",
+                              background: isExpanded
+                                ? (isLight ? "#f8fafc" : "rgba(255, 255, 255, 0.03)")
+                                : "transparent",
                             }}
-                            title={`Open test file ${suite.filePath}`}
+                            className={isLight ? "hover:bg-slate-50/80" : "hover:bg-white/[0.02]"}
                           >
-                            <FlaskConical
-                              size={15}
+                            {/* File Index */}
+                            <div style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
+                              <span
+                                style={{
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  fontFamily: "var(--font-mono, monospace)",
+                                  color: isLight ? "#64748b" : "#94a3b8",
+                                  background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.05)",
+                                  border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
+                                  borderRadius: 6,
+                                  padding: "2px 6px",
+                                  minWidth: 26,
+                                  textAlign: "center",
+                                }}
+                              >
+                                {(testSuitePage - 1) * TEST_SUITES_PER_PAGE + idx + 1}
+                              </span>
+                            </div>
+
+                            {/* File path */}
+                            <div
+                              onClick={() => handleOpenFileInPlace(suite.filePath)}
                               style={{
-                                color:
-                                  suite.framework === "vitest"
-                                    ? (isLight ? "#0284c7" : "#38bdf8")
-                                    : (isLight ? "#7c3aed" : "#c084fc"),
-                                flexShrink: 0,
+                                cursor: "pointer",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 6,
+                                overflow: "hidden",
                               }}
-                            />
-                            {(() => {
-                              const cleaned = cleanDisplayPath(suite.filePath);
-                              const parts = cleaned.split("/");
-                              if (parts.length <= 1) {
+                              title={`Open test file ${suite.filePath}`}
+                            >
+                              {(() => {
+                                const cleaned = cleanDisplayPath(suite.filePath);
+                                const parts = cleaned.split("/");
+                                if (parts.length <= 1) {
+                                  return (
+                                    <span
+                                      style={{
+                                        overflow: "hidden",
+                                        textOverflow: "ellipsis",
+                                        whiteSpace: "nowrap",
+                                        color: isLight ? "#0f172a" : "#e6edf3",
+                                        fontSize: 13,
+                                        fontWeight: 600,
+                                        fontFamily: "var(--font-mono)",
+                                      }}
+                                    >
+                                      {cleaned}
+                                    </span>
+                                  );
+                                }
+                                const dir = parts.slice(0, -1).join(" / ");
+                                const file = parts[parts.length - 1];
                                 return (
                                   <span
                                     style={{
                                       overflow: "hidden",
                                       textOverflow: "ellipsis",
                                       whiteSpace: "nowrap",
-                                      color: isLight ? "#0f172a" : "#e6edf3",
                                       fontSize: 13,
-                                      fontWeight: 600,
                                       fontFamily: "var(--font-mono)",
                                     }}
+                                    title={cleaned}
                                   >
-                                    {cleaned}
+                                    <span style={{ color: isLight ? "#64748b" : "#8b949e", marginRight: 5 }}>{dir} /</span>
+                                    <span style={{ color: isLight ? "#0f172a" : "#e6edf3", fontWeight: 600 }}>{file}</span>
                                   </span>
                                 );
-                              }
-                              const dir = parts.slice(0, -1).join(" / ");
-                              const file = parts[parts.length - 1];
-                              return (
-                                <span
-                                  style={{
-                                    overflow: "hidden",
-                                    textOverflow: "ellipsis",
-                                    whiteSpace: "nowrap",
-                                    fontSize: 13,
-                                    fontFamily: "var(--font-mono)",
-                                  }}
-                                  title={cleaned}
-                                >
-                                  <span style={{ color: isLight ? "#64748b" : "#8b949e", marginRight: 5 }}>{dir} /</span>
-                                  <span style={{ color: isLight ? "#0f172a" : "#e6edf3", fontWeight: 600 }}>{file}</span>
-                                </span>
-                              );
-                            })()}
-                          </div>
+                              })()}
+                            </div>
 
-                          {/* Framework Badge */}
-                          <div
-                            style={{
-                              display: "flex",
-                              justifyContent: "center",
-                            }}
-                          >
-                            <span
+                            {/* Framework Badge */}
+                            <div
                               style={{
-                                fontSize: 11,
-                                fontWeight: 700,
-                                padding: "2px 8px",
-                                borderRadius: 6,
-                                background:
-                                  suite.framework === "vitest"
-                                    ? (isLight ? "#f0fdf4" : "rgba(56, 189, 248, 0.15)")
-                                    : (isLight ? "#fff1f2" : "rgba(192, 132, 252, 0.15)"),
-                                color:
-                                  suite.framework === "vitest"
-                                    ? (isLight ? "#15803d" : "#38bdf8")
-                                    : (isLight ? "#be123c" : "#c084fc"),
-                                border:
-                                  suite.framework === "vitest"
-                                    ? (isLight ? "1px solid #bbf7d0" : "1px solid rgba(56, 189, 248, 0.35)")
-                                    : (isLight ? "1px solid #fecdd3" : "1px solid rgba(192, 132, 252, 0.35)"),
-                                textTransform: "uppercase",
+                                display: "flex",
+                                justifyContent: "center",
                               }}
                             >
-                              {suite.framework}
-                            </span>
-                          </div>
-
-                          {/* Test Cases Count */}
-                          <div
-                            style={{
-                              textAlign: "right",
-                              fontSize: 12,
-                              fontFamily: "var(--font-mono)",
-                            }}
-                          >
-                            <span style={{ color: isLight ? "#16a34a" : "#4ade80", fontWeight: 600 }}>
-                              ✓ {suite.passedTests || 0}
-                            </span>
-                            {suite.failedTests > 0 && (
                               <span
                                 style={{
-                                  color: isLight ? "#dc2626" : "#f87171",
-                                  fontWeight: 600,
-                                  marginLeft: 6,
-                                }}
-                              >
-                                × {suite.failedTests}
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Duration */}
-                          <div
-                            style={{
-                              textAlign: "right",
-                              fontSize: 12,
-                              color: isLight ? "#64748b" : "#8b949e",
-                              fontFamily: "var(--font-mono)",
-                            }}
-                          >
-                            {suite.durationMs ? `${suite.durationMs}ms` : "—"}
-                          </div>
-
-                          {/* Status */}
-                          <div
-                            style={{
-                              display: "flex",
-                              justifyContent: "center",
-                            }}
-                          >
-                            <span
-                              style={{
-                                fontSize: 11,
-                                fontWeight: 700,
-                                padding: "2px 8px",
-                                borderRadius: 10,
-                                background: isPassed
-                                  ? (isLight ? "#f0fdf4" : "rgba(34, 197, 94, 0.15)")
-                                  : suite.status === "pending"
-                                    ? (isLight ? "#fefce8" : "rgba(234, 179, 8, 0.15)")
-                                    : (isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.15)"),
-                                color: isPassed
-                                  ? (isLight ? "#15803d" : "#4ade80")
-                                  : suite.status === "pending"
-                                    ? (isLight ? "#a16207" : "#fde047")
-                                    : (isLight ? "#b91c1c" : "#fca5a5"),
-                                border: isPassed
-                                  ? (isLight ? "1px solid #bbf7d0" : "1px solid rgba(34, 197, 94, 0.3)")
-                                  : suite.status === "pending"
-                                    ? (isLight ? "1px solid #fef08a" : "1px solid rgba(234, 179, 8, 0.3)")
-                                    : (isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.3)"),
-                              }}
-                            >
-                              {isPassed ? "✓ PASSED" : suite.status === "pending" ? "— PENDING" : "× FAILED"}
-                            </span>
-                          </div>
-
-                          {/* Actions */}
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              gap: 6,
-                            }}
-                          >
-                            <button
-                              onClick={() => onOpenFile?.(suite.filePath)}
-                              style={{
-                                padding: "4px 8px",
-                                borderRadius: 5,
-                                background: isLight ? "#ffffff" : "rgba(255,255,255,0.05)",
-                                border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.1)",
-                                color: isLight ? "#334155" : "#c9d1d9",
-                                fontSize: 11,
-                                fontWeight: isLight ? 600 : 400,
-                                cursor: "pointer",
-                              }}
-                              title="Open test file in editor"
-                            >
-                              Open test
-                            </button>
-
-                            {((suite.assertions && suite.assertions.length > 0) || suite.message) && (
-                              <button
-                                onClick={() =>
-                                  setExpandedSuite(
-                                    isExpanded ? null : suite.filePath,
-                                  )
-                                }
-                                style={{
-                                  padding: "4px 6px",
-                                  borderRadius: 5,
-                                  background: isLight ? "#ffffff" : "rgba(255,255,255,0.03)",
-                                  border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.08)",
-                                  color: isLight ? "#64748b" : "#8b949e",
                                   fontSize: 11,
-                                  cursor: "pointer",
-                                  display: "flex",
-                                  alignItems: "center",
+                                  fontWeight: 700,
+                                  padding: "2px 8px",
+                                  borderRadius: 4,
+                                  background:
+                                    suite.framework === "vitest"
+                                      ? (isLight ? "#f0fdf4" : "rgba(56, 189, 248, 0.15)")
+                                      : (isLight ? "#fff1f2" : "rgba(192, 132, 252, 0.15)"),
+                                  color:
+                                    suite.framework === "vitest"
+                                      ? (isLight ? "#15803d" : "#38bdf8")
+                                      : (isLight ? "#be123c" : "#c084fc"),
+                                  border:
+                                    suite.framework === "vitest"
+                                      ? (isLight ? "1px solid #bbf7d0" : "1px solid rgba(56, 189, 248, 0.35)")
+                                      : (isLight ? "1px solid #fecdd3" : "1px solid rgba(192, 132, 252, 0.35)"),
+                                  textTransform: "uppercase",
                                 }}
-                                title={suite.message ? "View error details" : "View child test cases"}
                               >
-                                {isExpanded ? (
-                                  <ChevronDown size={13} />
-                                ) : (
-                                  <ChevronRight size={13} />
-                                )}
-                              </button>
-                            )}
-                          </div>
-                        </div>
+                                {suite.framework}
+                              </span>
+                            </div>
 
-                        {/* Expanded Test Cases Accordion */}
-                        {isExpanded && (suite.assertions?.length > 0 || suite.message) && (
-                          <div
-                            style={{
-                              background: isLight ? "#f8fafc" : "rgba(0,0,0,0.25)",
-                              padding: "12px 24px",
-                              borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,.05)",
-                            }}
-                          >
-                            {/* Error message banner */}
-                            {suite.message && (
-                              <div style={{
-                                background: isLight ? "#fef2f2" : "rgba(239,68,68,0.08)",
-                                border: isLight ? "1px solid #fecaca" : "1px solid rgba(239,68,68,0.25)",
-                                borderRadius: 6,
-                                padding: "8px 12px",
-                                marginBottom: suite.assertions?.length > 0 ? 10 : 0,
-                                fontSize: 11,
+                            {/* Test Cases Count */}
+                            <div
+                              style={{
+                                textAlign: "right",
+                                fontSize: 12,
                                 fontFamily: "var(--font-mono)",
-                                color: isLight ? "#991b1b" : "#fca5a5",
-                                whiteSpace: "pre-wrap",
-                                wordBreak: "break-all",
-                                maxHeight: 200,
-                                overflowY: "auto",
-                              }}>
-                                <span style={{ fontWeight: 700, display: "block", marginBottom: 4, color: isLight ? "#dc2626" : "#f87171" }}>
-                                  ⚠ Error Details:
-                                </span>
-                                {suite.message}
-                              </div>
-                            )}
-                            {suite.assertions && suite.assertions.length > 0 && (
-                              <>
-                                <div
+                              }}
+                            >
+                              <span style={{ color: isLight ? "#16a34a" : "#4ade80", fontWeight: 600 }}>
+                                ✓ {suite.passedTests || 0}
+                              </span>
+                              {suite.failedTests > 0 && (
+                                <span
                                   style={{
-                                    fontSize: 11,
-                                    fontWeight: 700,
-                                    color: isLight ? "#475569" : "#8b949e",
-                                    marginBottom: 6,
-                                    textTransform: "uppercase",
+                                    color: isLight ? "#dc2626" : "#f87171",
+                                    fontWeight: 600,
+                                    marginLeft: 6,
                                   }}
                                 >
-                                  Test cases in {suite.fileName}:
-                                </div>
-                                <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-                                  {suite.assertions.map((testCase, idx) => {
-                                    const targetFn = testCase.targetFunction ||
-                                      (Array.isArray(testCase.ancestorTitles) && testCase.ancestorTitles.length > 1
-                                        ? testCase.ancestorTitles[testCase.ancestorTitles.length - 1]
-                                        : null);
+                                  × {suite.failedTests}
+                                </span>
+                              )}
+                            </div>
 
-                                    return (
-                                      <div
-                                        key={idx}
-                                        style={{
-                                          display: "flex",
-                                          alignItems: "center",
-                                          gap: 9,
-                                          fontSize: 12,
-                                          fontFamily: "var(--font-mono)",
-                                          padding: "4px 0",
-                                          borderBottom: isLight ? "1px dashed #e2e8f0" : "1px dashed rgba(255,255,255,0.03)",
-                                        }}
-                                      >
-                                        <span
+                            {/* Duration */}
+                            <div
+                              style={{
+                                textAlign: "right",
+                                fontSize: 12,
+                                color: isLight ? "#64748b" : "#8b949e",
+                                fontFamily: "var(--font-mono)",
+                              }}
+                            >
+                              {suite.durationMs ? `${suite.durationMs}ms` : "—"}
+                            </div>
+
+                            {/* Status */}
+                            <div
+                              style={{
+                                display: "flex",
+                                justifyContent: "center",
+                              }}
+                            >
+                              <span
+                                style={{
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  padding: "2px 8px",
+                                  borderRadius: 4,
+                                  background: isPassed
+                                    ? (isLight ? "#f0fdf4" : "rgba(34, 197, 94, 0.15)")
+                                    : suite.status === "pending"
+                                      ? (isLight ? "#fefce8" : "rgba(234, 179, 8, 0.15)")
+                                      : (isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.15)"),
+                                  color: isPassed
+                                    ? (isLight ? "#15803d" : "#4ade80")
+                                    : suite.status === "pending"
+                                      ? (isLight ? "#a16207" : "#fde047")
+                                      : (isLight ? "#b91c1c" : "#fca5a5"),
+                                  border: isPassed
+                                    ? (isLight ? "1px solid #bbf7d0" : "1px solid rgba(34, 197, 94, 0.3)")
+                                    : suite.status === "pending"
+                                      ? (isLight ? "1px solid #fef08a" : "1px solid rgba(234, 179, 8, 0.3)")
+                                      : (isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.3)"),
+                                }}
+                                title={
+                                  suite.status === "pending"
+                                    ? (suite.pendingReason || suite.message || "Pending: Test file not executed during test run")
+                                    : isPassed
+                                      ? "Test suite passed"
+                                      : (suite.message || "Test suite failed")
+                                }
+                              >
+                                {isPassed ? "✓ PASSED" : suite.status === "pending" ? "— PENDING" : "× FAILED"}
+                              </span>
+                            </div>
+
+                            {/* Actions */}
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                gap: 6,
+                              }}
+                            >
+                              <button
+                                onClick={() => handleOpenFileInPlace(suite.filePath)}
+                                style={{
+                                  padding: "4px 8px",
+                                  borderRadius: 5,
+                                  background: isLight ? "#ffffff" : "rgba(255,255,255,0.05)",
+                                  border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.1)",
+                                  color: isLight ? "#334155" : "#c9d1d9",
+                                  fontSize: 11,
+                                  fontWeight: isLight ? 600 : 400,
+                                  cursor: "pointer",
+                                }}
+                                title="Open test file in editor"
+                              >
+                                Open test
+                              </button>
+
+                              {((suite.assertions && suite.assertions.length > 0) || suite.message || suite.pendingReason || suite.status === "pending") && (
+                                <button
+                                  onClick={() =>
+                                    setExpandedSuite(
+                                      isExpanded ? null : suite.filePath,
+                                    )
+                                  }
+                                  style={{
+                                    padding: "4px 6px",
+                                    borderRadius: 5,
+                                    background: isLight ? "#ffffff" : "rgba(255,255,255,0.03)",
+                                    border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.08)",
+                                    color: isLight ? "#64748b" : "#8b949e",
+                                    fontSize: 11,
+                                    cursor: "pointer",
+                                    display: "flex",
+                                    alignItems: "center",
+                                  }}
+                                  title={suite.status === "pending" ? "View pending reason" : suite.message ? "View error details" : "View child test cases"}
+                                >
+                                  {isExpanded ? (
+                                    <ChevronDown size={13} />
+                                  ) : (
+                                    <ChevronRight size={13} />
+                                  )}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Expanded Test Cases Accordion */}
+                          {isExpanded && (suite.assertions?.length > 0 || suite.message || suite.pendingReason || suite.status === "pending") && (
+                            <div
+                              style={{
+                                background: isLight ? "#f8fafc" : "rgba(0,0,0,0.25)",
+                                padding: "12px 24px",
+                                borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,.05)",
+                              }}
+                            >
+                              {/* Pending reason banner */}
+                              {suite.status === "pending" && (
+                                <div style={{
+                                  background: isLight ? "#fefce8" : "rgba(234,179,8,0.08)",
+                                  border: isLight ? "1px solid #fef08a" : "1px solid rgba(234,179,8,0.25)",
+                                  borderRadius: 6,
+                                  padding: "8px 12px",
+                                  marginBottom: suite.assertions?.length > 0 ? 10 : 0,
+                                  fontSize: 11,
+                                  fontFamily: "var(--font-mono)",
+                                  color: isLight ? "#854d0e" : "#fef08a",
+                                  whiteSpace: "pre-wrap",
+                                  wordBreak: "break-all",
+                                }}>
+                                  <span style={{ fontWeight: 700, display: "block", marginBottom: 4, color: isLight ? "#a16207" : "#fde047" }}>
+                                    ⏳ Pending Reason:
+                                  </span>
+                                  {suite.pendingReason || suite.message || "File was discovered on disk but was not executed during the test run."}
+                                </div>
+                              )}
+
+                              {/* Error message banner */}
+                              {suite.status !== "pending" && suite.message && (
+                                <div style={{
+                                  background: isLight ? "#fef2f2" : "rgba(239,68,68,0.08)",
+                                  border: isLight ? "1px solid #fecaca" : "1px solid rgba(239,68,68,0.25)",
+                                  borderRadius: 6,
+                                  padding: "8px 12px",
+                                  marginBottom: suite.assertions?.length > 0 ? 10 : 0,
+                                  fontSize: 11,
+                                  fontFamily: "var(--font-mono)",
+                                  color: isLight ? "#991b1b" : "#fca5a5",
+                                  whiteSpace: "pre-wrap",
+                                  wordBreak: "break-all",
+                                  maxHeight: 200,
+                                  overflowY: "auto",
+                                }}>
+                                  <span style={{ fontWeight: 700, display: "block", marginBottom: 4, color: isLight ? "#dc2626" : "#f87171" }}>
+                                    ⚠ Error Details:
+                                  </span>
+                                  {suite.message}
+                                </div>
+                              )}
+                              {suite.assertions && suite.assertions.length > 0 && (
+                                <>
+                                  <div
+                                    style={{
+                                      fontSize: 11,
+                                      fontWeight: 700,
+                                      color: isLight ? "#475569" : "#8b949e",
+                                      marginBottom: 6,
+                                      textTransform: "uppercase",
+                                    }}
+                                  >
+                                    Test cases in {suite.fileName}:
+                                  </div>
+                                  <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                                    {suite.assertions.map((testCase, idx) => {
+                                      const targetFn = testCase.targetFunction ||
+                                        (Array.isArray(testCase.ancestorTitles) && testCase.ancestorTitles.length > 1
+                                          ? testCase.ancestorTitles[testCase.ancestorTitles.length - 1]
+                                          : null);
+
+                                      return (
+                                        <div
+                                          key={idx}
+                                          onClick={() => handleOpenFileInPlace(suite.filePath, testCase.line || testCase.location?.line || null, testCase.title)}
                                           style={{
-                                            fontSize: 10.5,
-                                            fontWeight: 700,
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: 9,
+                                            fontSize: 12,
                                             fontFamily: "var(--font-mono)",
-                                            color: isLight ? "#94a3b8" : "#64748b",
-                                            minWidth: 22,
+                                            padding: "4px 6px",
+                                            borderRadius: 4,
+                                            cursor: "pointer",
+                                            borderBottom: isLight ? "1px dashed #e2e8f0" : "1px dashed rgba(255,255,255,0.03)",
+                                            transition: "all 0.12s ease",
                                           }}
+                                          className="hover:bg-indigo-500/10"
+                                          title={`Click to view test case source code: ${testCase.title}`}
                                         >
-                                          #{idx + 1}
-                                        </span>
-                                        {testCase.status === "passed" ? (
-                                          <Check size={13} style={{ color: isLight ? "#16a34a" : "#4ade80", flexShrink: 0 }} />
-                                        ) : (
-                                          <X size={13} style={{ color: isLight ? "#dc2626" : "#f87171", flexShrink: 0 }} />
-                                        )}
-                                        {targetFn && (
                                           <span
                                             style={{
-                                              display: "inline-flex",
-                                              alignItems: "center",
-                                              gap: 3,
                                               fontSize: 10.5,
                                               fontWeight: 700,
-                                              padding: "1px 7px",
-                                              borderRadius: 4,
-                                              background: isLight ? "#eff6ff" : "rgba(59, 130, 246, 0.16)",
-                                              color: isLight ? "#1d4ed8" : "#60a5fa",
-                                              border: isLight ? "1px solid #bfdbfe" : "1px solid rgba(59, 130, 246, 0.35)",
-                                              whiteSpace: "nowrap",
-                                              flexShrink: 0,
-                                              letterSpacing: "0.2px",
+                                              fontFamily: "var(--font-mono)",
+                                              color: isLight ? "#94a3b8" : "#64748b",
+                                              minWidth: 22,
                                             }}
-                                            title={`Target function: ${targetFn}`}
                                           >
-                                            <span style={{ color: isLight ? "#3b82f6" : "#93c5fd", opacity: 0.8 }}>ƒ</span>
-                                            {targetFn}
+                                            #{idx + 1}
                                           </span>
-                                        )}
-                                        <span
-                                          style={{
-                                            color:
-                                              testCase.status === "passed"
-                                                ? (isLight ? "#1e293b" : "#c9d1d9")
-                                                : (isLight ? "#991b1b" : "#fca5a5"),
-                                            flex: 1,
-                                            overflow: "hidden",
-                                            textOverflow: "ellipsis",
-                                            whiteSpace: "nowrap",
-                                          }}
-                                          title={testCase.title}
-                                        >
-                                          {testCase.title}
-                                        </span>
-                                        {testCase.duration ? (
+                                          {testCase.status === "passed" ? (
+                                            <Check size={13} style={{ color: isLight ? "#16a34a" : "#4ade80", flexShrink: 0 }} />
+                                          ) : (
+                                            <X size={13} style={{ color: isLight ? "#dc2626" : "#f87171", flexShrink: 0 }} />
+                                          )}
+                                          {targetFn && (
+                                            <span
+                                              style={{
+                                                display: "inline-flex",
+                                                alignItems: "center",
+                                                gap: 3,
+                                                fontSize: 10.5,
+                                                fontWeight: 700,
+                                                padding: "1px 7px",
+                                                borderRadius: 4,
+                                                background: isLight ? "#eff6ff" : "rgba(59, 130, 246, 0.16)",
+                                                color: isLight ? "#1d4ed8" : "#60a5fa",
+                                                border: isLight ? "1px solid #bfdbfe" : "1px solid rgba(59, 130, 246, 0.35)",
+                                                whiteSpace: "nowrap",
+                                                flexShrink: 0,
+                                                letterSpacing: "0.2px",
+                                              }}
+                                              title={`Target function: ${targetFn}`}
+                                            >
+                                              <span style={{ color: isLight ? "#3b82f6" : "#93c5fd", opacity: 0.8 }}>ƒ</span>
+                                              {targetFn}
+                                            </span>
+                                          )}
                                           <span
                                             style={{
-                                              color: isLight ? "#64748b" : "#6e7681",
-                                              fontSize: 11,
-                                              marginLeft: "auto",
-                                              flexShrink: 0,
-                                              paddingLeft: 10,
+                                              color:
+                                                testCase.status === "passed"
+                                                  ? (isLight ? "#1e293b" : "#c9d1d9")
+                                                  : (isLight ? "#991b1b" : "#fca5a5"),
+                                              flex: 1,
+                                              overflow: "hidden",
+                                              textOverflow: "ellipsis",
+                                              whiteSpace: "nowrap",
                                             }}
+                                            title={testCase.title}
                                           >
-                                            {testCase.duration}ms
+                                            {testCase.title}
                                           </span>
-                                        ) : null}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                                          {testCase.duration ? (
+                                            <span
+                                              style={{
+                                                color: isLight ? "#64748b" : "#6e7681",
+                                                fontSize: 11,
+                                                marginLeft: "auto",
+                                                flexShrink: 0,
+                                                paddingLeft: 10,
+                                              }}
+                                            >
+                                              {testCase.duration}ms
+                                            </span>
+                                          ) : null}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
 
-                <PaginationControl
-                  currentPage={testSuitePage}
-                  totalItems={filteredTestSuites.length}
-                  pageSize={TEST_SUITES_PER_PAGE}
-                  onPageChange={setTestSuitePage}
-                  isLight={isLight}
-                  itemLabel="test files"
-                />
-              </div>
-            )}
+                  <PaginationControl
+                    currentPage={testSuitePage}
+                    totalItems={filteredTestSuites.length}
+                    pageSize={TEST_SUITES_PER_PAGE}
+                    onPageChange={setTestSuitePage}
+                    isLight={isLight}
+                    itemLabel="test files"
+                  />
+                </div>
+              )}
             </div>
           ) : type === "unit" && activeMetricView === "functions" ? (
             functionViewMode === "map" ? (
@@ -4112,7 +4322,7 @@ export default function CoverageTypeDashboard({
                     realName: resolveFunctionName(fn, flowData?.functions),
                   }))}
                   loading={loadingFunctions}
-                  onOpenFile={onOpenFile}
+                  onOpenFile={handleOpenFileInPlace}
                   onSuggestTestcase={onSuggestTestcase}
                   onOpenCfg={(filePath, funcName, line) => {
                     if (onOpenCFG) {
@@ -4261,262 +4471,262 @@ export default function CoverageTypeDashboard({
                   <div>
                     <div style={{ overflowX: "auto" }}>
                       <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns:
-                          "40px minmax(180px, 1.2fr) minmax(200px, 1.4fr) 85px 100px 95px 140px",
-                        gap: 10,
-                        minWidth: 760,
-                        padding: "10px 18px",
-                        background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)",
-                        borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.05)",
-                        fontSize: 11,
-                        fontWeight: 650,
-                        color: isLight ? "#475569" : "#8b949e",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.04em",
-                      }}
-                    >
-                      <span style={{ textAlign: "center" }}>#</span>
-                      <span>Function Name</span>
-                      <span>Source File</span>
-                      <span>Location</span>
-                      <span style={{ textAlign: "right" }}>Call Count</span>
-                      <span style={{ textAlign: "center" }}>Status</span>
-                      <span style={{ textAlign: "center" }}>Actions</span>
-                    </div>
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns:
+                            "40px minmax(180px, 1.2fr) minmax(200px, 1.4fr) 85px 100px 95px 140px",
+                          gap: 10,
+                          minWidth: 760,
+                          padding: "10px 18px",
+                          background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)",
+                          borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.05)",
+                          fontSize: 11,
+                          fontWeight: 650,
+                          color: isLight ? "#475569" : "#8b949e",
+                          textTransform: "uppercase",
+                          letterSpacing: "0.04em",
+                        }}
+                      >
+                        <span style={{ textAlign: "center" }}>#</span>
+                        <span>Function Name</span>
+                        <span>Source File</span>
+                        <span>Location</span>
+                        <span style={{ textAlign: "right" }}>Call Count</span>
+                        <span style={{ textAlign: "center" }}>Status</span>
+                        <span style={{ textAlign: "center" }}>Actions</span>
+                      </div>
 
-                    {paginatedFunctions.map((fn, idx) => {
-                      const isCovered = fn.hit > 0;
-                      return (
-                        <div
-                          key={
-                            fn.id ||
-                            `${fn.filePath}:${fn.functionName}:${fn.startLine}`
-                          }
-                          style={{
-                            display: "grid",
-                            gridTemplateColumns:
-                              "40px minmax(180px, 1.2fr) minmax(200px, 1.4fr) 85px 100px 95px 140px",
-                            gap: 10,
-                            minWidth: 760,
-                            padding: "10px 18px",
-                            alignItems: "center",
-                            borderBottom: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255,255,255,.04)",
-                            transition: "background 0.15s ease",
-                          }}
-                          className={isLight ? "hover:bg-slate-50/80" : "hover:bg-white/[0.02]"}
-                        >
-                          {/* Function Index */}
-                          <div style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
-                            <span
-                              style={{
-                                fontSize: 11,
-                                fontWeight: 700,
-                                fontFamily: "var(--font-mono, monospace)",
-                                color: isLight ? "#64748b" : "#94a3b8",
-                                background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.05)",
-                                border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
-                                borderRadius: 6,
-                                padding: "2px 6px",
-                                minWidth: 26,
-                                textAlign: "center",
-                              }}
-                            >
-                              {(functionPage - 1) * FUNCTIONS_PER_PAGE + idx + 1}
-                            </span>
-                          </div>
-
+                      {paginatedFunctions.map((fn, idx) => {
+                        const isCovered = fn.hit > 0;
+                        return (
                           <div
-                            onClick={() => onOpenFile?.(fn.filePath)}
+                            key={
+                              fn.id ||
+                              `${fn.filePath}:${fn.functionName}:${fn.startLine}`
+                            }
                             style={{
-                              display: "flex",
+                              display: "grid",
+                              gridTemplateColumns:
+                                "40px minmax(180px, 1.2fr) minmax(200px, 1.4fr) 85px 100px 95px 140px",
+                              gap: 10,
+                              minWidth: 760,
+                              padding: "10px 18px",
                               alignItems: "center",
-                              gap: 7,
-                              overflow: "hidden",
-                              cursor: "pointer",
+                              borderBottom: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255,255,255,.04)",
+                              transition: "background 0.15s ease",
                             }}
-                            title={`Open file ${fn.filePath} at function ${fn.functionName}`}
+                            className={isLight ? "hover:bg-slate-50/80" : "hover:bg-white/[0.02]"}
                           >
-                            <Code2
-                              size={14}
+                            {/* Function Index */}
+                            <div style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
+                              <span
+                                style={{
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  fontFamily: "var(--font-mono, monospace)",
+                                  color: isLight ? "#64748b" : "#94a3b8",
+                                  background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.05)",
+                                  border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
+                                  borderRadius: 6,
+                                  padding: "2px 6px",
+                                  minWidth: 26,
+                                  textAlign: "center",
+                                }}
+                              >
+                                {(functionPage - 1) * FUNCTIONS_PER_PAGE + idx + 1}
+                              </span>
+                            </div>
+
+                            <div
+                              onClick={() => handleOpenFileInPlace(fn.filePath, fn.startLine || fn.line || 1, fn.functionName, fn.endLine)}
                               style={{
-                                color: isCovered
-                                  ? (isLight ? "#0284c7" : "#38bdf8")
-                                  : (isLight ? "#d97706" : "#fbbf24"),
-                                flexShrink: 0,
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 7,
+                                overflow: "hidden",
+                                cursor: "pointer",
                               }}
-                            />
-                            <span
+                              title={`Open file ${fn.filePath} at function ${fn.functionName}`}
+                            >
+                              <Code2
+                                size={14}
+                                style={{
+                                  color: isCovered
+                                    ? (isLight ? "#0284c7" : "#38bdf8")
+                                    : (isLight ? "#d97706" : "#fbbf24"),
+                                  flexShrink: 0,
+                                }}
+                              />
+                              <span
+                                style={{
+                                  fontFamily: "var(--font-mono)",
+                                  fontSize: 13,
+                                  color: isCovered
+                                    ? (isLight ? "#0f172a" : "#e6edf3")
+                                    : (isLight ? "#b45309" : "#fde68a"),
+                                  fontWeight: 600,
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {resolveFunctionName(fn, flowData?.functions)}()
+                              </span>
+                            </div>
+
+                            <div
+                              onClick={() => handleOpenFileInPlace(fn.filePath, fn.startLine || fn.line || 1, fn.functionName, fn.endLine)}
                               style={{
-                                fontFamily: "var(--font-mono)",
-                                fontSize: 13,
-                                color: isCovered
-                                  ? (isLight ? "#0f172a" : "#e6edf3")
-                                  : (isLight ? "#b45309" : "#fde68a"),
-                                fontWeight: 600,
                                 overflow: "hidden",
                                 textOverflow: "ellipsis",
                                 whiteSpace: "nowrap",
-                              }}
-                            >
-                              {resolveFunctionName(fn, flowData?.functions)}()
-                            </span>
-                          </div>
-
-                          <div
-                            onClick={() => onOpenFile?.(fn.filePath)}
-                            style={{
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                              color: isLight ? "#64748b" : "#8b949e",
-                              fontSize: 12,
-                              fontFamily: "var(--font-mono)",
-                              cursor: "pointer",
-                            }}
-                            title={fn.filePath}
-                          >
-                            {cleanDisplayPath(fn.filePath)}
-                          </div>
-
-                          <div
-                            style={{
-                              fontSize: 11,
-                              color: isLight ? "#64748b" : "#8b949e",
-                              fontFamily: "var(--font-mono)",
-                            }}
-                          >
-                            L{fn.startLine || 1}
-                            {fn.endLine ? ` - L${fn.endLine}` : ""}
-                          </div>
-
-                          <div
-                            style={{
-                              textAlign: "right",
-                              fontFamily: "var(--font-mono)",
-                              fontSize: 12,
-                              fontWeight: 600,
-                              color: isCovered
-                                ? (isLight ? "#16a34a" : "#22c55e")
-                                : (isLight ? "#d97706" : "#fbbf24"),
-                            }}
-                          >
-                            {isCovered ? `${fn.hit} hits` : "0 hits"}
-                          </div>
-
-                          <div
-                            style={{
-                              display: "flex",
-                              justifyContent: "center",
-                            }}
-                          >
-                            <span
-                              style={{
-                                fontSize: 10,
-                                fontWeight: 700,
-                                padding: "2px 7px",
-                                borderRadius: 10,
-                                background: isCovered
-                                  ? (isLight ? "#f0fdf4" : "rgba(34, 197, 94, 0.15)")
-                                  : (isLight ? "#fefce8" : "rgba(251, 191, 36, 0.15)"),
-                                color: isCovered
-                                  ? (isLight ? "#15803d" : "#4ade80")
-                                  : (isLight ? "#a16207" : "#fde047"),
-                                border: isCovered
-                                  ? (isLight ? "1px solid #bbf7d0" : "1px solid rgba(34, 197, 94, 0.3)")
-                                  : (isLight ? "1px solid #fef08a" : "1px solid rgba(251, 191, 36, 0.3)"),
-                              }}
-                            >
-                              {isCovered ? "✓ PASS" : "⚑ UNCALLED"}
-                            </span>
-                          </div>
-
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              gap: 6,
-                            }}
-                          >
-                            <button
-                              onClick={() =>
-                                onOpenFile?.(
-                                  fn.filePath,
-                                  fn.startLine || fn.line || 1,
-                                  fn.functionName,
-                                  fn.endLine
-                                )
-                              }
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 4,
-                                padding: "4px 8px",
-                                borderRadius: 5,
-                                background: isLight ? "#ffffff" : "rgba(255,255,255,0.05)",
-                                border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.1)",
-                                color: isLight ? "#334155" : "#c9d1d9",
-                                fontSize: 11,
-                                fontWeight: isLight ? 600 : 400,
+                                color: isLight ? "#64748b" : "#8b949e",
+                                fontSize: 12,
+                                fontFamily: "var(--font-mono)",
                                 cursor: "pointer",
                               }}
-                              title="View function source code"
+                              title={fn.filePath}
                             >
-                              <Code2 size={12} />
-                              <span>Open code</span>
-                            </button>
+                              {cleanDisplayPath(fn.filePath)}
+                            </div>
 
-                            <button
-                              onClick={() => {
-                                const targetLine = fn.startLine || fn.line || 1;
-                                const targetFunc = fn.displayName || fn.functionName;
-                                if (onOpenCFG) {
-                                  onOpenCFG(fn.filePath, targetFunc, targetLine);
-                                } else {
-                                  setCfgModalContext({
-                                    file: fn.filePath,
-                                    func: targetFunc,
-                                    line: targetLine,
-                                  });
-                                  setShowCfgModal(true);
-                                }
-                              }}
+                            <div
                               style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 4,
-                                padding: "4px 8px",
-                                borderRadius: 5,
-                                background: isLight ? "#e0f2fe" : "rgba(56, 189, 248, 0.12)",
-                                border: isLight ? "1px solid #7dd3fc" : "1px solid rgba(56, 189, 248, 0.3)",
-                                color: isLight ? "#0284c7" : "#38bdf8",
                                 fontSize: 11,
+                                color: isLight ? "#64748b" : "#8b949e",
+                                fontFamily: "var(--font-mono)",
+                              }}
+                            >
+                              L{fn.startLine || 1}
+                              {fn.endLine ? ` - L${fn.endLine}` : ""}
+                            </div>
+
+                            <div
+                              style={{
+                                textAlign: "right",
+                                fontFamily: "var(--font-mono)",
+                                fontSize: 12,
                                 fontWeight: 600,
-                                cursor: "pointer",
+                                color: isCovered
+                                  ? (isLight ? "#16a34a" : "#22c55e")
+                                  : (isLight ? "#d97706" : "#fbbf24"),
                               }}
-                              title="View Control Flow Graph (CFG) for this function"
                             >
-                              <Network size={12} />
-                              <span>View CFG</span>
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                              {isCovered ? `${fn.hit} hits` : "0 hits"}
+                            </div>
 
-                  <PaginationControl
-                    currentPage={functionPage}
-                    totalItems={filteredFunctions.length}
-                    pageSize={FUNCTIONS_PER_PAGE}
-                    onPageChange={setFunctionPage}
-                    isLight={isLight}
-                    itemLabel="functions"
-                  />
-                </div>
-              )}
+                            <div
+                              style={{
+                                display: "flex",
+                                justifyContent: "center",
+                              }}
+                            >
+                              <span
+                                style={{
+                                  fontSize: 10,
+                                  fontWeight: 700,
+                                  padding: "2px 7px",
+                                  borderRadius: 10,
+                                  background: isCovered
+                                    ? (isLight ? "#f0fdf4" : "rgba(34, 197, 94, 0.15)")
+                                    : (isLight ? "#fefce8" : "rgba(251, 191, 36, 0.15)"),
+                                  color: isCovered
+                                    ? (isLight ? "#15803d" : "#4ade80")
+                                    : (isLight ? "#a16207" : "#fde047"),
+                                  border: isCovered
+                                    ? (isLight ? "1px solid #bbf7d0" : "1px solid rgba(34, 197, 94, 0.3)")
+                                    : (isLight ? "1px solid #fef08a" : "1px solid rgba(251, 191, 36, 0.3)"),
+                                }}
+                              >
+                                {isCovered ? "✓ PASS" : "⚑ UNCALLED"}
+                              </span>
+                            </div>
+
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                gap: 6,
+                              }}
+                            >
+                              <button
+                                onClick={() =>
+                                  handleOpenFileInPlace(
+                                    fn.filePath,
+                                    fn.startLine || fn.line || 1,
+                                    fn.functionName,
+                                    fn.endLine
+                                  )
+                                }
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 4,
+                                  padding: "4px 8px",
+                                  borderRadius: 5,
+                                  background: isLight ? "#ffffff" : "rgba(255,255,255,0.05)",
+                                  border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.1)",
+                                  color: isLight ? "#334155" : "#c9d1d9",
+                                  fontSize: 11,
+                                  fontWeight: isLight ? 600 : 400,
+                                  cursor: "pointer",
+                                }}
+                                title="View function source code"
+                              >
+                                <Code2 size={12} />
+                                <span>Open code</span>
+                              </button>
+
+                              <button
+                                onClick={() => {
+                                  const targetLine = fn.startLine || fn.line || 1;
+                                  const targetFunc = fn.displayName || fn.functionName;
+                                  if (onOpenCFG) {
+                                    onOpenCFG(fn.filePath, targetFunc, targetLine);
+                                  } else {
+                                    setCfgModalContext({
+                                      file: fn.filePath,
+                                      func: targetFunc,
+                                      line: targetLine,
+                                    });
+                                    setShowCfgModal(true);
+                                  }
+                                }}
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 4,
+                                  padding: "4px 8px",
+                                  borderRadius: 5,
+                                  background: isLight ? "#e0f2fe" : "rgba(56, 189, 248, 0.12)",
+                                  border: isLight ? "1px solid #7dd3fc" : "1px solid rgba(56, 189, 248, 0.3)",
+                                  color: isLight ? "#0284c7" : "#38bdf8",
+                                  fontSize: 11,
+                                  fontWeight: 600,
+                                  cursor: "pointer",
+                                }}
+                                title="View Control Flow Graph (CFG) for this function"
+                              >
+                                <Network size={12} />
+                                <span>View CFG</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <PaginationControl
+                      currentPage={functionPage}
+                      totalItems={filteredFunctions.length}
+                      pageSize={FUNCTIONS_PER_PAGE}
+                      onPageChange={setFunctionPage}
+                      isLight={isLight}
+                      itemLabel="functions"
+                    />
+                  </div>
+                )}
               </div>
             )
           ) : (
@@ -4596,29 +4806,6 @@ export default function CoverageTypeDashboard({
                         ? `${filteredSourceFiles.length} of ${displayFiles.length} files`
                         : `${displayFiles.length} files analyzed`}
                   </span>
-                  {type === "unit" && allPendingSuggestions.length > 0 && (
-                    <button
-                      onClick={handleApplyAllGlobal}
-                      disabled={!canWrite || isBulkApplying}
-                      style={{
-                        padding: "3px 10px",
-                        background: isLight ? "#f0fdf4" : "rgba(34, 197, 94, 0.15)",
-                        border: isLight ? "1px solid #86efac" : "1px solid rgba(34, 197, 94, 0.4)",
-                        borderRadius: 5,
-                        color: isLight ? "#15803d" : "#4ade80",
-                        fontSize: 11,
-                        fontWeight: 600,
-                        cursor: isBulkApplying ? "wait" : "pointer",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 5,
-                      }}
-                      title="Apply all generated test suggestions across all files"
-                    >
-                      <Zap size={12} />
-                      <span>Apply All ({allPendingSuggestions.length})</span>
-                    </button>
-                  )}
                 </div>
               </div>
 
@@ -4733,9 +4920,9 @@ export default function CoverageTypeDashboard({
                             disabled={isSavingAiTest || loading || running}
                             title="Save this AI-generated test to your project test suite"
                             style={{
-                              background: "rgba(34, 197, 94, 0.15)",
-                              border: "1px solid var(--color-success)",
-                              color: "var(--color-success)",
+                              background: "rgba(34, 197, 94, 0.2)",
+                              border: "1px solid rgba(34, 197, 94, 0.5)",
+                              color: "#4ade80",
                               borderRadius: 6,
                               padding: "4px 12px",
                               fontSize: 12,
@@ -4766,7 +4953,7 @@ export default function CoverageTypeDashboard({
                           <div>
                             <div style={{ fontSize: 11, fontWeight: 600, color: "#8b949e", marginBottom: 4 }}>AI-generated test code ({systemSummary.latestAiTest.filePath}):</div>
                             <pre style={{ margin: 0, padding: 8, background: "#0d1117", borderRadius: 6, fontSize: 11, color: "#c9d1d9", maxHeight: 180, overflowY: "auto", whiteSpace: "pre-wrap" }}>
-                                {systemSummary.latestAiTest.content}
+                              {systemSummary.latestAiTest.content}
                             </pre>
                           </div>
                         </div>
@@ -4776,12 +4963,11 @@ export default function CoverageTypeDashboard({
                   <div style={{ display: "flex", justifyContent: "center", gap: 12 }}>
                     <button
                       onClick={handleGenerateAiSystemTest}
-                      disabled={!canUseAi || loading || running || isGenerating}
+                      disabled={loading || running || isGenerating}
                       style={{
-                        ...buttonStyle("var(--color-primary)"),
-                        background: "var(--color-surface-raised)",
-                        border: "1px solid var(--color-border)",
-                        color: "var(--color-text)",
+                        ...buttonStyle("#67e8f9"),
+                        background: "rgba(103, 232, 249, 0.15)",
+                        border: "1px solid rgba(103,232,249,0.45)",
                         padding: "10px 18px",
                         fontSize: 13,
                         display: "flex",
@@ -4798,7 +4984,7 @@ export default function CoverageTypeDashboard({
                     </button>
                     <button
                       onClick={run}
-                      disabled={!canRun || !snapshotId || running || isGenerating}
+                      disabled={!snapshotId || running || isGenerating}
                       style={{
                         ...buttonStyle(config.accent),
                         padding: "10px 18px",
@@ -4820,7 +5006,7 @@ export default function CoverageTypeDashboard({
                 </div>
               ) : type === "system" && systemSummary?.hasRun && !systemSummary?.coverageAvailable ? (
                 /* E2E Test Scenarios Table */
-                <div style={{overflowX:'auto'}}>
+                <div style={{ overflowX: 'auto' }}>
                   <div
                     style={{
                       display: "grid",
@@ -4886,10 +5072,10 @@ export default function CoverageTypeDashboard({
                                 </span>
                               )}
                             </div>
-                            <div style={{ fontSize: 11, color: "#8b949e", fontFamily: "var(--font-mono)",overflowWrap:'anywhere' }}>
+                            <div style={{ fontSize: 11, color: "#8b949e", fontFamily: "var(--font-mono)", overflowWrap: 'anywhere' }}>
                               {sc.file || "E2E Spec"}
                             </div>
-                            <div>{sc.hasEvidence ? <SystemTestEvidence snapshotId={snapshotId} scenarioId={sc.id} title={sc.title} /> : <span style={{color:'#6e7681',fontSize:12}}>Not captured</span>}</div>
+                            <div>{sc.hasEvidence ? <SystemTestEvidence snapshotId={snapshotId} scenarioId={sc.id} title={sc.title} /> : <span style={{ color: '#6e7681', fontSize: 12 }}>Not captured</span>}</div>
                             <div style={{ textAlign: "right", fontSize: 12, color: "#c9d1d9", fontFamily: "var(--font-mono)" }}>
                               {sc.durationMs ? `${Number(sc.durationMs).toFixed(0)}ms` : "—"}
                             </div>
@@ -4954,7 +5140,7 @@ export default function CoverageTypeDashboard({
                       <div style={{ fontSize: 12, color: "#8b949e", fontFamily: "var(--font-mono)" }}>
                         {systemSummary.latestRun?.type || "PLAYWRIGHT"}
                       </div>
-                      <div style={{color:'#6e7681'}}>Not captured</div>
+                      <div style={{ color: '#6e7681' }}>Not captured</div>
                       <div style={{ textAlign: "right", fontSize: 12, color: "#c9d1d9", fontFamily: "var(--font-mono)" }}>
                         {systemSummary.latestRun?.durationMs ? `${Number(systemSummary.latestRun.durationMs).toFixed(0)}ms` : "—"}
                       </div>
@@ -4994,448 +5180,448 @@ export default function CoverageTypeDashboard({
                 <div>
                   <div style={{ overflowX: "auto" }}>
                     {/* Table Header */}
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns:
-                        "40px minmax(220px, 1fr) repeat(4, 75px) 115px",
-                      gap: 10,
-                      minWidth: 700,
-                      padding: "10px 18px",
-                      background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)",
-                      borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.05)",
-                      fontSize: 11,
-                      fontWeight: 650,
-                      color: isLight ? "#475569" : "#8b949e",
-                      textTransform: "uppercase",
-                      letterSpacing: "0.04em",
-                    }}
-                  >
-                    <span style={{ textAlign: "center" }}>#</span>
-                    <span>Source File</span>
-                    <span style={{ textAlign: "right" }}>Lines</span>
-                    <span
+                    <div
                       style={{
-                        textAlign: "right",
-                        color:
-                          activeMetricView === "branches"
-                            ? (isLight ? "#d97706" : "#fbbf24")
-                            : undefined,
+                        display: "grid",
+                        gridTemplateColumns:
+                          "40px minmax(220px, 1fr) repeat(4, 75px) 115px",
+                        gap: 10,
+                        minWidth: 700,
+                        padding: "10px 18px",
+                        background: isLight ? "#f8fafc" : "rgba(255,255,255,0.02)",
+                        borderBottom: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255,255,255,0.05)",
+                        fontSize: 11,
+                        fontWeight: 650,
+                        color: isLight ? "#475569" : "#8b949e",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.04em",
                       }}
                     >
-                      Branches
-                    </span>
-                    <span style={{ textAlign: "right" }}>Funcs</span>
-                    <span
-                      style={{
-                        textAlign: "right",
-                        color:
-                          activeMetricView === "statements"
-                            ? (isLight ? "#6366f1" : "#a78bfa")
-                            : undefined,
-                      }}
-                    >
-                      Stmts
-                    </span>
-                    <span style={{ textAlign: "center" }}>Actions</span>
-                  </div>
+                      <span style={{ textAlign: "center" }}>#</span>
+                      <span>Source File</span>
+                      <span style={{ textAlign: "right" }}>Lines</span>
+                      <span
+                        style={{
+                          textAlign: "right",
+                          color:
+                            activeMetricView === "branches"
+                              ? (isLight ? "#d97706" : "#fbbf24")
+                              : undefined,
+                        }}
+                      >
+                        Branches
+                      </span>
+                      <span style={{ textAlign: "right" }}>Funcs</span>
+                      <span
+                        style={{
+                          textAlign: "right",
+                          color:
+                            activeMetricView === "statements"
+                              ? (isLight ? "#6366f1" : "#a78bfa")
+                              : undefined,
+                        }}
+                      >
+                        Stmts
+                      </span>
+                      <span style={{ textAlign: "center" }}>Actions</span>
+                    </div>
 
-                  {/* Table Rows */}
-                  {paginatedSourceFiles.map((file, idx) => {
-                    const isFull = (file.linesPct || 0) >= 100;
-                    const isExpanded = expandedFiles.has(file.filePath);
-                    const cacheEntry = fileCoverageCache[file.filePath];
-                    const isLoadingDetails = cacheEntry?.loading;
-                    const fileDetails = cacheEntry?.data;
-                    const fileSuggestions = inlineSuggestions[file.filePath] || [];
-                    const isSuggesting = loadingSuggestions[file.filePath] || false;
-                    const lastApply = applyResultsByFile[file.filePath] || null;
-                    const progressStep = applyProgressSteps[file.filePath] || "";
+                    {/* Table Rows */}
+                    {paginatedSourceFiles.map((file, idx) => {
+                      const isFull = (file.linesPct || 0) >= 100;
+                      const isExpanded = expandedFiles.has(file.filePath);
+                      const cacheEntry = fileCoverageCache[file.filePath];
+                      const isLoadingDetails = cacheEntry?.loading;
+                      const fileDetails = cacheEntry?.data;
+                      const fileSuggestions = inlineSuggestions[file.filePath] || [];
+                      const isSuggesting = loadingSuggestions[file.filePath] || false;
+                      const lastApply = applyResultsByFile[file.filePath] || null;
+                      const progressStep = applyProgressSteps[file.filePath] || "";
 
-                    return (
-                      <div key={file.filePath}>
-                        <div
-                          style={{
-                            display: "grid",
-                            gridTemplateColumns:
-                              "40px minmax(220px, 1fr) repeat(4, 75px) 115px",
-                            gap: 10,
-                            minWidth: 700,
-                            padding: "10px 18px",
-                            alignItems: "center",
-                            borderBottom: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255,255,255,.04)",
-                            transition: "background 0.15s ease",
-                            background: isExpanded
-                              ? (isLight ? "#f8fafc" : "rgba(255,255,255,0.03)")
-                              : "transparent",
-                          }}
-                          className={isLight ? "hover:bg-slate-50/80" : "hover:bg-white/[0.02]"}
-                        >
-                          {/* File Index */}
-                          <div style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
-                            <span
-                              style={{
-                                fontSize: 11,
-                                fontWeight: 700,
-                                fontFamily: "var(--font-mono, monospace)",
-                                color: isLight ? "#64748b" : "#94a3b8",
-                                background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.05)",
-                                border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
-                                borderRadius: 6,
-                                padding: "2px 6px",
-                                minWidth: 26,
-                                textAlign: "center",
-                              }}
-                            >
-                              {(sourceFilePage - 1) * SOURCE_FILES_PER_PAGE + idx + 1}
-                            </span>
-                          </div>
-
-                          {/* File path + status icon */}
+                      return (
+                        <div key={file.filePath}>
                           <div
                             style={{
-                              display: "flex",
+                              display: "grid",
+                              gridTemplateColumns:
+                                "40px minmax(220px, 1fr) repeat(4, 75px) 115px",
+                              gap: 10,
+                              minWidth: 700,
+                              padding: "10px 18px",
                               alignItems: "center",
-                              gap: 8,
-                              overflow: "hidden",
+                              borderBottom: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255,255,255,.04)",
+                              transition: "background 0.15s ease",
+                              background: isExpanded
+                                ? (isLight ? "#f8fafc" : "rgba(255,255,255,0.03)")
+                                : "transparent",
                             }}
+                            className={isLight ? "hover:bg-slate-50/80" : "hover:bg-white/[0.02]"}
                           >
-                            <span
-                              onClick={() => toggleExpandFile(file.filePath)}
-                              style={{
-                                cursor: "pointer",
-                                fontSize: 12,
-                                fontWeight: 700,
-                                color: isFull ? (isLight ? "#16a34a" : "#22c55e") : (isLight ? "#d97706" : "#eab308"),
-                                flexShrink: 0,
-                              }}
-                            >
-                              {isFull ? "✓" : "⚑"}
-                            </span>
-
-                            <span
-                              onClick={() => toggleExpandFile(file.filePath)}
-                              style={{
-                                cursor: "pointer",
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                                color: isExpanded
-                                  ? (isLight ? "#0f172a" : "#ffffff")
-                                  : (isLight ? "#1e293b" : "#c9d1d9"),
-                                fontSize: 13,
-                                fontWeight: isExpanded ? 700 : 500,
-                                fontFamily: "var(--font-mono)",
-                              }}
-                              title="Click to view execution flow analysis"
-                            >
-                              {cleanDisplayPath(file.filePath)}
-                            </span>
-                          </div>
-
-                          {/* Coverage percentages */}
-                          {[
-                            { val: file.linesPct, col: "lines" },
-                            { val: file.branchesPct, col: "branches" },
-                            { val: file.funcsPct, col: "funcs" },
-                            { val: file.stmtsPct, col: "stmts" },
-                          ].map(({ val, col }, i) => {
-                            const isHighlightedCol =
-                              (col === "stmts" &&
-                                activeMetricView === "statements") ||
-                              (col === "branches" &&
-                                activeMetricView === "branches") ||
-                              (col === "funcs" &&
-                                activeMetricView === "functions");
-
-                            return (
+                            {/* File Index */}
+                            <div style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
                               <span
-                                key={i}
                                 style={{
-                                  color: getCoverageColor(val, isLight),
-                                  textAlign: "right",
-                                  fontSize: 12,
-                                  fontFamily: "var(--font-mono)",
-                                  fontWeight: isHighlightedCol ? 750 : 600,
-                                  background: isHighlightedCol
-                                    ? isLight
-                                      ? col === "stmts"
-                                        ? "#ede9fe"
-                                        : col === "branches"
-                                          ? "#fef3c7"
-                                          : "#e0f2fe"
-                                      : col === "stmts"
-                                        ? "rgba(167, 139, 250, 0.1)"
-                                        : col === "branches"
-                                          ? "rgba(251, 191, 36, 0.1)"
-                                          : "rgba(56, 189, 248, 0.1)"
-                                    : "transparent",
-                                  padding: isHighlightedCol ? "2px 4px" : "0",
-                                  borderRadius: isHighlightedCol ? 4 : 0,
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  fontFamily: "var(--font-mono, monospace)",
+                                  color: isLight ? "#64748b" : "#94a3b8",
+                                  background: isLight ? "#f1f5f9" : "rgba(255, 255, 255, 0.05)",
+                                  border: isLight ? "1px solid #e2e8f0" : "1px solid rgba(255, 255, 255, 0.08)",
+                                  borderRadius: 6,
+                                  padding: "2px 6px",
+                                  minWidth: 26,
+                                  textAlign: "center",
                                 }}
                               >
-                                {pct(val)}
+                                {(sourceFilePage - 1) * SOURCE_FILES_PER_PAGE + idx + 1}
                               </span>
-                            );
-                          })}
+                            </div>
 
-                          {/* Action: Open Code & Expand Toggle */}
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              gap: 6,
-                            }}
-                          >
-                            {fileSuggestions.length > 0 && !isExpanded && (
+                            {/* File path + status icon */}
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                                overflow: "hidden",
+                              }}
+                            >
+                              <span
+                                onClick={() => toggleExpandFile(file.filePath)}
+                                style={{
+                                  cursor: "pointer",
+                                  fontSize: 12,
+                                  fontWeight: 700,
+                                  color: isFull ? (isLight ? "#16a34a" : "#22c55e") : (isLight ? "#d97706" : "#eab308"),
+                                  flexShrink: 0,
+                                }}
+                              >
+                                {isFull ? "✓" : "⚑"}
+                              </span>
+
+                              <span
+                                onClick={() => toggleExpandFile(file.filePath)}
+                                style={{
+                                  cursor: "pointer",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                  color: isExpanded
+                                    ? (isLight ? "#0f172a" : "#ffffff")
+                                    : (isLight ? "#1e293b" : "#c9d1d9"),
+                                  fontSize: 13,
+                                  fontWeight: isExpanded ? 700 : 500,
+                                  fontFamily: "var(--font-mono)",
+                                }}
+                                title="Click to view execution flow analysis"
+                              >
+                                {cleanDisplayPath(file.filePath)}
+                              </span>
+                            </div>
+
+                            {/* Coverage percentages */}
+                            {[
+                              { val: file.linesPct, col: "lines" },
+                              { val: file.branchesPct, col: "branches" },
+                              { val: file.funcsPct, col: "funcs" },
+                              { val: file.stmtsPct, col: "stmts" },
+                            ].map(({ val, col }, i) => {
+                              const isHighlightedCol =
+                                (col === "stmts" &&
+                                  activeMetricView === "statements") ||
+                                (col === "branches" &&
+                                  activeMetricView === "branches") ||
+                                (col === "funcs" &&
+                                  activeMetricView === "functions");
+
+                              return (
+                                <span
+                                  key={i}
+                                  style={{
+                                    color: getCoverageColor(val, isLight),
+                                    textAlign: "right",
+                                    fontSize: 12,
+                                    fontFamily: "var(--font-mono)",
+                                    fontWeight: isHighlightedCol ? 750 : 600,
+                                    background: isHighlightedCol
+                                      ? isLight
+                                        ? col === "stmts"
+                                          ? "#ede9fe"
+                                          : col === "branches"
+                                            ? "#fef3c7"
+                                            : "#e0f2fe"
+                                        : col === "stmts"
+                                          ? "rgba(167, 139, 250, 0.1)"
+                                          : col === "branches"
+                                            ? "rgba(251, 191, 36, 0.1)"
+                                            : "rgba(56, 189, 248, 0.1)"
+                                      : "transparent",
+                                    padding: isHighlightedCol ? "2px 4px" : "0",
+                                    borderRadius: isHighlightedCol ? 4 : 0,
+                                  }}
+                                >
+                                  {pct(val)}
+                                </span>
+                              );
+                            })}
+
+                            {/* Action: Open Code & Expand Toggle */}
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                gap: 6,
+                              }}
+                            >
+                              {fileSuggestions.length > 0 && !isExpanded && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleExpandFile(file.filePath);
+                                  }}
+                                  style={{
+                                    padding: "3px 6px",
+                                    borderRadius: 5,
+                                    background: isLight ? "#f5f3ff" : "rgba(168, 85, 247, 0.18)",
+                                    border: isLight ? "1px solid #ddd6fe" : "1px solid rgba(168, 85, 247, 0.35)",
+                                    color: isLight ? "#6d28d9" : "#d8b4fe",
+                                    fontSize: 10,
+                                    fontWeight: 700,
+                                    cursor: "pointer",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 3,
+                                  }}
+                                  title="Click to view generated test suggestions"
+                                >
+                                  <Sparkles size={10} />
+                                  <span>{fileSuggestions.length}</span>
+                                </button>
+                              )}
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   toggleExpandFile(file.filePath);
                                 }}
                                 style={{
-                                  padding: "3px 6px",
+                                  padding: "4px 8px",
                                   borderRadius: 5,
-                                  background: isLight ? "#f5f3ff" : "rgba(168, 85, 247, 0.18)",
-                                  border: isLight ? "1px solid #ddd6fe" : "1px solid rgba(168, 85, 247, 0.35)",
-                                  color: isLight ? "#6d28d9" : "#d8b4fe",
-                                  fontSize: 10,
-                                  fontWeight: 700,
+                                  background: isExpanded
+                                    ? (isLight ? "#eff6ff" : "rgba(56, 189, 248, 0.18)")
+                                    : (isLight ? "#ffffff" : "rgba(255, 255, 255, 0.05)"),
+                                  border: isExpanded
+                                    ? (isLight ? "1px solid #93c5fd" : "1px solid rgba(56, 189, 248, 0.4)")
+                                    : (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)"),
+                                  color: isExpanded
+                                    ? (isLight ? "#1d4ed8" : "#38bdf8")
+                                    : (isLight ? "#334155" : "#c9d1d9"),
+                                  fontSize: 11,
+                                  fontWeight: isLight ? 600 : 400,
+                                  cursor: "pointer",
+                                  transition: "all 0.15s ease",
+                                }}
+                                className={isLight ? "hover:bg-slate-100" : "hover:bg-white/10 hover:text-white"}
+                                title={isExpanded ? "Close view & edit" : "View coverage & edit code directly"}
+                              >
+                                {isExpanded ? "Close" : "View & Edit"}
+                              </button>
+
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleExpandFile(file.filePath);
+                                }}
+                                style={{
+                                  padding: "4px 6px",
+                                  borderRadius: 4,
+                                  background: isExpanded
+                                    ? (isLight ? "#f1f5f9" : "rgba(255,255,255,0.14)")
+                                    : (isLight ? "#ffffff" : "rgba(255,255,255,0.04)"),
+                                  border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.1)",
+                                  color: isExpanded
+                                    ? (isLight ? "#0f172a" : "#ffffff")
+                                    : (isLight ? "#64748b" : "#8b949e"),
                                   cursor: "pointer",
                                   display: "flex",
                                   alignItems: "center",
-                                  gap: 3,
-                                }}
-                                title="Click to view generated test suggestions"
-                              >
-                                <Sparkles size={10} />
-                                <span>{fileSuggestions.length}</span>
-                              </button>
-                            )}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleExpandFile(file.filePath);
-                              }}
-                              style={{
-                                padding: "4px 8px",
-                                borderRadius: 5,
-                                background: isExpanded
-                                  ? (isLight ? "#eff6ff" : "rgba(56, 189, 248, 0.18)")
-                                  : (isLight ? "#ffffff" : "rgba(255, 255, 255, 0.05)"),
-                                border: isExpanded
-                                  ? (isLight ? "1px solid #93c5fd" : "1px solid rgba(56, 189, 248, 0.4)")
-                                  : (isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.1)"),
-                                color: isExpanded
-                                  ? (isLight ? "#1d4ed8" : "#38bdf8")
-                                  : (isLight ? "#334155" : "#c9d1d9"),
-                                fontSize: 11,
-                                fontWeight: isLight ? 600 : 400,
-                                cursor: "pointer",
-                                transition: "all 0.15s ease",
-                              }}
-                              className={isLight ? "hover:bg-slate-100" : "hover:bg-white/10 hover:text-white"}
-                              title={isExpanded ? "Close view & edit" : "View coverage & edit code directly"}
-                            >
-                              {isExpanded ? "Close" : "View & Edit"}
-                            </button>
-
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleExpandFile(file.filePath);
-                              }}
-                              style={{
-                                padding: "4px 6px",
-                                borderRadius: 4,
-                                background: isExpanded
-                                  ? (isLight ? "#f1f5f9" : "rgba(255,255,255,0.14)")
-                                  : (isLight ? "#ffffff" : "rgba(255,255,255,0.04)"),
-                                border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255,255,255,0.1)",
-                                color: isExpanded
-                                  ? (isLight ? "#0f172a" : "#ffffff")
-                                  : (isLight ? "#64748b" : "#8b949e"),
-                                cursor: "pointer",
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                transition: "all 0.15s ease",
-                                flexShrink: 0,
-                              }}
-                              className={isLight ? "hover:bg-slate-100" : "hover:bg-white/10 hover:text-white"}
-                              title={
-                                isExpanded
-                                  ? "Collapse flow analysis"
-                                  : "View execution flow analysis & suggestions"
-                              }
-                            >
-                              {isExpanded ? (
-                                <ChevronDown size={13} />
-                              ) : (
-                                <ChevronRight size={13} />
-                              )}
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Expanded Dropdown Accordion Panel */}
-                        {isExpanded && (
-                          <div
-                            style={{
-                              padding: "14px 18px",
-                              background: isLight ? "#f8fafc" : "rgba(0, 0, 0, 0.4)",
-                              borderBottom: isLight
-                                ? "1px solid #e2e8f0"
-                                : "1px solid rgba(255, 255, 255, 0.08)",
-                              display: "flex",
-                              flexDirection: "column",
-                              gap: 16,
-                            }}
-                          >
-                            {/* Inline Suggestions Section (only for unit test, when not in FileCodeExecutionView) */}
-                            {type === "unit" && (fileSuggestions.length > 0 || isSuggesting) && activeMetricView !== "statements" && (
-                              <InlineTestSuggestions
-                                filePath={file.filePath}
-                                suggestions={fileSuggestions}
-                                isLoading={isSuggesting}
-                                onApply={(sug) => handleApplySuggestionInline(file.filePath, sug)}
-                                onApplyAll={(sugs) => handleApplyAllInline(file.filePath, sugs)}
-                                onReject={(sugId) => handleRejectInline(file.filePath, sugId)}
-                                onDismiss={(fPath) => handleDismissFileSuggestions(fPath)}
-                                onUpdateSuggestionCode={(sugId, newCode) =>
-                                  handleUpdateSuggestionCode(file.filePath, sugId, newCode)
-                                }
-                                applyingIds={applyingSuggestionIds}
-                                lastApplyResult={lastApply}
-                                progressStep={progressStep}
-                              />
-                            )}
-
-                            {isLoadingDetails || (!fileDetails && !cacheEntry?.error) ? (
-                              <div
-                                style={{
-                                  padding: "24px",
-                                  textAlign: "center",
-                                  color: isLight ? "#64748b" : "#8b949e",
-                                  fontSize: 12,
-                                  display: "flex",
-                                  alignItems: "center",
                                   justifyContent: "center",
-                                  gap: 8,
+                                  transition: "all 0.15s ease",
+                                  flexShrink: 0,
                                 }}
+                                className={isLight ? "hover:bg-slate-100" : "hover:bg-white/10 hover:text-white"}
+                                title={
+                                  isExpanded
+                                    ? "Collapse flow analysis"
+                                    : "View execution flow analysis & suggestions"
+                                }
                               >
-                                <Loader2 size={16} className={`animate-spin ${isLight ? "text-indigo-600" : "text-purple-400"}`} />
-                                <span>Analyzing execution flow for {cleanDisplayPath(file.filePath)}...</span>
-                              </div>
-                            ) : fileDetails ? (
-                              activeMetricView === "branches" ? (
-                                <FileBranchCFGView
+                                {isExpanded ? (
+                                  <ChevronDown size={13} />
+                                ) : (
+                                  <ChevronRight size={13} />
+                                )}
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Expanded Dropdown Accordion Panel */}
+                          {isExpanded && (
+                            <div
+                              style={{
+                                padding: "14px 18px",
+                                background: isLight ? "#f8fafc" : "rgba(0, 0, 0, 0.4)",
+                                borderBottom: isLight
+                                  ? "1px solid #e2e8f0"
+                                  : "1px solid rgba(255, 255, 255, 0.08)",
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 16,
+                              }}
+                            >
+                              {/* Inline Suggestions Section (only for unit test, when not in FileCodeExecutionView) */}
+                              {type === "unit" && (fileSuggestions.length > 0 || isSuggesting) && activeMetricView !== "statements" && (
+                                <InlineTestSuggestions
                                   filePath={file.filePath}
-                                  fileCoverage={fileDetails}
-                                  onOpenFile={onOpenFile}
-                                  onSuggestTestcase={(target) => {
-                                    if (type === "unit") {
-                                      handleSuggestTestcaseInline(target || file.filePath);
-                                    } else {
-                                      onSuggestTestcase?.(target || file.filePath);
-                                    }
-                                  }}
-                                />
-                              ) : activeMetricView === "functions" ? (
-                                <FileFunctionCallGraphView
-                                  filePath={file.filePath}
-                                  fileCoverage={fileDetails}
-                                  testSuites={testSuites}
-                                  onOpenFile={onOpenFile}
-                                  onSuggestTestcase={(target) => {
-                                    if (type === "unit") {
-                                      handleSuggestTestcaseInline(target || file.filePath);
-                                    } else {
-                                      onSuggestTestcase?.(target || file.filePath);
-                                    }
-                                  }}
-                                />
-                              ) : (
-                                <FileCodeExecutionView
-                                  filePath={file.filePath}
-                                  fileCoverage={fileDetails}
-                                  projectId={projectId}
-                                  snapshotId={snapshotId}
-                                  onOpenFile={onOpenFile}
-                                  onFileSaved={async (savedPath) => {
-                                    await ensureFileCoverage(savedPath, true);
-                                    invalidateCoverageQueries(snapshotId);
-                                    await refetchCoverage();
-                                  }}
-                                  onSuggestTestcase={(target) => {
-                                    if (type === "unit") {
-                                      handleSuggestTestcaseInline(target || file.filePath);
-                                    } else {
-                                      onSuggestTestcase?.(target || file.filePath);
-                                    }
-                                  }}
-                                  suggestions={type === "unit" ? fileSuggestions : []}
-                                  isLoadingSuggestions={type === "unit" ? isSuggesting : false}
-                                  applyingSuggestionIds={type === "unit" ? applyingSuggestionIds : new Set()}
-                                  onApplySuggestion={type === "unit" ? (sug) => handleApplySuggestionInline(file.filePath, sug) : undefined}
-                                  onApplyAllSuggestions={type === "unit" ? (sugs) => handleApplyAllInline(file.filePath, sugs) : undefined}
-                                  onRejectSuggestion={type === "unit" ? (sugId) => handleRejectInline(file.filePath, sugId) : undefined}
+                                  suggestions={fileSuggestions}
+                                  isLoading={isSuggesting}
+                                  onApply={(sug) => handleApplySuggestionInline(file.filePath, sug)}
+                                  onApplyAll={(sugs) => handleApplyAllInline(file.filePath, sugs)}
+                                  onReject={(sugId) => handleRejectInline(file.filePath, sugId)}
+                                  onDismiss={(fPath) => handleDismissFileSuggestions(fPath)}
                                   onUpdateSuggestionCode={(sugId, newCode) =>
                                     handleUpdateSuggestionCode(file.filePath, sugId, newCode)
                                   }
+                                  applyingIds={applyingSuggestionIds}
                                   lastApplyResult={lastApply}
                                   progressStep={progressStep}
-                                  isLight={isLight}
                                 />
-                              )
-                            ) : (
-                              <div
-                                style={{
-                                  padding: "20px",
-                                  textAlign: "center",
-                                  color: isLight ? "#dc2626" : "#f87171",
-                                  fontSize: 12,
-                                  display: "flex",
-                                  flexDirection: "column",
-                                  alignItems: "center",
-                                  gap: 8,
-                                }}
-                              >
-                                <span>{cacheEntry?.error ? `Error: ${cacheEntry.error}` : "Failed to load flow analysis data for this file."}</span>
-                                <button
-                                  onClick={() => ensureFileCoverage(file.filePath, true)}
+                              )}
+
+                              {isLoadingDetails || (!fileDetails && !cacheEntry?.error) ? (
+                                <div
                                   style={{
-                                    padding: "4px 10px",
-                                    background: isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.15)",
-                                    border: isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.3)",
-                                    borderRadius: 4,
-                                    color: isLight ? "#b91c1c" : "#f87171",
-                                    fontSize: 11,
-                                    cursor: "pointer",
+                                    padding: "24px",
+                                    textAlign: "center",
+                                    color: isLight ? "#64748b" : "#8b949e",
+                                    fontSize: 12,
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    gap: 8,
                                   }}
                                 >
-                                  Retry
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                                  <Loader2 size={16} className={`animate-spin ${isLight ? "text-indigo-600" : "text-purple-400"}`} />
+                                  <span>Analyzing execution flow for {cleanDisplayPath(file.filePath)}...</span>
+                                </div>
+                              ) : fileDetails ? (
+                                activeMetricView === "branches" ? (
+                                  <FileBranchCFGView
+                                    filePath={file.filePath}
+                                    fileCoverage={fileDetails}
+                                    onOpenFile={handleOpenFileInPlace}
+                                    onSuggestTestcase={(target) => {
+                                      if (type === "unit") {
+                                        handleSuggestTestcaseInline(target || file.filePath);
+                                      } else {
+                                        onSuggestTestcase?.(target || file.filePath);
+                                      }
+                                    }}
+                                  />
+                                ) : activeMetricView === "functions" ? (
+                                  <FileFunctionCallGraphView
+                                    filePath={file.filePath}
+                                    fileCoverage={fileDetails}
+                                    testSuites={testSuites}
+                                    onOpenFile={handleOpenFileInPlace}
+                                    onSuggestTestcase={(target) => {
+                                      if (type === "unit") {
+                                        handleSuggestTestcaseInline(target || file.filePath);
+                                      } else {
+                                        onSuggestTestcase?.(target || file.filePath);
+                                      }
+                                    }}
+                                  />
+                                ) : (
+                                  <FileCodeExecutionView
+                                    filePath={file.filePath}
+                                    fileCoverage={fileDetails}
+                                    projectId={projectId}
+                                    snapshotId={snapshotId}
+                                    onOpenFile={handleOpenFileInPlace}
+                                    onFileSaved={async (savedPath) => {
+                                      await ensureFileCoverage(savedPath, true);
+                                      invalidateCoverageQueries(snapshotId);
+                                      await refetchCoverage();
+                                    }}
+                                    onSuggestTestcase={(target) => {
+                                      if (type === "unit") {
+                                        handleSuggestTestcaseInline(target || file.filePath);
+                                      } else {
+                                        onSuggestTestcase?.(target || file.filePath);
+                                      }
+                                    }}
+                                    suggestions={type === "unit" ? fileSuggestions : []}
+                                    isLoadingSuggestions={type === "unit" ? isSuggesting : false}
+                                    applyingSuggestionIds={type === "unit" ? applyingSuggestionIds : new Set()}
+                                    onApplySuggestion={type === "unit" ? (sug) => handleApplySuggestionInline(file.filePath, sug) : undefined}
+                                    onApplyAllSuggestions={type === "unit" ? (sugs) => handleApplyAllInline(file.filePath, sugs) : undefined}
+                                    onRejectSuggestion={type === "unit" ? (sugId) => handleRejectInline(file.filePath, sugId) : undefined}
+                                    onUpdateSuggestionCode={(sugId, newCode) =>
+                                      handleUpdateSuggestionCode(file.filePath, sugId, newCode)
+                                    }
+                                    lastApplyResult={lastApply}
+                                    progressStep={progressStep}
+                                    isLight={isLight}
+                                  />
+                                )
+                              ) : (
+                                <div
+                                  style={{
+                                    padding: "20px",
+                                    textAlign: "center",
+                                    color: isLight ? "#dc2626" : "#f87171",
+                                    fontSize: 12,
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    alignItems: "center",
+                                    gap: 8,
+                                  }}
+                                >
+                                  <span>{cacheEntry?.error ? `Error: ${cacheEntry.error}` : "Failed to load flow analysis data for this file."}</span>
+                                  <button
+                                    onClick={() => ensureFileCoverage(file.filePath, true)}
+                                    style={{
+                                      padding: "4px 10px",
+                                      background: isLight ? "#fef2f2" : "rgba(239, 68, 68, 0.15)",
+                                      border: isLight ? "1px solid #fecaca" : "1px solid rgba(239, 68, 68, 0.3)",
+                                      borderRadius: 4,
+                                      color: isLight ? "#b91c1c" : "#f87171",
+                                      fontSize: 11,
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    Retry
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
 
-                <PaginationControl
-                  currentPage={sourceFilePage}
-                  totalItems={filteredSourceFiles.length}
-                  pageSize={SOURCE_FILES_PER_PAGE}
-                  onPageChange={setSourceFilePage}
-                  isLight={isLight}
-                  itemLabel="source files"
-                />
-              </div>
-            )}
+                  <PaginationControl
+                    currentPage={sourceFilePage}
+                    totalItems={filteredSourceFiles.length}
+                    pageSize={SOURCE_FILES_PER_PAGE}
+                    onPageChange={setSourceFilePage}
+                    isLight={isLight}
+                    itemLabel="source files"
+                  />
+                </div>
+              )}
             </div>
           )}
         </>
@@ -5450,7 +5636,7 @@ export default function CoverageTypeDashboard({
           initialFile={cfgModalContext?.file}
           initialFunc={cfgModalContext?.func}
           initialLine={cfgModalContext?.line}
-          onOpenFile={onOpenFile}
+          onOpenFile={handleOpenFileInPlace}
         />
       )}
       {showJobQueueModal && projectId && (
@@ -5531,6 +5717,74 @@ export default function CoverageTypeDashboard({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Unit Test Diff Review Modal (Monaco Side-by-Side Diff) */}
+      {reviewModalOpen && (
+        <DiffReviewModal
+          isOpen={reviewModalOpen}
+          onClose={() => setReviewModalOpen(false)}
+          files={reviewFiles}
+          initialFileIndex={reviewInitialFileIndex}
+          onApplyFile={async (file, currentSuggestion) => {
+            const cleanTarget = cleanDisplayPath(file.filePath);
+            let fileSugs = allPendingSuggestions.filter((s) => {
+              const sPath = s.sourceFile || s.filePath;
+              return sPath === file.filePath || cleanDisplayPath(sPath) === cleanTarget;
+            });
+            if (fileSugs.length === 0 && Array.isArray(file.suggestions) && file.suggestions.length > 0) {
+              fileSugs = file.suggestions;
+            } else if (fileSugs.length === 0 && currentSuggestion) {
+              fileSugs = [currentSuggestion];
+            }
+            if (fileSugs.length > 0) {
+              await handleApplyAllInline(file.filePath, fileSugs);
+            }
+          }}
+          onApplyAll={handleApplyAllGlobal}
+          onRunAnalysis={run}
+          isApplying={isBulkApplying}
+          applyingStep={bulkApplyStep}
+        />
+      )}
+
+      {/* In-Place File & Code Viewer Modal (keeps user in Unit Test without redirect) */}
+      {inPlaceOpenFileTarget && (
+        <InPlaceCoverageFileModal
+          isOpen={Boolean(inPlaceOpenFileTarget)}
+          onClose={() => setInPlaceOpenFileTarget(null)}
+          filePath={inPlaceOpenFileTarget.filePath}
+          targetLine={inPlaceOpenFileTarget.targetLine}
+          functionName={inPlaceOpenFileTarget.functionName}
+          endLine={inPlaceOpenFileTarget.endLine}
+          testInfo={inPlaceOpenFileTarget.testInfo}
+          projectId={projectId}
+          snapshotId={snapshotId}
+          onOpenInExternalEditor={(fPath, line) => {
+            setInPlaceOpenFileTarget(null);
+            onOpenFile?.(fPath, line);
+          }}
+          isLight={isLight}
+          testSuites={unitTestSuites}
+        />
+      )}
+
+      {/* Suggest TestCase Modal (Mode selection: AI vs Manual + Vitest vs Jest) */}
+      {suggestModalConfig.isOpen && (
+        <SuggestTestcaseModal
+          isOpen={suggestModalConfig.isOpen}
+          onClose={() => setSuggestModalConfig((prev) => ({ ...prev, isOpen: false }))}
+          targetFilePath={suggestModalConfig.filePath}
+          targetFunction={suggestModalConfig.functionName}
+          targetFunctionsList={functionsForTargetFile}
+          allBusinessFiles={selectedFiles}
+          allFunctions={functionsList}
+          defaultFramework={activeFramework || "vitest"}
+          onConfirmAi={handleConfirmAiSuggest}
+          onApplyManualTest={handleConfirmManualApply}
+          isApplying={isBulkApplying}
+          isLight={isLight}
+        />
       )}
     </div>
   );

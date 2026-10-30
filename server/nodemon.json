@@ -1,7 +1,18 @@
 {
-  "watch": ["src", ".env"],
-  "ignore": ["storage/*", "node_modules", ".git"],
-  "ext": "js,json,ts,env",
-  "exec": "node index.js",
+  "watch": ["src"],
+  "ignore": [
+    "src/tests/*",
+    "src/**/*.test.js",
+    "src/**/*.spec.js",
+    "storage/*",
+    "uploads/*",
+    ".covai-temp/*",
+    "scratch/*",
+    "test-results/*",
+    "node_modules",
+    ".git"
+  ],
+  "ext": "js,json,ts",
+  "delay": 1500,
   "legacyWatch": true
 }

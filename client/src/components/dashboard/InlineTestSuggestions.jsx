@@ -320,22 +320,29 @@ export default function InlineTestSuggestions({
                 background: "rgba(10, 14, 23, 0.75)",
                 border: "1px solid rgba(56, 189, 248, 0.2)",
                 borderRadius: 8,
-                padding: 16,
+                maxHeight: 1000,
+                overflowY: "auto",
                 display: "flex",
                 flexDirection: "column",
-                gap: 14,
             }}
+            className="custom-scrollbar"
         >
-            {/* Header bar */}
+            {/* Header bar (sticky) */}
             <div
                 style={{
+                    position: "sticky",
+                    top: 0,
+                    zIndex: 10,
+                    background: "rgba(10, 14, 23, 0.95)",
+                    backdropFilter: "blur(8px)",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "space-between",
                     borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
-                    paddingBottom: 10,
+                    padding: "14px 16px 12px 16px",
                     flexWrap: "wrap",
                     gap: 8,
+                    borderRadius: "8px 8px 0 0",
                 }}
             >
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -405,17 +412,17 @@ export default function InlineTestSuggestions({
                             }}
                             style={{
                                 padding: "5px 12px",
-                                background: "var(--color-primary)",
-                                border: "1px solid var(--color-primary)",
+                                background: "#0284c7",
+                                border: "1px solid rgba(56, 189, 248, 0.5)",
                                 borderRadius: 6,
-                                color: "var(--color-primary-foreground)",
+                                color: "#ffffff",
                                 fontSize: 11,
                                 fontWeight: 600,
                                 cursor: "pointer",
                                 display: "flex",
                                 alignItems: "center",
                                 gap: 6,
-                                transition: "opacity 0.15s ease",
+                                transition: "all 0.15s ease",
                             }}
                             className="hover:opacity-90"
                         >
@@ -426,6 +433,15 @@ export default function InlineTestSuggestions({
                 </div>
             </div>
 
+            {/* Inner Content Area */}
+            <div
+                style={{
+                    padding: "14px 16px 16px 16px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 14,
+                }}
+            >
             {/* Progress notification banner if currently applying */}
             {progressStep && (
                 <div
@@ -679,23 +695,25 @@ export default function InlineTestSuggestions({
                                             padding: "5px 14px",
                                             background:
                                                 status === "PASSED"
-                                                    ? "rgba(16, 185, 129, 0.15)"
+                                                    ? "rgba(34, 197, 94, 0.15)"
                                                     : isApplying
-                                                    ? "var(--color-surface-secondary)"
-                                                    : "var(--color-primary)",
+                                                    ? "rgba(2, 132, 199, 0.5)"
+                                                    : "#0284c7",
                                             border:
                                                 status === "PASSED"
-                                                    ? "1px solid rgba(16, 185, 129, 0.4)"
-                                                    : "1px solid var(--color-primary)",
-                                            borderRadius: 4,
-                                            color: status === "PASSED" ? "var(--color-success)" : "var(--color-primary-foreground)",
+                                                    ? "1px solid rgba(34, 197, 94, 0.4)"
+                                                    : "1px solid rgba(56, 189, 248, 0.4)",
+                                            borderRadius: 5,
+                                            color: status === "PASSED" ? "#4ade80" : "#ffffff",
                                             fontSize: 11,
                                             fontWeight: 600,
                                             cursor: isApplying || status === "PASSED" ? "not-allowed" : "pointer",
                                             display: "flex",
                                             alignItems: "center",
                                             gap: 6,
-                                            transition: "opacity 0.15s ease",
+                                            boxShadow:
+                                                status === "PASSED" ? "none" : "0 2px 6px rgba(2, 132, 199, 0.2)",
+                                            transition: "all 0.15s ease",
                                         }}
                                         className={status !== "PASSED" && !isApplying ? "hover:opacity-90" : ""}
                                     >
@@ -721,6 +739,7 @@ export default function InlineTestSuggestions({
                         </div>
                     );
                 })}
+            </div>
             </div>
         </div>
     );

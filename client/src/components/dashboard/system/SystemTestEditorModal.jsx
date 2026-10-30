@@ -413,6 +413,8 @@ export default function SystemTestEditorModal({
                 language="javascript"
                 original={content}
                 modified={suggestedContent}
+                keepCurrentOriginalModel={true}
+                keepCurrentModifiedModel={true}
                 theme={isDarkMode ? "vs-dark" : "light"}
                 options={{
                   fontSize: 13,

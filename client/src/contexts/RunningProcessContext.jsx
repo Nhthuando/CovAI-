@@ -56,10 +56,34 @@ function loadStoredProcesses(sessionUserId) {
     if (loadedAnalysis.isRunning && !loadedAnalysis.jobId) {
       loadedAnalysis.isRunning = false;
     }
+    const loadedSuggestion = { ...initialProcesses.suggestion, ...(parsed.suggestion || {}) };
+    // In-memory async generation loops cannot survive browser reloads
+    if (loadedSuggestion.isGenerating) {
+      loadedSuggestion.isGenerating = false;
+    }
+    const loadedBulkApply = { ...initialProcesses.bulkApply, ...(parsed.bulkApply || {}) };
+    // In-memory bulk apply loop cannot survive browser reloads
+    if (loadedBulkApply.isApplying) {
+      loadedBulkApply.isApplying = false;
+    }
+
+    // Expire completedAt older than 4 seconds so finished items don't resurrect on refresh
+    const now = Date.now();
+    if (loadedAnalysis.completedAt && now - loadedAnalysis.completedAt > 4000) {
+      loadedAnalysis.completedAt = null;
+    }
+    if (loadedSuggestion.completedAt && now - loadedSuggestion.completedAt > 4000) {
+      loadedSuggestion.completedAt = null;
+      loadedSuggestion.completedMessage = null;
+    }
+    if (loadedBulkApply.completedAt && now - loadedBulkApply.completedAt > 4000) {
+      loadedBulkApply.completedAt = null;
+    }
+
     return {
       analysis: loadedAnalysis,
-      suggestion: { ...initialProcesses.suggestion, ...(parsed.suggestion || {}) },
-      bulkApply: { ...initialProcesses.bulkApply, ...(parsed.bulkApply || {}) },
+      suggestion: loadedSuggestion,
+      bulkApply: loadedBulkApply,
     };
   } catch (err) {
     console.warn("Failed to load stored running processes:", err);
@@ -71,6 +95,7 @@ export function RunningProcessProvider({ children, sessionUserId }) {
   const [processes, setProcesses] = useState(() => loadStoredProcesses(sessionUserId));
   const suggestionsCacheRef = useRef({});
   const pollingRef = useRef(null);
+  const autoDismissTimersRef = useRef({});
 
   // Sync processes to sessionStorage
   useEffect(() => {
@@ -78,6 +103,80 @@ export function RunningProcessProvider({ children, sessionUserId }) {
       sessionStorage.setItem(`${STORAGE_KEY}_${sessionUserId || "anonymous"}`, JSON.stringify(processes));
     } catch (_) { }
   }, [processes, sessionUserId]);
+
+  // Clean dismiss of a single process or all processes
+  const dismissProcess = useCallback((processKey) => {
+    if (autoDismissTimersRef.current[processKey]) {
+      clearTimeout(autoDismissTimersRef.current[processKey]);
+      delete autoDismissTimersRef.current[processKey];
+    }
+    setProcesses((prev) => {
+      if (!processKey || processKey === "all") {
+        try {
+          sessionStorage.removeItem(STORAGE_KEY);
+        } catch (_) {}
+        return initialProcesses;
+      }
+      if (!prev[processKey]) return prev;
+      const updated = {
+        ...prev,
+        [processKey]: {
+          ...initialProcesses[processKey],
+        },
+      };
+      try {
+        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      } catch (_) {}
+      return updated;
+    });
+  }, []);
+
+  const dismissAll = useCallback(() => {
+    Object.values(autoDismissTimersRef.current).forEach((t) => clearTimeout(t));
+    autoDismissTimersRef.current = {};
+    try {
+      sessionStorage.removeItem(STORAGE_KEY);
+    } catch (_) {}
+    setProcesses(initialProcesses);
+  }, []);
+
+  // Schedule auto-dismiss for completed or failed states
+  const scheduleAutoDismiss = useCallback((key, delayMs = 3500) => {
+    if (autoDismissTimersRef.current[key]) {
+      clearTimeout(autoDismissTimersRef.current[key]);
+    }
+    autoDismissTimersRef.current[key] = setTimeout(() => {
+      dismissProcess(key);
+      delete autoDismissTimersRef.current[key];
+    }, delayMs);
+  }, [dismissProcess]);
+
+  // Clean processes when switching projects or navigating to /projects
+  const clearOtherProjectProcesses = useCallback((currentProjectId) => {
+    setProcesses((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      ["analysis", "suggestion", "bulkApply"].forEach((k) => {
+        if (next[k]?.projectId) {
+          if (!currentProjectId || next[k].projectId !== currentProjectId) {
+            next[k] = { ...initialProcesses[k] };
+            changed = true;
+            if (autoDismissTimersRef.current[k]) {
+              clearTimeout(autoDismissTimersRef.current[k]);
+              delete autoDismissTimersRef.current[k];
+            }
+          }
+        }
+      });
+      if (changed) {
+        try {
+          sessionStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+        } catch (_) {}
+        return next;
+      }
+      return prev;
+    });
+  }, []);
 
   // Background poller for analysis job (runs across all pages and tabs)
   useEffect(() => {
@@ -131,6 +230,7 @@ export function RunningProcessProvider({ children, sessionUserId }) {
               error: null,
             },
           }));
+          scheduleAutoDismiss("analysis", 3500);
           if (snapshotId) {
             invalidateCoverageQueries(snapshotId);
           }
@@ -146,6 +246,7 @@ export function RunningProcessProvider({ children, sessionUserId }) {
               completedAt: Date.now(),
             },
           }));
+          scheduleAutoDismiss("analysis", 4500);
           return;
         } else if (prog !== undefined) {
           setProcesses((prev) => ({
@@ -179,10 +280,14 @@ export function RunningProcessProvider({ children, sessionUserId }) {
         pollingRef.current = null;
       }
     };
-  }, [processes.analysis.isRunning, processes.analysis.jobId, processes.analysis.snapshotId]);
+  }, [processes.analysis.isRunning, processes.analysis.jobId, processes.analysis.snapshotId, scheduleAutoDismiss]);
 
   // Methods for Analysis Process
   const startAnalysis = useCallback(({ snapshotId, projectId, type = "unit", jobId = null }) => {
+    if (autoDismissTimersRef.current.analysis) {
+      clearTimeout(autoDismissTimersRef.current.analysis);
+      delete autoDismissTimersRef.current.analysis;
+    }
     setProcesses((prev) => ({
       ...prev,
       analysis: {
@@ -210,22 +315,45 @@ export function RunningProcessProvider({ children, sessionUserId }) {
     }));
   }, []);
 
-  const completeAnalysis = useCallback((success = true, error = null) => {
+  const completeAnalysis = useCallback((arg1 = true, arg2 = null) => {
+    let success = true;
+    let error = null;
+    let step = "Analysis completed successfully!";
+
+    if (typeof arg1 === "string") {
+      success = true;
+      step = arg1;
+      error = arg2 || null;
+    } else if (typeof arg1 === "boolean") {
+      success = arg1;
+      error = arg2 || null;
+      step = success ? "Analysis completed successfully!" : (error || "Analysis failed.");
+    } else if (arg1 && typeof arg1 === "object") {
+      success = arg1.success !== false;
+      error = arg1.error || null;
+      step = arg1.step || arg1.message || (success ? "Analysis completed successfully!" : "Analysis failed.");
+    }
+
     setProcesses((prev) => ({
       ...prev,
       analysis: {
         ...prev.analysis,
         isRunning: false,
         progress: success ? 100 : prev.analysis.progress,
-        step: success ? "Analysis completed successfully!" : "Analysis failed.",
-        error: error || null,
+        step,
+        error,
         completedAt: Date.now(),
       },
     }));
-  }, []);
+    scheduleAutoDismiss("analysis", error ? 4500 : 3500);
+  }, [scheduleAutoDismiss]);
 
   // Methods for Inline Suggestion Process
   const startSuggestion = useCallback(({ snapshotId, projectId, type = "unit", totalFiles = 0, initialMessage = "" }) => {
+    if (autoDismissTimersRef.current.suggestion) {
+      clearTimeout(autoDismissTimersRef.current.suggestion);
+      delete autoDismissTimersRef.current.suggestion;
+    }
     setProcesses((prev) => ({
       ...prev,
       suggestion: {
@@ -270,10 +398,15 @@ export function RunningProcessProvider({ children, sessionUserId }) {
         completedMessage: message || `✓ Generated inline test suggestions under ${prev.suggestion.completedFiles || prev.suggestion.totalFiles} files!`,
       },
     }));
-  }, []);
+    scheduleAutoDismiss("suggestion", 3500);
+  }, [scheduleAutoDismiss]);
 
   // Methods for Bulk Apply Process
   const startBulkApply = useCallback(({ snapshotId, projectId, totalCount = 0, step = "", type = "unit" }) => {
+    if (autoDismissTimersRef.current.bulkApply) {
+      clearTimeout(autoDismissTimersRef.current.bulkApply);
+      delete autoDismissTimersRef.current.bulkApply;
+    }
     setProcesses((prev) => ({
       ...prev,
       bulkApply: {
@@ -328,25 +461,11 @@ export function RunningProcessProvider({ children, sessionUserId }) {
         result,
         progressPct: 100,
         stats: "Done",
+        step: result?.error ? `Applied with errors: ${result.error}` : (result?.message || "✓ Successfully applied test suggestions!"),
       },
     }));
-  }, []);
-
-  // Dismiss / Clear process notification
-  const dismissProcess = useCallback((processKey) => {
-    setProcesses((prev) => {
-      if (!prev[processKey]) return prev;
-      return {
-        ...prev,
-        [processKey]: {
-          ...prev[processKey],
-          completedAt: null,
-          completedMessage: null,
-          error: null,
-        },
-      };
-    });
-  }, []);
+    scheduleAutoDismiss("bulkApply", 3500);
+  }, [scheduleAutoDismiss]);
 
 const sanitizeCachedSuggestions = (sugsMap) => {
   if (!sugsMap || typeof sugsMap !== "object") return {};
@@ -448,10 +567,10 @@ const sanitizeCachedSuggestions = (sugsMap) => {
   );
 
   const recentlyCompleted = Boolean(
-    (processes.suggestion.completedMessage && processes.suggestion.completedAt && (Date.now() - processes.suggestion.completedAt < 12000)) ||
-    (processes.bulkApply.completedAt && (Date.now() - processes.bulkApply.completedAt < 12000)) ||
-    (processes.analysis.completedAt && !processes.analysis.error && (Date.now() - processes.analysis.completedAt < 8000)) ||
-    (processes.analysis.error && processes.analysis.completedAt && (Date.now() - processes.analysis.completedAt < 12000))
+    (processes.suggestion.completedMessage && processes.suggestion.completedAt && (Date.now() - processes.suggestion.completedAt < 4000)) ||
+    (processes.bulkApply.completedAt && (Date.now() - processes.bulkApply.completedAt < 4000)) ||
+    (processes.analysis.completedAt && !processes.analysis.error && (Date.now() - processes.analysis.completedAt < 4000)) ||
+    (processes.analysis.error && processes.analysis.completedAt && (Date.now() - processes.analysis.completedAt < 5000))
   );
 
   const value = {
@@ -468,6 +587,9 @@ const sanitizeCachedSuggestions = (sugsMap) => {
     updateBulkApplyStep,
     completeBulkApply,
     dismissProcess,
+    dismissAll,
+    clearOtherProjectProcesses,
+    scheduleAutoDismiss,
     getSuggestions,
     saveSuggestions,
     saveFileSuggestions,

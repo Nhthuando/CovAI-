@@ -70,4 +70,18 @@ describe('projectRootResolver', () => {
 
         expect(resolveProjectRoot(tempDir)).toBe(serverDir);
     });
+
+    test('resolveSnapshotRootDir resolves /app/storage paths to real host directories', () => {
+        const testProjectId = 'cmv6g536z01789xo1b1pu1p1q';
+        const containerPath = `/app/storage/projects/${testProjectId}/github/1791881771584/repo`;
+        const resolved = resolveProjectRoot(containerPath);
+
+        if (process.cwd().startsWith('/app')) {
+            expect(resolved).toContain('/app/storage');
+        } else {
+            expect(resolved).not.toContain('/app/');
+        }
+        expect(fs.existsSync(path.join(resolved, 'package.json'))).toBe(true);
+    });
 });
+

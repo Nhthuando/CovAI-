@@ -1,9 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useRunningProcess } from "../contexts/RunningProcessContext";
 import {
   Sparkles,
-  Loader2,
   CheckCircle2,
   AlertTriangle,
   ArrowRight,
@@ -15,21 +14,49 @@ import {
 } from "lucide-react";
 
 export default function GlobalProcessIndicator() {
-  const { processes, hasActiveProcess, recentlyCompleted, dismissProcess } = useRunningProcess();
+  // ── 1. All React Hooks called unconditionally at the top level ──
+  const {
+    processes,
+    hasActiveProcess,
+    recentlyCompleted,
+    dismissProcess,
+    dismissAll,
+    clearOtherProjectProcesses,
+  } = useRunningProcess();
   const navigate = useNavigate();
   const location = useLocation();
   const [minimized, setMinimized] = useState(false);
 
-  const { analysis, suggestion, bulkApply } = processes;
+  // Extract current projectId from query params or route path
+  const searchParams = new URLSearchParams(location.search);
+  const queryProjectId = searchParams.get("projectId");
+  const pathMatch = location.pathname.match(/^\/project\/([^/]+)/);
+  const currentProjectId = queryProjectId || (pathMatch ? pathMatch[1] : null);
 
-  if (!hasActiveProcess && !recentlyCompleted) {
-    return null;
-  }
+  const isOutsideProject =
+    location.pathname === "/projects" ||
+    location.pathname === "/" ||
+    location.pathname === "/login" ||
+    location.pathname === "/register" ||
+    location.pathname === "/reset-password";
 
-  const navigateToCoverage = (coverageType = "unit") => {
+  // Hook: Auto-dismiss or hide cache when navigating across projects or back to /projects
+  useEffect(() => {
+    if (isOutsideProject) {
+      clearOtherProjectProcesses(null);
+    } else if (currentProjectId) {
+      clearOtherProjectProcesses(currentProjectId);
+    }
+  }, [currentProjectId, isOutsideProject, clearOtherProjectProcesses]);
+
+  const navigateToCoverage = (coverageType = "unit", targetProjId = null) => {
     const params = new URLSearchParams(location.search);
     params.set("tab", "coverage");
     params.set("type", coverageType);
+    const finalProjId = targetProjId || currentProjectId;
+    if (finalProjId && !params.get("projectId")) {
+      params.set("projectId", finalProjId);
+    }
     if (location.pathname === "/main-editor") {
       navigate(`${location.pathname}?${params.toString()}`);
     } else {
@@ -37,38 +64,64 @@ export default function GlobalProcessIndicator() {
     }
   };
 
+  // ── 2. Early returns (AFTER all hooks have executed) ──────────
+  if (isOutsideProject) {
+    return null;
+  }
+
+  if (!hasActiveProcess && !recentlyCompleted) {
+    return null;
+  }
+
+  const { analysis, suggestion, bulkApply } = processes;
+
+  const isMatchingProject = (proc) => {
+    if (!proc) return false;
+    if (!proc.projectId) return true;
+    if (!currentProjectId) return true;
+    return proc.projectId === currentProjectId;
+  };
+
   // Determine current active item or recently completed item to show
   let content = null;
 
-  if (suggestion.isGenerating) {
+  if (suggestion.isGenerating && isMatchingProject(suggestion)) {
     const total = suggestion.totalFiles || 1;
     const completed = suggestion.completedFiles || 0;
     const pct = Math.min(100, Math.round((completed / total) * 100));
 
     content = {
       type: "suggestion",
-      badgeColor: "var(--color-primary)",
-      icon: <Sparkles size={16} className="text-[var(--color-primary)]" />,
+      processKey: "suggestion",
+      badgeColor: "#38bdf8",
+      borderColor: "rgba(56, 189, 248, 0.4)",
+      glowColor: "rgba(56, 189, 248, 0.15)",
+      icon: <Sparkles size={16} className="text-sky-400 animate-pulse" />,
       title: "Generating Inline Unit Tests",
       progressPct: pct,
       stats: `${completed}/${total} files (${pct}%)`,
       subtitle: suggestion.currentFile ? `Analyzing: ${suggestion.currentFile}` : suggestion.message,
       actionLabel: "View in Coverage",
-      onAction: () => navigateToCoverage(suggestion.type || "unit"),
+      onAction: () => navigateToCoverage(suggestion.type || "unit", suggestion.projectId),
+      onDismiss: () => dismissProcess("suggestion"),
     };
-  } else if (analysis.isRunning) {
+  } else if (analysis.isRunning && isMatchingProject(analysis)) {
     content = {
       type: "analysis",
-      badgeColor: "var(--color-primary)",
-      icon: <Activity size={16} className="text-[var(--color-primary)] animate-spin" />,
+      processKey: "analysis",
+      badgeColor: "#a855f7",
+      borderColor: "rgba(168, 85, 247, 0.4)",
+      glowColor: "rgba(168, 85, 247, 0.15)",
+      icon: <Activity size={16} className="text-purple-400 animate-spin" />,
       title: "Running Coverage Analysis",
       progressPct: analysis.progress || 10,
       stats: `${analysis.progress || 10}%`,
       subtitle: analysis.step || "Running test suites in background...",
       actionLabel: "View in Coverage",
-      onAction: () => navigateToCoverage(analysis.type || "unit"),
+      onAction: () => navigateToCoverage(analysis.type || "unit", analysis.projectId),
+      onDismiss: () => dismissProcess("analysis"),
     };
-  } else if (bulkApply.isApplying) {
+  } else if (bulkApply.isApplying && isMatchingProject(bulkApply)) {
     const statsText = bulkApply.stats || (bulkApply.totalCount ? `${bulkApply.completedCount || 0}/${bulkApply.totalCount}` : "Applying...");
     const progressPct = bulkApply.progressPct !== undefined && bulkApply.progressPct !== null
       ? bulkApply.progressPct
@@ -76,75 +129,91 @@ export default function GlobalProcessIndicator() {
 
     content = {
       type: "bulkApply",
-      badgeColor: "var(--color-success)",
-      icon: <Zap size={16} className="text-[var(--color-success)]" />,
+      processKey: "bulkApply",
+      badgeColor: "#22c55e",
+      borderColor: "rgba(34, 197, 94, 0.4)",
+      glowColor: "rgba(34, 197, 94, 0.15)",
+      icon: <Zap size={16} className="text-green-400 animate-bounce" />,
       title: `Applying ${bulkApply.totalCount || ""} Test Suggestions`,
       progressPct: progressPct,
       stats: statsText,
       subtitle: bulkApply.step || "Writing to disk & running test verification...",
       actionLabel: "View in Coverage",
-      onAction: () => navigateToCoverage(bulkApply.type || "unit"),
+      onAction: () => navigateToCoverage(bulkApply.type || "unit", bulkApply.projectId),
+      onDismiss: () => dismissProcess("bulkApply"),
     };
-  } else if (bulkApply.completedAt && Date.now() - bulkApply.completedAt < 12000) {
+  } else if (bulkApply.completedAt && isMatchingProject(bulkApply) && Date.now() - bulkApply.completedAt < 4000) {
     content = {
       type: "completed_bulkApply",
-      badgeColor: "var(--color-success)",
-      icon: <CheckCircle2 size={16} className="text-[var(--color-success)]" />,
+      processKey: "bulkApply",
+      badgeColor: "#22c55e",
+      borderColor: "rgba(34, 197, 94, 0.5)",
+      glowColor: "rgba(34, 197, 94, 0.2)",
+      icon: <CheckCircle2 size={16} className="text-green-400" />,
       title: "Test Application Complete",
       progressPct: 100,
       stats: "Done",
       subtitle: bulkApply.step || "✓ Successfully applied test suggestions and updated coverage!",
       actionLabel: "View in Coverage",
       onAction: () => {
-        navigateToCoverage(bulkApply.type || "unit");
+        navigateToCoverage(bulkApply.type || "unit", bulkApply.projectId);
         dismissProcess("bulkApply");
       },
       onDismiss: () => dismissProcess("bulkApply"),
     };
-  } else if (suggestion.completedMessage && suggestion.completedAt && Date.now() - suggestion.completedAt < 12000) {
+  } else if (suggestion.completedMessage && suggestion.completedAt && isMatchingProject(suggestion) && Date.now() - suggestion.completedAt < 4000) {
     content = {
       type: "completed_suggestion",
-      badgeColor: "var(--color-success)",
-      icon: <CheckCircle2 size={16} className="text-[var(--color-success)]" />,
+      processKey: "suggestion",
+      badgeColor: "#22c55e",
+      borderColor: "rgba(34, 197, 94, 0.5)",
+      glowColor: "rgba(34, 197, 94, 0.2)",
+      icon: <CheckCircle2 size={16} className="text-green-400" />,
       title: "Test Generation Complete",
       progressPct: 100,
       stats: "Done",
       subtitle: suggestion.completedMessage,
       actionLabel: "View & Apply All",
       onAction: () => {
-        navigateToCoverage(suggestion.type || "unit");
+        navigateToCoverage(suggestion.type || "unit", suggestion.projectId);
         dismissProcess("suggestion");
       },
       onDismiss: () => dismissProcess("suggestion"),
     };
-  } else if (analysis.error && analysis.completedAt && Date.now() - analysis.completedAt < 12000) {
+  } else if (analysis.error && analysis.completedAt && isMatchingProject(analysis) && Date.now() - analysis.completedAt < 5000) {
     content = {
       type: "error_analysis",
-      badgeColor: "var(--color-danger)",
-      icon: <AlertTriangle size={16} className="text-[var(--color-danger)]" />,
+      processKey: "analysis",
+      badgeColor: "#ef4444",
+      borderColor: "rgba(239, 68, 68, 0.5)",
+      glowColor: "rgba(239, 68, 68, 0.2)",
+      icon: <AlertTriangle size={16} className="text-red-400" />,
       title: "Coverage Analysis Error",
       progressPct: null,
       stats: "Failed",
       subtitle: analysis.error,
       actionLabel: "View Details",
       onAction: () => {
-        navigateToCoverage(analysis.type || "unit");
+        navigateToCoverage(analysis.type || "unit", analysis.projectId);
         dismissProcess("analysis");
       },
       onDismiss: () => dismissProcess("analysis"),
     };
-  } else if (analysis.completedAt && !analysis.error && Date.now() - analysis.completedAt < 8000) {
+  } else if (analysis.completedAt && !analysis.error && isMatchingProject(analysis) && Date.now() - analysis.completedAt < 4000) {
     content = {
       type: "completed_analysis",
-      badgeColor: "var(--color-success)",
-      icon: <CheckCircle2 size={16} className="text-[var(--color-success)]" />,
+      processKey: "analysis",
+      badgeColor: "#22c55e",
+      borderColor: "rgba(34, 197, 94, 0.5)",
+      glowColor: "rgba(34, 197, 94, 0.2)",
+      icon: <CheckCircle2 size={16} className="text-green-400" />,
       title: "Analysis Succeeded",
       progressPct: 100,
       stats: "100%",
       subtitle: "Fresh coverage metrics updated and ready to view.",
       actionLabel: "View Results",
       onAction: () => {
-        navigateToCoverage(analysis.type || "unit");
+        navigateToCoverage(analysis.type || "unit", analysis.projectId);
         dismissProcess("analysis");
       },
       onDismiss: () => dismissProcess("analysis"),
@@ -162,12 +231,14 @@ export default function GlobalProcessIndicator() {
         zIndex: 9999,
         maxWidth: minimized ? 260 : 380,
         width: "calc(100vw - 48px)",
-        background: "var(--color-surface-raised)",
-        border: "1px solid var(--color-border)",
-        boxShadow: "0 8px 24px rgba(0, 0, 0, 0.2)",
-        borderRadius: 8,
+        background: "rgba(11, 15, 25, 0.95)",
+        backdropFilter: "blur(14px)",
+        WebkitBackdropFilter: "blur(14px)",
+        border: `1px solid ${content.borderColor}`,
+        boxShadow: `0 12px 32px rgba(0, 0, 0, 0.6), 0 0 20px ${content.glowColor}`,
+        borderRadius: 12,
         overflow: "hidden",
-        transition: "all 0.2s ease",
+        transition: "all 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
       }}
     >
       {/* Header bar */}
@@ -177,8 +248,8 @@ export default function GlobalProcessIndicator() {
           alignItems: "center",
           justifyContent: "space-between",
           padding: "10px 14px",
-          background: "var(--color-surface-secondary)",
-          borderBottom: minimized ? "none" : "1px solid var(--color-border)",
+          background: "rgba(255, 255, 255, 0.03)",
+          borderBottom: minimized ? "none" : "1px solid rgba(255, 255, 255, 0.06)",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
@@ -187,7 +258,7 @@ export default function GlobalProcessIndicator() {
             style={{
               fontSize: 12,
               fontWeight: 700,
-              color: "var(--color-text)",
+              color: "#f1f5f9",
               whiteSpace: "nowrap",
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -203,10 +274,10 @@ export default function GlobalProcessIndicator() {
               fontSize: 10,
               fontWeight: 700,
               padding: "1px 6px",
-              borderRadius: 4,
-              background: "var(--color-surface)",
+              borderRadius: 10,
+              background: `${content.badgeColor}22`,
               color: content.badgeColor,
-              border: "1px solid var(--color-border)",
+              border: `1px solid ${content.badgeColor}44`,
             }}
           >
             {content.stats}
@@ -217,36 +288,46 @@ export default function GlobalProcessIndicator() {
             style={{
               background: "transparent",
               border: "none",
-              color: "var(--color-text-secondary)",
+              color: "#94a3b8",
               cursor: "pointer",
               padding: 2,
               display: "flex",
               alignItems: "center",
+              transition: "color 0.15s ease",
             }}
-            className="hover:text-[var(--color-text)]"
+            className="hover:text-white"
             title={minimized ? "Expand" : "Minimize"}
           >
             {minimized ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
           </button>
 
-          {content.onDismiss && (
-            <button
-              onClick={content.onDismiss}
-              style={{
-                background: "transparent",
-                border: "none",
-                color: "var(--color-text-secondary)",
-                cursor: "pointer",
-                padding: 2,
-                display: "flex",
-                alignItems: "center",
-              }}
-              className="hover:text-[var(--color-text)]"
-              title="Close"
-            >
-              <X size={14} />
-            </button>
-          )}
+          {/* Close button: ALWAYS present so user can dismiss anytime */}
+          <button
+            onClick={() => {
+              if (content.onDismiss) {
+                content.onDismiss();
+              } else if (content.processKey) {
+                dismissProcess(content.processKey);
+              } else {
+                dismissAll();
+              }
+            }}
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "#94a3b8",
+              cursor: "pointer",
+              padding: 2,
+              display: "flex",
+              alignItems: "center",
+              transition: "color 0.15s ease, transform 0.1s ease",
+            }}
+            className="hover:text-red-400 hover:scale-110 active:scale-95"
+            title="Dismiss notification"
+            aria-label="Close process indicator"
+          >
+            <X size={14} />
+          </button>
         </div>
       </div>
 
@@ -257,7 +338,7 @@ export default function GlobalProcessIndicator() {
           <div
             style={{
               fontSize: 11,
-              color: "var(--color-text-secondary)",
+              color: "#94a3b8",
               lineHeight: 1.4,
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -275,10 +356,9 @@ export default function GlobalProcessIndicator() {
               style={{
                 height: 4,
                 width: "100%",
-                background: "var(--color-surface-secondary)",
-                borderRadius: 2,
+                background: "rgba(255, 255, 255, 0.08)",
+                borderRadius: 9999,
                 overflow: "hidden",
-                border: "1px solid var(--color-border)",
               }}
             >
               <div
@@ -286,8 +366,8 @@ export default function GlobalProcessIndicator() {
                   height: "100%",
                   width: `${content.progressPct}%`,
                   background: content.badgeColor,
-                  borderRadius: 2,
-                  transition: "width 0.3s ease",
+                  borderRadius: 9999,
+                  transition: "width 0.35s ease",
                 }}
               />
             </div>
@@ -299,19 +379,19 @@ export default function GlobalProcessIndicator() {
               onClick={content.onAction}
               style={{
                 padding: "5px 12px",
-                background: "var(--color-primary)",
-                border: "1px solid var(--color-primary)",
-                borderRadius: 4,
-                color: "var(--color-primary-foreground)",
+                background: `${content.badgeColor}22`,
+                border: `1px solid ${content.badgeColor}66`,
+                borderRadius: 6,
+                color: "#ffffff",
                 fontSize: 11,
                 fontWeight: 600,
                 cursor: "pointer",
                 display: "flex",
                 alignItems: "center",
                 gap: 5,
-                transition: "opacity 0.15s ease",
+                transition: "all 0.15s ease",
               }}
-              className="hover:opacity-90"
+              className="hover:brightness-125"
             >
               <span>{content.actionLabel}</span>
               <ArrowRight size={12} />

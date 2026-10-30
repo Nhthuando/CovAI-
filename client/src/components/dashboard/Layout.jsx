@@ -18,6 +18,7 @@ import JobQueue from "./JobQueue";
 import ProjectArchitecturePanel from "./ProjectArchitecturePanel";
 import CFGCalculator from "./CFGCalculator";
 import QualityDashboard from "./QualityDashboard";
+import TrustworthinessWorkspace from './trustworthiness/TrustworthinessWorkspace';
 import UnifiedDashboard from "./unified/UnifiedDashboard";
 import { buildWorkspaceUrl } from "../../services/unifiedDashboard/workspaceNavigation";
 import SettingsSidebar from "./settings/SettingsSidebar";
@@ -270,6 +271,10 @@ function LayoutInner() {
   const [pendingAiSuggestion, setPendingAiSuggestion] = useState(null);
 
   const handleSuggestTestcase = (filePath, options = {}) => {
+    // Never open AIPanel for bulk test suggestions; they belong to the guided dashboard workflow
+    if (options?.isBulk || (typeof filePath === "object" && filePath?.isBulk) || options?.skipAiPanel) {
+      return;
+    }
     setAiPanelOpen(true);
     if (typeof filePath === "object" && filePath !== null) {
       setPendingAiSuggestion({ ...filePath, timestamp: Date.now() });
@@ -330,9 +335,15 @@ function LayoutInner() {
   };
 
   const handleTriggerRunAnalysis = () => {
+    setShowCFG(false);
     setActiveActivity("coverage");
     handleSelectCoverageType("unit");
     setCoverageRunTrigger((prev) => prev + 1);
+    const params = new URLSearchParams(location.search);
+    if (params.get("tab") !== "coverage") {
+      params.set("tab", "coverage");
+      navigate(`${location.pathname}?${params.toString()}`);
+    }
   };
 
   const handleGitSync = async () => {
@@ -623,14 +634,22 @@ function LayoutInner() {
       } else {
         setProjects((prev) => prev.filter((p) => p.id !== projectId));
       }
+      return true;
     } catch (err) {
-      showToast({ type: "error", title: "Delete failed" });
+      showToast({ type: "error", title: "Delete failed", message: err.message || "Could not delete the project. Please retry." });
+      return false;
     }
   };
 
   const handleOpenFile = (node) => {
     if (node.type === "folder") return;
+    setShowCFG(false);
     setActiveActivity("explorer");
+    const params = new URLSearchParams(location.search);
+    if (params.get("tab") !== "explorer") {
+      params.set("tab", "explorer");
+      navigate(`${location.pathname}?${params.toString()}`, { replace: true });
+    }
     setActiveFileId(node.id);
     if (!tabs.find((t) => t.id === node.id)) {
       setTabs((prev) => [
@@ -642,7 +661,13 @@ function LayoutInner() {
   };
 
   const handleOpenFileByPath = (filePath, targetLine = null, functionName = null, endLine = null) => {
+    setShowCFG(false);
     setActiveActivity("explorer");
+    const params = new URLSearchParams(location.search);
+    if (params.get("tab") !== "explorer") {
+      params.set("tab", "explorer");
+      navigate(`${location.pathname}?${params.toString()}`, { replace: true });
+    }
     const normalizedPath = filePath.replace(/\\/g, "/").replace(/^\.\//, "");
     const findNode = (nodes, path) => {
       for (const node of nodes) {
@@ -986,7 +1011,7 @@ function LayoutInner() {
           </motion.div>
         )}
         <AnimatePresence initial={false}>
-          {sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && (
+          {sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && activeActivity !== "trustworthiness" && (
             <motion.div
               key="sidebar"
               initial={
@@ -1064,7 +1089,7 @@ function LayoutInner() {
             </motion.div>
           )}
         </AnimatePresence>
-        {!isMobile && sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && (
+        {!isMobile && sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && activeActivity !== "trustworthiness" && (
           <PanelResizer
             onMouseDown={handleSidebarResize}
             isDragging={isDraggingSidebar}
@@ -1099,6 +1124,8 @@ function LayoutInner() {
           <div className={activeActivity === "jobs" ? "w-full h-full overflow-y-auto" : "hidden"}>
             <JobQueue projectId={project?.id} onSync={handleGitSync} />
           </div>
+
+          {activeActivity === 'trustworthiness' && <div className="w-full h-full overflow-y-auto"><TrustworthinessWorkspace key={project?.id} projectId={project?.id} /></div>}
 
           <div className={activeActivity === "architecture" ? "w-full h-full overflow-y-auto" : "hidden"}>
             <ProjectArchitecturePanel
@@ -1144,6 +1171,7 @@ function LayoutInner() {
                   testPromptSnapshotId
                 }
                 projectId={project?.id}
+                treeVersion={treeVersion}
                 focusFile={searchParams.get("focusFile")}
                 onOpenFile={handleOpenFileByPath}
                 onSuggestTestcase={handleSuggestTestcase}
@@ -1189,7 +1217,7 @@ function LayoutInner() {
             </div>
           </div>
 
-          <div className={activeActivity !== "settings" && activeActivity !== "jobs" && activeActivity !== "architecture" && activeActivity !== "coverage" && activeActivity !== "overview" ? "w-full h-full" : "hidden"}>
+          <div className={activeActivity !== "settings" && activeActivity !== "jobs" && activeActivity !== "architecture" && activeActivity !== "coverage" && activeActivity !== "overview" && activeActivity !== "trustworthiness" ? "w-full h-full" : "hidden"}>
                 <Editor
                   key={`${user?.id}:${project?.id}:${project?.snapshots?.[0]?.id || project?.latestSnapshotId || ""}`}
                   tabs={tabs}
@@ -1325,7 +1353,13 @@ function LayoutInner() {
             onClose={() => setShowImport(false)}
             onSuccess={() => {
               setShowImport(false);
+              setShowCFG(false);
               setActiveActivity("jobs");
+              const params = new URLSearchParams(location.search);
+              if (params.get("tab") !== "jobs") {
+                params.set("tab", "jobs");
+                navigate(`${location.pathname}?${params.toString()}`);
+              }
               setTimeout(() => loadData(null, 3, 2500), 1500);
             }}
           />

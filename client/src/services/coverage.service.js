@@ -28,7 +28,11 @@ async function handleResponse(res) {
             window.location.href = "/login";
         }
 
-        throw new Error(data.message || "Failed API call");
+        const msg = data.message || `API error (${res.status})`;
+        const error = new Error(msg);
+        error.status = res.status;
+        error.data = data;
+        throw error;
     }
 
     return data;
@@ -113,14 +117,23 @@ export async function getCoverageFrameworks(snapshotId) {
     return handleResponse(res);
 }
 
-export async function runCoverageByType(snapshotId, coverageType, framework, executionMode) {
+export async function runCoverageByType(snapshotId, coverageType, framework, executionMode, options = {}) {
     const headers = getAuthHeaders();
-    const options = {
-        method: "POST",
-        headers: framework || executionMode ? { ...headers, "Content-Type": "application/json" } : headers,
-        body: framework || executionMode ? JSON.stringify({ framework, executionMode }) : undefined,
+    const isRestart = Boolean(options?.restart);
+    const bodyPayload = {
+        ...(framework ? { framework } : {}),
+        ...(executionMode ? { executionMode } : {}),
+        ...(isRestart ? { restart: true } : {}),
     };
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/${coverageType}/run`, options);
+    const hasBody = Object.keys(bodyPayload).length > 0;
+    const url = isRestart
+        ? `${BASE_URL}/coverage/${snapshotId}/${coverageType}/run?restart=true`
+        : `${BASE_URL}/coverage/${snapshotId}/${coverageType}/run`;
+    const res = await fetch(url, {
+        method: "POST",
+        headers: hasBody ? { ...headers, "Content-Type": "application/json" } : headers,
+        body: hasBody ? JSON.stringify(bodyPayload) : undefined,
+    });
     return handleResponse(res);
 }
 
@@ -128,6 +141,15 @@ export async function getSystemTestEvidence(snapshotId, scenarioId, signal) {
     const response = await fetch(`${BASE_URL}/coverage/${snapshotId}/system/scenarios/${scenarioId}/evidence`, {headers:getAuthHeaders(),signal});
     if (!response.ok) throw new Error('Evidence could not be loaded');
     return response.blob();
+}
+
+export async function installMissingDependency(snapshotId, packageName, isDev = false, rerunTests = true, importedFrom = null) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/install-dependency`, {
+        method: "POST",
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ packageName, isDev, rerunTests, ...(importedFrom ? { importedFrom } : {}) }),
+    });
+    return handleResponse(res);
 }
 
 export async function getFileCoverage(snapshotId, filePath) {
@@ -201,11 +223,11 @@ export async function getIntegrationWorkspace(snapshotId) {
     return handleResponse(res);
 }
 
-export async function applyUnitTestSuggestion(snapshotId, { suggestion, suggestions, projectId } = {}) {
+export async function applyUnitTestSuggestion(snapshotId, { suggestion, suggestions, projectId, skipBackgroundJob } = {}) {
     const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/apply-suggestion`, {
         method: "POST",
         headers: getAuthHeaders(),
-        body: JSON.stringify({ suggestion, suggestions, projectId }),
+        body: JSON.stringify({ suggestion, suggestions, projectId, skipBackgroundJob: Boolean(skipBackgroundJob) }),
     });
     return handleResponse(res);
 }

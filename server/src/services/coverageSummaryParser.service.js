@@ -134,7 +134,14 @@ const upsertCoverageSummary = async (snapshotId, lines, branches, functions, sta
 /**
  * Upsert CoverageFile records for each project file.
  */
-const upsertCoverageFiles = async (snapshotId, fileEntries) => stagePreparedPublication(async tx=>{
+const upsertCoverageFiles = async (snapshotId, fileEntries) => {
+    try {
+        if (!prisma?.coverageFile) return;
+    } catch (_) {
+        return;
+    }
+    return stagePreparedPublication(async tx=>{
+        if (typeof tx?.coverageFile?.upsert !== "function") return;
     for (const [filePath, data] of fileEntries) {
         const lines = parseLineCoverage(data);
         const branches = parseBranchCoverage(data);
@@ -159,7 +166,8 @@ const upsertCoverageFiles = async (snapshotId, fileEntries) => stagePreparedPubl
             },
         });
     }
-});
+    });
+};
 
 /**
  * Main entry point of SCRUM-85.
@@ -171,7 +179,7 @@ const upsertCoverageFiles = async (snapshotId, fileEntries) => stagePreparedPubl
  * @param {string} snapshotId   - ID of ProjectSnapshot
  * @returns {{ summary, total, fileCount }}
  */
-export const parseCoverageSummary = async (coverageDir, snapshotId) => {
+export const parseCoverageSummary = async (coverageDir, snapshotId, options = {}) => {
     if (!coverageDir || !snapshotId) {
         throw new ServiceError("coverageDir and snapshotId are required", 400);
     }
@@ -186,8 +194,11 @@ export const parseCoverageSummary = async (coverageDir, snapshotId) => {
     const functions = parseFunctionCoverage(total); // SCRUM-120
     const statements = parseStatementCoverage(total); // SCRUM-121
 
-    // SCRUM-122: Ghi CoverageSummary
-    const summary = await upsertCoverageSummary(snapshotId, lines, branches, functions, statements);
+    // SCRUM-122: Ghi CoverageSummary only if not explicitly skipped (e.g. Integration test runs)
+    let summary = null;
+    if (!options?.skipSummaryUpsert) {
+        summary = await upsertCoverageSummary(snapshotId, lines, branches, functions, statements);
+    }
 
     // Write CoverageFile per file (excluding "total" key)
     const fileEntries = Object.entries(raw).filter(([key]) => key !== "total");

@@ -1,9 +1,12 @@
 node_modules/
 **/node_modules/
+.covai-temp/
+**/.covai-temp/
+.covai_journal/
+**/.covai_journal/
 dist/
 build/
 coverage/
 .git/
 .env*
 *.log
-
