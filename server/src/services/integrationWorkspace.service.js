@@ -1,3 +1,4 @@
+import { scenarioArtifactVersion } from './scenarioManager.service.js';
 import fs from "fs";
 import path from "path";
 import prisma from "../config/prisma.js";
@@ -747,6 +748,7 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
           startedAt: true,
           finishedAt: true,
           errorMessage: true,
+          resultJson: true,
         },
       }),
     ]);
@@ -835,7 +837,12 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
     executeJob &&
     executeJob.status === "FAILED" &&
     (!latestRun || latestRun.createdAt < executeJob.createdAt);
-  const firebaseCacheKey = `${snapshotId}_${latestRun?.id || "none"}`;
+  const outputJob = jobs.find(job => ['SUPERTEST_COVERAGE','PLAYWRIGHT_API'].includes(job.type) && job.status === 'SUCCESS' && job.resultJson);
+  let artifactPrefix;
+  try { artifactPrefix = outputJob ? JSON.parse(outputJob.resultJson).storageBasePath : undefined; } catch { /* Legacy results remain readable. */ }
+  if (!artifactPrefix && typeof snapshot?.storagePath === 'string' && snapshot.storagePath.startsWith('projects/') && snapshot.storagePath.endsWith('/coverage')) artifactPrefix = snapshot.storagePath;
+  if (artifactPrefix && (typeof artifactPrefix !== 'string' || !artifactPrefix.startsWith('projects/') || artifactPrefix.split('/').includes('..'))) artifactPrefix = undefined;
+  const firebaseCacheKey = `${snapshotId}_${latestRun?.id || "none"}_${outputJob?.id || 'legacy'}`;
   if (executeFailedBeforeTests) {
     // Current execution job failed before tests could execute; do not load stale prior scenarios
     testScenarios = [];
@@ -902,7 +909,7 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
     }
 
     // SLOW FALLBACK: Only if DB and local disk do not have scenarios, query Firebase Cloud Storage
-    if (!loadedFromDisk && snapshot?.storagePath) {
+    if (!loadedFromDisk && artifactPrefix) {
       try {
         const timeoutPromise = new Promise((_, reject) =>
           setTimeout(
@@ -912,7 +919,7 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
         );
         const downloadPromise = (async () => {
           const file = getBucket().file(
-            `${snapshot.storagePath}/integration-scenarios.json`,
+            `${artifactPrefix}/integration-scenarios.json`,
           );
           const [exists] = await file.exists();
           if (exists) {
@@ -960,7 +967,7 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
     }
   }
 
-  if (runtimeEvidences.length === 0 && snapshot?.storagePath) {
+  if (runtimeEvidences.length === 0 && artifactPrefix) {
     try {
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(
@@ -970,7 +977,7 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
       );
       const downloadPromise = (async () => {
         const file = getBucket().file(
-          `${snapshot.storagePath}/runtime-evidence.json`,
+          `${artifactPrefix}/runtime-evidence.json`,
         );
         const [exists] = await file.exists();
         if (exists) {
@@ -2263,6 +2270,7 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
         : extractValidatedTestRequests(t);
       return {
         id: t.id,
+        version: scenarioArtifactVersion(t),
         filePath: t.filePath,
         status: meta.status || "DRAFT",
         isValid: meta.isValid !== false,

@@ -2,9 +2,10 @@ import { jest } from '@jest/globals';
 
 const prismaMock = {
     project: {
-        findUnique: jest.fn()
+        findUnique: jest.fn(), findFirst: jest.fn(async()=> await prismaMock.project.findUnique())
     },
-    snapshot: {
+    projectMember:{findUnique:jest.fn(async()=>null)},
+    projectSnapshot: {
         findFirst: jest.fn()
     }
 };
@@ -18,6 +19,10 @@ jest.unstable_mockModule('../services/aiSuggestJob.service.js', () => ({
     processAiSuggestJob: mockProcessAiSuggestJob
 }));
 
+const createAiSuggestJob=jest.fn(async()=>({id:'queued-suggest'}));
+const enqueue=jest.fn(async()=>{});
+jest.unstable_mockModule('../services/job.service.js',()=>({createAiSuggestJob}));
+jest.unstable_mockModule('../services/queue.service.js',()=>({addJobToQueue:enqueue}));
 const { refreshAiSuggestions } = await import('../services/aiSuggestion.service.js');
 const prisma = prismaMock;
 
@@ -31,7 +36,7 @@ describe('aiSuggestionService - refreshAiSuggestions', () => {
 
     it('should throw 401 if userId is missing', async () => {
         await expect(refreshAiSuggestions({ projectId: mockProjectId, userId: null }))
-            .rejects.toThrow('Unauthorized');
+            .rejects.toMatchObject({statusCode:401});
     });
 
     it('should throw 404 if project does not exist', async () => {
@@ -43,14 +48,14 @@ describe('aiSuggestionService - refreshAiSuggestions', () => {
     it('should throw 403 if user is not the owner', async () => {
         prisma.project.findUnique.mockResolvedValue({ ownerId: 'otherUser' });
         await expect(refreshAiSuggestions({ projectId: mockProjectId, userId: mockUserId }))
-            .rejects.toThrow('Forbidden');
+            .rejects.toMatchObject({statusCode:404});
     });
 
     it('should return success message if valid', async () => {
         prisma.project.findUnique.mockResolvedValue({ ownerId: mockUserId });
-        prisma.snapshot.findFirst.mockResolvedValue({ id: 'snapshot-1' });
+        prisma.projectSnapshot.findFirst.mockResolvedValue({ id: 'snapshot-1' });
         const result = await refreshAiSuggestions({ projectId: mockProjectId, userId: mockUserId });
         expect(result.success).toBe(true);
-        expect(result.message).toBe('Suggestions refreshed successfully');
+        expect(result.message).toBe('Suggestions refresh queued');
     });
 });

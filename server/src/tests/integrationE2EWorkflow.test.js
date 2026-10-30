@@ -1,3 +1,4 @@
+import './helpers/integrationServiceDoubles.js';
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -53,6 +54,7 @@ const {
     applyIntegrationTestsService,
 } = await import("../services/integrationApiService.service.js");
 const { dockerRunner } = await import("../services/dockerRunner.service.js");
+const {scenarioArtifactVersion} = await import('../services/scenarioManager.service.js');
 const prisma = (await import("../config/prisma.js")).default;
 
 describe("Phase 6.2: Kiểm Thử Luồng Thực Tế (E2E Integration Scenarios)", () => {
@@ -71,6 +73,8 @@ describe("Phase 6.2: Kiểm Thử Luồng Thực Tế (E2E Integration Scenarios
     };
 
     beforeEach(() => {
+        jest.spyOn(prisma.project,'update').mockResolvedValue({workspaceRevision:1,eventSequence:1});
+        jest.spyOn(prisma.projectEvent,'create').mockResolvedValue({id:'event'});
         origDockerRun = dockerRunner.run;
         dockerRunner.run = async () => ({
             success: true,
@@ -437,7 +441,7 @@ describe("Phase 6.2: Kiểm Thử Luồng Thực Tế (E2E Integration Scenarios
             jest.spyOn(prisma.projectSnapshot, "findUnique").mockResolvedValue({
                 id: mockSnapshotId,
                 rootDir,
-                project: { ownerId: mockUserId, rootDir },
+                projectId:"proj-1", project: { id:"proj-1", workspaceRevision:0, ownerId: mockUserId, rootDir },
             });
 
             const initialAiTest = {
@@ -477,12 +481,14 @@ describe("Phase 6.2: Kiểm Thử Luồng Thực Tế (E2E Integration Scenarios
                 return currentAiTestRecord;
             });
 
+            jest.spyOn(prisma.aiTest,'findUnique').mockImplementation(async()=>currentAiTestRecord);
             // 1. User edits scenario in editor (changes expectedStatus to 201, modifies payload)
             const updateResult = await updateIntegrationScenarioService({
                 snapshotId: mockSnapshotId,
                 scenarioId: "sc-prod-create",
                 userId: mockUserId,
                 updates: {
+                    expectedVersion:scenarioArtifactVersion(currentAiTestRecord),
                     title: "POST /api/products - creates custom branded item",
                     expectedStatus: 201,
                     payload: { name: "Branded Widget", category: "Hardware" },

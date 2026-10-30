@@ -6,8 +6,11 @@ import { runSupertest } from '../services/supertestRunner.service.js';
 import { parseJestResults } from '../services/testResultParser.service.js';
 import { transformTestCodeForProject } from '../services/supertestCoverageJob.service.js';
 
-describe('Verification Gap 1: Import-Path Repair Without Pre-Healing the Fixtures', () => {
-    const originalSnapshotDir = 'D:/NCKH/CovAI-/server/uploads/snapshots/cmv96a09k0001r87dy9bs65g4/Online-Food-Ordering-System-main';
+// Optional replay of a developer-owned snapshot; regular tests use committed fixtures.
+const externalSnapshot = process.env.COVAI_EXTERNAL_SNAPSHOT || "D:/NCKH/CovAI-/server/uploads/snapshots/cmv96a09k0001r87dy9bs65g4/Online-Food-Ordering-System-main";
+const replaySnapshot = fs.existsSync(externalSnapshot) ? describe : describe.skip;
+replaySnapshot('Verification Gap 1: Import-Path Repair Without Pre-Healing the Fixtures', () => {
+    const originalSnapshotDir = externalSnapshot;
     let disposableRootDir;
     const testFilesRel = [
         'server/__tests__/integration/generated_api-76cbcebb.test.js',

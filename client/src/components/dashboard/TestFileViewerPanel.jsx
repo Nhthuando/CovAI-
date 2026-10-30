@@ -23,6 +23,8 @@ import {
 } from "lucide-react";
 import MonacoEditor from "@monaco-editor/react";
 import { updateFileContentApi, createProjectFileApi } from "../../services/project.service.js";
+import { useVersionedProjectFile } from "../../hooks/useVersionedProjectFile";
+import { useProjectAccess } from "../../hooks/useProjectAccess";
 import { cleanDisplayPath } from "./CoverageTypeDashboard.jsx";
 
 /* ── Extension to Language Mapping ───────────────────────── */
@@ -127,12 +129,15 @@ export default function TestFileViewerPanel({
   const isFound = Boolean(testFile?.found);
   const testFilePath = testFile?.filePath || testFile?.suggestedFilePath || "";
   const testFileName = testFile?.fileName || (testFilePath ? testFilePath.split("/").pop() : "test-file.js");
-  const rawTestCode = testFile?.testCode || "";
+  const versionedTest = useVersionedProjectFile(projectId, snapshotId, testFilePath, isFound);
+  const testAccess = useProjectAccess(projectId);
+  const rawTestCode = versionedTest.data?.content ?? testFile?.testCode ?? "";
   const framework = (testFile?.framework || "jest").toUpperCase();
 
   const [viewMode, setViewMode] = useState("code"); // "code" | "editor" | "suggestions"
   const [editorContent, setEditorContent] = useState(rawTestCode);
   const [isTestDirty, setIsTestDirty] = useState(false);
+  const [baseVersion, setBaseVersion] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState("");
@@ -141,22 +146,25 @@ export default function TestFileViewerPanel({
 
   // Sync editor content whenever raw test code changes from disk
   useEffect(() => {
+    if (isTestDirty) return;
     setEditorContent(rawTestCode);
+    setBaseVersion(versionedTest.data?.version || null);
     setIsTestDirty(false);
     onTestDirtyChange?.(false);
-  }, [rawTestCode, onTestDirtyChange]);
+  }, [rawTestCode, onTestDirtyChange, isTestDirty, versionedTest.data?.version]);
 
-  const saveTestFileInternal = useCallback(async () => {
+  const saveTestFileInternal = useCallback(async ({ expectedWorkspaceRevision } = {}) => {
+    if (!testAccess.can("files.write") || !isTestDirty) return testFilePath;
     if (!projectId || !testFilePath) return testFilePath;
-    if (isFound) {
-      await updateFileContentApi(projectId, testFilePath, editorContent);
-    } else {
-      await createProjectFileApi(projectId, testFilePath, editorContent);
-    }
+    const result = isFound
+      ? await updateFileContentApi(projectId, testFilePath, editorContent, { snapshotId, expectedVersion: baseVersion })
+      : await createProjectFileApi(projectId, testFilePath, editorContent, { snapshotId, expectedWorkspaceRevision: expectedWorkspaceRevision ?? testAccess.access?.project?.workspaceRevision });
+    setBaseVersion(result.data?.version || null);
+    await versionedTest.refetch();
     setIsTestDirty(false);
     onTestDirtyChange?.(false);
     return testFilePath;
-  }, [projectId, testFilePath, isFound, editorContent, onTestDirtyChange]);
+  }, [projectId, snapshotId, testFilePath, isFound, editorContent, onTestDirtyChange, isTestDirty, testAccess, versionedTest, baseVersion]);
 
   useEffect(() => {
     if (onRegisterTestSaver) {
@@ -202,17 +210,14 @@ export default function TestFileViewerPanel({
   };
 
   const handleSaveTestFile = async () => {
+    if (!testAccess.can("files.write")) return;
     if (!projectId || !testFilePath) return;
     setIsSaving(true);
     setSaveError("");
     setSaveSuccess(false);
 
     try {
-      if (isFound) {
-        await updateFileContentApi(projectId, testFilePath, editorContent);
-      } else {
-        await createProjectFileApi(projectId, testFilePath, editorContent);
-      }
+      await saveTestFileInternal();
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2500);
       setViewMode("code");
@@ -434,7 +439,7 @@ export default function TestFileViewerPanel({
                     if (onSaveBoth) onSaveBoth();
                     else handleSaveTestFile();
                   }}
-                  disabled={isSaving || isGlobalSaving}
+                  disabled={isSaving || isGlobalSaving || !testAccess.can("files.write")}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -731,7 +736,7 @@ export default function TestFileViewerPanel({
 
             <button
               onClick={() => onSuggestMissingTest?.()}
-              disabled={isLoadingSuggestions}
+              disabled={isLoadingSuggestions || !testAccess.can("ai.use")}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -1020,7 +1025,7 @@ export default function TestFileViewerPanel({
                       {onRejectSuggestion && sug.status !== "REJECTED" && (
                         <button
                           onClick={() => onRejectSuggestion(sugId)}
-                          disabled={isApplying}
+                          disabled={isApplying || !testAccess.can("files.write")}
                           style={{
                             display: "flex",
                             alignItems: "center",
@@ -1043,7 +1048,7 @@ export default function TestFileViewerPanel({
                       {/* Single Apply Button */}
                       <button
                         onClick={() => onApplySuggestion?.({ ...sug, generatedCode: currentCode, suggestedTestCode: currentCode, code: currentCode, fullUpdatedContent: sug.fullUpdatedContent })}
-                        disabled={isApplying || sug.status === "PASSED"}
+                        disabled={isApplying || sug.status === "PASSED" || !testAccess.can("files.write")}
                         style={{
                           display: "flex",
                           alignItems: "center",
@@ -1243,6 +1248,7 @@ export default function TestFileViewerPanel({
               }}
               onMount={handleEditorDidMount}
               options={{
+                readOnly: isSaving || isGlobalSaving || !testAccess.can("files.write"),
                 minimap: { enabled: false },
                 fontSize: 12,
                 lineNumbers: "on",

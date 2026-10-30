@@ -6,7 +6,7 @@ import path from "node:path";
 // Mock Prisma
 const prismaMock = {
     projectSnapshot: { findUnique: jest.fn(), findMany: jest.fn() },
-    project: { findUnique: jest.fn() },
+    project: { findUnique: jest.fn(), findFirst:jest.fn(async()=>null) },
     job: { findMany: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn() },
     testRun: { findMany: jest.fn(), findUnique: jest.fn(), findFirst: jest.fn() },
     aiTest: { findMany: jest.fn() },
@@ -346,7 +346,7 @@ describe("COVAI Phase 4 — Before/After Comparison & Quality Analysis Regressio
         const reqForbidden = { params: { projectId: "proj-1" }, user: { id: "user-attacker" }, query: {} };
         const resForbidden = { status: jest.fn().mockReturnThis(), json: jest.fn() };
         await getBeforeAfterComparison(reqForbidden, resForbidden);
-        expect(resForbidden.status).toHaveBeenCalledWith(403);
+        expect(resForbidden.status).toHaveBeenCalledWith(404);
     });
 
     // 12. Hủy hoặc chạy Job mới không ghi đè các phiên bản dùng làm baseline

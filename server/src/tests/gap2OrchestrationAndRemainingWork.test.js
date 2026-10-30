@@ -242,9 +242,12 @@ class IsolatedPersistenceDouble {
     $transaction = async (fn) => fn(this);
 }
 
-describe('Verification Gap 2: Live Run All and Run Remaining Workflows (Isolated Persistence Double)', () => {
+// Optional replay of a developer-owned snapshot; regular tests use committed fixtures.
+const externalSnapshot = process.env.COVAI_EXTERNAL_SNAPSHOT || "D:/NCKH/CovAI-/server/uploads/snapshots/cmv96a09k0001r87dy9bs65g4/Online-Food-Ordering-System-main";
+const replaySnapshot = fs.existsSync(externalSnapshot) ? describe : describe.skip;
+replaySnapshot('Verification Gap 2: Live Run All and Run Remaining Workflows (Isolated Persistence Double)', () => {
     let db;
-    const snapshotRootDir = 'D:/NCKH/CovAI-/server/uploads/snapshots/cmv96a09k0001r87dy9bs65g4/Online-Food-Ordering-System-main';
+    const snapshotRootDir = externalSnapshot;
     const snapshotId = 'snap-food-gap2';
     const projectId = 'proj-food-gap2';
     const userId = 'user-gap2-owner';

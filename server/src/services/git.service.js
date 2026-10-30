@@ -1,4 +1,7 @@
-import { exec } from "child_process";
+import { execFile } from "child_process";
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { withPreparedProjectWorkspace } from './projectWorkspacePreparation.service.js';
+import { stagePreparedPublication } from './projectOperationWorkspace.service.js';
 import util from "util";
 import path from "path";
 import fs from "fs";
@@ -6,18 +9,48 @@ import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { GitHubRepositoryAccessService } from "./github.service.js";
 import { snapshotWorkspaceRoot } from "../utils/snapshotWorkspace.js";
+import { resolveProjectAccess, membershipWhere } from "./projectAccess.service.js";
 
-const execAsync = util.promisify(exec);
+const execFileAsync = util.promisify(execFile);
 
+export const gitCommandArguments = command => {
+  if (Array.isArray(command)) return command;
+  const tokens = []; let current = "", quote = null, started = false;
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    if (ch === "\\" && quote === '"' && ['"', "\\"].includes(command[i + 1])) { current += command[++i]; started = true; }
+    else if (quote) { if (ch === quote) quote = null; else current += ch; started = true; }
+    else if (ch === '"' || ch === "'") { quote = ch; started = true; }
+    else if (/\s/.test(ch)) { if (started) tokens.push(current); current = ""; started = false; }
+    else { current += ch; started = true; }
+  }
+  if (quote) throw new ServiceError("Unterminated Git argument", 400);
+  if (started) tokens.push(current);
+  if (tokens.shift() !== "git") throw new ServiceError("Only Git commands are supported", 400);
+  return tokens;
+};
+const branchName = value => {
+  if (value !== undefined && (typeof value !== "string" || !/^[\w][\w./-]{0,199}$/.test(value) || value.includes("..") || value.includes("@{"))) throw new ServiceError("Invalid branch name", 400);
+  return value;
+};
+const fileName = value => {
+  if (typeof value !== "string" || !value || /[\0\r\n"]/.test(value) || path.isAbsolute(value) || /^[a-z]:/i.test(value) || value.split(/[\\/]/).some(part => part === ".." || part === ".git")) throw new ServiceError("Use a project-relative file path", 400);
+  return value;
+};
+
+const preparedGit = new AsyncLocalStorage();
 export class GitService {
   /**
    * Resolves the actual project root directory from the latest snapshot
    */
   static async getRepoPath(projectId, userId) {
+    const active = preparedGit.getStore();
+    if (active?.projectId === projectId && active.userId === userId) return active.repo;
+    await resolveProjectAccess({ projectId, userId, capability: "project.read" });
     const project = await prisma.project.findFirst({
       where: {
         id: projectId,
-        ...(userId ? { ownerId: userId } : {}),
+        ...membershipWhere(userId),
       },
       include: {
         owner: {
@@ -63,12 +96,8 @@ export class GitService {
    */
   static async runCommand(rootDir, commandStr, envExtra = {}) {
     try {
-      const trimmed = (commandStr || "").trim();
-      const safeCommand = trimmed.startsWith("git ")
-        ? trimmed.replace(/^git\s+/, "git -c safe.directory=* ")
-        : trimmed;
-
-      const { stdout, stderr } = await execAsync(safeCommand, {
+      const args = gitCommandArguments(commandStr);
+      const { stdout, stderr } = await execFileAsync("git", ["-c", "core.hooksPath=/dev/null", ...args], {
         cwd: rootDir,
         env: {
           ...process.env,
@@ -82,7 +111,7 @@ export class GitService {
       });
       return { stdout: stdout.trim(), stderr: stderr.trim() };
     } catch (error) {
-      const errMsg = error.stderr || error.stdout || error.message;
+      const errMsg = (error.stderr || error.stdout || error.message).replace(/https:\/\/[^@\s]+@github\.com/gi, "https://github.com");
       throw new ServiceError(errMsg.trim(), 500);
     }
   }
@@ -91,6 +120,7 @@ export class GitService {
    * Ensures a .git directory exists and is properly configured
    */
   static async ensureGitRepo(projectId, userId) {
+    await resolveProjectAccess({ projectId, userId, capability: "integrations.write" });
     const { rootDir, project, snapshot, isGitHubProject } =
       await this.getRepoPath(projectId, userId);
 
@@ -116,8 +146,8 @@ export class GitService {
           await this.runCommand(rootDir, "git init");
         },
       );
-      await this.runCommand(rootDir, `git config user.name "${authorName}"`);
-      await this.runCommand(rootDir, `git config user.email "${authorEmail}"`);
+      await this.runCommand(rootDir, ['config', 'user.name', authorName]);
+      await this.runCommand(rootDir, ['config', 'user.email', authorEmail]);
       await this.runCommand(rootDir, "git config commit.gpgsign false");
 
       // If project has a repoUrl or was imported from GitHub, link origin and fetch
@@ -160,11 +190,11 @@ export class GitService {
       // Ensure config exists
       await this.runCommand(
         rootDir,
-        `git config user.name "${authorName}"`,
+        ['config', 'user.name', authorName],
       ).catch(() => {});
       await this.runCommand(
         rootDir,
-        `git config user.email "${authorEmail}"`,
+        ['config', 'user.email', authorEmail],
       ).catch(() => {});
       await this.runCommand(rootDir, "git config commit.gpgsign false").catch(
         () => {},
@@ -182,7 +212,7 @@ export class GitService {
               /https:\/\/[^@]+@github\.com\//,
               "https://github.com/",
             );
-            await prisma.project
+            if (!preparedGit.getStore()) await prisma.project
               .update({
                 where: { id: projectId },
                 data: { repoUrl: cleanUrl },
@@ -318,24 +348,12 @@ export class GitService {
             /https:\/\/[^@]+@github\.com\//,
             "https://github.com/",
           );
-          await prisma.project
-            .update({
-              where: { id: projectId },
-              data: { repoUrl: activeRepoUrl },
-            })
-            .catch(() => {});
         }
       } catch (_) {}
 
       if (!activeRepoUrl && project.owner?.name) {
         activeRepoUrl = `https://github.com/${project.owner.name}/${project.name}`;
-        await prisma.project
-          .update({
-            where: { id: projectId },
-            data: { repoUrl: activeRepoUrl },
-          })
-          .catch(() => {});
-        project.repoUrl = activeRepoUrl;
+
       }
     }
 
@@ -447,6 +465,7 @@ export class GitService {
    * Stage files (git add)
    */
   static async stageFiles(projectId, userId, files) {
+    if (files && files !== "all") (Array.isArray(files) ? files : [files]).forEach(fileName);
     const { rootDir } = await this.ensureGitRepo(projectId, userId);
 
     if (
@@ -469,6 +488,7 @@ export class GitService {
    * Unstage files (git restore --staged or git reset)
    */
   static async unstageFiles(projectId, userId, files) {
+    if (files && files !== "all") (Array.isArray(files) ? files : [files]).forEach(fileName);
     const { rootDir } = await this.ensureGitRepo(projectId, userId);
 
     if (
@@ -509,10 +529,16 @@ export class GitService {
     filePath,
     isUntracked = false,
   ) {
+    fileName(filePath);
     const { rootDir } = await this.ensureGitRepo(projectId, userId);
 
     if (isUntracked) {
-      const targetPath = path.join(rootDir, filePath);
+      const targetPath = path.resolve(rootDir, filePath);
+      const relative = path.relative(fs.realpathSync(rootDir), targetPath);
+      if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) throw new ServiceError("Invalid file path", 400);
+      const realParent = fs.realpathSync(path.dirname(targetPath));
+      const parentRelative = path.relative(fs.realpathSync(rootDir), realParent);
+      if (parentRelative.startsWith("..") || path.isAbsolute(parentRelative)) throw new ServiceError("Invalid file path", 400);
       if (fs.existsSync(targetPath)) {
         const stat = fs.statSync(targetPath);
         if (stat.isDirectory()) {
@@ -557,10 +583,9 @@ export class GitService {
     const authorName = user?.name || "GitHub Developer";
     const authorEmail = user?.email || "developer@github.com";
 
-    const escapedMsg = message.replace(/"/g, '\\"');
     const { stdout } = await this.runCommand(
       rootDir,
-      `git commit --author="${authorName} <${authorEmail}>" -m "${escapedMsg}"`,
+      ['commit', '--author', `${authorName} <${authorEmail}>`, '-m', message],
     );
 
     return {
@@ -574,6 +599,7 @@ export class GitService {
    * Push branch to remote (authenticated with user's GitHub session)
    */
   static async push(projectId, userId, branch) {
+    branchName(branch);
     const { rootDir, project } = await this.ensureGitRepo(projectId, userId);
 
     // Ensure origin has the latest decrypted GitHub access token
@@ -647,6 +673,7 @@ export class GitService {
    * Pull changes from remote (authenticated with user's GitHub session)
    */
   static async pull(projectId, userId, branch) {
+    branchName(branch);
     const { rootDir, project } = await this.ensureGitRepo(projectId, userId);
 
     if (project.repoUrl) {
@@ -713,7 +740,7 @@ export class GitService {
    * Get list of branches
    */
   static async getBranches(projectId, userId) {
-    const { rootDir } = await this.ensureGitRepo(projectId, userId);
+    const { rootDir } = await this.getRepoPath(projectId, userId);
 
     let current = "main";
     try {
@@ -761,6 +788,7 @@ export class GitService {
    * Checkout or create branch
    */
   static async checkout(projectId, userId, branch, createNew = false) {
+    branchName(branch);
     if (!branch || branch.trim().length === 0) {
       throw new ServiceError("Branch name is required", 400);
     }
@@ -795,21 +823,24 @@ export class GitService {
    * Set or update remote repository URL (e.g. link to GitHub)
    */
   static async setRemoteUrl(projectId, userId, repoUrl) {
+    await resolveProjectAccess({ projectId, userId, capability: "integrations.write" });
     if (!repoUrl || typeof repoUrl !== "string") {
       throw new ServiceError("repoUrl is required", 400);
     }
     const cleanUrl = repoUrl.trim();
-    if (!cleanUrl.startsWith("https://github.com/")) {
+    if (!/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+(?:\.git)?\/?$/.test(cleanUrl)) {
       throw new ServiceError(
         "Only GitHub URLs (https://github.com/...) are supported",
         400,
       );
     }
 
-    await prisma.project.update({
+    const active = preparedGit.getStore();
+    if (active) active.repo.project.repoUrl = cleanUrl;
+    await stagePreparedPublication(tx => tx.project.update({
       where: { id: projectId },
       data: { repoUrl: cleanUrl },
-    });
+    }));
 
     await this.ensureGitRepo(projectId, userId);
     return this.getStatus(projectId, userId);
@@ -819,7 +850,9 @@ export class GitService {
    * Get commit history (log)
    */
   static async getLog(projectId, userId, limit = 25) {
-    const { rootDir } = await this.ensureGitRepo(projectId, userId);
+    const { rootDir } = await this.getRepoPath(projectId, userId);
+    limit = Number(limit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new ServiceError("Log limit must be 1–100", 400);
 
     try {
       const { stdout } = await this.runCommand(
@@ -851,7 +884,8 @@ export class GitService {
    * Get file diff
    */
   static async getDiff(projectId, userId, filePath, staged = false) {
-    const { rootDir } = await this.ensureGitRepo(projectId, userId);
+    if (filePath) fileName(filePath);
+    const { rootDir } = await this.getRepoPath(projectId, userId);
 
     const targetFlag = staged ? "--cached" : "";
     const fileArg = filePath ? `-- "${filePath}"` : "";
@@ -868,9 +902,38 @@ export class GitService {
    * Generic git command runner (fallback)
    */
   static async runGitCommand(projectId, command, args = [], userId) {
-    const { rootDir } = await this.ensureGitRepo(projectId, userId);
-    const cmd = `git ${command} ${(args || []).join(" ")}`;
-    const { stdout, stderr } = await this.runCommand(rootDir, cmd);
+    const safeCommands = new Set(["status", "log", "diff", "branch"]);
+    if (!safeCommands.has(command) || !Array.isArray(args) || args.length > 20 || args.some(arg => typeof arg !== "string" || !/^[\w./:=@ -]{1,200}$/.test(arg) || /^(?:-c|--config|--exec|--output|--ext-diff|--textconv|--no-index)/.test(arg))) throw new ServiceError("Use the dedicated Git action for this command", 400);
+    if (command === 'branch') {
+      const readFlags = new Set(['--show-current', '--list', '-a', '--all', '-r', '--remotes', '-v', '-vv', '--verbose', '--no-color']);
+      if (!args.every(arg => readFlags.has(arg))) throw new ServiceError('Use the dedicated checkout action to create or change a branch', 400);
+    }
+    const { rootDir } = await this.getRepoPath(projectId, userId);
+    const { stdout, stderr } = await this.runCommand(rootDir, [command, ...args]);
     return stdout || stderr || "";
   }
+}
+
+// Git commands prepare against a complete private repository copy. Source and
+// .git files publish together under the same version/permission guard as Editor
+// saves. No network command runs while a database transaction holds the lock.
+for (const method of ['stageFiles', 'unstageFiles', 'discardChanges', 'commit', 'pull', 'checkout', 'push', 'ensureGitRepo', 'setRemoteUrl']) {
+  const original = GitService[method];
+  GitService[method] = async function (projectId, userId, ...args) {
+    if (method === 'discardChanges') fileName(args[0]);
+    if (['checkout', 'pull', 'push'].includes(method)) branchName(args[0]);
+    if (preparedGit.getStore()) return original.call(this, projectId, userId, ...args);
+    const repo = await this.getRepoPath(projectId, userId);
+    await resolveProjectAccess({ projectId, userId, capability: 'integrations.write' });
+    const dotGit = path.join(repo.rootDir, '.git');
+    if (fs.existsSync(dotGit) && (!fs.lstatSync(dotGit).isDirectory() || fs.lstatSync(dotGit).isSymbolicLink())) {
+      throw new ServiceError('Linked Git worktrees are not supported for project source publication', 409, 'UNSUPPORTED_GIT_WORKTREE');
+    }
+    return withPreparedProjectWorkspace({ projectId, snapshotId: repo.snapshot.id, userId,
+      capability: 'integrations.write', expectedWorkspaceRevision: repo.project.workspaceRevision,
+      type: `GIT_${method.toUpperCase()}`, input: { method }, includeGitMetadata: true,
+    }, context => preparedGit.run({ projectId, userId, repo: { ...repo, rootDir: context.rootDir,
+      snapshot: { ...repo.snapshot, rootDir: path.join(context.rootDir, context.analysisRelative), storagePath: context.rootDir },
+    } }, () => original.call(this, projectId, userId, ...args)));
+  };
 }

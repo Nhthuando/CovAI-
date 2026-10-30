@@ -17,6 +17,16 @@ const mockPrisma = {
 
 await jest.unstable_mockModule("../config/prisma.js", () => ({ default: mockPrisma }));
 
+// Pure coverage-outcome checks use a deterministic preparation seam; real DB
+// publication/rollback tests live in projectWorkspacePublish.integration.test.js.
+await jest.unstable_mockModule('../services/projectWorkspacePreparation.service.js',()=>({
+    withPreparedProjectWorkspace:jest.fn(async(options,run)=>{
+        expect(options.expectedWorkspaceRevision).toBe(0);
+        expect(options.snapshotId).toBe('snap-dod');
+        return run({});
+    }),
+}));
+
 await jest.unstable_mockModule("../controllers/coverage.controller.js", () => ({
     invalidateCoverageCache: jest.fn()
 }));
@@ -356,6 +366,7 @@ describe('Calculator User Tests', () => {
 
             const suggestion = {
                 sourceFile: "src/metric.js",
+                proposalBase:{snapshotId:'snap-dod',workspaceRevision:0},
                 testFile: "tests/metric.test.js",
                 framework: "jest",
                 generatedCode: `describe('MetricService', () => {

@@ -20,7 +20,7 @@ describe("project structure authorization and safe projections", () => {
   });
 
   it("reports a processing upload when an owned project has no ready snapshot yet", async () => {
-    prismaMock.project.findFirst.mockResolvedValue({ id: "project-1" });
+    prismaMock.project.findFirst.mockResolvedValue({ id: "project-1",ownerId:'owner-1' });
     prismaMock.projectSnapshot.findFirst.mockResolvedValue(null);
 
     await expect(resolveLatestOwnedProjectSnapshot({ projectId: "project-1", userId: "owner-1", requireRoot: true }))
@@ -28,7 +28,7 @@ describe("project structure authorization and safe projections", () => {
   });
 
   it("resolves the latest ready snapshot only after ownership is confirmed", async () => {
-    prismaMock.project.findFirst.mockResolvedValue({ id: "project-1" });
+    prismaMock.project.findFirst.mockResolvedValue({ id: "project-1",ownerId:'owner-1' });
     prismaMock.projectSnapshot.findFirst.mockResolvedValue({ id: "snapshot-2", projectId: "project-1", rootDir: "C:/workspace/snapshot-2" });
 
     const result = await resolveLatestOwnedProjectSnapshot({ projectId: "project-1", userId: "owner-1", requireRoot: true });
@@ -41,9 +41,11 @@ describe("project structure authorization and safe projections", () => {
   });
 
   it("requires the owning project for job reads", async () => {
-    prismaMock.job.findFirst.mockResolvedValue(null);
+    prismaMock.job.findFirst.mockResolvedValue({id:'job-1',projectId:'foreign-project'});
+    prismaMock.project.findFirst.mockResolvedValue(null);
     await expect(resolveOwnedJob({ jobId: "job-1", userId: "owner-1" })).rejects.toMatchObject({ statusCode: 404 });
-    expect(prismaMock.job.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "job-1", project: { ownerId: "owner-1" } } }));
+    expect(prismaMock.job.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "job-1" } }));
+    expect(prismaMock.project.findFirst).toHaveBeenCalledWith(expect.objectContaining({where:expect.objectContaining({id:'foreign-project'})}));
   });
 
   it("omits raw payloads, results, and internal snapshot paths from projections", () => {

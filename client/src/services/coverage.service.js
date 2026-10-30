@@ -1,3 +1,4 @@
+import { getAIModelHeaders } from './aiModel.service.js';
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 function getAuthHeaders() {
@@ -7,6 +8,7 @@ function getAuthHeaders() {
 
     return {
         "Content-Type": "application/json",
+    ...getAIModelHeaders(),
         ...(token && {
             Authorization: `Bearer ${token}`,
         }),
@@ -208,10 +210,11 @@ export async function applyUnitTestSuggestion(snapshotId, { suggestion, suggesti
     return handleResponse(res);
 }
 
-export async function saveAiSystemTest(snapshotId) {
+export async function saveAiSystemTest(snapshotId, options = {}) {
     const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/system/save-ai-test`, {
         method: "POST",
         headers: getAuthHeaders(),
+        body: JSON.stringify(options),
     });
     return handleResponse(res);
 }

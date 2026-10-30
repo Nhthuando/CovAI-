@@ -1,8 +1,10 @@
+import { enforceProjectEndpointPolicy } from '../middlewares/projectEndpointPolicy.js';
 import express from "express";
 import { listAiTests, generateCypressTests } from "../controllers/aiTest.controller.js";
 import { authMiddleware } from "../middlewares/auth.middleware.js";
 
 const router = express.Router();
+router.use(authMiddleware, enforceProjectEndpointPolicy('ai-tests'));
 
 // GET /ai-tests?projectId=xxx — list AI-generated tests for a project
 router.get("/", authMiddleware, listAiTests);

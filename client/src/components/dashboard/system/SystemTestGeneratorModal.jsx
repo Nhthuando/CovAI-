@@ -3,7 +3,7 @@ import { X, Sparkles, Plus, Trash2, Check, AlertCircle, Loader2 } from "lucide-r
 import Button from "../../common/Button.jsx";
 import { generateColdStartSystemTests } from "../../../services/systemTest.service.js";
 
-const DEFAULT_ROUTES = ["/", "/login", "/register", "/dashboard", "/cart"];
+const DEFAULT_ROUTES = ["/"];
 
 export default function SystemTestGeneratorModal({
   isOpen,
@@ -13,7 +13,7 @@ export default function SystemTestGeneratorModal({
   onSuccess,
 }) {
   const [framework, setFramework] = useState(initialFramework);
-  const [routes, setRoutes] = useState(["/", "/login"]);
+  const [routes, setRoutes] = useState([]);
   const [newRoute, setNewRoute] = useState("");
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState(null);
@@ -44,10 +44,6 @@ export default function SystemTestGeneratorModal({
   };
 
   const handleGenerate = async () => {
-    if (routes.length === 0) {
-      setError("Please specify at least one route to generate tests for.");
-      return;
-    }
     setGenerating(true);
     setError(null);
     setResult(null);
@@ -86,12 +82,13 @@ export default function SystemTestGeneratorModal({
                 Auto-Generate System Tests with AI
               </h3>
               <p className="text-[11px] text-[var(--color-text-secondary)] m-0">
-                Cold-start generator for frontend routes & user workflows
+                Source-based tests for browser routes and user workflows
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
+            aria-label="Close test generator"
             disabled={generating}
             className="p-1 rounded-[var(--radius-sm)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer"
           >
@@ -123,7 +120,7 @@ export default function SystemTestGeneratorModal({
               <div className="text-[11px] text-[var(--color-text-secondary)]">
                 Scenarios generated:{" "}
                 <span className="font-semibold text-[var(--color-text)]">
-                  {result.scenariosCount || 1}
+                  {result.scenariosCount ?? result.scenarioCount ?? 0}
                 </span>
               </div>
               <div className="pt-2 flex justify-end">
@@ -171,7 +168,7 @@ export default function SystemTestGeneratorModal({
               {/* Target Routes */}
               <div>
                 <label className="block font-medium text-[var(--color-text)] mb-1.5">
-                  Target Routes to Cover
+                  Target routes (optional)
                 </label>
                 <div className="flex flex-wrap gap-1.5 mb-2.5">
                   {DEFAULT_ROUTES.map((route) => {
@@ -197,7 +194,7 @@ export default function SystemTestGeneratorModal({
                 <div className="space-y-1.5 max-h-32 overflow-y-auto border border-[var(--color-border)] rounded-[var(--radius-md)] p-2 bg-[var(--color-surface-secondary)]/30">
                   {routes.length === 0 ? (
                     <div className="text-[11px] text-[var(--color-text-muted)] italic text-center py-2">
-                      No routes selected. Please add or select at least one route.
+                      Routes will be discovered automatically from your source.
                     </div>
                   ) : (
                     routes.map((route) => (
@@ -261,9 +258,10 @@ export default function SystemTestGeneratorModal({
             <Button
               variant="primary"
               size="sm"
+              className="system-test-primary-action"
               icon={generating ? Loader2 : Sparkles}
               loading={generating}
-              disabled={generating || routes.length === 0}
+              disabled={generating}
               onClick={handleGenerate}
             >
               {generating ? "Generating..." : "Generate Test Suite"}

@@ -4,6 +4,12 @@ import { EventEmitter } from "events";
 let currentJobStatus = "QUEUED";
 
 const mockPrisma = {
+ projectOperationRequest: {findUnique:jest.fn(async()=>null),create:jest.fn(async({data})=>({id:'alias',...data}))},
+ project:{findFirst:jest.fn(async()=>({id:"mockProjectId",ownerId:"mockUserId",workspaceRevision:0}))},
+ projectOperation: {
+   findUnique: jest.fn(async()=>null), findFirst: jest.fn(async()=>null),
+   create: jest.fn(async({data})=>({id:"mockOperation",...data})),
+ },
   projectSnapshot: {
     findUnique: jest.fn().mockResolvedValue({
       id: "mockSnapshotId",
@@ -60,6 +66,8 @@ const mockPrisma = {
     upsert: jest.fn().mockResolvedValue({}),
   },
 };
+mockPrisma.$transaction = jest.fn(async action => action(mockPrisma));
+mockPrisma.$executeRaw = jest.fn(async () => 1);
 
 const mockChild = new EventEmitter();
 mockChild.stdout = new EventEmitter();
@@ -182,7 +190,8 @@ describe("Coverage Processing", () => {
   });
 
   test("Error when missing snapshot for any test coverage processing", async () => {
-    mockPrisma.projectSnapshot.findUnique.mockResolvedValueOnce(null);
+    // Guarded admission resolves the snapshot through its project-scoped query.
+    mockPrisma.projectSnapshot.findFirst.mockResolvedValueOnce(null);
 
     await expect(
       createVitestCoverageJob({

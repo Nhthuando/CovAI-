@@ -1,5 +1,6 @@
 import admin from "firebase-admin";
 import dotenv from "dotenv";
+import { createLocalProjectBucket } from './localProjectStorage.js';
 dotenv.config();
 
 const requiredEnvVars = [
@@ -9,15 +10,16 @@ const requiredEnvVars = [
   "FIREBASE_STORAGE_BUCKET",
 ];
 
-for (const key of requiredEnvVars) {
+const localStorage = process.env.PROJECT_STORAGE_DRIVER === 'local';
+for (const key of localStorage ? [] : requiredEnvVars) {
   if (!process.env[key]) {
     throw new Error(`Missing environment variable: ${key}`);
   }
 }
 
-const privateKey = process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n");
+const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
 
-admin.initializeApp({
+if (!localStorage && admin.apps.length === 0) admin.initializeApp({
   credential: admin.credential.cert({
     projectId: process.env.FIREBASE_PROJECT_ID,
     clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
@@ -26,5 +28,9 @@ admin.initializeApp({
   storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
 });
 
-export const getBucket = () => admin.storage().bucket();
+let localBucket;
+export const getBucket = () => {
+  if (!localStorage) return admin.storage().bucket();
+  return localBucket ||= createLocalProjectBucket(process.env.PROJECT_STORAGE_ROOT);
+};
 export { admin };

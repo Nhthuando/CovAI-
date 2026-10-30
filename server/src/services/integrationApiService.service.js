@@ -1,3 +1,22 @@
+import { resolveProjectAccess } from './projectAccess.service.js';
+import { currentProjectOperation, operationSnapshot, stagePreparedValue, stagePreparedPublication, deferPreparedCommit } from './projectOperationWorkspace.service.js';
+import { withPreparedProjectWorkspace } from './projectWorkspacePreparation.service.js';
+import { scenarioArtifactVersion, assertScenarioVersion, updateScenarioService, getScenarioService, regenerateScenarioService } from './scenarioManager.service.js';
+import { createSnapshotJob } from './job.service.js';
+const invalidateAfterCommit = snapshotId => currentProjectOperation() ? deferPreparedCommit(()=>invalidateEndpointCache(snapshotId)) : invalidateEndpointCache(snapshotId);
+const stageArtifact = async (run, placeholder) => stagePreparedValue(async tx => {
+    const value = await run(tx);
+    const operation = currentProjectOperation();
+    if (operation && !operation.publicationMetadata?.changedPaths?.length) await tx.project.update({where:{id:operation.projectId},data:{workspaceRevision:{increment:1}}});
+    return value;
+},placeholder);
+const guardedWorkspace = async (args,capability,run) => {
+    const {snapshot,project} = args.snapshotId ? await verifySnapshotOwnership(args.snapshotId,args.userId) : await (async()=>{const project=await verifyProjectOwnership(args.projectId,args.userId);return {project,snapshot:project.snapshots?.[0]};})();
+    if (!snapshot) throw new ServiceError('Snapshot not found',404);
+    await resolveProjectAccess({projectId:project.id,userId:args.userId,capability});
+    if (currentProjectOperation()) return run({...args,snapshotId:snapshot.id});
+    return withPreparedProjectWorkspace({projectId:project.id,snapshotId:snapshot.id,userId:args.userId,capability,expectedWorkspaceRevision:project.workspaceRevision,type:'INTEGRATION_WRITE'},()=>run({...args,snapshotId:snapshot.id}));
+};
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
@@ -56,10 +75,8 @@ export const verifySnapshotOwnership = async (snapshotId, userId) => {
     if (!snapshot) {
         throw new ServiceError("Project snapshot not found", 404);
     }
-    if (snapshot.project?.ownerId && snapshot.project.ownerId !== userId) {
-        throw new ServiceError("Forbidden: You do not have access to this project", 403);
-    }
-    return { snapshot, project: snapshot.project };
+    await resolveProjectAccess({projectId:snapshot.projectId,userId,capability:'project.read'});
+    return { snapshot:operationSnapshot(snapshot), project: snapshot.project };
 };
 
 /**
@@ -81,10 +98,8 @@ export const verifyProjectOwnership = async (projectId, userId) => {
     if (!project) {
         throw new ServiceError("Project not found", 404);
     }
-    if (project.ownerId && project.ownerId !== userId) {
-        throw new ServiceError("Forbidden: You do not have access to this project", 403);
-    }
-    return project;
+    await resolveProjectAccess({projectId:projectId,userId,capability:'project.read'});
+    return {...project,snapshots:(project.snapshots || []).map(operationSnapshot)};
 };
 
 /**
@@ -114,7 +129,7 @@ export const detectIntegrationFrameworksService = async ({ snapshotId, projectId
 /**
  * Task 4.2: Install missing dependencies for integration testing
  */
-export const installIntegrationDependenciesService = async ({ snapshotId, projectId, userId, packages, framework }) => {
+const installIntegrationDependenciesInWorkspace = async ({ snapshotId, projectId, userId, packages, framework }) => {
     let rootDir = null;
     if (snapshotId) {
         const { snapshot, project } = await verifySnapshotOwnership(snapshotId, userId);
@@ -132,7 +147,8 @@ export const installIntegrationDependenciesService = async ({ snapshotId, projec
     }
 
     const target = framework || packages;
-    const result = await installIntegrationDependencies(rootDir, target);
+    const result = await installIntegrationDependencies({rootDir,packages,framework});
+    if (!result.success) throw new ServiceError("Dependency installation failed",500);
     return result;
 };
 
@@ -145,8 +161,10 @@ export const queueIntegrationTestGenerationService = async ({
     framework = "supertest",
     targetEndpoints = [],
     force = false,
+    model, requestId,
 }) => {
     const { snapshot, project } = await verifySnapshotOwnership(snapshotId, userId);
+    await resolveProjectAccess({projectId:snapshot.projectId,userId,capability:'ai.use'});
     const normFramework = normalizeFramework(framework);
 
     // Pre-flight dirty check (F-03): Check if user edited scenarios exist on targeted endpoints
@@ -178,30 +196,9 @@ export const queueIntegrationTestGenerationService = async ({
         }
     }
 
-    const job = await prisma.job.create({
-        data: {
-            userId,
-            projectId: snapshot.projectId,
-            snapshotId,
-            type: "AI_TESTS",
-            status: "QUEUED",
-            payloadJson: JSON.stringify({
-                mode: "INTEGRATION_GENERATION",
-                framework: normFramework,
-                targetEndpoints,
-                force,
-            }),
-        },
-    });
-
-    addJobToQueue("AI_TESTS", job.id, {
-        mode: "INTEGRATION_GENERATION",
-        framework: normFramework,
-        targetEndpoints,
-        force,
-    }).catch((err) => {
-        console.error(`[queueIntegrationTestGeneration] Failed to queue job ${job.id}:`, err.message);
-    });
+    const payload = {mode:'INTEGRATION_GENERATION',framework:normFramework,targetEndpoints,force,model};
+    const job = await createSnapshotJob({projectId:snapshot.projectId,snapshotId,userId,type:'AI_TESTS',payloadJson:payload,requestId});
+    if (!job.reused) await addJobToQueue('AI_TESTS',job.id,payload);
 
     return {
         job,
@@ -219,6 +216,7 @@ export const runIntegrationGenerationPipeline = async ({
     framework = "SUPERTEST",
     targetEndpoints = [],
     abortSignal = null,
+    model,
 }) => {
     const normFramework = normalizeFramework(framework);
     await updateJobStatus({ jobId, progress: 10, status: "RUNNING" }).catch(() => {});
@@ -265,7 +263,7 @@ export const runIntegrationGenerationPipeline = async ({
     await updateJobStatus({ jobId, progress: 70 }).catch(() => {});
     await addJobLog(jobId, "INFO", "[Integration AI] Đang gửi yêu cầu tới mô hình AI LLM...").catch(() => {});
 
-    const aiResponseText = await generateText(prompt, process.env.GEMINI_MODEL || "gemini-3.8-flash");
+    const aiResponseText = await generateText(prompt, model || process.env.GEMINI_MODEL || "gemini-2.5-flash");
     if (!aiResponseText || !aiResponseText.trim()) {
         throw new ServiceError("Mô hình AI trả về phản hồi rỗng", 500);
     }
@@ -301,8 +299,10 @@ export const runIntegrationGenerationPipeline = async ({
         createdAt: new Date().toISOString(),
     }));
 
-    const createdAiTest = await prisma.aiTest.create({
+    const plannedId = crypto.randomUUID();
+    const createdAiTest = await stageArtifact(tx => tx.aiTest.create({
         data: {
+            id:plannedId,
             projectId,
             snapshotId,
             filePath: targetFilePath,
@@ -315,9 +315,9 @@ export const runIntegrationGenerationPipeline = async ({
                 requests: requestsMeta,
             }),
         },
-    });
+    }),{id:plannedId});
 
-    invalidateEndpointCache(snapshotId);
+    invalidateAfterCommit(snapshotId);
 
     await updateJobStatus({ jobId, progress: 100, status: "SUCCESS" }).catch(() => {});
     await addJobLog(jobId, "INFO", `[Integration AI] Hoàn tất! Đã sinh và lưu ${requestsMeta.length} kịch bản test vào Workspace.`).catch(() => {});
@@ -338,8 +338,10 @@ export const queueRegenerateScenarioService = async ({
     scenarioId,
     framework = "supertest",
     failureContext = null,
+    expectedVersion, model, requestId,
 }) => {
     const { snapshot } = await verifySnapshotOwnership(snapshotId, userId);
+    await resolveProjectAccess({projectId:snapshot.projectId,userId,capability:'ai.use'});
     if (!scenarioId) {
         throw new ServiceError("scenarioId is required", 400);
     }
@@ -347,30 +349,13 @@ export const queueRegenerateScenarioService = async ({
     const decodedScenarioId = decodeURIComponent(scenarioId);
     const normFramework = normalizeFramework(framework);
 
-    const job = await prisma.job.create({
-        data: {
-            userId,
-            projectId: snapshot.projectId,
-            snapshotId,
-            type: "AI_TESTS",
-            status: "QUEUED",
-            payloadJson: JSON.stringify({
-                mode: "INTEGRATION_REGENERATE",
-                scenarioId: decodedScenarioId,
-                framework: normFramework,
-                failureContext,
-            }),
-        },
-    });
-
-    addJobToQueue("AI_TESTS", job.id, {
-        mode: "INTEGRATION_REGENERATE",
-        scenarioId: decodedScenarioId,
-        framework: normFramework,
-        failureContext,
-    }).catch((err) => {
-        console.error(`[queueRegenerateScenario] Failed to queue job ${job.id}:`, err.message);
-    });
+    const tests = await prisma.aiTest.findMany({where:{snapshotId}});
+    const artifact = tests.find(test => {try {return (JSON.parse(test.metaJson || '{}').requests || []).some(r=>r.scenarioId===decodedScenarioId || r.testName===decodedScenarioId);}catch{return false;}});
+    if (!artifact) throw new ServiceError('Editable scenario not found',404);
+    assertScenarioVersion(artifact,expectedVersion);
+    const payload = {mode:'INTEGRATION_REGENERATE',scenarioId:decodedScenarioId,framework:normFramework,failureContext,expectedVersion,model};
+    const job = await createSnapshotJob({projectId:snapshot.projectId,snapshotId,userId,type:'AI_TESTS',payloadJson:payload,requestId});
+    if (!job.reused) await addJobToQueue('AI_TESTS',job.id,payload);
 
     return {
         job,
@@ -381,192 +366,37 @@ export const queueRegenerateScenarioService = async ({
 /**
  * Task 4.3: Pipeline execution for regenerating a single scenario
  */
-export const runRegenerateScenarioPipeline = async ({
-    jobId,
-    snapshotId,
-    scenarioId,
-    framework = "SUPERTEST",
-    failureContext = null,
-}) => {
-    await updateJobStatus({ jobId, progress: 20, status: "RUNNING" }).catch(() => {});
-    await addJobLog(jobId, "INFO", `[Regenerate] Tái sinh kịch bản test '${scenarioId}'...`).catch(() => {});
-
-    // Find AI test record containing this scenario
-    const aiTests = await prisma.aiTest.findMany({ where: { snapshotId } });
-    let matchedTest = null;
-    let matchedReq = null;
-
-    for (const test of aiTests) {
-        if (!test.metaJson) continue;
-        try {
-            const meta = typeof test.metaJson === "string" ? JSON.parse(test.metaJson) : test.metaJson;
-            const req = (meta.requests || []).find(
-                (r) => r.scenarioId === scenarioId || r.id === scenarioId || r.testName === scenarioId
-            );
-            if (req) {
-                matchedTest = test;
-                matchedReq = req;
-                break;
-            }
-        } catch (_) {}
-    }
-
-    const sourceCode = await loadSourceCode(snapshotId).catch(() => []);
-    const allEndpoints = extractValidEndpoints(sourceCode);
-    const matchedEp = matchedReq
-        ? allEndpoints.find((e) => e.method === matchedReq.method && (e.path === matchedReq.path || e.fullPath === matchedReq.path))
-        : allEndpoints[0];
-
-    await updateJobStatus({ jobId, progress: 50 }).catch(() => {});
-
-    let prompt = "";
-    if (failureContext && failureContext.failureMessages) {
-        prompt = buildFaultyTestFixPrompt({
-            testFileContent: matchedTest?.content || "",
-            testFilePath: matchedTest?.filePath || "test.js",
-            failureReport: failureContext,
-            endpoint: matchedEp || {},
-            sourceCode,
-            framework: framework.toLowerCase(),
-        });
-    } else {
-        prompt = buildIntegrationTestPrompt({
-            endpoints: matchedEp ? [matchedEp] : allEndpoints.slice(0, 1),
-            sourceCode,
-            framework: framework.toLowerCase(),
-        });
-    }
-
-    await updateJobStatus({ jobId, progress: 75 }).catch(() => {});
-    const aiResponseText = await generateText(prompt, process.env.GEMINI_MODEL || "gemini-3.8-flash");
-
-    let cleanedCode = aiResponseText.trim();
-    const codeMatch = cleanedCode.match(/```(?:javascript|js|typescript|ts)?\s*([\s\S]*?)```/);
-    if (codeMatch && codeMatch[1]) {
-        cleanedCode = codeMatch[1].trim();
-    }
-
-    validateIntegrationTestCode(cleanedCode, framework.toLowerCase());
-
-    if (matchedTest) {
-        await prisma.aiTest.update({
-            where: { id: matchedTest.id },
-            data: { content: cleanedCode },
-        });
-    }
-
-    invalidateEndpointCache(snapshotId);
-
-    await updateJobStatus({ jobId, progress: 100, status: "SUCCESS" }).catch(() => {});
-    await addJobLog(jobId, "INFO", `[Regenerate] Hoàn tất tái sinh kịch bản '${scenarioId}'.`).catch(() => {});
-
-    return {
-        scenarioId,
-        regenerated: true,
-    };
+export const runRegenerateScenarioPipeline = async ({jobId,snapshotId,scenarioId,expectedVersion,model,failureContext}) => {
+    const context = currentProjectOperation();
+    if (!context || context.snapshotId !== snapshotId || context.jobId !== jobId) throw new ServiceError('Guarded regeneration context required',409);
+    await updateJobStatus({jobId,progress:20,status:'RUNNING'});
+    const tests = await prisma.aiTest.findMany({where:{snapshotId}});
+    const artifact = tests.find(test => {try{return (JSON.parse(test.metaJson || '{}').requests || []).some(r=>r.scenarioId===scenarioId || r.testName===scenarioId);}catch{return false;}});
+    if (!artifact) throw new ServiceError('Editable scenario not found',404);
+    await regenerateScenarioService(artifact.id,scenarioId,{model,failureContext},{userId:context.userId,snapshotId,expectedVersion});
+    await updateJobStatus({jobId,progress:100,status:'SUCCESS'});
+    return {scenarioId,regenerated:true};
 };
 
 /**
  * Task 4.4: Update an integration scenario by scenarioId
  */
-export const updateIntegrationScenarioService = async ({
-    snapshotId,
-    scenarioId,
-    userId,
-    updates = {},
-}) => {
-    await verifySnapshotOwnership(snapshotId, userId);
-    if (!scenarioId) {
-        throw new ServiceError("scenarioId is required", 400);
-    }
-
-    const decodedScenarioId = decodeURIComponent(scenarioId);
-    const aiTests = await prisma.aiTest.findMany({ where: { snapshotId } });
-
-    let updatedAiTest = null;
-    let found = false;
-
-    for (const test of aiTests) {
-        if (!test.metaJson) continue;
-        try {
-            const meta = typeof test.metaJson === "string" ? JSON.parse(test.metaJson) : test.metaJson;
-            const reqIndex = (meta.requests || []).findIndex(
-                (r) => r.scenarioId === decodedScenarioId || r.id === decodedScenarioId || r.testName === decodedScenarioId
-            );
-
-            if (reqIndex !== -1) {
-                found = true;
-                const req = meta.requests[reqIndex];
-
-                if (updates.title !== undefined) req.testName = updates.title;
-                if (updates.expectedStatus !== undefined) req.expectedStatus = Number(updates.expectedStatus);
-                if (updates.payload !== undefined) req.payload = updates.payload;
-                if (updates.enabled !== undefined) req.enabled = Boolean(updates.enabled);
-                req.userEdited = true;
-                req.lastModifiedAt = new Date().toISOString();
-
-                let newContent = test.content;
-                if (updates.code) {
-                    validateIntegrationTestCode(updates.code, meta.framework ? meta.framework.toLowerCase() : "supertest");
-                    newContent = updates.code;
-                }
-
-                meta.userModified = true;
-                meta.requests[reqIndex] = req;
-
-                updatedAiTest = await prisma.aiTest.update({
-                    where: { id: test.id },
-                    data: {
-                        content: newContent,
-                        metaJson: JSON.stringify(meta),
-                    },
-                });
-                break;
-            }
-        } catch (err) {
-            if (err.statusCode) throw err;
-        }
-    }
-
-    if (!found) {
-        // Also check TestScenario table if it exists
-        const testScenario = await prisma.testScenario.findFirst({
-            where: {
-                id: decodedScenarioId,
-                testRun: { snapshotId },
-            },
-        });
-        if (testScenario) {
-            await prisma.testScenario.update({
-                where: { id: testScenario.id },
-                data: {
-                    ...(updates.title ? { title: updates.title } : {}),
-                    ...(updates.expectedStatus ? { responseStatus: Number(updates.expectedStatus) } : {}),
-                    ...(updates.payload ? { responseData: updates.payload } : {}),
-                },
-            });
-            found = true;
-        }
-    }
-
-    if (!found) {
-        throw new ServiceError(`Scenario '${decodedScenarioId}' not found in snapshot`, 404);
-    }
-
-    invalidateEndpointCache(snapshotId);
-
-    return {
-        success: true,
-        scenarioId: decodedScenarioId,
-        updated: true,
-        aiTest: updatedAiTest,
-    };
+export const updateIntegrationScenarioService = async ({snapshotId,scenarioId,userId,updates={}}) => {
+    await verifySnapshotOwnership(snapshotId,userId);
+    const tests = await prisma.aiTest.findMany({where:{snapshotId}});
+    const decoded = decodeURIComponent(scenarioId);
+    const test = tests.find(test => {try{return (JSON.parse(test.metaJson || '{}').requests || []).some(r=>r.scenarioId===decoded || r.testName===decoded);}catch{return false;}});
+    if (!test) throw new ServiceError('Editable scenario not found in snapshot',404);
+    const options = {userId,snapshotId,expectedVersion:updates.expectedVersion,updates};
+    const code = updates.code || (await getScenarioService(test.id,decoded,options)).code;
+    const updated = await updateScenarioService(test.id,decoded,code,options);
+    return {success:true,updated:true,scenarioId:decoded,aiTest:updated};
 };
 
 /**
  * Task 4.4: Apply approved/selected integration tests directly into project source code
  */
-export const applyIntegrationTestsService = async ({
+const applyIntegrationTestsInWorkspace = async ({
     snapshotId,
     userId,
     testIds = [],
@@ -652,20 +482,24 @@ export const applyIntegrationTestsService = async ({
         meta.status = "APPLIED";
         meta.appliedAt = new Date().toISOString();
 
-        await prisma.aiTest.update({
+        await stagePreparedPublication(tx => tx.aiTest.update({
             where: { id: test.id },
             data: {
                 filePath: relPath,
                 content: finalContent,
                 metaJson: JSON.stringify(meta),
             },
-        });
+        }));
 
         appliedFiles.push(relPath);
         totalScenarios += Array.isArray(meta.requests) ? meta.requests.length : 1;
     }
 
-    invalidateEndpointCache(snapshotId, rootDir);
+    await stagePreparedPublication(async tx => {
+        const operation = currentProjectOperation();
+        if (operation && !operation.publicationMetadata?.changedPaths?.length) await tx.project.update({where:{id:operation.projectId},data:{workspaceRevision:{increment:1}}});
+    });
+    invalidateAfterCommit(snapshotId);
 
     return {
         success: true,
@@ -675,3 +509,6 @@ export const applyIntegrationTestsService = async ({
         suggestRerun: true, // Prompts user to rerun coverage analysis to confirm 100% coverage
     };
 };
+
+export const installIntegrationDependenciesService = args => guardedWorkspace(args,'integrations.write',installIntegrationDependenciesInWorkspace);
+export const applyIntegrationTestsService = args => guardedWorkspace(args,'files.write',applyIntegrationTestsInWorkspace);

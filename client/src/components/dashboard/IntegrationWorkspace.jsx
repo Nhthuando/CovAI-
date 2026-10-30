@@ -1,3 +1,5 @@
+import { useProjectAccess } from "../../hooks/useProjectAccess";
+import { getIntegrationScenarioApi, mutateIntegrationScenarioApi } from "../../services/integrationScenario.service";
 import React, {
   useCallback,
   useEffect,
@@ -233,6 +235,7 @@ export default function IntegrationWorkspace({
   initialContext,
   onContextChange,
 }) {
+  const projectAccess = useProjectAccess(projectId);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -473,6 +476,7 @@ export default function IntegrationWorkspace({
 
   // Install missing test libraries
   const handleInstallDependencies = async () => {
+    if (!projectAccess.can("integrations.write")) return;
     if (!snapshotId || isInstallingDeps) return;
     setIsInstallingDeps(true);
     setError("");
@@ -488,6 +492,7 @@ export default function IntegrationWorkspace({
 
   // Generate tests via framework detection banner
   const handleGenerateByBannerFramework = async (targetFramework) => {
+    if (!projectAccess.can("ai.use")) return;
     if (!snapshotId || isGeneratingWithBanner) return;
     setIsGeneratingWithBanner(true);
     setError("");
@@ -513,6 +518,7 @@ export default function IntegrationWorkspace({
 
   // Run AST Project Analysis
   const handleRunAnalysis = async () => {
+    if (!projectAccess.can("tests.run")) return;
     if (
       !projectId ||
       !snapshotId ||
@@ -541,6 +547,7 @@ export default function IntegrationWorkspace({
 
   // Run AI Test Generator
   const handleGenerateClick = async (explicitTargets = null) => {
+    if (!projectAccess.can("ai.use")) return;
     if (
       !workspace?.generation?.hasAnalysis ||
       (activeJobId && activeJobStatus !== "FAILED")
@@ -568,6 +575,7 @@ export default function IntegrationWorkspace({
 
   // Run All Approved Tests
   const handleRunApprovedTests = async () => {
+    if (!projectAccess.can("tests.run")) return;
     if (!snapshotId || pendingAction) return;
     if (
       activeJobId &&
@@ -624,6 +632,7 @@ export default function IntegrationWorkspace({
 
   // Run Specific Endpoint
   const handleRunEndpoint = async (ep) => {
+    if (!projectAccess.can("tests.run")) return;
     if (!snapshotId || pendingAction || !ep) return;
     const epScenarios = ep.scenarios || [];
     const scenarioIds = epScenarios
@@ -656,6 +665,7 @@ export default function IntegrationWorkspace({
 
   // Retry Single Scenario
   const handleRetryScenario = async (ep, sc) => {
+    if (!projectAccess.can("tests.run")) return;
     if (!snapshotId || pendingAction || !sc) return;
     const scId = sc.id || `${sc.testId}::${sc.scenarioId || sc.testName}`;
     if (!scId) return;
@@ -678,91 +688,58 @@ export default function IntegrationWorkspace({
     }
   };
 
-  // AI Booster Repair Scenario
-  const handleAIFixScenario = async (ep, sc) => {
-    if (!snapshotId || !sc) return;
-    setError("");
-    try {
-      await regenerateIntegrationScenario(snapshotId, {
-        scenarioId: sc.id || sc.scenarioId,
-        framework: detectionInfo?.targetFramework || "supertest",
-        failureContext: {
-          failureLayer: sc.failureLayer,
-          actualStatus: sc.actualStatus ?? sc.actualStatusFromRuntime,
-          expectedStatus: sc.expectedStatus,
-          errorMessage:
-            (sc.failureMessages || []).join("\n") ||
-            sc.failureDetails?.raw ||
-            "",
-        },
-      });
-      await load();
-    } catch (err) {
-      setError(err.message || "Không thể sửa kịch bản bằng AI.");
+  // Resolve runtime results to the versioned editable artifact.
+  const editableScenario = sc => {
+    for (const test of workspace?.aiTests || []) {
+      const request = (test.requests || []).find(r =>
+        r.scenarioId === sc?.scenarioId || r.scenarioId === sc?.id ||
+        test.id + '::' + r.scenarioId === sc?.id ||
+        r.testName === (sc?.testName || sc?.title || sc?.name));
+      if (request) return {aiTestId:test.id,scenarioId:request.scenarioId,expectedVersion:test.version};
     }
+    throw new Error('Không tìm thấy mã nguồn của kịch bản. Hãy sinh test trước khi chỉnh sửa.');
   };
-
-  // Open Apply Tests Modal
+  const handleAIFixScenario = async (ep, sc) => {
+    if (!projectAccess.can('ai.use') || !snapshotId || !sc) return;
+    setError('');
+    try {
+      const result = await mutateIntegrationScenarioApi({snapshotId,...editableScenario(sc),action:'REGENERATE'});
+      const jobId = result?.data?.job?.id || result?.job?.id || result?.data?.jobId || result?.jobId;
+      if (jobId) {setActiveJobId(jobId);setActiveJobType('GENERATE');setActiveJobStatus('RUNNING');}
+      await load();
+    } catch(err) {setError(err.message || 'Không thể sửa kịch bản bằng AI.');}
+  };
   const handleOpenApplyModal = (targetIds = null) => {
-    const ids = targetIds && targetIds.length > 0 ? targetIds : selectedTestIds;
-    setApplyModalTestIds(ids);
+    if (!projectAccess.can('files.write')) return;
+    setApplyModalTestIds(targetIds?.length ? targetIds : selectedTestIds);
     setApplyModalOpen(true);
   };
-
-  // Open Scenario Monaco Editor Modal
-  const handleOpenEditScenario = (sc, ep = null) => {
-    setEditorModalScenario(sc);
-    setEditorModalEndpoint(ep);
-    setIsAddScenarioMode(false);
-    setEditorModalOpen(true);
-  };
-
-  const handleOpenAddScenario = (ep) => {
-    setEditorModalScenario(null);
-    setEditorModalEndpoint(ep);
-    setIsAddScenarioMode(true);
-    setEditorModalOpen(true);
-  };
-
-  const handleSaveScenario = async (savedData) => {
-    if (!snapshotId) return;
-    setError("");
+  const handleOpenEditScenario = async (sc,ep = null) => {
+    if (!projectAccess.can('files.write')) return;
     try {
-      if (isAddScenarioMode) {
-        // Add new scenario via API
-        const targetEp = editorModalEndpoint;
-        const res = await fetch(
-          `${BASE_URL}/coverage/${snapshotId}/integration/scenarios`,
-          {
-            method: "POST",
-            headers: getAuthHeaders(),
-            body: JSON.stringify({
-              endpointId: `${targetEp?.method} ${targetEp?.path}`,
-              title: savedData.name,
-              category: savedData.category,
-              expectedStatus: savedData.expectedStatus,
-              code: savedData.code,
-            }),
-          },
-        );
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.message || "Thêm kịch bản thất bại.");
-        }
-      } else if (editorModalScenario) {
-        const scId = editorModalScenario.id || editorModalScenario.scenarioId;
-        await updateIntegrationScenario(snapshotId, scId, {
-          title: savedData.name,
-          category: savedData.category,
-          expectedStatus: savedData.expectedStatus,
-          code: savedData.code,
-        });
-      }
-      setEditorModalOpen(false);
-      await load();
-    } catch (err) {
-      setError(err.message || "Lưu kịch bản thất bại.");
-    }
+      const identity = editableScenario(sc);
+      const result = await getIntegrationScenarioApi(snapshotId,identity.aiTestId,identity.scenarioId);
+      setEditorModalScenario({...sc,...identity,expectedVersion:result.version || result.aiTest?.version,code:result.code});
+      setEditorModalEndpoint(ep);setIsAddScenarioMode(false);setEditorModalOpen(true);
+    } catch(err) {setError(err.message);}
+  };
+  const handleOpenAddScenario = ep => {
+    if (!projectAccess.can('files.write')) return;
+    const tests = workspace?.aiTests || [];
+    const test = tests.find(t => t.requests?.some(r=>r.method===ep?.method && r.path===ep?.path)) || tests[0];
+    if (!test) {setError('Hãy sinh một file test trước khi thêm kịch bản.');return;}
+    setEditorModalScenario({aiTestId:test.id,expectedVersion:test.version});
+    setEditorModalEndpoint(ep);setIsAddScenarioMode(true);setEditorModalOpen(true);
+  };
+  const handleSaveScenario = async savedData => {
+    if (!projectAccess.can('files.write') || !snapshotId) return false;
+    setError('');
+    try {
+      await mutateIntegrationScenarioApi({snapshotId,aiTestId:editorModalScenario.aiTestId,
+        scenarioId:editorModalScenario.scenarioId,expectedVersion:editorModalScenario.expectedVersion,
+        action:isAddScenarioMode ? 'ADD' : 'UPDATE',code:typeof savedData === "string" ? savedData : savedData.code,endpoint:editorModalEndpoint});
+      setEditorModalOpen(false);await load();return true;
+    } catch(err) {setError(err.message || 'Lưu kịch bản thất bại.');return false;}
   };
 
   // Parse progress steps for active running job
@@ -1091,7 +1068,7 @@ export default function IntegrationWorkspace({
             <button
               type="button"
               onClick={handleRunApprovedTests}
-              disabled={isJobActive || pendingAction === "RUN"}
+              disabled={!projectAccess.can("tests.run") || isJobActive || pendingAction === "RUN"}
               className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-xs disabled:opacity-50"
             >
               <Play size={13} fill="currentColor" />
@@ -1106,7 +1083,7 @@ export default function IntegrationWorkspace({
             <button
               type="button"
               onClick={() => handleGenerateClick()}
-              disabled={isJobActive || pendingAction === "GENERATE"}
+              disabled={!projectAccess.can("ai.use") || isJobActive || pendingAction === "GENERATE"}
               className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-semibold transition-colors cursor-pointer shadow-xs disabled:opacity-50"
               title="Sinh thêm kịch bản API test bằng AI"
             >
@@ -1876,6 +1853,9 @@ export default function IntegrationWorkspace({
 
               <div className="p-4">
                 <IntegrationScenariosPane
+                  readOnly={!projectAccess.can("files.write")}
+                  canGenerate={projectAccess.can("ai.use")}
+                  canApprove={projectAccess.can("evidence.approve")}
                   aiTests={workspace?.aiTests || []}
                   selectedEndpoint={null}
                   onClearSelectedEndpoint={() => {}}
@@ -1898,6 +1878,7 @@ export default function IntegrationWorkspace({
                     (activeJobId && activeJobType === "GENERATE")
                   }
                   onApproveAndRun={async (ids) => {
+                    if (!projectAccess.can("evidence.approve")) return;
                     setSelectedTestIds(ids);
                     await approveIntegrationTestsApi(snapshotId, ids);
                     await handleRunApprovedTests();

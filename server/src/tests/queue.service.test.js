@@ -74,12 +74,30 @@ await jest.unstable_mockModule('../services/job.service.js', () => ({
     updateJobProgress: jest.fn(),
 }));
 
+const actualWorkspace = await import('../services/projectOperationWorkspace.service.js');
+await jest.unstable_mockModule('../services/projectSystemOperation.service.js', () => ({
+    runPreparedSystemJob: async (_jobId, run) => run(),
+}));
+await jest.unstable_mockModule('../services/projectOperationWorkspace.service.js', () => ({
+    ...actualWorkspace,
+    // This suite tests queue dispatch/dependency order; actual authorization,
+    // copying and publication are covered by PostgreSQL operation tests.
+    runJobInOperationWorkspace: async (_jobId, run) => run(),
+}));
 const { addJobToQueue, addSupertestCoveragePipeline } = await import('../services/queue.service.js');
 
 describe('queue.service supertest pipeline', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         mockPrismaJobFindUnique.mockResolvedValue({ status: 'SUCCESS' });
+    });
+    test('durable operations report queue failure instead of executing an in-memory fallback', async () => {
+        mockQueueAdd.mockRejectedValueOnce(new Error('Redis unavailable'));
+        await expect(addJobToQueue('SUPERTEST_COVERAGE', 'super-offline')).rejects.toMatchObject({ statusCode: 503, code: 'DEPENDENCY_UNAVAILABLE' });
+        expect(mockProcessSupertestCoverageJob).not.toHaveBeenCalled();
+        mockFlowProducerAdd.mockRejectedValueOnce(new Error('Redis unavailable'));
+        await expect(addSupertestCoveragePipeline('install-offline', 'super-offline')).rejects.toMatchObject({ statusCode: 503, code: 'DEPENDENCY_UNAVAILABLE' });
+        expect(mockProcessInstallDepsJob).not.toHaveBeenCalled();
     });
 
     test('keeps the install job as parent and queues the execution step only after success', async () => {

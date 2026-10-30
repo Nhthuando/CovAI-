@@ -1,3 +1,4 @@
+import './helpers/integrationServiceDoubles.js';
 import { describe, it, expect, jest, beforeEach } from "@jest/globals";
 import fs from "fs";
 import path from "path";
@@ -20,6 +21,7 @@ describe("Product API Tests", () => {
 `),
 }));
 
+jest.unstable_mockModule('../services/job.service.js',()=>({createSnapshotJob:jest.fn(),addJobLog:jest.fn(async()=>{}),getJobById:jest.fn()}));
 const {
     normalizeFramework,
     detectIntegrationFrameworksService,
@@ -32,6 +34,8 @@ const {
     applyIntegrationTestsService,
 } = await import("../services/integrationApiService.service.js");
 
+const {createSnapshotJob} = await import('../services/job.service.js');
+const {scenarioArtifactVersion} = await import('../services/scenarioManager.service.js');
 const prisma = (await import("../config/prisma.js")).default;
 const { addJobToQueue } = await import("../services/queue.service.js");
 const { generateText } = await import("../services/gemini.service.js");
@@ -41,6 +45,8 @@ describe("Phase 4: API Endpoints & Real-time Job Processing Test Suite", () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        jest.spyOn(prisma.project,'update').mockResolvedValue({workspaceRevision:1,eventSequence:1});
+        jest.spyOn(prisma.projectEvent,'create').mockResolvedValue({id:'event'});
         tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "covai-phase4-test-"));
     });
 
@@ -119,7 +125,7 @@ describe("Phase 4: API Endpoints & Real-time Job Processing Test Suite", () => {
                 id: mockSnapshotId,
                 projectId: mockProjectId,
                 rootDir: tempDir,
-                project: { ownerId: mockUserId },
+                projectId:"proj-1", project: { id:"proj-1", workspaceRevision:0, ownerId: mockUserId },
             });
 
             jest.spyOn(prisma.aiTest, "findMany").mockResolvedValue([]);
@@ -132,6 +138,7 @@ describe("Phase 4: API Endpoints & Real-time Job Processing Test Suite", () => {
                 status: "QUEUED",
             };
             jest.spyOn(prisma.job, "create").mockResolvedValue(createdJob);
+            createSnapshotJob.mockResolvedValue(createdJob);
 
             const result = await queueIntegrationTestGenerationService({
                 snapshotId: mockSnapshotId,
@@ -160,7 +167,7 @@ describe("Phase 4: API Endpoints & Real-time Job Processing Test Suite", () => {
             jest.spyOn(prisma.projectSnapshot, "findUnique").mockResolvedValue({
                 id: mockSnapshotId,
                 projectId: "proj-1",
-                project: { ownerId: mockUserId },
+                projectId:"proj-1", project: { id:"proj-1", workspaceRevision:0, ownerId: mockUserId },
             });
 
             jest.spyOn(prisma.aiTest, "findMany").mockResolvedValue([
@@ -228,7 +235,7 @@ describe("Phase 4: API Endpoints & Real-time Job Processing Test Suite", () => {
             jest.spyOn(prisma.projectSnapshot, "findUnique").mockResolvedValue({
                 id: mockSnapshotId,
                 projectId: "proj-regen-1",
-                project: { ownerId: mockUserId },
+                projectId:"proj-1", project: { id:"proj-1", workspaceRevision:0, ownerId: mockUserId },
             });
 
             const createdJob = {
@@ -236,11 +243,15 @@ describe("Phase 4: API Endpoints & Real-time Job Processing Test Suite", () => {
                 status: "QUEUED",
             };
             jest.spyOn(prisma.job, "create").mockResolvedValue(createdJob);
+            createSnapshotJob.mockResolvedValue(createdJob);
 
+            const regenArtifact={id:'regen-file',content:"it('fails',()=>{});",metaJson:JSON.stringify({requests:[{scenarioId:'sc-fail-1',testName:'fails'}]})};
+            jest.spyOn(prisma.aiTest,'findMany').mockResolvedValue([regenArtifact]);
             const result = await queueRegenerateScenarioService({
                 snapshotId: mockSnapshotId,
                 userId: mockUserId,
                 scenarioId: "sc-fail-1",
+                expectedVersion:scenarioArtifactVersion(regenArtifact),
                 framework: "supertest",
                 failureContext: {
                     failureLayer: "CONTROLLER_CRASH",
@@ -268,11 +279,11 @@ describe("Phase 4: API Endpoints & Real-time Job Processing Test Suite", () => {
 
             jest.spyOn(prisma.projectSnapshot, "findUnique").mockResolvedValue({
                 id: mockSnapshotId,
-                project: { ownerId: mockUserId },
+                projectId:"proj-1", project: { id:"proj-1", workspaceRevision:0, ownerId: mockUserId },
             });
 
             const existingAiTest = {
-                id: "aitest-1",
+                id: "aitest-1",projectId:"proj-1",snapshotId:mockSnapshotId,
                 content: `
 describe("Cart API", () => {
     it("POST /api/cart/checkout should succeed", async () => {
@@ -297,6 +308,7 @@ describe("Cart API", () => {
             };
 
             jest.spyOn(prisma.aiTest, "findMany").mockResolvedValue([existingAiTest]);
+            jest.spyOn(prisma.aiTest, "findUnique").mockResolvedValue(existingAiTest);
             jest.spyOn(prisma.aiTest, "update").mockImplementation(async ({ data }) => ({
                 ...existingAiTest,
                 ...data,
@@ -307,6 +319,7 @@ describe("Cart API", () => {
                 scenarioId: targetScenarioId,
                 userId: mockUserId,
                 updates: {
+                    expectedVersion:scenarioArtifactVersion(existingAiTest),
                     title: "POST /api/cart/checkout - customized title",
                     expectedStatus: 201,
                     enabled: true,
@@ -331,7 +344,7 @@ describe("Cart API", () => {
             jest.spyOn(prisma.projectSnapshot, "findUnique").mockResolvedValue({
                 id: mockSnapshotId,
                 rootDir: tempDir,
-                project: { ownerId: mockUserId, rootDir: tempDir },
+                projectId:"proj-1", project: { id:"proj-1", workspaceRevision:0, ownerId: mockUserId, rootDir: tempDir },
             });
 
             const testToApply = {
@@ -383,7 +396,7 @@ describe("Applied Integration Test", () => {
             jest.spyOn(prisma.projectSnapshot, "findUnique").mockResolvedValue({
                 id: mockSnapshotId,
                 rootDir: tempDir,
-                project: { ownerId: mockUserId },
+                projectId:"proj-1", project: { id:"proj-1", workspaceRevision:0, ownerId: mockUserId },
             });
 
             const testToApply = {

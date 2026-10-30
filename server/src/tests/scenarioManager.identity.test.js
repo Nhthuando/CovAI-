@@ -17,12 +17,17 @@ jest.unstable_mockModule('../config/prisma.js', () => {
 });
 
 const prisma = (await import('../config/prisma.js')).default;
-const { 
-    getScenarioService, 
-    updateScenarioService, 
-    deleteScenarioService, 
-    toggleScenarioService 
-} = await import('../services/scenarioManager.service.js');
+jest.unstable_mockModule('../services/projectAccess.service.js', () => ({
+    resolveProjectAccess:async()=>({project:{workspaceRevision:0}}),
+    withProjectGuard:async(_input,run)=>run({...prisma,project:{update:async()=>({workspaceRevision:1})}}),
+}));
+jest.unstable_mockModule('../services/projectEvent.service.js',()=>({publishProjectEvent:async()=>({}),deliverProjectEvent:async()=>{}}));
+const scenarios = await import('../services/scenarioManager.service.js');
+const options = async () => ({userId:'editor',expectedVersion:scenarios.scenarioArtifactVersion(await prisma.aiTest.findUnique())});
+const getScenarioService = async (...args) => scenarios.getScenarioService(...args,await options());
+const updateScenarioService = async (...args) => scenarios.updateScenarioService(...args,await options());
+const deleteScenarioService = async (...args) => scenarios.deleteScenarioService(...args,await options());
+const toggleScenarioService = async (...args) => scenarios.toggleScenarioService(...args,await options());
 
 describe('Scenario Identity Management (F-02)', () => {
     const aiTestId = 'test-id-1';

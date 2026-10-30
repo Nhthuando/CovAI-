@@ -3,6 +3,8 @@ import path from "path";
 import { randomUUID } from "crypto";
 import { getBucket } from "../config/firebase.js";
 import prisma from "../config/prisma.js";
+import { resolveProjectAccess, resolveJobAccess, withProjectGuard } from "../services/projectAccess.service.js";
+import { registerProjectStream } from "../services/projectStreamRegistry.service.js";
 import { scanArchiveBomb } from "../middlewares/upload.middleware.js";
 import { addJobToQueue } from "../services/queue.service.js";
 import { createSnapshotIngestJob, cleanupAllStaleJobs, cancelJob } from "../services/job.service.js";
@@ -53,22 +55,7 @@ export const listProjectJobs = async (req, res) => {
     if (!projectId)
       return res.status(400).json({ message: "Missing projectId!" });
 
-    const project = await withDbRetry(() =>
-      prisma.project.findFirst({
-        where: {
-          id: projectId,
-          ownerId: userId,
-        },
-      })
-    );
-
-    if (!project) {
-      return res
-        .status(404)
-        .json({
-          message: "Project not found or does not belong to user!",
-        });
-    }
+    await resolveProjectAccess({projectId,userId,capability:'project.read'});
 
     await throttledCleanup(userId);
 
@@ -86,7 +73,7 @@ export const listProjectJobs = async (req, res) => {
     });
   } catch (error) {
     console.error("[listProjectJobs] Error:", error.message || error);
-    return res.status(500).json({ success: false, message: "Internal server error!" });
+    return res.status(error.statusCode || 500).json({ success:false,code:error.code,message:error.statusCode ? error.message : "Internal server error!" });
   }
 };
 
@@ -136,6 +123,7 @@ export const getJobDetail = async (req, res) => {
           startedAt: true,
           finishedAt: true,
           userId: true,
+          projectId: true,
           logs: true,
           output: true,
         },
@@ -143,8 +131,7 @@ export const getJobDetail = async (req, res) => {
     );
 
     if (!job) return res.status(404).json({ message: "Job does not exist!" });
-    if (job.userId !== userId)
-      return res.status(403).json({ message: "Job does not belong to user!" });
+    await resolveProjectAccess({projectId:job.projectId,userId,capability:'project.read'});
 
     return res.status(200).json({
       message: "Job details retrieved successfully",
@@ -159,7 +146,7 @@ export const getJobDetail = async (req, res) => {
     });
   } catch (error) {
     console.error("[getJobDetail] Error:", error.message || error);
-    return res.status(500).json({ message: "Internal server error!" });
+    return res.status(error.statusCode || 500).json({ code:error.code,message: error.statusCode ? error.message : "Internal server error!" });
   }
 };
 
@@ -317,17 +304,16 @@ export const cancelJobController = async (req, res) => {
     const { jobId } = req.params;
     const job = await prisma.job.findUnique({
       where: { id: jobId },
-      select: { id: true, userId: true, status: true },
+      select: { id: true, projectId:true, userId: true, status: true },
     });
 
     if (!job) {
       return res.status(404).json({ success: false, message: "Job does not exist." });
     }
-    if (job.userId !== userId) {
-      return res.status(403).json({ success: false, message: "Not authorized to cancel this job." });
-    }
-
-    const canceled = await cancelJob(jobId);
+    const canceled = await withProjectGuard({projectId:job.projectId,userId,capability:'tests.run'}, async (_tx,access) => {
+      if (access.role !== 'OWNER' && job.userId !== userId) throw new ServiceError("Only Owner can cancel another member's job",403,'CAPABILITY_DENIED');
+      return cancelJob(jobId);
+    });
     return res.status(200).json({
       success: true,
       message: "Job was cancelled/paused successfully.",
@@ -343,56 +329,42 @@ export const cancelJobController = async (req, res) => {
 
 export const streamJobStatus = async (req, res) => {
   const userId = req.user?.id;
-  if (!userId) return res.status(401).json({ message: "Unauthorized" });
-
+  if (!userId) return res.status(401).json({ message: 'Unauthorized' });
   const { jobId } = req.params;
-
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
+  let access;
+  try { access = await resolveJobAccess({jobId,userId,capability:'project.read'}); }
+  catch (error) { return res.status(error.statusCode || 500).json({code:error.code,message:error.message}); }
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
-
-  const sendEvent = (data) => {
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
-  };
-
-  const interval = setInterval(async () => {
-    try {
-      const job = await prisma.job.findUnique({
-        where: { id: jobId },
-        select: { status: true, logs: true, errorMessage: true, userId: true },
-      });
-
-      if (!job) {
-        sendEvent({ error: "Job not found" });
-        clearInterval(interval);
-        res.end();
-        return;
-      }
-
-      if (job.userId !== userId) {
-        sendEvent({ error: "Forbidden" });
-        clearInterval(interval);
-        res.end();
-        return;
-      }
-
-      sendEvent({
-        status: job.status,
-        logs: job.logs || [],
-        errorMessage: job.errorMessage
-      });
-
-      if (["SUCCESS", "FAILED", "CANCELED"].includes(job.status)) {
-        clearInterval(interval);
-        res.end();
-      }
-    } catch (err) {
-      console.error("[streamJobStatus] Error:", err);
-    }
-  }, 1000);
-
-  req.on("close", () => {
+  let ended = false;
+  let polling = false;
+  let interval;
+  let unregister = () => {};
+  const close = data => {
+    if (ended) return;
+    ended = true;
     clearInterval(interval);
-  });
+    unregister();
+    if (data && !res.writableEnded) res.write(`data: ${JSON.stringify(data)}\n\n`);
+    res.end();
+  };
+  unregister = registerProjectStream({projectId:access.project.id,userId,close});
+  const poll = async () => {
+    if (ended || polling) return;
+    polling = true;
+    try {
+      await withProjectGuard({projectId:access.project.id,userId,capability:'project.read'}, async tx => {
+        const job = await tx.job.findUnique({where:{id:jobId},select:{status:true,logs:true,errorMessage:true}});
+        if (!job) return close({error:'Job not found'});
+        if (!ended) res.write(`data: ${JSON.stringify({status:job.status,logs:job.logs || [],errorMessage:job.errorMessage})}\n\n`);
+        if (['SUCCESS','FAILED','CANCELED'].includes(job.status)) close();
+      });
+    } catch (error) { close({type:'ACCESS_REVOKED',code:error.code || 'STREAM_FAILED'}); }
+    finally { polling = false; }
+  };
+  interval = setInterval(() => { void poll(); },1000);
+  req.on('close',() => close());
+  void poll();
 };

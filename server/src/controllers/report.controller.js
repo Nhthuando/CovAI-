@@ -1,3 +1,4 @@
+import { membershipWhere } from '../services/projectAccess.service.js';
 import prisma from '../config/prisma.js';
 import { getIntegrationAnalytics } from '../services/integrationReport.service.js';
 import { getIntegrationGuidance } from '../services/integrationGuidance.service.js';
@@ -12,7 +13,7 @@ export const getIntegrationReport = async (req, res) => {
         }
 
         const project = await prisma.project.findFirst({
-            where: { id: projectId, ownerId: userId }
+            where: { id: projectId, ...membershipWhere(userId) }
         });
 
         if (!project) {
@@ -41,7 +42,7 @@ export const getIntegrationGuidanceController = async (req, res) => {
         }
 
         const project = await prisma.project.findFirst({
-            where: { id: projectId, ownerId: userId }
+            where: { id: projectId, ...membershipWhere(userId) }
         });
 
         if (!project) {

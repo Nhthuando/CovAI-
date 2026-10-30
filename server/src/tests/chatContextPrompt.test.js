@@ -17,7 +17,7 @@ it("updates screen context within the same conversation and scopes saved runs to
     expect(nextPrompt).toContain("No saved test run");
     expect(db.testRun.findFirst).toHaveBeenLastCalledWith(expect.objectContaining({ where: { snapshotId: "snapshot-1", type: { in: ["JEST", "VITEST"] } } }));
 });
-const send = input => sendContextChat("project-1", "owner-1", { message: "Help with Jest", sessionId: "session-1", attachments: [], ...input }, { generate, quota, enqueue });
+const send = input => sendContextChat("project-1", "owner-1", { clientRequestId:"test-request", message: "Help with Jest", sessionId: "session-1", attachments: [], ...input }, { generate, quota, enqueue });
 
 it("uses stored history, approved guidance and current snapshot, ignoring supplied history", async () => {
     db.chatMessage.findMany.mockResolvedValue([{ id: "m1", role: "user", content: "Stored decision", attachments: [], createdAt: new Date() }]);
@@ -39,7 +39,7 @@ it("recalls approved/pinned memory from the same user and project when enabled",
     db.projectMemory.findMany.mockResolvedValue([{ id: "note-1", content: "Use Jest", pinned: true, status: "ACTIVE", updatedAt: new Date() }]);
     await send();
     expect(generate.mock.calls[0][0]).toContain("Use Jest");
-    expect(db.projectMemory.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { projectId: "project-1", userId: "owner-1", status: "ACTIVE" } }));
+    expect(db.projectMemory.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { projectId: "project-1", status: "ACTIVE" } }));
 });
 it("rejects unauthorized scope before quota or model calls", async () => {
     db.project.findFirst.mockResolvedValue(null);

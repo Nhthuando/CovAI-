@@ -1,0 +1,11 @@
+# Improvement timeout, execution cost, and remaining time
+
+The affected owned improvement job took 1,213 seconds and issued four AI requests. Its source/test hashes still match its baseline assessment. A worker time-budget abort was incorrectly mapped from HTTP 409 to STALE. Fourteen npm ci executions plus repeated failing candidate runs consumed most of the job; provider generations took seconds.
+
+Implement explicit timeout/cancel reasons, reserve STALE for source/test/revision/runtime conflicts, preserve completed baseline/candidate evidence on failures, and normalize the legacy misleading response for display. Keep original tests unchanged unless two complete independent candidate passes prove a measured coverage gain with no metric regression.
+
+For improvement only, stop an independent repeat after the first failing, skipped, or flaky run. Repair or reject immediately; a successful candidate still needs two actual runs. Cache dependencies only within one job, only for standalone npm projects with unchanged manifest/config/runtime inputs and no local dependencies or custom install lifecycle hooks. Missing or repaired lockfiles are resolved once and frozen with the prepared template for subsequent fresh copies in that job. Copy immutable prepared dependency templates into each fresh execution workspace; never share live node_modules, app processes, browsers, databases, or generated clients. Fall back to ordinary installs for ineligible projects.
+
+Make Estimated time remaining the primary UI metric, show elapsed time secondarily, and count down from a server sample timestamp. Historical successful job ranges are preferred; new projects learn a conservative range from completed independent run durations, bounded by the worker budget. Never infer time from progress percentages. Unknown estimates and overruns remain explicit English states.
+
+Verify behavior with regression tests, real browser checks of countdown/terminal/mobile states, and two real existing-test runs of the affected project. A real AI re-run on the imported project was blocked by automatic approval review because it can export source to Gemini and auto-apply tests. Do not claim that full AI rerun or a new coverage increase was verified until authorized and executed.

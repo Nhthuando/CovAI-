@@ -1,17 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { prepareFullSystemPackage, readApplicationEnvironment, readAssessmentTestEnvironment } from './fullSystemRuntime.service.js';
-import { execFile, spawn } from 'node:child_process';
-import { promisify } from 'node:util';
-import { startAutServer, stopAutServer, resolveAvailableAutPort } from './autLifecycle.service.js';
+import { spawn } from 'node:child_process';
+import { startAutServer, stopAutServer, runSeedDataIfPresent } from './autLifecycle.service.js';
 import { ServiceError } from '../utils/serviceError.js';
 
-const exec = promisify(execFile);
-const docker = (args, options = {}) => exec('docker', args, {timeout: 120000, windowsHide:true, maxBuffer: 2 * 1024 * 1024, ...options});
 import { containedPath } from './fullSystemConfig.service.js';
-import { ensureFullSystemSetup } from './fullSystemSetup.service.js';
+import { ensureFullSystemSetup, inspectSystemSetupSource } from './fullSystemSetup.service.js';
+import { validateStartupEnvironment, buildAutomaticTestEnvironment, managedEnvironmentNames } from './fullSystemEnvironment.service.js';
+import {provisionSystemResources} from './systemRuntimeResources.service.js';
+import {reserveSystemPorts} from './systemRuntimePorts.service.js';
 export { containedPath, readFullSystemConfig } from './fullSystemConfig.service.js';
 
 const writeSql = (container, engine, password, sql) => new Promise((resolve,reject) => {
@@ -28,72 +27,62 @@ const writeSql = (container, engine, password, sql) => new Promise((resolve,reje
   child.once('close',code => {clearTimeout(timer);code === 0 ? resolve() : reject(new ServiceError(`Test database initialization failed: ${error.replaceAll(password,'[redacted]')}`,422));});
 });
 
-export const startFullSystem = async ({rootDir,jobId,onProgress,measurementPreparation,signal}) => {
-  const setup = await ensureFullSystemSetup({rootDir,onProgress});
-  rootDir = setup.rootDir;
-  const config = setup.config;
-  try { await docker(['info'],{timeout:10000}); } catch { throw new ServiceError('Full Stack needs Docker running to create an isolated test database. Start Docker Desktop and retry.',422); }
-  const engine = config.database.engine;
-  const container = `covai-system-${crypto.randomUUID()}`;
-  const password = crypto.randomBytes(24).toString('hex');
+export const startFullSystem = async ({rootDir,jobId,onProgress,measurementPreparation,signal,environmentRoot}) => {
+  const setup=await ensureFullSystemSetup({rootDir,onProgress});
+  rootDir=setup.rootDir;
+  const config=setup.config;
+  const original=environmentRoot || measurementPreparation?.workspace?.originalRoot;
+  const environment=directory=>original ? readAssessmentTestEnvironment(containedPath(original,directory)) : readApplicationEnvironment(containedPath(rootDir,directory));
+  const backendDir=containedPath(rootDir,config.backend.directory),frontendDir=containedPath(rootDir,config.frontend.directory);
+  const source=inspectSystemSetupSource(backendDir);
+  const preliminary=buildAutomaticTestEnvironment({files:source.files,env:environment(config.backend.directory),port:4500});
+  validateStartupEnvironment({files:source.files,env:preliminary,directory:config.backend.directory,scripts:source.packages.find(pkg=>pkg.directory==='.')?.scripts,managedVariables:managedEnvironmentNames(source.files,config)});
+  const ports=await reserveSystemPorts(config.unified?1:2);
+  const backendPort=ports[0].port,frontendPort=config.unified?backendPort:ports[1].port;
+  const backendUrl=`http://127.0.0.1:${backendPort}`,frontendUrl=`http://127.0.0.1:${frontendPort}`;
   const handles=[];
-  let created=false;
-  const cleanup = async () => {
+  let resources;
+  const cleanup=async()=>{
     const failures=[];
-    for (const handle of handles.reverse()) {
-      try { await stopAutServer(handle.pid,handle.port,jobId); } catch (error) {failures.push(error.message);}
-    }
-    if (created) {try {await docker(['rm','-f',container]);} catch {failures.push('Could not remove owned test database container');}}
-    if (failures.length) throw new ServiceError(failures.join('; '),500);
+    for(const handle of handles.splice(0).reverse())try{await stopAutServer(handle.pid,handle.port,jobId);}catch(error){failures.push(error.message);}
+    try{await resources?.cleanup();}catch(error){failures.push(error.message);}
+    await Promise.all(ports.map(lease=>lease.release()));
+    if(failures.length)throw new ServiceError(failures.join('; '),500);
   };
   try {
-    const port = engine === 'mysql' ? 3306 : 5432;
-    const env = engine === 'mysql'
-      ? ['-e',`MYSQL_ROOT_PASSWORD=${password}`,'-e','MYSQL_DATABASE=covai_test','-e','MYSQL_USER=covai','-e',`MYSQL_PASSWORD=${password}`]
-      : ['-e','POSTGRES_DB=covai_test','-e','POSTGRES_USER=covai','-e',`POSTGRES_PASSWORD=${password}`];
-    created=true;
-    await docker(['run','-d','--name',container,'--label','covai.system-test=true','-p',`127.0.0.1::${port}`,...env,engine === 'mysql' ? 'mysql:8.4' : 'postgres:17']);
-    const mapped = await docker(['port',container,`${port}/tcp`]);
-    const databasePort=Number(mapped.stdout.trim().split(':').at(-1));
-    let ready=false;
-    for (let attempt=0;attempt<90;attempt++) {
-      if(signal?.aborted) throw new ServiceError("System setup canceled",409);
-      try {
-        await docker(engine === 'mysql'
-          ? ['exec','-e',`MYSQL_PWD=${password}`,container,'mysql','-h127.0.0.1','-ucovai','covai_test','-e','SELECT 1']
-          : ['exec',container,'pg_isready','-h','127.0.0.1','-U','covai','-d','covai_test'],{timeout:3000});
-        ready=true;break;
-      } catch {await new Promise(resolve => setTimeout(resolve,1000));}
-    }
-    if (!ready) throw new ServiceError('Disposable test database did not become ready',408);
-    const backendDir=containedPath(rootDir,config.backend.directory);
-    const environment = directory => measurementPreparation?.workspace?.originalRoot
-      ? readAssessmentTestEnvironment(containedPath(measurementPreparation.workspace.originalRoot, directory))
-      : readApplicationEnvironment(containedPath(rootDir, directory));
-    const backendPort=await resolveAvailableAutPort(backendDir,4500);
-    const databaseUrl=`${engine === 'mysql' ? 'mysql' : 'postgresql'}://covai:${password}@127.0.0.1:${databasePort}/covai_test`;
-    const backendEnv={...environment(config.backend.directory),NODE_ENV:'development',DATABASE_URL:databaseUrl,DB_HOST:'127.0.0.1',DB_PORT:String(databasePort),DB_USER:'covai',DB_PASSWORD:password,DB_NAME:'covai_test'};
+    await onProgress?.(26,'Preparing isolated application services and automatic test environment');
+    resources=await provisionSystemResources({rootDir,database:config.database,services:config.services,signal});
+    const backendEnv=buildAutomaticTestEnvironment({files:source.files,env:preliminary,resources:resources.environment,port:backendPort,backendUrl,frontendUrl});
     const metadata=JSON.parse(fs.readFileSync(path.join(backendDir,'package.json'),'utf8'));
     const usesPrisma=Boolean(metadata.dependencies?.['@prisma/client'] || metadata.devDependencies?.['@prisma/client']);
-    // Prisma owns its schema/migrations; generated SQL is for SQL-driver projects.
-    if (!usesPrisma) await writeSql(container,engine,password,fs.readFileSync(containedPath(rootDir,config.database.initSql),'utf8'));
-    await onProgress?.(28,'Installing backend dependencies and preparing the isolated database schema');
-    await prepareFullSystemPackage({directory:backendDir,env:backendEnv,jobId,database:true,signal});
+    if(config.database?.prismaSchema && !usesPrisma)throw new ServiceError('Configured Prisma schema requires @prisma/client in the selected backend package',422);
+    if(config.database?.initSql && !usesPrisma) {
+      const sql=fs.readFileSync(containedPath(rootDir,config.database.initSql),'utf8');
+      if(config.database.engine==='sqlite') {
+        if(/\b(?:ATTACH|DETACH|VACUUM|load_extension)\b/i.test(sql))throw new ServiceError('SQLite initialization cannot access files outside its owned test database',422);
+        const {DatabaseSync}=await import('node:sqlite');const db=new DatabaseSync(backendEnv.SQLITE_DB_PATH);try{db.exec(sql);}finally{db.close();}
+      } else await writeSql(resources.sqlContainer,config.database.engine,backendEnv.DB_PASSWORD,sql);
+    }
+    await onProgress?.(28,'Installing application dependencies and preparing the isolated schema');
+    await prepareFullSystemPackage({directory:backendDir,repositoryRoot:rootDir,env:backendEnv,jobId,database:Boolean(config.database),signal,schemaStrategy:config.database?.schemaStrategy,prismaSchema:config.database?.prismaSchema?containedPath(rootDir,config.database.prismaSchema):undefined});
+    if(config.database)await runSeedDataIfPresent({snapshotDir:backendDir,repositoryRoot:rootDir,jobId,signal,env:backendEnv,isolatedDatabase:true});
     const preload=fileURLToPath(new URL('../utils/autPortOverride.cjs',import.meta.url)).replaceAll('\\','/');
     backendEnv.COVAI_AUT_PORT=String(backendPort);
-    backendEnv.NODE_OPTIONS=`${process.env.NODE_OPTIONS || ''} --require="${preload}"`.trim();
-    if (measurementPreparation?.backendPreload) backendEnv.NODE_OPTIONS += ` --require="${measurementPreparation.backendPreload.replaceAll('\\','/')}"`;
-    const backend=await startAutServer({snapshotDir:backendDir,port:backendPort,jobId,healthPath:config.backend.healthPath,requireHealthy:true,env:backendEnv,preferStart:true,signal});
-    if (!backend.started) throw new ServiceError('No backend start script found',422);
+    backendEnv.NODE_OPTIONS=`--require="${preload}"`;
+    if(measurementPreparation?.backendPreload)backendEnv.NODE_OPTIONS+=` --require="${measurementPreparation.backendPreload.replaceAll('\\','/')}"`;
+    await ports[0].release();
+    const backend=await startAutServer({snapshotDir:backendDir,repositoryRoot:rootDir,port:backendPort,jobId,healthPath:config.backend.healthPath,allowHttpNotFound:config.backend.readiness==='http',requireHealthy:true,env:backendEnv,preferStart:!config.unified,signal});
+    if(!backend.started)throw new ServiceError('No application start script found',422);
     handles.push(backend);
-    const frontendDir=containedPath(rootDir,config.frontend.directory);
-    const frontendPort=await resolveAvailableAutPort(frontendDir,4173);
-    const backendUrl=`http://127.0.0.1:${backendPort}`;
-    const frontendEnv={...environment(config.frontend.directory),NODE_ENV:'development',VITE_API_URL:backendUrl,VITE_API_BASE_URL:backendUrl};
-    await prepareFullSystemPackage({directory:frontendDir,env:frontendEnv,jobId,signal});
-    const frontend=await startAutServer({snapshotDir:frontendDir,port:frontendPort,jobId,requireHealthy:true,env:frontendEnv,signal});
-    if (!frontend.started) throw new ServiceError('No frontend start script found',422);
-    handles.push(frontend);
+    if(!config.unified) {
+      const frontendSource=inspectSystemSetupSource(frontendDir);
+      const frontendEnv=buildAutomaticTestEnvironment({files:frontendSource.files,env:environment(config.frontend.directory),port:frontendPort,backendUrl,frontendUrl});
+      await prepareFullSystemPackage({directory:frontendDir,repositoryRoot:rootDir,env:frontendEnv,jobId,signal});
+      await ports[1].release();
+      const frontend=await startAutServer({snapshotDir:frontendDir,repositoryRoot:rootDir,port:frontendPort,jobId,requireHealthy:true,env:frontendEnv,signal});
+      if(!frontend.started)throw new ServiceError('No frontend start script found',422);
+      handles.push(frontend);
+    }
     return {frontendPort,backendUrl,cleanup};
-  } catch (error) {await cleanup().catch(() => {});throw new ServiceError(`Full system setup failed: ${error.message.replaceAll(password,'[redacted]')}`,error.statusCode || 422);}
+  } catch(error){await cleanup().catch(()=>{});let message=error.message;for(const [key,value] of Object.entries(resources?.environment || {}))if(value && /PASSWORD|SECRET|TOKEN|KEY|URL/.test(key))message=message.replaceAll(value,'[redacted]');const failure=new ServiceError(`Full system setup failed: ${message}`,error.statusCode || 422);failure.code=error.code || 'SYSTEM_RUNTIME_START_FAILED';failure.details=error.details;throw failure;}
 };

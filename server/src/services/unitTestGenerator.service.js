@@ -382,6 +382,7 @@ export const parseAndSanitizeAiTestResponse = ({
  * @returns {Promise<object>} Suggestion result object
  */
 export const generateAiUnitTestSuite = async ({
+    userId,
     framework = "jest",
     snapshot,
     sourceFileToInspect,
@@ -406,6 +407,13 @@ export const generateAiUnitTestSuite = async ({
         }
         : findExistingTestFile(snapshot.rootDir, cleanSource, framework);
 
+    let proposalBase = {};
+    if (userId && snapshot?.projectId && snapshot?.id) {
+        const { captureProjectProposalBase } = await import("./projectProposalBase.service.js");
+        proposalBase = await captureProjectProposalBase({ projectId: snapshot.projectId, snapshotId: snapshot.id, userId, path: testFileInfo.relativePath });
+        testFileInfo.content = proposalBase.existingContent;
+        testFileInfo.found = proposalBase.isExisting;
+    }
     const cleanImportPath = computeRelativeImportPath(testFileInfo.relativePath, cleanSource, snapshot?.rootDir);
 
     // 1. Assemble Phase 1 AST & Phase 2 Context Engineering
@@ -432,10 +440,11 @@ export const generateAiUnitTestSuite = async ({
     let aiGenerationError = null;
 
     try {
+        let generationTimer;
         const responseText = await Promise.race([
             generateText(prompt),
-            new Promise((_, reject) => setTimeout(() => reject(new Error("AI generation timed out (45s limit reached)")), 45000))
-        ]);
+            new Promise((_, reject) => { generationTimer = setTimeout(() => reject(new Error("AI generation timed out (45s limit reached)")), 45000); })
+        ]).finally(() => clearTimeout(generationTimer));
 
         // 4. Parse & Sanitize Response (Section 3.2)
         const parseCheck = parseAndSanitizeAiTestResponse({
@@ -495,6 +504,8 @@ export const generateAiUnitTestSuite = async ({
             : "Add test cases covering edge cases and logical conditions");
 
     const primarySuggestion = {
+        ...proposalBase,
+        proposalBase: { ...proposalBase, existingContent: undefined },
         suggestionId: `sug-${Date.now()}-1`,
         sourceFile: cleanSourceFile,
         testFile: cleanTargetTest,

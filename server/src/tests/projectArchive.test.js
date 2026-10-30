@@ -17,6 +17,7 @@ describe("snapshot source ZIP", () => {
     it("includes source, tests, and templates while excluding dependencies, credentials, backups and metadata", async () => {
         const included = ["src/app.js", "tests/app.test.js", "README.md", ".env.example", "package-lock.json"];
         const excluded = [".env", ".env.production", ".env.local.bak", "server/prod.env", "secrets.json", "firebase-adminsdk.json", "service-account.json", "private.key", "cert.pem.bak", ".npmrc", ".git/config", "node_modules/a/index.js", ".aws/config", ".covai-checkpoint.json"];
+        excluded.push('.covai-collaboration/private.before', '.covai-temp/debug.json', '.covai-system-test/runtime.json');
         for (const name of [...included, ...excluded]) await file(name);
         const result = await createProjectArchive(root);
         const zip = new AdmZip(result.buffer);

@@ -21,6 +21,17 @@ const generate = value => jest.fn().mockResolvedValue(JSON.stringify(value));
 afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root,{recursive:true,force:true}); });
 
 describe('automatic Full Stack setup', () => {
+    it('uses an existing Prisma schema and real root route without asking AI for SQL or endpoints',async()=>{
+        const root=fixture(),model=generate({backend:{healthPath:'/invented'}});
+        write(root,'server/package.json',JSON.stringify({scripts:{start:'node index.js'},dependencies:{express:'5','@prisma/client':'6'},devDependencies:{prisma:'6'}}));
+        write(root,'server/index.js','const express=require("express"); const app=express(); app.get("/",(req,res)=>res.send("ready"));');
+        write(root,'server/prisma/schema.prisma','datasource db { provider = "mysql"\n url = env("DATABASE_URL") }\n model Food { id Int @id }');
+        const result=await ensureFullSystemSetup({rootDir:root,dependencies:{generate:model}});
+        expect(result.config).toMatchObject({backend:{directory:'server',healthPath:'/'},database:{engine:'mysql',prismaSchema:'server/prisma/schema.prisma',schemaStrategy:'push'}});
+        expect(readFullSystemConfig(root)).toEqual(result.config);
+        expect(model).not.toHaveBeenCalled();
+        expect(fs.existsSync(path.join(root,'.covai/generated-schema.sql'))).toBe(false);
+    });
     it('creates schema and config from source without exposing env files', async () => {
         const root = fixture(), model = generate(proposal());
         const result = await ensureFullSystemSetup({rootDir:root,dependencies:{generate:model}});
@@ -93,12 +104,17 @@ describe('automatic Full Stack setup', () => {
         expect((await ensureFullSystemSetup({rootDir:root,dependencies:{generate:model}})).generated).toBe(false);
         expect(model).not.toHaveBeenCalled();
     });
+    it.each(['../outside.prisma','server/schema.sql'])('rejects an unsafe or invalid Prisma schema reference: %s',prismaSchema=>{
+        const root=fixture();
+        write(root,'.covai/system-test.json',JSON.stringify({frontend:{directory:'client'},backend:{directory:'server',healthPath:'/'},database:{engine:'mysql',prismaSchema,schemaStrategy:'push'}}));
+        expect(()=>readFullSystemConfig(root)).toThrow();
+    });
     it('serializes concurrent preparation for the same root', async () => {
         const root=fixture(), model=generate(proposal());
         await Promise.all([1,2,3].map(()=>ensureFullSystemSetup({rootDir:root,dependencies:{generate:model}})));
         expect(model).toHaveBeenCalledTimes(1);
     });
-    it.each(['bad-json','missing','unsafe','escape','engine','endpoint','directory','invented-table','invented-column'])('rejects %s and leaves no config', async kind => {
+    it.each(['bad-json','missing','unsafe','escape','invented-table','invented-column'])('rejects %s and leaves no config', async kind => {
         const root=fixture(), value=proposal();
         if(kind==='missing') value.missingInformation=['Schema is ambiguous'];
         if(kind==='unsafe') value.schemaSql+=' DROP TABLE todos;';
@@ -112,24 +128,26 @@ describe('automatic Full Stack setup', () => {
         await expect(ensureFullSystemSetup({rootDir:root,dependencies:{generate:model}})).rejects.toThrow();
         expect(fs.existsSync(path.join(root,'.covai/system-test.json'))).toBe(false);
     });
+    it('uses deterministic source facts instead of failing on an AI-invented service, database or health route',async()=>{
+        const root=fixture(),value=proposal();
+        value.frontend.directory='../untrusted';value.backend.directory='invented-backend';value.backend.healthPath='/invented';value.database.engine='sqlite';
+        const result=await ensureFullSystemSetup({rootDir:root,dependencies:{generate:generate(value)}});
+        expect(result.config).toMatchObject({frontend:{directory:'client'},backend:{directory:'server',healthPath:'/',readiness:'http'},database:{engine:'mysql'}});
+    });
     it('allows retry after a model failure', async () => {
         const root=fixture();
-        await expect(ensureFullSystemSetup({rootDir:root,dependencies:{generate:async()=>{throw new Error('offline');}}})).rejects.toThrow('offline');
+        await expect(ensureFullSystemSetup({rootDir:root,dependencies:{generate:async()=>{throw new Error('offline');}}})).rejects.toThrow('AI is unavailable while preparing Full Stack configuration');
         expect((await ensureFullSystemSetup({rootDir:root,dependencies:{generate:generate(proposal())}})).generated).toBe(true);
     });
-    it('reports unsupported source before invoking AI', async () => {
+    it('configures a frontend-only application without requiring an invented backend', async () => {
         const root=fixture(), model=generate(proposal()); fs.unlinkSync(path.join(root,'server/package.json'));
-        await expect(ensureFullSystemSetup({rootDir:root,dependencies:{generate:model}})).rejects.toThrow(/could not identify a backend with a start script/);
+        expect((await ensureFullSystemSetup({rootDir:root,dependencies:{generate:model}})).config).toMatchObject({unified:true,frontendOnly:true,database:null});
         expect(model).not.toHaveBeenCalled();
     });
-    it('explains missing database detection and distinguishes it from missing environment variables', async () => {
+    it('configures a backend without database dependencies without requiring database environment variables', async () => {
         const root=fixture(), model=generate(proposal());
         write(root,'server/package.json',JSON.stringify({scripts:{start:'node index.js'},dependencies:{express:'1'}}));
-        let error;
-        try {await ensureFullSystemSetup({rootDir:root,dependencies:{generate:model}});} catch(failure) {error=failure;}
-        expect(error.message).toContain('a supported database (MySQL or PostgreSQL)');
-        expect(error.message).toContain('Adding a .env file alone will not resolve');
-        expect(error.message).toContain('Choose Frontend Dev Server');
+        expect((await ensureFullSystemSetup({rootDir:root,dependencies:{generate:model}})).config.database).toBeNull();
         expect(model).not.toHaveBeenCalled();
     });
     it('keeps invalid existing setup and reports it', async () => {
