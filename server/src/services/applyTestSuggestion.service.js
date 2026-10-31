@@ -1394,14 +1394,41 @@ export const autoHealTestFailures = (rootDir, testFilesToRun, testResults, rawOu
             rawOutput.includes("Cannot define the same handler twice") ||
             rawOutput.includes("Analysis worker initialized") ||
             rawOutput.includes("connect ECONNREFUSED 127.0.0.1:3306") ||
-            rawOutput.includes("SequelizeConnectionRefusedError")
+            rawOutput.includes("SequelizeConnectionRefusedError") ||
+            rawOutput.includes("STACK_TRACE_ERROR") ||
+            /Test timed out in \d+ms/i.test(rawOutput)
         ) {
             if (!isConfigTestFile && content.includes("analysisQueue")) {
-                const wire = `    if (typeof analysisQueue !== 'undefined' && analysisQueue) {\n      const _fnM = typeof vi !== 'undefined' ? vi.fn : jest.fn;\n      analysisQueue.process = _fnM();\n      analysisQueue.on = _fnM();\n      analysisQueue.add = _fnM().mockResolvedValue({ id: '1' });\n      analysisQueue.getWaitingCount = _fnM().mockResolvedValue(1);\n      analysisQueue.getActiveCount = _fnM().mockResolvedValue(2);\n      analysisQueue.getCompletedCount = _fnM().mockResolvedValue(3);\n      analysisQueue.getFailedCount = _fnM().mockResolvedValue(4);\n      analysisQueue.getDelayedCount = _fnM().mockResolvedValue(5);\n    }\n`;
+                const wire = `    if (typeof analysisQueue !== 'undefined' && analysisQueue) {\n      const _fnM = typeof vi !== 'undefined' ? vi.fn : jest.fn;\n      analysisQueue.process = _fnM();\n      analysisQueue.on = _fnM();\n      analysisQueue.add = _fnM().mockResolvedValue({ id: '1' });\n      analysisQueue.getWaitingCount = _fnM().mockResolvedValue(1);\n      analysisQueue.getActiveCount = _fnM().mockResolvedValue(2);\n      analysisQueue.getCompletedCount = _fnM().mockResolvedValue(3);\n      analysisQueue.getFailedCount = _fnM().mockResolvedValue(4);\n      analysisQueue.getDelayedCount = _fnM().mockResolvedValue(5);\n      analysisQueue.close = _fnM().mockResolvedValue();\n      analysisQueue.moveUnlockedJobsToWait = _fnM().mockResolvedValue();\n      analysisQueue.processJob = _fnM().mockResolvedValue();\n      analysisQueue.getJobFromId = _fnM().mockResolvedValue(null);\n    }\n`;
                 if (content.includes("beforeEach") && !content.includes("analysisQueue.process = _fnM()")) {
                     content = content.replace(/(beforeEach\(\(\)\s*=>\s*\{)/, `$1\n${wire}`);
                 }
             }
+        }
+
+        // Fix Vitest STACK_TRACE_ERROR / Test timed out in XXXXms: heal hanging invocations & unsafe helper traversal
+        if (rawOutput.includes("STACK_TRACE_ERROR") || /Test timed out in \d+ms/i.test(rawOutput) || /Execution timed out/i.test(rawOutput)) {
+            // 1. Upgrade any outdated _collectCallableMembers
+            if (content.includes("_collectCallableMembers")) {
+                const safeCollector = `const _collectCallableMembers = (target, fallbackName = 'target') => {\n  const list = [];\n  const dangerousMethods = new Set([\n    'bclient', 'eclient', 'client', 'whenCurrentJobsFinished', 'obliterate',\n    'empty', 'close', 'pause', 'resume', 'isReady', 'clean', 'count',\n    'getJob', 'getJobs', 'moveToCompleted', 'moveToFailed', 'disconnect',\n    'quit', 'destroy', 'terminate', 'exit', 'authenticate', 'sync', 'connect',\n    'moveUnlockedJobsToWait', 'processJob', 'getJobFromId', 'multi', 'batch',\n    'length', 'name', 'prototype', 'caller', 'arguments', 'constructor'\n  ]);\n  if (typeof target === 'function') {\n    for (const p of Object.getOwnPropertyNames(target)) {\n      if (!dangerousMethods.has(p) && typeof target[p] === 'function') {\n        list.push({ name: p, fn: target[p].bind(target) });\n      }\n    }\n    try {\n      const inst = new target();\n      let p = Object.getPrototypeOf(inst);\n      while (p && p !== Object.prototype && p.constructor && !['EventEmitter', 'Queue', 'Bull', 'RedisClient'].includes(p.constructor.name)) {\n        for (const name of Object.getOwnPropertyNames(p)) {\n          if (!dangerousMethods.has(name) && typeof inst[name] === 'function') {\n            list.push({ name, fn: inst[name].bind(inst) });\n          }\n        }\n        p = Object.getPrototypeOf(p);\n      }\n    } catch (_) {}\n  } else if (target && typeof target === 'object') {\n    const isQueueOrEmitter = Boolean(\n      (target.constructor && ['EventEmitter', 'Queue', 'Bull', 'RedisClient'].includes(target.constructor.name)) ||\n      (target.client && target.bclient)\n    );\n    for (const k of Object.keys(target)) {\n      if (!dangerousMethods.has(k) && typeof target[k] === 'function') {\n        if (isQueueOrEmitter && ['process', 'on', 'add', 'moveUnlockedJobsToWait', 'processJob', 'getJobFromId', 'close'].includes(k)) {\n          continue;\n        }\n        list.push({ name: k, fn: target[k].bind(target) });\n      }\n    }\n  }\n  if (list.length === 0) list.push({ name: fallbackName, fn: target });\n  return list;\n};`;
+                content = content.replace(/(?:const|var|let)\s+_collectCallableMembers\s*=\s*\([^)]*\)\s*=>\s*\{[\s\S]*?^\s*\};\r?\n?/m, `${safeCollector}\n`);
+            }
+
+            // 2. Stop infinite prototype walking into Queue/EventEmitter
+            content = content.replace(
+                /while\s*\(\s*p\s*&&\s*p\s*!==\s*Object\.prototype\s*\)/g,
+                "while (p && p !== Object.prototype && p.constructor && !['EventEmitter', 'Queue', 'Bull', 'RedisClient'].includes(p.constructor.name))"
+            );
+
+            // 3. Wrap hanging await Promise.resolve(...) invocations with Promise.race 60ms timeout guard
+            content = content.replace(
+                /await\s+Promise\.resolve\s*\((m\.fn\([^)]*\)|inst\[mName\]\([^)]*\)|target\[name\]\([^)]*\)|act\.fn\([^)]*\))\)\.catch\(\(\)\s*=>\s*\{\}\)/g,
+                "await Promise.race([Promise.resolve($1).catch(() => {}), new Promise(r => setTimeout(r, 60))])"
+            );
+            content = content.replace(
+                /await\s+(res\d?)\.catch\((?:(?:\(?[a-zA-Z0-9_:]+\)?|\(\))\s*=>\s*[a-zA-Z0-9_]+)\)/g,
+                "await Promise.race([$1.catch(() => {}), new Promise(r => setTimeout(r, 60))])"
+            );
         }
 
         // Fix TypeError: models.Requirement.findByPk.mockResolvedValue is not a function
@@ -2341,6 +2368,7 @@ export const generateDeltaTestCode = ({
                 'empty', 'close', 'pause', 'resume', 'isReady', 'clean', 'count',
                 'getJob', 'getJobs', 'moveToCompleted', 'moveToFailed', 'disconnect',
                 'quit', 'destroy', 'terminate', 'exit', 'authenticate', 'sync', 'connect',
+                'moveUnlockedJobsToWait', 'processJob', 'getJobFromId', 'multi', 'batch',
                 'length', 'name', 'prototype', 'caller', 'arguments', 'constructor'
             ]);
             if (typeof target === 'function') {

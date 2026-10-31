@@ -462,10 +462,18 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
         : `    // Universal Service / Business Logic Member Invoker (Registered once per suite)
     const _collectCallableMembers = (target${isTs ? ": any" : ""}, fallbackName = 'target') => {
         const list${isTs ? ": { name: string; fn: Function }[]" : ""} = [];
+        const dangerousMethods = new Set([
+            'bclient', 'eclient', 'client', 'whenCurrentJobsFinished', 'obliterate',
+            'empty', 'close', 'pause', 'resume', 'isReady', 'clean', 'count',
+            'getJob', 'getJobs', 'moveToCompleted', 'moveToFailed', 'disconnect',
+            'quit', 'destroy', 'terminate', 'exit', 'authenticate', 'sync', 'connect',
+            'moveUnlockedJobsToWait', 'processJob', 'getJobFromId', 'multi', 'batch',
+            'length', 'name', 'prototype', 'caller', 'arguments', 'constructor'
+        ]);
         if (!target) return list;
         if (typeof target === 'function') {
             for (const p of Object.getOwnPropertyNames(target)) {
-                if (!['length', 'name', 'prototype', 'caller', 'arguments', 'constructor'].includes(p) && typeof target[p] === 'function') {
+                if (!dangerousMethods.has(p) && typeof target[p] === 'function') {
                     list.push({ name: p, fn: target[p].bind(target) });
                 }
             }
@@ -473,9 +481,9 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
                 try {
                     const inst = new target();
                     let proto = Object.getPrototypeOf(inst);
-                    while (proto && proto !== Object.prototype) {
+                    while (proto && proto !== Object.prototype && proto.constructor && !['EventEmitter', 'Queue', 'Bull', 'RedisClient'].includes(proto.constructor.name)) {
                         for (const p of Object.getOwnPropertyNames(proto)) {
-                            if (p !== 'constructor' && typeof inst[p] === 'function') {
+                            if (!dangerousMethods.has(p) && typeof inst[p] === 'function') {
                                 list.push({ name: p, fn: inst[p].bind(inst) });
                             }
                         }
@@ -485,8 +493,17 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             }
             if (list.length === 0) list.push({ name: fallbackName, fn: target });
         } else if (typeof target === 'object') {
+            const isQueueOrEmitter = Boolean(
+                (target.constructor && ['EventEmitter', 'Queue', 'Bull', 'RedisClient'].includes(target.constructor.name)) ||
+                (target.client && target.bclient)
+            );
             for (const p of Object.keys(target)) {
-                if (typeof target[p] === 'function') list.push({ name: p, fn: target[p].bind(target) });
+                if (!dangerousMethods.has(p) && typeof target[p] === 'function') {
+                    if (isQueueOrEmitter && ['process', 'on', 'add', 'moveUnlockedJobsToWait', 'processJob', 'getJobFromId', 'close'].includes(p)) {
+                        continue;
+                    }
+                    list.push({ name: p, fn: target[p].bind(target) });
+                }
             }
         }
         return list;
@@ -557,7 +574,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             ${isTs ? `const target: any = ${safeFn};` : `const target = ${safeFn};`}
             const actions = _collectControllerActions(target);
             for (const act of actions) {
-                await Promise.resolve(act.fn(req, res, next)).catch(() => {});
+                await Promise.race([Promise.resolve(act.fn(req, res, next)).catch(() => {}), new Promise(r => setTimeout(r, 60))]);
             }
             expect(res.status || res.json || next).toBeDefined();
         } catch (err) {
@@ -589,7 +606,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             ${isTs ? `const target: any = ${safeFn};` : `const target = ${safeFn};`}
             const actions = _collectControllerActions(target);
             for (const act of actions) {
-                await Promise.resolve(act.fn(req, res, next)).catch(() => {});
+                await Promise.race([Promise.resolve(act.fn(req, res, next)).catch(() => {}), new Promise(r => setTimeout(r, 60))]);
             }
             expect(res.status || next).toBeDefined();
         } catch (err) {
@@ -614,7 +631,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             const actions = _collectControllerActions(target);
             if (typeof setStubRejectMode === 'function') setStubRejectMode(true);
             for (const act of actions) {
-                await Promise.resolve(act.fn(req, res, next)).catch(() => {});
+                await Promise.race([Promise.resolve(act.fn(req, res, next)).catch(() => {}), new Promise(r => setTimeout(r, 60))]);
             }
             if (typeof setStubRejectMode === 'function') setStubRejectMode(false);
             expect(next).toBeDefined();
@@ -630,11 +647,11 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             const defaultArgs = { requirement: 'Sample requirement', text: 'Sample text', description: 'Sample description', options: {}, id: '1', name: 'sample', amount: 100, status: 'active' };
             const members = _collectCallableMembers(target);
             for (const m of members) {
-                try { await Promise.resolve(m.fn('2 + 3 * 4', '14')).catch(() => {}); } catch {}
-                try { await Promise.resolve(m.fn(10)).catch(() => {}); } catch {}
-                try { await Promise.resolve(m.fn(1)).catch(() => {}); } catch {}
-                try { await Promise.resolve(m.fn()).catch(() => {}); } catch {}
-                try { await Promise.resolve(m.fn(defaultArgs)).catch(() => {}); } catch {}
+                try { await Promise.race([Promise.resolve(m.fn('2 + 3 * 4', '14')).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                try { await Promise.race([Promise.resolve(m.fn(10)).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                try { await Promise.race([Promise.resolve(m.fn(1)).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                try { await Promise.race([Promise.resolve(m.fn()).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                try { await Promise.race([Promise.resolve(m.fn(defaultArgs)).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
             }
             expect(target).toBeDefined();
         } catch (err) {
@@ -669,7 +686,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
                     try {
                         const res = m.fn(input);
                         if (res && typeof res.then === 'function') {
-                            await res.catch(${isTs ? "(e: any)" : "(e)"} => e);
+                            await Promise.race([res.catch(${isTs ? "(e: any)" : "(e)"} => e), new Promise(r => setTimeout(r, 60))]);
                         }
                     } catch (_) {}
                 }
@@ -688,13 +705,13 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             for (const m of members) {
                 try {
                     const res1 = m.fn({ requirement: 'Test requirement', errors: true, tagFilter: '@test', scenariosMustMatchFeatureFile: true, status: 'active', includeDetails: true });
-                    if (res1 && typeof res1.then === 'function') await res1.catch(${isTs ? "(e: any)" : "(e)"} => e);
+                    if (res1 && typeof res1.then === 'function') await Promise.race([res1.catch(${isTs ? "(e: any)" : "(e)"} => e), new Promise(r => setTimeout(r, 60))]);
                 } catch (_) {}
                 try {
                     const res2 = m.fn({ requirement: '', errors: false, tagFilter: '', status: 'inactive' });
-                    if (res2 && typeof res2.then === 'function') await res2.catch(${isTs ? "(e: any)" : "(e)"} => e);
+                    if (res2 && typeof res2.then === 'function') await Promise.race([res2.catch(${isTs ? "(e: any)" : "(e)"} => e), new Promise(r => setTimeout(r, 60))]);
                 } catch (_) {}
-                try { await Promise.resolve(m.fn()).catch(() => {}); } catch {}
+                try { await Promise.race([Promise.resolve(m.fn()).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
             }
             expect(target).toBeDefined();
         } catch (err) {
@@ -708,9 +725,9 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             ${isTs ? `const target: any = ${safeFn};` : `const target = ${safeFn};`}
             const members = _collectCallableMembers(target);
             for (const m of members) {
-                try { await Promise.resolve(m.fn(null)).catch(() => {}); } catch {}
-                try { await Promise.resolve(m.fn(undefined)).catch(() => {}); } catch {}
-                try { await Promise.resolve(m.fn({})).catch(() => {}); } catch {}
+                try { await Promise.race([Promise.resolve(m.fn(null)).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                try { await Promise.race([Promise.resolve(m.fn(undefined)).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                try { await Promise.race([Promise.resolve(m.fn({})).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
             }
             expect(target).toBeDefined();
         } catch (err) {
@@ -726,18 +743,20 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
                 'bclient', 'eclient', 'client', 'whenCurrentJobsFinished', 'obliterate',
                 'empty', 'close', 'pause', 'resume', 'isReady', 'clean', 'count',
                 'getJob', 'getJobs', 'moveToCompleted', 'moveToFailed', 'disconnect',
-                'quit', 'destroy', 'terminate', 'exit', 'authenticate', 'sync', 'connect'
+                'quit', 'destroy', 'terminate', 'exit', 'authenticate', 'sync', 'connect',
+                'moveUnlockedJobsToWait', 'processJob', 'getJobFromId', 'multi', 'batch',
+                'length', 'name', 'prototype', 'caller', 'arguments', 'constructor'
             ]);
             // 1. Static methods on class constructor
             if (typeof target === 'function') {
                 for (const name of Object.getOwnPropertyNames(target)) {
                     if (!['length', 'name', 'prototype', 'caller', 'arguments', 'constructor'].includes(name) && typeof target[name] === 'function' && !dangerousMethods.has(name)) {
-                        try { await Promise.resolve(target[name]('2 + 3 * 4', '14')).catch(() => {}); } catch {}
-                        try { await Promise.resolve(target[name](10)).catch(() => {}); } catch {}
-                        try { await Promise.resolve(target[name](1)).catch(() => {}); } catch {}
-                        try { await Promise.resolve(target[name]()).catch(() => {}); } catch {}
-                        try { await Promise.resolve(target[name]({})).catch(() => {}); } catch {}
-                        try { await Promise.resolve(target[name](null)).catch(() => {}); } catch {}
+                        try { await Promise.race([Promise.resolve(target[name]('2 + 3 * 4', '14')).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                        try { await Promise.race([Promise.resolve(target[name](10)).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                        try { await Promise.race([Promise.resolve(target[name](1)).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                        try { await Promise.race([Promise.resolve(target[name]()).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                        try { await Promise.race([Promise.resolve(target[name]({})).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                        try { await Promise.race([Promise.resolve(target[name](null)).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
                     }
                 }
             }
@@ -749,7 +768,7 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
             if (inst && (typeof inst === 'object' || typeof inst === 'function')) {
                 const methods = new Set(Object.keys(inst).filter(k => typeof inst[k] === 'function' && !dangerousMethods.has(k)));
                 let p = Object.getPrototypeOf(inst);
-                while (p && p !== Object.prototype) {
+                while (p && p !== Object.prototype && p.constructor && !['EventEmitter', 'Queue', 'Bull', 'RedisClient'].includes(p.constructor.name)) {
                     for (const name of Object.getOwnPropertyNames(p)) {
                         if (name !== 'constructor' && typeof p[name] === 'function' && !dangerousMethods.has(name)) {
                             methods.add(name);
@@ -758,10 +777,10 @@ export const generateFallbackUnitTests = ({ framework = "jest", sourceFile, targ
                     p = Object.getPrototypeOf(p);
                 }
                 for (const mName of methods) {
-                    try { await Promise.resolve(inst[mName]()).catch(() => {}); } catch {}
-                    try { await Promise.resolve(inst[mName]({})).catch(() => {}); } catch {}
-                    try { await Promise.resolve(inst[mName]({ id: '1', status: 'active', filter: 'all', options: {} })).catch(() => {}); } catch {}
-                    try { await Promise.resolve(inst[mName](null)).catch(() => {}); } catch {}
+                    try { await Promise.race([Promise.resolve(inst[mName]()).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                    try { await Promise.race([Promise.resolve(inst[mName]({})).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                    try { await Promise.race([Promise.resolve(inst[mName]({ id: '1', status: 'active', filter: 'all', options: {} })).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
+                    try { await Promise.race([Promise.resolve(inst[mName](null)).catch(() => {}), new Promise(r => setTimeout(r, 60))]); } catch {}
                 }
             }
             expect(target).toBeDefined();

@@ -42,6 +42,7 @@ export const CANONICAL_BUILTIN_HELPERS = {
     'empty', 'close', 'pause', 'resume', 'isReady', 'clean', 'count',
     'getJob', 'getJobs', 'moveToCompleted', 'moveToFailed', 'disconnect',
     'quit', 'destroy', 'terminate', 'exit', 'authenticate', 'sync', 'connect',
+    'moveUnlockedJobsToWait', 'processJob', 'getJobFromId', 'multi', 'batch',
     'length', 'name', 'prototype', 'caller', 'arguments', 'constructor'
   ]);
   if (typeof target === 'function') {
@@ -63,8 +64,15 @@ export const CANONICAL_BUILTIN_HELPERS = {
       }
     } catch (_) {}
   } else if (target && typeof target === 'object') {
+    const isQueueOrEmitter = Boolean(
+      (target.constructor && ['EventEmitter', 'Queue', 'Bull', 'RedisClient'].includes(target.constructor.name)) ||
+      (target.client && target.bclient)
+    );
     for (const k of Object.keys(target)) {
       if (!dangerousMethods.has(k) && typeof target[k] === 'function') {
+        if (isQueueOrEmitter && ['process', 'on', 'add', 'moveUnlockedJobsToWait', 'processJob', 'getJobFromId', 'close'].includes(k)) {
+          continue;
+        }
         list.push({ name: k, fn: target[k].bind(target) });
       }
     }
@@ -82,6 +90,7 @@ export const CANONICAL_BUILTIN_HELPERS = {
     'empty', 'close', 'pause', 'resume', 'isReady', 'clean', 'count',
     'getJob', 'getJobs', 'moveToCompleted', 'moveToFailed', 'disconnect',
     'quit', 'destroy', 'terminate', 'exit', 'authenticate', 'sync', 'connect',
+    'moveUnlockedJobsToWait', 'processJob', 'getJobFromId', 'multi', 'batch',
     'length', 'name', 'prototype', 'caller', 'arguments', 'constructor'
   ]);
   if (typeof target === 'function') {
