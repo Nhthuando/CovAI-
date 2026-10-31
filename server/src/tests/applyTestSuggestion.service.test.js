@@ -15,7 +15,8 @@ import {
     cleanTestRunnerError,
     getTestRunnerFailure,
     resolveContainerOrHostTestPath,
-    applyUnitTestSuggestion
+    applyUnitTestSuggestion,
+    insertCodeIntoTestFile
 } from "../services/applyTestSuggestion.service.js";
 import { runJestCoverage } from "../services/runTestsJob.service.js";
 import { dockerRunner } from "../services/dockerRunner.service.js";
@@ -813,6 +814,36 @@ FAIL tests/calc.test.js
                 statusCode: 400,
                 code: "INVALID_SUGGESTION"
             });
+        });
+
+        test("insertCodeIntoTestFile safely merges multiline hoisted mocks without cutting statements in half", () => {
+            const originalContent = `import { describe, test, expect } from 'vitest';
+describe('service', () => {
+    test('existing', () => { expect(1).toBe(1); });
+});
+`;
+            const codeToAdd = `const { mockCreateUniversalStub, setStubRejectMode } = vi.hoisted(() => {
+    let shouldReject = false;
+    const fnMaker = typeof vi !== 'undefined' ? vi.fn : (() => ({}));
+    const handler = {
+        get: (target, prop) => {
+            if (prop === Symbol.iterator) return function* () { yield* []; };
+            return fnMaker();
+        }
+    };
+    return { mockCreateUniversalStub: () => new Proxy({}, handler) };
+});
+vi.mock('../src/lib/prisma.js', () => mockCreateUniversalStub());
+
+describe('service new tests', () => {
+    test('new branch', () => { expect(2).toBe(2); });
+});
+`;
+            const merged = insertCodeIntoTestFile(originalContent, codeToAdd, "tests/service.test.js");
+            expect(merged).toContain("mockCreateUniversalStub");
+            expect(merged).toContain("describe('service new tests'");
+            // Ensure no top-level return was created outside a function
+            expect(merged).not.toMatch(/^if\s*\(prop === Symbol\.iterator\)\s*return/m);
         });
     });
 });

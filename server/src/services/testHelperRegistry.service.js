@@ -180,6 +180,11 @@ export function areImplementationsCompatible(name, sigA, sigB, declNodeA = null,
         return cleanA === cleanB;
     }
 
+    // For mock variables (e.g. mockAxios, mockPrisma, mockCreateUniversalStub, stubFn)
+    if (/^(?:mock|_mock|stub)/i.test(name) || name === "setStubRejectMode") {
+        return true;
+    }
+
     return false;
 }
 
@@ -352,7 +357,8 @@ export function inspectAstScopeDuplicates(ast, code = "") {
                     }
                 }
 
-                if (allCompatible) {
+                const isMockHelper = /^(?:mock|_mock|stub)/i.test(name) || name === "setStubRejectMode";
+                if (allCompatible || isMockHelper) {
                     duplicates.push({
                         name,
                         scopeId: scopeKey,
@@ -445,8 +451,13 @@ export function deduplicateAstDeclarations(code, options = {}) {
 
     for (const dup of duplicates) {
         if (!dup.isReconcilable) {
-            // Do not remove conflicting implementations blindly
-            continue;
+            // Reconcile mock declarations in the same scope to prevent fatal SyntaxError: Identifier has already been declared
+            const isMockHelper = /^(?:mock|_mock|stub)/i.test(dup.name) || dup.name === "setStubRejectMode";
+            if (isMockHelper) {
+                dup.isReconcilable = true;
+            } else {
+                continue;
+            }
         }
 
         const occurrences = dup.occurrences;

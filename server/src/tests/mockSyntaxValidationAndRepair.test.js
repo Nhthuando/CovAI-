@@ -276,5 +276,68 @@ const res = myModule.default(1, 2);
     expect(healed).not.toContain("get (typeof defaultExport");
     expect(healed).not.toContain("myModule.(typeof defaultExport");
   });
+
+  // Self-Healing Invariant: Auto-repairs 'return' outside of function (orphaned mock getters or user returns)
+  test("11. Self-Healing: auto-repairs 'return' outside of function from orphaned mock branches or user returns", () => {
+    const corruptedCodeWithTopLevelReturn = `
+import { describe, it, expect } from 'vitest';
+
+if (prop === Symbol.iterator) return function* () { yield* []; };
+if (prop === Symbol.asyncIterator) return async function* () { yield* []; };
+if (prop === Symbol.toPrimitive) return (hint) => (hint === 'number' ? 0 : '');
+
+describe('User Service Suite', () => {
+  it('executes user test', () => {
+    expect(1 + 1).toBe(2);
+  });
+});
+`;
+    const repaired = autoRepairTestSyntaxWithAst(corruptedCodeWithTopLevelReturn, { filePath: "tests/user.test.js" });
+    expect(repaired.repaired).toBe(true);
+    expect(repaired.code).not.toContain("if (prop === Symbol.iterator) return");
+    expect(repaired.code).toContain("describe('User Service Suite'");
+  });
+
+  // Self-Healing Invariant: Auto-repairs duplicate conflicting variable declarations (Identifier 'X' already declared)
+  test("12. Self-Healing: auto-repairs duplicate mock declarations (Identifier 'mockAxios' has already been declared)", () => {
+    const codeWithDuplicateMock = `
+import { describe, it, expect, vi } from 'vitest';
+
+const mockAxios = { get: vi.fn(() => Promise.resolve({ data: 1 })) };
+const mockAxios = { get: vi.fn(() => Promise.resolve({ data: 2 })), post: vi.fn() };
+
+describe('Axios Test', () => {
+  it('calls mockAxios', async () => {
+    expect(mockAxios.get).toBeDefined();
+  });
+});
+`;
+    const repaired = autoRepairTestSyntaxWithAst(codeWithDuplicateMock, { filePath: "tests/api.test.js" });
+    expect(repaired.repaired).toBe(true);
+    expect(repaired.errors).toHaveLength(0);
+  });
+
+  // Deduplication Invariant: Collapses repetitive Symbol.iterator blocks
+  test("13. Deduplication: collapses repetitive Symbol.iterator proxy getters into a single block", () => {
+    const repetitiveCode = `
+const handler = {
+  get: (target, prop) => {
+    if (prop === Symbol.iterator) return function* () { yield* []; };
+    if (prop === Symbol.asyncIterator) return async function* () { yield* []; };
+    if (prop === Symbol.toPrimitive) return (hint) => (hint === 'number' ? 0 : '');
+    if (prop === Symbol.iterator) return function* () { yield* []; };
+    if (prop === Symbol.asyncIterator) return async function* () { yield* []; };
+    if (prop === Symbol.toPrimitive) return (hint) => (hint === 'number' ? 0 : '');
+    if (prop === Symbol.iterator) return function* () { yield* []; };
+    if (prop === Symbol.asyncIterator) return async function* () { yield* []; };
+    if (prop === Symbol.toPrimitive) return (hint) => (hint === 'number' ? 0 : '');
+    return target[prop];
+  }
+};
+`;
+    const cleaned = cleanAndDeduplicateTestContent(repetitiveCode, "", "tests/proxy.test.js");
+    const count = (cleaned.match(/Symbol\.iterator/g) || []).length;
+    expect(count).toBe(1);
+  });
 });
 

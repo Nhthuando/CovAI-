@@ -1263,6 +1263,13 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
         );
     }
 
+    // 0.05a. Collapse repetitively injected Symbol.iterator proxy getters caused by non-idempotent replacement
+    const repeatedSymbolRegex = /(?:[ \t]*if\s*\(\s*(?:prop|p)\s*===\s*Symbol\.iterator\s*\)\s*return\s+function\*\s*\(\s*\)\s*\{\s*yield\*\s*\[\];\s*\};?[ \t]*\r?\n[ \t]*if\s*\(\s*(?:prop|p)\s*===\s*Symbol\.asyncIterator\s*\)\s*return\s+async\s+function\*\s*\(\s*\)\s*\{\s*yield\*\s*\[\];\s*\};?[ \t]*\r?\n[ \t]*if\s*\(\s*(?:prop|p)\s*===\s*Symbol\.toPrimitive\s*\)\s*return\s+\(hint\)\s*=>\s*\(hint\s*===\s*['"]number['"]\s*\?\s*0\s*:\s*['"]['"]\);?[ \t]*\r?\n?)+/g;
+    cleaned = cleaned.replace(
+        repeatedSymbolRegex,
+        "      if (prop === Symbol.iterator) return function* () { yield* []; };\n      if (prop === Symbol.asyncIterator) return async function* () { yield* []; };\n      if (prop === Symbol.toPrimitive) return (hint) => (hint === 'number' ? 0 : '');\n"
+    );
+
     // 0.05b. Eliminate accidental consecutive commas in object destructuring, arrays, or imports (e.g. { a,, b } -> { a, b })
     cleaned = cleaned.replace(/,\s*,+/g, ", ");
 
@@ -2465,12 +2472,14 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
         cleaned = cleaned.replace(/type:\s*['"]INTEGER['"]/g, "type: expect.anything()");
     }
 
-    // Heal universal mocks for downstream local dependencies
+    // Heal universal mocks for downstream local dependencies (Idempotent patch)
     if (cleaned.includes("mockCreateUniversalStub")) {
-        cleaned = cleaned.replace(
-            /if\s*\(\s*prop\s*===\s*['"]then['"]\s*\|\|\s*(?:prop\s*===\s*['"]catch['"]\s*\|\|\s*)?typeof\s+prop\s*===\s*['"]symbol['"]\s*\)\s*return\s+undefined\s*;/g,
-            "if (prop === Symbol.iterator) return function* () { yield* []; };\n      if (prop === Symbol.asyncIterator) return async function* () { yield* []; };\n      if (prop === Symbol.toPrimitive) return (hint) => (hint === 'number' ? 0 : '');\n      if (prop === 'then' || prop === 'catch' || typeof prop === 'symbol') return undefined;"
-        );
+        if (!cleaned.includes("Symbol.iterator")) {
+            cleaned = cleaned.replace(
+                /if\s*\(\s*prop\s*===\s*['"]then['"]\s*\|\|\s*(?:prop\s*===\s*['"]catch['"]\s*\|\|\s*)?typeof\s+prop\s*===\s*['"]symbol['"]\s*\)\s*return\s+undefined\s*;/g,
+                "if (prop === Symbol.iterator) return function* () { yield* []; };\n      if (prop === Symbol.asyncIterator) return async function* () { yield* []; };\n      if (prop === Symbol.toPrimitive) return (hint) => (hint === 'number' ? 0 : '');\n      if (prop === 'then' || prop === 'catch' || typeof prop === 'symbol') return undefined;"
+            );
+        }
         cleaned = cleaned.replace(
             /const mockCreateUniversalStub = \(\) => \{[\s\S]*?return target\[prop\];[\s\S]*?\};\r?\n/g,
             `const mockCreateUniversalStub = () => {\n  const fnMaker = typeof vi !== 'undefined' ? vi.fn : (typeof jest !== 'undefined' ? jest.fn : (() => ({})));\n  const stubFn = () => fnMaker(() => Promise.resolve({ id: 1, name: 'Sample Item', title: 'Sample Title', status: 'ACTIVE', score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90, filename: 'sample.pdf', analysis: { score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }, toJSON() { return { id: 1, score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }; } }));\n  const baseTarget = {\n    models: mockCreateModelRegistry(),\n    AppError: class extends Error { statusCode; details; constructor(sc, m, d) { super(m); this.statusCode = sc; this.details = d; } },\n    asyncHandler: (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next),\n    errorMiddleware: fnMaker((err, req, res, next) => res.status(err.statusCode || 500).json({ message: err.message }))\n  };\n  return new Proxy(baseTarget, {\n    get: (target, prop) => {\n      if (prop === Symbol.iterator) return function* () { yield* []; };\n      if (prop === Symbol.asyncIterator) return async function* () { yield* []; };\n      if (prop === Symbol.toPrimitive) return (hint) => (hint === 'number' ? 0 : '');\n      if (prop === 'then' || typeof prop === 'symbol') return undefined;\n      if (!(prop in target)) {\n        if (prop === 'default') {\n          target[prop] = target;\n        } else if (prop === 'findAndCountAll') {\n          target[prop] = fnMaker(() => Promise.resolve({ count: 1, rows: [{ id: 1, title: 'Sample', score: 50, ambiguity: 50, clarity: 50, completeness: 50, consistency: 50, toJSON() { return { id: 1, score: 50, ambiguity: 50, clarity: 50, completeness: 50, consistency: 50 }; } }] }));\n        } else {\n          target[prop] = stubFn();\n        }\n      }\n      return target[prop];\n    }\n  });\n};\n`
