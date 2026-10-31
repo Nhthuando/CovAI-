@@ -14,13 +14,25 @@ export default defineConfig({
   server: {
     watch: {
       usePolling: true,
-      interval: 3000,
+      interval: 1500,
+      ignored: [
+        "**/node_modules/**",
+        "**/.git/**",
+        "**/dist/**",
+        "**/.cache/**",
+        "**/coverage/**",
+      ],
     },
     port: 5173,
     host: true,
+    strictPort: true,
+    hmr: {
+      clientPort: 5173,
+      overlay: true,
+    },
     proxy: {
       "/api": {
-        target: "http://localhost:5000",
+        target: process.env.VITE_BACKEND_DOCKER_URL || "http://localhost:5000",
         changeOrigin: true,
       },
     },
