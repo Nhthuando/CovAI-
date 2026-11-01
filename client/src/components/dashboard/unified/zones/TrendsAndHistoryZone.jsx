@@ -1,7 +1,12 @@
 import { CoverageTrendChart } from "../charts/CoverageTrendChart.jsx";
 import { UnifiedRecentRunsTable } from "../history/UnifiedRecentRunsTable.jsx";
 
-export function TrendsAndHistoryZone({ vm, onNavigateWorkspace, className = "" }) {
+export function TrendsAndHistoryZone({
+  vm,
+  onNavigateWorkspace,
+  onInspectItem,
+  className = "",
+}) {
   const trend = vm?.trend || {};
   const history = vm?.history || {};
 
@@ -17,6 +22,7 @@ export function TrendsAndHistoryZone({ vm, onNavigateWorkspace, className = "" }
         <UnifiedRecentRunsTable
           historyData={history}
           onNavigateWorkspace={onNavigateWorkspace}
+          onInspectItem={onInspectItem}
         />
       </div>
     </div>

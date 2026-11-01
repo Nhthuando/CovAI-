@@ -1,7 +1,15 @@
 import { CrossLayerTraceMatrix } from "../matrix/CrossLayerTraceMatrix.jsx";
 import { SmartActionCenter } from "../actions/SmartActionCenter.jsx";
 
-export function TraceAndActionsZone({ vm, onNavigateWorkspace, className = "" }) {
+export function TraceAndActionsZone({
+  vm,
+  onNavigateWorkspace,
+  onInspectItem,
+  onAskAi,
+  activeCrossFilter = null,
+  onClearCrossFilter,
+  className = "",
+}) {
   const matrix = vm?.matrix || {};
   const actions = vm?.actions || {};
 
@@ -12,6 +20,10 @@ export function TraceAndActionsZone({ vm, onNavigateWorkspace, className = "" })
         <CrossLayerTraceMatrix
           matrixData={matrix}
           onNavigateWorkspace={onNavigateWorkspace}
+          onInspectItem={onInspectItem}
+          onAskAi={onAskAi}
+          activeCrossFilter={activeCrossFilter}
+          onClearCrossFilter={onClearCrossFilter}
         />
       </div>
 
@@ -20,6 +32,9 @@ export function TraceAndActionsZone({ vm, onNavigateWorkspace, className = "" })
         <SmartActionCenter
           actionsData={actions}
           onNavigateWorkspace={onNavigateWorkspace}
+          onInspectItem={onInspectItem}
+          onAskAi={onAskAi}
+          activeCrossFilter={activeCrossFilter}
         />
       </div>
     </div>

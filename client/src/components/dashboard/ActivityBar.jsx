@@ -9,6 +9,7 @@ import {
   Layers,
   Network,
   Terminal,
+  ShieldCheck,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -17,6 +18,7 @@ const TOP_ITEMS = [
   { id: "explorer", icon: Files, label: "Explorer" },
   { id: "git", icon: GitGraph, label: "Git Control" },
   { id: "coverage", icon: BarChart3, label: "Coverage" },
+  { id: "trustworthiness", icon: ShieldCheck, label: "Đánh giá chatbot" },
   { id: "jobs", icon: Layers, label: "Snapshots & Jobs" },
   { id: "architecture", icon: Network, label: "Architecture" },
   { id: "logic-analysis", icon: GitBranch, label: "Logic Analysis" },
@@ -102,14 +104,17 @@ export default function ActivityBar({ active, onSelect }) {
       className="h-full flex flex-col items-center justify-between py-2.5 select-none shrink-0 bg-[var(--color-surface-secondary)] border-r border-[var(--color-border)] font-sans"
       style={{ width: 60 }}
     >
-      {/* Brand Icon & Top nav items */}
+      {/* Brand Icon (Click to return to Projects Portfolio) & Top nav items */}
       <div className="flex flex-col items-center gap-1 w-full">
-        <div
-          className="w-8 h-8 rounded-[var(--radius-md)] bg-[var(--color-primary)] text-white flex items-center justify-center mb-2.5 shrink-0"
-          title="CovAI Platform"
+        <button
+          type="button"
+          onClick={() => onSelect?.("portfolio")}
+          className="w-8 h-8 rounded-[var(--radius-md)] bg-[var(--color-primary)] hover:opacity-90 text-white flex items-center justify-center mb-2.5 shrink-0 cursor-pointer transition-opacity"
+          title="Back to All Projects Portfolio (/projects)"
+          aria-label="Back to All Projects Portfolio"
         >
           <Terminal size={16} strokeWidth={2.5} />
-        </div>
+        </button>
 
         {/* Divider */}
         <div className="w-6 h-px bg-[var(--color-border)] mb-1" />

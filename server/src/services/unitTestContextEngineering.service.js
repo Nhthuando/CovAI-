@@ -281,8 +281,11 @@ export const buildDecisionTableMatrix = ({
 
     const decisionTableMarkdown = tableHeader + tableRows;
 
+    const cc = astMetadata?.cyclomaticComplexity || (1 + (decisionPoints || []).length);
     const summary = {
         totalTestCases: matrixEntries.length,
+        cyclomaticComplexity: cc,
+        minimumBasisPaths: cc,
         happyPathCount: matrixEntries.filter(e => e.category === "HAPPY_PATH").length,
         boundaryCount: matrixEntries.filter(e => e.category === "BOUNDARY_VALUES").length,
         branchTogglingCount: matrixEntries.filter(e => e.category === "BRANCH_TOGGLING").length,
@@ -324,21 +327,57 @@ export const buildIndirectTestingStrategy = ({
         };
     }
 
-    // Scan AST or regex to map which exported functions call each internal helper
-    for (const helper of internalFunctions) {
-        const helperName = helper.name;
-        const callers = [];
+    // Map each function (internal or exported) to which internal helpers it directly calls
+    const allFuncs = [...internalFunctions, ...exportedSymbols.filter(s => s.type !== "constant")];
+    const funcDirectCallMap = new Map();
 
-        for (const exp of exportedSymbols) {
-            if (exp.type === "constant") continue;
-            // Check if caller body references the helper name
-            const callerRegex = new RegExp(`\\b${helperName}\\s*\\(`, "m");
-            if (callerRegex.test(sourceCode)) {
-                callers.push(exp.name);
+    for (const f of allFuncs) {
+        const name = f.name;
+        const declPattern = new RegExp(`(?:function\\s+${name}|const\\s+${name}\\s*=|let\\s+${name}\\s*=|var\\s+${name}\\s*=)([\\s\\S]*?)(?=(?:function\\s+[a-zA-Z0-9_$]+|const\\s+[a-zA-Z0-9_$]+\\s*=|let\\s+[a-zA-Z0-9_$]+\\s*=|var\\s+[a-zA-Z0-9_$]+\\s*=|module\\.exports|export\\s+default|export\\s+\\{|$))`);
+        const match = sourceCode.match(declPattern);
+        const body = match ? match[1] : "";
+        const calledHelpers = new Set();
+        for (const helper of internalFunctions) {
+            if (helper.name === name) continue;
+            const callRegex = new RegExp(`\\b${helper.name}\\s*\\(`, "m");
+            if (callRegex.test(body)) {
+                calledHelpers.add(helper.name);
             }
         }
+        funcDirectCallMap.set(name, calledHelpers);
+    }
 
-        const callerNames = callers.length > 0 ? callers : exportedSymbols.map(s => s.name);
+    // For each internal helper, backtrack callers through the call graph to find public exported callers
+    for (const helper of internalFunctions) {
+        const helperName = helper.name;
+        const exportedCallerNames = new Set();
+
+        const findExportedCallers = (targetName, visited = new Set()) => {
+            if (visited.has(targetName)) return;
+            visited.add(targetName);
+
+            for (const exp of exportedSymbols) {
+                if (exp.type === "constant") continue;
+                const calls = funcDirectCallMap.get(exp.name);
+                if (calls && calls.has(targetName)) {
+                    exportedCallerNames.add(exp.name);
+                }
+            }
+
+            // Also check internal functions that call targetName, and recursively backtrack
+            for (const inner of internalFunctions) {
+                const calls = funcDirectCallMap.get(inner.name);
+                if (calls && calls.has(targetName)) {
+                    findExportedCallers(inner.name, visited);
+                }
+            }
+        };
+
+        findExportedCallers(helperName);
+
+        const callerNames = exportedCallerNames.size > 0
+            ? Array.from(exportedCallerNames)
+            : exportedSymbols.filter(s => s.type !== "constant").map(s => s.name);
         const callersStr = callerNames.length > 0 ? callerNames.map(c => `\`${c}\``).join(", ") : "the exported module functions";
 
         indirectStrategies.push({
@@ -353,7 +392,7 @@ export const buildIndirectTestingStrategy = ({
     const indirectGuidancePrompt = indirectStrategies.map(s =>
         `⚠️ STRICT INDIRECT TESTING MANDATE FOR INTERNAL HELPER "${s.helperName}":\n` +
         `  - "${s.helperName}" is NOT exported! NEVER write \`import { ${s.helperName} }\` or \`const { ${s.helperName} } = require(...)\`.\n` +
-        `  - Call exported function(s): ${s.exportedCallers.join(", ")}.\n` +
+        `  - Call exported function(s): ${(s.exportedCallers || []).join(", ") || "the exported module functions"}.\n` +
         `  - ${s.guidance}`
     ).join("\n\n");
 
@@ -382,7 +421,10 @@ export const buildIndirectTestingStrategy = ({
 export const buildIsolationMockContracts = ({
     sourceCode = "",
     existingTestCode = "",
-    framework = "jest"
+    framework = "jest",
+    sourceFile = null,
+    targetTestFile = null,
+    rootDir = null
 }) => {
     const isVitest = framework === "vitest";
     const detectedDependencies = [];
@@ -391,11 +433,16 @@ export const buildIsolationMockContracts = ({
     // 1. Detect Environment Variables
     const envMatches = [...codeToInspect.matchAll(/process\.env\.([A-Z0-9_]+)/g)].map(m => m[1]);
     const uniqueEnvs = Array.from(new Set(envMatches)).filter(v => !["NODE_ENV", "PATH", "HOME", "USER"].includes(v));
+    if (/quickbooks/i.test(codeToInspect)) {
+        for (const qbKey of ["QUICKBOOKS_CLIENT_ID", "QUICKBOOKS_CLIENT_SECRET", "QUICKBOOKS_REDIRECT_URI", "QUICKBOOKS_ENVIRONMENT"]) {
+            if (!uniqueEnvs.includes(qbKey)) uniqueEnvs.push(qbKey);
+        }
+    }
     let envMockCode = "";
     if (uniqueEnvs.length > 0) {
         detectedDependencies.push("environment-variables");
         envMockCode = `// 1. Mock Environment Variables\nprocess.env.NODE_ENV = 'test';\n` +
-            uniqueEnvs.map(v => `process.env.${v} = process.env.${v} || 'test-${v.toLowerCase()}';`).join("\n") + "\n\n";
+            uniqueEnvs.map(v => (v.includes("URI") || v.includes("URL")) ? `process.env.${v} = process.env.${v} || 'http://localhost:8000/callback';` : `process.env.${v} = process.env.${v} || 'test-${v.toLowerCase()}';`).join("\n") + "\n\n";
     }
 
     // 2. Detect Prisma / Database
@@ -433,16 +480,16 @@ export const buildIsolationMockContracts = ({
             `  });\n` +
             `  return _clientProxy;\n` +
             `};\n` +
-            `const mockPrisma = _createPrismaProxyMock();\n` +
+            `var mockPrisma = globalThis.__mockPrisma = _createPrismaProxyMock();\n` +
             (isVitest
-                ? `vi.mock('@prisma/client', () => ({ PrismaClient: vi.fn(() => mockPrisma), default: { PrismaClient: vi.fn(() => mockPrisma) } }));\n\n`
-                : `jest.mock('@prisma/client', () => ({ PrismaClient: jest.fn(() => mockPrisma), default: { PrismaClient: jest.fn(() => mockPrisma) } }));\n` +
-                  `jest.mock('../lib/prisma.js', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });\n` +
-                  `jest.mock('../../lib/prisma.js', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });\n` +
-                  `jest.mock('../src/lib/prisma.js', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });\n` +
-                  `jest.mock('../config/prisma.js', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });\n` +
-                  `jest.mock('../../config/prisma.js', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });\n` +
-                  `jest.mock('../src/config/prisma.js', () => ({ prisma: mockPrisma, default: mockPrisma }), { virtual: true });\n\n`);
+                ? `vi.mock('@prisma/client', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { PrismaClient: vi.fn(() => p), default: { PrismaClient: vi.fn(() => p) } }; });\n\n`
+                : `jest.mock('@prisma/client', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { PrismaClient: jest.fn(() => p), default: { PrismaClient: jest.fn(() => p) } }; });\n` +
+                  `jest.mock('../lib/prisma.js', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; });\n` +
+                  `jest.mock('../../lib/prisma.js', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; });\n` +
+                  `jest.mock('../src/lib/prisma.js', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; });\n` +
+                  `jest.mock('../config/prisma.js', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; });\n` +
+                  `jest.mock('../../config/prisma.js', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; });\n` +
+                  `jest.mock('../src/config/prisma.js', () => { const p = globalThis.__mockPrisma || (typeof mockPrisma !== 'undefined' ? mockPrisma : {}); return { __esModule: true, prisma: p, default: p }; });\n\n`);
     }
 
     // 3. Detect Axios / HTTP Client
@@ -453,22 +500,53 @@ export const buildIsolationMockContracts = ({
         axiosMockCode = `// 3. Shared Axios Mock Instance (Handles axios.create, get, post, put, delete)\n` +
             (isVitest
                 ? `const _mockAxios = { post: vi.fn(() => Promise.resolve({ data: { success: true, message: 'ok' }, status: 200 })), get: vi.fn(() => Promise.resolve({ data: {}, status: 200 })), put: vi.fn(() => Promise.resolve({ data: {}, status: 200 })), delete: vi.fn(() => Promise.resolve({ data: {}, status: 200 })) };\n` +
-                  `vi.mock('axios', () => ({ default: { create: vi.fn(() => _mockAxios), ..._mockAxios } }));\n\n`
+                  `const mockAxios = _mockAxios;
+vi.mock('axios', () => ({ default: { create: vi.fn(() => _mockAxios), ..._mockAxios } }));\n\n`
                 : `const _mockAxios = { post: jest.fn(() => Promise.resolve({ data: { success: true, message: 'ok' }, status: 200 })), get: jest.fn(() => Promise.resolve({ data: {}, status: 200 })), put: jest.fn(() => Promise.resolve({ data: {}, status: 200 })), delete: jest.fn(() => Promise.resolve({ data: {}, status: 200 })) };\n` +
-                  `jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, default: { create: jest.fn(() => _mockAxios), ..._mockAxios } }));\n\n`);
+                  `const mockAxios = _mockAxios;
+jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, default: { create: jest.fn(() => _mockAxios), ..._mockAxios } }));\n\n`);
     }
 
     // 4. Detect Bull / BullMQ / Redis
-    const usesBull = /require\(['"]bull['"]\)|from\s+['"]bull['"]|bullmq|bull|\bQueue\b|\bWorker\b|redis/i.test(codeToInspect);
+    const usesBull = /(?:require\(['"]bull(?:mq)?['"]\)|from\s+['"]bull(?:mq)?['"]|\bnew\s+(?:Bull|Queue|Worker)\b)/i.test(codeToInspect);
     let bullMockCode = "";
     if (usesBull) {
         detectedDependencies.push("bull-queue");
         bullMockCode = `// 4. Bull / BullMQ / Redis Queue Mock (Prevents real Redis connections)\n` +
             (isVitest
-                ? `vi.mock('bull', () => ({ default: vi.fn().mockImplementation(() => ({ process: vi.fn(), add: vi.fn(() => Promise.resolve({ id: '1' })), close: vi.fn(() => Promise.resolve()) })) }));\n` +
-                  `vi.mock('bullmq', () => ({ Queue: vi.fn().mockImplementation(() => ({ add: vi.fn(() => Promise.resolve({ id: '1' })), close: vi.fn(() => Promise.resolve()) })), Worker: vi.fn().mockImplementation(() => ({ on: vi.fn(), close: vi.fn(() => Promise.resolve()) })) }));\n\n`
-                : `jest.mock('bull', () => jest.fn().mockImplementation(() => ({ process: jest.fn(), add: jest.fn(() => Promise.resolve({ id: '1' })), close: jest.fn(() => Promise.resolve()) })));\n` +
-                  `jest.mock('bullmq', () => ({ Queue: jest.fn().mockImplementation(() => ({ add: jest.fn(() => Promise.resolve({ id: '1' })), close: jest.fn(() => Promise.resolve()) })), Worker: jest.fn().mockImplementation(() => ({ on: jest.fn(), close: jest.fn(() => Promise.resolve()) })) }));\n\n`);
+                ? `const mockCreateBullInstance = () => ({ process: vi.fn(), on: vi.fn(), add: vi.fn(() => Promise.resolve({ id: '1' })), getWaitingCount: vi.fn(() => Promise.resolve(0)), getActiveCount: vi.fn(() => Promise.resolve(0)), getCompletedCount: vi.fn(() => Promise.resolve(0)), getFailedCount: vi.fn(() => Promise.resolve(0)), getDelayedCount: vi.fn(() => Promise.resolve(0)), close: vi.fn(() => Promise.resolve()) });\n` +
+                  `vi.mock('bull', () => ({ default: vi.fn().mockImplementation(mockCreateBullInstance) }));\n` +
+                  `vi.mock('bullmq', () => ({ Queue: vi.fn().mockImplementation(mockCreateBullInstance), Worker: vi.fn().mockImplementation(() => ({ on: vi.fn(), close: vi.fn(() => Promise.resolve()) })) }));\n\n`
+                : `const mockCreateBullInstance = () => ({ process: jest.fn(), on: jest.fn(), add: jest.fn(() => Promise.resolve({ id: '1' })), getWaitingCount: jest.fn(() => Promise.resolve(0)), getActiveCount: jest.fn(() => Promise.resolve(0)), getCompletedCount: jest.fn(() => Promise.resolve(0)), getFailedCount: jest.fn(() => Promise.resolve(0)), getDelayedCount: jest.fn(() => Promise.resolve(0)), close: jest.fn(() => Promise.resolve()) });\n` +
+                  `jest.mock('bull', () => Object.assign(jest.fn().mockImplementation(mockCreateBullInstance), { default: jest.fn().mockImplementation(mockCreateBullInstance) }), { virtual: true });\n` +
+                  `jest.mock('bullmq', () => ({ Queue: jest.fn().mockImplementation(mockCreateBullInstance), Worker: jest.fn().mockImplementation(() => ({ on: jest.fn(), close: jest.fn(() => Promise.resolve()) })) }), { virtual: true });\n\n`);
+    }
+
+    // 4.5. Detect App Config imports
+    const usesConfig = /require\(['"][^'"]*config(?:\/index)?['"]\)|from\s+['"][^'"]*config(?:\/index)?['"]/i.test(codeToInspect);
+    let configMockCode = "";
+    if (usesConfig) {
+        detectedDependencies.push("app-config");
+        configMockCode = `// 4.5. App Config Universal Mock\n` +
+            `const mockAppConfig = new Proxy({\n` +
+            `  aiEngine: { baseUrl: 'http://localhost:5000' },\n` +
+            `  ollama: { baseUrl: 'http://localhost:11434', timeoutMs: 10000, maxHistoryMessages: 2, model: 'llama3' },\n` +
+            `  groq: { baseUrl: 'https://api.groq.com', timeoutMs: 10000, enabled: false },\n` +
+            `  queue: { analysisQueueName: 'test-analysis-queue' },\n` +
+            `  redis: { host: 'localhost', port: 6379 },\n` +
+            `  upload: { maxFileSizeInBytes: 10485760 }\n` +
+            `}, {\n` +
+            `  get: (target, prop) => {\n` +
+            `    if (prop === 'then' || typeof prop === 'symbol') return undefined;\n` +
+            `    if (!(prop in target)) target[prop] = {};\n` +
+            `    return target[prop];\n` +
+            `  }\n` +
+            `});\n` +
+            (isVitest
+                ? `vi.mock('../../src/config', () => ({ default: mockAppConfig, ...mockAppConfig }));\n` +
+                  `vi.mock('../config', () => ({ default: mockAppConfig, ...mockAppConfig }));\n\n`
+                : `jest.mock('../../src/config', () => mockAppConfig, { virtual: true });\n` +
+                  `jest.mock('../config', () => mockAppConfig, { virtual: true });\n\n`);
     }
 
     // 5. Detect Express Controller Usage
@@ -507,7 +585,138 @@ export const buildIsolationMockContracts = ({
             `// And advance timers with ${isVitest ? "vi.runAllTimers()" : "jest.runAllTimers()"} or ${isVitest ? "vi.advanceTimersByTime(1000)" : "jest.advanceTimersByTime(1000)"};\n\n`;
     }
 
-    const mockPreambleCode = `${envMockCode}${prismaMockCode}${axiosMockCode}${bullMockCode}${controllerMockCode}${timersMockCode}`.trim();
+    // 7. Detect Third-Party Libraries (pdfkit, json2csv, multer)
+    let thirdPartyMockCode = "";
+    if (/pdfkit/i.test(codeToInspect)) {
+        detectedDependencies.push("pdfkit");
+        thirdPartyMockCode += `// 7. Mock PDFKit\n` +
+            (isVitest
+                ? `vi.mock('pdfkit', () => ({ default: vi.fn().mockImplementation(() => ({ fontSize: vi.fn().mockReturnThis(), text: vi.fn().mockReturnThis(), moveDown: vi.fn().mockReturnThis(), on: vi.fn().mockReturnThis(), pipe: vi.fn().mockReturnThis(), end: vi.fn().mockReturnThis() })) }));\n\n`
+                : `jest.mock('pdfkit', () => jest.fn().mockImplementation(() => ({ fontSize: jest.fn().mockReturnThis(), text: jest.fn().mockReturnThis(), moveDown: jest.fn().mockReturnThis(), on: jest.fn().mockReturnThis(), pipe: jest.fn().mockReturnThis(), end: jest.fn().mockReturnThis() })), { virtual: true });\n\n`);
+    }
+    if (/json2csv/i.test(codeToInspect)) {
+        detectedDependencies.push("json2csv");
+        thirdPartyMockCode += `// 7. Mock json2csv\n` +
+            (isVitest
+                ? `vi.mock('json2csv', () => ({ Parser: vi.fn().mockImplementation(() => ({ parse: vi.fn(() => 'col1,col2\\nval1,val2') })) }));\n\n`
+                : `jest.mock('json2csv', () => ({ Parser: jest.fn().mockImplementation(() => ({ parse: jest.fn(() => 'col1,col2\\nval1,val2') })) }), { virtual: true });\n\n`);
+    }
+    if (/multer/i.test(codeToInspect)) {
+        detectedDependencies.push("multer");
+        thirdPartyMockCode += `// 7. Mock multer\n` +
+            (isVitest
+                ? `const mockMulter = Object.assign(vi.fn(() => ({ single: vi.fn(() => (req, res, next) => next && next()), array: vi.fn(() => (req, res, next) => next && next()) })), { memoryStorage: vi.fn(), diskStorage: vi.fn() });\nvi.mock('multer', () => ({ default: mockMulter, ...mockMulter }));\n\n`
+                : `const mockMulter = Object.assign(jest.fn(() => ({ single: jest.fn(() => (req, res, next) => next && next()), array: jest.fn(() => (req, res, next) => next && next()) })), { memoryStorage: jest.fn(), diskStorage: jest.fn() });\njest.mock('multer', () => mockMulter, { virtual: true });\n\n`);
+    }
+
+    // 8. Detect Downstream Local Services & Models (Pure RAM Isolation)
+    const localRequires = [...new Set([...sourceCode.matchAll(/(?:require\s*\(\s*['"](\.[^'"]+)['"]\s*\)|from\s+['"](\.[^'"]+)['"])/g)].map(m => m[1] || m[2]))]
+        .filter(reqPath => !/(?:\/types\/|\.d\.ts$|definition)/i.test(reqPath))
+        .filter(reqPath => !/(?:utils?\/|helpers?\/|validators?\/|formatters?\/|math|evaluator|presets?\/|constants?\/|locales?\/|fixtures?\/|types?\/|schemas?\/|data\/|tier\d+)/i.test(reqPath));
+    let localServicesMockCode = "";
+    if (localRequires.length > 0) {
+        detectedDependencies.push("downstream-local-services");
+        if (isVitest) {
+            localServicesMockCode = `// 8. Universal RAM Mocks for Downstream Local Dependencies\n` +
+                `const { mockCreateUniversalStub, setStubRejectMode } = vi.hoisted(() => {\n` +
+                `  let shouldReject = false;\n` +
+                `  const fnMaker = typeof vi !== 'undefined' ? vi.fn : (() => ({}));\n` +
+                `  const stubFn = () => fnMaker(() => {\n` +
+                `    if (shouldReject) return Promise.reject(new Error('Mocked downstream failure'));\n` +
+                `    return Promise.resolve({ id: 1, name: 'Sample Item', title: 'Sample Title', status: 'ACTIVE', score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90, filename: 'sample.pdf', analysis: { score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }, toJSON() { return { id: 1, score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }; } });\n` +
+                `  });\n` +
+                `  const handler = {\n` +
+                `    get: (target, prop) => {\n` +
+                `      if (prop === Symbol.iterator) return function* () { yield* []; };\n` +
+                `      if (prop === Symbol.asyncIterator) return async function* () { yield* []; };\n` +
+                `      if (prop === Symbol.toPrimitive) return (hint) => (hint === 'number' ? 0 : '');\n` +
+                `      if (prop === 'then' || prop === 'catch' || typeof prop === 'symbol') return undefined;\n` +
+                `      if (prop === '__esModule') return true;\n` +
+                `      return new Proxy(stubFn(), handler);\n` +
+                `    },\n` +
+                `    has: (target, prop) => {\n` +
+                `      if (prop === 'then' || prop === 'catch') return false;\n` +
+                `      return true;\n` +
+                `    }\n` +
+                `  };\n` +
+                `  return {\n` +
+                `    mockCreateUniversalStub: () => new Proxy({}, handler),\n` +
+                `    setStubRejectMode: (mode) => { shouldReject = Boolean(mode); }\n` +
+                `  };\n` +
+                `});\n`;
+            for (const reqPath of localRequires) {
+                const mockPaths = [reqPath];
+                if (sourceFile && targetTestFile) {
+                    try {
+                        const srcDir = path.dirname(sourceFile.replace(/\\/g, "/"));
+                        const testDir = path.dirname(targetTestFile.replace(/\\/g, "/"));
+                        const resolvedTarget = path.normalize(path.join(srcDir, reqPath)).replace(/\\/g, "/");
+                        let testRelPath = path.relative(testDir, resolvedTarget).replace(/\\/g, "/");
+                        if (!testRelPath.startsWith(".")) testRelPath = "./" + testRelPath;
+                        if (!mockPaths.includes(testRelPath)) mockPaths.push(testRelPath);
+                    } catch (_) {}
+                }
+                for (const p of mockPaths) {
+                    localServicesMockCode += `vi.mock('${p}', () => mockCreateUniversalStub());\n`;
+                }
+            }
+            localServicesMockCode += "\n";
+        } else {
+            localServicesMockCode = `// 8. Universal RAM Mocks for Downstream Local Dependencies\n` +
+                `var _mockShouldReject = false;\n` +
+                `var setStubRejectMode = globalThis.__setStubRejectMode = (mode) => { _mockShouldReject = Boolean(mode); };\n` +
+                `var _createStubMaker = () => {\n` +
+                `  const fnMaker = typeof jest !== 'undefined' ? jest.fn : (() => ({}));\n` +
+                `  const stubFn = () => fnMaker(() => {\n` +
+                `    if (_mockShouldReject) return Promise.reject(new Error('Mocked downstream failure'));\n` +
+                `    return Promise.resolve({ id: 1, name: 'Sample Item', title: 'Sample Title', status: 'ACTIVE', score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90, filename: 'sample.pdf', analysis: { score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }, toJSON() { return { id: 1, score: 85, ambiguity: 15, clarity: 85, completeness: 90, consistency: 90 }; } });\n` +
+                `  });\n` +
+                `  const baseTarget = {\n` +
+                `    models: new Proxy({}, { get: (t, p) => (p === 'then' ? undefined : (t[p] || (t[p] = stubFn()))) }),\n` +
+                `    AppError: class extends Error { statusCode; details; constructor(sc, m, d) { super(m); this.statusCode = sc; this.details = d; } },\n` +
+                `    asyncHandler: (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next),\n` +
+                `    errorMiddleware: fnMaker((err, req, res, next) => res.status(err.statusCode || 500).json({ message: err.message }))\n` +
+                `  };\n` +
+                `  const handler = {\n` +
+                `    get: (target, prop) => {\n` +
+                `      if (prop === Symbol.iterator) return function* () { yield* []; };\n` +
+                `      if (prop === Symbol.asyncIterator) return async function* () { yield* []; };\n` +
+                `      if (prop === Symbol.toPrimitive) return (hint) => (hint === 'number' ? 0 : '');\n` +
+                `      if (prop === 'then' || prop === 'catch' || typeof prop === 'symbol') return undefined;\n` +
+                `      if (prop === '__esModule') return true;\n` +
+                `      if (!(prop in target)) {\n` +
+                `        if (prop === 'default') target[prop] = target;\n` +
+                `        else target[prop] = stubFn();\n` +
+                `      }\n` +
+                `      return target[prop];\n` +
+                `    },\n` +
+                `    has: (target, prop) => (prop !== 'then' && prop !== 'catch')\n` +
+                `  };\n` +
+                `  return new Proxy(baseTarget, handler);\n` +
+                `};\n` +
+                `var mockCreateUniversalStub = globalThis.__mockCreateUniversalStub = globalThis.__mockCreateUniversalStub || (() => _createStubMaker());\n`;
+            for (const reqPath of localRequires) {
+                const mockPaths = [reqPath];
+                if (sourceFile && targetTestFile) {
+                    try {
+                        const srcDir = path.dirname(sourceFile.replace(/\\/g, "/"));
+                        const testDir = path.dirname(targetTestFile.replace(/\\/g, "/"));
+                        const resolvedTarget = path.normalize(path.join(srcDir, reqPath)).replace(/\\/g, "/");
+                        let testRelPath = path.relative(testDir, resolvedTarget).replace(/\\/g, "/");
+                        if (!testRelPath.startsWith(".")) testRelPath = "./" + testRelPath;
+                        if (!mockPaths.includes(testRelPath)) mockPaths.push(testRelPath);
+                    } catch (_) {}
+                }
+                for (const p of mockPaths) {
+                    localServicesMockCode += `jest.mock('${p}', () => (globalThis.__mockCreateUniversalStub || mockCreateUniversalStub)(), { virtual: true });\n`;
+                }
+            }
+            localServicesMockCode += "\n";
+        }
+    }
+
+    const trimmedPreamble = `${envMockCode}${prismaMockCode}${axiosMockCode}${bullMockCode}${configMockCode}${thirdPartyMockCode}${localServicesMockCode}${controllerMockCode}${timersMockCode}`.trim();
+    const mockPreambleCode = trimmedPreamble ? trimmedPreamble + "\n\n" : "";
 
     const mockInstructions = [
         "MANDATORY ISOLATION MOCK CONTRACTS:",
@@ -517,7 +726,8 @@ export const buildIsolationMockContracts = ({
         detectedDependencies.includes("bull-queue") ? "- Bull Queue: Mock queue.add and queue.process to prevent Redis connection timeouts." : null,
         detectedDependencies.includes("environment-variables") ? "- Environment Variables: Required keys are pre-initialized in process.env." : null,
         detectedDependencies.includes("express-controller") ? "- Express Controllers: ALWAYS pass (req, res, next) with createMockReqResNext() and assert `res.status` / `res.json` / `next`." : null,
-        detectedDependencies.includes("timers-async") ? `- Asynchronous & Timers: Wrap asynchronous logic in async/await. For timers/delays, use ${isVitest ? 'vi.useFakeTimers()' : 'jest.useFakeTimers()'} and advance timers immediately.` : null
+        detectedDependencies.includes("timers-async") ? `- Asynchronous & Timers: Wrap asynchronous logic in async/await. For timers/delays, use ${isVitest ? 'vi.useFakeTimers()' : 'jest.useFakeTimers()'} and advance timers immediately.` : null,
+        detectedDependencies.includes("downstream-local-services") ? "- Downstream Services & Models: All local services and models are stubbed in RAM. Never import unmocked downstream files that connect to databases." : null
     ].filter(Boolean).join("\n");
 
     return {
@@ -571,7 +781,7 @@ export const assembleUnitTestContext = ({
     // 5. Build Engineered Context Prompt Block
     const engineeredPromptContext = [
         `### SECTION 1: PUBLIC APIS & INDIRECT TESTING DIRECTIVE`,
-        `Exported Public Symbols: ${astMetadata.exportedSymbolNames.join(", ") || "All exported members"}`,
+        `Exported Public Symbols: ${(astMetadata?.exportedSymbolNames || []).filter(Boolean).join(", ") || "All exported members"}`,
         indirectTesting.indirectGuidancePrompt,
         "",
         `### SECTION 2: ISOLATION MOCK CONTRACTS`,

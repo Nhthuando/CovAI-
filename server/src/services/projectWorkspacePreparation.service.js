@@ -9,7 +9,7 @@ import { projectFileError } from './projectFileVersion.service.js';
 export const withPreparedProjectWorkspace = async ({projectId,snapshotId,userId,capability = 'files.write',
     expectedWorkspaceRevision,type = 'PREPARE_WORKSPACE',input = {},publish = true,includeGitMetadata = false,primaryJobId},run) => {
     if (!Number.isSafeInteger(expectedWorkspaceRevision)) throw projectFileError('FILE_VERSION_REQUIRED','Regenerate the proposal to capture the current workspace version',428);
-    const operation = await withProjectGuard({projectId,userId,capability},async(tx,access) => {
+    const operation = await withProjectGuard({projectId,userId,capability,maxWait:30000,timeout:60000},async(tx,access) => {
         if (primaryJobId) {
             const existing = await tx.projectOperation.findUnique({where:{primaryJobId}});
             if (existing) return existing;
@@ -43,7 +43,7 @@ export const withPreparedProjectWorkspace = async ({projectId,snapshotId,userId,
         const publication = shouldPublish ? await publishPreparedWorkspace({projectId,snapshotId,userId,capability,
             expectedWorkspaceRevision,beforeFiles,preparedRoot:context.rootDir,requestId:operation.id,afterMutation:complete,includeGitMetadata,
             emitCommittedEvent:async event=>deferPreparedCommit(()=>deliverProjectEvent(event))}) : null;
-        if (!shouldPublish) await withProjectGuard({projectId,userId,capability},tx=>complete(tx,{workspaceRevision:expectedWorkspaceRevision,changedPaths:[]}));
+        if (!shouldPublish) await withProjectGuard({projectId,userId,capability,maxWait:30000,timeout:60000},tx=>complete(tx,{workspaceRevision:expectedWorkspaceRevision,changedPaths:[]}));
         await deliverPreparedCommits();
         return result && typeof result === 'object' ? {...result,...(publication ? {workspaceRevision:publication.workspaceRevision,changedPaths:publication.changedPaths} : {})} : result;
     },{includeGitMetadata});

@@ -1,6 +1,8 @@
+import { useMemo } from "react";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { fetchCoverageDashboardData } from "./useCoverageQuery.js";
 import {
+  getUnifiedQualityDashboard,
   getIntegrationWorkspace,
   getCoverageSummary,
   getBeforeAfterComparison,
@@ -12,13 +14,40 @@ import {
 import { adaptUnifiedDashboard } from "../services/unifiedDashboard/unifiedDashboard.adapter.js";
 
 /**
- * Fetch raw data across Unit, Integration, and System testing layers in parallel.
+ * Fetch 100% real data across Unified Aggregation API + Unit, Integration, and System testing layers in parallel.
  */
-export async function fetchAllTestingLayers({ snapshotId, projectId, projectName = "", snapshots = [] }) {
-  if (!snapshotId) return null;
+export async function fetchAllTestingLayers({ snapshotId, projectId }) {
+  if (!snapshotId) {
+    return {
+      unifiedBackendRaw: null,
+      unitRaw: null,
+      integrationRaw: null,
+      systemRaw: null,
+      comparisonRaw: null,
+      errorsByLayer: { unit: null, integration: null, system: null },
+    };
+  }
 
   const errorsByLayer = { unit: null, integration: null, system: null };
 
+  // FAST PATH: Single unified endpoint returns aggregated data across all 3 tiers in < 300ms
+  try {
+    const unifiedRes = await getUnifiedQualityDashboard(snapshotId);
+    if (unifiedRes?.data) {
+      return {
+        unifiedBackendRaw: unifiedRes.data,
+        unitRaw: null,
+        integrationRaw: null,
+        systemRaw: null,
+        comparisonRaw: null,
+        errorsByLayer,
+      };
+    }
+  } catch (err) {
+    console.warn("[useUnifiedDashboard] Unified quality endpoint unavailable, falling back to multi-layer fetch:", err.message);
+  }
+
+  // FALLBACK PATH: If unified aggregation endpoint is unavailable, fan out to legacy individual endpoints
   const [unitRes, intWorkspaceRes, , sysSummaryRes, , comparisonRes] =
     await Promise.all([
       // 1. Unit Test Layer (re-uses shared cached queryFn)
@@ -56,49 +85,87 @@ export async function fetchAllTestingLayers({ snapshotId, projectId, projectName
       // 4. Baseline Before/After Comparison (for deltas & trends)
       projectId
         ? getBeforeAfterComparison(projectId, { snapshotId })
-            .then((res) => res?.data || null)
-            .catch(() => null)
+          .then((res) => res?.data || null)
+          .catch(() => null)
         : Promise.resolve(null),
     ]);
 
-  const vm = adaptUnifiedDashboard({
+  return {
+    unifiedBackendRaw: null,
     unitRaw: unitRes,
     integrationRaw: intWorkspaceRes,
     systemRaw: sysSummaryRes,
     comparisonRaw: comparisonRes,
-    context: {
-      projectId,
-      projectName,
-      snapshotId,
-      snapshots,
-    },
-  });
-
-  return {
-    vm,
     errorsByLayer,
   };
 }
 
+const EMPTY_SNAPSHOTS = [];
+
 /**
- * React Query Hook for Unified Quality & Testing Dashboard.
+ * React Query Hook for Unified Quality & Testing Dashboard (100% Real Data).
  */
-export function useUnifiedDashboard({ snapshotId, projectId, projectName = "", snapshots = [] }) {
+export function useUnifiedDashboard({
+  snapshotId,
+  projectId,
+  projectName = "",
+  snapshots = EMPTY_SNAPSHOTS,
+}) {
+  const effectiveSnapshotId = snapshotId || snapshots[0]?.id || "";
+
   const query = useQuery({
-    queryKey: ["unifiedDashboard", snapshotId, projectId || null],
-    queryFn: () => fetchAllTestingLayers({ snapshotId, projectId, projectName, snapshots }),
-    enabled: Boolean(snapshotId),
+    queryKey: ["unifiedDashboard", effectiveSnapshotId, projectId || null],
+    queryFn: () => fetchAllTestingLayers({ snapshotId: effectiveSnapshotId, projectId }),
+    enabled: Boolean(effectiveSnapshotId),
     placeholderData: keepPreviousData,
-    staleTime: 5 * 60 * 1000, // 5 minutes cache freshness
-    gcTime: 30 * 60 * 1000,    // 30 minutes in memory
+    staleTime: 2 * 60 * 1000, // 2 minutes cache freshness
+    gcTime: 30 * 60 * 1000,
   });
 
+  const vm = useMemo(() => {
+    if (!effectiveSnapshotId) {
+      return adaptUnifiedDashboard({
+        context: {
+          projectId,
+          projectName,
+          snapshotId: "",
+          snapshots,
+        },
+      });
+    }
+
+    if (!query.data && query.isLoading) {
+      return null;
+    }
+
+    return adaptUnifiedDashboard({
+      unifiedBackendRaw: query.data?.unifiedBackendRaw || null,
+      unitRaw: query.data?.unitRaw || null,
+      integrationRaw: query.data?.integrationRaw || null,
+      systemRaw: query.data?.systemRaw || null,
+      comparisonRaw: query.data?.comparisonRaw || null,
+      context: {
+        projectId,
+        projectName,
+        snapshotId: effectiveSnapshotId,
+        snapshots,
+      },
+    });
+  }, [
+    query.data,
+    query.isLoading,
+    projectId,
+    projectName,
+    effectiveSnapshotId,
+    snapshots,
+  ]);
+
   return {
-    vm: query.data?.vm || null,
+    vm,
     errorsByLayer: query.data?.errorsByLayer || { unit: null, integration: null, system: null },
-    isLoading: query.isLoading,
-    isFetching: query.isFetching,
-    isError: query.isError,
+    isLoading: Boolean(effectiveSnapshotId) ? query.isLoading : false,
+    isFetching: Boolean(effectiveSnapshotId) ? query.isFetching : false,
+    isError: Boolean(effectiveSnapshotId) ? query.isError : false,
     error: query.error,
     refetch: query.refetch,
   };

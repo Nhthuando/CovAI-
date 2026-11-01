@@ -87,6 +87,8 @@ const JOB_TYPE_CONFIG = {
     icon: BrainCircuit,
     taskLabel: "Generating AI improvement suggestions",
   },
+  AI_EVALUATION: { label: 'Chatbot Evaluation', icon: BrainCircuit, taskLabel: 'Evaluating project chatbot against its benchmark' },
+  AI_EVALUATION_PREPARE: { label: 'Evaluation Preparation', icon: BrainCircuit, taskLabel: 'Preparing evaluation knowledge or benchmark proposal' },
   AI_TESTS: {
     label: "AI Tests",
     icon: BrainCircuit,

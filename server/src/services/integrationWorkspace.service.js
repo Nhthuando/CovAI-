@@ -210,11 +210,13 @@ export function parseFailureMessages(failureMessages, req = null) {
 const endpointCache = new Map();
 const firebaseCache = new Map();
 const aiTestParseCache = new Map(); // Structure: Map<snapshotId, Map<aiTestId, { updatedAt: number, requests: Array }>>
+const apiTraceCache = new Map();
 
 export const invalidateEndpointCache = (snapshotId, rootDir = null) => {
   endpointCache.delete(snapshotId);
   firebaseCache.delete(snapshotId);
   aiTestParseCache.delete(snapshotId);
+  apiTraceCache.delete(snapshotId);
   if (rootDir) {
     try {
       import("fs").then((fsModule) => {
@@ -1016,36 +1018,41 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
     }
   });
 
-  // 5.5 Load Unified Coverage and Trace API Coverage
-  let fileCoverageMap = {};
-  if (snapshot?.rootDir) {
-    const candidateCovPaths = [
-      path.join(snapshot.rootDir, "coverage", "coverage-final.json"),
-      path.join(snapshot.rootDir, ".covai-temp", "coverage-final.json"),
-    ];
-    for (const cp of candidateCovPaths) {
-      try {
-        if (fs.existsSync(cp)) {
-          const parsed = parseUnifiedCoverage(cp, snapshot.rootDir);
-          if (parsed && parsed.files) {
-            fileCoverageMap = parsed.files;
-            break;
+  // 5.5 Load Unified Coverage and Trace API Coverage (Cached by snapshotId + latestRun)
+  const apiTraceCacheKey = `${snapshotId}_${latestRun?.id || "none"}`;
+  let apiTraceResult = apiTraceCache.get(apiTraceCacheKey);
+  if (!apiTraceResult) {
+    let fileCoverageMap = {};
+    if (snapshot?.rootDir) {
+      const candidateCovPaths = [
+        path.join(snapshot.rootDir, "coverage", "coverage-final.json"),
+        path.join(snapshot.rootDir, ".covai-temp", "coverage-final.json"),
+      ];
+      for (const cp of candidateCovPaths) {
+        try {
+          if (fs.existsSync(cp)) {
+            const parsed = parseUnifiedCoverage(cp, snapshot.rootDir);
+            if (parsed && parsed.files) {
+              fileCoverageMap = parsed.files;
+              break;
+            }
           }
-        }
-      } catch (_) {}
+        } catch (_) {}
+      }
     }
+
+    let sourceCodeList = [];
+    try {
+      sourceCodeList = await loadSourceCode(snapshotId);
+    } catch (_) {}
+
+    apiTraceResult = traceApiEndpointCoverage({
+      endpoints: discoveredEndpoints,
+      fileCoverageMap,
+      sourceCode: sourceCodeList,
+    });
+    apiTraceCache.set(apiTraceCacheKey, apiTraceResult);
   }
-
-  let sourceCodeList = [];
-  try {
-    sourceCodeList = await loadSourceCode(snapshotId);
-  } catch (_) {}
-
-  const apiTraceResult = traceApiEndpointCoverage({
-    endpoints: discoveredEndpoints,
-    fileCoverageMap,
-    sourceCode: sourceCodeList,
-  });
 
   const endpointTraceMap = new Map();
   if (apiTraceResult?.endpointsTraceability) {

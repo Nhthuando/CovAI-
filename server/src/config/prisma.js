@@ -8,12 +8,12 @@ let prismaClient;
 if (process.env.DATABASE_URL) {
     const pool = new Pool({ 
         connectionString: process.env.DATABASE_URL,
-        max: 20,
-        idleTimeoutMillis: 15000,
-        connectionTimeoutMillis: 30000,
-        allowExitOnIdle: true,
+        max: 25,
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 45000,
         keepAlive: true,
         keepAliveInitialDelayMillis: 10000,
+        allowExitOnIdle: true,
     });
     pool.on("error", (err) => {
         // Neon / PostgreSQL idle connections; handle here to prevent unhandled errors or stale pool clients

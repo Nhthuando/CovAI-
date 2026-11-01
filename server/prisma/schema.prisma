@@ -7,6 +7,239 @@ datasource db {
   provider = "postgresql"
 }
 
+model AiEvaluationTarget {
+  id String @id @default(cuid())
+  projectId String
+  name String
+  archivedAt DateTime?
+  createdAt DateTime @default(now())
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  versions AiEvaluationTargetVersion[]
+  credentials AiEvaluationCredential[]
+  @@index([projectId])
+}
+
+model AiEvaluationCredential {
+  id String @id @default(cuid())
+  targetId String
+  revision Int
+  ciphertext String @db.Text
+  revokedAt DateTime?
+  target AiEvaluationTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  versions AiEvaluationTargetVersion[]
+  @@unique([targetId, revision])
+}
+
+model AiEvaluationTargetVersion {
+  id String @id @default(cuid())
+  targetId String
+  version Int
+  config Json
+  configHash String
+  credentialId String?
+  createdAt DateTime @default(now())
+  target AiEvaluationTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  credential AiEvaluationCredential? @relation(fields: [credentialId], references: [id], onDelete: SetNull)
+  runs AiEvaluationRun[]
+  @@unique([targetId, version])
+}
+
+model AiEvaluationKnowledgeSource {
+  id String @id @default(cuid())
+  projectId String
+  name String
+  sourceKey String
+  version Int
+  format String
+  status String @default("READY")
+  content String @db.Text
+  contentHash String
+  provenance Json
+  createdAt DateTime @default(now())
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  @@unique([projectId, sourceKey, version])
+}
+
+model AiEvaluationProfile {
+  id String @id @default(cuid())
+  projectId String
+  name String
+  archivedAt DateTime?
+  createdAt DateTime @default(now())
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  versions AiEvaluationProfileVersion[]
+  @@index([projectId])
+}
+
+model AiEvaluationProfileVersion {
+  id String @id @default(cuid())
+  profileId String
+  version Int
+  revision Int @default(0)
+  status String @default("DRAFT")
+  definition Json
+  definitionHash String?
+  sourceManifest Json @default("[]")
+  approvedBy String?
+  approvedAt DateTime?
+  createdAt DateTime @default(now())
+  profile AiEvaluationProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  cases AiEvaluationTestCase[]
+  runs AiEvaluationRun[]
+  @@unique([profileId, version])
+}
+
+model AiEvaluationTestCase {
+  id String @id @default(cuid())
+  profileVersionId String
+  caseKey String
+  taskType String
+  definition Json
+  definitionHash String
+  profileVersion AiEvaluationProfileVersion @relation(fields: [profileVersionId], references: [id], onDelete: Cascade)
+  results AiEvaluationCaseResult[]
+  @@unique([profileVersionId, caseKey])
+}
+
+model AiEvaluationRun {
+  id String @id @default(cuid())
+  projectId String
+  targetVersionId String
+  profileVersionId String
+  snapshotId String?
+  jobId String @unique
+  parentRunId String?
+  idempotencyKey String
+  executionStatus String @default("QUEUED")
+  verdict String @default("INCOMPLETE")
+  manifest Json
+  summary Json?
+  evidenceBytes Int @default(0)
+  errorCode String?
+  leaseToken String?
+  leaseUntil DateTime?
+  createdAt DateTime @default(now())
+  startedAt DateTime?
+  finishedAt DateTime?
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  targetVersion AiEvaluationTargetVersion @relation(fields: [targetVersionId], references: [id], onDelete: Cascade)
+  profileVersion AiEvaluationProfileVersion @relation(fields: [profileVersionId], references: [id], onDelete: Cascade)
+  cases AiEvaluationCaseResult[]
+  evidence AiEvaluationEvidence[]
+  @@unique([projectId, idempotencyKey])
+  @@index([executionStatus, leaseUntil])
+}
+
+model AiEvaluationCaseResult {
+  id String @id @default(cuid())
+  runId String
+  testCaseId String
+  executionStatus String @default("PENDING")
+  verdict String @default("INCOMPLETE")
+  errorCode String?
+  run AiEvaluationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  testCase AiEvaluationTestCase @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
+  attempts AiEvaluationAttempt[]
+  criteria AiEvaluationCriterionResult[]
+  @@unique([runId, testCaseId])
+}
+
+model AiEvaluationAttempt {
+  id String @id @default(cuid())
+  caseResultId String
+  repetition Int
+  requestId String @unique
+  status String @default("PENDING")
+  gatewayState String @default("CLOSED")
+  tokenHash String? @unique
+  expiresAt DateTime?
+  state Json
+  initialState Json
+  sequence Int @default(0)
+  callbackCount Int @default(0)
+  dispatchedAt DateTime?
+  finishedAt DateTime?
+  caseResult AiEvaluationCaseResult @relation(fields: [caseResultId], references: [id], onDelete: Cascade)
+  calls AiEvaluationToolCall[]
+  grants AiEvaluationConfirmationGrant[]
+  @@unique([caseResultId, repetition])
+}
+
+model AiEvaluationToolCall {
+  id String @id @default(cuid())
+  attemptId String
+  callId String
+  payloadHash String
+  businessKey String?
+  sequence Int
+  toolName String
+  arguments Json
+  status String
+  result Json
+  createdAt DateTime @default(now())
+  attempt AiEvaluationAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  @@unique([attemptId, callId])
+  @@index([attemptId, businessKey])
+}
+
+model AiEvaluationConfirmationGrant {
+  id String @id @default(cuid())
+  attemptId String
+  requestId String
+  fingerprint String
+  decision String
+  prompt String
+  sequence Int
+  expiresAt DateTime
+  consumedAt DateTime?
+  attempt AiEvaluationAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  @@unique([attemptId, requestId])
+}
+
+model AiEvaluationCriterionResult {
+  id String @id @default(cuid())
+  caseResultId String
+  criterionKey String
+  method String
+  status String
+  score Float?
+  reason String @db.Text
+  details Json
+  evidenceRefs Json
+  evaluator Json
+  caseResult AiEvaluationCaseResult @relation(fields: [caseResultId], references: [id], onDelete: Cascade)
+  reviews AiEvaluationHumanReview[]
+  @@unique([caseResultId, criterionKey])
+}
+
+model AiEvaluationEvidence {
+  id String @id @default(cuid())
+  runId String
+  caseResultId String?
+  attemptId String?
+  kind String
+  provenance String
+  availability String
+  completeness String
+  payload Json
+  contentHash String
+  createdAt DateTime @default(now())
+  run AiEvaluationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  @@index([runId, caseResultId])
+}
+
+model AiEvaluationHumanReview {
+  id String @id @default(cuid())
+  criterionResultId String
+  reviewerId String
+  verdict String
+  score Float?
+  rationale String @db.Text
+  createdAt DateTime @default(now())
+  criterionResult AiEvaluationCriterionResult @relation(fields: [criterionResultId], references: [id], onDelete: Cascade)
+  @@index([criterionResultId, createdAt])
+}
+
 model User {
   id                   String         @id @default(cuid())
   email                String         @unique
@@ -49,6 +282,10 @@ model User {
 }
 
 model Project {
+  evaluationTargets AiEvaluationTarget[]
+  evaluationSources AiEvaluationKnowledgeSource[]
+  evaluationProfiles AiEvaluationProfile[]
+  evaluationRuns AiEvaluationRun[]
   id                   String            @id @default(cuid())
   accessRevision       Int               @default(0)
   workspaceRevision    Int               @default(0)
@@ -556,6 +793,8 @@ enum SnapshotSource {
 }
 
 enum JobType {
+  AI_EVALUATION
+  AI_EVALUATION_PREPARE
   INGEST
   INSTALL_DEPS
   RUN_TESTS

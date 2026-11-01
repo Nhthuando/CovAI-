@@ -71,7 +71,7 @@ const getCoverageColor = (pct) => {
   };
 };
 
-const getCoverageGradient = (pct) => {
+const getCoverageBarColor = (pct) => {
   if (pct == null) return "var(--color-border)";
   if (pct >= 90) return "var(--color-success, #22c55e)";
   if (pct >= 70) return "var(--color-warning, #f59e0b)";
@@ -425,9 +425,8 @@ const CoverageBar = ({ pct }) => {
           style={{
             height: "100%",
             width: `${pct ?? 0}%`,
-            background: getCoverageGradient(pct),
+            background: getCoverageBarColor(pct),
             borderRadius: 99,
-            boxShadow: `0 0 8px ${theme.color}50`,
             transition: "width 0.8s ease-out",
           }}
         />

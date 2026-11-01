@@ -55,12 +55,19 @@ export const publishPreparedWorkspace = async ({projectId,snapshotId,userId,capa
         changes.push({path:name,beforeHash:beforeFiles.get(name)?.sha256 || null,afterHash:next?.sha256 || null,content});
     }
     if (total > (includeGitMetadata ? 256 : 16) * 1024 * 1024) throw projectFileError('MUTATION_TOO_LARGE','Prepared changes exceed the publication size limit',413);
-    const committed = await withProjectGuard({projectId,userId,capability,db},async(tx,access) => {
+    const committed = await withProjectGuard({projectId,userId,capability,db,maxWait:60000,timeout:120000},async(tx,access) => {
         const {assertProjectOperationActive} = await import('./projectOperationWorkspace.service.js');
         await assertProjectOperationActive(undefined,tx);
         const snapshot = await findEditableSnapshot(tx,projectId,snapshotId);
         const latest = await tx.projectSnapshot.findFirst({where:{projectId},orderBy:{createdAt:'desc'},select:{id:true}});
-        if (latest?.id !== snapshotId || access.project.workspaceRevision !== expectedWorkspaceRevision) throw projectFileError('SNAPSHOT_CHANGED','Workspace changed during preparation; regenerate or review the changes again');
+        if (latest?.id !== snapshotId || access.project.workspaceRevision !== expectedWorkspaceRevision) {
+            const currentOp = (await import('./projectOperationWorkspace.service.js')).currentProjectOperation?.();
+            if (currentOp?.type === 'APPLY_UNIT_SUGGESTION' && latest?.id === snapshotId) {
+                expectedWorkspaceRevision = access.project.workspaceRevision;
+            } else {
+                throw projectFileError('SNAPSHOT_CHANGED','Workspace changed during preparation; regenerate or review the changes again');
+            }
+        }
         if (!changes.length) {
             const result = {snapshotId,workspaceRevision:expectedWorkspaceRevision,changedPaths:[]};
             if (afterMutation) await afterMutation(tx,result);

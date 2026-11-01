@@ -10,10 +10,13 @@ await jest.unstable_mockModule("../config/prisma.js", () => ({
 const {
     findAssociatedSourceFile,
     findExistingTestFile,
+    findSourceOnDisk,
     generateFallbackUnitTests,
     suggestUnitTestcases,
     extractAstMetadata
 } = await import("../services/unitTestSuggestion.service.js");
+const { analyzeSourceAst } = await import("../services/businessLogicAstAnalyzer.service.js");
+const { assembleUnitTestContext } = await import("../services/unitTestContextEngineering.service.js");
 
 describe("unitTestSuggestion.service unit tests", () => {
     let tmpDir;
@@ -81,6 +84,22 @@ describe("unitTestSuggestion.service unit tests", () => {
 
             expect(result.fullUpdatedContent.startsWith(existing)).toBe(true);
             expect(result.fullUpdatedContent).toContain("describe('calc unit tests");
+        });
+
+        test("generates safe defaultExport identifier when sourceCode exports default", () => {
+            const sourceCode = `export default { calculate(x) { return x + 1; } };`;
+            const result = generateFallbackUnitTests({
+                framework: "vitest",
+                sourceFile: "src/main.ts",
+                baseName: "main",
+                sourceCode,
+                existingContent: ""
+            });
+
+            expect(result.fullUpdatedContent).toContain("import defaultExport from '../src/main';");
+            expect(result.fullUpdatedContent).toContain("const fnRef: any = defaultExport;");
+            expect(result.fullUpdatedContent).not.toContain("const fnRef: any = default;");
+            expect(result.fullUpdatedContent).not.toContain("let target = default;");
         });
     });
 
@@ -193,6 +212,35 @@ describe("unitTestSuggestion.service unit tests", () => {
             const result = extractAstMetadata(code);
             expect(result.exportedSymbols).toContain("calculateBonus");
             expect(result.decisionPoints.some(d => d.type === "if")).toBe(true);
+        });
+    });
+
+    describe("findSourceOnDisk and empty AST resilience", () => {
+        test("analyzeSourceAst returns complete metadata schema for empty string", () => {
+            const ast = analyzeSourceAst("");
+            expect(Array.isArray(ast.exportedSymbols)).toBe(true);
+            expect(Array.isArray(ast.exportedSymbolNames)).toBe(true);
+            expect(Array.isArray(ast.unexportedFunctions)).toBe(true);
+            expect(ast.cyclomaticComplexity).toBe(1);
+        });
+
+        test("assembleUnitTestContext executes without throwing join error for empty sourceCode", () => {
+            expect(() => {
+                const ctx = assembleUnitTestContext({ sourceCode: "" });
+                expect(ctx).toBeDefined();
+                expect(ctx.engineeredPromptContext).toContain("Exported Public Symbols: All exported members");
+            }).not.toThrow();
+        });
+
+        test("findSourceOnDisk resolves package-prefixed path when rootDir is subdirectory", () => {
+            const subDir = path.join(tmpDir, "backend");
+            const srcDir = path.join(subDir, "src", "config");
+            fs.mkdirSync(srcDir, { recursive: true });
+            fs.writeFileSync(path.join(srcDir, "index.js"), "module.exports = { appName: 'test' };");
+
+            const res = findSourceOnDisk(subDir, "backend/src/config/index.js");
+            expect(res.path).toBeDefined();
+            expect(res.content).toContain("appName");
         });
     });
 });

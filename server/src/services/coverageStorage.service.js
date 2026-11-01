@@ -65,15 +65,19 @@ export const storeCoverageOutputs = async (snapshotId, projectId, coverageDir) =
     const operation = currentProjectOperation();
     const baseStoragePath = `projects/${projectId}/snapshots/${snapshotId}${operation ? `/operations/${operation.operationId}` : ""}/coverage`;
     const results = {};
+    const uploadTasks = [];
 
     // ── SCRUM-114: Upload coverage-summary.json ───────────────────────────
     const summaryFile = path.join(coverageDir, "coverage-summary.json");
     if (fs.existsSync(summaryFile)) {
         const buf = fs.readFileSync(summaryFile);
         const dest = `${baseStoragePath}/coverage-summary.json`;
-        await uploadBufferToFirebase(buf, dest, "application/json");
         results.summaryStoragePath = dest;
-        console.log(`[CoverageStorage] Uploaded coverage-summary.json → ${dest}`);
+        uploadTasks.push(
+            uploadBufferToFirebase(buf, dest, "application/json").then(() => {
+                console.log(`[CoverageStorage] Uploaded coverage-summary.json → ${dest}`);
+            })
+        );
     } else {
         console.warn(`[CoverageStorage] coverage-summary.json not found at ${summaryFile}`);
     }
@@ -83,9 +87,12 @@ export const storeCoverageOutputs = async (snapshotId, projectId, coverageDir) =
     if (fs.existsSync(finalFile)) {
         const buf = fs.readFileSync(finalFile);
         const dest = `${baseStoragePath}/coverage-final.json`;
-        await uploadBufferToFirebase(buf, dest, "application/json");
         results.finalStoragePath = dest;
-        console.log(`[CoverageStorage] Uploaded coverage-final.json → ${dest}`);
+        uploadTasks.push(
+            uploadBufferToFirebase(buf, dest, "application/json").then(() => {
+                console.log(`[CoverageStorage] Uploaded coverage-final.json → ${dest}`);
+            })
+        );
     } else {
         console.warn(`[CoverageStorage] coverage-final.json not found at ${finalFile}`);
     }
@@ -95,9 +102,12 @@ export const storeCoverageOutputs = async (snapshotId, projectId, coverageDir) =
     if (fs.existsSync(lcovFile)) {
         const buf = fs.readFileSync(lcovFile);
         const dest = `${baseStoragePath}/lcov.info`;
-        await uploadBufferToFirebase(buf, dest, "text/plain");
         results.lcovStoragePath = dest;
-        console.log(`[CoverageStorage] Uploaded lcov.info → ${dest}`);
+        uploadTasks.push(
+            uploadBufferToFirebase(buf, dest, "text/plain").then(() => {
+                console.log(`[CoverageStorage] Uploaded lcov.info → ${dest}`);
+            })
+        );
     } else {
         console.warn(`[CoverageStorage] lcov.info not found at ${lcovFile}`);
     }
@@ -107,9 +117,12 @@ export const storeCoverageOutputs = async (snapshotId, projectId, coverageDir) =
     if (fs.existsSync(scenariosFile)) {
         const buf = fs.readFileSync(scenariosFile);
         const dest = `${baseStoragePath}/integration-scenarios.json`;
-        await uploadBufferToFirebase(buf, dest, "application/json");
         results.scenariosStoragePath = dest;
-        console.log(`[CoverageStorage] Uploaded integration-scenarios.json → ${dest}`);
+        uploadTasks.push(
+            uploadBufferToFirebase(buf, dest, "application/json").then(() => {
+                console.log(`[CoverageStorage] Uploaded integration-scenarios.json → ${dest}`);
+            })
+        );
     }
 
     // ── Runtime Evidence ─────────────────────────────────────────────
@@ -117,9 +130,16 @@ export const storeCoverageOutputs = async (snapshotId, projectId, coverageDir) =
     if (fs.existsSync(evidenceFile)) {
         const buf = fs.readFileSync(evidenceFile);
         const dest = `${baseStoragePath}/runtime-evidence.json`;
-        await uploadBufferToFirebase(buf, dest, "application/json");
         results.evidenceStoragePath = dest;
-        console.log(`[CoverageStorage] Uploaded runtime-evidence.json → ${dest}`);
+        uploadTasks.push(
+            uploadBufferToFirebase(buf, dest, "application/json").then(() => {
+                console.log(`[CoverageStorage] Uploaded runtime-evidence.json → ${dest}`);
+            })
+        );
+    }
+
+    if (uploadTasks.length > 0) {
+        await Promise.allSettled(uploadTasks);
     }
 
     // Snapshot.storagePath identifies its original uploaded archive/Git source.

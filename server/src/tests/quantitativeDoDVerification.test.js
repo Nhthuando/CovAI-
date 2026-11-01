@@ -5,6 +5,7 @@ import { describe, test, it, expect, beforeEach, afterEach, jest } from "@jest/g
 
 // Mock Prisma
 const mockPrisma = {
+    $transaction: jest.fn(async (cb) => (typeof cb === "function" ? cb(mockPrisma) : Promise.all(cb))),
     project: { findFirst: jest.fn(), findUnique: jest.fn() },
     projectSnapshot: { findUnique: jest.fn(), findFirst: jest.fn() },
     coverageSummary: { findUnique: jest.fn(), upsert: jest.fn().mockResolvedValue({}) },

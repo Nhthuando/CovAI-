@@ -18,6 +18,7 @@ import JobQueue from "./JobQueue";
 import ProjectArchitecturePanel from "./ProjectArchitecturePanel";
 import CFGCalculator from "./CFGCalculator";
 import QualityDashboard from "./QualityDashboard";
+import TrustworthinessWorkspace from './trustworthiness/TrustworthinessWorkspace';
 import UnifiedDashboard from "./unified/UnifiedDashboard";
 import { buildWorkspaceUrl } from "../../services/unifiedDashboard/workspaceNavigation";
 import SettingsSidebar from "./settings/SettingsSidebar";
@@ -113,6 +114,10 @@ function LayoutInner() {
   };
 
   const handleSelectActivity = (id) => {
+    if (id === "portfolio") {
+      navigate("/projects");
+      return;
+    }
     if (id === "logout") {
       setShowLogoutConfirm(true);
       return;
@@ -121,8 +126,18 @@ function LayoutInner() {
       setShowCFG(true);
       return;
     }
+    setShowCFG(false);
+    if (id === "system") {
+      setActiveActivity("coverage");
+      setCoverageType("system");
+    } else {
+      setActiveActivity(id);
+    }
     const params = new URLSearchParams(location.search);
     params.set("tab", id);
+    params.delete("focusFile");
+    params.delete("focusEndpoint");
+    params.delete("focusScenario");
     navigate(`${location.pathname}?${params.toString()}`);
   };
 
@@ -153,6 +168,7 @@ function LayoutInner() {
         message: `Focus target: ${focusFile}`,
       });
     } else if (focusEndpoint) {
+      setIntegrationInitialContext((prev) => ({ ...prev, focusEndpoint }));
       showToast({
         type: "info",
         title: "Navigated to Integration Tests",
@@ -194,7 +210,16 @@ function LayoutInner() {
   const [activeFileId, setActiveFileId] = useState(null);
   const initialCoverageType = searchParams.get("coverageType") || searchParams.get("type") || (searchParams.get("tab") === "system" ? "system" : "unit");
   const [coverageType, setCoverageType] = useState(initialCoverageType);
-  const screenContext = useMemo(() => ({ activity: activeActivity, testType: activeActivity === "coverage" ? coverageType : activeActivity === "overview" ? "overview" : undefined, filePath: activeActivity === "explorer" ? activeTabId || undefined : undefined }), [activeActivity, coverageType, activeTabId]);
+  const [unifiedSummary, setUnifiedSummary] = useState(null);
+  const screenContext = useMemo(
+    () => ({
+      activity: activeActivity,
+      testType: activeActivity === "coverage" ? coverageType : activeActivity === "overview" ? "overview" : undefined,
+      filePath: activeActivity === "explorer" ? activeTabId || undefined : undefined,
+      unifiedSummary: activeActivity === "overview" ? unifiedSummary : undefined,
+    }),
+    [activeActivity, coverageType, activeTabId, unifiedSummary]
+  );
   const [showImport, setShowImport] = useState(false);
   const [showQualityDashboard, setShowQualityDashboard] = useState(false);
   const [cfgInitialContext, setCfgInitialContext] = useState(null);
@@ -246,6 +271,10 @@ function LayoutInner() {
   const [pendingAiSuggestion, setPendingAiSuggestion] = useState(null);
 
   const handleSuggestTestcase = (filePath, options = {}) => {
+    // Never open AIPanel for bulk test suggestions; they belong to the guided dashboard workflow
+    if (options?.isBulk || (typeof filePath === "object" && filePath?.isBulk) || options?.skipAiPanel) {
+      return;
+    }
     setAiPanelOpen(true);
     if (typeof filePath === "object" && filePath !== null) {
       setPendingAiSuggestion({ ...filePath, timestamp: Date.now() });
@@ -253,6 +282,24 @@ function LayoutInner() {
       setPendingAiSuggestion({ filePath, ...options, timestamp: Date.now() });
     }
   };
+
+  const handleAskAiPrompt = useCallback((promptText) => {
+    if (!promptText) return;
+    setAiPanelOpen(true);
+    setPendingAiSuggestion({ promptText, timestamp: Date.now() });
+  }, []);
+
+  useEffect(() => {
+    const onPrefillEvent = (e) => {
+      const text = e.detail?.promptText;
+      if (text) {
+        setAiPanelOpen(true);
+        setPendingAiSuggestion({ promptText: text, timestamp: Date.now() });
+      }
+    };
+    window.addEventListener("covai:prefill-prompt", onPrefillEvent);
+    return () => window.removeEventListener("covai:prefill-prompt", onPrefillEvent);
+  }, []);
 
   const [projects, setProjects] = useState([]);
   const [project, setProject] = useState(null);
@@ -288,9 +335,15 @@ function LayoutInner() {
   };
 
   const handleTriggerRunAnalysis = () => {
+    setShowCFG(false);
     setActiveActivity("coverage");
     handleSelectCoverageType("unit");
     setCoverageRunTrigger((prev) => prev + 1);
+    const params = new URLSearchParams(location.search);
+    if (params.get("tab") !== "coverage") {
+      params.set("tab", "coverage");
+      navigate(`${location.pathname}?${params.toString()}`);
+    }
   };
 
   const handleGitSync = async () => {
@@ -581,14 +634,22 @@ function LayoutInner() {
       } else {
         setProjects((prev) => prev.filter((p) => p.id !== projectId));
       }
+      return true;
     } catch (err) {
-      showToast({ type: "error", title: "Delete failed" });
+      showToast({ type: "error", title: "Delete failed", message: err.message || "Could not delete the project. Please retry." });
+      return false;
     }
   };
 
   const handleOpenFile = (node) => {
     if (node.type === "folder") return;
+    setShowCFG(false);
     setActiveActivity("explorer");
+    const params = new URLSearchParams(location.search);
+    if (params.get("tab") !== "explorer") {
+      params.set("tab", "explorer");
+      navigate(`${location.pathname}?${params.toString()}`, { replace: true });
+    }
     setActiveFileId(node.id);
     if (!tabs.find((t) => t.id === node.id)) {
       setTabs((prev) => [
@@ -600,7 +661,13 @@ function LayoutInner() {
   };
 
   const handleOpenFileByPath = (filePath, targetLine = null, functionName = null, endLine = null) => {
+    setShowCFG(false);
     setActiveActivity("explorer");
+    const params = new URLSearchParams(location.search);
+    if (params.get("tab") !== "explorer") {
+      params.set("tab", "explorer");
+      navigate(`${location.pathname}?${params.toString()}`, { replace: true });
+    }
     const normalizedPath = filePath.replace(/\\/g, "/").replace(/^\.\//, "");
     const findNode = (nodes, path) => {
       for (const node of nodes) {
@@ -806,8 +873,17 @@ function LayoutInner() {
           {project?.name && (
             <div className="hidden sm:flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] font-mono min-w-0 overflow-hidden">
               <span className="flex-shrink-0 select-none">/</span>
+              <button
+                type="button"
+                onClick={() => navigate("/projects")}
+                className="text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] font-medium transition-colors cursor-pointer"
+                title="Return to Projects Quality Portfolio"
+              >
+                Projects
+              </button>
+              <span className="flex-shrink-0 select-none">/</span>
               <span
-                className="text-[var(--color-text-secondary)] font-medium truncate max-w-[120px] md:max-w-[180px]"
+                className="text-[var(--color-text)] font-semibold truncate max-w-[120px] md:max-w-[180px]"
                 title={project.name}
               >
                 {project.name}
@@ -935,7 +1011,7 @@ function LayoutInner() {
           </motion.div>
         )}
         <AnimatePresence initial={false}>
-          {sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && (
+          {sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && activeActivity !== "trustworthiness" && (
             <motion.div
               key="sidebar"
               initial={
@@ -1013,7 +1089,7 @@ function LayoutInner() {
             </motion.div>
           )}
         </AnimatePresence>
-        {!isMobile && sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && (
+        {!isMobile && sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && activeActivity !== "trustworthiness" && (
           <PanelResizer
             onMouseDown={handleSidebarResize}
             isDragging={isDraggingSidebar}
@@ -1049,6 +1125,8 @@ function LayoutInner() {
             <JobQueue projectId={project?.id} onSync={handleGitSync} />
           </div>
 
+          {activeActivity === 'trustworthiness' && <div className="w-full h-full overflow-y-auto"><TrustworthinessWorkspace key={project?.id} projectId={project?.id} /></div>}
+
           <div className={activeActivity === "architecture" ? "w-full h-full overflow-y-auto" : "hidden"}>
             <ProjectArchitecturePanel
               projectId={project?.id}
@@ -1060,6 +1138,8 @@ function LayoutInner() {
             <UnifiedDashboard
               projectId={project?.id}
               project={project}
+              projects={projects}
+              onSelectProject={handleChangeProject}
               snapshotId={
                 searchParams.get("snapshotId") ||
                 project?.latestSnapshotId ||
@@ -1073,6 +1153,8 @@ function LayoutInner() {
                 const targetUrl = buildWorkspaceUrl(location, pillar, focus);
                 navigate(targetUrl);
               }}
+              onAskAi={handleAskAiPrompt}
+              onSummaryChange={setUnifiedSummary}
             />
           </div>
 
@@ -1089,6 +1171,8 @@ function LayoutInner() {
                   testPromptSnapshotId
                 }
                 projectId={project?.id}
+                treeVersion={treeVersion}
+                focusFile={searchParams.get("focusFile")}
                 onOpenFile={handleOpenFileByPath}
                 onSuggestTestcase={handleSuggestTestcase}
                 onOpenCFG={handleOpenCFG}
@@ -1118,6 +1202,7 @@ function LayoutInner() {
             <div className={coverageType === "system" ? "h-full overflow-y-auto" : "hidden"}>
               <SystemTestDashboard
                 snapshotId={
+                  searchParams.get("snapshotId") ||
                   project?.snapshots?.[0]?.id ||
                   project?.latestSnapshotId ||
                   (project?.id
@@ -1126,12 +1211,13 @@ function LayoutInner() {
                   testPromptSnapshotId
                 }
                 projectId={project?.id}
+                focusScenario={searchParams.get("focusScenario")}
                 onOpenFile={handleOpenFileByPath}
               />
             </div>
           </div>
 
-          <div className={activeActivity !== "settings" && activeActivity !== "jobs" && activeActivity !== "architecture" && activeActivity !== "coverage" && activeActivity !== "overview" ? "w-full h-full" : "hidden"}>
+          <div className={activeActivity !== "settings" && activeActivity !== "jobs" && activeActivity !== "architecture" && activeActivity !== "coverage" && activeActivity !== "overview" && activeActivity !== "trustworthiness" ? "w-full h-full" : "hidden"}>
                 <Editor
                   key={`${user?.id}:${project?.id}:${project?.snapshots?.[0]?.id || project?.latestSnapshotId || ""}`}
                   tabs={tabs}
@@ -1267,7 +1353,13 @@ function LayoutInner() {
             onClose={() => setShowImport(false)}
             onSuccess={() => {
               setShowImport(false);
+              setShowCFG(false);
               setActiveActivity("jobs");
+              const params = new URLSearchParams(location.search);
+              if (params.get("tab") !== "jobs") {
+                params.set("tab", "jobs");
+                navigate(`${location.pathname}?${params.toString()}`);
+              }
               setTimeout(() => loadData(null, 3, 2500), 1500);
             }}
           />

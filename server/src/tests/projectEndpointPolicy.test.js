@@ -16,6 +16,7 @@ it.each([
     ["coverage", "POST", "/s1/system/proposals/p1/apply", {}, "files.write"],
     ["coverage", "POST", "/s1/system/generate-tests", {}, "ai.use"],
     ["coverage", "GET", "/s1/system/assessments/a1/events", {}, "project.read"],
+    ["coverage", "GET", "/project/p1/comparison", {}, "project.read"],
     ["git", "POST", "/command", { projectId: "p1" }, "integrations.write"],
     ["git", "GET", "/status", { projectId: "p1" }, "project.read"],
     ["pipeline", "POST", "/p1/run-analysis", {}, "tests.run"],

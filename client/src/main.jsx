@@ -12,6 +12,7 @@ if (typeof window !== 'undefined') {
     if (!msg) return false;
     const str = String(msg);
     return (
+      str.includes('TextModel got disposed before DiffEditorWidget model got reset') ||
       str.includes('QuickPro') ||
       str.includes('PageWorldBridgeError') ||
       str.includes('Page runtime unavailable') ||

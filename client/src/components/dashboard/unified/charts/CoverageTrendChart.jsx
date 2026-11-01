@@ -3,22 +3,27 @@ import { SegmentedFilter } from "../primitives/SegmentedFilter.jsx";
 import { ZonePanel } from "../primitives/ZonePanel.jsx";
 import { fmtPct } from "../../../../services/unifiedDashboard/format.js";
 
-export function CoverageTrendChart({ trendData, className = "" }) {
+export function CoverageTrendChart({
+  trendData,
+  className = "",
+}) {
   const [viewMode, setViewMode] = useState("trend"); // 'trend' | 'before_after'
   const [activeMetric, setActiveMetric] = useState("coverage"); // 'coverage' | 'pass_rate'
   const [hoveredPoint, setHoveredPoint] = useState(null);
 
   const series = trendData?.series || [];
-  const beforeAfter = trendData?.beforeAfter || { before: { unit: 0, integration: 0, system: 0 }, after: { unit: 0, integration: 0, system: 0 } };
-  const source = trendData?.source || "demo";
+  const beforeAfter = trendData?.beforeAfter || {
+    before: { unit: 0, integration: 0, system: 0, unitPassRate: 0, integrationPassRate: 0, systemPassRate: 0 },
+    after: { unit: 0, integration: 0, system: 0, unitPassRate: 0, integrationPassRate: 0, systemPassRate: 0 },
+  };
 
-  // SVG dimensions
-  const svgWidth = 520;
+  // SVG dimensions — padRight increased to 48px (+28px) to prevent right-most X-axis label clipping
+  const svgWidth = 540;
   const svgHeight = 220;
-  const padLeft = 40;
-  const padRight = 20;
+  const padLeft = 42;
+  const padRight = 48;
   const padTop = 20;
-  const padBottom = 30;
+  const padBottom = 32;
 
   const chartW = svgWidth - padLeft - padRight;
   const chartH = svgHeight - padTop - padBottom;
@@ -56,11 +61,10 @@ export function CoverageTrendChart({ trendData, className = "" }) {
       id="ud-zone-trend"
       title="Coverage & Quality Trends"
       description="Historical trajectory & Before / After comparison"
-      source={source}
       contentClassName="p-4"
       className={`h-full ${className}`}
       actions={
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 ud-no-print">
           <SegmentedFilter
             idPrefix="ud-trend-view"
             options={[
@@ -71,22 +75,29 @@ export function CoverageTrendChart({ trendData, className = "" }) {
             onChange={setViewMode}
             size="sm"
           />
-          {viewMode === "trend" && (
-            <SegmentedFilter
-              idPrefix="ud-trend-metric"
-              options={[
-                { label: "Coverage", value: "coverage" },
-                { label: "Pass Rate", value: "pass_rate" },
-              ]}
-              value={activeMetric}
-              onChange={setActiveMetric}
-              size="sm"
-            />
-          )}
+          <SegmentedFilter
+            idPrefix="ud-trend-metric"
+            options={[
+              { label: "Coverage", value: "coverage" },
+              { label: "Pass Rate", value: "pass_rate" },
+            ]}
+            value={activeMetric}
+            onChange={setActiveMetric}
+            size="sm"
+          />
         </div>
       }
     >
-      {viewMode === "trend" ? (
+      {series.length === 0 ? (
+        <div className="h-[220px] flex flex-col items-center justify-center text-center p-4 gap-2.5">
+          <p className="text-xs font-semibold text-[var(--ud-text)]">
+            No Historical Trend Points Recorded Yet
+          </p>
+          <p className="text-[11px] text-[var(--ud-text-muted)] max-w-xs font-sans">
+            Execute Unit, Integration, or System E2E test suites to record chronological coverage and pass rate trend points.
+          </p>
+        </div>
+      ) : viewMode === "trend" ? (
         <div className="space-y-3">
           {/* SVG Trend Line Chart */}
           <div className="relative w-full overflow-hidden">
@@ -124,15 +135,17 @@ export function CoverageTrendChart({ trendData, className = "" }) {
                 );
               })}
 
-              {/* X-axis run labels */}
+              {/* X-axis run labels — last label anchored slightly inward or end-aligned so '#6 (Current)' is never clipped */}
               {series.map((pt, i) => {
+                const isLast = i === series.length - 1;
+                const isFirst = i === 0 && series.length > 1;
                 const x = getX(i, series.length);
                 return (
                   <text
                     key={i}
-                    x={x}
+                    x={isLast ? x + 12 : x}
                     y={svgHeight - 8}
-                    textAnchor="middle"
+                    textAnchor={isLast ? "end" : isFirst ? "start" : "middle"}
                     fill="var(--ud-text-muted)"
                     fontSize="10"
                     fontFamily="var(--font-mono)"
@@ -186,7 +199,12 @@ export function CoverageTrendChart({ trendData, className = "" }) {
                           fill="var(--ud-surface)"
                           stroke="var(--ud-unit)"
                           strokeWidth="2"
-                          onMouseEnter={() => setHoveredPoint({ label: pt.runLabel, value: `Unit: ${fmtPct(pt.unitCoverage)}` })}
+                          onMouseEnter={() =>
+                            setHoveredPoint({
+                              label: pt.runLabel,
+                              value: `Unit: ${fmtPct(pt.unitCoverage)}`,
+                            })
+                          }
                           onMouseLeave={() => setHoveredPoint(null)}
                           className="cursor-pointer"
                         />
@@ -197,7 +215,12 @@ export function CoverageTrendChart({ trendData, className = "" }) {
                           fill="var(--ud-surface)"
                           stroke="var(--ud-integration)"
                           strokeWidth="2"
-                          onMouseEnter={() => setHoveredPoint({ label: pt.runLabel, value: `Integration: ${fmtPct(pt.integrationCoverage)}` })}
+                          onMouseEnter={() =>
+                            setHoveredPoint({
+                              label: pt.runLabel,
+                              value: `Integration: ${fmtPct(pt.integrationCoverage)}`,
+                            })
+                          }
                           onMouseLeave={() => setHoveredPoint(null)}
                           className="cursor-pointer"
                         />
@@ -208,7 +231,12 @@ export function CoverageTrendChart({ trendData, className = "" }) {
                           fill="var(--ud-surface)"
                           stroke="var(--ud-system)"
                           strokeWidth="2"
-                          onMouseEnter={() => setHoveredPoint({ label: pt.runLabel, value: `System: ${fmtPct(pt.systemCoverage)}` })}
+                          onMouseEnter={() =>
+                            setHoveredPoint({
+                              label: pt.runLabel,
+                              value: `System: ${fmtPct(pt.systemCoverage)}`,
+                            })
+                          }
                           onMouseLeave={() => setHoveredPoint(null)}
                           className="cursor-pointer"
                         />
@@ -238,7 +266,12 @@ export function CoverageTrendChart({ trendData, className = "" }) {
                         fill="var(--ud-surface)"
                         stroke="var(--ud-pass)"
                         strokeWidth="2"
-                        onMouseEnter={() => setHoveredPoint({ label: pt.runLabel, value: `Pass Rate: ${fmtPct(pt.passRate)}` })}
+                        onMouseEnter={() =>
+                          setHoveredPoint({
+                            label: pt.runLabel,
+                            value: `Pass Rate: ${fmtPct(pt.passRate)}`,
+                          })
+                        }
                         onMouseLeave={() => setHoveredPoint(null)}
                         className="cursor-pointer"
                       />
@@ -260,7 +293,9 @@ export function CoverageTrendChart({ trendData, className = "" }) {
                   </div>
                   <div className="flex items-center gap-1.5 font-sans text-xs">
                     <span className="w-2.5 h-1 bg-[var(--ud-integration)] rounded-full" />
-                    <span className="text-[var(--ud-text-muted)]">Integration Coverage</span>
+                    <span className="text-[var(--ud-text-muted)]">
+                      Integration Coverage
+                    </span>
                   </div>
                   <div className="flex items-center gap-1.5 font-sans text-xs">
                     <span className="w-2.5 h-1 bg-[var(--ud-system)] rounded-full" />
@@ -270,7 +305,9 @@ export function CoverageTrendChart({ trendData, className = "" }) {
               ) : (
                 <div className="flex items-center gap-1.5 font-sans text-xs">
                   <span className="w-2.5 h-1 bg-[var(--ud-pass)] rounded-full" />
-                  <span className="text-[var(--ud-text-muted)]">Multi-Suite Pass Rate %</span>
+                  <span className="text-[var(--ud-text-muted)]">
+                    Multi-Suite Pass Rate %
+                  </span>
                 </div>
               )}
             </div>
@@ -285,21 +322,76 @@ export function CoverageTrendChart({ trendData, className = "" }) {
         /* Before / After Clustered Comparison View */
         <div className="space-y-4 py-2">
           <p className="text-xs text-[var(--ud-text-muted)] font-sans">
-            Comparison of coverage metrics before and after recent test synthesis and optimization.
+            {activeMetric === "pass_rate"
+              ? "Comparison of test suite pass rates between initial baseline run and latest run."
+              : "Comparison of coverage metrics between initial baseline run and latest run."}
           </p>
 
           <div className="space-y-3">
-            {[
-              { label: "Unit Code Coverage", before: beforeAfter.before.unit, after: beforeAfter.after.unit, color: "var(--ud-unit)" },
-              { label: "API Endpoint Coverage", before: beforeAfter.before.integration, after: beforeAfter.after.integration, color: "var(--ud-integration)" },
-              { label: "System Flow Coverage", before: beforeAfter.before.system, after: beforeAfter.after.system, color: "var(--ud-system)" },
-            ].map((row, idx) => {
-              const diff = Number((row.after - row.before).toFixed(1));
+            {(activeMetric === "pass_rate"
+              ? [
+                  {
+                    label: "Unit Suite Pass Rate",
+                    before: beforeAfter.before.unitPassRate ?? beforeAfter.before.unit ?? 0,
+                    after: beforeAfter.after.unitPassRate ?? beforeAfter.after.unit ?? 0,
+                    color: "var(--ud-unit)",
+                  },
+                  {
+                    label: "Integration API Pass Rate",
+                    before:
+                      beforeAfter.before.integrationPassRate ??
+                      beforeAfter.before.integration ??
+                      0,
+                    after:
+                      beforeAfter.after.integrationPassRate ??
+                      beforeAfter.after.integration ??
+                      0,
+                    color: "var(--ud-integration)",
+                  },
+                  {
+                    label: "System E2E Pass Rate",
+                    before: beforeAfter.before.systemPassRate ?? beforeAfter.before.system ?? 0,
+                    after: beforeAfter.after.systemPassRate ?? beforeAfter.after.system ?? 0,
+                    color: "var(--ud-system)",
+                  },
+                ]
+              : [
+                  {
+                    label: "Unit Code Coverage",
+                    before: beforeAfter.before.unit ?? 0,
+                    after: beforeAfter.after.unit ?? 0,
+                    color: "var(--ud-unit)",
+                  },
+                  {
+                    label: "API Endpoint Coverage",
+                    before: beforeAfter.before.integration ?? 0,
+                    after: beforeAfter.after.integration ?? 0,
+                    color: "var(--ud-integration)",
+                  },
+                  {
+                    label: "System Flow Coverage",
+                    before: beforeAfter.before.system ?? 0,
+                    after: beforeAfter.after.system ?? 0,
+                    color: "var(--ud-system)",
+                  },
+                ]
+            ).map((row, idx) => {
+              const diff = Number(((Number(row.after) || 0) - (Number(row.before) || 0)).toFixed(1));
               return (
                 <div key={idx} className="space-y-1.5">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="font-semibold text-[var(--ud-text)]">{row.label}</span>
-                    <span className="font-mono text-xs tabular-nums text-[var(--ud-pass)] font-semibold">
+                    <span className="font-semibold text-[var(--ud-text)]">
+                      {row.label}
+                    </span>
+                    <span
+                      className={`font-mono text-xs tabular-nums font-semibold ${
+                        diff > 0
+                          ? "text-[var(--ud-pass)]"
+                          : diff < 0
+                          ? "text-[var(--ud-fail)]"
+                          : "text-[var(--ud-text-muted)]"
+                      }`}
+                    >
                       {diff > 0 ? `+${diff}%` : `${diff}%`}
                     </span>
                   </div>
@@ -311,7 +403,10 @@ export function CoverageTrendChart({ trendData, className = "" }) {
                         <span>{fmtPct(row.before)}</span>
                       </div>
                       <div className="w-full bg-[var(--ud-surface-2)] h-2 rounded-full overflow-hidden border border-[var(--ud-border)]">
-                        <div className="h-full bg-[var(--ud-text-muted)]/50 rounded-full" style={{ width: `${row.before}%` }} />
+                        <div
+                          className="h-full bg-[var(--ud-text-muted)]/50 rounded-full"
+                          style={{ width: `${Math.min(100, Math.max(0, Number(row.before) || 0))}%` }}
+                        />
                       </div>
                     </div>
 
@@ -322,7 +417,13 @@ export function CoverageTrendChart({ trendData, className = "" }) {
                         <span>{fmtPct(row.after)}</span>
                       </div>
                       <div className="w-full bg-[var(--ud-surface-2)] h-2 rounded-full overflow-hidden border border-[var(--ud-border)]">
-                        <div className="h-full rounded-full" style={{ width: `${row.after}%`, backgroundColor: row.color }} />
+                        <div
+                          className="h-full rounded-full"
+                          style={{
+                            width: `${Math.min(100, Math.max(0, Number(row.after) || 0))}%`,
+                            backgroundColor: row.color,
+                          }}
+                        />
                       </div>
                     </div>
                   </div>

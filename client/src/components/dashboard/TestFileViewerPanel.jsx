@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
-  FlaskConical,
   FileCode,
   Edit3,
   Eye,
@@ -23,9 +22,8 @@ import {
 } from "lucide-react";
 import MonacoEditor from "@monaco-editor/react";
 import { updateFileContentApi, createProjectFileApi } from "../../services/project.service.js";
-import { useVersionedProjectFile } from "../../hooks/useVersionedProjectFile";
-import { useProjectAccess } from "../../hooks/useProjectAccess";
 import { cleanDisplayPath } from "./CoverageTypeDashboard.jsx";
+import { resolveTestOrFunctionLine, resolveTestBlockRange } from "../../services/navigation.service.js";
 
 /* ── Extension to Language Mapping ───────────────────────── */
 const EXT_LANG_MAP = {
@@ -125,46 +123,73 @@ export default function TestFileViewerPanel({
   onRegisterTestSaver,
   onTestDirtyChange,
   onSaveBoth,
+  targetTestTitle = null,
+  targetTestLine = null,
+  targetFunction = null,
 }) {
   const isFound = Boolean(testFile?.found);
   const testFilePath = testFile?.filePath || testFile?.suggestedFilePath || "";
   const testFileName = testFile?.fileName || (testFilePath ? testFilePath.split("/").pop() : "test-file.js");
-  const versionedTest = useVersionedProjectFile(projectId, snapshotId, testFilePath, isFound);
-  const testAccess = useProjectAccess(projectId);
-  const rawTestCode = versionedTest.data?.content ?? testFile?.testCode ?? "";
+  const rawTestCode = testFile?.testCode || "";
   const framework = (testFile?.framework || "jest").toUpperCase();
 
   const [viewMode, setViewMode] = useState("code"); // "code" | "editor" | "suggestions"
   const [editorContent, setEditorContent] = useState(rawTestCode);
   const [isTestDirty, setIsTestDirty] = useState(false);
-  const [baseVersion, setBaseVersion] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [copied, setCopied] = useState(false);
   const [editedCodes, setEditedCodes] = useState({});
 
+  // Auto-resolve exact block range of target test scenario or function in test file
+  const testBlockRange = useMemo(() => {
+    const code = rawTestCode || editorContent || "";
+    if (!code) return null;
+    return resolveTestBlockRange(code, {
+      targetFunction,
+      targetTestTitle,
+      targetTestLine,
+    });
+  }, [rawTestCode, editorContent, targetFunction, targetTestTitle, targetTestLine]);
+
+  const testStartLine = testBlockRange?.startLine || (targetTestLine ? Number(targetTestLine) : null);
+  const testEndLine = testBlockRange?.endLine || testStartLine;
+  const testCallLine = testBlockRange?.callLine || null;
+  const resolvedTestLine = testStartLine || null;
+
+  // Scroll to testStartLine or testCallLine when in code view
+  useEffect(() => {
+    const scrollTarget = testStartLine || testCallLine;
+    if (scrollTarget && scrollTarget > 0 && viewMode === "code") {
+      const timer = setTimeout(() => {
+        const el = document.getElementById(`test-line-${scrollTarget}`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }, 220);
+      return () => clearTimeout(timer);
+    }
+  }, [testStartLine, testCallLine, viewMode]);
+
   // Sync editor content whenever raw test code changes from disk
   useEffect(() => {
-    if (isTestDirty) return;
     setEditorContent(rawTestCode);
-    setBaseVersion(versionedTest.data?.version || null);
     setIsTestDirty(false);
     onTestDirtyChange?.(false);
-  }, [rawTestCode, onTestDirtyChange, isTestDirty, versionedTest.data?.version]);
+  }, [rawTestCode, onTestDirtyChange]);
 
-  const saveTestFileInternal = useCallback(async ({ expectedWorkspaceRevision } = {}) => {
-    if (!testAccess.can("files.write") || !isTestDirty) return testFilePath;
+  const saveTestFileInternal = useCallback(async () => {
     if (!projectId || !testFilePath) return testFilePath;
-    const result = isFound
-      ? await updateFileContentApi(projectId, testFilePath, editorContent, { snapshotId, expectedVersion: baseVersion })
-      : await createProjectFileApi(projectId, testFilePath, editorContent, { snapshotId, expectedWorkspaceRevision: expectedWorkspaceRevision ?? testAccess.access?.project?.workspaceRevision });
-    setBaseVersion(result.data?.version || null);
-    await versionedTest.refetch();
+    if (isFound) {
+      await updateFileContentApi(projectId, testFilePath, editorContent);
+    } else {
+      await createProjectFileApi(projectId, testFilePath, editorContent);
+    }
     setIsTestDirty(false);
     onTestDirtyChange?.(false);
     return testFilePath;
-  }, [projectId, snapshotId, testFilePath, isFound, editorContent, onTestDirtyChange, isTestDirty, testAccess, versionedTest, baseVersion]);
+  }, [projectId, testFilePath, isFound, editorContent, onTestDirtyChange]);
 
   useEffect(() => {
     if (onRegisterTestSaver) {
@@ -175,11 +200,67 @@ export default function TestFileViewerPanel({
   const onSaveBothRef = useRef(onSaveBoth || handleSaveTestFile);
   onSaveBothRef.current = onSaveBoth || handleSaveTestFile;
 
+  const monacoEditorRef = useRef(null);
+  const monacoInstanceRef = useRef(null);
+  const monacoDecorationsRef = useRef([]);
+
   const handleEditorDidMount = (editor, monaco) => {
+    monacoEditorRef.current = editor;
+    monacoInstanceRef.current = monaco;
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       onSaveBothRef.current?.();
     });
+    if (testStartLine && testStartLine > 0) {
+      setTimeout(() => {
+        try {
+          const safeEnd = testEndLine && testEndLine >= testStartLine ? testEndLine : testStartLine;
+          editor.revealLineInCenter(testStartLine);
+          editor.setPosition({ lineNumber: testStartLine, column: 1 });
+          monacoDecorationsRef.current = editor.deltaDecorations([], [
+            {
+              range: new monaco.Range(testStartLine, 1, safeEnd, 1),
+              options: {
+                isWholeLine: true,
+                className: "monaco-test-highlight-line",
+                linesDecorationsClassName: "monaco-test-glyph-marker",
+                overviewRuler: {
+                  color: "#a855f7",
+                  position: monaco.editor.OverviewRulerLane.Full,
+                },
+              },
+            },
+          ]);
+        } catch (_) {}
+      }, 150);
+    }
   };
+
+  // Sync Monaco editor highlight when test block changes while in editor view
+  useEffect(() => {
+    if (viewMode === "editor" && monacoEditorRef.current && monacoInstanceRef.current && testStartLine && testStartLine > 0) {
+      try {
+        const editor = monacoEditorRef.current;
+        const monaco = monacoInstanceRef.current;
+        const safeEnd = testEndLine && testEndLine >= testStartLine ? testEndLine : testStartLine;
+        editor.revealLineInCenter(testStartLine);
+        editor.setPosition({ lineNumber: testStartLine, column: 1 });
+        monacoDecorationsRef.current = editor.deltaDecorations(monacoDecorationsRef.current, [
+          {
+            range: new monaco.Range(testStartLine, 1, safeEnd, 1),
+            options: {
+              isWholeLine: true,
+              className: "monaco-test-highlight-line",
+              linesDecorationsClassName: "monaco-test-glyph-marker",
+              overviewRuler: {
+                color: "#a855f7",
+                position: monaco.editor.OverviewRulerLane.Full,
+              },
+            },
+          },
+        ]);
+      } catch (_) {}
+    }
+  }, [testStartLine, testEndLine, viewMode]);
 
   // If new suggestions arrive or finished loading, switch to suggestions tab automatically
   const prevLoadingRef = useRef(isLoadingSuggestions);
@@ -210,14 +291,17 @@ export default function TestFileViewerPanel({
   };
 
   const handleSaveTestFile = async () => {
-    if (!testAccess.can("files.write")) return;
     if (!projectId || !testFilePath) return;
     setIsSaving(true);
     setSaveError("");
     setSaveSuccess(false);
 
     try {
-      await saveTestFileInternal();
+      if (isFound) {
+        await updateFileContentApi(projectId, testFilePath, editorContent);
+      } else {
+        await createProjectFileApi(projectId, testFilePath, editorContent);
+      }
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2500);
       setViewMode("code");
@@ -290,7 +374,7 @@ export default function TestFileViewerPanel({
               flexShrink: 0,
             }}
           >
-            <FlaskConical size={15} />
+            <FileCode size={15} />
           </div>
 
           <div style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
@@ -439,7 +523,7 @@ export default function TestFileViewerPanel({
                     if (onSaveBoth) onSaveBoth();
                     else handleSaveTestFile();
                   }}
-                  disabled={isSaving || isGlobalSaving || !testAccess.can("files.write")}
+                  disabled={isSaving || isGlobalSaving}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -569,7 +653,7 @@ export default function TestFileViewerPanel({
                 }}
                 title={tf.filePath}
               >
-                <FlaskConical size={11} />
+                <FileCode size={11} />
                 <span>{tf.fileName}</span>
                 {tf.relationType === "DIRECT_IMPORT" && (
                   <span
@@ -687,7 +771,7 @@ export default function TestFileViewerPanel({
                 marginBottom: 16,
               }}
             >
-              <FlaskConical size={26} />
+              <FileQuestion size={26} />
             </div>
 
             <h4
@@ -736,22 +820,22 @@ export default function TestFileViewerPanel({
 
             <button
               onClick={() => onSuggestMissingTest?.()}
-              disabled={isLoadingSuggestions || !testAccess.can("ai.use")}
+              disabled={isLoadingSuggestions}
               style={{
                 display: "flex",
                 alignItems: "center",
                 gap: 8,
                 padding: "8px 16px",
-                borderRadius: 6,
+                borderRadius: 7,
                 fontSize: 12,
                 fontWeight: 600,
-                background: "var(--color-primary)",
-                color: "var(--color-primary-foreground)",
-                border: "1px solid var(--color-primary)",
+                background: "var(--color-primary, #6d5dfb)",
+                color: "#ffffff",
+                border: "none",
                 cursor: isLoadingSuggestions ? "wait" : "pointer",
-                transition: "opacity 0.15s ease",
+                transition: "all 0.15s ease",
               }}
-              className="hover:opacity-90 disabled:opacity-50"
+              className="hover:opacity-95"
             >
               {isLoadingSuggestions ? (
                 <Loader2 size={15} className="animate-spin" />
@@ -844,13 +928,11 @@ export default function TestFileViewerPanel({
                       borderRadius: 6,
                       fontSize: 11,
                       fontWeight: 700,
-                      background: "var(--color-success)",
-                      color: "var(--color-primary-foreground)",
-                      border: "1px solid var(--color-success)",
+                      background: "var(--color-success, #16a34a)",
+                      color: "#ffffff",
+                      border: "none",
                       cursor: "pointer",
-                      transition: "opacity 0.15s ease",
                     }}
-                    className="hover:opacity-90"
                   >
                     <Layers size={13} />
                     <span>Apply all to project ({suggestions.filter((s) => s.status !== "REJECTED").length})</span>
@@ -890,6 +972,8 @@ export default function TestFileViewerPanel({
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "space-between",
+                  flexWrap: "wrap",
+                  gap: 8,
                   fontSize: 11,
                   color: isLight ? "#15803d" : "#4ade80",
                 }}
@@ -898,15 +982,96 @@ export default function TestFileViewerPanel({
                   <TrendingUp size={13} />
                   <span>Verified Coverage Increase:</span>
                 </div>
-                <div style={{ display: "flex", gap: 12, fontFamily: "var(--font-mono, monospace)" }}>
-                  <span>Lines: {lastApplyResult.oldCoverage?.lines ?? 0}% → {lastApplyResult.newCoverage?.lines ?? 0}%</span>
-                  <span>Branches: {lastApplyResult.oldCoverage?.branches ?? 0}% → {lastApplyResult.newCoverage?.branches ?? 0}%</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", gap: 12, fontFamily: "var(--font-mono, monospace)" }}>
+                    <span>Lines: {lastApplyResult.oldCoverage?.lines ?? 0}% → {lastApplyResult.newCoverage?.lines ?? 0}%</span>
+                    <span>Branches: {lastApplyResult.oldCoverage?.branches ?? 0}% → {lastApplyResult.newCoverage?.branches ?? 0}%</span>
+                  </div>
+                  {((lastApplyResult.newCoverage?.lines < 100) || (lastApplyResult.newCoverage?.branches < 100)) && (
+                    <button
+                      onClick={() => onSuggestMissingTest?.()}
+                      disabled={isLoadingSuggestions}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 4,
+                        padding: "3px 9px",
+                        borderRadius: 5,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        background: "var(--color-primary, #6d5dfb)",
+                        color: "#ffffff",
+                        border: "none",
+                        cursor: isLoadingSuggestions ? "wait" : "pointer",
+                        transition: "all 0.15s ease",
+                      }}
+                      title="Continue suggesting test cases for remaining uncovered branches until 100%"
+                    >
+                      {isLoadingSuggestions ? (
+                        <Loader2 size={11} className="animate-spin" />
+                      ) : (
+                        <Sparkles size={11} />
+                      )}
+                      <span>Suggest Next Missing Tests</span>
+                    </button>
+                  )}
                 </div>
               </div>
             )}
 
             {/* List of suggestion cards */}
             {suggestions.filter((s) => s.status !== "REJECTED").map((sug, idx) => {
+              if (sug.isFullyCovered) {
+                const summary = sug.summary || {};
+                return (
+                  <div
+                    key={sug.suggestionId || idx}
+                    style={{
+                      padding: "16px 18px",
+                      borderRadius: 8,
+                      background: isLight ? "#f0fdf4" : "rgba(34, 197, 94, 0.1)",
+                      border: isLight ? "1px solid #86efac" : "1px solid rgba(34, 197, 94, 0.3)",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 8,
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, color: isLight ? "#15803d" : "#4ade80", fontWeight: 700, fontSize: 13 }}>
+                      <CheckCircle2 size={17} />
+                      <span>{sug.explanation || `File \`${cleanDisplayPath(sourceFilePath)}\` has achieved 100% full coverage across all metrics!`}</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: isLight ? "#166534" : "#86efac", display: "flex", gap: 12, fontFamily: "var(--font-mono, monospace)" }}>
+                      <span>Statements: {summary.statementsPct ?? summary.stmtsPct ?? 100}%</span>
+                      <span>Branches: {summary.branchesPct ?? 100}%</span>
+                      <span>Functions: {summary.functionsPct ?? summary.funcsPct ?? 100}%</span>
+                      <span>Lines: {summary.linesPct ?? 100}%</span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+                      <button
+                        onClick={() => onSuggestMissingTest?.()}
+                        disabled={isLoadingSuggestions}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 5,
+                          padding: "5px 12px",
+                          borderRadius: 6,
+                          fontSize: 11,
+                          fontWeight: 600,
+                          background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.08)",
+                          border: isLight ? "1px solid #bbf7d0" : "1px solid rgba(34, 197, 94, 0.4)",
+                          color: isLight ? "#15803d" : "#4ade80",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <Sparkles size={11} />
+                        <span>Generate Additional Edge Cases / Boundary Tests</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+
               const sugId = sug.suggestionId || sug.id || idx;
               const isApplying = applyingSuggestionIds.has(sugId);
               const currentCode = editedCodes[sugId] !== undefined
@@ -1025,7 +1190,7 @@ export default function TestFileViewerPanel({
                       {onRejectSuggestion && sug.status !== "REJECTED" && (
                         <button
                           onClick={() => onRejectSuggestion(sugId)}
-                          disabled={isApplying || !testAccess.can("files.write")}
+                          disabled={isApplying}
                           style={{
                             display: "flex",
                             alignItems: "center",
@@ -1048,7 +1213,7 @@ export default function TestFileViewerPanel({
                       {/* Single Apply Button */}
                       <button
                         onClick={() => onApplySuggestion?.({ ...sug, generatedCode: currentCode, suggestedTestCode: currentCode, code: currentCode, fullUpdatedContent: sug.fullUpdatedContent })}
-                        disabled={isApplying || sug.status === "PASSED" || !testAccess.can("files.write")}
+                        disabled={isApplying || sug.status === "PASSED"}
                         style={{
                           display: "flex",
                           alignItems: "center",
@@ -1191,44 +1356,106 @@ export default function TestFileViewerPanel({
               color: isLight ? "#0f172a" : "#e2e8f0",
             }}
           >
-            {testLines.map((line, idx) => (
-              <div
-                key={idx}
-                style={{
-                  display: "flex",
-                  alignItems: "flex-start",
-                  padding: "1px 12px",
-                  transition: "background 0.1s ease",
-                }}
-                className={isLight ? "hover:bg-slate-100" : "hover:bg-white/[0.03]"}
-              >
-                {/* Line number */}
-                <span
+            {testLines.map((line, idx) => {
+              const lineNum = idx + 1;
+              const isTestBlockLine = testStartLine && testEndLine && lineNum >= testStartLine && lineNum <= testEndLine;
+              const isTestStartLine = testStartLine && lineNum === testStartLine;
+              const isCallLine = testCallLine && lineNum === testCallLine && testCallLine !== testStartLine;
+              return (
+                <div
+                  key={idx}
+                  id={`test-line-${lineNum}`}
                   style={{
-                    width: 38,
-                    flexShrink: 0,
-                    textAlign: "right",
-                    marginRight: 16,
-                    color: isLight ? "#94a3b8" : "#475569",
-                    userSelect: "none",
-                    fontSize: 11,
+                    display: "flex",
+                    alignItems: "flex-start",
+                    padding: isTestBlockLine ? "2px 12px" : "1px 12px",
+                    background: isTestBlockLine
+                      ? (isLight ? "rgba(147, 51, 234, 0.05)" : "rgba(168, 85, 247, 0.07)")
+                      : "transparent",
+                    borderLeft: isTestBlockLine
+                      ? (isLight ? "3px solid #c084fc" : "3px solid #a855f7")
+                      : "3px solid transparent",
+                    transition: "background 0.1s ease",
                   }}
+                  className={isLight ? "hover:bg-slate-100" : "hover:bg-white/[0.03]"}
                 >
-                  {idx + 1}
-                </span>
+                  {/* Line number */}
+                  <span
+                    style={{
+                      width: 38,
+                      flexShrink: 0,
+                      textAlign: "right",
+                      marginRight: 16,
+                      color: isTestBlockLine ? (isLight ? "#7e22ce" : "#d8b4fe") : (isLight ? "#94a3b8" : "#475569"),
+                      fontWeight: isTestBlockLine ? 650 : 400,
+                      userSelect: "none",
+                      fontSize: 11,
+                    }}
+                  >
+                    {lineNum}
+                  </span>
 
-                {/* Line code */}
-                <span
-                  style={{
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-all",
-                    flex: 1,
-                  }}
-                >
-                  {line || " "}
-                </span>
-              </div>
-            ))}
+                  {/* Target test badge on start line of the test case */}
+                  {isTestStartLine && (
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        fontSize: 10,
+                        fontFamily: "var(--font-mono)",
+                        fontWeight: 600,
+                        padding: "1px 6px",
+                        borderRadius: 3,
+                        background: isLight ? "rgba(147, 51, 234, 0.08)" : "rgba(168, 85, 247, 0.12)",
+                        color: isLight ? "#7e22ce" : "#d8b4fe",
+                        border: isLight ? "1px solid rgba(147, 51, 234, 0.22)" : "1px solid rgba(168, 85, 247, 0.28)",
+                        marginRight: 8,
+                        flexShrink: 0,
+                      }}
+                      title={`Test scenario for: ${targetFunction || targetTestTitle || ""}`}
+                    >
+                      Test {targetFunction ? `for ${targetFunction}()` : ""}
+                    </span>
+                  )}
+
+                  {/* Direct invocation marker */}
+                  {isCallLine && (
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        fontSize: 9.5,
+                        fontFamily: "var(--font-mono)",
+                        fontWeight: 600,
+                        padding: "0.5px 5px",
+                        borderRadius: 3,
+                        background: isLight ? "rgba(99, 102, 241, 0.12)" : "rgba(99, 102, 241, 0.18)",
+                        color: isLight ? "#4338ca" : "#c7d2fe",
+                        border: isLight ? "1px solid rgba(99, 102, 241, 0.25)" : "1px solid rgba(99, 102, 241, 0.3)",
+                        marginRight: 6,
+                        flexShrink: 0,
+                      }}
+                      title={`Direct invocation of ${targetFunction}()`}
+                    >
+                      call
+                    </span>
+                  )}
+
+                  {/* Line code */}
+                  <span
+                    style={{
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-all",
+                      flex: 1,
+                      fontWeight: isTestBlockLine ? 500 : 400,
+                      color: isLight ? "#0f172a" : "#e2e8f0",
+                    }}
+                  >
+                    {line || " "}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -1248,7 +1475,6 @@ export default function TestFileViewerPanel({
               }}
               onMount={handleEditorDidMount}
               options={{
-                readOnly: isSaving || isGlobalSaving || !testAccess.can("files.write"),
                 minimap: { enabled: false },
                 fontSize: 12,
                 lineNumbers: "on",

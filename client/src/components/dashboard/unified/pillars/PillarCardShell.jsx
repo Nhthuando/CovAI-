@@ -7,6 +7,7 @@ export function PillarCardShell({
   pillar = "unit",
   framework = "Jest",
   status = "pass",
+  statusLabel = null,
   counts = null,
   onOpenWorkspace,
   buttonLabel = "Open Workspace",
@@ -27,15 +28,21 @@ export function PillarCardShell({
       } ${className}`}
     >
       <div>
-        {/* Card Header */}
-        <div className="flex items-center justify-between pb-3 border-b border-[var(--ud-border)] gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <PillarBadge pillar={pillar} size="md" />
-            <span className="text-[11px] font-mono font-medium text-[var(--ud-text-muted)] bg-[var(--ud-surface-2)] px-1.5 py-0.5 rounded border border-[var(--ud-border)] truncate">
+        {/* Card Header — Zero truncation with shrink-0 and whitespace-nowrap */}
+        <div className="flex flex-wrap items-center justify-between pb-3 border-b border-[var(--ud-border)] gap-1.5">
+          <div className="flex items-center gap-1.5 shrink-0">
+            <PillarBadge pillar={pillar} size="sm" className="shrink-0 whitespace-nowrap" />
+            <span className="text-[11px] font-mono font-medium text-[var(--ud-text-muted)] bg-[var(--ud-surface-2)] px-1.5 py-0.5 rounded border border-[var(--ud-border)] shrink-0 whitespace-nowrap">
               {framework}
             </span>
           </div>
-          <StatusPill status={status} counts={counts} size="sm" />
+          <StatusPill
+            status={status}
+            label={statusLabel}
+            counts={counts}
+            size="sm"
+            className="shrink-0 whitespace-nowrap"
+          />
         </div>
 
         {/* Content Body */}

@@ -1,43 +1,54 @@
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { queryClient } from "../lib/queryClient";
 import {
-  FolderGit2,
-  Plus,
-  Trash2,
-  Search,
-  Grid,
-  List,
-  ArrowRight,
-  GitBranch,
-  Clock,
-  AlertTriangle,
-  Star,
-  LogOut,
-  SlidersHorizontal,
-  X,
   Terminal,
+  Plus,
+  LogOut,
+  AlertTriangle,
+  PanelRightClose,
+  PanelRightOpen,
 } from "lucide-react";
-import { getProjectsApi, deleteProjectApi } from "../services/project.service";
+import { deleteProjectApi } from "../services/project.service";
 import ImportLayout from "../components/dashboard/import/ImportLayout";
 import { useAuth } from "../hooks/useAuth";
 import Button from "../components/common/Button";
-import Badge from "../components/common/Badge";
-import Card from "../components/common/Card";
 import ThemeSelector from "../components/common/ThemeSelector";
 import ConfirmDialog from "../components/common/ConfirmDialog";
-import { ProjectGridSkeleton } from "../components/common/Skeleton";
+import { NotificationCenter } from "../components/NotificationCenter";
+import { useBreakpoints } from "../hooks/useMediaQuery";
+import PanelResizer from "../components/dashboard/PanelResizer";
+import AIPanel from "../components/dashboard/AIPanel";
+import ProjectsPortfolioDashboard from "../components/dashboard/portfolio/ProjectsPortfolioDashboard";
+import { motion, AnimatePresence } from "framer-motion";
+
+const DEFAULT_AI_PANEL_WIDTH = 340;
 
 export default function ProjectSelectionPage() {
-  const [projects, setProjects] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { user, logout } = useAuth();
+  const userId = user?.id;
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { isMobile } = useBreakpoints();
+
+  // URL query parameter for demo vs live data mode
+  const [dataMode, setDataMode] = useState(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get("mode") === "demo" ? "demo" : "live";
+  });
+
   const [showImport, setShowImport] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [sortBy, setSortBy] = useState("recent"); // "recent" | "name" | "oldest"
-  const [viewMode, setViewMode] = useState("grid"); // "grid" | "list"
   const [projectToDelete, setProjectToDelete] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+
+  // AI Assistant Sidebar state
+  const [aiPanelOpen, setAiPanelOpen] = useState(() => !isMobile);
+  const [aiPanelWidth, setAiPanelWidth] = useState(DEFAULT_AI_PANEL_WIDTH);
+  const [isDraggingAiPanel, setIsDraggingAiPanel] = useState(false);
+  const [pendingAiSuggestion, setPendingAiSuggestion] = useState(null);
+
+  // Favorites (Pinned projects)
   const [favorites, setFavorites] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem("covai_favorites") || "[]");
@@ -46,55 +57,7 @@ export default function ProjectSelectionPage() {
     }
   });
 
-  const { user, logout } = useAuth();
-  const userId = user?.id;
-  const navigate = useNavigate();
-  const location = useLocation();
-
-  const handleLogout = () => {
-    setShowLogoutConfirm(false);
-    logout();
-    navigate("/", { replace: true });
-  };
-
-  const fetchProjects = useCallback(async () => {
-    try {
-      setLoading(true);
-      const data = await queryClient.fetchQuery({
-        queryKey: ["projects", userId],
-        queryFn: async () => {
-          const res = await getProjectsApi();
-          return res?.projects || [];
-        },
-        staleTime: 5 * 60 * 1000,
-      });
-      setProjects(data || []);
-    } catch (err) {
-      console.error("Failed to load projects", err);
-    } finally {
-      setLoading(false);
-    }
-  }, [userId]);
-
-  useEffect(() => {
-    let ignore = false;
-    getProjectsApi()
-      .then((res) => {
-        if (!ignore) setProjects(res?.projects || []);
-      })
-      .catch((err) => {
-        console.error("Failed to load projects", err);
-      })
-      .finally(() => {
-        if (!ignore) setLoading(false);
-      });
-    return () => {
-      ignore = true;
-    };
-  }, []);
-
-  const toggleFavorite = (e, projectId) => {
-    e.stopPropagation();
+  const toggleFavorite = useCallback((projectId) => {
     setFavorites((prev) => {
       const next = prev.includes(projectId)
         ? prev.filter((id) => id !== projectId)
@@ -102,6 +65,23 @@ export default function ProjectSelectionPage() {
       localStorage.setItem("covai_favorites", JSON.stringify(next));
       return next;
     });
+  }, []);
+
+  const handleChangeDataMode = useCallback(
+    (nextMode) => {
+      const normalized = nextMode === "demo" ? "demo" : "live";
+      setDataMode(normalized);
+      const params = new URLSearchParams(location.search);
+      params.set("mode", normalized);
+      navigate(`${location.pathname}?${params.toString()}`, { replace: true });
+    },
+    [location, navigate]
+  );
+
+  const handleLogout = () => {
+    setShowLogoutConfirm(false);
+    logout();
+    navigate("/", { replace: true });
   };
 
   const handleConfirmDelete = async () => {
@@ -110,8 +90,9 @@ export default function ProjectSelectionPage() {
     try {
       setIsDeleting(true);
       await deleteProjectApi(targetProject.id);
+      queryClient.invalidateQueries({ queryKey: ["projects", userId] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
-      setProjects((prev) => prev.filter((p) => p.id !== targetProject.id));
+      queryClient.invalidateQueries({ queryKey: ["projectsPortfolio"] });
       setProjectToDelete(null);
     } catch (err) {
       console.error("Failed to delete project", err);
@@ -121,31 +102,37 @@ export default function ProjectSelectionPage() {
     }
   };
 
-  // Filter & Sort Projects
-  const filteredProjects = useMemo(() => {
-    let list = [...projects];
+  const handleAskAiPrompt = useCallback((promptText) => {
+    if (!promptText) return;
+    setAiPanelOpen(true);
+    setPendingAiSuggestion({ promptText, timestamp: Date.now() });
+  }, []);
 
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      list = list.filter((p) => p.name?.toLowerCase().includes(q));
-    }
-
-    if (sortBy === "recent") {
-      list.sort(
-        (a, b) =>
-          new Date(b.updatedAt || b.createdAt || 0) -
-          new Date(a.updatedAt || a.createdAt || 0),
-      );
-    } else if (sortBy === "name") {
-      list.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-    } else if (sortBy === "oldest") {
-      list.sort(
-        (a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0),
-      );
-    }
-
-    return list;
-  }, [projects, searchQuery, sortBy]);
+  const handleAiPanelResize = useCallback(
+    (e) => {
+      e.preventDefault();
+      setIsDraggingAiPanel(true);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      const startX = e.clientX;
+      const startWidth = aiPanelWidth;
+      const onMouseMove = (moveEvent) => {
+        const deltaX = startX - moveEvent.clientX;
+        const newWidth = Math.max(260, Math.min(800, startWidth + deltaX));
+        setAiPanelWidth(newWidth);
+      };
+      const onMouseUp = () => {
+        setIsDraggingAiPanel(false);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+      };
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+    },
+    [aiPanelWidth]
+  );
 
   const userInitials = useMemo(() => {
     if (!user?.name && !user?.email) return "CO";
@@ -158,20 +145,25 @@ export default function ProjectSelectionPage() {
       .toUpperCase();
   }, [user]);
 
+  const screenContext = useMemo(
+    () => ({ activity: "projects-portfolio", testType: "portfolio" }),
+    []
+  );
+
   return (
-    <div className="min-h-screen bg-[var(--color-bg)] text-[var(--color-text)] font-sans flex flex-col transition-colors duration-150">
-      {/* ── Top Navigation Bar ──────────────────────────────── */}
-      <header className="h-14 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 sm:px-6 lg:px-8 flex items-center justify-between sticky top-0 z-30">
-        <div className="flex items-center gap-3">
-          <div className="w-7 h-7 rounded-[var(--radius-md)] bg-[var(--color-primary)] text-white flex items-center justify-center font-bold text-xs shrink-0">
-            <Terminal className="w-3.5 h-3.5 stroke-[2.5]" />
+    <div className="h-screen w-screen flex flex-col overflow-hidden bg-[var(--color-bg)] text-[var(--color-text)] font-sans transition-colors duration-150">
+      {/* ── Global Top Navigation Bar (with single +Project button) ────── */}
+      <header className="h-11 sm:h-12 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 sm:px-4 flex items-center justify-between sticky top-0 z-40 select-none shrink-0">
+        <div className="flex items-center gap-2.5">
+          <div className="w-6 h-6 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-white flex items-center justify-center font-bold text-xs shrink-0">
+            <Terminal size={13} strokeWidth={2.5} />
           </div>
-          <div className="flex items-center gap-2">
-            <span className="font-bold text-sm tracking-tight text-[var(--color-text)]">
+          <div className="flex items-center gap-1.5 font-mono">
+            <span className="font-bold text-xs tracking-tight text-[var(--color-text)]">
               CovAI
             </span>
-            <span className="text-xs text-[var(--color-text-muted)]">/</span>
-            <span className="text-xs text-[var(--color-text-secondary)] font-medium">
+            <span className="text-[10px] text-[var(--color-text-muted)]">/</span>
+            <span className="text-xs font-semibold text-[var(--color-primary)]">
               Projects
             </span>
           </div>
@@ -179,9 +171,39 @@ export default function ProjectSelectionPage() {
 
         {/* Header Right Actions */}
         <div className="flex items-center gap-2">
+          {/* THE ONLY + Project Button on the page per UX rules */}
+          <Button
+            type="button"
+            variant="primary"
+            size="sm"
+            onClick={() => setShowImport(true)}
+            icon={Plus}
+          >
+            Project
+          </Button>
+
+          <div className="h-4 w-px bg-[var(--color-border)] mx-0.5 hidden sm:block" />
+
           <ThemeSelector compact />
 
-          <div className="h-4 w-px bg-[var(--color-border)] mx-1" />
+          <NotificationCenter userId={user?.id} size={14} />
+
+          {/* Toggle COV AI Assistant Sidebar */}
+          <button
+            type="button"
+            onClick={() => setAiPanelOpen((prev) => !prev)}
+            className={`p-1.5 rounded-[var(--radius-md)] border border-[var(--color-border)] transition-colors cursor-pointer ${
+              aiPanelOpen
+                ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] border-[var(--color-primary)]/40"
+                : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] bg-[var(--color-surface-secondary)]"
+            }`}
+            title={aiPanelOpen ? "Collapse AI Assistant" : "Expand AI Assistant"}
+            aria-label="Toggle AI Assistant"
+          >
+            {aiPanelOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
+          </button>
+
+          <div className="h-4 w-px bg-[var(--color-border)] mx-0.5" />
 
           {/* User profile & logout */}
           <div className="flex items-center gap-1.5">
@@ -198,325 +220,114 @@ export default function ProjectSelectionPage() {
               title="Sign Out"
               aria-label="Sign Out"
             >
-              <LogOut className="w-3.5 h-3.5" />
+              <LogOut size={13} />
             </button>
           </div>
         </div>
       </header>
 
-      {/* ── Main Content Area ──────────────────────────────── */}
-      <main className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 flex flex-col gap-6">
-        {location.state?.projectAccessLost && <div role="alert" className="rounded-lg border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/10 p-4 text-sm text-[var(--color-text)]">Your access to this project has been removed. Your unsaved editor drafts are kept in this browser.</div>}
-        {/* Page Header: Title & Action */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2.5">
-              <h1 className="text-2xl font-bold tracking-tight text-[var(--color-text)]">
-                Projects
-              </h1>
-              <Badge variant="neutral" size="sm">
-                {projects.length}
-              </Badge>
+      {/* ── Main Content Area + Right AI Sidebar Split ─────────────────── */}
+      <div className="flex flex-1 overflow-hidden relative min-h-0">
+        {/* Main 5-Zone Projects Portfolio Dashboard */}
+        <main className="flex-1 overflow-y-auto custom-scrollbar min-w-0">
+          {location.state?.projectAccessLost && (
+            <div className="max-w-[1600px] mx-auto px-4 sm:px-6 pt-4">
+              <div
+                role="alert"
+                className="rounded-lg border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/10 p-4 text-sm text-[var(--color-text)]"
+              >
+                Your access to this project has been removed. Your unsaved editor drafts are kept in this browser.
+              </div>
             </div>
-            <p className="text-xs sm:text-sm text-[var(--color-text-secondary)] mt-1">
-              Select a project to inspect code, run CFG branch diagnostics, and
-              synthesize unit tests.
-            </p>
-          </div>
+          )}
+          <ProjectsPortfolioDashboard
+            dataMode={dataMode}
+            onChangeDataMode={handleChangeDataMode}
+            favorites={favorites}
+            onTogglePin={toggleFavorite}
+            onOpenProjectOverview={(projectId) =>
+              navigate(`/main-editor?projectId=${projectId}&tab=overview${dataMode === "demo" ? "&mode=demo" : ""}`)
+            }
+            onNavigateWorkspace={(projectId, pillar, focus = {}) => {
+              const params = new URLSearchParams();
+              params.set("projectId", projectId);
+              params.set("tab", "coverage");
+              params.set("coverageType", pillar);
+              if (focus?.focusFile) params.set("focusFile", focus.focusFile);
+              if (focus?.focusEndpoint) params.set("focusEndpoint", focus.focusEndpoint);
+              if (focus?.focusScenario) params.set("focusScenario", focus.focusScenario);
+              navigate(`/main-editor?${params.toString()}`);
+            }}
+            onDeleteProject={(proj) => setProjectToDelete(proj)}
+            onAddProject={() => setShowImport(true)}
+            onAskAi={handleAskAiPrompt}
+          />
+        </main>
 
-          <Button
-            type="button"
-            variant="primary"
-            size="md"
-            onClick={() => setShowImport(true)}
-            icon={Plus}
-          >
-            New Project
-          </Button>
-        </div>
-
-        {/* ── Filter & Search Toolbar ────────────────────────── */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pb-2 border-b border-[var(--color-border)]">
-          {/* Search Box */}
-          <div className="relative w-full sm:w-80">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] pointer-events-none" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search projects..."
-              className="w-full h-8 pl-9 pr-8 rounded-[var(--radius-md)] bg-[var(--color-surface)] border border-[var(--color-border)] text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] outline-none focus:border-[var(--color-primary)] transition-colors"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery("")}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
-                aria-label="Clear search"
+        {/* Collapsible Right-Hand COV AI Assistant Sidebar */}
+        <AnimatePresence initial={false}>
+          {aiPanelOpen && (
+            <>
+              {!isMobile && (
+                <PanelResizer
+                  onMouseDown={handleAiPanelResize}
+                  isDragging={isDraggingAiPanel}
+                  onDoubleClick={() => setAiPanelWidth(DEFAULT_AI_PANEL_WIDTH)}
+                  currentWidth={aiPanelWidth}
+                  defaultWidth={DEFAULT_AI_PANEL_WIDTH}
+                  side="right"
+                  label="COV Assistant"
+                />
+              )}
+              <motion.div
+                key="portfolio-ai-panel"
+                initial={
+                  isMobile ? { x: 320, opacity: 0 } : { width: 0, opacity: 0 }
+                }
+                animate={
+                  isMobile
+                    ? { x: 0, opacity: 1 }
+                    : { width: aiPanelWidth, opacity: 1 }
+                }
+                exit={
+                  isMobile ? { x: 320, opacity: 0 } : { width: 0, opacity: 0 }
+                }
+                transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
+                style={
+                  isMobile
+                    ? {
+                        position: "fixed",
+                        top: 48,
+                        bottom: 0,
+                        right: 0,
+                        width: "100%",
+                        maxWidth: 360,
+                        overflow: "hidden",
+                        zIndex: 45,
+                        boxShadow: "-4px 0 24px rgba(0,0,0,0.4)",
+                      }
+                    : { overflow: "hidden", flexShrink: 0 }
+                }
               >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-
-          {/* Sort & View Mode */}
-          <div className="flex items-center gap-2.5 justify-between sm:justify-end">
-            <div className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
-              <SlidersHorizontal className="w-3.5 h-3.5 shrink-0" />
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value)}
-                className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-md)] px-2 py-1 text-xs text-[var(--color-text)] outline-none cursor-pointer focus:border-[var(--color-primary)]"
-              >
-                <option value="recent">Recently Active</option>
-                <option value="name">Name (A-Z)</option>
-                <option value="oldest">Oldest First</option>
-              </select>
-            </div>
-
-            {/* Grid / List View Toggle */}
-            <div className="flex items-center p-0.5 rounded-[var(--radius-md)] bg-[var(--color-surface)] border border-[var(--color-border)]">
-              <button
-                type="button"
-                onClick={() => setViewMode("grid")}
-                className={`p-1.5 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${
-                  viewMode === "grid"
-                    ? "bg-[var(--color-surface-secondary)] text-[var(--color-text)] font-semibold shadow-xs"
-                    : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                }`}
-                title="Grid View"
-                aria-label="Grid View"
-              >
-                <Grid className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode("list")}
-                className={`p-1.5 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${
-                  viewMode === "list"
-                    ? "bg-[var(--color-surface-secondary)] text-[var(--color-text)] font-semibold shadow-xs"
-                    : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                }`}
-                title="List View"
-                aria-label="List View"
-              >
-                <List className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* ── Projects Content Section ───────────────────────── */}
-        {loading ? (
-          <ProjectGridSkeleton count={6} viewMode={viewMode} />
-        ) : filteredProjects.length === 0 ? (
-          <div className="py-16 border border-dashed border-[var(--color-border)] rounded-[var(--radius-lg)] text-center bg-[var(--color-surface)] flex flex-col items-center justify-center p-8">
-            <div className="w-12 h-12 rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] flex items-center justify-center text-[var(--color-text-muted)] mb-3">
-              <FolderGit2 className="w-6 h-6" />
-            </div>
-            <h3 className="text-sm font-semibold text-[var(--color-text)]">
-              {searchQuery ? "No matching projects" : "No projects yet"}
-            </h3>
-            <p className="text-xs text-[var(--color-text-secondary)] mt-1 max-w-sm">
-              {searchQuery
-                ? `No projects match "${searchQuery}". Clear your search or try another keyword.`
-                : "Import a project from GitHub or upload a local archive to start analyzing coverage."}
-            </p>
-            {searchQuery ? (
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => setSearchQuery("")}
-                className="mt-4"
-              >
-                Clear Search
-              </Button>
-            ) : (
-              <Button
-                type="button"
-                variant="primary"
-                size="sm"
-                onClick={() => setShowImport(true)}
-                icon={Plus}
-                className="mt-4"
-              >
-                Import First Project
-              </Button>
-            )}
-          </div>
-        ) : viewMode === "grid" ? (
-          /* ── Grid View ─────────────────────────────────── */
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredProjects.map((project) => {
-              const isFav = favorites.includes(project.id);
-              const initials = (project.name || "PR").slice(0, 2).toUpperCase();
-
-              return (
-                <Card
-                  key={project.id}
-                  interactive
-                  onClick={() =>
-                    navigate(`/main-editor?projectId=${project.id}`)
+                <AIPanel
+                  screenContext={screenContext}
+                  projectId={null}
+                  snapshotId={null}
+                  fileTree={[]}
+                  pendingAiSuggestion={pendingAiSuggestion}
+                  onClearPendingSuggestion={() => setPendingAiSuggestion(null)}
+                  onOpenFile={(filePath) =>
+                    navigate(`/main-editor?focusFile=${encodeURIComponent(filePath)}`)
                   }
-                  className="p-4 flex flex-col justify-between group bg-[var(--color-surface)] border-[var(--color-border)] hover:border-[var(--color-primary)] transition-all"
-                >
-                  <div>
-                    {/* Top Row: Icon + Badges + Favorite/Delete */}
-                    <div className="flex items-start justify-between gap-3 mb-3">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className="w-8 h-8 rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] flex items-center justify-center text-[var(--color-primary)] font-bold text-xs shrink-0 font-mono">
-                          {initials}
-                        </div>
-                        <Badge
-                          variant={project.repoUrl ? "info" : "neutral"}
-                          size="sm"
-                        >
-                          {project.repoUrl ? "GitHub" : "Local"}
-                        </Badge>
-                      </div>
+                  onRunAnalysis={() => {}}
+                />
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>
+      </div>
 
-                      {/* Action buttons */}
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={(e) => toggleFavorite(e, project.id)}
-                          className={`p-1.5 rounded-[var(--radius-sm)] transition-colors cursor-pointer ${
-                            isFav
-                              ? "text-amber-500 bg-amber-500/10"
-                              : "text-[var(--color-text-muted)] hover:text-amber-500 hover:bg-[var(--color-surface-secondary)]"
-                          }`}
-                          title={isFav ? "Remove favorite" : "Add to favorites"}
-                          aria-label={
-                            isFav ? "Remove favorite" : "Add to favorites"
-                          }
-                        >
-                          <Star
-                            className="w-3.5 h-3.5"
-                            fill={isFav ? "currentColor" : "none"}
-                          />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setProjectToDelete(project);
-                          }}
-                          className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] hover:bg-[var(--color-surface-secondary)] rounded-[var(--radius-sm)] transition-colors cursor-pointer"
-                          title="Delete Project"
-                          aria-label="Delete Project"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Project Title */}
-                    <h3
-                      className="text-sm font-semibold text-[var(--color-text)] group-hover:text-[var(--color-primary)] transition-colors truncate mb-1"
-                      title={project.name}
-                    >
-                      {project.name}
-                    </h3>
-
-                    {/* Branch & Source */}
-                    <div className="flex items-center gap-2 mt-2 text-xs text-[var(--color-text-muted)] font-mono">
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[10px]">
-                        <GitBranch className="w-3 h-3 text-[var(--color-primary)]" />
-                        main
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Card Footer: Timestamp & Launch Link */}
-                  <div className="pt-3 mt-4 border-t border-[var(--color-border)] flex items-center justify-between text-xs">
-                    <span className="text-[var(--color-text-muted)] flex items-center gap-1 font-mono text-[11px]">
-                      <Clock className="w-3 h-3" />
-                      {project.updatedAt
-                        ? new Date(project.updatedAt).toLocaleDateString()
-                        : "Recent"}
-                    </span>
-                    <span className="text-[var(--color-primary)] font-medium flex items-center gap-1 group-hover:translate-x-0.5 transition-transform text-xs">
-                      Open <ArrowRight className="w-3 h-3" />
-                    </span>
-                  </div>
-                </Card>
-              );
-            })}
-          </div>
-        ) : (
-          /* ── List View ─────────────────────────────────── */
-          <div className="flex flex-col gap-2">
-            {filteredProjects.map((project) => {
-              const isFav = favorites.includes(project.id);
-              const initials = (project.name || "PR").slice(0, 2).toUpperCase();
-
-              return (
-                <div
-                  key={project.id}
-                  onClick={() =>
-                    navigate(`/main-editor?projectId=${project.id}`)
-                  }
-                  className="group flex items-center justify-between p-3 rounded-[var(--radius-md)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] hover:border-[var(--color-primary)] transition-all cursor-pointer"
-                >
-                  <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <div className="w-8 h-8 rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] flex items-center justify-center text-[var(--color-primary)] font-bold text-xs shrink-0 font-mono">
-                      {initials}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-semibold text-[var(--color-text)] group-hover:text-[var(--color-primary)] transition-colors truncate">
-                          {project.name}
-                        </h3>
-                        {isFav && (
-                          <Star className="w-3 h-3 text-amber-500 fill-amber-500 shrink-0" />
-                        )}
-                        <Badge
-                          variant={project.repoUrl ? "info" : "neutral"}
-                          size="sm"
-                        >
-                          {project.repoUrl ? "GitHub" : "Local"}
-                        </Badge>
-                      </div>
-                      <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] mt-0.5">
-                        <span className="flex items-center gap-1 font-mono text-[11px]">
-                          <GitBranch className="w-3 h-3 text-[var(--color-primary)]" />
-                          main
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-3">
-                    <span className="text-[var(--color-text-muted)] text-xs font-mono hidden sm:inline-block">
-                      {project.updatedAt
-                        ? new Date(project.updatedAt).toLocaleDateString()
-                        : "Recent"}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setProjectToDelete(project);
-                      }}
-                      className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] hover:bg-[var(--color-surface-secondary)] rounded-[var(--radius-sm)] transition-colors cursor-pointer"
-                      title="Delete"
-                      aria-label="Delete"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                    <span className="text-xs font-semibold text-[var(--color-primary)] flex items-center gap-1 group-hover:translate-x-0.5 transition-transform">
-                      Open <ArrowRight className="w-3 h-3" />
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </main>
-
-      {/* ── Logout Confirmation Dialog (Rule 24) ───────────── */}
+      {/* ── Dialogs: Logout & Delete & Import ───────────────────────────── */}
       <ConfirmDialog
         isOpen={showLogoutConfirm}
         onClose={() => setShowLogoutConfirm(false)}
@@ -529,7 +340,6 @@ export default function ProjectSelectionPage() {
         icon={LogOut}
       />
 
-      {/* ── Project Delete Confirmation Dialog (Rule 24) ─────── */}
       <ConfirmDialog
         isOpen={Boolean(projectToDelete)}
         onClose={() => setProjectToDelete(null)}
@@ -549,13 +359,14 @@ export default function ProjectSelectionPage() {
         )}
       </ConfirmDialog>
 
-      {/* ── Import Modal ────────────────────────────────────── */}
       {showImport && (
         <ImportLayout
           onClose={() => setShowImport(false)}
           onSuccess={() => {
             setShowImport(false);
-            fetchProjects();
+            queryClient.invalidateQueries({ queryKey: ["projects", userId] });
+            queryClient.invalidateQueries({ queryKey: ["projects"] });
+            queryClient.invalidateQueries({ queryKey: ["projectsPortfolio"] });
           }}
         />
       )}

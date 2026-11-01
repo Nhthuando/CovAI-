@@ -1,18 +1,29 @@
 import { useState, useMemo } from "react";
-import { ChevronLeft, ChevronRight, ExternalLink } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  ArrowUpRight,
+} from "lucide-react";
 import { PillarBadge } from "../primitives/PillarBadge.jsx";
 import { StatusPill } from "../primitives/StatusPill.jsx";
 import { SegmentedFilter } from "../primitives/SegmentedFilter.jsx";
 import { ZonePanel } from "../primitives/ZonePanel.jsx";
-import { fmtDuration, fmtPct, fmtRelativeTime } from "../../../../services/unifiedDashboard/format.js";
+import {
+  fmtDuration,
+  fmtPct,
+  fmtRelativeTime,
+} from "../../../../services/unifiedDashboard/format.js";
 
-export function UnifiedRecentRunsTable({ historyData, onNavigateWorkspace }) {
+export function UnifiedRecentRunsTable({
+  historyData,
+  onNavigateWorkspace,
+  onInspectItem,
+}) {
   const [pillarFilter, setPillarFilter] = useState("all");
   const [currentPage, setCurrentPage] = useState(1);
-  const pageSize = 5; // Compact rows fitting alongside trend chart
+  const pageSize = 5;
 
   const runs = useMemo(() => historyData?.runs || [], [historyData?.runs]);
-  const source = historyData?.source || "demo";
 
   // Filter runs
   const filteredRuns = useMemo(() => {
@@ -27,30 +38,88 @@ export function UnifiedRecentRunsTable({ historyData, onNavigateWorkspace }) {
     return filteredRuns.slice(start, start + pageSize);
   }, [filteredRuns, currentPage, pageSize]);
 
+  const handleViewRun = (run) => {
+    if (onInspectItem) {
+      onInspectItem({
+        inspectorType: "run",
+        id: run.id,
+        runId: run.runId || run.id,
+        shortId: run.shortId || run.id,
+        title: `Test Run ${run.shortId || run.id} — ${run.type.toUpperCase()} Suite`,
+        pillar: run.type,
+        type: run.type,
+        framework: run.framework,
+        status: run.status,
+        passed: run.passed,
+        failed: run.failed,
+        flaky: run.flaky,
+        skipped: run.skipped,
+        total: run.total,
+        coveragePct: run.coveragePct,
+        startedAt: run.startedAt,
+        commitSha: run.commitSha,
+        targetName: run.shortId || run.id,
+        summary:
+          run.summary ||
+          `Executed ${run.total} tests (${run.passed} passed, ${run.failed} failed) with ${fmtPct(
+            run.coveragePct
+          )} coverage in ${fmtDuration(run.durationMs)}.`,
+        failureLayer:
+          run.failureLayer ||
+          (run.failed > 0
+            ? `${run.type.toUpperCase()} Test Execution Failure`
+            : "All Assertions Passed"),
+        durationMs: run.durationMs,
+        stackTrace: run.stackTrace || null,
+        testCases:
+          run.testCases ||
+          [
+            {
+              name: `${run.type} suite execution (${run.passed}/${run.total} passed)`,
+              status: run.status,
+              durationMs: run.durationMs || 500,
+              step: run.failed > 0 ? "Failed assertion step" : "Completed",
+            },
+          ],
+        focusParams: run.focusParams || {},
+        aiPrompt:
+          run.aiPrompt ||
+          `Analyze test execution run ${run.shortId || run.id} (${run.type} suite): ${run.passed}/${run.total} passed, ${run.failed} failed, coverage ${fmtPct(
+            run.coveragePct
+          )}. Help me inspect and resolve any failures or coverage gaps.`,
+      });
+      return;
+    }
+    if (onNavigateWorkspace) {
+      onNavigateWorkspace(run.type);
+    }
+  };
+
   return (
     <ZonePanel
       id="ud-zone-history"
       title="Recent Test Executions"
-      description="Unified multi-suite run log"
-      source={source}
+      description="Unified multi-suite run log — click View to inspect run steps & stack traces"
       contentClassName="p-0 flex flex-col justify-between"
       className="h-full"
       actions={
-        <SegmentedFilter
-          idPrefix="ud-history-filter"
-          options={[
-            { label: "All", value: "all" },
-            { label: "Unit", value: "unit" },
-            { label: "Integration", value: "integration" },
-            { label: "System", value: "system" },
-          ]}
-          value={pillarFilter}
-          onChange={(val) => {
-            setPillarFilter(val);
-            setCurrentPage(1);
-          }}
-          size="sm"
-        />
+        <div className="ud-no-print">
+          <SegmentedFilter
+            idPrefix="ud-history-filter"
+            options={[
+              { label: "All", value: "all" },
+              { label: "Unit", value: "unit" },
+              { label: "Integration", value: "integration" },
+              { label: "System", value: "system" },
+            ]}
+            value={pillarFilter}
+            onChange={(val) => {
+              setPillarFilter(val);
+              setCurrentPage(1);
+            }}
+            size="sm"
+          />
+        </div>
       }
     >
       {/* Table */}
@@ -65,7 +134,7 @@ export function UnifiedRecentRunsTable({ historyData, onNavigateWorkspace }) {
               <th className="py-2.5 px-3">Coverage</th>
               <th className="py-2.5 px-3">Duration</th>
               <th className="py-2.5 px-3">Executed</th>
-              <th className="py-2.5 px-3 text-right">Action</th>
+              <th className="py-2.5 px-3 text-right ud-no-print">Action</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[var(--ud-border)] font-mono text-[11px]">
@@ -73,11 +142,14 @@ export function UnifiedRecentRunsTable({ historyData, onNavigateWorkspace }) {
               pageItems.map((run) => (
                 <tr
                   key={run.id}
-                  className="hover:bg-[var(--ud-surface-2)] transition-colors group"
+                  onClick={() => handleViewRun(run)}
+                  className="hover:bg-[var(--ud-surface-2)] transition-colors group cursor-pointer"
                 >
                   {/* Run ID */}
-                  <td className="py-2.5 px-3 font-semibold text-[var(--ud-text)]">
-                    {run.id}
+                  <td className="py-2.5 px-3 font-semibold text-[var(--ud-text)]" title={run.id}>
+                    <span className="px-1.5 py-0.5 rounded bg-[var(--ud-surface-2)] border border-[var(--ud-border)] text-[11px] font-mono">
+                      {run.shortId || `#${(run.id || "").slice(-6)}`}
+                    </span>
                   </td>
 
                   {/* Suite Type */}
@@ -92,9 +164,17 @@ export function UnifiedRecentRunsTable({ historyData, onNavigateWorkspace }) {
 
                   {/* Pass / Fail */}
                   <td className="py-2.5 px-3 text-[var(--ud-text)] tabular-nums">
-                    <span className="text-[var(--ud-pass)] font-semibold">{run.passed}</span>
+                    <span className="text-[var(--ud-pass)] font-semibold">
+                      {run.passed}
+                    </span>
                     <span className="text-[var(--ud-text-muted)]"> / </span>
-                    <span className={run.failed > 0 ? "text-[var(--ud-fail)] font-semibold" : "text-[var(--ud-text-muted)]"}>
+                    <span
+                      className={
+                        run.failed > 0
+                          ? "text-[var(--ud-fail)] font-semibold"
+                          : "text-[var(--ud-text-muted)]"
+                      }
+                    >
                       {run.failed}
                     </span>
                   </td>
@@ -115,22 +195,39 @@ export function UnifiedRecentRunsTable({ historyData, onNavigateWorkspace }) {
                   </td>
 
                   {/* Action */}
-                  <td className="py-2.5 px-3 text-right">
+                  <td className="py-2.5 px-3 text-right ud-no-print">
                     <button
                       type="button"
-                      onClick={() => onNavigateWorkspace(run.type)}
-                      className="inline-flex items-center gap-1 text-[11px] font-sans text-[var(--ud-unit)] hover:underline cursor-pointer"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleViewRun(run);
+                      }}
+                      className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-[var(--radius-sm)] border border-[var(--ud-border)] bg-[var(--ud-surface-2)] text-[11px] font-sans font-medium text-[var(--ud-unit)] hover:border-[var(--ud-unit)]/50 transition-colors cursor-pointer"
                     >
                       <span>View</span>
-                      <ExternalLink size={11} />
+                      <ArrowUpRight size={11} />
                     </button>
                   </td>
                 </tr>
               ))
             ) : (
               <tr>
-                <td colSpan={8} className="py-8 text-center text-[var(--ud-text-muted)] font-sans">
-                  No test executions recorded for this filter.
+                <td
+                  colSpan={8}
+                  className="py-10 px-4 text-center text-[var(--ud-text-muted)] font-sans"
+                >
+                  <div className="max-w-xs mx-auto space-y-2">
+                    <p className="text-xs font-semibold text-[var(--ud-text)]">
+                      {runs.length === 0
+                        ? "No Test Executions Recorded Yet"
+                        : "No test executions match this filter"}
+                    </p>
+                    <p className="text-[11px] text-[var(--ud-text-muted)]">
+                      {runs.length === 0
+                        ? "Execute Unit, Integration, or System E2E suites to inspect execution logs, scenarios, and step timings."
+                        : "Select 'All' to view runs across all testing suites."}
+                    </p>
+                  </div>
                 </td>
               </tr>
             )}
@@ -143,7 +240,7 @@ export function UnifiedRecentRunsTable({ historyData, onNavigateWorkspace }) {
         <span>
           Page {currentPage} of {totalPages} ({filteredRuns.length} runs)
         </span>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 ud-no-print">
           <button
             type="button"
             disabled={currentPage <= 1}

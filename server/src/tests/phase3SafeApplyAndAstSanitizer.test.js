@@ -84,7 +84,10 @@ describe("Phase 3: Hoàn Thiện Cơ Chế Safe Apply & AST Sanitizer", () => {
 
             const writtenPath = path.join(tempDir, "tests", "math.test.js");
             const content = fs.readFileSync(writtenPath, "utf8");
-            expect(content).toContain("import { describe, it, test, expect");
+            const imports = parseJavaScriptCode(content).ast.program.body
+                .filter(node => node.type === "ImportDeclaration" && node.source.value === "vitest")
+                .flatMap(node => node.specifiers.map(spec => spec.local.name));
+            expect(imports).toEqual(expect.arrayContaining(["describe", "it", "expect"]));
             expect(content).toContain("from 'vitest'");
             expect(content).toContain("describe('MathUtils'");
 

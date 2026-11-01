@@ -60,12 +60,85 @@ const scorePackageJsonCandidate = (dir) => {
     return score;
 };
 
+/**
+ * Resolves a snapshot's root directory, translating Docker container paths (/app/storage/... or /app/uploads/...)
+ * to local host paths on the current operating system (Windows/Linux/macOS), while verifying that the
+ * directory actually contains package.json, source code, or tests.
+ *
+ * @param {string} snapshotRoot - The stored rootDir (may be /app/storage/..., Windows path, etc.)
+ * @returns {string} The verified host directory path
+ */
+export const resolveSnapshotRootDir = (snapshotRoot) => {
+    if (!snapshotRoot || typeof snapshotRoot !== 'string' || !snapshotRoot.trim()) {
+        return null;
+    }
+
+    const hasCodeOrConfig = (dir) => {
+        try {
+            if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return false;
+            return fs.existsSync(path.join(dir, 'package.json')) ||
+                fs.existsSync(path.join(dir, 'src')) ||
+                fs.existsSync(path.join(dir, 'tests')) ||
+                fs.existsSync(path.join(dir, '__tests__'));
+        } catch {
+            return false;
+        }
+    };
+
+    // Try resolving as standard local path first
+    const resolved = path.resolve(snapshotRoot);
+
+    // If local resolved path exists AND has package.json or source code, it's valid
+    if (hasCodeOrConfig(resolved)) {
+        return resolved;
+    }
+
+    // Determine current server root directory and potential base roots
+    const serverRoot = process.cwd();
+    let fileServerDir = serverRoot;
+    try {
+        if (typeof __dirname !== 'undefined') {
+            fileServerDir = path.resolve(__dirname, '../..');
+        }
+    } catch (_) {}
+    const baseCandidates = [serverRoot, path.resolve(serverRoot, 'server'), fileServerDir];
+
+    // Check if snapshotRoot is a Docker container path (/app/storage/... or /app/uploads/...)
+    const normalized = snapshotRoot.replace(/\\/g, '/');
+    if (normalized.startsWith('/app/') || normalized.startsWith('app/')) {
+        const sub = normalized.replace(/^\/?app\//, '');
+        for (const base of baseCandidates) {
+            const candidate = path.resolve(base, sub);
+            if (hasCodeOrConfig(candidate) || fs.existsSync(candidate)) {
+                return candidate;
+            }
+        }
+    }
+
+    // Check if snapshotRoot contains 'storage' or 'uploads'
+    for (const marker of ['storage', 'uploads']) {
+        const idx = normalized.indexOf(marker);
+        if (idx !== -1) {
+            const sub = normalized.slice(idx);
+            for (const base of baseCandidates) {
+                const candidate = path.resolve(base, sub);
+                if (hasCodeOrConfig(candidate) || fs.existsSync(candidate)) {
+                    return candidate;
+                }
+            }
+        }
+    }
+
+    return resolved;
+};
+
 export const resolveProjectRoot = (snapshotRoot) => {
     if (!snapshotRoot || typeof snapshotRoot !== 'string') {
         return snapshotRoot ?? null;
     }
 
-    const resolvedRoot = path.resolve(snapshotRoot);
+    const hostRoot = resolveSnapshotRootDir(snapshotRoot);
+    const resolvedRoot = path.resolve(hostRoot);
     if (!isDirectory(resolvedRoot)) {
         return resolvedRoot;
     }

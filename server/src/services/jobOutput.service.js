@@ -59,7 +59,6 @@ export const appendJobOutput = async (jobId, { stdout = null, stderr = null } = 
         update: { stdout: newStdout, stderr: newStderr },
     });
 
-    await addJobLog(jobId, "INFO", "Job output appended").catch(() => { });
     return result;
 };
 

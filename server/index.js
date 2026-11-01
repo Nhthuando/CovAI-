@@ -16,6 +16,9 @@ import refreshRoute from "./src/routes/refresh.route.js";
 import userRoute from "./src/routes/user.route.js";
 import cookieParser from "cookie-parser";
 import projectRoutes from "./src/routes/project.route.js";
+import aiEvaluationRoutes from './src/routes/aiEvaluation.route.js';
+import aiEvaluationGatewayRoutes from './src/routes/aiEvaluationGateway.route.js';
+import { reconcileEvaluations } from './src/services/aiEvaluation/runner.service.js';
 import projectMemberRoutes from './src/routes/projectMember.route.js';
 import projectInvitationRoutes from './src/routes/projectInvitation.route.js';
 import { startInvitationDeliveryWorker } from './src/services/invitationDelivery.service.js';
@@ -83,6 +86,7 @@ app.use(
 
 app.use(cookieParser());
 
+app.use('/api/ai-evaluation-gateway', aiEvaluationGatewayRoutes);
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use('/invitations', (_req, res, next) => { res.setHeader('Referrer-Policy', 'no-referrer'); next(); });
@@ -100,7 +104,19 @@ app.get('/api/health', async (_req, res) => {
   try { await prisma.$queryRaw`SELECT 1`; res.json({ success: true }); }
   catch { res.status(503).json({ success: false }); }
 });
+app.use('/api/projects/:projectId/ai-evaluations', aiEvaluationRoutes);
 app.use("/api/projects", projectRoutes);
+if (process.env.AI_EVALUATION_ENABLED === 'true') {
+  let recoveringEvaluation = false;
+  const recover = async () => {
+    if (recoveringEvaluation) return;
+    recoveringEvaluation = true;
+    try { await reconcileEvaluations(); } catch { console.error('[Evaluation] Recovery failed; check database and migration status'); }
+    finally { recoveringEvaluation = false; }
+  };
+  void recover();
+  setInterval(recover, 30000).unref();
+}
 app.use("/api/pipeline", pipelineRoutes);
 app.use("/api/upload", uploadRoute);
 app.use("/api/job", jobRoute);
