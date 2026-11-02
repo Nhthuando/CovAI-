@@ -7,6 +7,7 @@ import {
   getTestExecution,
   runCoverageByType,
 } from "../../services/coverage.service.js";
+import { invalidateCoverageQueries } from "../../hooks/useCoverageQuery.js";
 
 async function handleResponse(res) {
   const data = await res.json().catch(() => ({}));
@@ -843,6 +844,9 @@ const CoverageDashboard = ({ snapshotId, projectId, onOpenFile }) => {
     try {
       await runCoverageByType(snapshotId, "system");
       await fetchData();
+      if (snapshotId) {
+        invalidateCoverageQueries(snapshotId);
+      }
     } catch (err) {
       setError(err.message || "Unable to run System Test.");
     } finally {

@@ -385,6 +385,10 @@ export const processSystemTestAnalysisJob = async (jobId) => {
     }
 
     await markJobSuccess(jobId, result);
+    try {
+      const { invalidateCoverageCache } = await import("../controllers/coverage.controller.js");
+      invalidateCoverageCache(jobSnapshotId);
+    } catch (_) { }
     await broadcastJobProgress(jobId, {
       progress: 100,
       stage: "Completed",

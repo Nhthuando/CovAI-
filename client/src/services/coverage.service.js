@@ -347,8 +347,12 @@ export async function applyIntegrationTests(snapshotId, { testIds = [], targetFi
     return handleResponse(res);
 }
 
-export async function getUnifiedQualityDashboard(snapshotId) {
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/unified-dashboard`, {
+export async function getUnifiedQualityDashboard(snapshotId, options = {}) {
+    const isRefresh = Boolean(options?.refresh || options?.bypassCache);
+    const url = isRefresh
+        ? `${BASE_URL}/coverage/${snapshotId}/unified-dashboard?refresh=true`
+        : `${BASE_URL}/coverage/${snapshotId}/unified-dashboard`;
+    const res = await fetch(url, {
         headers: getAuthHeaders(),
     });
     return handleResponse(res);

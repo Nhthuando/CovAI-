@@ -140,6 +140,9 @@ export const invalidateCoverageCache = (snapshotId) => {
     } else {
         frameworksCache.clear();
     }
+    try {
+        clearUnifiedDashboardCache(snapshotId);
+    } catch (_) { }
 };
 
 export const getCoverageFrameworks = async (req, res) => {
@@ -4040,6 +4043,7 @@ export const optimizeSystemTestController = async (req, res) => {
 import {
     buildUnifiedQualityDashboard,
     getUnifiedTestRunInspection,
+    clearUnifiedDashboardCache,
 } from "../services/unifiedQualityDashboard.service.js";
 
 /**
@@ -4056,9 +4060,12 @@ export const getUnifiedQualityDashboardController = async (req, res) => {
             return res.status(400).json({ success: false, message: "snapshotId is required." });
         }
 
+        const bypassCache = req.query?.refresh === "true" || req.query?.bypassCache === "true";
+
         const data = await buildUnifiedQualityDashboard({
             snapshotId: snapshotId.trim(),
             userId,
+            bypassCache,
         });
 
         return res.status(200).json({
