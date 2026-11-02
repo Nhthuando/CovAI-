@@ -9,8 +9,8 @@ import {
   createEditorJumpTarget,
 } from "../utils/functionNavigationHelpers.js";
 
-describe("## 7. TIÊU CHÍ NGHIỆM THU ĐỊNH LƯỢNG (QUANTITATIVE ACCEPTANCE CRITERIA)", () => {
-  describe("AC-NAV-01: CFG File Matching (Kỳ vọng: 100% file được chọn chính xác, 0% hiển thị ngẫu nhiên)", () => {
+describe("## 7. QUANTITATIVE ACCEPTANCE CRITERIA", () => {
+  describe("AC-NAV-01: CFG File Matching (Expected: 100% accurate file selection, 0% random)", () => {
     const candidateFiles = [
       "backend/src/controllers/userController.js",
       "backend/src/services/authService.js",
@@ -61,7 +61,7 @@ describe("## 7. TIÊU CHÍ NGHIỆM THU ĐỊNH LƯỢNG (QUANTITATIVE ACCEPTANC
     });
   });
 
-  describe("AC-NAV-02: CFG Function Auto-Select (Kỳ vọng: 100% hàm hợp lệ kích hoạt ngay lập tức đồ thị CFG)", () => {
+  describe("AC-NAV-02: CFG Function Auto-Select (Expected: 100% valid functions trigger CFG immediately)", () => {
     const fileCfgs = [
       { functionName: "initModule", startLine: 1, endLine: 15 },
       { functionName: "authenticateUser", startLine: 18, endLine: 50 },
@@ -106,7 +106,7 @@ describe("## 7. TIÊU CHÍ NGHIỆM THU ĐỊNH LƯỢNG (QUANTITATIVE ACCEPTANC
     });
   });
 
-  describe("AC-NAV-03: CFG Code Scroll & Focus (Kỳ vọng: Dòng startLine nằm trong trung tâm; highlight mã nguồn)", () => {
+  describe("AC-NAV-03: CFG Code Scroll & Focus (Expected: startLine centered; code highlighted)", () => {
     test("AC-NAV-03.1: DOM Element ID and scroll into view behavior contract", () => {
       const activeCfg = { functionName: "calculateTax", startLine: 45, endLine: 85 };
       const targetLine = activeCfg.startLine;
@@ -134,7 +134,7 @@ describe("## 7. TIÊU CHÍ NGHIỆM THU ĐỊNH LƯỢNG (QUANTITATIVE ACCEPTANC
     });
   });
 
-  describe("AC-NAV-04: Monaco Line Jump (Kỳ vọng: Con trỏ đặt đúng startLine, đưa dòng vào trung tâm)", () => {
+  describe("AC-NAV-04: Monaco Line Jump (Expected: Cursor placed on startLine, line centered)", () => {
     test("AC-NAV-04.1: revealLineInCenter and setPosition cursor alignment", () => {
       let revealedLine = null;
       let cursorPosition = null;
@@ -169,7 +169,7 @@ describe("## 7. TIÊU CHÍ NGHIỆM THU ĐỊNH LƯỢNG (QUANTITATIVE ACCEPTANC
     });
   });
 
-  describe("AC-NAV-05: Visual Glow Feedback (Kỳ vọng: Highlight phát sáng trong 3.5s, tự động mờ dần)", () => {
+  describe("AC-NAV-05: Visual Glow Feedback (Expected: Glowing highlight for 3.5s, auto-fades)", () => {
     test("AC-NAV-05.1: deltaDecorations auto-cleanup after 3500ms timeout", async () => {
       let currentDecorations = ["initial-decor-1"];
       const mockEditor = {
@@ -216,7 +216,7 @@ describe("## 7. TIÊU CHÍ NGHIỆM THU ĐỊNH LƯỢNG (QUANTITATIVE ACCEPTANC
     });
   });
 
-  describe("AC-NAV-06: Zero Regression (Kỳ vọng: 100% các bộ kiểm thử tự động chạy đạt kết quả Passed Green)", () => {
+  describe("AC-NAV-06: Zero Regression (Expected: 100% automated test suites pass green)", () => {
     test("AC-NAV-06.1: Verifies backward compatibility of createFunctionNavigationTarget", () => {
       const legacyTarget = createFunctionNavigationTarget({
         filePath: "src/legacy.js",

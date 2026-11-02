@@ -60,7 +60,7 @@ try {
     : await call('/chat', 'POST', { useMemory: true, message: 'What is the rule for editing completed todo items? Answer in one sentence.', attachments: [] });
   assert.notEqual(newReply.sessionId, original.id);
   assert.ok(newReply.context.memories.some(row => row.content.includes('Completed todo items cannot be edited')));
-  assert.match(newReply.reply, /cannot|can't|not|kh[oô]ng/i);
+  assert.match(newReply.reply, /cannot|can't|not/i);
   console.log(uiOnly ? 'PASS new conversation context includes stored memory' : 'PASS new conversation recalls project memory');
   const browser = await chromium.launch({ headless: true });
   try {

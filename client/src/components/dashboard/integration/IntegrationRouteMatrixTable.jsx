@@ -164,10 +164,10 @@ export default function IntegrationRouteMatrixTable({
             <Layers size={18} className="text-[var(--color-primary)]" />
             <div>
               <h3 className="text-sm font-bold uppercase tracking-wider text-[var(--color-text)] m-0">
-                Ma Trận Độ Bao Phủ Endpoint (Route Matrix)
+                Endpoint Coverage Matrix (Route Matrix)
               </h3>
               <p className="text-xs text-[var(--color-text-secondary)] m-0 mt-0.5">
-                Danh sách toàn bộ các route Express/Node AST được phát hiện, trạng thái kiểm thử và kịch bản chi tiết
+                Complete list of detected Express/Node AST routes, test statuses, and detailed scenarios
               </p>
             </div>
           </div>
@@ -197,7 +197,7 @@ export default function IntegrationRouteMatrixTable({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Tìm kiếm theo URL, handler, file..."
+              placeholder="Search by URL, handler, file..."
               className="w-full pl-8 pr-3 py-1.5 text-xs rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)] transition-colors"
             />
             {searchQuery && (
@@ -232,10 +232,10 @@ export default function IntegrationRouteMatrixTable({
           {/* Status Filter */}
           <div className="flex items-center gap-1 bg-[var(--color-surface-secondary)] p-0.5 rounded-[var(--radius-sm)] border border-[var(--color-border)] text-[11px]">
             {[
-              { id: "ALL", label: "Tất cả" },
+              { id: "ALL", label: "All" },
               { id: "PASS", label: "✓ Pass" },
               { id: "FAIL", label: "✗ Fail" },
-              { id: "UNCOVERED", label: "○ Chưa test" },
+              { id: "UNCOVERED", label: "○ Untested" },
             ].map((s) => (
               <button
                 key={s.id}
@@ -259,7 +259,7 @@ export default function IntegrationRouteMatrixTable({
               onChange={(e) => setModuleFilter(e.target.value)}
               className="px-2.5 py-1.5 text-xs rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text)] focus:outline-none cursor-pointer"
             >
-              <option value="ALL">Mọi Module ({modulesList.length})</option>
+              <option value="ALL">All Modules ({modulesList.length})</option>
               {modulesList.map((mod) => (
                 <option key={mod} value={mod}>
                   Module: {mod}
@@ -275,7 +275,7 @@ export default function IntegrationRouteMatrixTable({
               onClick={expandAll}
               className="text-[11px] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] px-2 py-1 cursor-pointer transition-colors"
             >
-              Mở rộng tất cả
+              Expand all
             </button>
             <span className="text-[var(--color-border)]">|</span>
             <button
@@ -283,7 +283,7 @@ export default function IntegrationRouteMatrixTable({
               onClick={collapseAll}
               className="text-[11px] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] px-2 py-1 cursor-pointer transition-colors"
             >
-              Thu gọn
+              Collapse
             </button>
           </div>
         </div>
@@ -299,16 +299,16 @@ export default function IntegrationRouteMatrixTable({
               <th className="py-2.5 px-3">Endpoint Path</th>
               <th className="py-2.5 px-3">Handler / Controller</th>
               <th className="py-2.5 px-3">Source File</th>
-              <th className="py-2.5 px-3 text-center w-28">Trạng thái</th>
-              <th className="py-2.5 px-3 text-center w-24">Kịch bản</th>
-              <th className="py-2.5 px-3 text-right w-44">Hành động</th>
+              <th className="py-2.5 px-3 text-center w-28">Status</th>
+              <th className="py-2.5 px-3 text-center w-24">Scenarios</th>
+              <th className="py-2.5 px-3 text-right w-44">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[var(--color-border)]/60 font-sans">
             {filteredEndpoints.length === 0 ? (
               <tr>
                 <td colSpan={8} className="py-8 text-center text-xs text-[var(--color-text-muted)]">
-                  Không tìm thấy endpoint nào phù hợp với bộ lọc.
+                  No endpoints match the selected filter.
                 </td>
               </tr>
             ) : (
@@ -401,7 +401,7 @@ export default function IntegrationRouteMatrixTable({
                             type="button"
                             onClick={() => onRunEndpoint(ep)}
                             disabled={isJobActive || ep.totalScenarios === 0}
-                            title={ep.totalScenarios === 0 ? "Chưa có kịch bản test để chạy" : "Chạy test cho endpoint này"}
+                            title={ep.totalScenarios === 0 ? "No test scenarios available to run" : "Run tests for this endpoint"}
                             className="p-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] hover:text-[var(--color-primary)] transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                           >
                             <Play size={12} fill="currentColor" />
@@ -412,7 +412,7 @@ export default function IntegrationRouteMatrixTable({
                             type="button"
                             onClick={() => onGenerateThisEndpoint(`${ep.method} ${ep.path}`)}
                             disabled={isJobActive}
-                            title="Sinh bổ sung kịch bản AI cho endpoint này"
+                            title="Generate additional AI scenarios for this endpoint"
                             className="p-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] hover:text-[var(--color-primary)] transition-colors cursor-pointer disabled:opacity-40"
                           >
                             <Zap size={12} />
@@ -422,7 +422,7 @@ export default function IntegrationRouteMatrixTable({
                           <button
                             type="button"
                             onClick={() => onAddScenario(ep)}
-                            title="Thêm kịch bản kiểm thử mới qua Monaco Editor"
+                            title="Add new test scenario via Monaco Editor"
                             className="p-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] hover:text-[var(--color-primary)] transition-colors cursor-pointer"
                           >
                             <Plus size={12} />
@@ -449,7 +449,7 @@ export default function IntegrationRouteMatrixTable({
                                   className="flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
                                 >
                                   <Plus size={12} />
-                                  <span>Thêm kịch bản kiểm thử</span>
+                                  <span>Add Test Scenario</span>
                                 </button>
                               </div>
                             </div>
@@ -458,7 +458,7 @@ export default function IntegrationRouteMatrixTable({
                             {ep.scenarios && ep.scenarios.length > 0 ? (
                               <div className="space-y-2">
                                 <div className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
-                                  Danh sách kịch bản kiểm thử ({ep.scenarios.length}):
+                                  Test Scenarios List ({ep.scenarios.length}):
                                 </div>
                                 <div className="grid grid-cols-1 gap-2">
                                   {ep.scenarios.map((sc, idx) => {
@@ -502,30 +502,30 @@ export default function IntegrationRouteMatrixTable({
                                             <button
                                               type="button"
                                               onClick={() => onAIFixScenario(ep, sc)}
-                                              title="Sửa lỗi kịch bản này bằng AI"
+                                              title="Repair scenario using AI"
                                               className="flex items-center gap-1 px-2 py-1 rounded bg-rose-500/10 text-[var(--color-danger)] border border-rose-500/25 hover:bg-rose-500/20 transition-colors cursor-pointer"
                                             >
                                               <Zap size={11} />
-                                              <span>Sửa AI</span>
+                                              <span>AI Repair</span>
                                             </button>
                                           )}
                                           <button
                                             type="button"
                                             onClick={() => onRetryScenario(ep, sc)}
-                                            title="Chạy lại kịch bản này"
+                                            title="Re-run this scenario"
                                             className="flex items-center gap-1 px-2 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer"
                                           >
                                             <Play size={11} fill="currentColor" />
-                                            <span>Chạy lại</span>
+                                            <span>Re-run</span>
                                           </button>
                                           <button
                                             type="button"
                                             onClick={() => onEditScenario(sc, ep)}
-                                            title="Mở trình soạn thảo Monaco Editor"
+                                            title="Open Monaco Editor"
                                             className="flex items-center gap-1 px-2 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer"
                                           >
                                             <Code2 size={11} />
-                                            <span>Sửa code</span>
+                                            <span>Edit code</span>
                                           </button>
                                         </div>
                                       </div>
@@ -535,7 +535,7 @@ export default function IntegrationRouteMatrixTable({
                               </div>
                             ) : (
                               <div className="p-4 rounded border border-dashed border-[var(--color-border)] text-center text-xs text-[var(--color-text-muted)]">
-                                Chưa có kịch bản kiểm thử nào cho endpoint này. Bấm <strong>"Thêm kịch bản kiểm thử"</strong> hoặc <strong>"Sinh test AI"</strong> ở trên để tạo kịch bản.
+                                No test scenarios for this endpoint yet. Click <strong>"Add Test Scenario"</strong> or <strong>"AI Test Generation"</strong> above to create scenarios.
                               </div>
                             )}
                           </div>

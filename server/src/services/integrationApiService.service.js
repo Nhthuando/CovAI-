@@ -34,7 +34,9 @@ import {
     buildFaultyTestFixPrompt,
     harvestApiDeepContext,
 } from "./integrationAiTestGenerator.service.js";
-import { generateText } from "./gemini.service.js";
+import { generateText as generateFeatureText } from './gemini.service.js';
+import { withGeminiFeature } from './geminiRouting.service.js';
+const generateText = (...args) => withGeminiFeature('integration-test', () => generateFeatureText(...args));
 import { extractTestRequests } from "./testSourceParser.service.js";
 import { invalidateEndpointCache } from "./integrationWorkspace.service.js";
 import {
@@ -220,11 +222,11 @@ export const runIntegrationGenerationPipeline = async ({
 }) => {
     const normFramework = normalizeFramework(framework);
     await updateJobStatus({ jobId, progress: 10, status: "RUNNING" }).catch(() => {});
-    await addJobLog(jobId, "INFO", `[Integration AI] Khởi động sinh test cho framework: ${normFramework}`).catch(() => {});
+    await addJobLog(jobId, "INFO", `[Integration AI] Starting test generation for framework: ${normFramework}`).catch(() => {});
 
     // 1. Load source code & extract valid endpoints
     await updateJobStatus({ jobId, progress: 25 }).catch(() => {});
-    await addJobLog(jobId, "INFO", "[Integration AI] Đang quét mã nguồn Router và Controller...").catch(() => {});
+    await addJobLog(jobId, "INFO", "[Integration AI] Scanning Router and Controller source code...").catch(() => {});
     const sourceCode = await loadSourceCode(snapshotId).catch(() => []);
     const allEndpoints = extractValidEndpoints(sourceCode);
 
@@ -251,7 +253,7 @@ export const runIntegrationGenerationPipeline = async ({
 
     // 2. Build multi-scenario prompt
     await updateJobStatus({ jobId, progress: 50 }).catch(() => {});
-    await addJobLog(jobId, "INFO", `[Integration AI] Thu thập AST context & sinh prompt cho ${endpointsToGenerate.length} API endpoint...`).catch(() => {});
+    await addJobLog(jobId, "INFO", `[Integration AI] Gathering AST context & building prompt for ${endpointsToGenerate.length} API endpoints...`).catch(() => {});
 
     const prompt = buildIntegrationTestPrompt({
         endpoints: endpointsToGenerate,
@@ -261,16 +263,16 @@ export const runIntegrationGenerationPipeline = async ({
 
     // 3. Call LLM
     await updateJobStatus({ jobId, progress: 70 }).catch(() => {});
-    await addJobLog(jobId, "INFO", "[Integration AI] Đang gửi yêu cầu tới mô hình AI LLM...").catch(() => {});
+    await addJobLog(jobId, "INFO", "[Integration AI] Sending request to AI LLM model...").catch(() => {});
 
-    const aiResponseText = await generateText(prompt, model || process.env.GEMINI_MODEL || "gemini-2.5-flash");
+    const aiResponseText = await generateText(prompt, model || null);
     if (!aiResponseText || !aiResponseText.trim()) {
-        throw new ServiceError("Mô hình AI trả về phản hồi rỗng", 500);
+        throw new ServiceError("AI model returned empty response", 500);
     }
 
     // 4. Extract and validate generated code
     await updateJobStatus({ jobId, progress: 85 }).catch(() => {});
-    await addJobLog(jobId, "INFO", "[Integration AI] Kiểm duyệt an toàn cú pháp Babel AST...").catch(() => {});
+    await addJobLog(jobId, "INFO", "[Integration AI] Sanitizing syntax with Babel AST...").catch(() => {});
 
     let cleanedCode = aiResponseText.trim();
     const codeMatch = cleanedCode.match(/```(?:javascript|js|typescript|ts)?\s*([\s\S]*?)```/);
@@ -320,7 +322,7 @@ export const runIntegrationGenerationPipeline = async ({
     invalidateAfterCommit(snapshotId);
 
     await updateJobStatus({ jobId, progress: 100, status: "SUCCESS" }).catch(() => {});
-    await addJobLog(jobId, "INFO", `[Integration AI] Hoàn tất! Đã sinh và lưu ${requestsMeta.length} kịch bản test vào Workspace.`).catch(() => {});
+    await addJobLog(jobId, "INFO", `[Integration AI] Done! Generated and saved ${requestsMeta.length} test scenarios into Workspace.`).catch(() => {});
 
     return {
         aiTestId: createdAiTest.id,
@@ -503,7 +505,7 @@ const applyIntegrationTestsInWorkspace = async ({
 
     return {
         success: true,
-        message: `Đã áp dụng thành công ${appliedFiles.length} file test vào mã nguồn dự án.`,
+        message: `Successfully applied ${appliedFiles.length} test file(s) into project source code.`,
         appliedFiles,
         totalScenarios,
         suggestRerun: true, // Prompts user to rerun coverage analysis to confirm 100% coverage

@@ -52,22 +52,22 @@ export default function IntegrationFrameworkDetectionBanner({
               </div>
               <div>
                 <h4 className="text-sm font-bold text-amber-500 m-0 flex items-center gap-2">
-                  <span>Phát Hiện File Test Thiếu Thư Viện</span>
+                  <span>Missing Test Libraries Detected</span>
                   <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/30 font-semibold uppercase">
-                    Kịch Bản D
+                    Scenario D
                   </span>
                 </h4>
                 <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-                  Dự án có sẵn mã nguồn kiểm thử API (suy luận framework{" "}
+                  Existing API test suites found (inferred framework{" "}
                   <strong className="text-[var(--color-text)] font-semibold font-mono">
                     {framework?.toUpperCase() || "SUPERTEST"}
                   </strong>
-                  ), nhưng <code className="text-amber-400 font-mono">package.json</code> chưa cài đặt các gói cần thiết để thực thi.
+                  ), but <code className="text-amber-400 font-mono">package.json</code> is missing packages required for execution.
                 </p>
 
                 {/* List missing packages */}
                 <div className="mt-2.5 flex flex-wrap items-center gap-2">
-                  <span className="text-[11px] text-[var(--color-text-muted)] font-medium">Gói cần cài:</span>
+                  <span className="text-[11px] text-[var(--color-text-muted)] font-medium">Required packages:</span>
                   {missingPackages.map((pkg) => (
                     <span
                       key={pkg}
@@ -89,7 +89,7 @@ export default function IntegrationFrameworkDetectionBanner({
                 className="flex items-center gap-2 px-3.5 py-2 rounded-[var(--radius-md)] bg-amber-500 hover:bg-amber-600 text-black text-xs font-bold transition-all shadow-xs cursor-pointer disabled:opacity-50"
               >
                 <DownloadCloud size={14} className={isInstalling ? "animate-bounce" : ""} />
-                <span>{isInstalling ? "Đang cài đặt thư viện..." : "Cài đặt thư viện & Tiếp tục phân tích"}</span>
+                <span>{isInstalling ? "Installing packages..." : "Install Packages & Continue Analysis"}</span>
               </button>
             </div>
           </div>
@@ -107,13 +107,13 @@ export default function IntegrationFrameworkDetectionBanner({
                 </div>
                 <div>
                   <h4 className="text-sm font-bold text-[var(--color-primary)] m-0 flex items-center gap-2">
-                    <span>Dự Án Chưa Có Test Integration (API Test)</span>
+                    <span>No API Integration Tests Found</span>
                     <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--color-primary)]/20 border border-[var(--color-primary)]/30 font-semibold uppercase">
                       Cold-Start AI
                     </span>
                   </h4>
                   <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-                    Hệ thống chưa tìm thấy file kiểm thử API nào. Chọn framework bạn muốn sử dụng để AI tự động phân tích router/controller và sinh bộ kịch bản bao phủ tối đa.
+                    No API test suites found in project. Select a framework below to let AI analyze routes/controllers and generate optimal coverage test suites.
                   </p>
                 </div>
               </div>
@@ -143,11 +143,11 @@ export default function IntegrationFrameworkDetectionBanner({
                     <div className="text-xs font-bold flex items-center gap-1.5">
                       <span>Supertest + Jest</span>
                       <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 font-mono">
-                        Khuyến nghị Express
+                        Recommended for Express
                       </span>
                     </div>
                     <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
-                      Test trực tiếp Express HTTP app qua in-memory listener
+                      Direct Express HTTP testing via in-memory listener
                     </div>
                   </div>
                 </label>
@@ -176,7 +176,7 @@ export default function IntegrationFrameworkDetectionBanner({
                       </span>
                     </div>
                     <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
-                      Test qua Playwright request context với JSON report
+                      Testing via Playwright request context with JSON reports
                     </div>
                   </div>
                 </label>
@@ -192,8 +192,8 @@ export default function IntegrationFrameworkDetectionBanner({
                 <Sparkles size={14} className={isGenerating ? "animate-spin text-amber-300" : ""} />
                 <span>
                   {isGenerating
-                    ? "Đang phân tích AST & Sinh test..."
-                    : "✨ Tự động sinh kịch bản API Test bằng AI"}
+                    ? "Analyzing AST & Generating Tests..."
+                    : "✨ Auto-generate API Test Scenarios with AI"}
                 </span>
               </button>
             </div>

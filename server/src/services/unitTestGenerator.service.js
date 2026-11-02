@@ -1,6 +1,9 @@
 import fs from "fs";
+import { withAgentContext } from '../agents/registry.js';
 import path from "path";
-import { generateText } from "./gemini.service.js";
+import { generateText as generateFeatureText } from './gemini.service.js';
+import { withGeminiFeature } from './geminiRouting.service.js';
+const generateText = (...args) => withGeminiFeature('unit-test', () => generateFeatureText(...args));
 import { parseJavaScriptCode } from "./babelParser.service.js";
 import { normalizeTestFrameworkCode } from "./testFrameworkNormalization.service.js";
 import { assembleUnitTestContext, buildIsolationMockContracts } from "./unitTestContextEngineering.service.js";
@@ -15,16 +18,16 @@ import { cleanAndDeduplicateTestContent, STATEMENT_SEPARATION_EXCLUSIONS, safeDe
 import { deduplicateAstDeclarations } from "./testHelperRegistry.service.js";
 
 /**
- * GIAI ĐOẠN 3: AI TEST GENERATION (SINH TEST THÔNG MINH QUA LLM)
+ * STAGE 3: AI TEST GENERATION VIA LLM
  *
  * Implements:
- * 3.1. Cấu trúc Prompt Tiêu Chuẩn Cho LLM (6 phần chặt chẽ)
+ * 3.1. Standard Prompt Structure for LLM (6 Rigid Sections)
  * 3.2. Response Parsing & Sanity Check (AST Syntax Validation, Anti-skip, Placeholder filtering)
  * 3.3. Resilient Generation Orchestration (Gemini LLM with Isolation Fallback)
  */
 
 /**
- * 3.1 CẤU TRÚC PROMPT TIÊU CHUẨN CHO LLM (6 PHẦN CHẶT CHẼ)
+ * 3.1 STANDARD PROMPT STRUCTURE FOR LLM (6 RIGID SECTIONS)
  *
  * @param {object} params
  * @param {string} params.framework - "jest" or "vitest"
@@ -80,7 +83,7 @@ export const buildStandardUnitTestPrompt = ({
         ? uncoveredFunctions.slice(0, 30).map(f => `- Function "${f.realName || f.name}" (line ${f.line}) - 0 test invocations`).join("\n")
         : "All functions currently invoked";
 
-    return isTest
+    const prompt = isTest
         ? `You are an expert ${framework.toUpperCase()} unit testing engineer.
 We need to improve and add new unit test cases to the EXISTING test file: ${testFileInfo.relativePath}
 which tests the source file: ${cleanSource}
@@ -261,9 +264,10 @@ Format your output strictly in JSON:
 {
   "explanation": "Summary of the added test cases and which branches are covered",
   "suggestedTestCode": "// only executable test code blocks with real assertions",
-  "fullUpdatedContent": "// complete test file content to be written"
+"fullUpdatedContent": "// complete test file content to be written"
 }
 `;
+    return withAgentContext(prompt, 'unit-test');
 };
 
 /**

@@ -88,7 +88,7 @@ describe('supertestDetection.service', () => {
     });
 
     describe('Task 6.1: 4 Library Permutations via detectSupertest', () => {
-        test('Permutation 1: Có test + có lib (HAS_TESTS_AND_DEPS)', async () => {
+        test('Permutation 1: Has tests + has lib (HAS_TESTS_AND_DEPS)', async () => {
             fs.writeFileSync(
                 path.join(tempDir, 'package.json'),
                 JSON.stringify({ devDependencies: { supertest: '^6.3.3', jest: '^29.0.0' } })
@@ -106,7 +106,7 @@ describe('supertestDetection.service', () => {
             expect(result.permutationDetails.needsInstall).toBe(false);
         });
 
-        test('Permutation 2: Không test + không lib (ZERO_TESTS_NO_DEPS)', async () => {
+        test('Permutation 2: Zero tests + no lib (ZERO_TESTS_NO_DEPS)', async () => {
             fs.writeFileSync(
                 path.join(tempDir, 'package.json'),
                 JSON.stringify({ dependencies: { express: '^4.18.2' } })
@@ -119,7 +119,7 @@ describe('supertestDetection.service', () => {
             expect(result.permutationDetails.proposedFrameworks.length).toBeGreaterThanOrEqual(1);
         });
 
-        test('Permutation 3: Có lib + không test (HAS_DEPS_NO_TESTS)', async () => {
+        test('Permutation 3: Has lib + zero tests (HAS_DEPS_NO_TESTS)', async () => {
             fs.writeFileSync(
                 path.join(tempDir, 'package.json'),
                 JSON.stringify({ devDependencies: { supertest: '^6.3.3' } })
@@ -133,7 +133,7 @@ describe('supertestDetection.service', () => {
             expect(result.permutationDetails.targetFramework).toBe('supertest');
         });
 
-        test('Permutation 4: Có test + thiếu lib (HAS_TESTS_NO_DEPS)', async () => {
+        test('Permutation 4: Has tests + missing lib (HAS_TESTS_NO_DEPS)', async () => {
             fs.writeFileSync(
                 path.join(tempDir, 'package.json'),
                 JSON.stringify({ dependencies: { express: '^4.18.2' } })

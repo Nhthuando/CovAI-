@@ -4,7 +4,7 @@
  */
 
 /**
- * Chuẩn hóa đường dẫn POSIX để so sánh an toàn độc lập hệ điều hành
+ * Normalizes POSIX paths for safe cross-platform comparison
  */
 export const normalizePathForCompare = (p) => {
   if (!p || typeof p !== "string") return "";
@@ -17,7 +17,7 @@ export const normalizePathForCompare = (p) => {
 };
 
 /**
- * Khớp file mục tiêu trong danh sách file CFG ứng viên
+ * Matches target file within candidate CFG files
  */
 export const findMatchingCfgFile = (candidateFiles, targetPath) => {
   if (!targetPath || !Array.isArray(candidateFiles) || candidateFiles.length === 0) {
@@ -25,11 +25,11 @@ export const findMatchingCfgFile = (candidateFiles, targetPath) => {
   }
   const targetNorm = normalizePathForCompare(targetPath);
 
-  // 1. Khớp chính xác hoàn toàn
+  // 1. Exact full path match
   const exact = candidateFiles.find((f) => normalizePathForCompare(f) === targetNorm);
   if (exact) return exact;
 
-  // 2. Khớp đuôi (endsWith)
+  // 2. Suffix match (endsWith)
   const endsWithMatch = candidateFiles.find(
     (f) =>
       targetNorm.endsWith("/" + normalizePathForCompare(f)) ||
@@ -37,7 +37,7 @@ export const findMatchingCfgFile = (candidateFiles, targetPath) => {
   );
   if (endsWithMatch) return endsWithMatch;
 
-  // 3. Khớp sau khi loại bỏ prefix thư mục gốc monorepo (backend/, server/, client/, api/, app/)
+  // 3. Match after stripping monorepo root prefixes (backend/, server/, client/, api/, app/)
   const strippedTarget = targetNorm.replace(/^(?:backend|server|client|api|app|frontend)\//i, "");
   const strippedMatch = candidateFiles.find((f) => {
     const strippedCandidate = normalizePathForCompare(f).replace(/^(?:backend|server|client|api|app|frontend)\//i, "");
@@ -49,14 +49,14 @@ export const findMatchingCfgFile = (candidateFiles, targetPath) => {
   });
   if (strippedMatch) return strippedMatch;
 
-  // 4. Khớp basename
+  // 4. Basename match
   const baseTarget = targetNorm.split("/").pop();
   const baseMatch = candidateFiles.find(
     (f) => normalizePathForCompare(f).split("/").pop() === baseTarget
   );
   if (baseMatch) return baseMatch;
 
-  // 5. Khớp tiền tố (hỗ trợ đường dẫn bị cắt ngắn dấu ... trên UI)
+  // 5. Prefix match (handles truncated paths with ... in UI)
   const cleanPrefix = targetNorm.replace(/\.{2,}$/, "");
   if (cleanPrefix.length > 5) {
     const prefixMatch = candidateFiles.find((f) =>
@@ -69,18 +69,18 @@ export const findMatchingCfgFile = (candidateFiles, targetPath) => {
 };
 
 /**
- * Khớp hàm mục tiêu trong danh sách CFGs của file với chiến lược phân giải 5 tầng:
- * 1. Khớp chính xác tên hàm (hoặc tiền tố cắt ngắn)
- * 2. Khớp chính xác startLine
- * 3. Khớp phạm vi lồng nhau hẹp nhất (Innermost Span)
- * 4. Khớp tên synthetic func_L{N}
- * 5. Fallback về hàm đầu tiên
+ * Matches target function in file CFG list using a 5-tier resolution strategy:
+ * 1. Exact function name match (or truncated prefix)
+ * 2. Exact startLine match
+ * 3. Innermost Span match
+ * 4. Synthetic func_L{N} match
+ * 5. Fallback to first function
  */
 export const findMatchingCfgFunction = (fileCfgs, targetFuncName, targetLine) => {
   if (!Array.isArray(fileCfgs) || fileCfgs.length === 0) return null;
   const lineNum = targetLine && Number(targetLine) > 0 ? Number(targetLine) : null;
 
-  // 1. Khớp tên hàm (nếu không phải anonymous hoặc synthetic func_L...)
+  // 1. Function name match (if not anonymous or synthetic func_L...)
   if (targetFuncName && typeof targetFuncName === "string") {
     const cleanTarget = targetFuncName.replace(/\(\)$/, "").trim();
     const isSyntheticOrAnon =
@@ -89,17 +89,17 @@ export const findMatchingCfgFunction = (fileCfgs, targetFuncName, targetLine) =>
       /^\(anonymous/i.test(cleanTarget);
 
     if (!isSyntheticOrAnon && cleanTarget.length > 0) {
-      // 1a. Khớp chính xác tên
+      // 1a. Exact name match
       const exactMatch = fileCfgs.find((c) => c.functionName === cleanTarget);
       if (exactMatch) return exactMatch.functionName;
 
-      // 1b. Khớp không phân biệt hoa thường
+      // 1b. Case-insensitive match
       const caseMatch = fileCfgs.find(
         (c) => c.functionName?.toLowerCase() === cleanTarget.toLowerCase()
       );
       if (caseMatch) return caseMatch.functionName;
 
-      // 1c. Khớp tiền tố (hỗ trợ tên bị cắt ngắn fallbackRewriteFr...)
+      // 1c. Prefix match (handles truncated names like fallbackRewriteFr...)
       const prefix = cleanTarget.replace(/\.{2,}$/, "").trim();
       if (prefix.length >= 6) {
         const prefixMatch = fileCfgs.find(
@@ -113,13 +113,13 @@ export const findMatchingCfgFunction = (fileCfgs, targetFuncName, targetLine) =>
     }
   }
 
-  // 2. Khớp chính xác startLine (tránh bị hàm bao ngoài nuốt khi là callback)
+  // 2. Exact startLine match (avoids enclosing outer functions when target is callback)
   if (lineNum !== null) {
     const exactStartMatch = fileCfgs.find((c) => c.startLine === lineNum);
     if (exactStartMatch) return exactStartMatch.functionName;
   }
 
-  // 3. Khớp theo khoảng bao hẹp nhất (Innermost Span)
+  // 3. Innermost Span match
   if (lineNum !== null) {
     const containingFunctions = fileCfgs.filter(
       (c) => c.startLine <= lineNum && c.endLine && c.endLine >= lineNum
@@ -132,7 +132,7 @@ export const findMatchingCfgFunction = (fileCfgs, targetFuncName, targetLine) =>
     }
   }
 
-  // 4. Khớp synthetic func_L{N}
+  // 4. Synthetic func_L{N} match
   if (targetFuncName && typeof targetFuncName === "string") {
     const match = targetFuncName.trim().match(/^func_l(\d+)$/i);
     if (match) {
@@ -142,12 +142,12 @@ export const findMatchingCfgFunction = (fileCfgs, targetFuncName, targetLine) =>
     }
   }
 
-  // 5. Fallback: trả về hàm đầu tiên
+  // 5. Fallback: return first function
   return fileCfgs[0].functionName;
 };
 
 /**
- * Tạo hợp đồng CfgInitialContext
+ * Creates CfgInitialContext contract
  */
 export const createCfgInitialContext = (filePath, functionName = null, initialLine = null) => {
   if (!filePath) return null;
@@ -160,7 +160,7 @@ export const createCfgInitialContext = (filePath, functionName = null, initialLi
 };
 
 /**
- * Tạo hợp đồng EditorJumpTarget
+ * Creates EditorJumpTarget contract
  */
 export const createEditorJumpTarget = (filePath, line, endLine = null, functionName = null) => {
   if (!filePath) return null;

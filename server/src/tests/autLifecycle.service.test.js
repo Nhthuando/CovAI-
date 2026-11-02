@@ -154,7 +154,7 @@ describe("autLifecycle.service", () => {
       }
     });
 
-    it("Tầng 1 (Socket check): waitForPortOpen succeeds when port is listening", async () => {
+    it("Tier 1 (Socket check): waitForPortOpen succeeds when port is listening", async () => {
       server = net.createServer();
       await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
       testPort = server.address().port;
@@ -163,12 +163,12 @@ describe("autLifecycle.service", () => {
       expect(open).toBe(true);
     });
 
-    it("Tầng 1 (Socket check): waitForPortOpen throws when port is closed and times out", async () => {
+    it("Tier 1 (Socket check): waitForPortOpen throws when port is closed and times out", async () => {
       // Choose a high port unlikely to be open
       await expect(waitForPortOpen(49999, 1000, "127.0.0.1", 200)).rejects.toThrow("did not open");
     });
 
-    it("Tầng 2 (HTTP verify): responds healthy with status 200", async () => {
+    it("Tier 2 (HTTP verify): responds healthy with status 200", async () => {
       server = http.createServer((req, res) => {
         res.writeHead(200, { "Content-Type": "text/plain" });
         res.end("OK");
@@ -181,7 +181,7 @@ describe("autLifecycle.service", () => {
       expect(result.status).toBe(200);
     });
 
-    it("Tầng 2 (HTTP verify): captures HTTP 500 without crashing/hanging and flags warning", async () => {
+    it("Tier 2 (HTTP verify): captures HTTP 500 without crashing/hanging and flags warning", async () => {
       server = http.createServer((req, res) => {
         res.writeHead(500, { "Content-Type": "text/plain" });
         res.end("Internal Server Error - DB Missing");

@@ -57,7 +57,7 @@ const { dockerRunner } = await import("../services/dockerRunner.service.js");
 const {scenarioArtifactVersion} = await import('../services/scenarioManager.service.js');
 const prisma = (await import("../config/prisma.js")).default;
 
-describe("Phase 6.2: Kiểm Thử Luồng Thực Tế (E2E Integration Scenarios)", () => {
+describe("Phase 6.2: Real-World E2E Integration Scenarios", () => {
     const tmpDirs = [];
     let origDockerRun;
 
@@ -94,10 +94,10 @@ describe("Phase 6.2: Kiểm Thử Luồng Thực Tế (E2E Integration Scenarios
     });
 
     // ─────────────────────────────────────────────────────────────────────────────
-    // Kịch bản 1: Dự án đã có sẵn test API
+    // Scenario 1: Project with existing API tests
     // ─────────────────────────────────────────────────────────────────────────────
-    describe("Kịch bản 1 (Dự án đã có sẵn test API)", () => {
-        it("nhận diện chính xác Supertest có sẵn, chạy kiểm thử và bóc tách độ bao phủ từng API", async () => {
+    describe("Scenario 1 (Project with existing API tests)", () => {
+        it("accurately identifies existing Supertest, executes tests, and traces per-API coverage", async () => {
             const rootDir = createTempRepo({
                 "package.json": JSON.stringify({
                     name: "sample-ecommerce-api",
@@ -215,10 +215,10 @@ describe("Phase 6.2: Kiểm Thử Luồng Thực Tế (E2E Integration Scenarios
     });
 
     // ─────────────────────────────────────────────────────────────────────────────
-    // Kịch bản 2: Dự án sạch chưa có test
+    // Scenario 2: Clean project without tests
     // ─────────────────────────────────────────────────────────────────────────────
-    describe("Kịch bản 2 (Dự án sạch chưa có test)", () => {
-        it("hiển thị tùy chọn Supertest/Playwright, sinh test bằng AI đa kịch bản và ra report bao phủ toàn diện", async () => {
+    describe("Scenario 2 (Clean project without tests)", () => {
+        it("displays Supertest/Playwright options, generates multi-scenario AI tests, and produces comprehensive coverage report", async () => {
             const rootDir = createTempRepo({
                 "package.json": JSON.stringify({
                     name: "clean-inventory-service",
@@ -363,10 +363,10 @@ describe("Phase 6.2: Kiểm Thử Luồng Thực Tế (E2E Integration Scenarios
     });
 
     // ─────────────────────────────────────────────────────────────────────────────
-    // Kịch bản 3: Dự án có test nhưng thiếu thư viện trong package.json
+    // Scenario 3: Project with tests but missing package.json dependency
     // ─────────────────────────────────────────────────────────────────────────────
-    describe("Kịch bản 3 (Dự án có test nhưng thiếu thư viện)", () => {
-        it("phát hiện thiếu dependency, cảnh báo người dùng, tự động cài đặt và chuyển sang trạng thái sẵn sàng", async () => {
+    describe("Scenario 3 (Project with tests but missing dependencies)", () => {
+        it("detects missing dependencies, warns user, auto-installs, and transitions to ready state", async () => {
             const rootDir = createTempRepo({
                 "package.json": JSON.stringify({
                     name: "uninstalled-deps-api",
@@ -419,10 +419,10 @@ describe("Phase 6.2: Kiểm Thử Luồng Thực Tế (E2E Integration Scenarios
     });
 
     // ─────────────────────────────────────────────────────────────────────────────
-    // Kịch bản 4: Biên tập & Apply test vào mã nguồn dự án
+    // Scenario 4: Edit & Apply tests into project source code
     // ─────────────────────────────────────────────────────────────────────────────
-    describe("Kịch bản 4 (Biên tập & Apply test)", () => {
-        it("cho phép biên tập kịch bản trong editor, áp dụng vào repo và kích hoạt gợi ý chạy lại phân tích độ bao phủ", async () => {
+    describe("Scenario 4 (Edit & Apply tests)", () => {
+        it("allows editing scenarios in editor, applying to repo, and triggering rerun coverage suggestions", async () => {
             const rootDir = createTempRepo({
                 "package.json": JSON.stringify({
                     name: "apply-test-service",
@@ -501,7 +501,7 @@ describe("Phase 6.2: Kiểm Thử Luồng Thực Tế (E2E Integration Scenarios
             expect(parsedMeta.requests[0].userEdited).toBe(true);
             expect(parsedMeta.requests[0].payload).toEqual({ name: "Branded Widget", category: "Hardware" });
 
-            // 2. User selects custom target path in directory picker and clicks "Lưu & Apply vào mã nguồn"
+            // 2. User selects custom target path in directory picker and clicks "Save & Apply to Source"
             const customTargetPath = "tests/integration/custom-products.test.js";
             const applyResult = await applyIntegrationTestsService({
                 snapshotId: mockSnapshotId,

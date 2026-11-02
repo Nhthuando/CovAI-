@@ -415,17 +415,76 @@ export const ensureWorkspaceNodeModulesLinked = (originalRootDir, preparedRootDi
     const origNm = path.join(origPkgDir, "node_modules");
     const prepNm = path.join(prepPkgDir, "node_modules");
 
-    if (fs.existsSync(origNm) && fs.existsSync(prepPkgDir) && !fs.existsSync(prepNm)) {
-      try {
-        fs.symlinkSync(
-          origNm,
-          prepNm,
-          process.platform === "win32" ? "junction" : "dir"
-        );
-        createdLinks.push(prepNm);
-      } catch (err) {
-        console.warn(`[ensureWorkspaceNodeModulesLinked] Could not link ${origNm} -> ${prepNm}:`, err.message);
+    if (!fs.existsSync(origNm) || !fs.existsSync(prepPkgDir)) {
+      continue;
+    }
+
+    let prepNmExists = false;
+    let prepNmIsSymlink = false;
+    try {
+      const lstat = fs.lstatSync(prepNm);
+      prepNmExists = true;
+      prepNmIsSymlink = lstat.isSymbolicLink();
+    } catch (_) {
+      prepNmExists = false;
+    }
+
+    if (prepNmExists) {
+      if (prepNmIsSymlink) {
+        try {
+          const target = fs.realpathSync(prepNm);
+          if (path.resolve(target) === path.resolve(origNm)) {
+            continue; // Already correctly linked
+          }
+          fs.unlinkSync(prepNm);
+        } catch (_) {
+          try { fs.unlinkSync(prepNm); } catch { }
+        }
+      } else {
+        // prepNm is a directory. Check if it's empty or only contains transient cache (.vite, .cache, .bin)
+        let entries = [];
+        try { entries = fs.readdirSync(prepNm); } catch { }
+        const isOnlyCacheOrEmpty = entries.length === 0 || entries.every(e => [".vite", ".cache", ".bin"].includes(e));
+        if (isOnlyCacheOrEmpty) {
+          try {
+            fs.rmSync(prepNm, { recursive: true, force: true });
+          } catch (rmErr) {
+            console.warn(`[ensureWorkspaceNodeModulesLinked] Could not remove cache dir ${prepNm}:`, rmErr.message);
+          }
+        } else {
+          // prepNm has real contents; link missing individual packages from origNm into prepNm
+          try {
+            const origEntries = fs.readdirSync(origNm, { withFileTypes: true });
+            for (const oe of origEntries) {
+              const origItem = path.join(origNm, oe.name);
+              const prepItem = path.join(prepNm, oe.name);
+              if (!fs.existsSync(prepItem)) {
+                try {
+                  fs.symlinkSync(
+                    origItem,
+                    prepItem,
+                    process.platform === "win32" ? "junction" : "dir"
+                  );
+                  createdLinks.push(prepItem);
+                } catch (_) { }
+              }
+            }
+          } catch (_) { }
+          continue;
+        }
       }
+    }
+
+    // Create fresh symlink/junction from origNm to prepNm
+    try {
+      fs.symlinkSync(
+        origNm,
+        prepNm,
+        process.platform === "win32" ? "junction" : "dir"
+      );
+      createdLinks.push(prepNm);
+    } catch (err) {
+      console.warn(`[ensureWorkspaceNodeModulesLinked] Could not link ${origNm} -> ${prepNm}:`, err.message);
     }
   }
 
@@ -441,9 +500,13 @@ export const cleanupWorkspaceNodeModulesLinks = (linkPaths = []) => {
   if (!Array.isArray(linkPaths)) return;
   for (const linkPath of linkPaths) {
     try {
-      if (linkPath && fs.existsSync(linkPath)) {
-        const stat = fs.lstatSync(linkPath);
-        if (stat.isSymbolicLink()) {
+      if (linkPath) {
+        let isSym = false;
+        try {
+          const stat = fs.lstatSync(linkPath);
+          isSym = stat.isSymbolicLink();
+        } catch (_) { }
+        if (isSym) {
           fs.unlinkSync(linkPath);
         }
       }
@@ -461,7 +524,7 @@ export const cleanupWorkspaceNodeModulesLinks = (linkPaths = []) => {
  * @param {boolean} [params.isDev=false]
  * @param {string|null} [params.importedFrom=null]
  * @param {string|null} [params.jobId=null]
- * @returns {Promise<{ success: boolean, stdout: string, stderr: string, targetDir: string }>}
+ * @returns {Promise<{ success: boolean, stdout: string, stderr: string, targetDir: string, timedOut?: boolean }>}
  */
 export const installPackageInWorkspace = async ({
   rootDir,
@@ -481,14 +544,26 @@ export const installPackageInWorkspace = async ({
 
   const targetDir = findTargetPackageDir(effectiveRootDir, importedFrom, packageName);
   const saveFlag = isDev ? "--save-dev" : "--save";
-  const command = `npm install ${saveFlag} ${packageName} --prefer-offline --legacy-peer-deps --no-audit --no-fund --progress=false`;
+  const command = `npm install ${saveFlag} ${packageName} --prefer-offline --prefer-cached --legacy-peer-deps --no-audit --no-fund --progress=false --maxsockets=4`;
 
-  const execResult = await dockerRunner.run({
-    snapshotPath: targetDir,
-    command,
-    timeoutMs: 5 * 60 * 1000,
-    jobId,
-  });
+  let execResult;
+  try {
+    execResult = await dockerRunner.run({
+      snapshotPath: targetDir,
+      command,
+      timeoutMs: 30 * 1000, // 30s timeout to prevent hanging UI
+      jobId,
+    });
+  } catch (err) {
+    console.warn(`[installPackageInWorkspace] Package install timed out or failed for '${packageName}' (will fallback to universal RAM mock):`, err.message);
+    execResult = {
+      success: false,
+      stdout: "",
+      stderr: err.message || "Timed out after 30s",
+      exitCode: 408,
+      timedOut: true,
+    };
+  }
 
   // Guarantee package.json has entry in case npm ran in restricted sandbox
   const pkgJsonPath = path.join(targetDir, "package.json");
@@ -512,5 +587,6 @@ export const installPackageInWorkspace = async ({
     stderr: execResult.stderr || "",
     targetDir,
     exitCode: execResult.exitCode,
+    timedOut: Boolean(execResult.timedOut),
   };
 };

@@ -1,8 +1,8 @@
 /**
- * Tính toán Cyclomatic Complexity từ nút AST của hàm.
- * Hỗ trợ các nút AST từ Babel (@babel/parser), tương thích đầy đủ với ES2024+.
+ * Calculates Cyclomatic Complexity from function AST node.
+ * Supports Babel (@babel/parser) AST nodes with full ES2024+ compatibility.
  * CC = 1 + Decision Points (If, Loops, Catch, Switch cases, Logical &&, ||, ??).
- * @param {object} astNode - Nút AST của hàm
+ * @param {object} astNode - Function AST node
  * @returns {{value: number, decisionPoints: number}}
  */
 export function calculateComplexityFromAst(astNode) {
@@ -29,12 +29,12 @@ export function calculateComplexityFromAst(astNode) {
                 decisionPoints++;
             }
 
-            // SwitchCase chỉ tính là điểm rẽ nhánh khi có điều kiện test (không phải default)
+            // SwitchCase is only a decision point if it has a test condition (not default)
             if (type === 'SwitchCase' && node.test !== null && node.test !== undefined) {
                 decisionPoints++;
             }
 
-            // LogicalExpression: &&, || và ?? (Nullish Coalescing)
+            // LogicalExpression: &&, ||, and ?? (Nullish Coalescing)
             if (
                 type === 'LogicalExpression' &&
                 (node.operator === '&&' || node.operator === '||' || node.operator === '??')
@@ -42,7 +42,7 @@ export function calculateComplexityFromAst(astNode) {
                 decisionPoints++;
             }
 
-            // Duyệt đệ quy tất cả thuộc tính con của node (an toàn, không lỗi unknown node type)
+            // Recursively traverse all node child properties (safe, avoids unknown node type errors)
             for (const key of Object.keys(node)) {
                 if (
                     key === 'loc' ||
@@ -65,7 +65,7 @@ export function calculateComplexityFromAst(astNode) {
             }
         };
 
-        // Duyệt phần thân hàm (node.body) nếu có, hoặc duyệt chính astNode
+        // Traverse function body (node.body) if present, or traverse astNode directly
         countDecisions(astNode.body || astNode);
     } catch (err) {
         console.warn('Failed to calculate complexity from AST:', err.message);

@@ -15,6 +15,9 @@ import {
     getFileCoverage,
     suggestUnitTestcase,
     applySuggestion,
+    getUnitTestVersionsController,
+    switchUnitTestVersionController,
+    saveUnitTestVersionsController,
     getCoverageTestSuites,
     getIntegrationHistory,
     getIntegrationVersionHistory,
@@ -78,6 +81,11 @@ router.post("/:snapshotId/suggest-testcase", authMiddleware, suggestUnitTestcase
 
 // POST /api/coverage/:snapshotId/apply-suggestion — write testcase to disk, rerun test, collect new coverage
 router.post("/:snapshotId/apply-suggestion", authMiddleware, applySuggestion);
+
+// Unit test versioning & rollback routes
+router.get("/:snapshotId/unit-test-versions", authMiddleware, getUnitTestVersionsController);
+router.post("/:snapshotId/unit-test-versions/switch", authMiddleware, switchUnitTestVersionController);
+router.post("/:snapshotId/unit-test-versions/save", authMiddleware, saveUnitTestVersionsController);
 
 // POST /api/coverage/:snapshotId/run — trigger pipeline INSTALL_DEPS → RUN_TESTS
 router.post("/:snapshotId/run", authMiddleware, runCoverage);

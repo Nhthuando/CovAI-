@@ -606,7 +606,10 @@ const addScenarioServiceUnsafe = async (aiTestId, newScenarioCode, endpoint) => 
     return updatedTest;
 };
 
-import { generateText } from "./gemini.service.js";
+import { generateText as generateFeatureText } from './gemini.service.js';
+import { withGeminiFeature } from './geminiRouting.service.js';
+const generateText = (...args) => withGeminiFeature('integration-test', () => generateFeatureText(...args));
+import { withAgentContext } from '../agents/registry.js';
 
 export const regenerateScenarioService = async (aiTestId, scenarioId, payload = {}, options) => {
     const aiTest = await loadScenarioArtifact(aiTestId,options,prisma,'ai.use');
@@ -642,7 +645,7 @@ ${originalCode}
 Please improve it, fix potential issues, or make it more robust based on the API context if relevant. Do NOT output a full file, ONLY the test block (e.g. it(...) {...}).
 `;
 
-    const generatedText = await generateText(prompt, payload.model || "gemini-3.8-flash");
+    const generatedText = await generateText(withAgentContext(prompt, 'integration-test', { phase: 'repair' }), payload.model || null);
     if (!generatedText) throw new Error("Failed to generate test from AI");
 
     const cleanText = generatedText.replace(/```(javascript|js|typescript|ts)?/g, '').replace(/```/g, '').trim();

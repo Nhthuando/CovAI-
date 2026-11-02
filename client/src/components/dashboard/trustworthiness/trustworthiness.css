@@ -24,6 +24,11 @@
 .evaluation-status-FAILED, .evaluation-status-ERROR, .evaluation-error { color: var(--color-danger); }
 .evaluation-status-INCOMPLETE, .evaluation-status-INSUFFICIENT_EVIDENCE, .evaluation-status-INDETERMINATE { color: var(--color-warning); }
 .evaluation-table { overflow-x: auto; }
+.evaluation-project-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 0; list-style: none; margin: 18px 0; }
+.evaluation-project-steps li { padding: 12px; border-bottom: 2px solid var(--color-border); color: var(--color-text-secondary); }
+.evaluation-project-steps li[aria-current=step] { color: var(--color-primary); border-color: var(--color-primary); font-weight: 600; }
+.evaluation-project-score { font-size: 24px; font-weight: 600; }
+@media (max-width: 480px) { .evaluation-project-steps li { padding: 8px 2px; font-size: 12px; } }
 .evaluation-table table { width: 100%; border-collapse: collapse; text-align: left; }
 .evaluation-table th, .evaluation-table td { padding: 10px; border-bottom: 1px solid var(--color-border); }
 .evaluation-table th { font-size: 12px; color: var(--color-text-secondary); }

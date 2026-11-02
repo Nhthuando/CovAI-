@@ -295,20 +295,20 @@ export const classifyIntegrationPermutation = (detection) => {
         {
             id: "supertest",
             name: "Supertest (Express + Jest)",
-            description: "Kiểm thử API trực tiếp trong tiến trình Node.js không cần bật HTTP server cổng ngoài.",
+            description: "Direct in-process Node.js API testing without exposing external HTTP server ports.",
             isRecommended: true,
             defaultPackages: ["supertest@^7.0.0", "jest@^29.7.0"],
         },
         {
             id: "playwright",
             name: "Playwright API Testing",
-            description: "Kiểm thử API độc lập bằng HTTP client chuẩn của Playwright Runner.",
+            description: "Standalone API testing using standard Playwright HTTP client runner.",
             isRecommended: false,
             defaultPackages: ["@playwright/test@^1.40.0"],
         },
     ];
 
-    // Permutation A: Có test + Có thư viện
+    // Permutation A: Has Tests + Has Library
     if (hasTestFiles && hasDependencies) {
         const activeFramework =
             supertest.files.length > 0 && supertest.hasDep
@@ -328,12 +328,12 @@ export const classifyIntegrationPermutation = (detection) => {
             needsInstall: false,
             targetFramework: activeFramework,
             inferredFramework: activeFramework,
-            message: "Dự án đã có kịch bản test API và đã cài đặt đầy đủ thư viện. Sẵn sàng thực thi và phân tích độ bao phủ.",
+            message: "Project has API test scenarios and complete test libraries installed. Ready for execution and coverage analysis.",
             actions: ["RUN_TESTS", "ANALYZE_COVERAGE"],
         };
     }
 
-    // Permutation B: Không có test + Không có thư viện (Zero-Test Project)
+    // Permutation B: Zero Tests + No Library (Zero-Test Project)
     if (!hasTestFiles && !hasDependencies) {
         return {
             permutation: "ZERO_TESTS_NO_DEPS",
@@ -344,12 +344,12 @@ export const classifyIntegrationPermutation = (detection) => {
             needsInstall: false,
             targetFramework: null,
             proposedFrameworks,
-            message: "Dự án chưa có kịch bản test API và chưa cài đặt thư viện kiểm thử. Vui lòng chọn framework để AI sinh test tự động.",
+            message: "Project has no API test scenarios and no test libraries installed. Please choose a framework for automated AI test generation.",
             actions: ["SELECT_FRAMEWORK", "GENERATE_COLD_START_TESTS"],
         };
     }
 
-    // Permutation C: Có thư viện + Không có test
+    // Permutation C: Has Library + Zero Tests
     if (!hasTestFiles && hasDependencies) {
         const targetFramework = supertest.hasDep ? "supertest" : "playwright";
         return {
@@ -361,12 +361,12 @@ export const classifyIntegrationPermutation = (detection) => {
             needsInstall: false,
             targetFramework,
             inferredFramework: targetFramework,
-            message: `Dự án đã cài đặt thư viện ${targetFramework.toUpperCase()} nhưng chưa có file test API. Hệ thống sẽ tự động dùng thư viện này để sinh test.`,
+            message: `Project has installed ${targetFramework.toUpperCase()} library but has no API test files. The system will automatically use this framework to generate tests.`,
             actions: ["GENERATE_COLD_START_TESTS"],
         };
     }
 
-    // Permutation D: Có test + Chưa cài thư viện trong package.json
+    // Permutation D: Has Tests + Library Not in package.json
     const inferredFramework =
         supertest.files.length > 0
             ? "supertest"
@@ -392,8 +392,8 @@ export const classifyIntegrationPermutation = (detection) => {
         inferredFramework,
         missingPackages,
         installCommand,
-        warningMessage: `Dự án đã có file test API (${inferredFramework}) nhưng chưa cài đặt gói ${missingPackages.join(", ")} trong package.json.`,
-        confirmActionText: "Cài đặt thư viện phát hiện & Chạy tiếp",
+        warningMessage: `Project already has API test files (${inferredFramework}) but packages ${missingPackages.join(", ")} are missing in package.json.`,
+        confirmActionText: "Install Detected Framework & Continue",
         actions: ["PROMPT_INSTALL_DEPENDENCIES"],
     };
 };

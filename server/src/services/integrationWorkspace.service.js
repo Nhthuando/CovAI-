@@ -1307,11 +1307,11 @@ export const buildIntegrationWorkspace = async (snapshotId) => {
             ? Number(parsedFailure.expected)
             : null;
         const expectedFromTitle = rest.title.match(
-          /(?:should return|returns?|status|mong đợi|kỳ vọng)\s*[:=]?\s*(\d{3})/i,
+          /(?:should return|returns?|status|expected)\s*[:=]?\s*(\d{3})/i,
         )
           ? Number(
               rest.title.match(
-                /(?:should return|returns?|status|mong đợi|kỳ vọng)\s*[:=]?\s*(\d{3})/i,
+                /(?:should return|returns?|status|expected)\s*[:=]?\s*(\d{3})/i,
               )[1],
             )
           : null;

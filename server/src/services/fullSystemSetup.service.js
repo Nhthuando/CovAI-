@@ -1,7 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { generateText } from './gemini.service.js';
+import { generateText as generateFeatureText } from './gemini.service.js';
+import { withGeminiFeature } from './geminiRouting.service.js';
+const generateText = (...args) => withGeminiFeature('system-test', () => generateFeatureText(...args));
+import { withAgentContext } from '../agents/registry.js';
 import { containedPath, readFullSystemConfig, resolveSystemRepositoryRoot } from './fullSystemConfig.service.js';
 import { ServiceError } from '../utils/serviceError.js';
 import { extractValidEndpoints } from './apiEndpointParser.service.js';
@@ -170,7 +173,7 @@ const prepare = async ({ rootDir, onProgress = async () => {}, dependencies = {}
     const knownBackendFiles=knownServices?source.files.filter(file=>backends[0].directory==='.' || file.path.startsWith(backends[0].directory+'/')):[];
     const knownReadiness=knownServices?discoverReadinessPaths(knownBackendFiles):[];
     const facts=knownServices?'\nCovAI has already resolved the single frontend/backend/database from source. These fields are not decisions for the model. Focus on selecting or deriving the database schema. A dedicated health endpoint is not required: CovAI verifies HTTP transport readiness and the tests verify real API behavior. Do not report missingInformation solely because a health endpoint is absent.':'';
-    const proposal = await generateSetupProposal({ prompt: schemaGuidance + '\n' + prompt + facts, generate: dependencies.generate || generateText, onProgress });
+    const proposal = await generateSetupProposal({ prompt: withAgentContext(schemaGuidance + '\n' + prompt + facts, 'system-test'), generate: dependencies.generate || generateText, onProgress });
     if (Array.isArray(proposal?.missingInformation) && proposal.missingInformation.length) throw new ServiceError(`Full Stack setup needs more information: ${proposal.missingInformation.map(String).join('; ').slice(0, 1000)}`, 422);
     const frontend = knownServices?frontends[0]:frontends.find(pkg => pkg.directory === proposal?.frontend?.directory);
     const backend = knownServices?backends[0]:backends.find(pkg => pkg.directory === proposal?.backend?.directory);

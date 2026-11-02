@@ -81,10 +81,10 @@ export default function IntegrationApplyTestsModal({
             </div>
             <div>
               <h3 className="text-sm font-bold tracking-tight text-[var(--color-text)] m-0">
-                {appliedResult ? "Áp Dụng Test Thành Công" : "Lưu & Apply Test Vào Mã Nguồn"}
+                {appliedResult ? "Tests Applied Successfully" : "Save & Apply Tests to Repository"}
               </h3>
               <p className="text-[11px] text-[var(--color-text-secondary)] m-0 font-mono mt-0.5">
-                {testIds.length} kịch bản test sẽ được ghi trực tiếp vào file repository
+                {testIds.length} test scenarios will be committed directly to repository files
               </p>
             </div>
           </div>
@@ -112,7 +112,7 @@ export default function IntegrationApplyTestsModal({
               {/* Directory & File Path Picker */}
               <div className="flex flex-col gap-1.5">
                 <label className="text-[11px] font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider">
-                  Đường dẫn thư mục đích (Target Directory)
+                  Target Directory Path
                 </label>
                 <div className="relative">
                   <Folder size={14} className="absolute left-3 top-2.5 text-[var(--color-text-muted)]" />
@@ -128,7 +128,7 @@ export default function IntegrationApplyTestsModal({
 
               <div className="flex flex-col gap-1.5">
                 <label className="text-[11px] font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider">
-                  Tên file kiểm thử (Test File Name)
+                  Test File Name
                 </label>
                 <div className="relative">
                   <FileCode size={14} className="absolute left-3 top-2.5 text-[var(--color-text-muted)]" />
@@ -144,7 +144,7 @@ export default function IntegrationApplyTestsModal({
 
               {/* Path Presets */}
               <div className="flex flex-col gap-1.5">
-                <span className="text-[11px] text-[var(--color-text-muted)]">Gợi ý đường dẫn phổ biến:</span>
+                <span className="text-[11px] text-[var(--color-text-muted)]">Suggested paths:</span>
                 <div className="flex flex-wrap gap-1.5">
                   {DEFAULT_PRESETS.map((p) => (
                     <button
@@ -165,7 +165,7 @@ export default function IntegrationApplyTestsModal({
 
               {/* Preview Target Full Path */}
               <div className="p-3 rounded bg-[var(--color-surface-secondary)]/40 border border-[var(--color-border)]/60 font-mono text-[11px] flex items-center justify-between">
-                <span className="text-[var(--color-text-muted)]">File sẽ ghi:</span>
+                <span className="text-[var(--color-text-muted)]">Target file:</span>
                 <span className="text-[var(--color-primary)] font-semibold truncate ml-2">
                   {fullDestinationPath}
                 </span>
@@ -178,7 +178,7 @@ export default function IntegrationApplyTestsModal({
                 <CheckCircle2 size={22} className="shrink-0 mt-0.5" />
                 <div className="flex flex-col gap-1">
                   <h4 className="text-xs font-bold text-[var(--color-success)] m-0">
-                    Đã lưu test thành công vào mã nguồn!
+                    Tests saved successfully to repository!
                   </h4>
                   <p className="text-[11px] text-[var(--color-text-secondary)] m-0 font-mono">
                     File: <span className="text-[var(--color-text)] font-semibold">{appliedResult.appliedFiles?.[0]?.filePath || fullDestinationPath}</span>
@@ -188,10 +188,10 @@ export default function IntegrationApplyTestsModal({
 
               <div className="p-3.5 rounded bg-[var(--color-surface-secondary)] border border-[var(--color-border)] flex flex-col gap-2">
                 <span className="text-xs font-semibold text-[var(--color-text)]">
-                  Bạn có muốn chạy lại phân tích để kiểm tra độ bao phủ mới không?
+                  Would you like to re-run analysis to measure verified coverage?
                 </span>
                 <p className="text-[11px] text-[var(--color-text-muted)] m-0">
-                  Hệ thống sẽ chạy bộ test vừa apply qua CovAI Tracing Engine và tính toán lại API Coverage % thực tế của dự án.
+                  The test runner will execute applied tests through CovAI Tracing Engine to recalculate verified API coverage.
                 </p>
               </div>
             </div>
@@ -208,7 +208,7 @@ export default function IntegrationApplyTestsModal({
                 disabled={isApplying}
                 className="px-3.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer"
               >
-                Hủy
+                Cancel
               </button>
               <button
                 type="button"
@@ -217,7 +217,7 @@ export default function IntegrationApplyTestsModal({
                 className="flex items-center gap-1.5 px-4 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-bold hover:opacity-90 transition-opacity shadow-xs cursor-pointer disabled:opacity-50"
               >
                 <HardDriveDownload size={13} />
-                <span>{isApplying ? "Đang ghi file..." : "Lưu & Apply vào mã nguồn"}</span>
+                <span>{isApplying ? "Writing files..." : "Save & Apply to Repository"}</span>
               </button>
             </>
           ) : (
@@ -227,7 +227,7 @@ export default function IntegrationApplyTestsModal({
                 onClick={onClose}
                 className="px-3.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer"
               >
-                Đóng
+                Close
               </button>
               <button
                 type="button"
@@ -238,7 +238,7 @@ export default function IntegrationApplyTestsModal({
                 className="flex items-center gap-1.5 px-4 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-success)] text-[var(--color-primary-foreground)] text-xs font-bold hover:opacity-90 transition-opacity shadow-xs cursor-pointer"
               >
                 <Play size={13} fill="currentColor" />
-                <span>Chạy phân tích lại ngay</span>
+                <span>Run Analysis Now</span>
               </button>
             </>
           )}

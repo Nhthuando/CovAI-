@@ -198,15 +198,15 @@ export default function IntegrationReportPage() {
                 onClick={() => navigate(`/main-editor?projectId=${projectId}&tab=integration-tests`)}
                 className="flex items-center text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] mb-2 text-xs font-semibold transition-colors cursor-pointer"
               >
-                <ArrowLeft size={14} className="mr-1" /> Quay lại Integration Workbench
+                <ArrowLeft size={14} className="mr-1" /> Back to Integration Workbench
               </button>
             </div>
             <h1 className="text-2xl font-bold text-[var(--color-text)] print:text-black flex items-center gap-2.5">
               <FileText className="text-[var(--color-primary)] print:text-black" size={24} />
-              <span>Báo Cáo Kiểm Thử Tích Hợp API (Integration Test Report)</span>
+              <span>API Integration Test Report</span>
             </h1>
             <p className="text-xs text-[var(--color-text-secondary)] print:text-gray-600 mt-1 font-mono">
-              Project #{projectId?.substring(0, 8) || "active"} • Snapshot: #{report.overview?.snapshotId?.substring(0, 8) || "latest"} • Xuất ngày: {new Date().toLocaleString()}
+              Project #{projectId?.substring(0, 8) || "active"} • Snapshot: #{report.overview?.snapshotId?.substring(0, 8) || "latest"} • Exported: {new Date().toLocaleString()}
             </p>
           </div>
 
@@ -215,19 +215,19 @@ export default function IntegrationReportPage() {
               type="button"
               onClick={handleExportJson}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-semibold hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer shadow-xs"
-              title="Xuất dữ liệu báo cáo dạng JSON"
+              title="Export report summary as JSON"
             >
               <Download size={13} />
-              <span>Xuất JSON Summary</span>
+              <span>Export JSON Summary</span>
             </button>
             <button
               type="button"
               onClick={handlePrint}
               className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
-              title="In báo cáo hoặc lưu ra file PDF"
+              title="Print report or save to PDF"
             >
               <Printer size={13} />
-              <span>In báo cáo / Xuất PDF</span>
+              <span>Print Report / Export PDF</span>
             </button>
           </div>
         </header>
@@ -299,7 +299,7 @@ export default function IntegrationReportPage() {
             <div className="flex items-center gap-2">
               <Database size={16} className="text-[var(--color-primary)] print:text-black" />
               <h2 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text)] print:text-black m-0">
-                Ma Trận Độ Bao Phủ Endpoint (Route Coverage Matrix)
+                Endpoint Coverage Matrix (Route Matrix)
               </h2>
             </div>
             <span className="text-xs font-mono text-[var(--color-text-secondary)]">
@@ -315,14 +315,14 @@ export default function IntegrationReportPage() {
                   <th className="py-2.5 px-3">Route Endpoint</th>
                   <th className="py-2.5 px-3">Handler</th>
                   <th className="py-2.5 px-3">Source File</th>
-                  <th className="py-2.5 px-3 text-center">Trạng Thái Test</th>
+                  <th className="py-2.5 px-3 text-center">Test Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--color-border)]/60 font-mono">
                 {routeMatrix.length === 0 ? (
                   <tr>
                     <td colSpan={5} className="py-6 text-center text-xs text-[var(--color-text-muted)] italic">
-                      Chưa phát hiện route nào trong snapshot này.
+                      No routes detected in this snapshot.
                     </td>
                   </tr>
                 ) : (
@@ -378,7 +378,7 @@ export default function IntegrationReportPage() {
               <div className="flex items-center gap-2">
                 <AlertTriangle size={16} className="text-[var(--color-danger)] print:text-black" />
                 <h2 className="text-xs font-bold uppercase tracking-wider text-[var(--color-danger)] print:text-black m-0">
-                  Chi Tiết Kịch Bản Thất Bại & Điểm Lỗi Từng Tầng ({failureLogs.length} failures)
+                  Failure Diagnostics & Layer Breakdown ({failureLogs.length} failures)
                 </h2>
               </div>
             </div>
@@ -433,19 +433,19 @@ export default function IntegrationReportPage() {
           {/* Execution History */}
           <section className="bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-4 shadow-xs">
             <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text)] m-0 pb-2 border-b border-[var(--color-border)] mb-3">
-              Lịch Sử Chạy Test (Execution History)
+              Execution Run History
             </h3>
             {report.history?.executions?.length === 0 ? (
-              <p className="text-[var(--color-text-muted)] text-xs italic py-2">Không có lịch sử chạy test.</p>
+              <p className="text-[var(--color-text-muted)] text-xs italic py-2">No test run history found.</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-xs text-left">
                   <thead className="text-[var(--color-text-secondary)] bg-[var(--color-surface-secondary)] text-[10px] uppercase font-bold">
                     <tr>
-                      <th className="py-2 px-2">Thời gian</th>
-                      <th className="py-2 px-2">Trạng thái</th>
+                      <th className="py-2 px-2">Timestamp</th>
+                      <th className="py-2 px-2">Status</th>
                       <th className="py-2 px-2">Passed / Total</th>
-                      <th className="py-2 px-2 text-right">Thời lượng</th>
+                      <th className="py-2 px-2 text-right">Duration</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--color-border)] font-mono text-[11px]">
@@ -470,16 +470,16 @@ export default function IntegrationReportPage() {
           {/* Coverage History */}
           <section className="bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-4 shadow-xs">
             <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text)] m-0 pb-2 border-b border-[var(--color-border)] mb-3">
-              Xu Hướng Độ Bao Phủ Code (Coverage Trend)
+              Code Coverage Trend
             </h3>
             {report.history?.coverage?.length === 0 ? (
-              <p className="text-[var(--color-text-muted)] text-xs italic py-2">Không có lịch sử đo độ bao phủ.</p>
+              <p className="text-[var(--color-text-muted)] text-xs italic py-2">No coverage history found.</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-xs text-left">
                   <thead className="text-[var(--color-text-secondary)] bg-[var(--color-surface-secondary)] text-[10px] uppercase font-bold">
                     <tr>
-                      <th className="py-2 px-2">Thời gian</th>
+                      <th className="py-2 px-2">Timestamp</th>
                       <th className="py-2 px-2">Snapshot</th>
                       <th className="py-2 px-2 text-right">Statements %</th>
                     </tr>

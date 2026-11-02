@@ -2,7 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import traverseModule from "@babel/traverse";
 import { parseJavaScriptCode } from "./babelParser.service.js";
-import { generateText } from "./gemini.service.js";
+import { generateText as generateFeatureText } from './gemini.service.js';
+import { withGeminiFeature } from './geminiRouting.service.js';
+const generateText = (...args) => withGeminiFeature('unit-test', () => generateFeatureText(...args));
+import { withAgentContext } from '../agents/registry.js';
 
 const traverse = traverseModule.default || traverseModule;
 const primitive = value => value === null || typeof value === "string" || typeof value === "boolean" ||
@@ -150,7 +153,7 @@ RUNNER DIFF:\n${rawOutput.slice(0, 12000)}`;
     let timeout;
     try {
         const response = await Promise.race([
-            generateText(prompt),
+            generateText(withAgentContext(prompt, 'unit-test', { phase: 'repair' })),
             new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error("Input repair timed out")), 30000); })
         ]);
         const parsed = JSON.parse(String(response).trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""));

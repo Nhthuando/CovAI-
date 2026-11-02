@@ -46,7 +46,7 @@ export function calculateTax(income, options = {}) {
 }
 `;
 
-    describe("3.1 Cấu Trúc Prompt Tiêu Chuẩn Cho LLM (buildStandardUnitTestPrompt)", () => {
+    describe("3.1 Standard Prompt Structure for LLM (buildStandardUnitTestPrompt)", () => {
         test("constructs 6-part standardized prompt with all required sections and methodology", () => {
             const context = assembleUnitTestContext({
                 sourceCode: mockSourceCode,

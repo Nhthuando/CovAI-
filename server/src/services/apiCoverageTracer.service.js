@@ -293,10 +293,10 @@ export const diagnoseApiFailureLayer = ({
     if (isRouterNotFound) {
         return {
             failureLayer: "ROUTER_NOT_FOUND",
-            explanation: `Yêu cầu API tới '${endpoint.method || "GET"} ${endpoint.path || "/"}' trả về mã 404 hoặc không tìm thấy route handler. Không có dòng code controller nào được kích hoạt.`,
+            explanation: `API request to '${endpoint.method || "GET"} ${endpoint.path || "/"}' returned 404 or route handler was not found. No controller lines were triggered.`,
             failingComponent: endpoint.routeFile || "Express Router",
             lastExecutedLine: null,
-            suggestedFix: "Kiểm tra lại cấu hình `app.use()` prefix và phương thức HTTP/URL path trong router file.",
+            suggestedFix: "Check `app.use()` prefix configuration and HTTP method / URL path in router file.",
             diagnosticsDetails: {
                 actualStatus,
                 expectedStatus,
@@ -319,10 +319,10 @@ export const diagnoseApiFailureLayer = ({
         const mwName = (endpoint.middlewares && endpoint.middlewares[0]?.name) || "Auth/Validation Middleware";
         return {
             failureLayer: "MIDDLEWARE_REJECTED",
-            explanation: `Request bị chặn tại tầng Middleware (${mwName}) trước khi tiến vào Controller. Mã lỗi: ${actualStatus || 401}.`,
+            explanation: `Request blocked at middleware layer (${mwName}) before reaching controller. Status code: ${actualStatus || 401}.`,
             failingComponent: mwName,
             lastExecutedLine: null,
-            suggestedFix: "Bổ sung Bearer Token, API Key hoặc kiểm tra body schema/headers phù hợp với yêu cầu của middleware.",
+            suggestedFix: "Add Bearer Token, API Key, or verify request body schema/headers match middleware requirements.",
             diagnosticsDetails: {
                 actualStatus,
                 expectedStatus,
@@ -340,10 +340,10 @@ export const diagnoseApiFailureLayer = ({
     if (isDbError) {
         return {
             failureLayer: "DATABASE_FAILURE",
-            explanation: `Xảy ra lỗi tương tác cơ sở dữ liệu (Database Query / Connection Error). Điểm dừng gần nhất tại dòng ${lastExecuted ? lastExecuted.line : lineStart}.`,
+            explanation: `Database query or connection error occurred. Execution paused near line ${lastExecuted ? lastExecuted.line : lineStart}.`,
             failingComponent: controllerFile || "Database Layer",
             lastExecutedLine: lastExecuted,
-            suggestedFix: "Đảm bảo database test đang chạy, kết nối DATABASE_URL hợp lệ, và dữ liệu tham chiếu (foreign key/seed) tồn tại trước khi chạy test.",
+            suggestedFix: "Ensure test database is running, DATABASE_URL is valid, and foreign keys/seed data exist before testing.",
             diagnosticsDetails: {
                 actualStatus,
                 expectedStatus,
@@ -362,10 +362,10 @@ export const diagnoseApiFailureLayer = ({
     if (isControllerCrash) {
         return {
             failureLayer: "CONTROLLER_CRASH",
-            explanation: `Controller bị crash do biệt lệ không được bắt (Unhandled Exception). Luồng thực thi bị ngắt tại dòng ${lastExecuted ? lastExecuted.line : lineStart}.`,
+            explanation: `Controller crashed due to unhandled exception. Execution stopped near line ${lastExecuted ? lastExecuted.line : lineStart}.`,
             failingComponent: controllerFile || "Controller Handler",
             lastExecutedLine: lastExecuted,
-            suggestedFix: "Thêm try-catch hoặc kiểm tra các giá trị undefined/null trước khi truy cập thuộc tính trong controller.",
+            suggestedFix: "Add try-catch or guard against undefined/null values before property access in controller.",
             diagnosticsDetails: {
                 actualStatus,
                 expectedStatus,
@@ -385,10 +385,10 @@ export const diagnoseApiFailureLayer = ({
     if (isAssertion) {
         return {
             failureLayer: "ASSERTION_FAILED",
-            explanation: `Request hoàn thành trọn vẹn luồng backend, nhưng response trả về khác với kỳ vọng của test case. (Kỳ vọng: ${expectedStatus}, Thực tế: ${actualStatus}).`,
+            explanation: `Request completed backend flow, but response differed from test case expectation. (Expected: ${expectedStatus}, Actual: ${actualStatus}).`,
             failingComponent: "Test Assertion / Contract",
             lastExecutedLine: lastExecuted,
-            suggestedFix: "Cập nhật kỳ vọng trong kịch bản kiểm thử hoặc điều chỉnh schema payload phản hồi từ controller cho đúng chuẩn.",
+            suggestedFix: "Update test scenario assertions or adjust controller response payload schema accordingly.",
             diagnosticsDetails: {
                 actualStatus,
                 expectedStatus,
@@ -400,10 +400,10 @@ export const diagnoseApiFailureLayer = ({
     // Default Fallback
     return {
         failureLayer: "UNKNOWN_ERROR",
-        explanation: `Test case thất bại do lỗi không xác định. (Status: ${actualStatus || "N/A"}).`,
+        explanation: `Test case failed due to undetermined error. (Status: ${actualStatus || "N/A"}).`,
         failingComponent: controllerFile || "System Pipeline",
         lastExecutedLine: lastExecuted,
-        suggestedFix: "Kiểm tra log chi tiết của test runner để biết thêm thông tin.",
+        suggestedFix: "Check detailed test runner logs for further information.",
         diagnosticsDetails: {
             actualStatus,
             expectedStatus,
@@ -479,10 +479,10 @@ export const buildApiCoverageReport = ({
 
     const recommendations = [];
     if (uncoveredEndpointsList.length > 0) {
-        recommendations.push(`Cần bổ sung test case cho ${uncoveredEndpointsList.length} API endpoint chưa được kích hoạt logic controller.`);
+        recommendations.push(`Need additional test cases for ${uncoveredEndpointsList.length} API endpoints without triggered controller logic.`);
     }
     if (failedScenariosDiagnostics.length > 0) {
-        recommendations.push(`Có ${failedScenariosDiagnostics.length} kịch bản test bị fail cần phân tích và sửa lỗi.`);
+        recommendations.push(`${failedScenariosDiagnostics.length} failed test scenarios require diagnostic review and fixes.`);
     }
 
     return {

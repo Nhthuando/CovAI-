@@ -12,7 +12,7 @@ describe("Problem Statement 1.0 Empirical & Objective Verification", () => {
     );
 
     describe("1.2 Real User Project Empirical Case (QuickBooks Handler)", () => {
-        it("Mục tiêu 1 & 2: Resolves create-account.handlers.test.ts for create-quickbooks-account.handler.ts with zero false negatives", () => {
+        it("Goal 1 & 2: Resolves create-account.handlers.test.ts for create-quickbooks-account.handler.ts with zero false negatives", () => {
             if (!fs.existsSync(realUserRepo)) {
                 console.warn("[SKIP] Real user project not present on disk:", realUserRepo);
                 return;
@@ -36,7 +36,7 @@ describe("Problem Statement 1.0 Empirical & Objective Verification", () => {
             expect(compat.filePath).toBe("tests/unit/handlers/create-account.handlers.test.ts");
         });
 
-        it("Mục tiêu 4: Preserves existing test mocks and context for AI Test Generation", () => {
+        it("Goal 4: Preserves existing test mocks and context for AI Test Generation", () => {
             if (!fs.existsSync(realUserRepo)) return;
 
             const targetSource = "src/handlers/create-quickbooks-account.handler.ts";

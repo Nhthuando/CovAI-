@@ -98,31 +98,31 @@ const FAILURE_LAYERS_META = {
     label: "Router (404)",
     code: "[ROUTER_NOT_FOUND]",
     style: "bg-orange-500/10 text-orange-400 border-orange-500/25",
-    desc: "Đường dẫn Route hoặc URL mount point không khớp router Express.",
+    desc: "Route path or mount point does not match Express router.",
   },
   MIDDLEWARE_REJECTED: {
     label: "Middleware (401/403)",
     code: "[MIDDLEWARE_REJECTED]",
     style: "bg-amber-500/10 text-amber-400 border-amber-500/25",
-    desc: "Bị chặn bởi Authentication, JWT token, CORS hoặc Request Validator.",
+    desc: "Blocked by Authentication, JWT token, CORS, or Request Validator.",
   },
   CONTROLLER_CRASH: {
     label: "Controller (500)",
     code: "[CONTROLLER_CRASH]",
     style: "bg-rose-500/10 text-rose-400 border-rose-500/25",
-    desc: "Lỗi runtime crash (TypeError, ReferenceError) trong controller handler.",
+    desc: "Runtime crash error (TypeError, ReferenceError) inside controller handler.",
   },
   DATABASE_FAILURE: {
     label: "Database / ORM",
     code: "[DATABASE_FAILURE]",
     style: "bg-purple-500/10 text-purple-400 border-purple-500/25",
-    desc: "Lỗi kết nối database, schema constraint hoặc Prisma query failure.",
+    desc: "Database connection, schema constraint, or Prisma query failure.",
   },
   ASSERTION_FAILED: {
     label: "Assertion Mismatch",
     code: "[ASSERTION_FAILED]",
     style: "bg-sky-500/10 text-sky-400 border-sky-500/25",
-    desc: "HTTP response status code hoặc JSON body không khớp với giá trị mong đợi.",
+    desc: "HTTP response status code or JSON payload mismatch with expected value.",
   },
 };
 
@@ -416,7 +416,7 @@ export default function IntegrationWorkspace({
 
   const handleJobCanceled = useCallback(async () => {
     setActiveJobStatus("CANCELED");
-    setCancellationNotice("Tác vụ đã được hủy bỏ thành công.");
+    setCancellationNotice("Operation cancelled successfully.");
     try {
       await load();
     } catch (err) {
@@ -444,7 +444,7 @@ export default function IntegrationWorkspace({
       try {
         await cancelJobApi(jId);
         setActiveJobStatus("CANCELED");
-        setCancellationNotice("Tác vụ đã được hủy bỏ thành công.");
+        setCancellationNotice("Operation cancelled successfully.");
         await load();
         setTimeout(() => {
           setActiveJobId(null);
@@ -455,7 +455,7 @@ export default function IntegrationWorkspace({
         }, 500);
       } catch (err) {
         console.error("[IntegrationWorkspace] Failed to cancel job:", err);
-        setError(err.message || "Không thể hủy tác vụ. Vui lòng thử lại.");
+        setError(err.message || "Failed to cancel operation. Please try again.");
         await load();
         setIsCancelling(false);
       }
@@ -484,7 +484,7 @@ export default function IntegrationWorkspace({
       await installIntegrationDependencies(snapshotId);
       await load();
     } catch (err) {
-      setError(err.message || "Cài đặt thư viện kiểm thử thất bại.");
+      setError(err.message || "Test library installation failed.");
     } finally {
       setIsInstallingDeps(false);
     }
@@ -510,7 +510,7 @@ export default function IntegrationWorkspace({
         await load();
       }
     } catch (err) {
-      setError(err.message || "Không thể sinh kiểm thử tự động.");
+      setError(err.message || "Automated test generation failed.");
     } finally {
       setIsGeneratingWithBanner(false);
     }
@@ -539,7 +539,7 @@ export default function IntegrationWorkspace({
         setActiveJobStatus("RUNNING");
       }
     } catch (err) {
-      setError(err.message || "Phân tích cấu trúc dự án thất bại.");
+      setError(err.message || "Project structure analysis failed.");
     } finally {
       setPendingAction(null);
     }
@@ -567,7 +567,7 @@ export default function IntegrationWorkspace({
         await load();
       }
     } catch (err) {
-      setError(err.message || "Sinh kịch bản kiểm thử thất bại.");
+      setError(err.message || "Test scenario generation failed.");
     } finally {
       setPendingAction(null);
     }
@@ -581,7 +581,7 @@ export default function IntegrationWorkspace({
       activeJobId &&
       (activeJobStatus === "RUNNING" || activeJobStatus === "QUEUED")
     ) {
-      setError("Một tác vụ kiểm thử đang được thực thi.");
+      setError("A test execution is currently running.");
       return;
     }
     setError("");
@@ -624,7 +624,7 @@ export default function IntegrationWorkspace({
         setActiveJobStatus("RUNNING");
       }
     } catch (err) {
-      setError(err.message || "Khởi chạy kiểm thử tích hợp thất bại.");
+      setError(err.message || "Integration test launch failed.");
     } finally {
       setPendingAction(null);
     }
@@ -640,7 +640,7 @@ export default function IntegrationWorkspace({
       .filter(Boolean);
     if (scenarioIds.length === 0) {
       setError(
-        `Endpoint ${ep.method} ${ep.path} chưa có kịch bản kiểm thử nào.`,
+        `Endpoint ${ep.method} ${ep.path} has no test scenarios yet.`,
       );
       return;
     }
@@ -657,7 +657,7 @@ export default function IntegrationWorkspace({
         setActiveJobStatus("RUNNING");
       }
     } catch (err) {
-      setError(err.message || "Không thể thực thi kiểm thử cho endpoint này.");
+      setError(err.message || "Cannot execute tests for this endpoint.");
     } finally {
       setPendingAction(null);
     }
@@ -682,7 +682,7 @@ export default function IntegrationWorkspace({
         setActiveJobStatus("RUNNING");
       }
     } catch (err) {
-      setError(err.message || "Không thể chạy lại kịch bản này.");
+      setError(err.message || "Cannot re-run this scenario.");
     } finally {
       setPendingAction(null);
     }
@@ -697,7 +697,7 @@ export default function IntegrationWorkspace({
         r.testName === (sc?.testName || sc?.title || sc?.name));
       if (request) return {aiTestId:test.id,scenarioId:request.scenarioId,expectedVersion:test.version};
     }
-    throw new Error('Không tìm thấy mã nguồn của kịch bản. Hãy sinh test trước khi chỉnh sửa.');
+    throw new Error("Scenario source not found. Generate tests before editing.");
   };
   const handleAIFixScenario = async (ep, sc) => {
     if (!projectAccess.can('ai.use') || !snapshotId || !sc) return;
@@ -707,7 +707,7 @@ export default function IntegrationWorkspace({
       const jobId = result?.data?.job?.id || result?.job?.id || result?.data?.jobId || result?.jobId;
       if (jobId) {setActiveJobId(jobId);setActiveJobType('GENERATE');setActiveJobStatus('RUNNING');}
       await load();
-    } catch(err) {setError(err.message || 'Không thể sửa kịch bản bằng AI.');}
+    } catch(err) {setError(err.message || "Failed to repair scenario with AI.");}
   };
   const handleOpenApplyModal = (targetIds = null) => {
     if (!projectAccess.can('files.write')) return;
@@ -727,7 +727,7 @@ export default function IntegrationWorkspace({
     if (!projectAccess.can('files.write')) return;
     const tests = workspace?.aiTests || [];
     const test = tests.find(t => t.requests?.some(r=>r.method===ep?.method && r.path===ep?.path)) || tests[0];
-    if (!test) {setError('Hãy sinh một file test trước khi thêm kịch bản.');return;}
+    if (!test) {setError("Please generate a test file before adding scenarios.");return;}
     setEditorModalScenario({aiTestId:test.id,expectedVersion:test.version});
     setEditorModalEndpoint(ep);setIsAddScenarioMode(true);setEditorModalOpen(true);
   };
@@ -739,7 +739,7 @@ export default function IntegrationWorkspace({
         scenarioId:editorModalScenario.scenarioId,expectedVersion:editorModalScenario.expectedVersion,
         action:isAddScenarioMode ? 'ADD' : 'UPDATE',code:typeof savedData === "string" ? savedData : savedData.code,endpoint:editorModalEndpoint});
       setEditorModalOpen(false);await load();return true;
-    } catch(err) {setError(err.message || 'Lưu kịch bản thất bại.');return false;}
+    } catch(err) {setError(err.message || "Failed to save scenario.");return false;}
   };
 
   // Parse progress steps for active running job
@@ -757,76 +757,76 @@ export default function IntegrationWorkspace({
 
     if (jobType === "ANALYZE") {
       return [
-        { label: "Nạp snapshot dự án", done: true },
+        { label: "Load project snapshot", done: true },
         {
-          label: "Quét cấu trúc mã nguồn AST",
+          label: "Scan source AST structure",
           done:
             hasStage("LOAD_SOURCE") ||
             textLogs.includes("Scanning") ||
             textLogs.includes("Analyzed"),
         },
         {
-          label: "Nhận diện framework kiểm thử",
+          label: "Detect test framework",
           done: hasStage("DETECT_ENDPOINTS") || textLogs.includes("Analyzed"),
         },
         {
-          label: "Khám phá endpoint API Express/Node",
+          label: "Discover Express/Node API endpoints",
           done: hasStage("DETECT_ENDPOINTS") || textLogs.includes("Saving"),
         },
         {
-          label: "Lập bản đồ phụ thuộc route/controller",
+          label: "Map route/controller dependencies",
           done: hasStage("MAP_DEPENDENCIES") || textLogs.includes("Saving"),
         },
         {
-          label: "Hoàn tất phân tích",
+          label: "Complete analysis",
           done: hasStage("COMPLETE") || textLogs.includes("completed"),
         },
       ];
     } else if (jobType === "GENERATE") {
       return [
         {
-          label: "Xây dựng AI context cho API",
+          label: "Construct AI context for API",
           done:
             hasStage("BUILD_CONTEXT") || textLogs.includes("Calling Gemini"),
         },
         {
-          label: "Sinh bộ test đa kịch bản với LLM",
+          label: "Generate multi-scenario tests with LLM",
           done:
             hasStage("GENERATE_AI_TESTS") ||
             textLogs.includes("Calling Gemini"),
         },
         {
-          label: "Xác thực cú pháp & Jest assertions",
+          label: "Validate syntax & Jest assertions",
           done:
             hasStage("VALIDATE_SCENARIOS") ||
             textLogs.includes("Saved") ||
             textLogs.includes("Generated"),
         },
         {
-          label: "Hoàn tất sinh kiểm thử",
+          label: "Complete test generation",
           done: hasStage("COMPLETE") || activeJobStatus === "SUCCESS",
         },
       ];
     } else {
       return [
-        { label: "Nạp danh sách kịch bản đã duyệt", done: true },
+        { label: "Load approved test scenarios", done: true },
         {
-          label: "Khởi tạo môi trường cô lập",
+          label: "Initialize isolated environment",
           done:
             hasStage("PREPARE_ENV") ||
             textLogs.includes("start") ||
             textLogs.includes("TestRun"),
         },
         {
-          label: "Thực thi Jest & Supertest runner",
+          label: "Execute Jest & Supertest runner",
           done: hasStage("RUN_JEST") || textLogs.includes("TestRun"),
         },
         {
-          label: "Bóc tách độ bao phủ API & Tracing",
+          label: "Extract API coverage & tracing",
           done: hasStage("PARSE_COVERAGE") || textLogs.includes("complete"),
         },
         {
-          label: "Bóc tách 5 tầng lỗi & Báo cáo",
+          label: "Diagnose 5-tier failure layers & report",
           done: hasStage("COMPLETE") || textLogs.includes("complete"),
         },
       ];
@@ -1004,11 +1004,11 @@ export default function IntegrationWorkspace({
       <div className="flex flex-col items-center justify-center min-h-[400px] p-8 text-[var(--color-text)]">
         <div className="w-10 h-10 border-3 border-[var(--color-primary)]/20 border-t-[var(--color-primary)] rounded-full animate-spin mb-4" />
         <h3 className="text-sm font-semibold text-[var(--color-text)] mb-1">
-          Đang nạp Integration Testing Workbench...
+          Loading Integration Testing Workbench...
         </h3>
         <p className="text-xs text-[var(--color-text-secondary)] font-mono">
-          Kết nối Snapshot #{snapshotId?.substring(0, 8)} • Quét ma trận API và
-          kết quả kiểm thử
+          Connecting Snapshot #{snapshotId?.substring(0, 8)} • Scanning API matrix &
+          test results
         </p>
       </div>
     );
@@ -1020,11 +1020,11 @@ export default function IntegrationWorkspace({
       <div className="flex flex-col items-center justify-center min-h-[400px] p-8 text-center text-[var(--color-text)]">
         <AlertTriangle size={36} className="text-[var(--color-warning)] mb-3" />
         <h3 className="text-base font-bold text-[var(--color-text)] mb-1">
-          Chưa chọn Snapshot dự án
+          No Project Snapshot Selected
         </h3>
         <p className="text-xs text-[var(--color-text-secondary)] max-w-md mb-4 leading-relaxed">
-          Vui lòng chọn một snapshot hợp lệ từ danh sách dự án trước khi sử dụng
-          tính năng Kiểm thử Tích hợp API.
+          Please select a valid snapshot from the project list before using
+          API Integration Testing.
         </p>
       </div>
     );
@@ -1056,8 +1056,8 @@ export default function IntegrationWorkspace({
                 )}
               </div>
               <p className="text-[11px] text-[var(--color-text-muted)] font-mono m-0 mt-0.5">
-                Kiểm thử tích hợp API endpoint tự động • Trực quan hóa độ bao
-                phủ & Chẩn đoán 5 tầng lỗi
+                Automated API endpoint integration testing • Coverage visualization &
+                5-tier failure diagnostics
               </p>
             </div>
           </div>
@@ -1074,8 +1074,8 @@ export default function IntegrationWorkspace({
               <Play size={13} fill="currentColor" />
               <span>
                 {isJobActive && activeJobType === "EXECUTE"
-                  ? "Đang chạy test..."
-                  : "Chạy tất cả test"}
+                  ? "Running tests..."
+                  : "Run All Tests"}
               </span>
             </button>
 
@@ -1085,7 +1085,7 @@ export default function IntegrationWorkspace({
               onClick={() => handleGenerateClick()}
               disabled={!projectAccess.can("ai.use") || isJobActive || pendingAction === "GENERATE"}
               className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-semibold transition-colors cursor-pointer shadow-xs disabled:opacity-50"
-              title="Sinh thêm kịch bản API test bằng AI"
+              title="Generate additional API test scenarios with AI"
             >
               <Zap size={13} className="text-[var(--color-primary)]" />
               <span>Sinh test AI</span>
@@ -1097,10 +1097,10 @@ export default function IntegrationWorkspace({
               onClick={() => handleOpenApplyModal()}
               disabled={isJobActive}
               className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-semibold transition-colors cursor-pointer shadow-xs"
-              title="Ghi các kịch bản test vào file trong thư mục dự án"
+              title="Commit test scenarios into project test files"
             >
               <HardDriveDownload size={13} />
-              <span>Áp dụng vào Repo</span>
+              <span>Apply to Repo</span>
             </button>
 
             {/* Print / PDF Report */}
@@ -1108,7 +1108,7 @@ export default function IntegrationWorkspace({
               type="button"
               onClick={() => window.print()}
               className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-semibold transition-colors cursor-pointer shadow-xs"
-              title="In hoặc xuất file PDF báo cáo này"
+              title="Print or export PDF report"
             >
               <Printer size={13} />
               <span>In PDF</span>
@@ -1123,10 +1123,10 @@ export default function IntegrationWorkspace({
                   ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] border-[var(--color-primary)]/30"
                   : "bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)]"
               }`}
-              title="Xem lịch sử các lần chạy và so sánh phiên bản Trước/Sau"
+              title="View execution run history and Before/After comparison"
             >
               <Clock size={13} />
-              <span>Lịch sử & So sánh</span>
+              <span>History & Compare</span>
             </button>
           </div>
         </div>
@@ -1135,39 +1135,39 @@ export default function IntegrationWorkspace({
         <div className="px-6 py-1.5 border-t border-[var(--color-border)]/60 bg-[var(--color-surface-secondary)]/30 flex items-center justify-between overflow-x-auto custom-scrollbar">
           <div className="flex items-center gap-1 text-xs">
             <span className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider mr-2 shrink-0">
-              Chuyển nhanh:
+              Quick jump:
             </span>
 
             {[
-              { id: "section-kpis", label: "Tổng quan & KPIs" },
+              { id: "section-kpis", label: "Overview & KPIs" },
               ...(detectionInfo?.isZeroTestProject ||
               detectionInfo?.needsDependencyInstall
                 ? [
                     {
                       id: "section-framework",
-                      label: "Cài đặt & Thư viện",
+                      label: "Setup & Packages",
                       alert: true,
                     },
                   ]
                 : []),
               {
                 id: "section-execution",
-                label: "Thực thi & Logs",
+                label: "Execution & Logs",
                 pulsing: isJobActive,
               },
               {
                 id: "section-failures",
-                label: "Chẩn đoán lỗi (5 Tầng)",
+                label: "5-Tier Diagnostics",
                 badge: failedScenariosList.length,
                 badgeColor: "bg-rose-500/20 text-[var(--color-danger)]",
               },
               {
                 id: "section-matrix",
-                label: "Ma trận API Endpoints",
+                label: "API Route Matrix",
                 count: endpoints.length,
               },
-              { id: "section-scenarios", label: "Kịch bản Test & Monaco" },
-              { id: "section-report", label: "Báo cáo Tích hợp & In ấn" },
+              { id: "section-scenarios", label: "Test Scenarios & Editor" },
+              { id: "section-report", label: "Integration Report & Print" },
             ].map((nav) => {
               const isActive = activeAnchor === nav.id;
               return (
@@ -1205,7 +1205,7 @@ export default function IntegrationWorkspace({
           <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] shrink-0 font-mono">
             {refreshing && (
               <span className="flex items-center gap-1 text-[var(--color-primary)]">
-                <RefreshCw size={11} className="animate-spin" /> Đang đồng bộ...
+                <RefreshCw size={11} className="animate-spin" /> Syncing...
               </span>
             )}
           </div>
@@ -1283,7 +1283,7 @@ export default function IntegrationWorkspace({
                   </div>
                 </div>
                 <div className="text-[10px] text-[var(--color-text-secondary)] mt-2">
-                  Tỉ lệ endpoint API vượt qua 100% kịch bản kiểm thử
+                  Percentage of API endpoints passing 100% of test scenarios
                 </div>
               </div>
 
@@ -1329,7 +1329,7 @@ export default function IntegrationWorkspace({
                   </div>
                 </div>
                 <div className="text-[10px] text-[var(--color-text-secondary)] mt-2 flex items-center justify-between">
-                  <span>Chưa có kịch bản test</span>
+                  <span>No test scenarios</span>
                   {overallStats.uncoveredApis > 0 && (
                     <button
                       type="button"
@@ -1361,7 +1361,7 @@ export default function IntegrationWorkspace({
                   </div>
                 </div>
                 <div className="text-[10px] text-[var(--color-text-secondary)] mt-2">
-                  Phân loại trạng thái kiểm thử theo từng route
+                  Test status breakdown by route
                 </div>
               </div>
             </div>
@@ -1371,7 +1371,7 @@ export default function IntegrationWorkspace({
               <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 divide-x divide-y sm:divide-y-0 divide-[var(--color-border)] text-center text-xs">
                 <div className="p-2.5">
                   <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">
-                    Tổng kịch bản
+                    Total Scenarios
                   </div>
                   <div className="text-base font-bold font-mono text-[var(--color-text)] mt-0.5">
                     {overallStats.totalScenariosCount}
@@ -1419,7 +1419,7 @@ export default function IntegrationWorkspace({
                 </div>
                 <div className="p-2.5">
                   <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">
-                    Độ bao phủ
+                    Coverage
                   </div>
                   <div className="text-base font-bold font-mono text-[var(--color-text)] mt-0.5">
                     {overallStats.scenarioCoverageRate}%
@@ -1427,7 +1427,7 @@ export default function IntegrationWorkspace({
                 </div>
                 <div className="p-2.5">
                   <div className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider">
-                    Thời lượng
+                    Duration
                   </div>
                   <div className="text-base font-bold font-mono text-[var(--color-text)] mt-0.5">
                     {((execution?.durationMs || 0) / 1000).toFixed(1)}s
@@ -1448,12 +1448,12 @@ export default function IntegrationWorkspace({
                       className="animate-spin text-sky-400"
                     />
                     <span className="text-xs font-bold uppercase tracking-wider text-sky-400">
-                      Tác Vụ Đang Thực Thi:{" "}
+                      Active Execution:{" "}
                       {activeJobType === "ANALYZE"
-                        ? "Phân tích dự án"
+                        ? "Analyzing project"
                         : activeJobType === "GENERATE"
-                          ? "Sinh kiểm thử AI"
-                          : "Chạy bộ kiểm thử"}
+                          ? "Generating AI tests"
+                          : "Running test suite"}
                     </span>
                     <span className="text-xs font-mono text-[var(--color-text-secondary)]">
                       Job #{activeJobId?.substring(0, 8)}
@@ -1466,7 +1466,7 @@ export default function IntegrationWorkspace({
                     disabled={isCancelling}
                     className="px-3 py-1 rounded bg-rose-500/10 text-[var(--color-danger)] border border-rose-500/30 hover:bg-rose-500/20 text-xs font-semibold cursor-pointer disabled:opacity-50"
                   >
-                    {isCancelling ? "Đang hủy..." : "Hủy tác vụ"}
+                    {isCancelling ? "Cancelling..." : "Cancel Task"}
                   </button>
                 </div>
 
@@ -1509,7 +1509,7 @@ export default function IntegrationWorkspace({
                 <div className="p-4 bg-[#090D12] text-slate-300 font-mono text-xs max-h-64 overflow-y-auto custom-scrollbar">
                   {activeLogs.length === 0 ? (
                     <div className="text-slate-500 italic">
-                      Đang thiết lập kết nối luồng sự kiện SSE...
+                      Establishing SSE event stream...
                     </div>
                   ) : (
                     activeLogs.map((log, idx) => (
@@ -1538,16 +1538,16 @@ export default function IntegrationWorkspace({
                   </div>
                   <div>
                     <div className="text-xs font-bold text-[var(--color-text)]">
-                      Hệ Thống Sẵn Sàng Thực Thi Kiểm Thử
+                      System Ready to Execute Tests
                     </div>
                     <div className="text-[11px] text-[var(--color-text-secondary)] font-mono mt-0.5">
-                      Lần chạy gần nhất:{" "}
+                      Last execution:{" "}
                       {execution?.timestamp
                         ? new Date(execution.timestamp).toLocaleTimeString()
                         : overallStats.passedScenariosCount > 0 ||
                             overallStats.failedScenariosCount > 0
-                          ? "Vừa hoàn tất"
-                          : "Chưa chạy"}{" "}
+                          ? "Just completed"
+                          : "Never run"}{" "}
                       • {overallStats.totalScenariosCount} tests (
                       {overallStats.passedScenariosCount} pass,{" "}
                       {overallStats.failedScenariosCount} fail)
@@ -1561,7 +1561,7 @@ export default function IntegrationWorkspace({
                     onClick={handleRunAnalysis}
                     className="px-3 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-semibold transition-colors cursor-pointer"
                   >
-                    Quét lại cấu trúc AST
+                    Rescan AST Structure
                   </button>
                   <button
                     type="button"
@@ -1569,14 +1569,14 @@ export default function IntegrationWorkspace({
                     className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
                   >
                     <Play size={12} fill="currentColor" />
-                    <span>Chạy lại kiểm thử ngay</span>
+                    <span>Run Tests Now</span>
                   </button>
                 </div>
               </div>
             )}
           </section>
 
-          {/* SECTION 4: Failure Inspector (Chẩn Đoán 5 Tầng Lỗi) */}
+          {/* SECTION 4: Failure Inspector (5-Tier Diagnostics) */}
           <section id="section-failures" className="scroll-mt-24">
             {failedScenariosList.length > 0 ? (
               <div className="rounded-[var(--radius-md)] border border-rose-500/30 bg-[var(--color-surface)] shadow-xs overflow-hidden">
@@ -1589,12 +1589,12 @@ export default function IntegrationWorkspace({
                     />
                     <div>
                       <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-danger)] m-0">
-                        Chẩn Đoán 5 Tầng Lỗi ({failedScenariosList.length} Thất
-                        bại)
+                        5-Tier Failure Diagnostics ({failedScenariosList.length}
+                        Failed)
                       </h3>
                       <p className="text-[11px] text-[var(--color-text-secondary)] m-0 mt-0.5">
-                        Phân tầng Router, Middleware, Controller, Database và
-                        Assertion kèm vị trí dòng mã gãy
+                        Layered diagnosis across Router, Middleware, Controller, Database and
+                        Assertion with fault lines
                       </p>
                     </div>
                   </div>
@@ -1610,7 +1610,7 @@ export default function IntegrationWorkspace({
                           : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
                       }`}
                     >
-                      Tất cả ({failedScenariosList.length})
+                      All ({failedScenariosList.length})
                     </button>
                     {Object.entries(FAILURE_LAYERS_META).map(
                       ([layerKey, meta]) => {
@@ -1702,28 +1702,28 @@ export default function IntegrationWorkspace({
                                 type="button"
                                 onClick={() => handleAIFixScenario(ep, sc)}
                                 className="flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
-                                title="Tự động sửa kịch bản bằng AI"
+                                title="Auto-repair scenario with AI"
                               >
                                 <Zap size={12} />
-                                <span>Sửa bằng AI</span>
+                                <span>AI Repair</span>
                               </button>
                               <button
                                 type="button"
                                 onClick={() => handleRetryScenario(ep, sc)}
                                 className="flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] text-xs font-semibold transition-colors cursor-pointer"
-                                title="Chạy lại kịch bản này"
+                                title="Re-run this scenario"
                               >
                                 <Play size={11} fill="currentColor" />
-                                <span>Chạy lại</span>
+                                <span>Re-run</span>
                               </button>
                               <button
                                 type="button"
                                 onClick={() => handleOpenEditScenario(sc, ep)}
                                 className="flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] text-xs font-semibold transition-colors cursor-pointer"
-                                title="Mở trình soạn thảo Monaco Editor"
+                                title="Open Monaco Editor"
                               >
                                 <Code2 size={12} />
-                                <span>Sửa Monaco</span>
+                                <span>Edit Monaco</span>
                               </button>
                             </div>
                           </div>
@@ -1732,7 +1732,7 @@ export default function IntegrationWorkspace({
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                             <div className="p-2.5 rounded bg-[var(--color-surface-secondary)]/50 border border-[var(--color-border)]">
                               <span className="text-[10px] font-semibold text-[var(--color-text-secondary)]">
-                                HTTP Status Mong Đợi (Expected):
+                                Expected HTTP Status:
                               </span>
                               <div className="font-mono font-bold text-xs text-[var(--color-success)] mt-0.5">
                                 HTTP {expectedHttp}
@@ -1740,7 +1740,7 @@ export default function IntegrationWorkspace({
                             </div>
                             <div className="p-2.5 rounded bg-rose-500/5 border border-rose-500/20">
                               <span className="text-[10px] font-semibold text-[var(--color-danger)]">
-                                HTTP Status Thực Tế (Received):
+                                Received HTTP Status:
                               </span>
                               <div className="font-mono font-bold text-xs text-[var(--color-danger)] mt-0.5">
                                 HTTP {actualHttp}
@@ -1781,8 +1781,8 @@ export default function IntegrationWorkspace({
                               )}
                               <span>
                                 {isCallstackOpen
-                                  ? "Ẩn callstack chi tiết"
-                                  : "Xem callstack lỗi chi tiết"}
+                                  ? "Hide detailed callstack"
+                                  : "View error callstack"}
                               </span>
                             </button>
 
@@ -1790,7 +1790,7 @@ export default function IntegrationWorkspace({
                               <div className="mt-2 p-3 rounded bg-[var(--color-surface-secondary)]/50 border border-[var(--color-border)] font-mono text-[11px] text-rose-400 whitespace-pre-wrap overflow-x-auto max-h-48 custom-scrollbar">
                                 {(sc.failureMessages || []).join("\n") ||
                                   failDetails.raw ||
-                                  "Không có thông tin callstack chi tiết."}
+                                  "No detailed callstack available."}
                               </div>
                             )}
                           </div>
@@ -1808,11 +1808,11 @@ export default function IntegrationWorkspace({
                   </div>
                   <div>
                     <h4 className="text-xs font-bold text-[var(--color-success)] uppercase tracking-wider m-0">
-                      Không Có Lỗi Phát Sinh (Zero Failures)
+                      Zero Failures Detected
                     </h4>
                     <p className="text-[11px] text-[var(--color-text-secondary)] m-0 mt-0.5">
-                      Toàn bộ {overallStats.passedScenariosCount} kịch bản đã
-                      thực thi đều vượt qua bài kiểm tra thành công!
+                      All {overallStats.passedScenariosCount} executed scenarios
+                      passed tests successfully!
                     </p>
                   </div>
                 </div>
@@ -1842,11 +1842,11 @@ export default function IntegrationWorkspace({
               <div className="p-4 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between">
                 <div>
                   <h3 className="text-sm font-bold uppercase tracking-wider text-[var(--color-text)] m-0">
-                    Bộ Kịch Bản Test (Test Scenarios Suite)
+                    Test Scenarios Suite
                   </h3>
                   <p className="text-xs text-[var(--color-text-secondary)] m-0 mt-0.5">
-                    Quản lý danh sách test case, lọc theo danh mục, chỉnh sửa mã
-                    nguồn Monaco và áp dụng vào dự án
+                    Manage test cases, filter by category, edit source
+                    in Monaco, and apply to project
                   </p>
                 </div>
               </div>
@@ -1907,7 +1907,7 @@ export default function IntegrationWorkspace({
         </IntegrationErrorBoundary>
       </div>
 
-      {/* 3. SLIDE-OVER DRAWER (Lịch Sử Phiên Bản & So Sánh Trước/Sau) */}
+      {/* 3. SLIDE-OVER DRAWER (Version History & Compare Before/After) */}
       {drawerOpen && (
         <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-xs transition-opacity animate-in fade-in duration-200 no-print">
           <div className="w-full max-w-2xl h-full bg-[var(--color-surface)] border-l border-[var(--color-border)] shadow-2xl flex flex-col overflow-hidden">
@@ -1916,7 +1916,7 @@ export default function IntegrationWorkspace({
               <div className="flex items-center gap-2">
                 <Clock size={16} className="text-[var(--color-primary)]" />
                 <h3 className="text-sm font-bold text-[var(--color-text)] m-0">
-                  Lịch Sử Phiên Bản & So Sánh
+                  Version History & Compare
                 </h3>
               </div>
 
@@ -1932,7 +1932,7 @@ export default function IntegrationWorkspace({
                         : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
                     }`}
                   >
-                    Lịch sử Snapshots
+                    Snapshot History
                   </button>
                   <button
                     type="button"
@@ -1943,7 +1943,7 @@ export default function IntegrationWorkspace({
                         : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
                     }`}
                   >
-                    So sánh Before / After
+                    Before / After Comparison
                   </button>
                 </div>
 
@@ -1951,7 +1951,7 @@ export default function IntegrationWorkspace({
                   type="button"
                   onClick={() => setDrawerOpen(null)}
                   className="p-1 rounded text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] cursor-pointer"
-                  title="Đóng (Esc)"
+                  title="Close (Esc)"
                 >
                   <X size={16} />
                 </button>
@@ -2003,8 +2003,8 @@ export default function IntegrationWorkspace({
         title={
           editorModalScenario?.title ||
           (editorModalEndpoint
-            ? `Thêm kịch bản cho ${editorModalEndpoint.method} ${editorModalEndpoint.path}`
-            : "Soạn thảo kịch bản")
+            ? `Add scenario for ${editorModalEndpoint.method} ${editorModalEndpoint.path}`
+            : "Edit Scenario")
         }
         targetEndpoint={editorModalEndpoint}
         availableEndpoints={endpoints}

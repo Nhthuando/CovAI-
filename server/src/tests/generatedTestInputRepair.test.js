@@ -63,6 +63,7 @@ describe("source-aware generated test input repair", () => {
         expect(fs.readFileSync(path.join(rootDir, "src/number.js"), "utf8")).toBe(source);
         expect(generateText.mock.calls[0][0]).toContain(source.replace(/\n/g, "\\n").slice(0, 30));
         expect(generateText.mock.calls[0][0]).toContain("An input rejected by an earlier guard cannot exercise a later branch");
+        expect(generateText.mock.calls[0][0]).toContain('Agent ID: unit-test; phase: repair;');
     });
 
     test.each([[], [{ code: "weaken assertions" }], [null], [1], ["null", "extra"]].map(args => [args]))("rejects invalid argument replacements %j", async args => {
@@ -133,9 +134,14 @@ describe("source-aware generated test input repair", () => {
                 }
             }
         });
-        expect(executions).toHaveLength(2);
+        // Successful input repair also triggers the existing coverage-gap closure pass.
+        expect(executions).toHaveLength(valid ? 3 : 2);
         expect(executions[0].numFailedTests).toBe(1);
         expect(executions[1].numFailedTests).toBe(valid ? 0 : 1);
+        if (valid) {
+            expect(executions[2].numFailedTests).toBe(0);
+            expect(executions[2].numTotalTests).toBeGreaterThan(executions[1].numTotalTests);
+        }
         expect(result.testResults.success).toBe(valid);
         expect(result.appliedSuggestions[0].status).toBe(valid ? "PASSED" : "FAILED");
         expect(generateText).toHaveBeenCalledTimes(1);

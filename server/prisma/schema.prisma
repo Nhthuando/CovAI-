@@ -7,6 +7,40 @@ datasource db {
   provider = "postgresql"
 }
 
+model AiEvaluationProjectSettings {
+  projectId String @id
+  revision Int @default(1)
+  settings Json
+  encryptedEnvironment String?
+  updatedAt DateTime @updatedAt
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model AiEvaluationProjectRun {
+  id String @id @default(cuid())
+  projectId String
+  snapshotId String
+  jobId String @unique
+  evaluationRunId String?
+  idempotencyKey String
+  status String @default("QUEUED")
+  phase String @default("CHECKING")
+  configuration Json
+  encryptedEnvironment String?
+  discovery Json?
+  result Json?
+  errorCode String?
+  errorMessage String?
+  leaseToken String?
+  leaseUntil DateTime?
+  createdAt DateTime @default(now())
+  finishedAt DateTime?
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  @@unique([projectId, idempotencyKey])
+  @@index([status, leaseUntil])
+  @@index([projectId, createdAt])
+}
+
 model AiEvaluationTarget {
   id String @id @default(cuid())
   projectId String
@@ -282,6 +316,8 @@ model User {
 }
 
 model Project {
+  chatbotEvaluations AiEvaluationProjectRun[]
+  chatbotEvaluationSettings AiEvaluationProjectSettings?
   evaluationTargets AiEvaluationTarget[]
   evaluationSources AiEvaluationKnowledgeSource[]
   evaluationProfiles AiEvaluationProfile[]

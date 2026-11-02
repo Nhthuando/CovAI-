@@ -8,6 +8,8 @@ import { saveKnowledge, snapshotKnowledge } from '../services/aiEvaluation/knowl
 import { cancelRun } from '../services/aiEvaluation/runner.service.js';
 import { getRunReport, compareRuns, calibration, renderEvaluationPdf } from '../services/aiEvaluation/report.service.js';
 import { readEvidencePayload, removeRunArtifacts } from '../services/aiEvaluation/artifactStore.service.js';
+import * as projectEvaluation from '../services/aiEvaluation/projectEvaluation.service.js';
+import { getProjectSettings, saveProjectSettings } from '../services/aiEvaluation/projectSettings.service.js';
 
 export function createEvaluationRouter({ db = prisma, auth = authMiddleware, enqueue = service.enqueueStrict, transport } = {}) {
     const router = express.Router({ mergeParams: true });
@@ -18,6 +20,13 @@ export function createEvaluationRouter({ db = prisma, auth = authMiddleware, enq
     router.use((req, _res, next) => { if (req.body && Buffer.byteLength(JSON.stringify(req.body)) > 2 * 1024 * 1024) return next(Object.assign(new Error('Evaluation request exceeds 2 MiB'), { statusCode: 413, code: 'BODY_TOO_LARGE' })); next(); });
     const route = (method, path, action, status = 200) => router[method](path, async (req, res, next) => { try { const data = await action(req, res); if (!res.headersSent) res.status(status).json({ success: true, data }); } catch (error) { next(error); } });
     route('get', '/', req => service.workspace(db, req.params.projectId));
+    route('get', '/project-runs', req => projectEvaluation.listProjectEvaluations(db, req.params.projectId));
+    route('get', '/project-settings', req => getProjectSettings(db, req.params.projectId));
+    route('put', '/project-settings', req => saveProjectSettings(db, req.params.projectId, req.body));
+    route('post', '/project-runs', req => projectEvaluation.startProjectEvaluation(db, req.params.projectId, req.user.id, req.body, { enqueue }), 202);
+    route('get', '/project-runs/:id', req => projectEvaluation.getProjectEvaluation(db, req.params.projectId, req.params.id));
+    route('post', '/project-runs/:id/cancel', req => projectEvaluation.cancelProjectEvaluation(db, req.params.projectId, req.params.id));
+    route('delete', '/project-runs/:id', req => projectEvaluation.deleteProjectEvaluation(db, req.params.projectId, req.params.id));
     route('get', '/targets', async req => (await service.workspace(db, req.params.projectId)).targets);
     route('post', '/targets', req => service.saveTarget(db, req.params.projectId, req.body), 201);
     route('post', '/targets/:id/versions', req => service.saveTarget(db, req.params.projectId, req.body, req.params.id), 201);

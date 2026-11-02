@@ -18,7 +18,7 @@ import JobQueue from "./JobQueue";
 import ProjectArchitecturePanel from "./ProjectArchitecturePanel";
 import CFGCalculator from "./CFGCalculator";
 import QualityDashboard from "./QualityDashboard";
-import TrustworthinessWorkspace from './trustworthiness/TrustworthinessWorkspace';
+import TrustworthinessWorkspace from './trustworthiness/ProjectChatbotWorkspace';
 import UnifiedDashboard from "./unified/UnifiedDashboard";
 import { buildWorkspaceUrl } from "../../services/unifiedDashboard/workspaceNavigation";
 import SettingsSidebar from "./settings/SettingsSidebar";

@@ -39,9 +39,9 @@ describe("Section 4: Business Logic Edge Cases Matrix Verification", () => {
     });
 
     // =========================================================================
-    // 4.1. HÀM NỘI BỘ (UNEXPORTED HELPER FUNCTIONS)
+    // 4.1. UNEXPORTED HELPER FUNCTIONS
     // =========================================================================
-    describe("4.1 Edge Case 1: Hàm nội bộ (Unexported)", () => {
+    describe("4.1 Edge Case 1: Unexported Helper Functions", () => {
         const sourceWithInternalHelpers = `
             function calculateDiscount(tier, amount) {
                 if (tier === 'VIP') return amount * 0.2;
@@ -106,9 +106,9 @@ describe("Section 4: Business Logic Edge Cases Matrix Verification", () => {
     });
 
     // =========================================================================
-    // 4.2. LOGIC PHỤ THUỘC DATABASE (PRISMA MOCKING & $TRANSACTION)
+    // 4.2. DATABASE DEPENDENT LOGIC (PRISMA MOCKING & $TRANSACTION)
     // =========================================================================
-    describe("4.2 Edge Case 2: Logic phụ thuộc Database (Prisma Mocking)", () => {
+    describe("4.2 Edge Case 2: Database Dependent Logic (Prisma Mocking)", () => {
         const sourceWithDatabase = `
             import prisma from '../config/prisma.js';
 
@@ -190,9 +190,9 @@ describe("Section 4: Business Logic Edge Cases Matrix Verification", () => {
     });
 
     // =========================================================================
-    // 4.3. LOGIC BẤT ĐỒNG BỘ & TIMEOUT (ASYNC/AWAIT & TIMERS)
+    // 4.3. ASYNC LOGIC & TIMEOUTS (ASYNC/AWAIT & TIMERS)
     // =========================================================================
-    describe("4.3 Edge Case 3: Logic bất đồng bộ & Timeout", () => {
+    describe("4.3 Edge Case 3: Async Logic & Timeout", () => {
         const sourceWithTimers = `
             export async function fetchWithRetry(fn, retries = 3, delayMs = 1000) {
                 try {
@@ -218,9 +218,9 @@ describe("Section 4: Business Logic Edge Cases Matrix Verification", () => {
     });
 
     // =========================================================================
-    // 4.4. TOÁN TỬ NGẮN MẠCH (??, ||, ?.)
+    // 4.4. SHORT-CIRCUIT OPERATORS (??, ||, ?.)
     // =========================================================================
-    describe("4.4 Edge Case 4: Toán tử ngắn mạch (??, ||, ?.)", () => {
+    describe("4.4 Edge Case 4: Short-circuit operators (??, ||, ?.)", () => {
         const sourceWithShortCircuits = `
             export function parseUserProfile(input) {
                 const name = input?.name ?? 'Anonymous';
@@ -251,9 +251,9 @@ describe("Section 4: Business Logic Edge Cases Matrix Verification", () => {
     });
 
     // =========================================================================
-    // 4.5. XỬ LÝ NGOẠI LỆ (TRY/CATCH & THROW)
+    // 4.5. EXCEPTION HANDLING (TRY/CATCH & THROW)
     // =========================================================================
-    describe("4.5 Edge Case 5: Xử lý Ngoại lệ (try/catch & throw)", () => {
+    describe("4.5 Edge Case 5: Exception Handling (try/catch & throw)", () => {
         const sourceWithErrorHandling = `
             export async function processPayment(paymentGateway, payload) {
                 if (!payload || !payload.amount) {
@@ -290,9 +290,9 @@ describe("Section 4: Business Logic Edge Cases Matrix Verification", () => {
     });
 
     // =========================================================================
-    // 4.6. XUNG ĐỘT KHAI BÁO BIẾN (IDENTIFIER ALREADY DECLARED)
+    // 4.6. VARIABLE DECLARATION CONFLICTS (IDENTIFIER ALREADY DECLARED)
     // =========================================================================
-    describe("4.6 Edge Case 6: Xung đột Khai báo Biến", () => {
+    describe("4.6 Edge Case 6: Variable Declaration Conflicts", () => {
         const existingTestContent = `
 const { processOrder } = require('../services/order.service');
 const { calculateTax } = require('../services/tax.service');
@@ -349,9 +349,9 @@ describe('test', () => { test('ok', () => {}); });
     });
 
     // =========================================================================
-    // 4.7. AN TOÀN THƯ MỤC STORAGE (STORAGE GUARD)
+    // 4.7. STORAGE DIRECTORY SAFETY (STORAGE GUARD)
     // =========================================================================
-    describe("4.7 Edge Case 7: An toàn Thư mục Storage (Storage Guard)", () => {
+    describe("4.7 Edge Case 7: Storage Directory Safety (Storage Guard)", () => {
         test("applyCodeToTestFile throws 403 ServiceError when target file is inside storage/", () => {
             const forbiddenPaths = [
                 "storage/project/tests/foo.test.js",

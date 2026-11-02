@@ -5,7 +5,7 @@ import { chromium } from '../server/node_modules/@playwright/test/index.mjs';
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1440, height: 960 } });
 page.on('pageerror', (error) => console.log('PAGE ERROR:', error.message));
-const project = { id: 'demo-project', name: 'CovAI - Dự án kiểm thử', latestSnapshotId: 'snapshot-new' };
+const project = { id: 'demo-project', name: 'CovAI - Demo Test Project', latestSnapshotId: 'snapshot-new' };
 const snapshots = [
   { id: 'snapshot-new', source: 'GITHUB', label: 'Latest analysis', createdAt: '2026-10-09T06:30:00Z', isCurrent: true },
   { id: 'snapshot-old', source: 'ZIP', label: 'Initial import', createdAt: '2026-10-08T06:30:00Z', isCurrent: false },

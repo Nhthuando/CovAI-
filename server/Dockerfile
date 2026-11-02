@@ -1,5 +1,9 @@
 FROM node:24-slim
 
+# Orchestrator only: imported applications never receive this socket or CLI.
+COPY --from=docker:27-cli /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=docker:27-cli /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/local/libexec/docker/cli-plugins/docker-buildx
+
 WORKDIR /app
 
 # Install openssl for Prisma, git for githubClone.service, procps (ps) for process tree management, and configure safe.directory for container volume mounts

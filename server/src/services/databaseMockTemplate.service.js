@@ -121,13 +121,13 @@ export const generatePrismaSeeds = (schemaModels = {}) => {
                     if (isClassModel && /malop|code|id/i.test(lower)) {
                         row[fName] = ["CNTT01", "CNTT02", "KTPM01", "KHMT01"][i];
                     } else if (isClassModel && /tenlop|name|title/i.test(lower)) {
-                        row[fName] = ["Công nghệ thông tin 01", "Công nghệ thông tin 02", "Kỹ thuật phần mềm 01", "Khoa học máy tính 01"][i];
+                        row[fName] = ["Computer Science 01", "Computer Science 02", "Software Engineering 01", "Data Science 01"][i];
                     } else if (isStudentModel && /hoten|fullname|name/i.test(lower)) {
-                        row[fName] = ["Nguyễn Văn An", "Trần Thị Bình", "Lê Hoàng Cường", "Phạm Minh Đức"][i];
+                        row[fName] = ["Alice Smith", "Bob Jones", "Charlie Brown", "Diana Prince"][i];
                     } else if (isStudentModel && /malop|class/i.test(lower)) {
                         row[fName] = ["CNTT01", "CNTT01", "CNTT02", "KTPM01"][i];
                     } else if (/hoten|fullname|author/.test(lower)) {
-                        row[fName] = ["Nguyễn Văn An", "Trần Thị Bình", "Lê Hoàng Cường", "Phạm Minh Đức"][i];
+                        row[fName] = ["Alice Smith", "Bob Jones", "Charlie Brown", "Diana Prince"][i];
                     } else if (/ma|code|sku/.test(lower)) {
                         row[fName] = "CODE0" + (i + 1);
                     } else if (/ten|name|title/.test(lower)) {
@@ -137,7 +137,7 @@ export const generatePrismaSeeds = (schemaModels = {}) => {
                     } else if (/phone|tel/.test(lower)) {
                         row[fName] = "090123456" + i;
                     } else if (/gioitinh|gender/.test(lower)) {
-                        row[fName] = i % 2 === 0 ? "Nam" : "Nữ";
+                        row[fName] = i % 2 === 0 ? "Male" : "Female";
                     } else {
                         row[fName] = fName + "_" + (i + 1);
                     }

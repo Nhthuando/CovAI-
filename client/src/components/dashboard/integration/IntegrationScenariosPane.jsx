@@ -955,12 +955,12 @@ export default function IntegrationScenariosPane({
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-sm)] bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition-opacity shadow-xs disabled:opacity-40 cursor-pointer"
               title={
                 selectedCount > 0
-                  ? `Apply ${selectedCount} kịch bản đã chọn vào mã nguồn dự án`
-                  : "Chọn ít nhất 1 kịch bản để apply"
+                  ? `Apply ${selectedCount} selected scenarios to repository files`
+                  : "Select at least 1 scenario to apply"
               }
             >
               <HardDriveDownload size={13} />
-              <span>Apply vào Mã Nguồn ({selectedCount})</span>
+              <span>Apply to Repository ({selectedCount})</span>
             </button>
           )}
 

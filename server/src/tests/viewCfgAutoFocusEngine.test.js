@@ -1,6 +1,6 @@
 /**
  * Verification Test Suite for Section 4: View CFG Subsystem Implementation
- * CHI TIẾT TRIỂN KHAI PHÂN HỆ VIEW CFG (CFG AUTO-FOCUS & SYNC ENGINE)
+ * VIEW CFG AUTO-FOCUS & SYNC ENGINE IMPLEMENTATION
  *
  * Verifies Section 4.1 (Container Dispatch & Dual Views) and
  * Section 4.2 (CFGCalculator Auto-Focus, Centering, Code Scroll & Editor Bridge) from:
@@ -13,7 +13,7 @@ import {
   findMatchingCfgFunction,
 } from "../utils/functionNavigationHelpers.js";
 
-describe("## 4. CHI TIẾT TRIỂN KHAI PHÂN HỆ VIEW CFG (CFG AUTO-FOCUS & SYNC ENGINE)", () => {
+describe("## 4. VIEW CFG AUTO-FOCUS & SYNC ENGINE IMPLEMENTATION", () => {
   const projectCandidates = [
     "backend/src/services/sentence.service.js",
     "backend/src/services/auth.service.js",
@@ -52,7 +52,7 @@ describe("## 4. CHI TIẾT TRIỂN KHAI PHÂN HỆ VIEW CFG (CFG AUTO-FOCUS & SY
     },
   ];
 
-  describe("4.1 Nâng Cấp UnitTestDashboard & CoverageTypeDashboard (Dual Modes Dispatch)", () => {
+  describe("4.1 Upgrade UnitTestDashboard & CoverageTypeDashboard (Dual Modes Dispatch)", () => {
     it("4.1.1 Method Call Map View: View CFG button emits normalized coordinates", () => {
       const fn = {
         filePath: "backend/src/services/sentence.service.js",
@@ -134,7 +134,7 @@ describe("## 4. CHI TIẾT TRIỂN KHAI PHÂN HỆ VIEW CFG (CFG AUTO-FOCUS & SY
     });
   });
 
-  describe("4.2 Nâng Cấp CFGCalculator (Auto-Focus, Auto-Center, Scroll & Editor Bridge)", () => {
+  describe("4.2 Upgrade CFGCalculator (Auto-Focus, Auto-Center, Scroll & Editor Bridge)", () => {
     it("4.2.1 Data initialization: Automatically selects matching file and function", () => {
       const initialFile = "backend/src/services/sentence.service.js";
       const initialFunc = "toSingleSentence()";

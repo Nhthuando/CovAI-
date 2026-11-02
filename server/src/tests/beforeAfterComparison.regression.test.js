@@ -67,7 +67,7 @@ describe("COVAI Phase 4 — Before/After Comparison & Quality Analysis Regressio
         }
     });
 
-    // 1. Source diff nhận diện đúng file thêm/sửa/xóa
+    // 1. Source diff correctly identifies added/modified/deleted files
     it("Requirement 1: Source diff accurately identifies added, modified, deleted, and unchanged files", async () => {
         // Setup snapA: file1.js, file2.js
         fs.writeFileSync(path.join(tempDirA, "file1.js"), "console.log('original 1');\nline2\n", "utf8");
@@ -109,7 +109,7 @@ describe("COVAI Phase 4 — Before/After Comparison & Quality Analysis Regressio
         expect(delFile.status).toBe("DELETED");
     });
 
-    // 2. Hai revision có source giống nhau cho kết quả NO SOURCE CODE CHANGES
+    // 2. Two revisions with identical source yield NO SOURCE CODE CHANGES
     it("Requirement 2: Revisions with identical source tree produce NO SOURCE CODE CHANGES", async () => {
         const fileContent = "const x = 1;\nconsole.log(x);\n";
         fs.writeFileSync(path.join(tempDirA, "app.js"), fileContent, "utf8");
@@ -137,7 +137,7 @@ describe("COVAI Phase 4 — Before/After Comparison & Quality Analysis Regressio
         expect(result.files.length).toBe(0);
     });
 
-    // 3. Không đưa generated artifacts vào source diff một cách mặc định
+    // 3. Do not include generated artifacts in source diff by default
     it("Requirement 3: Generated artifacts (.covai-temp, node_modules, dist, coverage) are strictly excluded by default", () => {
         expect(isPathExcluded(".covai-temp/versions/job-1.json")).toBe(true);
         expect(isPathExcluded("node_modules/express/index.js")).toBe(true);
@@ -158,7 +158,7 @@ describe("COVAI Phase 4 — Before/After Comparison & Quality Analysis Regressio
         expect(scan.excludedFiles.some(f => f.includes(".covai-temp"))).toBe(true);
     });
 
-    // 4. Test suite diff phát hiện file/test mới, sửa, giữ nguyên và loại bỏ
+    // 4. Test suite diff detects new, modified, unchanged, and removed test files/cases
     it("Requirement 4: Test suite diff detects new, modified, unchanged, and removed test cases", () => {
         const testsA = [
             { id: "t1", name: "GET /api/users returns 200", code: "test('t1', () => expect(res.status).toBe(200));" },
@@ -193,7 +193,7 @@ describe("COVAI Phase 4 — Before/After Comparison & Quality Analysis Regressio
         expect(remT.diffStatus).toBe("REMOVED");
     });
 
-    // 5. Không kết luận coverage tăng chỉ dựa vào tổng số test
+    // 5. Do not infer coverage increase solely from total test count
     it("Requirement 5: Does NOT conclude test coverage increased just because total test count increased", () => {
         const endpointsA = [
             { method: "GET", path: "/api/users" },
@@ -237,7 +237,7 @@ describe("COVAI Phase 4 — Before/After Comparison & Quality Analysis Regressio
         expect(conclusions.testCoverageStatus).not.toBe("TEST_COVERAGE_INCREASED");
     });
 
-    // 6. Runtime diff phát hiện đúng PASS->FAIL và FAIL->PASS
+    // 6. Runtime diff correctly identifies PASS->FAIL and FAIL->PASS
     it("Requirement 6: Runtime diff correctly detects regressions (PASS->FAIL) and fixes (FAIL->PASS)", () => {
         const runA = {
             id: "run-a",
@@ -269,7 +269,7 @@ describe("COVAI Phase 4 — Before/After Comparison & Quality Analysis Regressio
         expect(conclusions.hasRegressions).toBe(true);
     });
 
-    // 7. Test chưa chạy không bị tính là PASS
+    // 7. Unexecuted tests are not counted as PASS
     it("Requirement 7: Unexecuted, skipped, or cancelled tests are NOT counted as PASS", () => {
         const scenario1 = { testName: "Skip Me", status: "SKIPPED" };
         const scenario2 = { testName: "Cancel Me", status: "CANCELLED" };
@@ -283,7 +283,7 @@ describe("COVAI Phase 4 — Before/After Comparison & Quality Analysis Regressio
         expect(runtimeDiff.summary.fixesCount).toBe(0);
     });
 
-    // 8. Không trộn dữ liệu hai snapshot/project
+    // 8. Do not mix data across two snapshots/projects
     it("Requirement 8: Enforces project and snapshot isolation; rejects cross-project snapshot comparison", async () => {
         prismaMock.project.findUnique.mockResolvedValue({ id: "proj-1", ownerId: "user-1" });
         // snapA belongs to proj-1, but snapB belongs to proj-999
@@ -299,7 +299,7 @@ describe("COVAI Phase 4 — Before/After Comparison & Quality Analysis Regressio
         })).rejects.toThrow("Snapshots do not belong to the specified project");
     });
 
-    // 9. Cảnh báo khi source revision hoặc test suite version khác nhau
+    // 9. Warn when source revision or test suite version differs
     it("Requirement 9: Emits explicit comparability warnings when TestRuns have different revisions or suite versions", () => {
         const runtimeDiff = {
             runA: { id: "ra", snapshotId: "snap-1", testSuiteVersion: 1 },
@@ -313,7 +313,7 @@ describe("COVAI Phase 4 — Before/After Comparison & Quality Analysis Regressio
         expect(conclusions.warnings[1]).toContain("different test suite versions");
     });
 
-    // 10. Thiếu artifact lịch sử được xử lý rõ ràng, không dựng dữ liệu giả
+    // 10. Missing historical artifacts are handled cleanly without fabricating data
     it("Requirement 10: Safely handles missing historical directory/artifact with INSUFFICIENT_EVIDENCE", async () => {
         prismaMock.project.findUnique.mockResolvedValue({ id: "proj-1", ownerId: "user-1" });
         // Non-existent directory
@@ -333,7 +333,7 @@ describe("COVAI Phase 4 — Before/After Comparison & Quality Analysis Regressio
         expect(result.reason).toContain("unavailable on disk");
     });
 
-    // 11. Quyền truy cập khi tải source và history comparison được kiểm tra
+    // 11. Access permissions verified when downloading source and history comparison
     it("Requirement 11: Access authorization verified (401/403/404) for comparison endpoints", async () => {
         // 1. Controller without auth
         const reqUnauth = { params: { projectId: "proj-1" }, user: null };
@@ -349,7 +349,7 @@ describe("COVAI Phase 4 — Before/After Comparison & Quality Analysis Regressio
         expect(resForbidden.status).toHaveBeenCalledWith(404);
     });
 
-    // 12. Hủy hoặc chạy Job mới không ghi đè các phiên bản dùng làm baseline
+    // 12. Cancelling or running new Job does not overwrite baseline versions
     it("Requirement 12: Archiving a new or cancelled Job version does NOT overwrite baseline version files", () => {
         const job1Data = { tests: [{ name: "t1" }], endpoints: [{ path: "/p1" }] };
         const job2Data = { tests: [{ name: "t2" }], endpoints: [{ path: "/p2" }] };

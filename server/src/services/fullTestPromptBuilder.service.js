@@ -2,6 +2,7 @@
  * Service to build specialized full test generation prompts for Gemini.
  * Orchestrates segments to produce high-quality, runnable Jest test files.
  */
+import { withAgentContext } from '../agents/registry.js';
 import {
   includeSourceCode,
   includeCoverageMetrics,
@@ -62,5 +63,5 @@ export const buildFullTestPrompt = ({
   prompt +=
     "- Wrap your code in a markdown code block (e.g., ```javascript ... ```).\n";
 
-  return prompt;
+  return withAgentContext(prompt, 'unit-test');
 };

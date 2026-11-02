@@ -241,3 +241,18 @@ export function useProjectTreeQuery(projectId) {
     gcTime: 60 * 60 * 1000,
   });
 }
+
+
+/**
+ * Invalidate Project file tree queries so Explorer immediately refreshes.
+ */
+export function invalidateProjectTree(projectId = null) {
+  queryClient.invalidateQueries({ predicate: (query) => query.queryKey?.[0] === "projectTree" });
+  if (typeof window !== "undefined" && projectId) {
+    window.dispatchEvent(
+      new CustomEvent("covai:project-event", {
+        detail: { projectId, type: "file" },
+      })
+    );
+  }
+}

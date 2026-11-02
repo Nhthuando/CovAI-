@@ -606,7 +606,7 @@ export const extractFunctionFlow = (fileCoverageData, sourceCode = "") => {
 export const calculateTraceabilityScore = (item, baseName = "", dirName = "") => {
     let score = 0;
 
-    // 1. S_relation (Điểm loại liên kết)
+    // 1. S_relation (Association type score)
     switch (item.relationType) {
         case "DIRECT_IMPORT":
             score += 1000;
@@ -626,7 +626,7 @@ export const calculateTraceabilityScore = (item, baseName = "", dirName = "") =>
             break;
     }
 
-    // 2. S_name (Điểm tương đồng tên gọi)
+    // 2. S_name (Name similarity score)
     if (baseName && item.fileName) {
         const lowerBase = baseName.toLowerCase();
         const lowerFile = item.fileName.toLowerCase();
@@ -635,10 +635,10 @@ export const calculateTraceabilityScore = (item, baseName = "", dirName = "") =>
         }
     }
 
-    // 3. S_count (Điểm số lượng test case)
+    // 3. S_count (Test case count score)
     score += (Number(item.testCount) || 0) * 10;
 
-    // 4. S_location (Điểm vị trí thư mục)
+    // 4. S_location (Directory location score)
     if (dirName && dirName !== "." && dirName !== "src" && item.filePath) {
         const cleanDirParts = dirName.replace(/^(?:.*?\/)?src\/?/, "").split("/").filter(Boolean);
         const normFilePath = normalizePath(item.filePath);
@@ -723,7 +723,7 @@ export const findAllAssociatedTestFiles = (rootDir, rawSourceFilePath, framework
 
     const linkedMap = new Map();
 
-    // 1. TẦNG 1: STATIC AST DEPENDENCY RESOLUTION (DIRECT_IMPORT)
+    // 1. TIER 1: STATIC AST DEPENDENCY RESOLUTION (DIRECT_IMPORT)
     // Find all test files in the project that actually import or require this source file
     try {
         const astImports = findTestsImportingSource(rootDir, normSource);
@@ -744,7 +744,7 @@ export const findAllAssociatedTestFiles = (rootDir, rawSourceFilePath, framework
         }
     } catch (_) { }
 
-    // 2. TẦNG 2: SCAN EXISTING TEST FILES (NAMING & TEXT HEURISTICS)
+    // 2. TIER 2: SCAN EXISTING TEST FILES (NAMING & TEXT HEURISTICS)
     let bestImportMatch = null;
     let bestScore = -999;
 
@@ -849,7 +849,7 @@ export const findAllAssociatedTestFiles = (rootDir, rawSourceFilePath, framework
     };
     try { scanDir(rootDir); } catch { }
 
-    // 3. TẦNG 3: CANDIDATE PATH CHECK (VITEST & CONVENTIONAL)
+    // 3. TIER 3: CANDIDATE PATH CHECK (VITEST & CONVENTIONAL)
     if (linkedMap.size === 0) {
         if (framework === "vitest") {
             const vitestCandidates = [

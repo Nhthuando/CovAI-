@@ -7,13 +7,14 @@ const validId = value => typeof value === "string" && /^[a-zA-Z0-9_-]+$/.test(va
 
 // Build deletion targets from owned database IDs, never from a stored rootDir.
 // rootDir can point to only backend/ inside an uploaded monorepo, or be stale.
-export function projectStorageTargets(projectId, snapshots, baseDir = process.cwd()) {
-    if (!validId(projectId) || snapshots.some(snapshot => !validId(snapshot.id))) {
+export function projectStorageTargets(projectId, snapshots, baseDir = process.cwd(), evaluationIds = []) {
+    if (!validId(projectId) || snapshots.some(snapshot => !validId(snapshot.id)) || evaluationIds.some(id => !validId(id))) {
         throw new Error("Invalid project or snapshot ID in cleanup plan");
     }
     return [...new Set([
         path.resolve(baseDir, "storage", "projects", projectId),
         ...snapshots.map(snapshot => path.resolve(baseDir, "uploads", "snapshots", snapshot.id)),
+        ...evaluationIds.map(id => path.resolve(baseDir, ".covai-temp", "chatbot-evaluations", id)),
     ])];
 }
 
@@ -58,10 +59,10 @@ async function deleteCloudFiles(projectId) {
 }
 
 /** Await every deletion. The caller must keep database metadata if this fails. */
-export async function cleanupProjectStorageAsync(projectId, snapshots = [], { baseDir = process.cwd() } = {}) {
+export async function cleanupProjectStorageAsync(projectId, snapshots = [], { baseDir = process.cwd(), evaluationIds = [] } = {}) {
     try {
         const canonicalBase = await fs.realpath(baseDir);
-        const targets = projectStorageTargets(projectId, snapshots, canonicalBase);
+        const targets = projectStorageTargets(projectId, snapshots, canonicalBase, evaluationIds);
         // Validate the entire plan before deleting any local or cloud data.
         await Promise.all(targets.map(target => verifyTarget(canonicalBase, target)));
         const results = await Promise.allSettled([

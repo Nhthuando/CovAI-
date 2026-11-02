@@ -89,7 +89,7 @@ describe("COVAI Phase 1: Cancellable Operations & Preserved Results", () => {
     resetJobCancellation();
   });
 
-  // 1. Cancel một Job đang chạy
+  // 1. Cancel running Job
   it("1. Successfully cancels a RUNNING job, updates status to CANCELED, and triggers abort signal", async () => {
     const runningJob = {
       id: "job-running-1",
@@ -121,7 +121,7 @@ describe("COVAI Phase 1: Cancellable Operations & Preserved Results", () => {
     );
   });
 
-  // 2. Cancel một Job đang chờ
+  // 2. Cancel waiting Job
   it("2. Successfully cancels a QUEUED job before worker begins", async () => {
     const queuedJob = {
       id: "job-queued-1",
@@ -149,7 +149,7 @@ describe("COVAI Phase 1: Cancellable Operations & Preserved Results", () => {
     );
   });
 
-  // 3. Cancel lặp lại (idempotent)
+  // 3. Repeated cancellation (idempotent)
   it("3. Cancellation is idempotent: repeating cancel on an already canceled job returns safely without duplicate updates", async () => {
     const alreadyCanceled = {
       id: "job-already-canceled",
@@ -168,7 +168,7 @@ describe("COVAI Phase 1: Cancellable Operations & Preserved Results", () => {
     expect(isJobCanceled("job-already-canceled")).toBe(true);
   });
 
-  // 4. Không cho user khác hủy Job không thuộc quyền truy cập
+  // 4. Prevent unauthorized users from cancelling Jobs
   it("4. Prevents unauthorized users from cancelling jobs belonging to an inaccessible project (404)", async () => {
     const job = {
       id: "job-user-a",projectId:"unrelated-project",
@@ -199,7 +199,7 @@ describe("COVAI Phase 1: Cancellable Operations & Preserved Results", () => {
     expect(prismaMock.job.update).not.toHaveBeenCalled();
   });
 
-  // 5. Không thể hủy ngược Job đã thành công
+  // 5. Cannot revert-cancel completed Jobs
   it("5. Disallows cancelling a job that already completed with SUCCESS (400)", async () => {
     const succeededJob = {
       id: "job-succeeded",
@@ -216,7 +216,7 @@ describe("COVAI Phase 1: Cancellable Operations & Preserved Results", () => {
     expect(prismaMock.job.update).not.toHaveBeenCalled();
   });
 
-  // 6. Worker dừng trước khi tiếp tục các bước thực thi tiếp theo
+  // 6. Worker halts before proceeding to subsequent execution steps
   it("6. Worker actively stops before continuing subsequent execution steps upon cancellation", async () => {
     const jobId = "job-worker-stop";
     const controller = new AbortController();
@@ -229,7 +229,7 @@ describe("COVAI Phase 1: Cancellable Operations & Preserved Results", () => {
     expect(controller.signal.aborted).toBe(true);
   });
 
-  // 7. Kết quả thành công gần nhất còn nguyên sau khi hủy Analyze
+  // 7. Latest successful result remains intact after cancelling Analyze
   it("7. Preserves previous project structure analysis when new Analyze job is cancelled midway", async () => {
     const jobId = "job-analyze-cancel";
     const snapshotId = "snapshot-keep-1";
@@ -261,7 +261,7 @@ describe("COVAI Phase 1: Cancellable Operations & Preserved Results", () => {
     expect(prismaMock.projectStructureAnalysis.upsert).not.toHaveBeenCalled();
   });
 
-  // 8. Phiên test hoàn chỉnh gần nhất còn nguyên sau khi hủy Generate
+  // 8. Latest complete test run remains intact after cancelling Generate
   it("8. Preserves latest complete test suite when Generate is canceled before transaction commit", async () => {
     const jobId = "job-generate-cancel";
     abortJob(jobId);
@@ -274,7 +274,7 @@ describe("COVAI Phase 1: Cancellable Operations & Preserved Results", () => {
     expect(prismaMock.aiTest.deleteMany).not.toHaveBeenCalled();
   });
 
-  // 9. Run Tests bị hủy vẫn giữ evidence của test đã chạy và không bịa kết quả cho test chưa chạy
+  // 9. Cancelled Run Tests retains executed test evidence without fabricating results for unrun tests
   it("9. Canceled Run Tests creates a TestRun marked CANCELED and retains actual executed test count without falsifying unexecuted tests", async () => {
     const snapshotId = "snapshot-supertest-cancel";
     const executedScenarios = [
@@ -318,7 +318,7 @@ describe("COVAI Phase 1: Cancellable Operations & Preserved Results", () => {
     expect(run.passedTests + run.failedTests).toBe(run.totalTests);
   });
 
-  // 10. Trạng thái được khôi phục đúng sau khi refresh UI
+  // 10. State is properly restored after UI refresh
   it("10. State is properly recovered after UI refresh when job has been canceled", async () => {
     const canceledJob = {
       id: "job-refreshed",
@@ -334,7 +334,7 @@ describe("COVAI Phase 1: Cancellable Operations & Preserved Results", () => {
     expect(fetched.status).toBe("CANCELED");
   });
 
-  // 11. Không có ghi đè kết quả do race condition giữa Cancel và Complete
+  // 11. No result overwrites due to race condition between Cancel and Complete
   it("11. Race condition resilience: markJobSuccess is rejected if a job was already CANCELED", async () => {
     const jobId = "job-race-condition";
 

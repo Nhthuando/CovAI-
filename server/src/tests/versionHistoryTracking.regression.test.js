@@ -56,7 +56,7 @@ describe("COVAI Phase 3 — Version History, Provenance & Old/New Tracking Regre
         }
     });
 
-    // 1. Bộ đếm đúng khi có nhiều lần Analyze/Generate/Run Tests
+    // 1. Counter accurate across multiple Analyze/Generate/Run Tests iterations
     it("Requirement 1: Calculates accurate operation counters across multiple Analyze, Generate, and Run Tests attempts", () => {
         const jobs = [
             { id: "job-a1", type: "ANALYSIS", status: "SUCCESS" },
@@ -100,7 +100,7 @@ describe("COVAI Phase 3 — Version History, Provenance & Old/New Tracking Regre
         expect(counters.runTests.canceled).toBe(1); // tr-3
     });
 
-    // 2. Không đếm trùng khi refresh hoặc polling
+    // 2. No duplicate counting on refresh or polling
     it("Requirement 2: Eliminates duplicate counts on refresh, polling, or repeated queries", () => {
         const jobs = [
             { id: "job-1", type: "ANALYSIS", status: "SUCCESS" },
@@ -119,7 +119,7 @@ describe("COVAI Phase 3 — Version History, Provenance & Old/New Tracking Regre
         expect(secondCall).toEqual(thirdCall);
     });
 
-    // 3. Phát hiện endpoint NEW, CHANGED, UNCHANGED
+    // 3. Detects NEW, CHANGED, and UNCHANGED endpoints
     it("Requirement 3: Accurately detects NEW, CHANGED, and UNCHANGED endpoints with field-level diffs", () => {
         const previousEndpoints = [
             {
@@ -193,7 +193,7 @@ describe("COVAI Phase 3 — Version History, Provenance & Old/New Tracking Regre
         });
     });
 
-    // 4. Không đánh dấu REMOVED khi Analyze mới bị hủy hoặc thất bại
+    // 4. Do not mark REMOVED when new Analyze is cancelled or fails
     it("Requirement 4: Never marks endpoints as REMOVED if the new Analyze session failed or was canceled", () => {
         const previousEndpoints = [
             { method: "GET", path: "/api/users" },
@@ -217,7 +217,7 @@ describe("COVAI Phase 3 — Version History, Provenance & Old/New Tracking Regre
         expect(removedEp.identity).toBe("POST /api/users");
     });
 
-    // 5. Phát hiện test file/test case mới, sửa, giữ nguyên và loại bỏ
+    // 5. Detects new, modified, unchanged, and removed test files/cases
     it("Requirement 5: Detects new, modified, unchanged, and removed test files and test cases", () => {
         const previousTests = [
             {
@@ -272,7 +272,7 @@ describe("COVAI Phase 3 — Version History, Provenance & Old/New Tracking Regre
         expect(diff.summary.tests.removedCount).toBe(1);
     });
 
-    // 6. Không đưa output Generate chưa hoàn chỉnh thành current version
+    // 6. Do not promote incomplete Generate output to current version
     it("Requirement 6: Never allows incomplete, failed, or canceled Generate jobs to overwrite current active version", async () => {
         prismaMock.projectSnapshot.findUnique.mockResolvedValue({
             id: "snap-1",
@@ -296,7 +296,7 @@ describe("COVAI Phase 3 — Version History, Provenance & Old/New Tracking Regre
         expect(history.currentVersions.generate.status).toBe("SUCCESS");
     });
 
-    // 7. Mỗi TestRun gắn đúng snapshot và test suite version
+    // 7. Each TestRun binds correctly to snapshot and test suite version
     it("Requirement 7: Links each TestRun to snapshot, test suite, and scenarios without losing runtime evidence", () => {
         const runA = {
             id: "run-alpha",
@@ -335,7 +335,7 @@ describe("COVAI Phase 3 — Version History, Provenance & Old/New Tracking Regre
         expect(comparison.summary.durationDeltaMs).toBe(-250); // Faster by 250ms
     });
 
-    // 8. Run Tests bị hủy vẫn giữ evidence đã thu được và không bịa kết quả
+    // 8. Cancelled Run Tests retains collected evidence without fabricating results
     it("Requirement 8: Preserves observed runtime evidence when Run Tests is canceled without fabricating passes", () => {
         const canceledRun = {
             id: "run-canceled",
@@ -372,7 +372,7 @@ describe("COVAI Phase 3 — Version History, Provenance & Old/New Tracking Regre
         expect(checkoutTransition.statusB).toBe("PASSED");
     });
 
-    // 9. So sánh lịch sử không trộn các snapshot hoặc project
+    // 9. Historical comparisons do not mix snapshots or projects
     it("Requirement 9: Enforces strict snapshot isolation; rejects non-existent snapshots", async () => {
         prismaMock.projectSnapshot.findUnique.mockResolvedValue(null);
 
@@ -381,7 +381,7 @@ describe("COVAI Phase 3 — Version History, Provenance & Old/New Tracking Regre
             .toThrow("Snapshot not found");
     });
 
-    // 10. Kết quả phiên trước vẫn truy cập được trong lúc operation mới chạy
+    // 10. Previous session results remain accessible while new operation runs
     it("Requirement 10: Ensures previous version remains fully readable while a new operation is actively running", async () => {
         // Create an archived version artifact on disk
         const previousJobId = "job-analyze-prev";
@@ -413,7 +413,7 @@ describe("COVAI Phase 3 — Version History, Provenance & Old/New Tracking Regre
         expect(historical.data.endpoints).toHaveLength(1);
     });
 
-    // 11. Quyền truy cập lịch sử và version metadata được kiểm tra
+    // 11. History access rights and version metadata are validated
     it("Requirement 11: Validates authorization and project ownership for history and version endpoints", async () => {
         // 1. Unauthorized (no user)
         const reqUnauth = { params: { snapshotId: "snap-1" }, user: null };
@@ -442,7 +442,7 @@ describe("COVAI Phase 3 — Version History, Provenance & Old/New Tracking Regre
         expect(resMissingQuery.status).toHaveBeenCalledWith(400);
     });
 
-    // 12. Refresh UI vẫn khôi phục đúng phiên hiện hành và lịch sử
+    // 12. UI refresh cleanly restores current active session and history
     it("Requirement 12: UI state restoration recovers identical timeline and active versions on reload", async () => {
         prismaMock.projectSnapshot.findUnique.mockResolvedValue({
             id: "snap-refresh",
@@ -465,7 +465,7 @@ describe("COVAI Phase 3 — Version History, Provenance & Old/New Tracking Regre
         expect(refreshFetch.timeline.map(t => t.id)).toEqual(firstFetch.timeline.map(t => t.id));
     });
 
-    // 13. Dữ liệu cũ không có đủ metadata được xử lý an toàn, không tự bịa provenance
+    // 13. Legacy data lacking metadata is handled safely without fabricating provenance
     it("Requirement 13: Safely handles legacy records without crashing and never invents fake provenance", async () => {
         prismaMock.projectSnapshot.findUnique.mockResolvedValue({
             id: "snap-legacy",

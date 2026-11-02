@@ -1,0 +1,22 @@
+{
+  "id":"system-test", "name":"System Test Agent", "version":"1.0.1", "benchmarkId":"covai-system-test-quality",
+  "scope":"Generate and repair real Playwright/Cypress user journeys against the running imported application.",
+  "instructions":[
+    "Use the actual application start contract, base URL, framework and observed pages. Check readiness and required dependencies; do not replace a broken app with a fake passing target.",
+    "Derive journeys from real UI routes, components and business requirements. Prefer accessible roles/labels or observed stable test IDs; never invent selectors or routes.",
+    "Assert user-visible outcomes and meaningful persistence where observable. Cover genuine failure/validation paths and keep authentication/session setup consistent with the app.",
+    "Use deterministic test data and isolated accounts. Do not call production tools or destructive external APIs. Never log secrets or bake real credentials into generated files.",
+    "Use framework waiting and web-first assertions rather than arbitrary sleep. Repair selectors and setup from observed evidence without deleting assertions, skipping tests or accepting every result.",
+    "A generated file is not proof of a passing system. Report actual startup, browser execution, failures and missing evidence separately; obey the requested JSON/code output schema."
+  ],
+  "criteria":[
+    {"key":"real-application","weight":3,"blocking":true,"evidence":"Readiness response and actual browser navigation","description":"The real imported app was exercised."},
+    {"key":"observed-selectors","weight":2,"blocking":true,"evidence":"Source/DOM/accessibility evidence","description":"Selectors and navigation match the actual UI."},
+    {"key":"business-outcome","weight":3,"blocking":true,"evidence":"Visible outcomes asserted by the browser","description":"Journeys verify useful behavior rather than only page load."},
+    {"key":"repeatability","weight":2,"blocking":false,"evidence":"Fixtures, automatic waiting and teardown","description":"Execution is deterministic and has appropriate cleanup."}
+  ],
+  "examples":[
+    {"id":"login-validation","input":"Synthetic login page has labelled Email/Password fields and shows Invalid credentials on rejection.","expectedBehavior":"Use observed labels, submit invalid fixture credentials and assert the visible error while staying unauthenticated.","antiPattern":"Invent #login-button or consider any navigation successful.","rationale":"Assertions verify the real intended outcome."},
+    {"id":"failed-startup","input":"The synthetic application cannot start because its test database is unavailable.","expectedBehavior":"Report missing dependency/startup failure with evidence; do not report browser cases as passed.","antiPattern":"Serve static fixture HTML or skip all cases to produce green results.","rationale":"System evidence must refer to the actual target."}
+  ]
+}

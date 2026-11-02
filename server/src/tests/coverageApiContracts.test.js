@@ -63,7 +63,7 @@ describe('Section 3: Data Contracts & Detailed APIs Verification', () => {
         jest.clearAllMocks();
     });
 
-    describe('3.1 API Yêu Cầu Gợi Ý Test Case (POST /api/coverage/:snapshotId/suggest-testcase)', () => {
+    describe('3.1 API Suggest Test Case (POST /api/coverage/:snapshotId/suggest-testcase)', () => {
         const mockSection31Response = {
             suggestionId: 'sug-1791389000-1',
             sourceFile: 'src/services/order.service.js',
@@ -72,7 +72,7 @@ describe('Section 3: Data Contracts & Detailed APIs Verification', () => {
             framework: 'jest',
             targetLines: [45, 46, 82, 83],
             targetBranches: ['if:45', 'conditional:82'],
-            explanation: 'Đã tạo 6 test cases bao phủ Happy Path, phân vùng giá trị biên của voucher, và trường hợp huỷ đơn hàng khi không đủ tồn kho.',
+            explanation: 'Generated 6 test cases covering Happy Path, voucher boundary value partitions, and out-of-stock order cancellation.',
             suggestedTestCode: "describe('OrderService - Business Logic Coverage', () => { test('happy path', () => {}); });",
             fullUpdatedContent: "const { processOrder } = require('../services/order.service');\ndescribe('OrderService', () => {});",
             summary: {
@@ -237,7 +237,7 @@ describe('Section 3: Data Contracts & Detailed APIs Verification', () => {
         });
     });
 
-    describe('3.2 API Áp Dụng Test Case & Chạy Lại (POST /api/coverage/:snapshotId/apply-suggestion)', () => {
+    describe('3.2 API Apply Test Case & Rerun (POST /api/coverage/:snapshotId/apply-suggestion)', () => {
         const mockSection32Response = {
             success: true,
             fileUpdated: true,

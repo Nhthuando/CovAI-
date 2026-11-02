@@ -1,6 +1,6 @@
 /**
  * Verification Test Suite for Section 3: Data Model Specifications & API Contracts
- * THIẾT KẾ DỮ LIỆU & API CONTRACTS (DATA MODEL SPECIFICATION)
+ * DATA MODEL SPECIFICATION & API CONTRACTS
  *
  * Verifies Section 3.1 (Navigation Target Interface) and
  * Section 3.2 (Fuzzy Matching Engine) from:
@@ -18,7 +18,7 @@ import {
   calculateClampedLineRange,
 } from "../utils/functionNavigationHelpers.js";
 
-describe("## 3. THIẾT KẾ DỮ LIỆU & API CONTRACTS (DATA MODEL SPECIFICATION)", () => {
+describe("## 3. DATA MODEL SPECIFICATION & API CONTRACTS", () => {
   const sampleCandidateFiles = [
     "backend/src/services/sentence.service.js",
     "backend/src/services/auth.service.js",
@@ -53,7 +53,7 @@ describe("## 3. THIẾT KẾ DỮ LIỆU & API CONTRACTS (DATA MODEL SPECIFICATI
     },
   ];
 
-  describe("3.1 Hợp Đồng Dữ Liệu Điều Hướng (Navigation Target Interface Specifications)", () => {
+  describe("3.1 Navigation Target Interface Specifications", () => {
     it("3.1.1 FunctionNavigationTarget: Validates structural schema, line indices, and defaults", () => {
       const target = createFunctionNavigationTarget({
         filePath: "backend\\src\\services\\sentence.service.js",
@@ -122,7 +122,7 @@ describe("## 3. THIẾT KẾ DỮ LIỆU & API CONTRACTS (DATA MODEL SPECIFICATI
     });
   });
 
-  describe("3.2 Thuật Toán Khớp Đường Dẫn Thông Minh (Fuzzy Matching Engine - Path Resolution)", () => {
+  describe("3.2 Smart Path Matching Engine - Path Resolution", () => {
     it("3.2.1 normalizePathForCompare: Strips OS backslashes, leading ./, repo roots, and lowercases", () => {
       expect(normalizePathForCompare("backend\\src\\services\\A.js")).toBe("backend/src/services/a.js");
       expect(normalizePathForCompare("./src/services/a.js")).toBe("src/services/a.js");
@@ -171,7 +171,7 @@ describe("## 3. THIẾT KẾ DỮ LIỆU & API CONTRACTS (DATA MODEL SPECIFICATI
     });
   });
 
-  describe("3.3 Thuật Toán Khớp Hàm Thông Minh (Fuzzy Matching Engine - Function Resolution)", () => {
+  describe("3.3 Smart Function Matching Engine - Function Resolution", () => {
     it("3.3.1 Matches function by exact name", () => {
       const matched = findMatchingCfgFunction(sampleFileCfgs, "toSingleSentence", 192);
       expect(matched).toBe("toSingleSentence");
@@ -205,7 +205,7 @@ describe("## 3. THIẾT KẾ DỮ LIỆU & API CONTRACTS (DATA MODEL SPECIFICATI
     });
   });
 
-  describe("3.4 Giới Hạn Dòng An Toàn Monaco Model Bounds (Clamped Line Range Calculation)", () => {
+  describe("3.4 Clamped Line Range Calculation (Monaco Model Bounds)", () => {
     it("Calculates 1-indexed range clamped within Monaco model line count", () => {
       const maxLines = 150;
 

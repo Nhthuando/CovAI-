@@ -4,9 +4,9 @@ import traverseModule from '@babel/traverse';
 const traverse = traverseModule.default?.default || traverseModule.default || traverseModule;
 
 /**
- * Trích xuất danh sách hàm từ mã nguồn JavaScript/TypeScript/JSX sử dụng Babel Parser.
- * Hỗ trợ toàn diện cú pháp ES2024+, Optional Chaining (?.), Nullish Coalescing (??), TypeScript & JSX.
- * @param {string} code - Nội dung mã nguồn
+ * Extracts function list from JavaScript/TypeScript/JSX source code using Babel Parser.
+ * Comprehensive support for ES2024+, Optional Chaining (?.), Nullish Coalescing (??), TypeScript & JSX.
+ * @param {string} code - Source code content
  * @returns {Array<{functionName: string, startLine: number, endLine: number, node: object}>}
  */
 export function extractFunctions(code) {

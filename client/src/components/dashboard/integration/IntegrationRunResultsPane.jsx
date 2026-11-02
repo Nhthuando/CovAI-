@@ -24,31 +24,31 @@ const FAILURE_LAYERS_META = {
     label: "Router",
     code: "[ROUTER_NOT_FOUND]",
     style: "bg-orange-500/15 text-orange-400 border-orange-500/30",
-    desc: "Đường dẫn Route hoặc URL mount point không khớp router Express.",
+    desc: "Route path or mount point does not match Express router.",
   },
   MIDDLEWARE_REJECTED: {
     label: "Middleware",
     code: "[MIDDLEWARE_REJECTED]",
     style: "bg-amber-500/15 text-amber-400 border-amber-500/30",
-    desc: "Bị chặn bởi Authentication, JWT token, CORS hoặc Request Validator.",
+    desc: "Blocked by Authentication, JWT token, CORS, or Request Validator.",
   },
   CONTROLLER_CRASH: {
     label: "Controller",
     code: "[CONTROLLER_CRASH]",
     style: "bg-rose-500/15 text-rose-400 border-rose-500/30",
-    desc: "Lỗi runtime crash (TypeError, ReferenceError) trong controller handler.",
+    desc: "Runtime crash error (TypeError, ReferenceError) inside controller handler.",
   },
   DATABASE_FAILURE: {
     label: "Database",
     code: "[DATABASE_FAILURE]",
     style: "bg-purple-500/15 text-purple-400 border-purple-500/30",
-    desc: "Lỗi kết nối database, schema constraint hoặc Prisma query failure.",
+    desc: "Database connection, schema constraint, or Prisma query failure.",
   },
   ASSERTION_FAILED: {
     label: "Assertion",
     code: "[ASSERTION_FAILED]",
     style: "bg-sky-500/15 text-sky-400 border-sky-500/30",
-    desc: "HTTP response status code hoặc JSON body không khớp với giá trị mong đợi.",
+    desc: "HTTP response status code or JSON payload mismatch with expected value.",
   },
 };
 
@@ -278,7 +278,7 @@ export default function IntegrationRunResultsPane({
             </div>
           </div>
           <div className="text-[10px] text-[var(--color-text-secondary)] mt-2">
-            Tỉ lệ API endpoint vượt qua toàn bộ kịch bản kiểm thử
+            Percentage of API endpoints passing 100% of test scenarios
           </div>
         </div>
 
@@ -318,7 +318,7 @@ export default function IntegrationRunResultsPane({
             </div>
           </div>
           <div className="text-[10px] text-[var(--color-text-secondary)] mt-2 flex items-center justify-between">
-            <span>Chưa kích hoạt qua kịch bản</span>
+            <span>Untested by scenarios</span>
             <span className="font-semibold text-[var(--color-primary)] font-mono">
               {Number(apiStats.apiCoverageRate).toFixed(0)}% Covered
             </span>
@@ -344,7 +344,7 @@ export default function IntegrationRunResultsPane({
             </div>
           </div>
           <div className="text-[10px] text-[var(--color-text-secondary)] mt-2">
-            Phân loại trạng thái kiểm thử theo từng route
+            Test status breakdown by route
           </div>
         </div>
       </div>
@@ -498,10 +498,10 @@ export default function IntegrationRunResultsPane({
                           onClick={() => onAIFixScenario(ep, sc)}
                           disabled={isJobActive || pendingAction === "RUN_REMAINING"}
                           className="px-2 py-0.5 rounded text-[10px] font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/25 hover:bg-purple-500/20 transition-colors cursor-pointer flex items-center gap-1"
-                          title="Sửa kịch bản bằng AI"
+                          title="Repair scenario using AI"
                         >
                           <Sparkles size={10} />
-                          <span>Sửa bằng AI</span>
+                          <span>AI Repair</span>
                         </button>
                       )}
                       <button
@@ -1048,7 +1048,7 @@ export default function IntegrationRunResultsPane({
                 Controller Handler Execution Tracing
               </h4>
               <p className="text-[11px] text-[var(--color-text-secondary)] m-0 mt-0.5">
-                Bóc tách thực thi các Controller Handler qua CovAI Tracing Engine
+                Controller Handler Execution Tracing via CovAI Tracing Engine
               </p>
             </div>
           </div>

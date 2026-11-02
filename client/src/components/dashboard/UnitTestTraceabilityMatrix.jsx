@@ -33,6 +33,7 @@ import {
   Info,
   Minimize2,
   Maximize2,
+  RotateCcw,
 } from "lucide-react";
 import { cleanDisplayPath, isTestFile } from "./CoverageTypeDashboard.jsx";
 import { getFileCoverage } from "../../services/coverage.service.js";
@@ -676,7 +677,29 @@ export default function UnitTestTraceabilityMatrix({
   onInstallDependency = null,
   installingDependencyName = null,
   isLight = false,
+  unitTestVersions = {},
+  onSwitchVersion = null,
+  isSwitchingVersion = false,
+  switchingVersionFile = null,
 }) {
+  const getFileVersionInfo = (fPath) => {
+    if (!fPath || !unitTestVersions) return null;
+    const norm = fPath.replace(/\\/g, "/").replace(/^\/+/, "");
+    for (const [k, rec] of Object.entries(unitTestVersions)) {
+      const cleanK = k.replace(/\\/g, "/").replace(/^\/+/, "");
+      const cleanSrc = (rec.sourceFile || "").replace(/\\/g, "/").replace(/^\/+/, "");
+      const cleanTest = (rec.testFile || "").replace(/\\/g, "/").replace(/^\/+/, "");
+      if (
+        cleanK === norm || cleanSrc === norm || cleanTest === norm ||
+        norm.endsWith(cleanK) || cleanK.endsWith(norm) ||
+        (cleanSrc && (norm.endsWith(cleanSrc) || cleanSrc.endsWith(norm))) ||
+        (cleanTest && (norm.endsWith(cleanTest) || cleanTest.endsWith(norm)))
+      ) {
+        return rec;
+      }
+    }
+    return null;
+  };
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("ALL"); // "ALL" | "HAPPY_PATH" | "BOUNDARY_VALUES" | "BRANCH_TOGGLING" | "ERROR_HANDLING"
   const [expandedFunctions, setExpandedFunctions] = useState(new Set());
@@ -1775,23 +1798,146 @@ export default function UnitTestTraceabilityMatrix({
                           )}
                         </div>
                       ) : (hasPassed || isFileFullyCovered) ? (
-                        <span
-                          style={{
-                            fontSize: 11,
-                            fontWeight: 700,
-                            color: "#16a34a",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 3,
-                            padding: "2px 8px",
-                            borderRadius: 5,
-                            background: isLight ? "#f0fdf4" : "rgba(34, 197, 94, 0.12)",
-                            border: isLight ? "1px solid #bbf7d0" : "1px solid rgba(34, 197, 94, 0.3)",
-                          }}
-                        >
-                          <Check size={12} strokeWidth={3} />
-                          <span>{isFileFullyCovered ? "100% Covered" : "Merged"}</span>
-                        </span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                          <span
+                            style={{
+                              fontSize: 11,
+                              fontWeight: 700,
+                              color: "#16a34a",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 3,
+                              padding: "2px 8px",
+                              borderRadius: 5,
+                              background: isLight ? "#f0fdf4" : "rgba(34, 197, 94, 0.12)",
+                              border: isLight ? "1px solid #bbf7d0" : "1px solid rgba(34, 197, 94, 0.3)",
+                            }}
+                          >
+                            <Check size={12} strokeWidth={3} />
+                            <span>{isFileFullyCovered ? "100% Covered" : "v2: Merged"}</span>
+                          </span>
+
+                          {onReviewDiff && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onReviewDiff(group.filePath);
+                              }}
+                              style={{
+                                padding: "2px 7px",
+                                borderRadius: 5,
+                                background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.08)",
+                                border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.2)",
+                                color: isLight ? "#334155" : "#e2e8f0",
+                                fontSize: 10.5,
+                                fontWeight: 600,
+                                cursor: "pointer",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 3,
+                              }}
+                              title="Review diff with original version"
+                            >
+                              <FileDiff size={11} style={{ color: "#6366f1" }} />
+                              <span>Diff</span>
+                            </button>
+                          )}
+
+                          {(() => {
+                            if (!onSwitchVersion) return null;
+                            const verInfo = getFileVersionInfo(group.filePath);
+                            const isThisFileSwitching = isSwitchingVersion && (switchingVersionFile === "all" || switchingVersionFile === group.filePath);
+
+                            if (verInfo && Array.isArray(verInfo.versions) && verInfo.versions.length > 1) {
+                              const isAtV1 = verInfo.currentVersion === 1;
+                              const targetVer = isAtV1 ? (verInfo.versions[verInfo.versions.length - 1]?.version || 2) : 1;
+
+                              return (
+                                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                  <span
+                                    style={{
+                                      fontSize: 10,
+                                      fontWeight: 700,
+                                      padding: "1px 5px",
+                                      borderRadius: 4,
+                                      background: isAtV1 ? (isLight ? "#f1f5f9" : "rgba(255,255,255,0.06)") : (isLight ? "#f5f3ff" : "rgba(139, 92, 246, 0.15)"),
+                                      border: isAtV1 ? "1px solid #cbd5e1" : "1px solid rgba(139, 92, 246, 0.3)",
+                                      color: isAtV1 ? "#64748b" : "#8b5cf6",
+                                    }}
+                                    title={`Active Version ${verInfo.currentVersion}`}
+                                  >
+                                    v{verInfo.currentVersion}
+                                  </span>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onSwitchVersion({ filePath: group.filePath, targetVersion: targetVer });
+                                    }}
+                                    disabled={isSwitchingVersion}
+                                    style={{
+                                      padding: "2px 8px",
+                                      borderRadius: 5,
+                                      background: isAtV1
+                                        ? (isLight ? "#f5f3ff" : "rgba(139, 92, 246, 0.12)")
+                                        : (isLight ? "#fff1f2" : "rgba(244, 63, 94, 0.12)"),
+                                      border: isAtV1
+                                        ? (isLight ? "1px solid #ddd6fe" : "1px solid rgba(139, 92, 246, 0.3)")
+                                        : (isLight ? "1px solid #fecdd3" : "1px solid rgba(244, 63, 94, 0.3)"),
+                                      color: isAtV1 ? (isLight ? "#7c3aed" : "#c4b5fd") : (isLight ? "#e11d48" : "#fb7185"),
+                                      fontSize: 10.5,
+                                      fontWeight: 700,
+                                      cursor: isSwitchingVersion ? "wait" : "pointer",
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 3,
+                                    }}
+                                    title={isAtV1 ? `Switch to new Version (v${targetVer})` : "Revert to baseline Version 1"}
+                                  >
+                                    {isThisFileSwitching ? (
+                                      <Loader2 size={11} className="animate-spin" />
+                                    ) : isAtV1 ? (
+                                      <Zap size={11} />
+                                    ) : (
+                                      <RotateCcw size={11} />
+                                    )}
+                                    <span>{isAtV1 ? `To v${targetVer}` : "Revert to v1"}</span>
+                                  </button>
+                                </div>
+                              );
+                            }
+
+                            return (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onSwitchVersion({ filePath: group.filePath, targetVersion: 1 });
+                                }}
+                                disabled={isSwitchingVersion}
+                                style={{
+                                  padding: "2px 8px",
+                                  borderRadius: 5,
+                                  background: isLight ? "#fff1f2" : "rgba(244, 63, 94, 0.12)",
+                                  border: isLight ? "1px solid #fecdd3" : "1px solid rgba(244, 63, 94, 0.3)",
+                                  color: isLight ? "#e11d48" : "#fb7185",
+                                  fontSize: 10.5,
+                                  fontWeight: 700,
+                                  cursor: isSwitchingVersion ? "wait" : "pointer",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 3,
+                                }}
+                                title="Revert to baseline Version 1"
+                              >
+                                {isThisFileSwitching ? (
+                                  <Loader2 size={11} className="animate-spin" />
+                                ) : (
+                                  <RotateCcw size={11} />
+                                )}
+                                <span>Revert to v1</span>
+                              </button>
+                            );
+                          })()}
+                        </div>
                       ) : hasFailed ? (
                         (() => {
                           const failedSugWithErr = fileSugs.find((s) => s.missingDependency?.packageName || s.testRunError);
@@ -1875,6 +2021,36 @@ export default function UnitTestTraceabilityMatrix({
                                 >
                                   <FileCode2 size={11} />
                                   <span>Re-generate</span>
+                                </button>
+                              )}
+                              {onSwitchVersion && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onSwitchVersion({ filePath: group.filePath, targetVersion: 1 });
+                                  }}
+                                  disabled={isSwitchingVersion}
+                                  style={{
+                                    padding: "3px 8px",
+                                    borderRadius: 5,
+                                    background: isLight ? "#fff1f2" : "rgba(244, 63, 94, 0.12)",
+                                    border: isLight ? "1px solid #fecdd3" : "1px solid rgba(244, 63, 94, 0.3)",
+                                    color: isLight ? "#e11d48" : "#fb7185",
+                                    fontSize: 11,
+                                    fontWeight: 700,
+                                    cursor: isSwitchingVersion ? "wait" : "pointer",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 3,
+                                  }}
+                                  title="Revert to baseline Version 1"
+                                >
+                                  {isSwitchingVersion && (switchingVersionFile === "all" || switchingVersionFile === group.filePath) ? (
+                                    <Loader2 size={11} className="animate-spin" />
+                                  ) : (
+                                    <RotateCcw size={11} />
+                                  )}
+                                  <span>Revert to v1</span>
                                 </button>
                               )}
                             </div>

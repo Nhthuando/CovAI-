@@ -158,6 +158,10 @@ export const healImportPathsInTestCode = (code, relTestPath = "tests/sample.test
                     }
                 }
                 if (targetExists) {
+                    if (!fs.existsSync(absTarget) && (fs.existsSync(absTarget + ".cjs") || fs.existsSync(absTarget + ".mjs"))) {
+                        const extToAdd = fs.existsSync(absTarget + ".cjs") ? ".cjs" : ".mjs";
+                        return `${prefix}${importTarget}${extToAdd}${suffix}`;
+                    }
                     return match;
                 }
 
@@ -1075,6 +1079,30 @@ export const healMockFactoryBraces = (code) => {
         }
         return mockBlock;
     });
+};
+
+/**
+ * Heals Vitest mock factories that illegally reference outer top-level variables (causing TDZ ReferenceError when hoisted).
+ */
+export const healVitestHoistedMocks = (code) => {
+    if (!code || !code.includes("vi.mock")) return code;
+    // Heal vi.mock('sonner') referencing top-level _mockSonnerToast
+    if (code.includes("_mockSonnerToast") && code.includes("vi.mock('sonner'")) {
+        code = code.replace(/^[ \t]*const\s+_mockSonnerToast\s*=[^;]+;\r?\n?/gm, "");
+        code = code.replace(
+            /vi\.mock\(['"]sonner['"]\s*,\s*\(\)\s*=>\s*\(?\{[\s\S]*?\}\)?\s*\);?/g,
+            "vi.mock('sonner', () => {\n  const _mockSonnerToast = Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn(), info: vi.fn(), warning: vi.fn(), message: vi.fn(), loading: vi.fn(), dismiss: vi.fn(), promise: vi.fn(), custom: vi.fn() });\n  return { toast: _mockSonnerToast, Toaster: vi.fn(() => null), default: { toast: _mockSonnerToast, Toaster: vi.fn(() => null) } };\n});"
+        );
+    }
+    // Heal vi.mock('react-toastify') referencing top-level _mockToastify
+    if (code.includes("_mockToastify") && code.includes("vi.mock('react-toastify'")) {
+        code = code.replace(/^[ \t]*const\s+_mockToastify\s*=[^;]+;\r?\n?/gm, "");
+        code = code.replace(
+            /vi\.mock\(['"]react-toastify['"]\s*,\s*\(\)\s*=>\s*\(?\{[\s\S]*?\}\)?\s*\);?/g,
+            "vi.mock('react-toastify', () => {\n  const _mockToastify = Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn(), info: vi.fn(), warning: vi.fn(), dismiss: vi.fn() });\n  return { toast: _mockToastify, ToastContainer: vi.fn(() => null), default: { toast: _mockToastify } };\n});"
+        );
+    }
+    return code;
 };
 
 
@@ -2108,6 +2136,7 @@ export const cleanAndDeduplicateTestContent = (content, rawOutput = "", filePath
 
     // 10d. Heal unclosed or runaway object braces in jest.mock / vi.mock factory closures
     cleaned = healMockFactoryBraces(cleaned);
+    cleaned = healVitestHoistedMocks(cleaned);
 
     // 11. Normalize redundant monorepo prefixes (../../backend/src/... -> ../../src/...) across all import and mock forms
     const computeSrcPrefix = (relPath) => {

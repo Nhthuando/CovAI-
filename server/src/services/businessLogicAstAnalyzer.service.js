@@ -12,7 +12,7 @@ export const normalizeRelativePath = (p = "") => {
 import { isBusinessLogicSourceFile } from "../utils/businessLogicFileDetector.js";
 
 /**
- * 1.1 PHÂN LOẠI VÀ NHẬN DIỆN FILE NGHIỆP VỤ MỤC TIÊU
+ * 1.1 CLASSIFY & IDENTIFY TARGET BUSINESS LOGIC FILES
  *
  * Checks if a relative or absolute file path corresponds to genuine Business Logic:
  * - Services: src/services/**
@@ -94,7 +94,7 @@ export const classifyBusinessLogicFiles = (rootDir) => {
 };
 
 /**
- * 1.2 PHÂN TÍCH AST (ABSTRACT SYNTAX TREE) BẰNG BABEL PARSER
+ * 1.2 ABSTRACT SYNTAX TREE (AST) ANALYSIS VIA BABEL PARSER
  *
  * Extracts deep architectural metadata from source code:
  * 1. Public Exported Symbols: APIs that tests are permitted to invoke.
@@ -686,7 +686,7 @@ export const analyzeSourceAst = (sourceCode = "") => {
 };
 
 /**
- * 1.3 ÁNH XẠ VỚI coverage-final.json (ISTANBUL / V8)
+ * 1.3 MAPPING WITH coverage-final.json (ISTANBUL / V8)
  *
  * Bridges the AST analysis with Istanbul / v8 execution data to isolate:
  * - Uncovered Lines: Statements with 0 hits.

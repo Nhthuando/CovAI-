@@ -9,6 +9,7 @@ const mockPrisma = {
     findMany: jest.fn(),
     deleteMany: jest.fn(),
   },
+  aiEvaluationProjectRun: { findMany: jest.fn().mockResolvedValue([]) },
   coverageSummary: { deleteMany: jest.fn() },
   coverageFile: { deleteMany: jest.fn() },
   coverageFunction: { deleteMany: jest.fn() },
@@ -104,7 +105,8 @@ describe('deleteProject service', () => {
     const deletion = deleteProject(projectId, userId);
     await started;
     expect(mockPrisma.project.delete).not.toHaveBeenCalled();
-    expect(cleanupStorage).toHaveBeenCalledWith(projectId, [expect.objectContaining({ id: 'snap1' })]);
+    expect(cleanupStorage).toHaveBeenCalledWith(projectId, [expect.objectContaining({ id: 'snap1' })], { evaluationIds: [] });
+    expect(mockPrisma.aiEvaluationProjectRun.findMany).toHaveBeenCalledWith({ where: { projectId }, select: { id: true } });
     expect(mockPrisma.projectSnapshot.findMany).toHaveBeenCalledWith({
       where: { projectId }, select: { id: true, rootDir: true, storagePath: true },
     });

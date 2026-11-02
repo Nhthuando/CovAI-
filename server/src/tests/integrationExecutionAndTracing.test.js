@@ -252,7 +252,7 @@ describe('Phase 3: Execution & Tracing Engine Test Suite', () => {
             });
 
             expect(diagnosis.failureLayer).toBe('DATABASE_FAILURE');
-            expect(diagnosis.explanation.toLowerCase()).toContain('cơ sở dữ liệu');
+            expect(diagnosis.explanation.toLowerCase()).toContain('database');
         });
 
         it('should diagnose CONTROLLER_CRASH when uncaught TypeError happens in controller', () => {

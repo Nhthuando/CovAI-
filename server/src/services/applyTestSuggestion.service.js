@@ -45,6 +45,7 @@ import {
     ensureWorkspaceNodeModulesLinked,
     cleanupWorkspaceNodeModulesLinks
 } from "./dependencyResolution.service.js";
+import { saveUnitTestFileVersions } from "./unitTestVersion.service.js";
 export { resolveSnapshotRootDir };
 
 export const activeApplyLocks = new Set();
@@ -1417,6 +1418,50 @@ export const autoHealTestFailures = (rootDir, testFilesToRun, testResults, rawOu
                 if (/(?:backend|frontend|server|client|api)\//.test(badSpec)) {
                     const healedSpec = badSpec.replace(/(^|\.\.\/|\.\/)(?:backend|frontend|server|client|api)\/(?:src\/)?/, "$1src/");
                     content = content.split(badSpec).join(healedSpec);
+                }
+            }
+        }
+
+        // Fix missing third-party packages or failed module resolution (e.g. Cannot find package 'sonner' / Failed to resolve import "sonner")
+        // Rule 4: Universal Mock Isolation - Hermetically mock missing packages in RAM instead of failing or timing out
+        const missingDep = extractMissingDependency(rawOutput);
+        if (missingDep && missingDep.packageName) {
+            const pkgName = missingDep.packageName;
+            const isVitestSuite = Boolean(
+                options.framework === "vitest" ||
+                fullPath.includes("vitest") ||
+                /from\s+['"]vitest['"]|\bvi\s*\./.test(content)
+            );
+            const escapedPkg = pkgName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const alreadyMocked = new RegExp(`(?:vi|jest)\\.mock\\s*\\(\\s*['"]${escapedPkg}['"]`).test(content);
+            if (!alreadyMocked) {
+                let mockBlock = "";
+                if (pkgName === "sonner") {
+                    mockBlock = isVitestSuite
+                        ? `vi.mock('sonner', () => {\n  const _mockSonnerToast = Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn(), info: vi.fn(), warning: vi.fn(), message: vi.fn(), loading: vi.fn(), dismiss: vi.fn(), promise: vi.fn(), custom: vi.fn() });\n  return { toast: _mockSonnerToast, Toaster: vi.fn(() => null), default: { toast: _mockSonnerToast, Toaster: vi.fn(() => null) } };\n});\n`
+                        : `const _mockSonnerToast = Object.assign(jest.fn(), { error: jest.fn(), success: jest.fn(), info: jest.fn(), warning: jest.fn(), message: jest.fn(), loading: jest.fn(), dismiss: jest.fn(), promise: jest.fn(), custom: jest.fn() });\njest.mock('sonner', () => ({ toast: _mockSonnerToast, Toaster: jest.fn(() => null), default: { toast: _mockSonnerToast, Toaster: jest.fn(() => null) } }), { virtual: true });\n`;
+                } else if (pkgName === "react-toastify") {
+                    mockBlock = isVitestSuite
+                        ? `vi.mock('react-toastify', () => {\n  const _mockToastify = Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn(), info: vi.fn(), warning: vi.fn(), dismiss: vi.fn() });\n  return { toast: _mockToastify, ToastContainer: vi.fn(() => null), default: { toast: _mockToastify } };\n});\n`
+                        : `const _mockToastify = Object.assign(jest.fn(), { error: jest.fn(), success: jest.fn(), info: jest.fn(), warning: jest.fn(), dismiss: jest.fn() });\njest.mock('react-toastify', () => ({ toast: _mockToastify, ToastContainer: jest.fn(() => null), default: { toast: _mockToastify } }), { virtual: true });\n`;
+                } else if (pkgName === "lucide-react") {
+                    mockBlock = isVitestSuite
+                        ? `vi.mock('lucide-react', () => new Proxy({}, { get: (_, prop) => prop === '__esModule' ? true : vi.fn(() => null) }));\n`
+                        : `jest.mock('lucide-react', () => new Proxy({}, { get: (_, prop) => prop === '__esModule' ? true : jest.fn(() => null) }), { virtual: true });\n`;
+                } else if (pkgName === "framer-motion") {
+                    mockBlock = isVitestSuite
+                        ? `vi.mock('framer-motion', () => ({ motion: new Proxy({}, { get: () => 'div' }), AnimatePresence: ({ children }) => children }));\n`
+                        : `jest.mock('framer-motion', () => ({ motion: new Proxy({}, { get: () => 'div' }), AnimatePresence: ({ children }) => children }), { virtual: true });\n`;
+                } else {
+                    mockBlock = isVitestSuite
+                        ? `vi.mock('${pkgName}', () => {\n  const handler = { get: (_, p) => p === '__esModule' ? true : (p === 'then' || p === 'catch' || typeof p === 'symbol') ? undefined : new Proxy(vi.fn(), handler) };\n  const mockObj = new Proxy(vi.fn(), handler);\n  return { default: mockObj, ...mockObj };\n});\n`
+                        : `jest.mock('${pkgName}', () => {\n  const handler = { get: (_, p) => p === '__esModule' ? true : (p === 'then' || p === 'catch' || typeof p === 'symbol') ? undefined : new Proxy(jest.fn(), handler) };\n  const mockObj = new Proxy(jest.fn(), handler);\n  return { default: mockObj, ...mockObj };\n}, { virtual: true });\n`;
+                }
+                const firstDescribe = content.search(/(?:describe|test|it)\s*\(/);
+                if (firstDescribe !== -1) {
+                    content = content.slice(0, firstDescribe) + mockBlock + "\n" + content.slice(firstDescribe);
+                } else {
+                    content = mockBlock + "\n" + content;
                 }
             }
         }
@@ -3962,6 +4007,38 @@ const _applyUnitTestSuggestionInternal = async ({ snapshotId, projectId, userId,
     });
 
     const isOverallSuccess = anyPassed && isCoverageAuthoritative;
+
+    // Record versions only after test application and runner verification completes
+    if (appliedList.length > 0 && (isOverallSuccess || anyPassed)) {
+        const processedTestFiles = new Set();
+        for (const item of appliedList) {
+            const targetRel = item.testFile;
+            if (processedTestFiles.has(targetRel)) continue;
+            processedTestFiles.add(targetRel);
+            try {
+                const targetFull = path.join(rootDir, targetRel);
+                const finalDiskContent = fs.existsSync(targetFull) ? fs.readFileSync(targetFull, "utf8") : "";
+                const origBackup = fileBackups.get(targetFull);
+                const wasExisting = Boolean(origBackup != null && origBackup.trim().length > 0);
+
+                saveUnitTestFileVersions({
+                    snapshotId,
+                    rootDir,
+                    projectId: actualProjectId,
+                    sourceFile: item.sourceFile,
+                    testFile: targetRel,
+                    originalContent: origBackup || "",
+                    updatedContent: finalDiskContent,
+                    framework: item.framework || "jest",
+                    summary: "Applied unit test suite verified by runner",
+                    isExisting: wasExisting,
+                    status: "APPLIED"
+                });
+            } catch (vErr) {
+                console.warn("[applyUnitTestSuggestion] Post-verification version save warning:", vErr.message);
+            }
+        }
+    }
 
     return {
         success: isOverallSuccess,

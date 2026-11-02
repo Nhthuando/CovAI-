@@ -40,7 +40,7 @@ const {
 
 const { parseJavaScriptCode } = await import("../services/babelParser.service.js");
 
-describe("6. Kế Hoạch Kiểm Định & Tiêu Chí Nghiệm Thu (Quantitative DoD)", () => {
+describe("6. Verification Plan & Acceptance Criteria (Quantitative DoD)", () => {
     let tempDir;
 
     beforeEach(() => {
@@ -54,8 +54,8 @@ describe("6. Kế Hoạch Kiểm Định & Tiêu Chí Nghiệm Thu (Quantitative
         } catch { }
     });
 
-    describe("6.1.1 Tiêu Chí Độ Bao Phủ Tối Thiểu (Target Coverage Threshold >= 90%)", () => {
-        test("chấp thuận nghiệm thu DoD khi cả 4 tiêu chí (Statements, Branches, Functions, Lines) đạt >= 90%", () => {
+    describe("6.1.1 Minimum Target Coverage Threshold (>= 90%)", () => {
+        test("accepts DoD when all 4 metrics (Statements, Branches, Functions, Lines) reach >= 90%", () => {
             const coverage = {
                 statements: 95.5,
                 branches: 91.2,
@@ -80,7 +80,7 @@ describe("6. Kế Hoạch Kiểm Định & Tiêu Chí Nghiệm Thu (Quantitative
             expect(result.criteria.coverageThreshold.lines.passed).toBe(true);
         });
 
-        test("đánh dấu trạng thái tối ưu (optimal: true) khi cả 4 tiêu chí đạt tuyệt đối 100%", () => {
+        test("marks optimal: true when all 4 metrics reach 100%", () => {
             const coverage = {
                 statements: 100,
                 branches: 100,
@@ -104,10 +104,10 @@ describe("6. Kế Hoạch Kiểm Định & Tiêu Chí Nghiệm Thu (Quantitative
             expect(result.criteria.coverageThreshold.lines.optimal).toBe(true);
         });
 
-        test("từ chối nghiệm thu DoD nếu Branch Coverage dưới 90% mặc dù 3 tiêu chí khác đạt 100%", () => {
+        test("rejects DoD if Branch Coverage is below 90% despite other 3 metrics reaching 100%", () => {
             const coverage = {
                 statements: 100,
-                branches: 87.5, // Dưới ngưỡng 90%
+                branches: 87.5, // Below 90% threshold
                 functions: 100,
                 lines: 100
             };
@@ -127,7 +127,7 @@ describe("6. Kế Hoạch Kiểm Định & Tiêu Chí Nghiệm Thu (Quantitative
             expect(result.criteria.coverageThreshold.statements.passed).toBe(true);
         });
 
-        test("từ chối nghiệm thu DoD nếu Statements, Functions hoặc Lines dưới 90%", () => {
+        test("rejects DoD if Statements, Functions, or Lines fall below 90%", () => {
             const lowStatements = { statements: 88, branches: 92, functions: 100, lines: 91 };
             const lowFunctions = { statements: 95, branches: 92, functions: 85, lines: 95 };
             const lowLines = { statements: 92, branches: 91, functions: 100, lines: 89 };
@@ -140,8 +140,8 @@ describe("6. Kế Hoạch Kiểm Định & Tiêu Chí Nghiệm Thu (Quantitative
         });
     });
 
-    describe("6.1.2 Tiêu Chí Tính Hợp Lệ Của Test Suite (100% Green, 0 Skips, 0 Fatal Errors)", () => {
-        test("chấp thuận khi 100% test cases pass, 0 failing, 0 skips, và 0 fatal runtime/syntax errors", () => {
+    describe("6.1.2 Test Suite Validity (100% Green, 0 Skips, 0 Fatal Errors)", () => {
+        test("accepts when 100% test cases pass, 0 failing, 0 skips, and 0 fatal errors", () => {
             const testResults = {
                 totalTests: 15,
                 passedTests: 15,
@@ -172,7 +172,7 @@ describe('AuthService', () => {
             expect(result.criteria.testValidity.zeroFatalErrors.passed).toBe(true);
         });
 
-        test("từ chối nghiệm thu nếu có test case bị thất bại (failedTests > 0 hoặc status !== passed)", () => {
+        test("rejects if test case fails (failedTests > 0 or status !== passed)", () => {
             const testResults = {
                 totalTests: 10,
                 passedTests: 8,
@@ -192,7 +192,7 @@ describe('AuthService', () => {
             expect(result.criteria.testValidity.allGreen.passed).toBe(false);
         });
 
-        test("từ chối nghiệm thu nếu mã test chứa các từ khóa skip (.skip, xit, xtest, xdescribe)", () => {
+        test("rejects if test code contains skip keywords (.skip, xit, xtest, xdescribe)", () => {
             const skippedCodes = [
                 "describe('Suite', () => { test.skip('skipped test', () => {}); });",
                 "describe('Suite', () => { it.skip('skipped it', () => {}); });",
@@ -217,7 +217,7 @@ describe('AuthService', () => {
             }
         });
 
-        test("từ chối nghiệm thu nếu runner gặp lỗi fatal: SyntaxError, ReferenceError hoặc TypeError", () => {
+        test("rejects if runner encounters fatal error: SyntaxError, ReferenceError, or TypeError", () => {
             const goodCoverage = { statements: 95, branches: 95, functions: 100, lines: 95 };
             const fatalErrorOutputs = [
                 { totalTests: 0, passedTests: 0, failedTests: 1, status: "failed", error: "SyntaxError: Unexpected token '{'" },
@@ -238,8 +238,8 @@ describe('AuthService', () => {
         });
     });
 
-    describe("6.1.3 Tiêu Chí An Toàn Hệ Thống (Storage Guard & Bảo Tồn Test Cũ)", () => {
-        test("Strict Storage Guard: từ chối nghiệm thu DoD nếu rootDir nằm trong storage/", () => {
+    describe("6.1.3 System Safety (Storage Guard & Test Preservation)", () => {
+        test("Strict Storage Guard: rejects DoD if rootDir resides in storage/", () => {
             const storageRoots = [
                 "d:/NCKH/CovAI-/server/storage/projects/p1",
                 "C:\\server\\storage\\test",
@@ -262,13 +262,13 @@ describe('AuthService', () => {
             }
         });
 
-        test("Bảo tồn 100% test cũ của người dùng: từ chối nghiệm thu DoD nếu bất kỳ test cũ nào bị mất hoặc bị ghi đè", () => {
+        test("Preserves 100% of user existing tests: rejects DoD if existing tests are deleted or overwritten", () => {
             const originalUserTests = [
                 "test('original user test 1: verifies invoice creation'",
                 "test('original user test 2: handles customer discount'"
             ];
 
-            // Trường hợp 1: Test cũ được bảo tồn đầy đủ
+            // Case 1: Existing tests fully preserved
             const preservedCode = `
 // Original Tests
 describe('Invoice', () => {
@@ -290,7 +290,7 @@ describe('Invoice - Additional Coverage', () => {
             expect(passRes.passed).toBe(true);
             expect(passRes.criteria.systemSafety.userTestsPreserved.passed).toBe(true);
 
-            // Trường hợp 2: Test cũ bị ghi đè mất test 2
+            // Case 2: Existing tests overwritten with missing test 2
             const truncatedCode = `
 describe('Invoice - AI Generated Only', () => {
     test('original user test 1: verifies invoice creation', () => expect(1).toBe(1));
@@ -308,7 +308,7 @@ describe('Invoice - AI Generated Only', () => {
             expect(failRes.criteria.systemSafety.userTestsPreserved.passed).toBe(false);
         });
 
-        test("thực nghiệm trên đĩa: applyCodeToTestFile bảo toàn 100% mã kiểm thử ban đầu của người dùng", () => {
+        test("disk verification: applyCodeToTestFile preserves 100% of user original test code", () => {
             const testsDir = path.join(tempDir, "tests");
             fs.mkdirSync(testsDir, { recursive: true });
 
@@ -338,13 +338,13 @@ describe('Calculator User Tests', () => {
 
             const updatedContent = fs.readFileSync(testPath, "utf8");
 
-            // Kiểm tra bảo tồn nguyên vẹn nội dung cũ
+            // Verify existing content intact
             expect(updatedContent).toContain("// User original test file");
             expect(updatedContent).toContain("describe('Calculator User Tests'");
             expect(updatedContent).toContain("test('user test: basic sum'");
             expect(updatedContent).toContain("expect(calculate(2, 3)).toBe(5)");
 
-            // Kiểm tra mã mới được gắn thêm hợp lệ
+            // Verify new code appended validly
             expect(updatedContent).toContain("Calculator Additional Edge Cases");
             expect(updatedContent).toContain("ai test: divide by zero");
 
@@ -353,8 +353,8 @@ describe('Calculator User Tests', () => {
         });
     });
 
-    describe("6.1.4 Tích Hợp Tự Động Định Lượng Vào Kết Quả applyUnitTestSuggestion", () => {
-        test("applyUnitTestSuggestion trả về dodEvaluation đáp ứng 100% tiêu chí khi test pass và đạt >=90%", async () => {
+    describe("6.1.4 Automated Quantitative DoD Integration into applyUnitTestSuggestion", () => {
+        test("applyUnitTestSuggestion returns dodEvaluation satisfying 100% criteria when tests pass and reach >= 90%", async () => {
             const srcDir = path.join(tempDir, "src");
             const testsDir = path.join(tempDir, "tests");
             const covDir = path.join(tempDir, "coverage");

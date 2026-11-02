@@ -144,12 +144,24 @@ export async function getSystemTestEvidence(snapshotId, scenarioId, signal) {
 }
 
 export async function installMissingDependency(snapshotId, packageName, isDev = false, rerunTests = true, importedFrom = null) {
-    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/install-dependency`, {
-        method: "POST",
-        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ packageName, isDev, rerunTests, ...(importedFrom ? { importedFrom } : {}) }),
-    });
-    return handleResponse(res);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 35000);
+    try {
+        const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/install-dependency`, {
+            method: "POST",
+            headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+            body: JSON.stringify({ packageName, isDev, rerunTests, ...(importedFrom ? { importedFrom } : {}) }),
+            signal: controller.signal,
+        });
+        return await handleResponse(res);
+    } catch (err) {
+        if (err.name === "AbortError") {
+            throw new Error(`Installation of '${packageName}' timed out after 35s. Test execution will proceed with universal RAM mock isolation.`);
+        }
+        throw err;
+    } finally {
+        clearTimeout(timer);
+    }
 }
 
 export async function getFileCoverage(snapshotId, filePath) {
@@ -364,3 +376,46 @@ export async function getUnifiedTestRunInspection(snapshotId, runId) {
     return handleResponse(res);
 }
 
+
+
+export async function getUnitTestVersions(snapshotId, filePath = null) {
+    const query = filePath ? `?filePath=${encodeURIComponent(filePath)}` : "";
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/unit-test-versions${query}`, {
+        headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
+}
+
+export async function switchUnitTestVersion(snapshotId, {
+    projectId,
+    filePath,
+    targetVersion,
+    targetVersionId,
+    allFiles = false,
+    targetVersionType = null,
+    runTests = true
+} = {}) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/unit-test-versions/switch`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+            projectId,
+            filePath,
+            targetVersion,
+            targetVersionId,
+            allFiles,
+            targetVersionType,
+            runTests
+        }),
+    });
+    return handleResponse(res);
+}
+
+export async function saveUnitTestVersions(snapshotId, payload = {}) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/unit-test-versions/save`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+}

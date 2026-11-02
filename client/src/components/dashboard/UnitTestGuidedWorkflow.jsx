@@ -69,7 +69,22 @@ export default function UnitTestGuidedWorkflow({
   activeTab = "guided",
   onChangeTab,
   isLight = false,
+  unitTestVersions = {},
+  onSwitchVersion = null,
+  isSwitchingVersion = false,
+  switchingVersionFile = null,
 }) {
+  const hasAnyV2 = React.useMemo(() => {
+    return Object.values(unitTestVersions || {}).some(
+      (v) => (v.currentVersion === 2 || v.currentVersion > 1) && (v.versions?.length || 0) > 1
+    );
+  }, [unitTestVersions]);
+
+  const hasAnyV1WithV2 = React.useMemo(() => {
+    return Object.values(unitTestVersions || {}).some(
+      (v) => v.currentVersion === 1 && (v.versions?.length || 0) > 1
+    );
+  }, [unitTestVersions]);
   // Determine current active workflow step index (1-based)
   const linesPct = Number(summary?.coverage?.lines || summary?.linesPct || 0);
   const branchesPct = Number(summary?.coverage?.branches || summary?.branchesPct || 0);
@@ -633,6 +648,66 @@ export default function UnitTestGuidedWorkflow({
                       ? `Review Diffs (${pendingSuggestionsCount})`
                       : "Review Merged Diffs"}
                   </span>
+                </button>
+              )}
+
+              {onSwitchVersion && hasAnyV2 && (
+                <button
+                  onClick={() => onSwitchVersion({ allFiles: true, targetVersion: 1 })}
+                  disabled={isBulkApplying || isSwitchingVersion}
+                  style={{
+                    background: isLight ? "#fff1f2" : "rgba(244, 63, 94, 0.12)",
+                    border: isLight ? "1px solid #fecdd3" : "1px solid rgba(244, 63, 94, 0.3)",
+                    color: isLight ? "#e11d48" : "#fb7185",
+                    borderRadius: 7,
+                    padding: "9px 15px",
+                    fontSize: 13,
+                    fontWeight: 650,
+                    cursor: isSwitchingVersion ? "wait" : "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    transition: "all 0.15s ease",
+                  }}
+                  className="hover:opacity-90"
+                  title="Revert all test files to Version 1 (Baseline)"
+                >
+                  {isSwitchingVersion && switchingVersionFile === "all" ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <RotateCcw size={14} />
+                  )}
+                  <span>Revert to v1 (Baseline)</span>
+                </button>
+              )}
+
+              {onSwitchVersion && hasAnyV1WithV2 && (
+                <button
+                  onClick={() => onSwitchVersion({ allFiles: true, targetVersion: 2 })}
+                  disabled={isBulkApplying || isSwitchingVersion}
+                  style={{
+                    background: isLight ? "#f5f3ff" : "rgba(139, 92, 246, 0.12)",
+                    border: isLight ? "1px solid #ddd6fe" : "1px solid rgba(139, 92, 246, 0.3)",
+                    color: isLight ? "#7c3aed" : "#c4b5fd",
+                    borderRadius: 7,
+                    padding: "9px 15px",
+                    fontSize: 13,
+                    fontWeight: 650,
+                    cursor: isSwitchingVersion ? "wait" : "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    transition: "all 0.15s ease",
+                  }}
+                  className="hover:opacity-90"
+                  title="Fast-forward all test files to Version 2"
+                >
+                  {isSwitchingVersion && switchingVersionFile === "all" ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <Zap size={14} />
+                  )}
+                  <span>Switch to v2 (AI New)</span>
                 </button>
               )}
 

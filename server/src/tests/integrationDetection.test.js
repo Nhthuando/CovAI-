@@ -138,7 +138,7 @@ describe("Phase 1: Integration Testing Detection & 4 Permutations Engine", () =>
             expect(perm.inferredFramework).toBe("supertest");
             expect(perm.missingPackages).toEqual(["supertest", "jest"]);
             expect(perm.installCommand).toBe("npm install --save-dev supertest jest");
-            expect(perm.confirmActionText).toBe("Cài đặt thư viện phát hiện & Chạy tiếp");
+            expect(perm.confirmActionText).toBe("Install Detected Framework & Continue");
         });
     });
 

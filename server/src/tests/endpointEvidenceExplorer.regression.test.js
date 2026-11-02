@@ -148,7 +148,7 @@ module.exports = authMiddleware;
     };
 
     /**
-     * Requirement 1: Endpoint có source location hợp lệ hiển thị đúng file và dòng.
+     * Requirement 1: Endpoints with valid source location display correct file and line.
      */
     it("1. Valid source location displays correct file, line numbers, and syntax snippets", () => {
         const sourceCode = createRealisticProjectFixture();
@@ -184,7 +184,7 @@ module.exports = authMiddleware;
     });
 
     /**
-     * Requirement 2: Endpoint động như `/api/items/:id` hoặc cấu trúc tương đương được xử lý đúng.
+     * Requirement 2: Dynamic endpoints like `/api/items/:id` are handled correctly.
      */
     it("2. Dynamic endpoints with path and query parameters are parsed and normalized accurately", () => {
         const sourceCode = createRealisticProjectFixture();
@@ -209,7 +209,7 @@ module.exports = authMiddleware;
     });
 
     /**
-     * Requirement 3: Endpoint không đủ bằng chứng hiển thị rõ trạng thái chưa xác minh.
+     * Requirement 3: Endpoints with insufficient evidence clearly show unverified status.
      */
     it("3. Endpoints with missing links or inline handlers truthfully report unverified status without fake data", () => {
         const sourceCode = createRealisticProjectFixture();
@@ -246,7 +246,7 @@ module.exports = authMiddleware;
     });
 
     /**
-     * Requirement 4: Test liên quan được nối với endpoint khi có mapping thực tế.
+     * Requirement 4: Associated tests link to endpoints upon real mapping.
      */
     it("4. Related integration tests and runtime scenarios are correctly mapped to endpoints", async () => {
         const snapshotId = "snap-test-mapping";
@@ -323,7 +323,7 @@ module.exports = authMiddleware;
     });
 
     /**
-     * Requirement 5: Static source evidence không bị nhầm thành runtime evidence hoặc contract verification.
+     * Requirement 5: Static source evidence is not conflated with runtime evidence or contract verification.
      */
     it("5. Static AST evidence is distinctly separated from runtime execution and contract verification", async () => {
         const snapshotId = "snap-static-only";
@@ -362,7 +362,7 @@ module.exports = authMiddleware;
     });
 
     /**
-     * Requirement 6: Snapshot/project khác nhau không bị trộn dữ liệu.
+     * Requirement 6: Different snapshots/projects do not mix data.
      */
     it("6. Different snapshots and projects strictly isolate their endpoint inventory and workspace data", async () => {
         const snapA = "snap-project-alpha";
@@ -416,7 +416,7 @@ module.exports = authMiddleware;
     });
 
     /**
-     * Requirement 7: Source viewer từ chối đường dẫn nằm ngoài thư mục project cho phép.
+     * Requirement 7: Source viewer rejects paths outside allowed project root.
      */
     it("7. Source file viewer strictly rejects path traversal attempts with 400 ServiceError", async () => {
         const dummySnapshot = {
@@ -448,7 +448,7 @@ module.exports = authMiddleware;
     });
 
     /**
-     * Requirement 8: UI mở và chuyển endpoint không buộc phải chạy Analyze lại.
+     * Requirement 8: Opening/switching endpoints in UI does not require re-running Analyze.
      */
     it("8. Opening and switching endpoints is an in-memory inspection that triggers zero new Analysis jobs", async () => {
         const createAnalysisJobMock = (await import("../services/job.service.js")).createAnalysisJob;
@@ -471,7 +471,7 @@ module.exports = authMiddleware;
     });
 
     /**
-     * Requirement 9: Loading và lỗi khi tải chi tiết không khóa workspace.
+     * Requirement 9: Loading and error states do not lock workspace.
      */
     it("9. Detail view read failures for missing or deleted files throw catchable ServiceError without crashing", async () => {
         const dummySnapshot = {
@@ -494,7 +494,7 @@ module.exports = authMiddleware;
     });
 
     /**
-     * Requirement 10: Không sửa hoặc làm thay đổi source code của ứng dụng mục tiêu.
+     * Requirement 10: Do not modify or alter target application source code.
      */
     it("10. Target application files remain 100% immutable throughout analysis and evidence extraction", () => {
         const targetAppDir = path.join(tempDir, "target-app");

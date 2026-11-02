@@ -1,4 +1,5 @@
 import { parse } from "@babel/parser";
+import { withAgentContext } from '../agents/registry.js';
 import _traverse from "@babel/traverse";
 const traverse = _traverse.default || _traverse;
 import { ServiceError } from "../utils/serviceError.js";
@@ -402,7 +403,7 @@ export const buildIntegrationTestPrompt = ({
     prompt += `\`\`\`\n\n`;
     prompt += `OUTPUT STRICTLY VALID JSON ONLY. NO OTHER EXPLANATORY TEXT OUTSIDE THE JSON BLOCK.`;
 
-    return prompt;
+    return withAgentContext(prompt, 'integration-test');
 };
 
 /**
@@ -542,5 +543,5 @@ export const buildFaultyTestFixPrompt = ({
     prompt += `}\n`;
     prompt += `\`\`\`\n`;
 
-    return prompt;
+    return withAgentContext(prompt, 'integration-test', { phase: 'repair' });
 };

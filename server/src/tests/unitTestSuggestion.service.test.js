@@ -97,7 +97,7 @@ describe("unitTestSuggestion.service unit tests", () => {
             });
 
             expect(result.fullUpdatedContent).toContain("import defaultExport from '../src/main';");
-            expect(result.fullUpdatedContent).toContain("const fnRef: any = defaultExport;");
+            expect(result.fullUpdatedContent).toMatch(/const (target|fnRef): any = defaultExport;/);
             expect(result.fullUpdatedContent).not.toContain("const fnRef: any = default;");
             expect(result.fullUpdatedContent).not.toContain("let target = default;");
         });

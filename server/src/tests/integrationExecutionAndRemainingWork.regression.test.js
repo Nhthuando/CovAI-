@@ -26,7 +26,7 @@ describe('Integration Testing: Execution and Remaining Work Regression Tests', (
     });
 
     // =========================================================================
-    // Regression Requirement 1: Test file ở thư mục nông import đúng entry point
+    // Regression Requirement 1: Shallow directory test file imports entry point correctly
     // =========================================================================
     test('Regression 1: Shallow test file (tests/integration/) resolves to correct entry point (../../server/index.js)', () => {
         const shallowTestPath = path.join(tempRootDir, 'tests', 'integration', 'cart.test.js');
@@ -58,7 +58,7 @@ describe('Integration Testing: Execution and Remaining Work Regression Tests', (
     });
 
     // =========================================================================
-    // Regression Requirement 2: Test file ở thư mục sâu import đúng entry point
+    // Regression Requirement 2: Deep directory test file imports entry point correctly
     // =========================================================================
     test('Regression 2: Deep test file (server/__tests__/integration/) resolves to correct entry point (../../index.js)', async () => {
         const deepTestPath = path.join(tempRootDir, 'server', '__tests__', 'integration', 'productEndpoints.test.js');
@@ -92,7 +92,7 @@ describe('Integration Testing: Execution and Remaining Work Regression Tests', (
     });
 
     // =========================================================================
-    // Regression Requirement 3: Jest suite lỗi khi load module được ánh xạ về đúng các scenario gốc
+    // Regression Requirement 3: Jest suite module load errors map back to original scenarios
     // =========================================================================
     test('Regression 3: Jest suite module load failure maps back to registered scenario IDs with TEST_SCRIPT_ERROR', () => {
         const coverageDir = path.join(tempRootDir, 'coverage');
@@ -159,7 +159,7 @@ describe('Integration Testing: Execution and Remaining Work Regression Tests', (
     });
 
     // =========================================================================
-    // Regression Requirement 4: Script error không làm tăng số endpoint có request execution evidence
+    // Regression Requirement 4: Script errors do not inflate endpoints with execution evidence
     // =========================================================================
     test('Regression 4: Script error does not increment genuine API call evidence or inflate executed endpoint metrics', () => {
         // An endpoint where all scenarios suffered TEST_SCRIPT_ERROR
@@ -195,7 +195,7 @@ describe('Integration Testing: Execution and Remaining Work Regression Tests', (
     });
 
     // =========================================================================
-    // Regression Requirement 5: Scenario trùng route trong các file khác nhau không khiến số endpoint được tính sai
+    // Regression Requirement 5: Scenarios sharing routes across different files do not miscount endpoints
     // =========================================================================
     test('Regression 5: Overlapping route across shallow and deep test files (POST /api/cart/validate) does not miscalculate endpoint counts', () => {
         // Discovered endpoints: 9 unique endpoints
@@ -259,7 +259,7 @@ describe('Integration Testing: Execution and Remaining Work Regression Tests', (
     });
 
     // =========================================================================
-    // Regression Requirement 6: Run Remaining Endpoint không âm thầm lặp lại cùng một lỗi mà không hiển thị trạng thái thất bại
+    // Regression Requirement 6: Run Remaining Endpoint does not silently loop without showing failed state
     // =========================================================================
     test('Regression 6: Run Remaining Endpoint includes script-errored endpoints and displays failure status rather than silent no-op', () => {
         const workspaceEndpoints = [
@@ -323,7 +323,7 @@ describe('Integration Testing: Execution and Remaining Work Regression Tests', (
     });
 
     // =========================================================================
-    // Regression Requirement 7: Khi có kết quả mới, workspace sau reload phản ánh đúng dữ liệu của lần chạy đó
+    // Regression Requirement 7: After reload, workspace accurately reflects latest run results
     // =========================================================================
     test('Regression 7: Workspace after reload derives state consistently from latest TestRun and persistent evidence', () => {
         // Simulated latest TestRun containing all 18 executed scenarios after fix

@@ -7,7 +7,7 @@ export async function evaluationRequest(projectId, suffix = '', { method = 'GET'
   });
   if (download && response.ok) return response.blob();
   const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw Object.assign(new Error(result.message || 'Không thể xử lý yêu cầu đánh giá.'), { status: response.status, code: result.code });
+  if (!response.ok) throw Object.assign(new Error(result.message || 'Failed to process trustworthiness evaluation request.'), { status: response.status, code: result.code });
   return result.data;
 }
 export async function downloadEvaluation(projectId, runId, format) {

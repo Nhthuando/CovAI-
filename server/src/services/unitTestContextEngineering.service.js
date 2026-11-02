@@ -3,16 +3,16 @@ import { parseJavaScriptCode } from "./babelParser.service.js";
 import { analyzeSourceAst, mapCoverageGaps } from "./businessLogicAstAnalyzer.service.js";
 
 /**
- * GIAI ĐOẠN 2: CONTEXT ENGINEERING & MA TRẬN KIỂM THỬ (DECISION TABLE)
+ * STAGE 2: CONTEXT ENGINEERING & DECISION TABLE TEST MATRIX
  *
  * Provides formal software engineering test methodology:
- * 2.1. Ma trận kiểm thử (Decision Table / Truth Table Engine - 4 Mandatory Categories)
- * 2.2. Chiến lược Kiểm thử Gián tiếp (Indirect Testing Strategy for Internal Helpers)
- * 2.3. Hợp đồng Mocking Độc lập (Isolation Mock Contracts: DB, HTTP, Queue, Env, Express)
+ * 2.1. Decision Table / Truth Table Engine - 4 Mandatory Categories
+ * 2.2. Indirect Testing Strategy for Internal Helpers
+ * 2.3. Isolation Mock Contracts: DB, HTTP, Queue, Env, Express
  */
 
 /**
- * 2.1 MA TRẬN KIỂM THỬ (DECISION TABLE / TRUTH TABLE ENGINE)
+ * 2.1 DECISION TABLE / TRUTH TABLE ENGINE
  *
  * Generates an exhaustive 4-category test matrix targeting >=90% to 100% coverage:
  * - Category A: Happy Path (Standard valid input, expected output)
@@ -53,7 +53,7 @@ export const buildDecisionTableMatrix = ({
 
     let counter = 1;
 
-    // --- CATEGORY A: HAPPY PATH (Luồng thành công chuẩn) ---
+    // --- CATEGORY A: HAPPY PATH (Standard Valid Flow) ---
     for (const exp of exportedSymbols) {
         if (exp.type === "constant") continue;
         const isFnUncovered = uncoveredFunctions.some(uf => uf.name === exp.name);
@@ -86,7 +86,7 @@ export const buildDecisionTableMatrix = ({
         });
     }
 
-    // --- CATEGORY B: BOUNDARY VALUE ANALYSIS (Phân tích giá trị biên) ---
+    // --- CATEGORY B: BOUNDARY VALUE ANALYSIS ---
     for (const exp of exportedSymbols) {
         if (exp.type === "constant") continue;
 
@@ -301,7 +301,7 @@ export const buildDecisionTableMatrix = ({
 };
 
 /**
- * 2.2 CHIẾN LƯỢC KIỂM THỬ GIÁN TIẾP (INDIRECT TESTING STRATEGY)
+ * 2.2 INDIRECT TESTING STRATEGY
  *
  * For internal, unexported helper functions, direct import triggers fatal TypeError.
  * This analyzer maps internal helpers to their exported callers and generates actionable
@@ -403,7 +403,7 @@ export const buildIndirectTestingStrategy = ({
 };
 
 /**
- * 2.3 HỢP ĐỒNG MOCKING ĐỘC LẬP (ISOLATION MOCK CONTRACTS)
+ * 2.3 ISOLATION MOCK CONTRACTS
  *
  * Generates robust, executable mock preambles ensuring tests execute purely in RAM:
  * - Database (Prisma Client, Mongoose, SQL): Proxy mock resolving dummy entities.
@@ -609,6 +609,64 @@ jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, de
                 : `const mockMulter = Object.assign(jest.fn(() => ({ single: jest.fn(() => (req, res, next) => next && next()), array: jest.fn(() => (req, res, next) => next && next()) })), { memoryStorage: jest.fn(), diskStorage: jest.fn() });\njest.mock('multer', () => mockMulter, { virtual: true });\n\n`);
     }
 
+    // 7.1 Detect UI & Client-side Libraries (sonner, react-toastify, lucide-react, framer-motion, @radix-ui, next-themes)
+    if (/sonner/i.test(codeToInspect)) {
+        detectedDependencies.push("sonner");
+        thirdPartyMockCode += `// 7.1 Mock Sonner Toast\n` +
+            (isVitest
+                ? `vi.mock('sonner', () => {\n  const _mockSonnerToast = Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn(), info: vi.fn(), warning: vi.fn(), message: vi.fn(), loading: vi.fn(), dismiss: vi.fn(), promise: vi.fn(), custom: vi.fn() });\n  return { toast: _mockSonnerToast, Toaster: vi.fn(() => null), default: { toast: _mockSonnerToast, Toaster: vi.fn(() => null) } };\n});\n\n`
+                : `const _mockSonnerToast = Object.assign(jest.fn(), { error: jest.fn(), success: jest.fn(), info: jest.fn(), warning: jest.fn(), message: jest.fn(), loading: jest.fn(), dismiss: jest.fn(), promise: jest.fn(), custom: jest.fn() });\n` +
+                  `jest.mock('sonner', () => ({ toast: _mockSonnerToast, Toaster: jest.fn(() => null), default: { toast: _mockSonnerToast, Toaster: jest.fn(() => null) } }), { virtual: true });\n\n`);
+    }
+    if (/react-toastify/i.test(codeToInspect)) {
+        detectedDependencies.push("react-toastify");
+        thirdPartyMockCode += `// 7.2 Mock React-Toastify\n` +
+            (isVitest
+                ? `vi.mock('react-toastify', () => {\n  const _mockToastify = Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn(), info: vi.fn(), warning: vi.fn(), dismiss: vi.fn() });\n  return { toast: _mockToastify, ToastContainer: vi.fn(() => null), default: { toast: _mockToastify } };\n});\n\n`
+                : `const _mockToastify = Object.assign(jest.fn(), { error: jest.fn(), success: jest.fn(), info: jest.fn(), warning: jest.fn(), dismiss: jest.fn() });\n` +
+                  `jest.mock('react-toastify', () => ({ toast: _mockToastify, ToastContainer: jest.fn(() => null), default: { toast: _mockToastify } }), { virtual: true });\n\n`);
+    }
+    if (/lucide-react/i.test(codeToInspect)) {
+        detectedDependencies.push("lucide-react");
+        thirdPartyMockCode += `// 7.3 Mock Lucide Icons\n` +
+            (isVitest
+                ? `vi.mock('lucide-react', () => new Proxy({}, { get: (_, prop) => prop === '__esModule' ? true : vi.fn(() => null) }));\n\n`
+                : `jest.mock('lucide-react', () => new Proxy({}, { get: (_, prop) => prop === '__esModule' ? true : jest.fn(() => null) }), { virtual: true });\n\n`);
+    }
+    if (/framer-motion/i.test(codeToInspect)) {
+        detectedDependencies.push("framer-motion");
+        thirdPartyMockCode += `// 7.4 Mock Framer Motion\n` +
+            (isVitest
+                ? `vi.mock('framer-motion', () => ({ motion: new Proxy({}, { get: () => 'div' }), AnimatePresence: ({ children }) => children }));\n\n`
+                : `jest.mock('framer-motion', () => ({ motion: new Proxy({}, { get: () => 'div' }), AnimatePresence: ({ children }) => children }), { virtual: true });\n\n`);
+    }
+    if (/@radix-ui/i.test(codeToInspect)) {
+        detectedDependencies.push("radix-ui");
+        const radixMatches = [...new Set([...codeToInspect.matchAll(/['"](@radix-ui\/[^'"]+)['"]/g)].map(m => m[1]))];
+        for (const rPkg of radixMatches) {
+            thirdPartyMockCode += isVitest
+                ? `vi.mock('${rPkg}', () => new Proxy({}, { get: (_, prop) => prop === '__esModule' ? true : (({ children, ...props }) => children || null) }));\n`
+                : `jest.mock('${rPkg}', () => new Proxy({}, { get: (_, prop) => prop === '__esModule' ? true : (({ children, ...props }) => children || null) }), { virtual: true });\n`;
+        }
+        if (radixMatches.length > 0) thirdPartyMockCode += "\n";
+    }
+    if (/next-themes/i.test(codeToInspect)) {
+        detectedDependencies.push("next-themes");
+        thirdPartyMockCode += `// 7.5 Mock Next Themes\n` +
+            (isVitest
+                ? `vi.mock('next-themes', () => ({ useTheme: () => ({ theme: 'light', setTheme: vi.fn(), systemTheme: 'light' }), ThemeProvider: ({ children }) => children }));\n\n`
+                : `jest.mock('next-themes', () => ({ useTheme: () => ({ theme: 'light', setTheme: jest.fn(), systemTheme: 'light' }), ThemeProvider: ({ children }) => children }), { virtual: true });\n\n`);
+    }
+    if (/@langchain|langsmith/i.test(codeToInspect)) {
+        detectedDependencies.push("langchain-sdk");
+        thirdPartyMockCode += `// 7.6 Mock LangChain & LangGraph SDK\n` +
+            (isVitest
+                ? `vi.mock('@langchain/langgraph-sdk', () => {\n  const Client = vi.fn().mockImplementation(function (opts) { this.apiKey = opts?.apiKey; this.apiUrl = opts?.apiUrl; this.defaultHeaders = opts?.defaultHeaders; });\n  return { Client, default: { Client } };\n});\n` +
+                  `vi.mock('langsmith', () => new Proxy({}, { get: (_, prop) => prop === '__esModule' ? true : vi.fn() }));\n\n`
+                : `jest.mock('@langchain/langgraph-sdk', () => {\n  const Client = jest.fn().mockImplementation(function (opts) { this.apiKey = opts?.apiKey; this.apiUrl = opts?.apiUrl; this.defaultHeaders = opts?.defaultHeaders; });\n  return { Client, default: { Client } };\n}, { virtual: true });\n` +
+                  `jest.mock('langsmith', () => new Proxy({}, { get: (_, prop) => prop === '__esModule' ? true : jest.fn() }), { virtual: true });\n\n`);
+    }
+
     // 8. Detect Downstream Local Services & Models (Pure RAM Isolation)
     const localRequires = [...new Set([...sourceCode.matchAll(/(?:require\s*\(\s*['"](\.[^'"]+)['"]\s*\)|from\s+['"](\.[^'"]+)['"])/g)].map(m => m[1] || m[2]))]
         .filter(reqPath => !/(?:\/types\/|\.d\.ts$|definition)/i.test(reqPath))
@@ -738,7 +796,7 @@ jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, de
 };
 
 /**
- * CONTEXT ASSEMBLER (GIAI ĐOẠN 2 ORCHESTRATION)
+ * CONTEXT ASSEMBLER (STAGE 2 ORCHESTRATION)
  *
  * Integrates AST Analysis (Phase 1) and Context Engineering (Phase 2)
  * into a single unified context payload for LLM Prompt Builder or Test Generator.

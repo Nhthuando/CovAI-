@@ -14,7 +14,7 @@ import {
     extractSourceGapsAndDecisions
 } from "../services/unitTestSuggestion.service.js";
 
-describe("Phase 1: AST & Coverage Gap Analyzer (Kế hoạch Triển khai Phase 1)", () => {
+describe("Phase 1: AST & Coverage Gap Analyzer (Implementation Plan)", () => {
     describe("1. Public Exported vs Internal Helper Function Classification", () => {
         const sourceCode = `
             // Internal unexported helper 1

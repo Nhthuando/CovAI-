@@ -37,7 +37,7 @@ import { snapshotWorkspaceRoot, resolveSnapshotFile } from "../utils/snapshotWor
 import { cleanupProjectStorageAsync } from "./projectStorageCleanup.service.js";
 
 export { ServiceError };
-export { cleanupProjectStorageAsync };
+export { cleanupProjectStorageAsync, buildTree };
 
 function buildTree(dirPath, rootPath = dirPath) {
   const result = [];
@@ -50,7 +50,9 @@ function buildTree(dirPath, rootPath = dirPath) {
         item === ".git" ||
         item === "__MACOSX" ||
         item === ".DS_Store" ||
-        item.startsWith(".covai-")
+        item.startsWith(".covai-") ||
+        item.startsWith(".covai_") ||
+        item === ".covai_test_versions"
       )
         continue;
 
@@ -926,7 +928,8 @@ export const deleteProject = async (projectId, userId) => {
     where: { projectId },
     select: { id: true, rootDir: true, storagePath: true },
   });
-  await cleanupProjectStorageAsync(projectId, snapshots);
+  const evaluations = await prisma.aiEvaluationProjectRun.findMany({ where: { projectId }, select: { id: true } });
+  await cleanupProjectStorageAsync(projectId, snapshots, { evaluationIds: evaluations.map(row => row.id) });
 
   // Fast DB deletion:
   // Primary attempt: Native PostgreSQL ON DELETE CASCADE via prisma.project.delete.

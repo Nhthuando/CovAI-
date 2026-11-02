@@ -27,7 +27,7 @@ const get = (query = "type=analysis&format=json") => request(app).get(`/api/proj
 beforeEach(() => {
     jest.clearAllMocks();
     process.env.JWT_SECRET = "export-test-secret";
-    prismaMock.project.findFirst.mockResolvedValue({ id: "project-1", ownerId:"owner-1", name: "Dự án thử nghiệm", description: "Demo", repoUrl: "https://user:password@github.com/team/repo?token=secret", createdAt: new Date("2026-10-01") });
+    prismaMock.project.findFirst.mockResolvedValue({ id: "project-1", ownerId:"owner-1", name: "Test Project", description: "Demo", repoUrl: "https://user:password@github.com/team/repo?token=secret", createdAt: new Date("2026-10-01") });
     prismaMock.projectSnapshot.findFirst.mockResolvedValue({ id: "snapshot-1", projectId: "project-1", source: "ZIP", createdAt: new Date("2026-10-02"), rootDir: "C:/private/workspace" });
     for (const model of many) prismaMock[model].findMany.mockResolvedValue([]);
     for (const model of unique) prismaMock[model].findUnique.mockResolvedValue(null);
@@ -68,7 +68,7 @@ describe("authenticated project export route", () => {
         expect(response.headers["content-disposition"]).toMatch(/^attachment; filename="covai-.*\.json"$/);
         expect(response.headers["cache-control"]).toBe("no-store");
         expect(response.body.schemaVersion).toBe(1);
-        expect(response.body.project.name).toBe("Dự án thử nghiệm");
+        expect(response.body.project.name).toBe("Test Project");
         expect(response.body.project.repoUrl).toBe("https://github.com/team/repo");
         expect(response.body.snapshot).not.toHaveProperty("rootDir");
         expect(response.body.analysis.coverage.summary).toBeNull();

@@ -6,6 +6,7 @@ const RunningProcessContext = createContext(null);
 
 const STORAGE_KEY = "covai_running_processes";
 const SUGGESTIONS_STORAGE_PREFIX = "covai_snapshot_suggestions_";
+const VERSIONS_STORAGE_PREFIX = "covai_unit_test_versions_";
 
 const initialProcesses = {
   analysis: {
@@ -94,6 +95,7 @@ function loadStoredProcesses(sessionUserId) {
 export function RunningProcessProvider({ children, sessionUserId }) {
   const [processes, setProcesses] = useState(() => loadStoredProcesses(sessionUserId));
   const suggestionsCacheRef = useRef({});
+  const versionsCacheRef = useRef({});
   const pollingRef = useRef(null);
   const autoDismissTimersRef = useRef({});
 
@@ -524,6 +526,49 @@ const sanitizeCachedSuggestions = (sugsMap) => {
     try {
       sessionStorage.setItem(`${SUGGESTIONS_STORAGE_PREFIX}${sessionUserId || "anonymous"}_${snapshotId}`, JSON.stringify(updated));
     } catch (_) { }
+  }, [sessionUserId]);
+
+  const getUnitTestVersionsCache = useCallback((snapshotId) => {
+    if (!snapshotId) return {};
+    if (versionsCacheRef.current[snapshotId]) return versionsCacheRef.current[snapshotId];
+    try {
+      const raw = sessionStorage.getItem(`${VERSIONS_STORAGE_PREFIX}${sessionUserId || "anonymous"}_${snapshotId}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        versionsCacheRef.current[snapshotId] = parsed;
+        return parsed;
+      }
+    } catch (_) {}
+    return {};
+  }, [sessionUserId]);
+
+  const saveUnitTestVersionsCache = useCallback((snapshotId, versionsMap) => {
+    if (!snapshotId) return;
+    versionsCacheRef.current[snapshotId] = versionsMap;
+    try {
+      sessionStorage.setItem(`${VERSIONS_STORAGE_PREFIX}${sessionUserId || "anonymous"}_${snapshotId}`, JSON.stringify(versionsMap));
+    } catch (_) {}
+  }, [sessionUserId]);
+
+  const updateFileActiveVersionCache = useCallback((snapshotId, filePath, newActiveVersion) => {
+    if (!snapshotId || !filePath) return;
+    const current = versionsCacheRef.current[snapshotId] || {};
+    const normKey = filePath.replace(/\\/g, "/");
+    const updated = { ...current };
+    if (updated[normKey]) {
+      updated[normKey] = {
+        ...updated[normKey],
+        currentVersion: Number(newActiveVersion),
+        versions: (updated[normKey].versions || []).map(v => ({
+          ...v,
+          isActive: v.version === Number(newActiveVersion)
+        }))
+      };
+      versionsCacheRef.current[snapshotId] = updated;
+      try {
+        sessionStorage.setItem(`${VERSIONS_STORAGE_PREFIX}${sessionUserId || "anonymous"}_${snapshotId}`, JSON.stringify(updated));
+      } catch (_) {}
+    }
   }, [sessionUserId]);
 
   const updateSingleSuggestionCode = useCallback((snapshotId, filePath, sugId, newCode) => {

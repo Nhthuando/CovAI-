@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { getAgentManifest } from '../../agents/registry.js';
 import { encrypt, decrypt } from '../../utils/crypto.js';
 import { resolveProjectAccess } from '../projectAccess.service.js';
 import { parse, targetSchema, profileInputSchema, definitionSchema, validateApproval, runSchema, reviewSchema } from './contracts.js';
@@ -117,6 +118,7 @@ export async function createRun(db, projectId, userId, input, { enqueue = enqueu
         return existing;
     }
     const profile = await versionFor(db, projectId, data.profileVersionId);
+    if ((await profileFor(db, projectId, profile.profileId)).archivedAt) fail('PROFILE_ARCHIVED', 'Archived benchmarks cannot start new runs');
     if (profile.status !== 'APPROVED') fail('PROFILE_NOT_APPROVED', 'Approve the benchmark before running');
     const target = must(await db.aiEvaluationTargetVersion.findFirst({ where: { id: data.targetVersionId, target: { projectId, archivedAt: null } } }));
     await targetCredential(db, target);
@@ -136,7 +138,7 @@ export async function createRun(db, projectId, userId, input, { enqueue = enqueu
             if (await tx.aiEvaluationRun.count({ where: { projectId, executionStatus: { in: ['QUEUED', 'RUNNING'] } } }) >= 2) fail('RUN_LIMIT', 'At most two evaluation runs can be active per project', 409);
             const job = await tx.job.create({ data: { projectId, userId, type: 'AI_EVALUATION', payloadJson: '{}' } });
             return tx.aiEvaluationRun.create({ data: { projectId, targetVersionId: target.id, profileVersionId: profile.id, snapshotId: data.snapshotId || null, idempotencyKey: data.idempotencyKey, parentRunId, jobId: job.id,
-                manifest: { versions: VERSIONS, targetConfig: target.config, targetConfigHash: target.configHash, targetVersion: target.version, profileHash: profile.definitionHash, profileVersion: profile.version, sourceHashes: profile.sourceManifest.map(s => ({ id: s.id, hash: s.contentHash })), caseHashes: profile.cases.map(c => c.definitionHash), limits: definition.limits, scoring: definition.scoring, judge: definition.judge, evidenceScope: profile.cases.some(c => c.taskType === 'ACTION_TOOL') ? 'COVAI_GATEWAY_ONLY' : 'TARGET_RESPONSE', targetMetadataProvenance: 'TARGET_REPORTED' },
+                manifest: { versions: VERSIONS, agent: getAgentManifest('chatbot-trustworthiness'), targetConfig: target.config, targetConfigHash: target.configHash, targetVersion: target.version, profileHash: profile.definitionHash, profileVersion: profile.version, sourceHashes: profile.sourceManifest.map(s => ({ id: s.id, hash: s.contentHash })), caseHashes: profile.cases.map(c => c.definitionHash), limits: definition.limits, scoring: definition.scoring, judge: definition.judge, evidenceScope: profile.cases.some(c => c.taskType === 'ACTION_TOOL') ? 'COVAI_GATEWAY_ONLY' : 'TARGET_RESPONSE', targetMetadataProvenance: 'TARGET_REPORTED' },
                 cases: { create: profile.cases.map(c => ({ testCaseId: c.id, criteria: { create: c.definition.criteria.map(r => ({ criterionKey: r.key, method: r.method, status: 'NOT_EVALUATED', score: null, reason: 'Case has not been evaluated', evidenceRefs: [], evaluator: {}, details: { caseKey: c.caseKey, taskType: c.taskType, caseWeight: c.definition.weight, criterionWeight: r.weight, required: r.required, blocking: r.blocking, expected: r.rule || { groundTruth: r.groundTruth, rubric: r.rubric } } })) } })) } } });
         });
     } catch (error) {

@@ -8,7 +8,7 @@ import {
 import { analyzeSourceAst, mapCoverageGaps } from "../services/businessLogicAstAnalyzer.service.js";
 
 describe("Unit Test Context Engineering Service - Phase 2 Verification", () => {
-    describe("2.1 Ma Trận Kiểm Thử (Decision Table / Truth Table Engine)", () => {
+    describe("2.1 Decision Table / Truth Table Engine", () => {
         test("constructs an exhaustive 4-category test matrix for a business module", () => {
             const sourceCode = `
 export function calculateOrderDiscount(order, options = {}) {
@@ -76,7 +76,7 @@ export function calculateOrderDiscount(order, options = {}) {
         });
     });
 
-    describe("2.2 Chiến Lược Kiểm Thử Gián Tiếp (Indirect Testing Strategy)", () => {
+    describe("2.2 Indirect Testing Strategy", () => {
         test("maps internal unexported helpers to their exported callers with strict testing directive", () => {
             const sourceCode = `
 // Internal helper function
@@ -130,7 +130,7 @@ export function sub(a, b) { return a - b; }
         });
     });
 
-    describe("2.3 Hợp Đồng Mocking Độc Lập (Isolation Mock Contracts)", () => {
+    describe("2.3 Isolation Mock Contracts", () => {
         test("detects Prisma, Axios, Bull, Env vars, and Express controller usage for Jest", () => {
             const sourceCode = `
 import { prisma } from '../lib/prisma.js';

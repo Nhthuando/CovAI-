@@ -31,6 +31,7 @@ import {
   Target,
   Play,
   FileCheck,
+  History,
 } from "lucide-react";
 import { useTheme } from "../../contexts/ThemeContext";
 import {
@@ -45,6 +46,9 @@ import {
   installMissingDependency,
   suggestUnitTestcase,
   applyUnitTestSuggestion,
+  getUnitTestVersions,
+  switchUnitTestVersion,
+  saveUnitTestVersions,
   getSystemCoverageSummary,
   saveAiSystemTest,
 } from "../../services/coverage.service.js";
@@ -52,6 +56,7 @@ import {
   useCoverageDashboard,
   invalidateCoverageQueries,
   updateCoverageFilesData,
+  invalidateProjectTree,
 } from "../../hooks/useCoverageQuery.js";
 import { getJobDetailApi, cancelJobApi, getProjectJobsApi } from "../../services/job.service.js";
 import { queryClient } from "../../lib/queryClient.js";
@@ -71,6 +76,8 @@ import UnitTestGuidedWorkflow from "./UnitTestGuidedWorkflow.jsx";
 import UnitTestPackageInstaller from "./UnitTestPackageInstaller.jsx";
 import UnitTestTraceabilityMatrix, { extractMissingPackageFromError } from "./UnitTestTraceabilityMatrix.jsx";
 import DiffReviewModal from "./DiffReviewModal.jsx";
+import UnitTestVersionPopover from "./UnitTestVersionPopover.jsx";
+import UnitTestVersionHistoryView from "./UnitTestVersionHistoryView.jsx";
 import InPlaceCoverageFileModal from "./InPlaceCoverageFileModal.jsx";
 import SuggestTestcaseModal from "./SuggestTestcaseModal.jsx";
 
@@ -1108,6 +1115,15 @@ export default function CoverageTypeDashboard({
         // Invalidate cached query data and refetch new verified coverage from test runner
         invalidateCoverageQueries(snapshotId);
         await refetchCoverage();
+        await loadUnitTestVersions();
+        invalidateProjectTree(projectId);
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("covai:project-event", {
+              detail: { projectId, type: "file" },
+            })
+          );
+        }
 
         // If backend returned a background analysis job, track it and auto-sync when it completes
         if (resultData?.backgroundJob?.id) {
@@ -1270,6 +1286,15 @@ export default function CoverageTypeDashboard({
 
         invalidateCoverageQueries(snapshotId);
         await refetchCoverage();
+        await loadUnitTestVersions();
+        invalidateProjectTree(projectId);
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("covai:project-event", {
+              detail: { projectId, type: "file" },
+            })
+          );
+        }
 
         // If backend returned a background analysis job, track it and auto-sync when it completes
         if (resultData?.backgroundJob?.id) {
@@ -1827,6 +1852,15 @@ export default function CoverageTypeDashboard({
       completeBulkApply(lastResultData);
       invalidateCoverageQueries(snapshotId);
       await refetchCoverage();
+      await loadUnitTestVersions();
+      invalidateProjectTree(projectId);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("covai:project-event", {
+            detail: { projectId, type: "file" },
+          })
+        );
+      }
 
       // Only trigger full project re-run if incremental coverage was not already returned by applyUnitTestSuggestion
       const hasIncrementalCoverage = Boolean(lastResultData?.newCoverage && lastResultData?.perFileResults);
@@ -1955,6 +1989,70 @@ export default function CoverageTypeDashboard({
     }
   }, [snapshotId, type, loadSystemSummary, refetchCoverage]);
   const [installingDependencyName, setInstallingDependencyName] = useState(null);
+  const [unitTestVersions, setUnitTestVersions] = useState({});
+
+  const uniqueVersionsCount = useMemo(() => {
+    const vers = new Set();
+    Object.values(unitTestVersions || {}).forEach((f) => {
+      (f.versions || []).forEach((v) => vers.add(v.version));
+    });
+    return vers.size > 0 ? vers.size : 1;
+  }, [unitTestVersions]);
+  const [isSwitchingVersion, setIsSwitchingVersion] = useState(false);
+  const [switchingVersionFile, setSwitchingVersionFile] = useState(null);
+
+  const loadUnitTestVersions = useCallback(async () => {
+    if (!snapshotId || type !== "unit") return;
+    try {
+      const res = await getUnitTestVersions(snapshotId);
+      if (res?.success && res.data) {
+        setUnitTestVersions(res.data);
+      }
+    } catch (err) {
+      console.warn("Failed to load unit test versions:", err);
+    }
+  }, [snapshotId, type]);
+
+  useEffect(() => {
+    loadUnitTestVersions();
+  }, [loadUnitTestVersions]);
+
+  const handleSwitchVersion = useCallback(async ({ filePath = null, targetVersion = 1, allFiles = false }) => {
+    if (isSwitchingVersion || !snapshotId) return;
+    setIsSwitchingVersion(true);
+    setSwitchingVersionFile(allFiles ? "all" : filePath);
+    try {
+      const res = await switchUnitTestVersion(snapshotId, {
+        projectId,
+        filePath,
+        targetVersion,
+        allFiles,
+        runTests: true
+      });
+      if (res?.success) {
+        await loadUnitTestVersions();
+        invalidateCoverageQueries(snapshotId);
+        await refetchCoverage();
+        invalidateProjectTree(projectId);
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("covai:project-event", {
+              detail: { projectId, type: "file" },
+            })
+          );
+        }
+      } else {
+        setError(res?.message || "Failed to switch unit test version.");
+      }
+      return res;
+    } catch (err) {
+      console.error("[handleSwitchVersion] Error:", err);
+      setError(err.message || "Error switching unit test version.");
+    } finally {
+      setIsSwitchingVersion(false);
+      setSwitchingVersionFile(null);
+    }
+  }, [snapshotId, projectId, isSwitchingVersion, loadUnitTestVersions, refetchCoverage]);
 
   const activeMissingDependency = useMemo(() => {
     if (summary?.missingDependency?.packageName) {
@@ -2817,6 +2915,10 @@ export default function CoverageTypeDashboard({
             activeTab={activeMetricView}
             onChangeTab={(tabId) => setActiveMetricView(tabId)}
             isLight={isLight}
+            unitTestVersions={unitTestVersions}
+            onSwitchVersion={handleSwitchVersion}
+            isSwitchingVersion={isSwitchingVersion}
+            switchingVersionFile={switchingVersionFile}
           />
 
           <UnitTestPackageInstaller
@@ -3357,6 +3459,13 @@ export default function CoverageTypeDashboard({
                       icon: Terminal,
                       accent: isLight ? "#0f172a" : "#38bdf8",
                     },
+                    {
+                      id: "versions",
+                      label: "Version History",
+                      count: `${uniqueVersionsCount} versions`,
+                      icon: History,
+                      accent: isLight ? "#7c3aed" : "#c4b5fd",
+                    },
                   ]
                   : [
                     {
@@ -3455,11 +3564,13 @@ export default function CoverageTypeDashboard({
                   </button>
                 );
               })}
+
+
             </div>
           )}
 
           {/* Active View Explanatory Banner */}
-          {activeMetricView !== "testcases" && activeMetricView !== "traceability" && (
+          {activeMetricView !== "testcases" && activeMetricView !== "traceability" && activeMetricView !== "versions" && (
             <div
               style={{
                 marginTop: 10,
@@ -3712,6 +3823,10 @@ export default function CoverageTypeDashboard({
                 onInstallDependency={handleInstallDependency}
                 installingDependencyName={installingDependencyName}
                 isLight={isLight}
+                unitTestVersions={unitTestVersions}
+                onSwitchVersion={handleSwitchVersion}
+                isSwitchingVersion={isSwitchingVersion}
+                switchingVersionFile={switchingVersionFile}
               />
             </div>
           ) : type === "unit" && activeMetricView === "visualization" ? (
@@ -3734,6 +3849,19 @@ export default function CoverageTypeDashboard({
                 missingDependency={summary?.missingDependency}
                 onInstallDependency={handleInstallDependency}
                 isInstallingDependency={Boolean(installingDependencyName)}
+              />
+            </div>
+          ) : type === "unit" && activeMetricView === "versions" ? (
+            <div style={{ marginTop: 14 }}>
+              <UnitTestVersionHistoryView
+                unitTestVersions={unitTestVersions}
+                onSwitchVersion={handleSwitchVersion}
+                isSwitchingVersion={isSwitchingVersion}
+                switchingVersionFile={switchingVersionFile}
+                onReviewDiff={openReviewForFile}
+                isLight={isLight}
+                snapshotId={snapshotId}
+                projectId={projectId}
               />
             </div>
           ) : type === "unit" && activeMetricView === "testcases" ? (
@@ -5726,6 +5854,10 @@ export default function CoverageTypeDashboard({
           onClose={() => setReviewModalOpen(false)}
           files={reviewFiles}
           initialFileIndex={reviewInitialFileIndex}
+          onUndoFile={async (file) => {
+            const fPath = file?.filePath || file?.sourceFile || file?.testFile;
+            await handleSwitchVersion({ filePath: fPath, targetVersion: 1 });
+          }}
           onApplyFile={async (file, currentSuggestion) => {
             const cleanTarget = cleanDisplayPath(file.filePath);
             let fileSugs = allPendingSuggestions.filter((s) => {

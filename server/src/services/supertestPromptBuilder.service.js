@@ -3,6 +3,7 @@
  * Builds AI prompts specifically for generating Supertest integration tests.
  */
 import { extractValidEndpoints } from "./apiEndpointParser.service.js";
+import { withAgentContext } from '../agents/registry.js';
 import { extractDatabaseSchemaConstraints } from "./integrationAiTestGenerator.service.js";
 
 
@@ -370,5 +371,5 @@ export const buildSupertestPrompt = (payload, targetEndpoints = null, pathConstr
     prompt += "---\n\n";
     prompt += "Now analyze the source code and contracts above and generate the Supertest integration test files in the exact JSON format specified. Output ONLY the JSON object inside a markdown code block. Do NOT add any explanations before or after the JSON block.";
 
-    return prompt;
+    return withAgentContext(prompt, 'integration-test');
 };

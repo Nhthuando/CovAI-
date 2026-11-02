@@ -1,7 +1,9 @@
 import fs from 'node:fs';
 import { containedPath } from './fullSystemConfig.service.js';
 import { collectSystemGenerationContext } from './systemGenerationContext.service.js';
-import { generateText } from './gemini.service.js';
+import { generateText as generateFeatureText } from './gemini.service.js';
+import { withGeminiFeature } from './geminiRouting.service.js';
+const generateText = (...args) => withGeminiFeature('system-test', () => generateFeatureText(...args));
 import { validateGeneratedTestCode } from '../validators/aiTestCode.validator.js';
 import { preserveTestIntent, analyzeSystemTestFile, walkAst, validateAdditionalTestQuality } from './systemTestStaticAnalysis.service.js';
 import { ServiceError } from '../utils/serviceError.js';

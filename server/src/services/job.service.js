@@ -739,6 +739,13 @@ export const cancelJob = async (jobId) => {
     await (await import('./aiEvaluation/runner.service.js')).cancelEvaluationJob(jobId);
     return prisma.job.findUnique({ where: { id: jobId } });
   }
+  if (currentJob.type === 'AI_EVALUATION_PREPARE') {
+    const evaluation = await prisma.aiEvaluationProjectRun.findUnique({ where: { jobId } });
+    if (evaluation) {
+      await (await import('./aiEvaluation/projectEvaluation.service.js')).cancelProjectEvaluation(prisma, evaluation.projectId, evaluation.id);
+      return prisma.job.findUnique({ where: { id: jobId } });
+    }
+  }
 
   // Idempotent: repeated cancel requests return the canceled job safely
   if (currentJob.status === "CANCELED") {

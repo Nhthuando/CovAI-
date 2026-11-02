@@ -135,10 +135,10 @@ export default function IntegrationReportEmbed({
           </div>
           <div>
             <h2 className="text-base font-bold text-[var(--color-text)] m-0 flex items-center gap-2">
-              Báo Cáo Kiểm Thử Tích Hợp API (Integration Test Report)
+              API Integration Test Report
             </h2>
             <p className="text-xs text-[var(--color-text-secondary)] font-mono m-0 mt-0.5">
-              Project #{projectId?.substring(0, 8) || "active"} • Snapshot: #{snapshotId?.substring(0, 8) || "latest"} • Báo cáo tự động tổng hợp
+              Project #{projectId?.substring(0, 8) || "active"} • Snapshot: #{snapshotId?.substring(0, 8) || "latest"} • Automated Quality Report
             </p>
           </div>
         </div>
@@ -148,19 +148,19 @@ export default function IntegrationReportEmbed({
             type="button"
             onClick={handleExportJson}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-semibold transition-colors cursor-pointer shadow-xs"
-            title="Tải toàn bộ báo cáo về máy dưới dạng JSON"
+            title="Download report summary as JSON"
           >
             <Download size={13} />
-            <span>Xuất JSON Summary</span>
+            <span>Export JSON Summary</span>
           </button>
           <button
             type="button"
             onClick={handlePrint}
             className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
-            title="In hoặc xuất file PDF báo cáo này"
+            title="Print or export PDF report"
           >
             <Printer size={13} />
-            <span>In báo cáo / Xuất PDF</span>
+            <span>Print Report / Export PDF</span>
           </button>
         </div>
       </div>
@@ -225,7 +225,7 @@ export default function IntegrationReportEmbed({
             {totalUncovered}
           </p>
           <div className="text-[10px] text-[var(--color-text-secondary)] mt-1 font-mono">
-            Chưa có kịch bản kiểm thử API
+            No API test scenarios available
           </div>
         </div>
       </div>
@@ -236,7 +236,7 @@ export default function IntegrationReportEmbed({
           <div className="flex items-center gap-2">
             <Database size={16} className="text-[var(--color-primary)]" />
             <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text)] m-0">
-              Tóm Tắt Ma Trận Độ Bao Phủ Endpoint ({routeMatrix.length} Routes)
+              Endpoint Coverage Matrix Summary ({routeMatrix.length} Routes)
             </h3>
           </div>
         </div>
@@ -249,14 +249,14 @@ export default function IntegrationReportEmbed({
                 <th className="py-2 px-3">Endpoint Route</th>
                 <th className="py-2 px-3">Handler</th>
                 <th className="py-2 px-3">Source File</th>
-                <th className="py-2 px-3 text-center">Trạng Thái</th>
+                <th className="py-2 px-3 text-center">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]/60 font-mono">
               {routeMatrix.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="py-6 text-center text-xs text-[var(--color-text-muted)] italic">
-                    Chưa phát hiện route nào trong snapshot này.
+                    No routes detected in this snapshot.
                   </td>
                 </tr>
               ) : (
@@ -310,20 +310,20 @@ export default function IntegrationReportEmbed({
         {/* Execution History */}
         <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-4 shadow-xs">
           <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text)] m-0 pb-2 border-b border-[var(--color-border)] mb-3 flex items-center justify-between">
-            <span>Lịch Sử Chạy Test (Executions)</span>
+            <span>Test Run History (Executions)</span>
             <Activity size={14} className="text-[var(--color-text-muted)]" />
           </h3>
           {!history?.executions || history.executions.length === 0 ? (
-            <p className="text-[var(--color-text-muted)] text-xs italic py-2">Không có lịch sử chạy test.</p>
+            <p className="text-[var(--color-text-muted)] text-xs italic py-2">No test execution history found.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-left">
                 <thead className="text-[var(--color-text-secondary)] bg-[var(--color-surface-secondary)] text-[10px] uppercase font-bold">
                   <tr>
-                    <th className="py-1.5 px-2">Thời gian</th>
-                    <th className="py-1.5 px-2">Trạng thái</th>
+                    <th className="py-1.5 px-2">Timestamp</th>
+                    <th className="py-1.5 px-2">Status</th>
                     <th className="py-1.5 px-2">Passed / Total</th>
-                    <th className="py-1.5 px-2 text-right">Thời lượng</th>
+                    <th className="py-1.5 px-2 text-right">Duration</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--color-border)] font-mono text-[11px]">
@@ -348,17 +348,17 @@ export default function IntegrationReportEmbed({
         {/* Coverage Trend History */}
         <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-4 shadow-xs">
           <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text)] m-0 pb-2 border-b border-[var(--color-border)] mb-3 flex items-center justify-between">
-            <span>Xu Hướng Độ Bao Phủ API (Coverage Trend)</span>
+            <span>API Coverage Trend</span>
             <BarChart2 size={14} className="text-[var(--color-text-muted)]" />
           </h3>
           {!history?.coverage || history.coverage.length === 0 ? (
-            <p className="text-[var(--color-text-muted)] text-xs italic py-2">Không có lịch sử đo độ bao phủ.</p>
+            <p className="text-[var(--color-text-muted)] text-xs italic py-2">No coverage trend history found.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-left">
                 <thead className="text-[var(--color-text-secondary)] bg-[var(--color-surface-secondary)] text-[10px] uppercase font-bold">
                   <tr>
-                    <th className="py-1.5 px-2">Thời gian</th>
+                    <th className="py-1.5 px-2">Timestamp</th>
                     <th className="py-1.5 px-2">Snapshot</th>
                     <th className="py-1.5 px-2 text-right">API Coverage %</th>
                   </tr>

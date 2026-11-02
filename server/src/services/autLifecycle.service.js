@@ -62,7 +62,7 @@ export const isPortInUse = async (port, host = "localhost", timeoutMs = 1000) =>
 };
 
 /**
- * Tầng 1: Socket Check.
+ * Tier 1: Socket Check.
  * Polls the port until it opens or times out.
  */
 export const waitForPortOpen = async (port, timeoutMs = 45000, host = "localhost", intervalMs = 500, isExited = () => false) => {
@@ -77,7 +77,7 @@ export const waitForPortOpen = async (port, timeoutMs = 45000, host = "localhost
 };
 
 /**
- * Tầng 2: HTTP Verification.
+ * Tier 2: HTTP Verification.
  * Sends a GET request to verify server responsiveness.
  */
 export const verifyHttpHealth = (port, pathName = "/", host = "127.0.0.1", timeoutMs = 5000) => {
@@ -372,7 +372,7 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
     exitCode = code;
   });
 
-  // Tầng 1: Socket Check (polling waitForPortOpen)
+  // Tier 1: Socket Check (polling waitForPortOpen)
   const readinessDeadline = Date.now() + healthTimeoutMs;
   try {
     await waitForPortOpen(port, healthTimeoutMs, "127.0.0.1", 500, () => serverExited);
@@ -387,7 +387,7 @@ export const startAutServer = async ({ snapshotDir, port = 4173, jobId = null, h
     throw error;
   }
 
-  // Tầng 2: HTTP Verification
+  // Tier 2: HTTP Verification
   let httpResult;
   try {
     httpResult = requireHealthy

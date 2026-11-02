@@ -207,7 +207,7 @@ export const processSupertestCoverageJob = async (jobId) => {
         }
 
         if (supertestFiles.length === 0) {
-            throw new ServiceError("Không tìm thấy tệp kiểm thử Supertest hợp lệ trong snapshot này. Vui lòng bấm 'Sinh test AI' để tạo kịch bản kiểm thử API.", 422);
+            throw new ServiceError("No valid Supertest test files found in this snapshot. Please click 'Generate AI Tests' to create API test scenarios.", 422);
         }
 
         await saveJobOutput(jobId, { stdout: "", stderr: "" }).catch(() => { });

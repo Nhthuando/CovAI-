@@ -9,8 +9,10 @@
     "db:push": "prisma db push",
     "start": "prisma generate && node index.js",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
-    "test:evaluation": "node --test src/tests/aiEvaluation.integration.test.mjs src/tests/aiEvaluation.contract.test.mjs",
-    "test:evaluation:ui": "node --test src/tests/aiEvaluation.browser.test.mjs"
+    "test:evaluation": "node --test src/tests/aiEvaluation.integration.test.mjs src/tests/aiEvaluation.contract.test.mjs src/tests/aiEvaluation.projectDiscovery.test.mjs src/tests/aiEvaluation.platformBenchmark.test.mjs src/tests/aiEvaluation.projectRuntime.test.mjs src/tests/aiEvaluation.projectWorkflow.test.mjs src/tests/aiEvaluation.projectSettings.test.mjs src/tests/aiEvaluation.projectSourceScope.test.mjs src/tests/aiEvaluation.chainlitTransport.test.mjs src/tests/aiEvaluation.projectProtocols.test.mjs src/tests/aiEvaluation.pythonRuntime.test.mjs",
+    "test:evaluation:ui": "node --test src/tests/aiEvaluation.projectBrowser.test.mjs",
+    "test:evaluation:docker": "node --test --test-concurrency=1 src/tests/aiEvaluation.sandboxDocker.test.mjs src/tests/aiEvaluation.chainlitDocker.test.mjs src/tests/aiEvaluation.streamingDocker.test.mjs",
+    "test:agents": "node --experimental-vm-modules node_modules/jest/bin/jest.js src/tests/aiAgentProfiles.test.js src/tests/aiPromptBuilder.test.js src/tests/unitTestGenerator.service.test.js src/tests/integrationAiTestGenerator.test.js src/tests/cypressPromptBuilder.test.js src/tests/verifiedSystemGeneration.test.js src/tests/systemTestPromptBudget.test.js --runInBand && node --test src/tests/aiAgentApi.test.mjs src/tests/aiEvaluation.contract.test.mjs src/tests/aiEvaluation.integration.test.mjs"
   },
   "keywords": [],
   "author": "",

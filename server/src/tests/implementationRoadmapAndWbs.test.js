@@ -6,8 +6,8 @@ import {
   normalizePathForCompare,
 } from "../utils/functionNavigationHelpers.js";
 
-describe("## 6. KẾ HOẠCH TRIỂN KHAI CHI TIẾT (IMPLEMENTATION ROADMAP & WBS)", () => {
-  describe("6.1 Phase 1: Chuẩn Hóa Contracts & Luồng Tham Số (WBS 1.1 - 1.3)", () => {
+describe("## 6. IMPLEMENTATION ROADMAP & WBS", () => {
+  describe("6.1 Phase 1: Normalize Contracts & Parameter Flow (WBS 1.1 - 1.3)", () => {
     test("WBS 1.1: FunctionExecutionFlow.jsx dispatches 4-parameter coordinates to onOpenFile", () => {
       let dispatchedParams = null;
       const onOpenFile = (filePath, startLine, funcName, endLine) => {
@@ -144,7 +144,7 @@ describe("## 6. KẾ HOẠCH TRIỂN KHAI CHI TIẾT (IMPLEMENTATION ROADMAP & W
     });
   });
 
-  describe("6.3 Phase 3: Hiện Thực Hóa Monaco Line Jump Engine (WBS 3.1 - 3.3)", () => {
+  describe("6.3 Phase 3: Monaco Line Jump Engine Implementation (WBS 3.1 - 3.3)", () => {
     test("WBS 3.1: Layout.jsx constructs unique editorJumpTarget with timestamp", () => {
       let jumpTarget = null;
       const setEditorJumpTarget = (target) => {
@@ -207,8 +207,8 @@ describe("## 6. KẾ HOẠCH TRIỂN KHAI CHI TIẾT (IMPLEMENTATION ROADMAP & W
     });
   });
 
-  describe("6.4 Ma Trận Quản Trị Rủi Ro Kỹ Thuật (Risk Mitigation Matrix)", () => {
-    test("Rủi ro 1: File lớn chưa tải xong nội dung -> Pending jump xử lý an toàn khi model/content sẵn sàng", () => {
+  describe("6.4 Technical Risk Mitigation Matrix", () => {
+    test("Risk 1: Large file loading -> Pending jump safely resolves when model/content ready", () => {
       let isFileLoading = true;
       let pendingJump = { filePath: "src/bigFile.js", line: 250 };
       let executedJump = null;
@@ -224,7 +224,7 @@ describe("## 6. KẾ HOẠCH TRIỂN KHAI CHI TIẾT (IMPLEMENTATION ROADMAP & W
       expect(executedJump.line).toBe(250);
     });
 
-    test("Rủi ro 2: Hàm vô danh không khớp tên -> Fallback khớp theo số dòng startLine và khoảng bao phủ", () => {
+    test("Risk 2: Anonymous functions without name match -> Fallback matches by startLine and span", () => {
       const functions = [
         { functionName: "renderList", startLine: 10, endLine: 35 },
         { functionName: "", startLine: 40, endLine: 65 }, // Anonymous
@@ -235,7 +235,7 @@ describe("## 6. KẾ HOẠCH TRIỂN KHAI CHI TIẾT (IMPLEMENTATION ROADMAP & W
       expect(matchedByLine).toBe(""); // Successfully matched the anonymous function covering line 45
     });
 
-    test("Rủi ro 3: Trùng lặp đường dẫn tương đối (./src vs src) -> Normalize path loại bỏ tiền tố thừa", () => {
+    test("Risk 3: Duplicate relative paths (./src vs src) -> Path normalization strips redundant prefix", () => {
       const pathA = "./src/components/Editor.jsx";
       const pathB = "src\\components\\Editor.jsx";
 
