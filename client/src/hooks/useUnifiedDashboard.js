@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useRef, useCallback } from "react";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { fetchCoverageDashboardData } from "./useCoverageQuery.js";
 import {
@@ -16,7 +16,7 @@ import { adaptUnifiedDashboard } from "../services/unifiedDashboard/unifiedDashb
 /**
  * Fetch 100% real data across Unified Aggregation API + Unit, Integration, and System testing layers in parallel.
  */
-export async function fetchAllTestingLayers({ snapshotId, projectId }) {
+export async function fetchAllTestingLayers({ snapshotId, projectId, refresh = false }) {
   if (!snapshotId) {
     return {
       unifiedBackendRaw: null,
@@ -32,7 +32,7 @@ export async function fetchAllTestingLayers({ snapshotId, projectId }) {
 
   // FAST PATH: Single unified endpoint returns aggregated data across all 3 tiers in < 300ms
   try {
-    const unifiedRes = await getUnifiedQualityDashboard(snapshotId);
+    const unifiedRes = await getUnifiedQualityDashboard(snapshotId, { refresh });
     if (unifiedRes?.data) {
       return {
         unifiedBackendRaw: unifiedRes.data,
@@ -112,15 +112,32 @@ export function useUnifiedDashboard({
   snapshots = EMPTY_SNAPSHOTS,
 }) {
   const effectiveSnapshotId = snapshotId || snapshots[0]?.id || "";
+  const isForceRefreshingRef = useRef(false);
 
   const query = useQuery({
     queryKey: ["unifiedDashboard", effectiveSnapshotId, projectId || null],
-    queryFn: () => fetchAllTestingLayers({ snapshotId: effectiveSnapshotId, projectId }),
+    queryFn: () => {
+      const isRefresh = isForceRefreshingRef.current;
+      isForceRefreshingRef.current = false;
+      return fetchAllTestingLayers({ snapshotId: effectiveSnapshotId, projectId, refresh: isRefresh });
+    },
     enabled: Boolean(effectiveSnapshotId),
-    placeholderData: keepPreviousData,
-    staleTime: 2 * 60 * 1000, // 2 minutes cache freshness
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery?.queryKey?.[1] === effectiveSnapshotId ? previousData : undefined,
+    staleTime: 15 * 1000, // 15 seconds cache freshness for responsive tab switching
+    refetchOnWindowFocus: true,
     gcTime: 30 * 60 * 1000,
   });
+
+  const forceRefresh = useCallback(async () => {
+    if (!effectiveSnapshotId) return;
+    isForceRefreshingRef.current = true;
+    try {
+      return await query.refetch();
+    } finally {
+      isForceRefreshingRef.current = false;
+    }
+  }, [effectiveSnapshotId, query]);
 
   const vm = useMemo(() => {
     if (!effectiveSnapshotId) {
@@ -138,7 +155,7 @@ export function useUnifiedDashboard({
       return null;
     }
 
-    return adaptUnifiedDashboard({
+    const adapted = adaptUnifiedDashboard({
       unifiedBackendRaw: query.data?.unifiedBackendRaw || null,
       unitRaw: query.data?.unitRaw || null,
       integrationRaw: query.data?.integrationRaw || null,
@@ -151,8 +168,16 @@ export function useUnifiedDashboard({
         snapshots,
       },
     });
+
+    if (adapted && adapted.context) {
+      const latestSyncTime = query.dataUpdatedAt || adapted.context.updatedAt || Date.now();
+      adapted.context.updatedAt = latestSyncTime;
+    }
+
+    return adapted;
   }, [
     query.data,
+    query.dataUpdatedAt,
     query.isLoading,
     projectId,
     projectName,
@@ -168,6 +193,7 @@ export function useUnifiedDashboard({
     isError: Boolean(effectiveSnapshotId) ? query.isError : false,
     error: query.error,
     refetch: query.refetch,
+    forceRefresh,
   };
 }
 

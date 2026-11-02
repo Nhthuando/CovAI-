@@ -335,6 +335,13 @@ export const processSupertestCoverageJob = async (jobId) => {
         });
 
         await addJobLog(jobId, "INFO", JSON.stringify({ stage: 'COMPLETE', label: "Supertest coverage pipeline completed.", progress: 100 }));
+
+        try {
+            const { invalidateCoverageCache } = await import("../controllers/coverage.controller.js");
+            invalidateCoverageCache(snapshotId);
+            const { invalidateEndpointCache } = await import("./integrationWorkspace.service.js");
+            invalidateEndpointCache(snapshotId, rootDir);
+        } catch (_) { }
     } catch (error) {
         if (isJobCanceled(jobId, abortController.signal) || error?.message?.includes("canceled") || error?.message?.includes("cancelled") || error?.statusCode === 409) {
             await addJobLog(jobId, "INFO", "[SUPERTEST] Run Tests canceled by user. Preserving partial execution evidence.").catch(() => {});

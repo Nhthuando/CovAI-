@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Play, Sparkles, Download, GitBranch, Clock } from "lucide-react";
+import { Play, Sparkles, Download, GitBranch, Clock, RefreshCw } from "lucide-react";
+import { useToast } from "../../ToastContext.jsx";
 import { QualityGateBadge } from "../primitives/QualityGateBadge.jsx";
 import { PillarBadge } from "../primitives/PillarBadge.jsx";
 import { StatusPill } from "../primitives/StatusPill.jsx";
@@ -16,11 +17,32 @@ export function GlobalCommandHeader({
   onSelectSnapshot,
   runAllState,
   onNavigateWorkspace,
+  isSyncing = false,
+  onForceRefresh = null,
   className = "",
 }) {
   const navigate = useNavigate();
+  const { addToast } = useToast?.() || {};
   const [showConfirmRun, setShowConfirmRun] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
+
+  const handleManualRefresh = async () => {
+    if (!onForceRefresh || isSyncing) return;
+    try {
+      await onForceRefresh();
+      addToast?.({
+        title: "Overview Synchronized",
+        message: "Unified quality metrics refreshed with latest backend state.",
+        type: "success",
+      });
+    } catch (err) {
+      addToast?.({
+        title: "Sync Failed",
+        message: err.message || "Failed to synchronize metrics.",
+        type: "error",
+      });
+    }
+  };
 
   const context = vm?.context || {};
   const qualityGate = vm?.qualityGate || {
@@ -140,10 +162,38 @@ export function GlobalCommandHeader({
 
               <span className="text-[var(--ud-border)] hidden sm:inline">•</span>
 
-              {/* Last Updated */}
-              <div className="inline-flex items-center gap-1">
-                <Clock size={12} className="shrink-0" />
-                <span>Updated {fmtRelativeTime(context.updatedAt)}</span>
+              {/* Last Updated & Hybrid Sync Button */}
+              <div className="inline-flex items-center gap-1.5">
+                <Clock size={12} className="shrink-0 text-[var(--ud-text-muted)]" />
+                <span className="text-xs text-[var(--ud-text-muted)] font-mono">
+                  Updated {fmtRelativeTime(context.updatedAt)}
+                </span>
+
+                {/* Circular Hybrid Sync Indicator / Force Refresh Button */}
+                <button
+                  type="button"
+                  id="ud-header-sync-btn"
+                  onClick={handleManualRefresh}
+                  disabled={isSyncing}
+                  aria-label="Force refresh and synchronize metrics"
+                  title={
+                    isSyncing
+                      ? "Syncing latest test metrics from backend..."
+                      : "Force refresh: Flush server cache & recompute all test metrics"
+                  }
+                  className={`inline-flex items-center justify-center w-5 h-5 rounded-full border border-[var(--ud-border)] bg-[var(--ud-surface-2)] text-[var(--ud-text-muted)] hover:text-[var(--ud-text)] hover:border-[var(--ud-text-muted)] transition-all cursor-pointer disabled:cursor-not-allowed ${
+                    isSyncing
+                      ? "opacity-90 border-[var(--color-primary)]/50 text-[var(--color-primary)]"
+                      : "active:scale-95"
+                  }`}
+                >
+                  <RefreshCw
+                    size={11}
+                    className={`shrink-0 transition-transform ${
+                      isSyncing ? "animate-spin text-[var(--color-primary)]" : ""
+                    }`}
+                  />
+                </button>
               </div>
             </div>
           </div>

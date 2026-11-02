@@ -216,7 +216,16 @@ export const invalidateEndpointCache = (snapshotId, rootDir = null) => {
   endpointCache.delete(snapshotId);
   firebaseCache.delete(snapshotId);
   aiTestParseCache.delete(snapshotId);
-  apiTraceCache.delete(snapshotId);
+  for (const key of apiTraceCache.keys()) {
+    if (key === snapshotId || key.startsWith(`${snapshotId}_`)) {
+      apiTraceCache.delete(key);
+    }
+  }
+  try {
+    import("./unifiedQualityDashboard.service.js").then((mod) => {
+      mod?.clearUnifiedDashboardCache?.(snapshotId);
+    }).catch(() => {});
+  } catch (_) {}
   if (rootDir) {
     try {
       import("fs").then((fsModule) => {

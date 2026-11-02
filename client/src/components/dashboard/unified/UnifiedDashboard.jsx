@@ -57,7 +57,7 @@ export function UnifiedDashboard({
   const snapshots = project?.snapshots || EMPTY_SNAPSHOTS;
 
   // 1. Fetch & Adapt Real Multi-Tier Data
-  const { vm, isLoading, isError, error, refetch } = useUnifiedDashboard({
+  const { vm, isLoading, isFetching, isError, error, refetch, forceRefresh } = useUnifiedDashboard({
     snapshotId: activeSnapshotId,
     projectId,
     projectName,
@@ -171,8 +171,7 @@ export function UnifiedDashboard({
     }
   }, []);
 
-  const isDashboardLoading =
-    (!vm && isLoading) || (!vm && dataMode === "live" && !activeSnapshotId);
+  const isDashboardLoading = !vm && isLoading && Boolean(activeSnapshotId);
 
   if (isDashboardLoading) {
     return (
@@ -226,6 +225,8 @@ export function UnifiedDashboard({
             onSelectSnapshot={handleSelectSnapshot}
             runAllState={runAllState}
             onNavigateWorkspace={handleNavigate}
+            isSyncing={isFetching}
+            onForceRefresh={forceRefresh}
           />
         </ZoneErrorBoundary>
 

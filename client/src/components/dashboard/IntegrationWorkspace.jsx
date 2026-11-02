@@ -20,6 +20,7 @@ import {
 import { fetchIntegrationReport } from "../../services/report.service.js";
 import { runProjectStructureAnalysisApi } from "../../services/project.service.js";
 import { cancelJobApi } from "../../services/job.service.js";
+import { invalidateCoverageQueries } from "../../hooks/useCoverageQuery.js";
 import {
   Search,
   Zap,
@@ -398,6 +399,9 @@ export default function IntegrationWorkspace({
     setActiveJobStatus("SUCCESS");
     try {
       await load();
+      if (snapshotId) {
+        invalidateCoverageQueries(snapshotId);
+      }
     } catch (err) {
       console.error(
         "[IntegrationWorkspace] Failed to reload workspace after job:",
@@ -412,7 +416,7 @@ export default function IntegrationWorkspace({
         setPendingAction(null);
       }, 500);
     }
-  }, [load]);
+  }, [load, snapshotId]);
 
   const handleJobCanceled = useCallback(async () => {
     setActiveJobStatus("CANCELED");
@@ -508,6 +512,9 @@ export default function IntegrationWorkspace({
         setActiveJobStatus("RUNNING");
       } else {
         await load();
+        if (snapshotId) {
+          invalidateCoverageQueries(snapshotId);
+        }
       }
     } catch (err) {
       setError(err.message || "Không thể sinh kiểm thử tự động.");
@@ -738,7 +745,7 @@ export default function IntegrationWorkspace({
       await mutateIntegrationScenarioApi({snapshotId,aiTestId:editorModalScenario.aiTestId,
         scenarioId:editorModalScenario.scenarioId,expectedVersion:editorModalScenario.expectedVersion,
         action:isAddScenarioMode ? 'ADD' : 'UPDATE',code:typeof savedData === "string" ? savedData : savedData.code,endpoint:editorModalEndpoint});
-      setEditorModalOpen(false);await load();return true;
+      setEditorModalOpen(false);await load();if (snapshotId) { invalidateCoverageQueries(snapshotId); }return true;
     } catch(err) {setError(err.message || 'Lưu kịch bản thất bại.');return false;}
   };
 
