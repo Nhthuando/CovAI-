@@ -42,8 +42,8 @@ export default function ProjectSelectionPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
-  // AI Assistant Sidebar state
-  const [aiPanelOpen, setAiPanelOpen] = useState(() => !isMobile);
+  // AI Assistant Sidebar state (collapsed by default across pages)
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [aiPanelWidth, setAiPanelWidth] = useState(DEFAULT_AI_PANEL_WIDTH);
   const [isDraggingAiPanel, setIsDraggingAiPanel] = useState(false);
   const [pendingAiSuggestion, setPendingAiSuggestion] = useState(null);

@@ -263,7 +263,15 @@ export const runIntegrationGenerationPipeline = async ({
     await updateJobStatus({ jobId, progress: 70 }).catch(() => {});
     await addJobLog(jobId, "INFO", "[Integration AI] Đang gửi yêu cầu tới mô hình AI LLM...").catch(() => {});
 
-    const aiResponseText = await generateText(prompt, model || process.env.GEMINI_MODEL || "gemini-2.5-flash");
+    const aiResponseText = await generateText(
+        prompt,
+        model || process.env.GEMINI_MODEL || "gemini-3.5-flash-lite",
+        {
+            taskType: "integration",
+            temperature: 0.2,
+            maxOutputTokens: 1500,
+        }
+    );
     if (!aiResponseText || !aiResponseText.trim()) {
         throw new ServiceError("Mô hình AI trả về phản hồi rỗng", 500);
     }

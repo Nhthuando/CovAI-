@@ -157,10 +157,13 @@ export const runJobInOperationWorkspace = async (jobId,run) => {
     if (!operation) throw projectFileError('OPERATION_CONTEXT_REQUIRED','This legacy job has no guarded operation context. Submit it again.',409);
     try { return await withOperationWorkspace(operation.id,run,{deferResults:true}); }
     catch(error) {
+        console.error(`[runJobInOperationWorkspace ${jobId}] Job execution failed:`, error);
         const status = error.code === 'OPERATION_STALE' ? 'STALE' : error.code === 'OPERATION_CANCELED' ? 'CANCELED' : 'FAILED';
         await prisma.projectOperation.updateMany({where:{id:operation.id,status:{in:ACTIVE_PROJECT_OPERATIONS}},data:{status}}).catch(()=>{});
+        const errDetail = error.message || 'Guarded operation failed; inspect the job log';
         await prisma.job.updateMany({where:{id:jobId,status:{in:['QUEUED','RUNNING']}},data:{status:'FAILED',finishedAt:new Date(),
-            errorMessage:error.statusCode ? `${error.code || 'OPERATION_FAILED'}: ${error.message}` : 'Guarded operation failed; inspect the job log'}}).catch(()=>{});
+            errorMessage:error.statusCode ? `${error.code || 'OPERATION_FAILED'}: ${error.message}` : errDetail}}).catch(()=>{});
+        await prisma.jobLog.create({data:{jobId,level:'ERROR',message:`Operation failed: ${errDetail}`}}).catch(()=>{});
         throw error;
     }
 };

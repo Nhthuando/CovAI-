@@ -2518,15 +2518,11 @@ select: { id: true, projectId: true, project: { select: { ownerId: true } } }
         }
 
         if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
-        if (typeof resolveProjectAccess === "function") {
-            await resolveProjectAccess({ projectId: snapshot.projectId, userId, capability: "project.read" });
-        } else if (snapshot.project?.ownerId && snapshot.project.ownerId !== userId) {
-            return res.status(403).json({ success: false, message: "Forbidden." });
-        }
-
-        if (!snapshot) return res.status(404).json({ success: false, message: "Snapshot not found." });
         if (snapshot.project?.ownerId && snapshot.project.ownerId !== userId) {
             return res.status(403).json({ success: false, message: "Forbidden." });
+        }
+        if (typeof resolveProjectAccess === "function") {
+            await resolveProjectAccess({ projectId: snapshot.projectId, userId, capability: "project.read" });
         }
 
         const workspaceData = await buildIntegrationWorkspace(targetSnapshotId);

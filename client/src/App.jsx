@@ -124,6 +124,10 @@ function AppContent() {
           }
         />
         <Route
+          path="/editor"
+          element={<Navigate to="/main-editor" replace />}
+        />
+        <Route
           path="/project/:projectId/reports/integration"
           element={
             <ProtectedRoute>

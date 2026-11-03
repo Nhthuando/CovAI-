@@ -2,6 +2,35 @@ import {jest} from '@jest/globals';
 import {fileURLToPath} from 'node:url';
 const service = name => fileURLToPath(new URL(`../../services/${name}.service.js`,import.meta.url));
 let operation;
+const { setPrismaClient } = await import('../../config/prisma.js');
+try {
+  (await (await import('../../config/prisma.js')).default).project;
+} catch {
+  const models = new Map();
+  const getModel = (name) => {
+    if (!models.has(name)) {
+      const methods = {};
+      const modelProxy = new Proxy(methods, {
+        get: (target, op) => {
+          if (op === 'then') return undefined;
+          if (!target[op]) {
+            target[op] = jest.fn().mockResolvedValue(null);
+          }
+          return target[op];
+        }
+      });
+      models.set(name, modelProxy);
+    }
+    return models.get(name);
+  };
+  const mockPrisma = new Proxy({}, {
+    get: (_, prop) => {
+      if (prop === 'then') return undefined;
+      return getModel(prop);
+    }
+  });
+  setPrismaClient(mockPrisma);
+}
 const db = async()=> (await import('../../config/prisma.js')).default;
 const stage = async run => run(await db());
 // These suites exercise API orchestration/AST on temporary files. PostgreSQL

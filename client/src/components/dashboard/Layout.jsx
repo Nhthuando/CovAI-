@@ -51,6 +51,10 @@ import {
   Terminal,
   LogOut,
   Download,
+  FlaskConical,
+  Network,
+  Layers,
+  FileText,
 } from "lucide-react";
 
 import { useAuth } from "../../hooks/useAuth";
@@ -73,6 +77,12 @@ import { queryClient } from "../../lib/queryClient.js";
 const INITIAL_TABS = [];
 const DEFAULT_SIDEBAR_WIDTH = 260;
 const DEFAULT_AI_PANEL_WIDTH = 340;
+
+const COVERAGE_TEST_TABS = [
+  { key: "unit", label: "Unit Test", shortLabel: "Unit", icon: FlaskConical },
+  { key: "integration", label: "Integration Test", shortLabel: "Integration", icon: Network },
+  { key: "system", label: "System Test", shortLabel: "System", icon: Layers },
+];
 
 const containerVariants = {
   hidden: {},
@@ -202,7 +212,7 @@ function LayoutInner() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [isDraggingSidebar, setIsDraggingSidebar] = useState(false);
-  const [aiPanelOpen, setAiPanelOpen] = useState(true);
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [aiPanelWidth, setAiPanelWidth] = useState(DEFAULT_AI_PANEL_WIDTH);
   const [isDraggingAiPanel, setIsDraggingAiPanel] = useState(false);
   const [tabs, setTabs] = useState(INITIAL_TABS);
@@ -414,7 +424,6 @@ function LayoutInner() {
       setAiPanelOpen(false);
     } else {
       setSidebarOpen(true);
-      setAiPanelOpen(true);
     }
   }, [isMobile, isTablet]);
 
@@ -912,8 +921,66 @@ function LayoutInner() {
           )}
         </div>
 
+        {/* ── Center: Test Suite Levels (Unit, Integration, System) ── */}
+        <div className="flex items-center justify-center flex-shrink-0 mx-2">
+          <nav
+            role="tablist"
+            aria-label="Coverage Test Levels"
+            className="inline-flex items-center p-0.5 rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] shadow-xs"
+          >
+            {COVERAGE_TEST_TABS.map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeActivity === "coverage" && coverageType === tab.key;
+              return (
+                <button
+                  key={tab.key}
+                  role="tab"
+                  id={`top-nav-test-${tab.key}`}
+                  aria-selected={isActive}
+                  type="button"
+                  onClick={() => {
+                    handleSelectCoverageType(tab.key);
+                    if (activeActivity !== "coverage") {
+                      setShowCFG(false);
+                      setActiveActivity("coverage");
+                      const params = new URLSearchParams(location.search);
+                      params.set("tab", "coverage");
+                      params.set("type", tab.key);
+                      params.set("coverageType", tab.key);
+                      navigate(`${location.pathname}?${params.toString()}`);
+                    }
+                  }}
+                  className={`relative flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-[var(--radius-sm)] text-xs font-medium transition-colors cursor-pointer select-none outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-focus)] ${
+                    isActive
+                      ? "text-[var(--color-primary)] font-semibold"
+                      : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]/60"
+                  }`}
+                  title={`${tab.label} Suite`}
+                >
+                  {isActive && (
+                    <motion.div
+                      layoutId="active-test-tab-pill"
+                      className="absolute inset-0 rounded-[var(--radius-sm)] bg-[var(--color-bg)] border border-[var(--color-border)] shadow-xs"
+                      transition={{ type: "spring", stiffness: 450, damping: 32 }}
+                    />
+                  )}
+                  <span className="relative z-10 flex items-center gap-1.5">
+                    <Icon
+                      size={13}
+                      strokeWidth={isActive ? 2.2 : 1.8}
+                      className={isActive ? "text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"}
+                    />
+                    <span className="hidden sm:inline">{tab.label}</span>
+                    <span className="sm:hidden">{tab.shortLabel}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+
         <div
-          className="flex items-center gap-2"
+          className="flex items-center gap-2 flex-1 justify-end"
           style={{ position: "relative" }}
         >
           <MissingTestFilesModal
@@ -1011,7 +1078,7 @@ function LayoutInner() {
           </motion.div>
         )}
         <AnimatePresence initial={false}>
-          {sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && activeActivity !== "trustworthiness" && (
+          {sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && activeActivity !== "trustworthiness" && activeActivity !== "coverage" && (
             <motion.div
               key="sidebar"
               initial={
@@ -1089,7 +1156,7 @@ function LayoutInner() {
             </motion.div>
           )}
         </AnimatePresence>
-        {!isMobile && sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && activeActivity !== "trustworthiness" && (
+        {!isMobile && sidebarOpen && activeActivity !== "architecture" && activeActivity !== "overview" && activeActivity !== "trustworthiness" && activeActivity !== "coverage" && (
           <PanelResizer
             onMouseDown={handleSidebarResize}
             isDragging={isDraggingSidebar}

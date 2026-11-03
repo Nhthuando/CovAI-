@@ -92,6 +92,7 @@ export const runSupertest = async (jobId, rootDir, jestConfigPath, supertestFile
     const testArgs = normalizedFiles.map(quoteForShell).join(" ");
     const usesEsm = shouldUseNodeJestDirect(resolvedRoot);
     const nodePathCandidates = [
+        "/app/node_modules",
         path.join(resolvedRoot, "node_modules"),
         path.join(resolvedRoot, "server", "node_modules"),
         path.join(resolvedRoot, "backend", "node_modules"),
