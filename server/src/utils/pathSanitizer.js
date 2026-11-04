@@ -27,8 +27,18 @@ export const cleanStoragePath = (p) => {
         return repoMatch[1].replace(/^\/+/, "");
     }
 
+    // 1b. Match .covai-temp/collaboration-operations/<id>/<file>
+    const collabMatch = clean.match(/(?:^|\/)\.?covai-temp\/collaboration-operations\/[^/]+\/(.+)$/i);
+    if (collabMatch) {
+        return collabMatch[1].replace(/^\/+/, "");
+    }
+    const tempMatch = clean.match(/(?:^|\/)\.?covai-temp\/[^/]+\/(.+)$/i);
+    if (tempMatch) {
+        return tempMatch[1].replace(/^\/+/, "");
+    }
+
     // 2. If it is exactly the repo root or storage directory without relative file
-    if (/(?:^|\/)(?:repo|storage\/projects\/[^/]+(?:\/[^/]+)*)\/?$/i.test(clean)) {
+    if (/(?:^|\/)(?:repo|storage\/projects\/[^/]+(?:\/[^/]+)*|\.?covai-temp(?:\/[^/]+)*)\/?$/i.test(clean)) {
         return "";
     }
 
@@ -56,7 +66,10 @@ export const cleanStoragePath = (p) => {
 
     // 5. Strip drive letters and docker root prefix
     clean = clean.replace(/^[a-zA-Z]:\//, "");
-    clean = clean.replace(/^\/app\/(?:storage|uploads)\/?/i, "");
+    clean = clean.replace(/^\/app\/(?:storage|uploads|\.?covai-temp)\/?/i, "");
+    clean = clean.replace(/^app\/(?:storage|uploads|\.?covai-temp)\/?/i, "");
+    clean = clean.replace(/^\/app\//i, "");
+    clean = clean.replace(/^app\//i, "");
     return clean.replace(/^\/+/, "");
 };
 
@@ -76,12 +89,15 @@ export const cleanStorageText = (text) => {
     if (!text || typeof text !== "string") return text;
     let cleaned = text
         .replace(/(?:\/app|[a-zA-Z]:[\\/][^ \t\r\n'\"()]*)?[\\/]storage[\\/]projects[\\/][^ \t\r\n'\"()]+(?:[\\/][^ \t\r\n'\"()]+)*?[\\/]repo[\\/]/gi, "")
+        .replace(/(?:\/app|[a-zA-Z]:[\\/][^ \t\r\n'\"()]*)?[\\/]\.?covai-temp[\\/]collaboration-operations[\\/][^ \t\r\n'\"()]+[\\/]/gi, "")
+        .replace(/(?:\/app|[a-zA-Z]:[\\/][^ \t\r\n'\"()]*)?[\\/]\.?covai-temp[\\/][^ \t\r\n'\"()]+[\\/]/gi, "")
         .replace(/(?:\/app)?\/storage\/projects\/[^\s'\"()]+\/repo\//gi, "")
         .replace(/(?:\/app)?\/storage\/projects\/[^\s'\"()]+\/snapshots\/[^\s'\"()]+\/coverage\//gi, "")
         .replace(/(?:\/app)?\/storage\/projects\/[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*\/?/gi, "")
         .replace(/(?:\/app|[a-zA-Z]:[\\/][^ \t\r\n'\"()]*)?[\\/]uploads[\\/]snapshots[\\/][^ \t\r\n'\"()]+[\\/][^ \t\r\n'\"()]+[\\/]/gi, "")
         .replace(/(?:\/app)?\/uploads\/snapshots\/[^\s'\"()]+\/[^\s'\"()]+\//gi, "")
-        .replace(/\/app\/(?:storage|uploads)\/?/gi, "");
+        .replace(/\/app\/(?:storage|uploads|\.?covai-temp)\/?/gi, "")
+        .replace(/^app\/(?:storage|uploads|\.?covai-temp)\/?/gi, "");
     return cleaned;
 };
 

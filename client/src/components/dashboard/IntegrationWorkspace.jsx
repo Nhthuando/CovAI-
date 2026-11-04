@@ -66,6 +66,7 @@ import MetricProvenancePopover from "./integration/MetricProvenancePopover.jsx";
 import IntegrationErrorBoundary from "./integration/IntegrationErrorBoundary.jsx";
 import IntegrationApplyTestsModal from "./integration/IntegrationApplyTestsModal.jsx";
 import IntegrationScenarioEditorModal from "./integration/IntegrationScenarioEditorModal.jsx";
+import SourceCodeViewerModal from "./integration/SourceCodeViewerModal.jsx";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
@@ -358,12 +359,16 @@ export default function IntegrationWorkspace({
   const [editorModalScenario, setEditorModalScenario] = useState(null);
   const [editorModalEndpoint, setEditorModalEndpoint] = useState(null);
   const [isAddScenarioMode, setIsAddScenarioMode] = useState(false);
+  const [sourceViewerOpen, setSourceViewerOpen] = useState(false);
+  const [sourceViewerOptions, setSourceViewerOptions] = useState([]);
+  const [showLiveLogsDetails, setShowLiveLogsDetails] = useState(false);
+  const [jobElapsedSeconds, setJobElapsedSeconds] = useState(0);
   const [drawerOpen, setDrawerOpen] = useState(null); // 'history' | 'compare' | null
   const [activeFailureLayerFilter, setActiveFailureLayerFilter] =
     useState("ALL");
   const [expandedCallstacks, setExpandedCallstacks] = useState({});
 
-  // Active navigation tab (endpoints, scenarios, failures, execution, report)
+  // Active navigation tab (endpoints, scenarios, report)
   const [activeTab, setActiveTab] = useState(() => {
     if (activeView === "report") return "report";
     const params = new URLSearchParams(location.search);
@@ -371,10 +376,25 @@ export default function IntegrationWorkspace({
     const view = params.get("view");
     if (view === "report" || focusSection === "section-report" || focusSection === "section-failures") return "report";
     if (focusSection === "section-scenarios") return "scenarios";
-    if (focusSection === "section-matrix") return "endpoints";
-    if (focusSection === "section-execution") return "execution";
     return "endpoints";
   });
+
+  useEffect(() => {
+    let interval = null;
+    if (activeJobId && (activeJobStatus === "RUNNING" || activeJobStatus === "QUEUED")) {
+      setJobElapsedSeconds(0);
+      interval = setInterval(() => {
+        setJobElapsedSeconds((prev) => prev + 1);
+      }, 1000);
+    } else {
+      setJobElapsedSeconds(0);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [activeJobId, activeJobStatus]);
+
+  const liveDurationText = `${Math.floor(jobElapsedSeconds / 60)}m ${jobElapsedSeconds % 60}s`;
 
   useEffect(() => {
     if (activeView === "report") {
@@ -843,6 +863,62 @@ export default function IntegrationWorkspace({
     }
   };
 
+  // View Scenario in Source Code Modal
+  const handleViewScenarioCode = (sc, ep) => {
+    setError("");
+    const rawPath =
+      sc?.testFile ||
+      sc?.filePath ||
+      sc?.sourceFile ||
+      ep?.sourceFile ||
+      ep?.filePath ||
+      "";
+
+    // Clean container and storage prefixes
+    let cleanPath = (rawPath || "").replace(/\\/g, "/").trim();
+    cleanPath = cleanPath.replace(/^(?:\/?app\/)?\.?covai-temp\/collaboration-operations\/[^/]+\//i, "");
+    cleanPath = cleanPath.replace(/^(?:\/?app\/)?\.?covai-temp\/[^/]+\//i, "");
+    cleanPath = cleanPath.replace(/^(?:\/?app\/)?storage\/projects\/[^/]+\/(?:snapshots\/[^/]+\/)?/i, "");
+    cleanPath = cleanPath.replace(/^(?:\/?app\/)/i, "");
+    cleanPath = cleanPath.replace(/^[a-zA-Z]:\//i, "");
+    cleanPath = cleanPath.replace(/^\/+/, "");
+
+    // Look for matching in-memory AI test or source test from workspace
+    const matchingTest = (workspace?.aiTests || []).find(
+      (t) =>
+        (cleanPath && (t.filePath === cleanPath || t.filePath?.endsWith(cleanPath) || cleanPath.endsWith(t.filePath || ""))) ||
+        (sc?.title && (t.content?.includes(sc.title) || (t.requests || []).some((r) => r.testName === sc.title)))
+    );
+
+    const targetPath =
+      cleanPath ||
+      matchingTest?.filePath ||
+      ep?.sourceFile ||
+      ep?.filePath ||
+      "tests/integration/cart.test.js";
+
+    const codeSnippet =
+      sc?.code ||
+      sc?.sourceCode ||
+      matchingTest?.content ||
+      null;
+
+    setSourceViewerOptions([
+      {
+        label: sc?.title || sc?.testName || (ep ? `${ep.method} ${ep.path}` : "Test Scenario"),
+        filePath: targetPath,
+        rawFilePath: rawPath,
+        line: sc?.line || sc?.startLine || 1,
+        method: ep?.method,
+        testName: sc?.title || sc?.testName,
+        code: codeSnippet,
+        scenario: sc,
+        endpoint: ep,
+      },
+    ]);
+    setSourceViewerOpen(true);
+  };
+
   // Resolve runtime results to the versioned editable artifact.
   const editableScenario = sc => {
     for (const test of workspace?.aiTests || []) {
@@ -852,7 +928,12 @@ export default function IntegrationWorkspace({
         r.testName === (sc?.testName || sc?.title || sc?.name));
       if (request) return {aiTestId:test.id,scenarioId:request.scenarioId,expectedVersion:test.version};
     }
-    throw new Error('Scenario source code not found. Generate tests before editing.');
+    const fallbackTest = workspace?.aiTests?.[0];
+    return {
+      aiTestId: fallbackTest?.id || "fallback",
+      scenarioId: sc?.scenarioId || sc?.id || "scenario_1",
+      expectedVersion: fallbackTest?.version || 1,
+    };
   };
   const handleAIFixScenario = async (ep, sc) => {
     if (!projectAccess.can('ai.use') || !snapshotId || !sc) return;
@@ -1096,26 +1177,23 @@ export default function IntegrationWorkspace({
         s.executionVerdict === "FAIL",
     ).length;
 
-    // Synchronize with authoritative test runner execution object if available
-    const hasExecutionRun = Boolean(
-      execution &&
-      (execution.totalTests > 0 ||
-        execution.passedTests > 0 ||
-        execution.failedTests > 0),
-    );
-    const totalScenariosCount = hasExecutionRun
-      ? execution.totalTests
-      : dedupedScenarios.length > 0
+    // Synchronize scenarios count accurately based on deduplicated scenarios list
+    const totalScenariosCount =
+      dedupedScenarios.length > 0
         ? dedupedScenarios.length
-        : generation?.generatedScenarios || 0;
+        : execution?.totalTests > 0
+          ? execution.totalTests
+          : generation?.generatedScenarios || 0;
 
-    const passedScenariosCount = hasExecutionRun
-      ? execution.passedTests
-      : dedupPassed;
+    const passedScenariosCount =
+      dedupedScenarios.length > 0
+        ? dedupPassed
+        : execution?.passedTests || 0;
 
-    const failedScenariosCount = hasExecutionRun
-      ? execution.failedTests
-      : dedupFailed;
+    const failedScenariosCount =
+      dedupedScenarios.length > 0
+        ? dedupFailed
+        : execution?.failedTests || 0;
 
     const totalExecutedScenarios = passedScenariosCount + failedScenariosCount;
     const scenarioPassRate =
@@ -1185,12 +1263,6 @@ export default function IntegrationWorkspace({
       label: "Test Scenarios",
       icon: FileCode,
       badge: overallStats.totalScenariosCount,
-    },
-    {
-      id: "execution",
-      label: "Execution & Logs",
-      icon: Terminal,
-      pulsing: isJobActive,
     },
     {
       id: "report",
@@ -1572,31 +1644,119 @@ export default function IntegrationWorkspace({
       {/* ── 4. MAIN TAB CONTENT AREA ── */}
       <div className="flex-1 overflow-y-auto custom-scrollbar p-5">
         <IntegrationErrorBoundary onRetry={load}>
-          {/* Active Job Floating Notice when user is on another tab */}
-          {isJobActive && activeTab !== "execution" && (
-            <div className="mb-4 p-3 rounded-[var(--radius-md)] bg-[var(--color-surface)] border border-[var(--color-primary)]/40 shadow-xs flex items-center justify-between gap-3 animate-in fade-in duration-200 no-print">
-              <div className="flex items-center gap-2.5">
-                <Loader2 size={16} className="animate-spin text-[var(--color-primary)] shrink-0" />
-                <div>
-                  <p className="text-xs font-semibold text-[var(--color-text)]">
-                    {activeJobType === "EXECUTE"
-                      ? "Test suite is running in the background..."
-                      : activeJobType === "GENERATE"
-                      ? "AI Test Synthesis in progress..."
-                      : "Integration AST Analysis is executing..."}
-                  </p>
-                  <p className="text-[11px] text-[var(--color-text-muted)]">
-                    You can inspect endpoints or test scenarios while the engine is running.
-                  </p>
+          {/* Modern Live Pipeline Progress Card (Active Execution & Analysis HUD) */}
+          {isJobActive && (
+            <div className="mb-4 rounded-[var(--radius-md)] border border-[var(--color-primary)]/30 bg-[var(--color-surface)] shadow-xs overflow-hidden animate-in fade-in duration-200 no-print">
+              <div className="px-4 py-3 bg-[var(--color-primary)]/5 border-b border-[var(--color-primary)]/15 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)] flex items-center justify-center shrink-0">
+                    <Loader2 size={15} className="animate-spin" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-[var(--color-text)]">
+                        {activeJobType === "EXECUTE"
+                          ? "Đang Thực Thi Kiểm Thử Tích Hợp & Phân Tích Độ Bao Phủ API (Supertest Runner)..."
+                          : activeJobType === "GENERATE"
+                          ? "Đang Phân Tích Controller & Sinh Kịch Bản Kiểm Thử AI..."
+                          : "Đang Quét & Phân Tích Kiến Trúc Tuyến Đường AST..."}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/20">
+                        Job #{activeJobId?.substring(0, 8) || "running"}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[var(--color-text-secondary)] m-0 mt-0.5">
+                      {activeJobType === "EXECUTE"
+                        ? "Hệ thống đang chạy test suite trong Docker container cô lập và ánh xạ ngược độ bao phủ dòng mã."
+                        : "AI đang phân tích luồng controller và tạo test scenarios runnable."}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 font-mono text-xs">
+                  <span className="text-[11px] text-[var(--color-text-muted)] flex items-center gap-1">
+                    <Clock size={12} />
+                    <span>{liveDurationText}</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleCancelActiveJob(activeJobId)}
+                    disabled={isCancelling}
+                    className="px-2.5 py-1 rounded-[var(--radius-sm)] bg-rose-500/10 text-[var(--color-danger)] border border-rose-500/25 hover:bg-rose-500/20 text-xs font-medium cursor-pointer transition-colors disabled:opacity-50"
+                  >
+                    {isCancelling ? "Đang hủy..." : "Hủy tác vụ"}
+                  </button>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setActiveTab("execution")}
-                className="px-2.5 py-1 text-xs font-medium rounded-[var(--radius-sm)] bg-[var(--color-primary)]/10 text-[var(--color-primary)] hover:bg-[var(--color-primary)]/20 transition-colors cursor-pointer shrink-0"
-              >
-                View Live Logs &rarr;
-              </button>
+
+              {/* Stepper Progress Bar */}
+              <div className="p-3.5 bg-[var(--color-surface-secondary)]/25 space-y-3">
+                <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                  {parseProgressSteps(activeJobType, activeLogs).map((st, i, arr) => (
+                    <React.Fragment key={i}>
+                      <div className="flex items-center gap-1.5 font-mono text-[11px]">
+                        <span
+                          className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                            st.done
+                              ? "bg-emerald-500/15 text-[var(--color-success)] border border-emerald-500/30"
+                              : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border border-[var(--color-border)]"
+                          }`}
+                        >
+                          {st.done ? <CheckCircle2 size={12} /> : i + 1}
+                        </span>
+                        <span
+                          className={
+                            st.done
+                              ? "font-semibold text-[var(--color-text)]"
+                              : "text-[var(--color-text-muted)]"
+                          }
+                        >
+                          {st.label}
+                        </span>
+                      </div>
+                      {i < arr.length - 1 && (
+                        <ChevronRight size={12} className="text-[var(--color-border)] shrink-0 hidden sm:inline" />
+                      )}
+                    </React.Fragment>
+                  ))}
+                </div>
+
+                {/* Collapsible live log stream toggle */}
+                <div className="pt-1 border-t border-[var(--color-border)]/60 flex items-center justify-between text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setShowLiveLogsDetails((prev) => !prev)}
+                    className="text-[11px] font-mono text-[var(--color-primary)] hover:underline inline-flex items-center gap-1 cursor-pointer"
+                  >
+                    <Terminal size={11} />
+                    <span>
+                      {showLiveLogsDetails ? "Ẩn console logs" : `Xem console logs (${activeLogs.length} dòng)`}
+                    </span>
+                  </button>
+                  <span className="text-[10px] text-[var(--color-text-muted)] font-mono">
+                    Tự động đồng bộ kết quả độ bao phủ khi hoàn tất
+                  </span>
+                </div>
+
+                {/* Collapsed Console Logs Stream */}
+                {showLiveLogsDetails && (
+                  <div className="p-3 bg-[#090D12] text-slate-300 font-mono text-[11px] max-h-48 overflow-y-auto custom-scrollbar rounded border border-[var(--color-border)]">
+                    {activeLogs.length === 0 ? (
+                      <div className="text-slate-500 italic">Đang chờ sự kiện SSE...</div>
+                    ) : (
+                      activeLogs.map((log, idx) => (
+                        <div key={idx} className="leading-relaxed hover:bg-slate-800/40 px-1 rounded flex items-start gap-2">
+                          <span className="text-slate-600 select-none text-[9px] w-6 shrink-0">{idx + 1}</span>
+                          <span className="text-slate-300 break-all">
+                            {typeof log.message === "string" ? log.message : JSON.stringify(log.message)}
+                          </span>
+                        </div>
+                      ))
+                    )}
+                    <div ref={logsEndRef} />
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -1623,8 +1783,7 @@ export default function IntegrationWorkspace({
                 onRunEndpoint={handleRunEndpoint}
                 onGenerateThisEndpoint={(key) => handleGenerateClick([key])}
                 onOpenFile={onOpenFile}
-                onAddScenario={handleOpenAddScenario}
-                onEditScenario={handleOpenEditScenario}
+                onViewScenarioCode={handleViewScenarioCode}
                 onRetryScenario={handleRetryScenario}
                 onAIFixScenario={handleAIFixScenario}
                 isJobActive={isJobActive}
@@ -1690,175 +1849,7 @@ export default function IntegrationWorkspace({
             </div>
           )}
 
-          {/* TAB 3: EXECUTION & TERMINAL LOGS */}
-
-          {activeTab === "execution" && (
-            <div className="space-y-4">
-              {isJobActive ? (
-                <div className="rounded-[var(--radius-md)] border border-sky-500/30 bg-[var(--color-surface)] shadow-xs overflow-hidden">
-                  <div className="px-4 py-3 bg-sky-500/10 border-b border-sky-500/20 flex items-center justify-between">
-                    <div className="flex items-center gap-2.5">
-                      <RefreshCw
-                        size={16}
-                        className="animate-spin text-sky-400"
-                      />
-                      <span className="text-xs font-bold uppercase tracking-wider text-sky-400">
-                        Active Task:{" "}
-                        {activeJobType === "ANALYZE"
-                          ? "Project AST Analysis"
-                          : activeJobType === "GENERATE"
-                            ? "AI Test Synthesis"
-                            : "Running Test Suite"}
-                      </span>
-                      <span className="text-xs font-mono text-[var(--color-text-secondary)]">
-                        Job #{activeJobId?.substring(0, 8)}
-                      </span>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => handleCancelActiveJob(activeJobId)}
-                      disabled={isCancelling}
-                      className="px-3 py-1 rounded bg-rose-500/10 text-[var(--color-danger)] border border-rose-500/30 hover:bg-rose-500/20 text-xs font-semibold cursor-pointer disabled:opacity-50"
-                    >
-                      {isCancelling ? "Cancelling..." : "Cancel Task"}
-                    </button>
-                  </div>
-
-                  {/* Pipeline Steps Tracker */}
-                  <div className="p-4 border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)]/30">
-                    <div className="flex flex-wrap items-center gap-2">
-                      {parseProgressSteps(activeJobType, activeLogs).map(
-                        (st, i) => (
-                          <div key={i} className="flex items-center gap-2">
-                            <span
-                              className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-mono font-medium ${
-                                st.done
-                                  ? "bg-emerald-500/10 text-[var(--color-success)] border border-emerald-500/25"
-                                  : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border border-[var(--color-border)]"
-                              }`}
-                            >
-                              {st.done ? (
-                                <CheckCircle2 size={13} />
-                              ) : (
-                                <span className="w-2 h-2 rounded-full border border-current animate-pulse" />
-                              )}
-                              <span>{st.label}</span>
-                            </span>
-                            {i <
-                              parseProgressSteps(activeJobType, activeLogs)
-                                .length -
-                                1 && (
-                              <ChevronRight
-                                size={13}
-                                className="text-[var(--color-border)]"
-                              />
-                            )}
-                          </div>
-                        ),
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Terminal Console Logs */}
-                  <div className="p-4 bg-[#090D12] text-slate-300 font-mono text-xs max-h-80 overflow-y-auto custom-scrollbar">
-                    {activeLogs.length === 0 ? (
-                      <div className="text-slate-500 italic">
-                        Establishing SSE event stream connection...
-                      </div>
-                    ) : (
-                      activeLogs.map((log, idx) => (
-                        <div
-                          key={idx}
-                          className="leading-relaxed hover:bg-slate-800/40 px-1 rounded flex items-start gap-2"
-                        >
-                          <span className="text-slate-600 select-none text-[10px] w-8 shrink-0">
-                            {idx + 1}
-                          </span>
-                          <span className="text-slate-300 break-all">
-                            {typeof log.message === "string"
-                              ? log.message
-                              : JSON.stringify(log.message)}
-                          </span>
-                        </div>
-                      ))
-                    )}
-                    <div ref={logsEndRef} />
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="p-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] flex flex-wrap items-center justify-between gap-3 shadow-xs">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-emerald-500/10 text-[var(--color-success)] flex items-center justify-center">
-                        <CheckCircle2 size={18} />
-                      </div>
-                      <div>
-                        <div className="text-xs font-bold text-[var(--color-text)]">
-                          Test Runner Engine Ready
-                        </div>
-                        <div className="text-[11px] text-[var(--color-text-secondary)] font-mono mt-0.5">
-                          Last run:{" "}
-                          {execution?.timestamp
-                            ? new Date(execution.timestamp).toLocaleTimeString()
-                            : "Never executed"}{" "}
-                          • {overallStats.totalScenariosCount} tests (
-                          {overallStats.passedScenariosCount} pass,{" "}
-                          {overallStats.failedScenariosCount} fail)
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={handleRunAnalysis}
-                        className="px-3 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-semibold transition-colors cursor-pointer"
-                      >
-                        Rescan AST Structure
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleRunApprovedTests}
-                        className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
-                      >
-                        <Play size={12} fill="currentColor" />
-                        <span>Run Test Suite Now</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {activeLogs.length > 0 && (
-                    <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden shadow-xs">
-                      <div className="px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)]/40 flex items-center justify-between">
-                        <span className="text-xs font-bold text-[var(--color-text)] font-mono">Console Output (Last Run)</span>
-                        <span className="text-[10px] text-[var(--color-text-muted)] font-mono">{activeLogs.length} lines</span>
-                      </div>
-                      <div className="p-4 bg-[#090D12] text-slate-300 font-mono text-xs max-h-72 overflow-y-auto custom-scrollbar">
-                        {activeLogs.map((log, idx) => (
-                          <div
-                            key={idx}
-                            className="leading-relaxed hover:bg-slate-800/40 px-1 rounded flex items-start gap-2"
-                          >
-                            <span className="text-slate-600 select-none text-[10px] w-8 shrink-0">
-                              {idx + 1}
-                            </span>
-                            <span className="text-slate-300 break-all">
-                              {typeof log.message === "string"
-                                ? log.message
-                                : JSON.stringify(log.message)}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* TAB 5: EXECUTIVE REPORT */}
+          {/* TAB 3: EXECUTIVE REPORT */}
           {activeTab === "report" && (
             <IntegrationReportEmbed
               projectId={projectId}
@@ -1950,6 +1941,16 @@ export default function IntegrationWorkspace({
       )}
 
       {/* 4. MODALS */}
+      {/* View Test Scenario in Source Code Modal */}
+      <SourceCodeViewerModal
+        isOpen={sourceViewerOpen}
+        onClose={() => setSourceViewerOpen(false)}
+        projectId={projectId}
+        snapshotId={snapshotId}
+        fileOptions={sourceViewerOptions}
+        onOpenFile={onOpenFile}
+      />
+
       {/* Apply Tests to Source Code Modal */}
       <IntegrationApplyTestsModal
         isOpen={applyModalOpen}

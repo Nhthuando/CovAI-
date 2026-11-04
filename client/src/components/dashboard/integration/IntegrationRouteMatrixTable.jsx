@@ -53,8 +53,7 @@ export default function IntegrationRouteMatrixTable({
   onRunEndpoint = () => {},
   onGenerateThisEndpoint = () => {},
   onOpenFile = () => {},
-  onAddScenario = () => {},
-  onEditScenario = () => {},
+  onViewScenarioCode = () => {},
   onRetryScenario = () => {},
   onAIFixScenario = () => {},
   isJobActive = false,
@@ -467,15 +466,6 @@ export default function IntegrationRouteMatrixTable({
                           >
                             <Zap size={12} />
                           </button>
-
-                          <button
-                            type="button"
-                            onClick={() => onAddScenario(ep)}
-                            title="Add new test scenario via Monaco Editor"
-                            className="p-1.5 rounded-[var(--radius-sm)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] transition-colors cursor-pointer shadow-2xs"
-                          >
-                            <Plus size={12} />
-                          </button>
                         </div>
                       </td>
                     </tr>
@@ -490,16 +480,6 @@ export default function IntegrationRouteMatrixTable({
                               <div className="flex items-center gap-2 font-mono">
                                 <span className="font-bold text-[var(--color-text)]">{ep.method} {ep.path}</span>
                                 <span className="text-[var(--color-text-muted)]">• Module: {ep.module}</span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => onAddScenario(ep)}
-                                  className="flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
-                                >
-                                  <Plus size={12} />
-                                  <span>Add Scenario</span>
-                                </button>
                               </div>
                             </div>
 
@@ -569,12 +549,12 @@ export default function IntegrationRouteMatrixTable({
                                           </button>
                                           <button
                                             type="button"
-                                            onClick={() => onEditScenario(sc, ep)}
-                                            title="Edit scenario in Monaco Editor"
-                                            className="flex items-center gap-1 px-2 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer"
+                                            onClick={() => onViewScenarioCode(sc, ep)}
+                                            title="Xem vị trí kịch bản test này trong source code"
+                                            className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer shadow-2xs font-medium"
                                           >
-                                            <Code2 size={11} />
-                                            <span>Edit</span>
+                                            <FileCode size={12} className="text-[var(--color-primary)]" />
+                                            <span>Xem Code</span>
                                           </button>
                                         </div>
                                       </div>
