@@ -246,7 +246,7 @@ export default function ProjectSelectionPage() {
             favorites={favorites}
             onTogglePin={toggleFavorite}
             onOpenProjectOverview={(projectId) =>
-              navigate(`/main-editor?projectId=${projectId}&tab=overview${dataMode === "demo" ? "&mode=demo" : ""}`)
+              navigate(`/main-editor?projectId=${projectId}&tab=explorer${dataMode === "demo" ? "&mode=demo" : ""}`)
             }
             onNavigateWorkspace={(projectId, pillar, focus = {}) => {
               const params = new URLSearchParams();

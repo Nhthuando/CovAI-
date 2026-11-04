@@ -71,6 +71,11 @@ import {
   renameProjectEntryApi,
   deleteProjectEntryApi,
 } from "../../services/project.service";
+import {
+  insertNodeIntoTree,
+  renameNodeInTree,
+  deleteNodeFromTree,
+} from "../../utils/fileTreeUtils";
 import { getProjectJobsApi } from "../../services/job.service";
 import { queryClient } from "../../lib/queryClient.js";
 
@@ -731,72 +736,159 @@ function LayoutInner() {
     }
   };
 
-  const refreshProjectFiles = async () => {
-    await queryClient.invalidateQueries({ queryKey: ["projectTree"] });
-    await projectAccess.refetch();
-    await loadData(project?.id, 1, 0);
+  const refreshProjectFiles = async (silent = true) => {
+    if (!project?.id) return;
+    try {
+      if (silent) {
+        const { getProjectTreeApi } = await import("../../services/project.service");
+        const res = await getProjectTreeApi(project.id);
+        const sourceTree = Array.isArray(res) ? res : (res?.data || res?.tree || []);
+        if (sourceTree && sourceTree.length > 0) {
+          setFileTree(sourceTree);
+          if (res.snapshotId) {
+            setTreeVersion({ snapshotId: res.snapshotId, expectedWorkspaceRevision: res.workspaceRevision });
+          }
+          queryClient.setQueryData(["projectTree", user?.id, project.id], {
+            tree: sourceTree,
+            snapshotId: res.snapshotId,
+            workspaceRevision: res.workspaceRevision,
+          });
+        }
+        await projectAccess.refetch();
+      } else {
+        await queryClient.invalidateQueries({ queryKey: ["projectTree"] });
+        await projectAccess.refetch();
+        await loadData(project?.id, 1, 0);
+      }
+    } catch (err) {
+      console.warn("Silent tree refresh failed", err);
+    }
   };
 
   const handleCreateFile = async (filePath) => {
     if (!project || !projectAccess.can("files.write")) return;
+    const normalizedPath = filePath.replace(/\\/g, "/");
+    const fileName = normalizedPath.split("/").pop();
+
+    // 1. Optimistically insert into tree immediately (instant 0ms response)
+    setFileTree((prev) => insertNodeIntoTree(prev, normalizedPath, false));
+
+    // 2. Open tab right away
+    handleOpenFile({
+      id: normalizedPath,
+      name: fileName,
+      type: "file",
+    });
+
     try {
-      await createProjectFileApi(project.id, filePath, "", treeVersion || {});
-      await refreshProjectFiles();
-      handleOpenFile({
-        id: filePath.replace(/\\/g, "/"),
-        name: filePath.split(/[\\/]/).pop(),
-        type: "file",
+      const snapId = treeVersion?.snapshotId || project.latestSnapshotId || searchParams.get("snapshotId");
+      const rev = Number.isSafeInteger(treeVersion?.expectedWorkspaceRevision) ? treeVersion.expectedWorkspaceRevision : 0;
+      await createProjectFileApi(project.id, normalizedPath, "", {
+        snapshotId: snapId,
+        expectedWorkspaceRevision: rev,
       });
+      refreshProjectFiles(true);
+      showToast({ type: "success", title: "File created", message: normalizedPath });
     } catch (err) {
-      showToast({ type: "error", title: "Could not create file" });
+      setFileTree((prev) => deleteNodeFromTree(prev, normalizedPath));
+      showToast({ type: "error", title: "Could not create file", message: err?.message || "File creation failed" });
     }
   };
 
   const handleCreateFolder = async (folderPath) => {
     if (!project || !projectAccess.can("files.write")) return;
+    const normalizedPath = folderPath.replace(/\\/g, "/");
+
+    // 1. Optimistically insert folder into tree immediately
+    setFileTree((prev) => insertNodeIntoTree(prev, normalizedPath, true));
+
     try {
-      await createProjectFolderApi(project.id, folderPath, treeVersion || {});
-      await refreshProjectFiles();
+      const snapId = treeVersion?.snapshotId || project.latestSnapshotId || searchParams.get("snapshotId");
+      const rev = Number.isSafeInteger(treeVersion?.expectedWorkspaceRevision) ? treeVersion.expectedWorkspaceRevision : 0;
+      await createProjectFolderApi(project.id, normalizedPath, {
+        snapshotId: snapId,
+        expectedWorkspaceRevision: rev,
+      });
+      refreshProjectFiles(true);
+      showToast({ type: "success", title: "Folder created", message: normalizedPath });
     } catch (err) {
-      showToast({ type: "error", title: "Could not create folder" });
+      setFileTree((prev) => deleteNodeFromTree(prev, normalizedPath));
+      showToast({ type: "error", title: "Could not create folder", message: err?.message || "Folder creation failed" });
     }
   };
 
   const handleRenameEntry = async (filePath, newPath) => {
     if (!project || !projectAccess.can("files.write")) return;
+    const normOld = filePath.replace(/\\/g, "/");
+    const normNew = newPath.replace(/\\/g, "/");
+
+    // 1. Optimistically rename in tree immediately
+    setFileTree((prev) => renameNodeInTree(prev, normOld, normNew));
+
+    // 2. Optimistically update open tabs
+    setTabs((prev) =>
+      prev.map((tab) =>
+        tab.id === normOld
+          ? { ...tab, id: normNew, name: normNew.split("/").pop() }
+          : tab.id.startsWith(`${normOld}/`)
+          ? { ...tab, id: `${normNew}${tab.id.slice(normOld.length)}` }
+          : tab,
+      ),
+    );
+    if (activeTabId === normOld) setActiveTabId(normNew);
+    else if (activeTabId?.startsWith(`${normOld}/`)) {
+      setActiveTabId(`${normNew}${activeTabId.slice(normOld.length)}`);
+    }
+    if (activeFileId === normOld) setActiveFileId(normNew);
+    else if (activeFileId?.startsWith(`${normOld}/`)) {
+      setActiveFileId(`${normNew}${activeFileId.slice(normOld.length)}`);
+    }
+
     try {
-      await renameProjectEntryApi(project.id, filePath, newPath, treeVersion || {});
-      setTabs((prev) =>
-        prev.map((tab) =>
-          tab.id === filePath
-            ? { ...tab, id: newPath, name: newPath.split("/").pop() }
-            : tab,
-        ),
-      );
-      if (activeTabId === filePath) setActiveTabId(newPath);
-      if (activeFileId === filePath) setActiveFileId(newPath);
-      await refreshProjectFiles();
+      const snapId = treeVersion?.snapshotId || project.latestSnapshotId || searchParams.get("snapshotId");
+      const rev = Number.isSafeInteger(treeVersion?.expectedWorkspaceRevision) ? treeVersion.expectedWorkspaceRevision : 0;
+      await renameProjectEntryApi(project.id, normOld, normNew, {
+        snapshotId: snapId,
+        expectedWorkspaceRevision: rev,
+      });
+      refreshProjectFiles(true);
+      showToast({ type: "success", title: "Renamed", message: `${normOld} → ${normNew}` });
     } catch (err) {
-      showToast({ type: "error", title: "Could not rename" });
+      setFileTree((prev) => renameNodeInTree(prev, normNew, normOld));
+      showToast({ type: "error", title: "Could not rename", message: err?.message || "Rename failed" });
     }
   };
 
   const handleDeleteEntry = async (node) => {
     if (!project || !projectAccess.can("files.write")) return;
+    const targetPath = node.id.replace(/\\/g, "/");
+
+    // 1. Optimistically delete from tree immediately
+    setFileTree((prev) => deleteNodeFromTree(prev, targetPath));
+
+    // 2. Optimistically close affected tabs
+    setTabs((prev) =>
+      prev.filter(
+        (tab) => tab.id !== targetPath && !tab.id.startsWith(`${targetPath}/`),
+      ),
+    );
+    if (activeFileId === targetPath || activeFileId?.startsWith(`${targetPath}/`)) {
+      setActiveFileId(null);
+      setActiveTabId(null);
+    }
+
     try {
-      await deleteProjectEntryApi(project.id, node.id, treeVersion || {});
-      setTabs((prev) =>
-        prev.filter(
-          (tab) => tab.id !== node.id && !tab.id.startsWith(`${node.id}/`),
-        ),
-      );
-      if (activeFileId === node.id || activeFileId?.startsWith(`${node.id}/`)) {
-        setActiveFileId(null);
-        setActiveTabId(null);
-      }
-      await refreshProjectFiles();
+      const snapId = treeVersion?.snapshotId || project.latestSnapshotId || searchParams.get("snapshotId");
+      const rev = Number.isSafeInteger(treeVersion?.expectedWorkspaceRevision) ? treeVersion.expectedWorkspaceRevision : 0;
+      await deleteProjectEntryApi(project.id, targetPath, {
+        snapshotId: snapId,
+        expectedWorkspaceRevision: rev,
+      });
+      refreshProjectFiles(true);
+      showToast({ type: "success", title: "Deleted", message: node.name || targetPath });
     } catch (err) {
-      showToast({ type: "error", title: "Could not delete" });
+      refreshProjectFiles(false);
+      showToast({ type: "error", title: "Could not delete", message: err?.message || "Delete failed" });
     }
   };
 

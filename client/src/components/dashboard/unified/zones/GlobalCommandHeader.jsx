@@ -112,7 +112,7 @@ export function GlobalCommandHeader({
                     if (onSelectProject) {
                       onSelectProject(val);
                     } else {
-                      navigate(`/main-editor?projectId=${val}&tab=overview`);
+                      navigate(`/main-editor?projectId=${val}&tab=explorer`);
                     }
                   }
                 }}

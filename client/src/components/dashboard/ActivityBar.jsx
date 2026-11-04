@@ -14,8 +14,8 @@ import {
 import { useState } from "react";
 
 const TOP_ITEMS = [
-  { id: "overview", icon: LayoutDashboard, label: "Overview" },
   { id: "explorer", icon: Files, label: "Explorer" },
+  { id: "overview", icon: LayoutDashboard, label: "Overview" },
   { id: "git", icon: GitGraph, label: "Git Control" },
   { id: "coverage", icon: BarChart3, label: "Coverage" },
   { id: "trustworthiness", icon: ShieldCheck, label: "Chatbot Evaluation" },
