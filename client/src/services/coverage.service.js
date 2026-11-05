@@ -368,3 +368,27 @@ export async function getUnifiedTestRunInspection(snapshotId, runId) {
     return handleResponse(res);
 }
 
+
+export async function getSuitesReadiness(snapshotId) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/suites-readiness`, {
+        headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
+}
+
+export async function approveIntegrationScenarios(snapshotId, { approvedTestIds = [], approveAll = false } = {}) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/integration/approve`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ approvedTestIds, approveAll }),
+    });
+    return handleResponse(res);
+}
+
+export async function confirmBatchSystemScenarios(snapshotId) {
+    const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/system/scenarios/confirm-batch`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+    });
+    return handleResponse(res);
+}

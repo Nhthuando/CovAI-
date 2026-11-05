@@ -47,6 +47,7 @@ import {
   deleteProjectEntry,
   createProjectCheckpoint,
   restoreProjectCheckpoint,
+  activateProjectSnapshot,
 } from "../services/project.service.js";
 import { createBuildCfgJob } from "../services/job.service.js";
 import { getArchitectureAiSummary } from "../services/architectureAiSummary.service.js";
@@ -194,6 +195,7 @@ class ProjectController {
           updatedAt: p.updatedAt,
           snapshotCount: p._count.snapshots,
           latestSnapshotId: p.snapshots?.[0]?.id || null,
+          activeSnapshotId: p.activeSnapshotId || p.snapshots?.[0]?.id || null,
         })),
       });
     } catch (error) {
@@ -282,6 +284,32 @@ class ProjectController {
   /**
    * POST /projects/:id/snapshots/:snapshotId/restore
    */
+    /**
+   * POST /projects/:id/snapshots/:snapshotId/activate
+   */
+  async activateSnapshot(req, res) {
+    try {
+      const { snapshotId } = req.params;
+      const data = await activateProjectSnapshot({
+        projectId: req.params.id,
+        snapshotId,
+        userId: req.user.id,
+      });
+      return res.status(200).json(data);
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        return res
+          .status(error.statusCode)
+          .json({ success: false, message: error.message, code: error.code, details: error.details });
+      }
+      console.error("[activateSnapshot] Error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to activate snapshot",
+      });
+    }
+  }
+
   async restoreSnapshot(req, res) {
     try {
       const { snapshotId } = req.params;

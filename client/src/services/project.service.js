@@ -418,12 +418,23 @@ export async function selectTestingFrameworkApi(
   return handleResponse(res);
 }
 
-export async function createProjectSnapshotApi(projectId, { label, message }) {
+export async function createProjectSnapshotApi(projectId, { label, message } = {}) {
   const res = await fetch(`${BASE_URL}/projects/${projectId}/snapshots`, {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify({ label, message }),
   });
+  return handleResponse(res);
+}
+
+export async function activateProjectSnapshotApi(projectId, snapshotId) {
+  const res = await fetch(
+    `${BASE_URL}/projects/${projectId}/snapshots/${snapshotId}/activate`,
+    {
+      method: "POST",
+      headers: getAuthHeaders(),
+    }
+  );
   return handleResponse(res);
 }
 

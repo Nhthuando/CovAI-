@@ -1,57 +1,71 @@
+import React from "react";
 import { Activity, CheckCircle2, ShieldCheck, Sparkles, ArrowRight } from "lucide-react";
 import { KpiCard } from "../primitives/KpiCard.jsx";
 import { DeltaIndicator } from "../primitives/DeltaIndicator.jsx";
-import { StackedBar } from "../primitives/StackedBar.jsx";
-import { MeterBar } from "../primitives/MeterBar.jsx";
-import { PillarBadge } from "../primitives/PillarBadge.jsx";
-import { fmtPct, fmtCount, fmtDuration } from "../../../../services/unifiedDashboard/format.js";
+import { SemiDonutGauge } from "../primitives/charts/SemiDonutGauge.jsx";
+import { DonutChart } from "../primitives/charts/DonutChart.jsx";
+import { ProgressRing } from "../primitives/charts/ProgressRing.jsx";
+import { fmtPct, fmtCount } from "../../../../services/unifiedDashboard/format.js";
 
-export function ExecutiveKpiRow({ vm, loading = false, className = "" }) {
+export function ExecutiveKpiRow({ vm, loading = false, onJumpToActions = null, className = "" }) {
   const health = vm?.health || {};
   const execution = vm?.execution || {};
   const coverage = vm?.coverage || {};
   const ai = vm?.ai || {};
+  const actionsCount = Array.isArray(vm?.actions?.items) ? vm.actions.items.length : 0;
+
+  const totalExecuted = Number(execution.total || 0);
+  const hasBaseline = totalExecuted > 0 && health.score !== null && health.score !== undefined;
 
   const handleScrollToActions = () => {
-    const el = document.getElementById("ud-smart-actions");
+    if (onJumpToActions) {
+      onJumpToActions();
+      return;
+    }
+    const el = document.getElementById("ud-action-alerts") || document.getElementById("ud-analysis-tabs");
     if (el) {
       el.scrollIntoView({ behavior: "smooth" });
     }
   };
 
-  const uncoveredApis = Number(execution.uncoveredApis ?? 0);
-
+  // Execution segments for DonutChart: Strictly executed test outcomes only (zero Uncovered APIs pollution)
   const execSegments = [
     { key: "Passed", value: execution.passed || 0, tone: "pass", label: "Passed" },
     { key: "Failed", value: execution.failed || 0, tone: "fail", label: "Failed" },
-    { key: "Skipped", value: (execution.skipped || 0) + (execution.flaky || 0), tone: "neutral", label: "Skip/Flaky" },
-    ...(uncoveredApis > 0
-      ? [{ key: "Uncovered", value: uncoveredApis, tone: "warn", label: "Uncovered APIs" }]
-      : []),
+    { key: "Skipped", value: (execution.skipped || 0) + (execution.flaky || 0), tone: "neutral", label: "Skipped" },
   ];
-
-  const barTotal = (execution.total || 0) + uncoveredApis;
 
   return (
     <div className={`grid grid-cols-12 gap-4 ${className}`}>
-      {/* 1. Quality Health Score */}
+      {/* 1. Quality Health Score with Semi-Donut Radial Gauge */}
       <KpiCard
         id="ud-kpi-health"
         className="col-span-12 sm:col-span-6 xl:col-span-3"
         label="Quality Health Score"
-        value={health.score !== null && health.score !== undefined ? health.score : "—"}
-        unit="/100"
-        grade={health.grade}
         icon={Activity}
         loading={loading}
         delta={<DeltaIndicator delta={health.delta} />}
-        supporting="Weighted: Unit 50% · Int 30% · Sys 20%"
+        supporting={
+          <div
+            className="flex items-center justify-center pt-1"
+            title="Composite score weighted: Unit (50%) + Integration (30%) + System (20%)"
+          >
+            <SemiDonutGauge
+              score={health.score}
+              max={100}
+              grade={health.grade || "--"}
+              hasBaseline={hasBaseline}
+              size={120}
+              title="Quality Health Score"
+            />
+          </div>
+        }
         footer={
           <>
             <span>Health Standard</span>
             <span className="font-mono text-xs font-semibold text-[var(--ud-text)]">
-              {health.score === null || health.score === undefined
-                ? "No Baseline / No Runs Yet"
+              {!hasBaseline
+                ? "No Baseline"
                 : (vm?.qualityGate?.status === "WARNING" || vm?.qualityGate?.status === "FAILED" || (execution.failed || 0) > 0) && health.score >= 80
                 ? "At Risk (Gate Warning)"
                 : health.score >= 80
@@ -64,36 +78,42 @@ export function ExecutiveKpiRow({ vm, loading = false, className = "" }) {
         }
       />
 
-      {/* 2. Total Test Execution (Strictly separates Executed Failed vs. Uncovered APIs) */}
+      {/* 2. Total Test Execution with Visual Donut Chart */}
       <KpiCard
         id="ud-kpi-execution"
         className="col-span-12 sm:col-span-6 xl:col-span-3"
         label="Total Test Execution"
-        value={fmtCount(execution.total || 0)}
-        unit={`(${execution.passRate ?? 0}% pass)`}
         icon={CheckCircle2}
         loading={loading}
         supporting={
-          <div className="mt-2 space-y-1.5">
-            <StackedBar
+          <div className="flex items-center justify-between pt-1 gap-2">
+            <DonutChart
               segments={execSegments}
-              total={barTotal}
-              height={6}
+              size={68}
+              centerLabel={fmtCount(execution.total || 0)}
+              centerSub="tests"
               showLegend={true}
+              ariaLabel="Test execution breakdown"
             />
           </div>
         }
         footer={
           <>
-            <span>Total Runtime</span>
-            <span className="font-mono text-xs font-semibold text-[var(--ud-text)]">
-              {fmtDuration(execution.durationMs)}
-            </span>
+            <span>Pass Rate</span>
+            {totalExecuted > 0 ? (
+              <span className="font-mono text-xs font-semibold text-[var(--ud-pass)]">
+                {execution.passRate ?? 0}%
+              </span>
+            ) : (
+              <span className="font-mono text-xs font-semibold text-[var(--ud-text-muted)]">
+                --
+              </span>
+            )}
           </>
         }
       />
 
-      {/* 3. Unified Coverage Index */}
+      {/* 3. Unified Coverage Index with 3 Circular Progress Rings */}
       <KpiCard
         id="ud-kpi-coverage"
         className="col-span-12 sm:col-span-6 xl:col-span-3"
@@ -102,39 +122,25 @@ export function ExecutiveKpiRow({ vm, loading = false, className = "" }) {
         icon={ShieldCheck}
         loading={loading}
         supporting={
-          <div className="mt-2 space-y-2">
-            {/* Unit line coverage */}
-            <div className="flex items-center justify-between text-xs gap-2">
-              <PillarBadge pillar="unit" size="sm" showIcon={false} label="Code" />
-              <div className="flex-1 mx-2">
-                <MeterBar value={coverage.codePct || 0} tone="unit" height={5} />
-              </div>
-              <span className="font-mono text-xs tabular-nums text-[var(--ud-text)] font-semibold w-10 text-right">
-                {fmtPct(coverage.codePct)}
-              </span>
-            </div>
-
-            {/* Integration API coverage */}
-            <div className="flex items-center justify-between text-xs gap-2">
-              <PillarBadge pillar="integration" size="sm" showIcon={false} label="API" />
-              <div className="flex-1 mx-2">
-                <MeterBar value={coverage.apiPct || 0} tone="integration" height={5} />
-              </div>
-              <span className="font-mono text-xs tabular-nums text-[var(--ud-text)] font-semibold w-10 text-right">
-                {fmtPct(coverage.apiPct)}
-              </span>
-            </div>
-
-            {/* System E2E Flow coverage */}
-            <div className="flex items-center justify-between text-xs gap-2">
-              <PillarBadge pillar="system" size="sm" showIcon={false} label="Flow" />
-              <div className="flex-1 mx-2">
-                <MeterBar value={coverage.flowPct || 0} tone="system" height={5} />
-              </div>
-              <span className="font-mono text-xs tabular-nums text-[var(--ud-text)] font-semibold w-10 text-right">
-                {fmtPct(coverage.flowPct)}
-              </span>
-            </div>
+          <div className="grid grid-cols-3 gap-2 pt-2 items-center text-center">
+            <ProgressRing
+              pct={coverage.codePct || 0}
+              label="Code"
+              tone="unit"
+              size={42}
+            />
+            <ProgressRing
+              pct={coverage.apiPct || 0}
+              label="API"
+              tone="integration"
+              size={42}
+            />
+            <ProgressRing
+              pct={coverage.flowPct || 0}
+              label="Flow"
+              tone="system"
+              size={42}
+            />
           </div>
         }
         footer={
@@ -147,24 +153,24 @@ export function ExecutiveKpiRow({ vm, loading = false, className = "" }) {
         }
       />
 
-      {/* 4. AI Optimization & Coverage Gaps */}
+      {/* 4. Open Actions & AI Contribution (Preserving AI Metrics, removing duplicate gaps) */}
       <KpiCard
         id="ud-kpi-ai"
         className="col-span-12 sm:col-span-6 xl:col-span-3"
-        label="AI Tests & Coverage Gaps"
-        value={fmtCount(ai.aiGenerated || 0)}
-        unit="generated"
+        label="Prioritized Actions"
+        value={fmtCount(actionsCount)}
+        unit={actionsCount === 1 ? "action" : "actions"}
         icon={Sparkles}
         loading={loading}
         supporting={
           <div className="mt-2 space-y-1.5 text-xs text-[var(--ud-text-muted)] font-mono">
             <div className="flex items-center justify-between">
-              <span>AI Repaired Tests:</span>
-              <span className="text-[var(--ud-text)] font-semibold">{ai.aiRepaired || 0}</span>
+              <span>AI Generated:</span>
+              <span className="text-[var(--ud-text)] font-semibold">{ai.aiGenerated || 0} tests</span>
             </div>
             <div className="flex items-center justify-between">
-              <span>Uncovered Gaps:</span>
-              <span className="text-[var(--ud-warn)] font-bold">{ai.gaps || 0} gaps</span>
+              <span>AI Repaired:</span>
+              <span className="text-[var(--ud-text)] font-semibold">{ai.aiRepaired || 0} tests</span>
             </div>
           </div>
         }

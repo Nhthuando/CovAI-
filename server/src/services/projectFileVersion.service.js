@@ -72,9 +72,19 @@ export const resolveContainedProjectPath = async (snapshot, value, options = {})
 };
 
 export const findEditableSnapshot = async (tx, projectId, snapshotId) => {
+    let effectiveSnapshotId = snapshotId;
+    if (!effectiveSnapshotId) {
+        const project = await tx.project.findUnique({
+            where: { id: projectId },
+            select: { activeSnapshotId: true },
+        });
+        if (project?.activeSnapshotId) {
+            effectiveSnapshotId = project.activeSnapshotId;
+        }
+    }
     const snapshot = await tx.projectSnapshot.findFirst({
-        where: { projectId, ...(snapshotId ? { id: snapshotId } : {}) },
-        orderBy: snapshotId ? undefined : { createdAt: 'desc' },
+        where: { projectId, ...(effectiveSnapshotId ? { id: effectiveSnapshotId } : {}) },
+        orderBy: effectiveSnapshotId ? undefined : { createdAt: 'desc' },
     });
     if (!snapshot?.rootDir) throw projectFileError('SNAPSHOT_CHANGED', 'Project snapshot is unavailable; select it again', 409);
     return snapshot;

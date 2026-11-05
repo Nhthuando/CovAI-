@@ -50,7 +50,20 @@ function collectFiles(dir, isMatch, rootDir = dir) {
 /**
  * SCRUM-380: Load source code
  */
+const sourceCodeMemoryCache = new Map();
+
+export const clearSourceCodeCache = (snapshotId = null) => {
+    if (snapshotId) {
+        sourceCodeMemoryCache.delete(snapshotId);
+    } else {
+        sourceCodeMemoryCache.clear();
+    }
+};
+
 export const loadSourceCode = async (snapshotId) => {
+    if (snapshotId && sourceCodeMemoryCache.has(snapshotId)) {
+        return sourceCodeMemoryCache.get(snapshotId);
+    }
     const snapshot = operationSnapshot(await prisma.projectSnapshot.findUnique({ where: { id: snapshotId } }));
     if (!snapshot || !snapshot.rootDir) {
         throw new ServiceError("Snapshot root directory not found", 404);
@@ -63,7 +76,11 @@ export const loadSourceCode = async (snapshotId) => {
         return validExts.includes(ext) && !isTest;
     };
 
-    return collectFiles(snapshot.rootDir, isSourceMatch);
+    const files = collectFiles(snapshot.rootDir, isSourceMatch);
+    if (snapshotId) {
+        sourceCodeMemoryCache.set(snapshotId, files);
+    }
+    return files;
 };
 
 /**

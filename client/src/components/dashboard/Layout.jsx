@@ -142,6 +142,7 @@ function LayoutInner() {
   };
 
   const [activeActivity, setActiveActivity] = useState(initialTab);
+  const [visitedPanels, setVisitedPanels] = useState(() => new Set([initialTab]));
   const [showGit, setShowGit] = useState(false);
 
   useEffect(() => {
@@ -153,10 +154,16 @@ function LayoutInner() {
     if (tab === "system") {
       setActiveActivity("coverage");
       setCoverageType("system");
+      setVisitedPanels((prev) => new Set([...prev, "coverage", "coverage:system"]));
     } else {
       setActiveActivity(tab);
       const type = params.get("coverageType") || params.get("type");
-      if (type) setCoverageType(type);
+      if (type) {
+        setCoverageType(type);
+        setVisitedPanels((prev) => new Set([...prev, tab, `${tab}:${type}`]));
+      } else {
+        setVisitedPanels((prev) => new Set([...prev, tab]));
+      }
     }
     const focusFile = params.get("focusFile");
     const focusEndpoint = params.get("focusEndpoint");
@@ -579,6 +586,7 @@ function LayoutInner() {
   };
 
   useEffect(() => {
+    if (initialProjectId && project?.id === initialProjectId) return;
     loadData(initialProjectId);
   }, [loadData, initialProjectId]);
 
@@ -610,6 +618,10 @@ function LayoutInner() {
     setActiveTabId(null);
     const newParams = new URLSearchParams(location.search);
     newParams.set("projectId", projectId);
+    newParams.delete("snapshotId");
+    newParams.delete("focusFile");
+    newParams.delete("focusEndpoint");
+    newParams.delete("focusScenario");
     navigate(`${location.pathname}?${newParams.toString()}`);
     loadData(projectId);
   };
@@ -629,6 +641,10 @@ function LayoutInner() {
         setActiveTabId(null);
         const newParams = new URLSearchParams(location.search);
         newParams.delete("projectId");
+        newParams.delete("snapshotId");
+        newParams.delete("focusFile");
+        newParams.delete("focusEndpoint");
+        newParams.delete("focusScenario");
         navigate(`${location.pathname}?${newParams.toString()}`, { replace: true });
         loadData();
       } else {
@@ -1127,95 +1143,111 @@ function LayoutInner() {
 
           {activeActivity === 'trustworthiness' && <div className="w-full h-full overflow-y-auto"><TrustworthinessWorkspace key={project?.id} projectId={project?.id} /></div>}
 
-          <div className={activeActivity === "architecture" ? "w-full h-full overflow-y-auto" : "hidden"}>
-            <ProjectArchitecturePanel
-              projectId={project?.id}
-              initialFile={archInitialContext?.initialFile}
-            />
-          </div>
+          {(activeActivity === "architecture" || visitedPanels.has("architecture")) && (
+            <div className={activeActivity === "architecture" ? "w-full h-full overflow-y-auto" : "hidden"}>
+              <ProjectArchitecturePanel
+                projectId={project?.id}
+                initialFile={archInitialContext?.initialFile}
+              />
+            </div>
+          )}
 
-          <div className={activeActivity === "overview" ? "w-full h-full overflow-y-auto" : "hidden"}>
-            <UnifiedDashboard
-              projectId={project?.id}
-              project={project}
-              projects={projects}
-              onSelectProject={handleChangeProject}
-              snapshotId={
-                searchParams.get("snapshotId") ||
-                project?.latestSnapshotId ||
-                project?.snapshots?.[0]?.id ||
-                (project?.id
-                  ? localStorage.getItem(`latestSnapshot_${project.id}`)
-                  : null) ||
-                testPromptSnapshotId
-              }
-              onNavigateWorkspace={(pillar, focus) => {
-                const targetUrl = buildWorkspaceUrl(location, pillar, focus);
-                navigate(targetUrl);
-              }}
-              onAskAi={handleAskAiPrompt}
-              onSummaryChange={setUnifiedSummary}
-            />
-          </div>
+          {(activeActivity === "overview" || visitedPanels.has("overview")) && (
+            <div className={activeActivity === "overview" ? "w-full h-full overflow-y-auto" : "hidden"}>
+              <UnifiedDashboard
+                projectId={project?.id}
+                project={project}
+                projects={projects}
+                onSelectProject={handleChangeProject}
+                snapshotId={
+                  searchParams.get("snapshotId") ||
+                  project?.activeSnapshotId ||
+                  project?.latestSnapshotId ||
+                  project?.snapshots?.[0]?.id ||
+                  (project?.id
+                    ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                    : null) ||
+                  testPromptSnapshotId
+                }
+                onNavigateWorkspace={(pillar, focus) => {
+                  const targetUrl = buildWorkspaceUrl(location, pillar, focus);
+                  navigate(targetUrl);
+                }}
+                onAskAi={handleAskAiPrompt}
+                onSummaryChange={setUnifiedSummary}
+              />
+            </div>
+          )}
 
-          <div className={activeActivity === "coverage" ? "w-full h-full overflow-hidden" : "hidden"}>
-            <div className={coverageType === "unit" ? "h-full overflow-y-auto" : "hidden"}>
-              <UnitTestDashboard
-                snapshotId={
-                  searchParams.get("snapshotId") ||
-                  project?.latestSnapshotId ||
-                  project?.snapshots?.[0]?.id ||
-                  (project?.id
-                    ? localStorage.getItem(`latestSnapshot_${project.id}`)
-                    : null) ||
-                  testPromptSnapshotId
-                }
-                projectId={project?.id}
-                treeVersion={treeVersion}
-                focusFile={searchParams.get("focusFile")}
-                onOpenFile={handleOpenFileByPath}
-                onSuggestTestcase={handleSuggestTestcase}
-                onOpenCFG={handleOpenCFG}
-                runTrigger={coverageRunTrigger}
-              />
+          {(activeActivity === "coverage" || visitedPanels.has("coverage")) && (
+            <div className={activeActivity === "coverage" ? "w-full h-full overflow-hidden" : "hidden"}>
+              {(coverageType === "unit" || visitedPanels.has("coverage:unit")) && (
+                <div className={coverageType === "unit" ? "h-full overflow-y-auto" : "hidden"}>
+                  <UnitTestDashboard
+                    snapshotId={
+                      searchParams.get("snapshotId") ||
+                      project?.activeSnapshotId ||
+                      project?.latestSnapshotId ||
+                      project?.snapshots?.[0]?.id ||
+                      (project?.id
+                        ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                        : null) ||
+                      testPromptSnapshotId
+                    }
+                    projectId={project?.id}
+                    treeVersion={treeVersion}
+                    focusFile={searchParams.get("focusFile")}
+                    onOpenFile={handleOpenFileByPath}
+                    onSuggestTestcase={handleSuggestTestcase}
+                    onOpenCFG={handleOpenCFG}
+                    runTrigger={coverageRunTrigger}
+                  />
+                </div>
+              )}
+              {(coverageType === "integration" || visitedPanels.has("coverage:integration")) && (
+                <div className={coverageType === "integration" ? "h-full overflow-hidden flex flex-col min-h-0" : "hidden"}>
+                  <IntegrationTestDashboard
+                    snapshotId={
+                      searchParams.get("snapshotId") ||
+                      project?.activeSnapshotId ||
+                      project?.latestSnapshotId ||
+                      project?.snapshots?.[0]?.id ||
+                      (project?.id
+                        ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                        : null) ||
+                      testPromptSnapshotId
+                    }
+                    projectId={project?.id}
+                    onOpenFile={handleOpenFileByPath}
+                    onOpenCFG={handleOpenCFG}
+                    onSuggestTestcase={handleSuggestTestcase}
+                    onOpenArchitecture={handleOpenArchitecture}
+                    initialContext={integrationInitialContext}
+                    onContextChange={setIntegrationInitialContext}
+                  />
+                </div>
+              )}
+              {(coverageType === "system" || visitedPanels.has("coverage:system")) && (
+                <div className={coverageType === "system" ? "h-full overflow-y-auto" : "hidden"}>
+                  <SystemTestDashboard
+                    snapshotId={
+                      searchParams.get("snapshotId") ||
+                      project?.activeSnapshotId ||
+                      project?.latestSnapshotId ||
+                      project?.snapshots?.[0]?.id ||
+                      (project?.id
+                        ? localStorage.getItem(`latestSnapshot_${project.id}`)
+                        : null) ||
+                      testPromptSnapshotId
+                    }
+                    projectId={project?.id}
+                    focusScenario={searchParams.get("focusScenario")}
+                    onOpenFile={handleOpenFileByPath}
+                  />
+                </div>
+              )}
             </div>
-            <div className={coverageType === "integration" ? "h-full overflow-hidden flex flex-col min-h-0" : "hidden"}>
-              <IntegrationTestDashboard
-                snapshotId={
-                  searchParams.get("snapshotId") ||
-                  project?.latestSnapshotId ||
-                  project?.snapshots?.[0]?.id ||
-                  (project?.id
-                    ? localStorage.getItem(`latestSnapshot_${project.id}`)
-                    : null) ||
-                  testPromptSnapshotId
-                }
-                projectId={project?.id}
-                onOpenFile={handleOpenFileByPath}
-                onOpenCFG={handleOpenCFG}
-                onSuggestTestcase={handleSuggestTestcase}
-                onOpenArchitecture={handleOpenArchitecture}
-                initialContext={integrationInitialContext}
-                onContextChange={setIntegrationInitialContext}
-              />
-            </div>
-            <div className={coverageType === "system" ? "h-full overflow-y-auto" : "hidden"}>
-              <SystemTestDashboard
-                snapshotId={
-                  searchParams.get("snapshotId") ||
-                  project?.snapshots?.[0]?.id ||
-                  project?.latestSnapshotId ||
-                  (project?.id
-                    ? localStorage.getItem(`latestSnapshot_${project.id}`)
-                    : null) ||
-                  testPromptSnapshotId
-                }
-                projectId={project?.id}
-                focusScenario={searchParams.get("focusScenario")}
-                onOpenFile={handleOpenFileByPath}
-              />
-            </div>
-          </div>
+          )}
 
           <div className={activeActivity !== "settings" && activeActivity !== "jobs" && activeActivity !== "architecture" && activeActivity !== "coverage" && activeActivity !== "overview" && activeActivity !== "trustworthiness" ? "w-full h-full" : "hidden"}>
                 <Editor
